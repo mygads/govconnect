@@ -156,17 +156,17 @@ export async function getComplaintStatistics() {
   ]);
   
   return {
-    by_status: totalByStatus.map((item) => ({
+    by_status: totalByStatus.map((item: any) => ({
       status: item.status,
-      count: item._count.status,
+      count: item._count._all,
     })),
-    by_kategori: totalByKategori.map((item) => ({
+    by_kategori: totalByKategori.map((item: any) => ({
       kategori: item.kategori,
-      count: item._count.kategori,
+      count: item._count._all,
     })),
-    by_rt_rw: totalByRtRw.map((item) => ({
+    by_rt_rw: totalByRtRw.map((item: any) => ({
       rt_rw: item.rt_rw,
-      count: item._count.rt_rw,
+      count: item._count._all,
     })),
     recent_7_days: recentComplaints,
   };

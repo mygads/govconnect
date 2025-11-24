@@ -138,13 +138,13 @@ export async function getTicketStatistics() {
   ]);
   
   return {
-    by_status: totalByStatus.map((item) => ({
+    by_status: totalByStatus.map((item: any) => ({
       status: item.status,
-      count: item._count.status,
+      count: item._count._all,
     })),
-    by_jenis: totalByJenis.map((item) => ({
+    by_jenis: totalByJenis.map((item: any) => ({
       jenis: item.jenis,
-      count: item._count.jenis,
+      count: item._count._all,
     })),
     recent_7_days: recentTickets,
   };
