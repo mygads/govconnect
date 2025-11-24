@@ -12,4 +12,50 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  schemas  = ["dashboard"]
+}
+
+model admin_users {
+  id            String   @id @default(cuid())
+  username      String   @unique
+  password_hash String
+  name          String
+  role          String   @default("admin")
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  
+  sessions      admin_sessions[]
+  activity_logs activity_logs[]
+  
+  @@schema("dashboard")
+}
+
+model admin_sessions {
+  id         String   @id @default(cuid())
+  admin_id   String
+  token      String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+  
+  admin      admin_users @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+  
+  @@index([admin_id])
+  @@index([expires_at])
+  @@schema("dashboard")
+}
+
+model activity_logs {
+  id         String   @id @default(cuid())
+  admin_id   String
+  action     String
+  resource   String
+  details    Json?
+  ip_address String?
+  timestamp  DateTime @default(now())
+  
+  admin      admin_users @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+  
+  @@index([admin_id])
+  @@index([timestamp])
+  @@schema("dashboard")
 }
