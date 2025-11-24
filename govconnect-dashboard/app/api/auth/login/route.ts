@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Find admin user
-    const admin = await prisma.adminUser.findUnique({
+    const admin = await prisma.admin_users.findUnique({
       where: { username }
     })
 
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     const expiresAt = new Date()
     expiresAt.setHours(expiresAt.getHours() + 24)
 
-    await prisma.adminSession.create({
+    await prisma.admin_sessions.create({
       data: {
         admin_id: admin.id,
         token,
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     })
 
     // Log activity
-    await prisma.activityLog.create({
+    await prisma.activity_logs.create({
       data: {
         admin_id: admin.id,
         action: 'login',

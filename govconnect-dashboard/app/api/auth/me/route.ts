@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Verify session exists and not expired
-    const session = await prisma.adminSession.findUnique({
+    const session = await prisma.admin_sessions.findUnique({
       where: { token },
       include: { admin: true }
     })

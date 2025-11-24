@@ -6,10 +6,10 @@ const prisma = new PrismaClient({
 })
 
 async function main() {
-  console.log('🌱 Seeding database...')
+  console.log('Seeding admin user...')
 
   // Check if admin already exists
-  const existingAdmin = await prisma.adminUser.findUnique({
+  const existingAdmin = await prisma.admin_users.findUnique({
     where: { username: 'admin' }
   })
 
