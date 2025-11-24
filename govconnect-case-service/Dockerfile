@@ -38,6 +38,9 @@ COPY package.json ./
 # Install production dependencies only
 RUN pnpm install --prod
 
+# Install prisma as dev dependency for generate command
+RUN pnpm add -D prisma@6.19.0
+
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
