@@ -9,7 +9,7 @@ async function main() {
   console.log('Seeding admin user...')
 
   // Check if admin already exists
-  const existingAdmin = await prisma.admin_users.findUnique({
+  const existingAdmin = await prisma.adminUsers.findUnique({
     where: { username: 'admin' }
   })
 
@@ -24,7 +24,7 @@ async function main() {
   // Create default admin user
   const hashedPassword = await bcrypt.hash('admin123', 10)
   
-  const admin = await prisma.adminUser.create({
+  const admin = await prisma.adminUsers.create({
     data: {
       id,
       username: 'admin',
