@@ -52,6 +52,53 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  # ==================== AI ORCHESTRATOR ====================
+  
+  ai-service:
+    build:
+      context: ./govconnect-ai-service
+      dockerfile: Dockerfile
+    container_name: govconnect-ai-service
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      
+      # RabbitMQ
+      RABBITMQ_URL: amqp://admin:rabbitmq_secret_2025@rabbitmq:5672/govconnect
+      
+      # Internal Service URLs
+      CHANNEL_SERVICE_URL: http://channel-service:3001
+      CASE_SERVICE_URL: http://case-service:3003
+      
+      # Security
+      INTERNAL_API_KEY: govconnect-internal-2025-secret
+      
+      # Google Gemini Configuration
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LLM_MODEL: gemini-1.5-flash
+      LLM_TEMPERATURE: 0.3
+      LLM_MAX_TOKENS: 1000
+      
+      # Logging
+      LOG_LEVEL: info
+      
+    ports:
+      - "3002:3002"
+    networks:
+      - govconnect-network
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      channel-service:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   # ==================== MESSAGE BROKER ====================
   
   rabbitmq:

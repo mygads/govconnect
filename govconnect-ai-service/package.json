@@ -1,0 +1,31 @@
+{
+  "name": "govconnect-ai-service",
+  "version": "1.0.0",
+  "description": "AI Orchestrator Service for GovConnect - Stateless service that processes WhatsApp messages with LLM",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": ["govconnect", "ai", "orchestrator", "gemini", "rabbitmq"],
+  "author": "GovConnect Team",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "amqplib": "^0.10.9",
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "winston": "^3.18.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.8",
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

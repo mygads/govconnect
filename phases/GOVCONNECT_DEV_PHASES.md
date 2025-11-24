@@ -6,8 +6,8 @@ Dokumen ini berisi tahapan development lengkap untuk membangun sistem GovConnect
 
 | Phase | Service | Status | File Plan |
 |-------|---------|--------|-----------|
-| Phase 0 | Infrastructure Setup | 🔴 Not Started | [PHASE_0_INFRASTRUCTURE.md](./phases/PHASE_0_INFRASTRUCTURE.md) |
-| Phase 1 | Channel Service | 🔴 Not Started | [PHASE_1_CHANNEL_SERVICE.md](./phases/PHASE_1_CHANNEL_SERVICE.md) |
+| Phase 0 | Infrastructure Setup | ✅ Complete | [PHASE_0_INFRASTRUCTURE.md](./phases/PHASE_0_INFRASTRUCTURE.md) |
+| Phase 1 | Channel Service | ✅ Complete | [PHASE_1_CHANNEL_SERVICE.md](./phases/PHASE_1_CHANNEL_SERVICE.md) |
 | Phase 2 | AI Orchestrator | 🔴 Not Started | [PHASE_2_AI_ORCHESTRATOR.md](./phases/PHASE_2_AI_ORCHESTRATOR.md) |
 | Phase 3 | Case Service | 🔴 Not Started | [PHASE_3_CASE_SERVICE.md](./phases/PHASE_3_CASE_SERVICE.md) |
 | Phase 4 | Notification Service | 🔴 Not Started | [PHASE_4_NOTIFICATION_SERVICE.md](./phases/PHASE_4_NOTIFICATION_SERVICE.md) |
