@@ -1,0 +1,60 @@
+services:
+  # ==================== DATABASE ====================
+  
+  # Single PostgreSQL instance with multiple schemas
+  postgres:
+    image: postgres:16-alpine
+    container_name: govconnect-postgres
+    environment:
+      POSTGRES_DB: govconnect
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_secret_2025
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-databases.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - govconnect-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d govconnect"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== MESSAGE BROKER ====================
+  
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: govconnect-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: rabbitmq_secret_2025
+      RABBITMQ_DEFAULT_VHOST: govconnect
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./docker/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./docker/definitions.json:/etc/rabbitmq/definitions.json:ro
+    networks:
+      - govconnect-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ==================== NETWORKS ====================
+networks:
+  govconnect-network:
+    driver: bridge
+    name: govconnect-network
+
+# ==================== VOLUMES ====================
+volumes:
+  pgdata:
+    name: govconnect-pgdata
+  rabbitmq-data:
+    name: govconnect-rabbitmq-data
