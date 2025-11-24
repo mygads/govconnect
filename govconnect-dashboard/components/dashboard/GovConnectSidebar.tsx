@@ -79,7 +79,7 @@ export function GovConnectSidebar() {
   ]
 
   const currentTheme = resolvedTheme || theme || "light"
-  const logoSrc = currentTheme === "dark" ? "/images/logo-dark.png" : "/images/logo-light.png"
+  const logoSrc = currentTheme === "dark" ? "/images/logo-dark.svg" : "/images/logo-light.svg"
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border">

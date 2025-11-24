@@ -42,7 +42,7 @@ export default function LoginPage() {
   }
 
   const currentTheme = resolvedTheme || theme || "light"
-  const logoSrc = currentTheme === "dark" ? "/images/logo-dark.png" : "/images/logo-light.png"
+  const logoSrc = currentTheme === "dark" ? "/images/logo-dark.svg" : "/images/logo-light.svg"
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-secondary/10 p-4">
