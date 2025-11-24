@@ -1,12 +1,49 @@
 {
   "name": "govconnect-channel-service",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "GovConnect Channel Service - WhatsApp webhook handler & message storage",
+  "main": "dist/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "test": "echo \"Tests will be added\"",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write \"src/**/*.ts\""
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "keywords": [
+    "govconnect",
+    "whatsapp",
+    "express",
+    "typescript"
+  ],
+  "author": "GovConnect Team",
+  "license": "ISC",
+  "dependencies": {
+    "amqplib": "^0.10.9",
+    "axios": "^1.13.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "winston": "^3.18.3"
+  },
+  "devDependencies": {
+    "@prisma/client": "6.19.0",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.24.0",
+    "@typescript-eslint/parser": "^8.24.0",
+    "eslint": "^9.19.0",
+    "pg": "^8.16.3",
+    "prettier": "^3.4.2",
+    "prisma": "6.19.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
 }

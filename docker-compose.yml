@@ -3,7 +3,7 @@ services:
   
   # Single PostgreSQL instance with multiple schemas
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16
     container_name: govconnect-postgres
     environment:
       POSTGRES_DB: govconnect
@@ -21,6 +21,36 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ==================== SERVICES ====================
+  
+  # Service 1: Channel Service
+  channel-service:
+    build: ./govconnect-channel-service
+    container_name: govconnect-channel-service
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://postgres:postgres2025@postgres:5432/govconnect?schema=channel
+      RABBITMQ_URL: amqp://admin:rabbitmq_secret_2025@rabbitmq:5672
+      INTERNAL_API_KEY: govconnect_internal_secret_key_2025_change_in_production
+      WA_WEBHOOK_VERIFY_TOKEN: govconnect_verify_token_2025
+      WA_API_URL: https://graph.facebook.com/v21.0
+      WA_PHONE_NUMBER_ID: ""
+      WA_ACCESS_TOKEN: ""
+      LOG_LEVEL: debug
+      LOG_DIR: logs
+      CASE_SERVICE_URL: http://case-service:3003
+      NOTIFICATION_SERVICE_URL: http://notification-service:3004
+    networks:
+      - govconnect-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   # ==================== MESSAGE BROKER ====================
   

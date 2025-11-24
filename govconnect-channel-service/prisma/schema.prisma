@@ -1,0 +1,41 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Message {
+  id           String   @id @default(cuid())
+  wa_user_id   String   // 628xxx (WhatsApp user phone number)
+  message_id   String   @unique // Unique message ID from WhatsApp provider
+  message_text String   @db.Text
+  direction    String   // "IN" | "OUT"
+  source       String   // "WA_WEBHOOK" | "AI" | "SYSTEM"
+  timestamp    DateTime @default(now())
+  createdAt    DateTime @default(now())
+  
+  @@index([wa_user_id, timestamp])
+  @@index([direction])
+  @@index([message_id])
+  @@map("messages")
+}
+
+model SendLog {
+  id           String   @id @default(cuid())
+  wa_user_id   String
+  message_text String   @db.Text
+  status       String   // "sent" | "failed"
+  error_msg    String?  @db.Text
+  timestamp    DateTime @default(now())
+  
+  @@index([wa_user_id])
+  @@index([status])
+  @@index([timestamp])
+  @@map("send_logs")
+}
