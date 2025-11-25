@@ -39,7 +39,7 @@ services:
       NODE_ENV: development
       PORT: 3001
       DATABASE_URL: postgresql://postgres:postgres_secret_2025@postgres:5432/govconnect?schema=channel
-      RABBITMQ_URL: amqp://admin:rabbitmq_secret_2025@rabbitmq:5672
+      RABBITMQ_URL: amqp://admin:rabbitmq_secret_2025@rabbitmq:5672/govconnect
       INTERNAL_API_KEY: govconnect-internal-2025-secret
       WA_WEBHOOK_VERIFY_TOKEN: govconnect_verify_token_2025
       WA_API_URL: https://graph.facebook.com/v21.0
