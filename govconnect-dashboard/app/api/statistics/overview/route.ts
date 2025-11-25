@@ -29,7 +29,23 @@ export async function GET(request: NextRequest) {
 
       if (response.ok) {
         const data = await response.json()
-        return NextResponse.json(data)
+        // Transform data to match dashboard expectations
+        return NextResponse.json({
+          complaints: {
+            total: data.totalLaporan || 0,
+            baru: data.laporanByStatus?.baru || 0,
+            proses: data.laporanByStatus?.proses || 0,
+            selesai: data.laporanByStatus?.selesai || 0,
+            ditolak: data.laporanByStatus?.ditolak || 0,
+          },
+          tickets: {
+            total: data.totalTiket || 0,
+            pending: data.tiketByStatus?.pending || 0,
+            proses: data.tiketByStatus?.proses || 0,
+            selesai: data.tiketByStatus?.selesai || 0,
+            ditolak: data.tiketByStatus?.ditolak || 0,
+          },
+        })
       }
     } catch (error) {
       console.log('Case service not available, using mock data')
@@ -37,22 +53,20 @@ export async function GET(request: NextRequest) {
 
     // Return mock data if case service not available
     return NextResponse.json({
-      totalLaporan: 0,
-      totalTiket: 0,
-      laporanByStatus: {
+      complaints: {
+        total: 0,
         baru: 0,
         proses: 0,
         selesai: 0,
-        ditolak: 0
+        ditolak: 0,
       },
-      tiketByStatus: {
+      tickets: {
+        total: 0,
         pending: 0,
         proses: 0,
         selesai: 0,
-        ditolak: 0
+        ditolak: 0,
       },
-      laporanByKategori: [],
-      tiketByJenis: []
     })
   } catch (error) {
     console.error('Error fetching statistics:', error)

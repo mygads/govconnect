@@ -116,16 +116,21 @@ docker-compose down -v
 
 **Single PostgreSQL instance** dengan schema terpisah per service:
 
-| Service | Schema | Connection String |
-|---------|--------|-------------------|
-| Channel | `channel` | `postgresql://postgres:pass@localhost:5432/govconnect?schema=channel` |
-| Case | `cases` | `postgresql://postgres:pass@localhost:5432/govconnect?schema=cases` |
-| Notification | `notification` | `postgresql://postgres:pass@localhost:5432/govconnect?schema=notification` |
-| Dashboard | `dashboard` | `postgresql://postgres:pass@localhost:5432/govconnect?schema=dashboard` |
-| Testing | `testing` | `postgresql://postgres:pass@localhost:5432/govconnect?schema=testing` |
+| Service | Schema | Connection String (Windows Host) |
+|---------|--------|----------------------------------|
+| Channel | `channel` | `postgresql://postgres:postgres_secret_2025@localhost:5433/govconnect?schema=channel` |
+| Case | `cases` | `postgresql://postgres:postgres_secret_2025@localhost:5433/govconnect?schema=cases` |
+| Notification | `notification` | `postgresql://postgres:postgres_secret_2025@localhost:5433/govconnect?schema=notification` |
+| Dashboard | `dashboard` | `postgresql://postgres:postgres_secret_2025@localhost:5433/govconnect?schema=dashboard` |
+| Testing | `testing` | `postgresql://postgres:postgres_secret_2025@localhost:5433/govconnect?schema=testing` |
 
-**PostgreSQL Port**: `5432`  
+**PostgreSQL Ports**:
+- **Windows Host**: `5433` (to avoid conflict with native PostgreSQL on port 5432)
+- **Docker Network**: `5432` (internal)
+
 **Container**: `govconnect-postgres`
+
+**Important**: Services running in Docker use `postgres:5432`, services running on Windows host use `localhost:5433`
 
 ## 🐰 RabbitMQ
 
@@ -184,7 +189,11 @@ Lihat detail: [GOVCONNECT_DEV_PHASES.md](./GOVCONNECT_DEV_PHASES.md)
 ## 🧪 Testing
 
 ```bash
-# Test database connection
+# Test database connection from Windows host
+$env:PGPASSWORD="postgres_secret_2025"
+psql -h localhost -p 5433 -U postgres -d govconnect -c "SELECT * FROM health_check();"
+
+# Test from inside container
 docker exec -it govconnect-postgres psql -U postgres -d govconnect -c "SELECT * FROM health_check();"
 
 # List all schemas
@@ -196,6 +205,8 @@ docker exec govconnect-rabbitmq rabbitmq-diagnostics status
 # List exchanges
 docker exec govconnect-rabbitmq rabbitmqctl list_exchanges -p govconnect
 ```
+
+**Note**: For comprehensive testing guide, see [docs/database-testing-guide.md](./docs/database-testing-guide.md)
 
 ## 📞 Support
 
@@ -209,4 +220,5 @@ Internal project for government services.
 ---
 
 **Status**: Phase 0 Complete ✅  
-**Last Updated**: November 24, 2025
+**Last Updated**: November 25, 2025  
+**PostgreSQL Port**: 5433 (Windows Host) / 5432 (Docker Internal)

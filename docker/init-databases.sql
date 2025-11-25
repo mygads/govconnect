@@ -9,6 +9,10 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- Set timezone to Asia/Jakarta
 SET timezone = 'Asia/Jakarta';
 
+-- ==================== SET PASSWORD ====================
+-- Ensure postgres user has proper password for md5 authentication
+ALTER USER postgres WITH PASSWORD 'postgres_secret_2025';
+
 -- ==================== CREATE SCHEMAS ====================
 
 -- Schema for Channel Service
