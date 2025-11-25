@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { apiClient } from '@/lib/api-client'
 
 interface AdminUser {
   id: string
@@ -36,12 +37,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
-      const response = await fetch('/api/auth/me')
+      // Set token in API client
+      apiClient.setAuthToken(token)
+
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
       if (response.ok) {
         const data = await response.json()
         setUser(data.user)
       } else {
         localStorage.removeItem('token')
+        apiClient.clearAuthToken()
       }
     } catch (error) {
       console.error('Auth check failed:', error)
@@ -64,12 +73,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const data = await response.json()
     localStorage.setItem('token', data.token)
+    
+    // Set token in API client for subsequent requests
+    apiClient.setAuthToken(data.token)
+    
     setUser(data.user)
     router.push('/dashboard')
   }
 
   const logout = () => {
     localStorage.removeItem('token')
+    apiClient.clearAuthToken()
     setUser(null)
     router.push('/login')
   }

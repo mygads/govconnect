@@ -1,20 +1,32 @@
 import axios, { AxiosInstance } from 'axios'
 
-const CASE_SERVICE_URL = process.env.CASE_SERVICE_URL || 'http://localhost:3003'
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || ''
+// Use dashboard API routes as proxy to case service
+// This works from both client and server side
+const API_BASE_URL = typeof window !== 'undefined' 
+  ? '/api'  // Client-side: use relative API routes
+  : 'http://localhost:3000/api'  // Server-side: use absolute URL
 
 class ApiClient {
   private client: AxiosInstance
 
   constructor() {
     this.client = axios.create({
-      baseURL: CASE_SERVICE_URL,
+      baseURL: API_BASE_URL,
       headers: {
         'Content-Type': 'application/json',
-        'x-internal-api-key': INTERNAL_API_KEY
       },
       timeout: 10000
     })
+  }
+
+  // Set auth token for requests
+  setAuthToken(token: string) {
+    this.client.defaults.headers.common['Authorization'] = `Bearer ${token}`
+  }
+
+  // Remove auth token
+  clearAuthToken() {
+    delete this.client.defaults.headers.common['Authorization']
   }
 
   // Complaints
@@ -72,5 +84,16 @@ class ApiClient {
   }
 }
 
-export const apiClient = new ApiClient()
+// Create singleton instance
+const apiClient = new ApiClient()
+
+// Helper to initialize with token from localStorage (client-side only)
+if (typeof window !== 'undefined') {
+  const token = localStorage.getItem('token')
+  if (token) {
+    apiClient.setAuthToken(token)
+  }
+}
+
+export { apiClient }
 export default apiClient
