@@ -1,0 +1,39 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "123456789",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "6281234567890",
+              "phone_number_id": "123456789"
+            },
+            "contacts": [
+              {
+                "profile": {
+                  "name": "Budi Santoso"
+                },
+                "wa_id": "6283333333333"
+              }
+            ],
+            "messages": [
+              {
+                "from": "6283333333333",
+                "id": "wamid.test_complete_complaint",
+                "timestamp": "TIMESTAMP_PLACEHOLDER",
+                "text": {
+                  "body": "pak saya mau lapor, lampu jalan di depan rumah saya sudah mati sejak 3 hari yang lalu. alamat saya di Jalan Mawar Gang 5 Nomor 12 RT 04 RW 02 Kelurahan Sukamaju. mohon segera diperbaiki karena gelap sekali di malam hari"
+                },
+                "type": "text"
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}
