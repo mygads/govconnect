@@ -122,8 +122,58 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
  * Handle complaint creation
  */
 async function handleComplaintCreation(wa_user_id: string, llmResponse: any, currentMessage: string): Promise<string> {
-  const { kategori, alamat, rt_rw } = llmResponse.fields;
-  let { deskripsi } = llmResponse.fields;
+  const { kategori, rt_rw } = llmResponse.fields;
+  let { alamat, deskripsi } = llmResponse.fields;
+  
+  // Log what LLM returned for debugging
+  logger.info('LLM complaint fields', {
+    wa_user_id,
+    kategori,
+    alamat,
+    deskripsi,
+    rt_rw,
+    currentMessage: currentMessage.substring(0, 100),
+  });
+  
+  // SMART ALAMAT DETECTION: If LLM didn't extract alamat but current message looks like an address
+  if (!alamat) {
+    // Check if message contains address indicators
+    const addressPatterns = [
+      /jalan/i, /jln/i, /jl\./i,
+      /\bno\b/i, /nomor/i,
+      /\brt\b/i, /\brw\b/i,
+      /gang/i, /gg\./i,
+      /komplek/i, /perumahan/i,
+      /bandung/i, /jakarta/i, /surabaya/i, /medan/i, // city names
+      /kecamatan/i, /kelurahan/i, /kota/i,
+    ];
+    
+    const looksLikeAddress = addressPatterns.some(pattern => pattern.test(currentMessage));
+    
+    if (looksLikeAddress) {
+      // Try to extract just the address part using regex
+      // Match from "di", "jalan", "jln", "jl" until end or before "terima kasih" etc
+      const addressRegex = /(?:di\s+)?(?:jalan|jln|jl\.?|komplek|perumahan|gang|gg\.)\s+[^,.!?]*(?:\s+(?:no|nomor|rt|rw|blok)\s*[\d\/]+[^,.!?]*)*/i;
+      const match = currentMessage.match(addressRegex);
+      
+      if (match) {
+        alamat = match[0].trim();
+      } else {
+        // If regex doesn't match, check if message is short (likely just address)
+        if (currentMessage.length < 100) {
+          alamat = currentMessage.trim();
+        }
+      }
+      
+      if (alamat) {
+        logger.info('Smart alamat detection: extracted address from message', {
+          wa_user_id,
+          originalMessage: currentMessage.substring(0, 50),
+          detectedAlamat: alamat,
+        });
+      }
+    }
+  }
   
   // Fallback: if deskripsi is empty but we have kategori, generate default description
   if (!deskripsi && kategori) {
@@ -135,6 +185,8 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
       'drainase': 'Laporan saluran air tersumbat',
       'pohon_tumbang': 'Laporan pohon tumbang',
       'fasilitas_rusak': 'Laporan fasilitas umum rusak',
+      'banjir': 'Laporan banjir',
+      'lainnya': 'Laporan lainnya',
     };
     deskripsi = kategoriMap[kategori] || `Laporan ${kategori.replace(/_/g, ' ')}`;
     
@@ -145,13 +197,25 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
     });
   }
   
-  // Check if we have enough information (only kategori is required now)
-  if (!kategori) {
+  // Check if we have enough information - BOTH kategori AND alamat are required!
+  if (!kategori || !alamat) {
     logger.info('Incomplete complaint data, asking for more info', {
       wa_user_id,
       hasKategori: !!kategori,
+      hasAlamat: !!alamat,
       hasDeskripsi: !!deskripsi,
     });
+    
+    // Generate custom response based on what's missing
+    // DON'T trust LLM reply_text as it might already contain confirmation
+    if (!kategori) {
+      return 'Mohon jelaskan jenis masalah yang ingin dilaporkan (contoh: jalan rusak, lampu mati, sampah, dll).';
+    }
+    if (!alamat) {
+      const kategoriLabel = kategori.replace(/_/g, ' ');
+      return `Baik, saya akan catat laporan ${kategoriLabel} Anda. Boleh sebutkan alamat lengkapnya?`;
+    }
+    
     return llmResponse.reply_text;
   }
   
@@ -160,7 +224,7 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
     wa_user_id,
     kategori,
     deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
-    alamat: alamat || '',
+    alamat: alamat,
     rt_rw: rt_rw || '',
   });
   

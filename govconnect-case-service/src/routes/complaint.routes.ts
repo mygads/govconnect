@@ -29,6 +29,8 @@ router.post(
         'drainase',
         'pohon_tumbang',
         'fasilitas_rusak',
+        'banjir',
+        'lainnya',
       ])
       .withMessage('Invalid kategori'),
     body('deskripsi').isLength({ min: 10, max: 1000 }).withMessage('Deskripsi 10-1000 chars'),

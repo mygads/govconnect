@@ -50,7 +50,7 @@ async function main() {
   
   const defaultSettings = [
     { key: 'ai_chatbot_enabled', value: 'true', description: 'Enable/disable AI chatbot feature' },
-    { key: 'ai_model_primary', value: 'gemini-2.5-flash-preview-05-20', description: 'Primary AI model' },
+    { key: 'ai_model_primary', value: 'gemini-2.5-flash', description: 'Primary AI model' },
     { key: 'ai_model_fallback', value: 'gemini-2.0-flash', description: 'Fallback AI model if primary fails' },
     { key: 'welcome_message', value: 'Selamat datang di GovConnect! Saya siap membantu Anda dengan laporan dan layanan pemerintah.', description: 'Welcome message for new users' },
   ]

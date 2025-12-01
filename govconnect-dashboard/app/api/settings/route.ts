@@ -5,7 +5,7 @@ import prisma from '@/lib/prisma'
 // Default settings
 const DEFAULT_SETTINGS = {
   ai_chatbot_enabled: 'true',
-  ai_model_primary: 'gemini-2.5-flash-preview-05-20',
+  ai_model_primary: 'gemini-2.5-flash',
   ai_model_fallback: 'gemini-2.0-flash',
   welcome_message: 'Selamat datang di GovConnect! Saya siap membantu Anda dengan laporan dan layanan pemerintah.',
 }

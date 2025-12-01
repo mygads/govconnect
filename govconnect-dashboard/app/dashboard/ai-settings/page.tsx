@@ -43,7 +43,7 @@ export default function AISettingsPage() {
   const [saving, setSaving] = useState(false)
   const [systemSettings, setSystemSettings] = useState<SystemSettings>({
     ai_chatbot_enabled: 'true',
-    ai_model_primary: 'gemini-2.5-flash-preview-05-20',
+    ai_model_primary: 'gemini-2.5-flash',
     ai_model_fallback: 'gemini-2.0-flash',
     welcome_message: '',
   })

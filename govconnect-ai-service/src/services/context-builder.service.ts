@@ -40,6 +40,12 @@ export async function buildContext(wa_user_id: string, currentMessage: string, k
       .replace('{history}', conversationHistory)
       .replace('{user_message}', currentMessage);
     
+    // Log the formatted history for debugging
+    logger.debug('Conversation history formatted', {
+      wa_user_id,
+      history: conversationHistory.substring(0, 500), // First 500 chars
+    });
+    
     logger.debug('Context built successfully', {
       wa_user_id,
       messageCount: messages.length,
@@ -163,7 +169,7 @@ function formatConversationHistory(messages: Message[]): string {
   const formatted = messages.map(msg => {
     const role = msg.direction === 'IN' ? 'User' : 'Assistant';
     return `${role}: ${msg.message_text}`;
-  }).join('\\n');
+  }).join('\n');
   
   return formatted;
 }

@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     // Convert to object format with defaults
     const settingsObj: Record<string, string> = {
       ai_chatbot_enabled: 'true',
-      ai_model_primary: 'gemini-2.5-flash-preview-05-20',
+      ai_model_primary: 'gemini-2.5-flash',
       ai_model_fallback: 'gemini-2.0-flash',
     }
     
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 function getDefaultValue(key: string): string {
   const defaults: Record<string, string> = {
     ai_chatbot_enabled: 'true',
-    ai_model_primary: 'gemini-2.5-flash-preview-05-20',
+    ai_model_primary: 'gemini-2.5-flash',
     ai_model_fallback: 'gemini-2.0-flash',
     welcome_message: 'Selamat datang di GovConnect!',
   }

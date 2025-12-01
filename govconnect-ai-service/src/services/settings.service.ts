@@ -54,7 +54,7 @@ export async function getSettings(): Promise<SystemSettings> {
     // Return defaults if fetch fails
     return {
       ai_chatbot_enabled: 'true',
-      ai_model_primary: 'gemini-2.5-flash-preview-05-20',
+      ai_model_primary: 'gemini-2.5-flash',
       ai_model_fallback: 'gemini-2.0-flash',
     };
   }
