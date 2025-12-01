@@ -237,6 +237,11 @@ services:
       
       # Case Service API
       CASE_SERVICE_URL: http://case-service:3003
+      
+      # Channel Service API (for WhatsApp management)
+      CHANNEL_SERVICE_URL: http://channel-service:3001
+      
+      # Internal API Key
       INTERNAL_API_KEY: govconnect-internal-2025-secret
       
       # App Config

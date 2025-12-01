@@ -4,12 +4,14 @@ import {
   checkDuplicateMessage,
 } from '../services/message.service';
 import { publishEvent } from '../services/rabbitmq.service';
+import {
+  markMessageAsRead,
+  isAutoReadEnabled,
+} from '../services/wa.service';
 import { rabbitmqConfig } from '../config/rabbitmq';
 import logger from '../utils/logger';
 import { 
-  GenfityWebhookPayload, 
-  GenfityEvent,
-  WhatsAppWebhookPayload 
+  GenfityWebhookPayload,
 } from '../types/webhook.types';
 
 /**
@@ -66,7 +68,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     }
 
     // Parse genfity-wa webhook payload
-    const { message, from, messageId, timestamp } = parseGenfityPayload(payload);
+    const { message, from, messageId, timestamp, senderPhone, chatPhone } = parseGenfityPayload(payload);
 
     logger.debug('Parsed payload result', { message, from, messageId, timestamp });
 
@@ -97,6 +99,13 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
     // Extract phone number from JID (remove @s.whatsapp.net)
     const waUserId = extractPhoneFromJID(from);
+
+    // Auto-read message if enabled
+    if (isAutoReadEnabled() && messageId && chatPhone && senderPhone) {
+      markMessageAsRead([messageId], chatPhone, senderPhone).catch((err) => {
+        logger.warn('Failed to mark message as read', { error: err.message });
+      });
+    }
 
     // Save message to database
     await saveIncomingMessage({
@@ -153,23 +162,31 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
   from: string | null;
   messageId: string | null;
   timestamp: Date;
+  senderPhone: string | null;
+  chatPhone: string | null;
 } {
   try {
     const event = payload.event;
     if (!event) {
       logger.debug('No event in payload');
-      return { message: null, from: null, messageId: null, timestamp: new Date() };
+      return { message: null, from: null, messageId: null, timestamp: new Date(), senderPhone: null, chatPhone: null };
     }
 
     // Handle both "Info" (from genfity-wa) formats
     const info = event.Info;
     if (!info) {
       logger.debug('No Info in event');
-      return { message: null, from: null, messageId: null, timestamp: new Date() };
+      return { message: null, from: null, messageId: null, timestamp: new Date(), senderPhone: null, chatPhone: null };
     }
 
     // Extract sender JID - Chat field contains the conversation JID
     const from = info.Chat; // e.g., "628123456789@s.whatsapp.net"
+    
+    // Extract sender and chat phone for auto-read feature
+    // Sender format: "6281233784490:24@s.whatsapp.net" or "6281233784490@s.whatsapp.net"
+    // Chat format: "6281233784490@s.whatsapp.net"
+    const senderPhone = info.Sender ? info.Sender.split('@')[0].split(':')[0] : null;
+    const chatPhone = info.Chat ? info.Chat.split('@')[0] : null;
 
     // Extract message ID
     const messageId = info.ID;
@@ -256,6 +273,8 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
       messageId,
       messageText: messageText?.substring(0, 50),
       timestamp: timestamp.toISOString(),
+      senderPhone,
+      chatPhone,
     });
 
     return {
@@ -263,10 +282,12 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
       from,
       messageId,
       timestamp,
+      senderPhone,
+      chatPhone,
     };
   } catch (error: any) {
     logger.error('Error parsing webhook payload', { error: error.message });
-    return { message: null, from: null, messageId: null, timestamp: new Date() };
+    return { message: null, from: null, messageId: null, timestamp: new Date(), senderPhone: null, chatPhone: null };
   }
 }
 

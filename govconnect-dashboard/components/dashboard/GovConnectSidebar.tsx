@@ -14,6 +14,7 @@ import {
   BookOpen,
   Settings,
   Bot,
+  Smartphone,
 } from "lucide-react"
 
 import {
@@ -81,6 +82,17 @@ export function GovConnectSidebar() {
         },
       ],
     },
+    // WhatsApp section - only for superadmin
+    ...(user?.role === 'superadmin' ? [{
+      title: "WhatsApp",
+      items: [
+        {
+          title: "Device",
+          url: "/dashboard/whatsapp",
+          icon: Smartphone,
+        },
+      ],
+    }] : []),
     // AI Chatbot section - only for superadmin
     ...(user?.role === 'superadmin' ? [{
       title: "AI Chatbot",
