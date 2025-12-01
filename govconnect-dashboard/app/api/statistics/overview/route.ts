@@ -29,26 +29,28 @@ export async function GET(request: NextRequest) {
 
       if (response.ok) {
         const data = await response.json()
+        console.log('Case service statistics response:', data)
         // Transform data to match dashboard expectations
+        // Case service returns: { totalLaporan, totalTiket, laporan: {baru, proses, selesai, hariIni}, tiket: {pending, proses, selesai, hariIni} }
         return NextResponse.json({
           complaints: {
             total: data.totalLaporan || 0,
-            baru: data.laporanByStatus?.baru || 0,
-            proses: data.laporanByStatus?.proses || 0,
-            selesai: data.laporanByStatus?.selesai || 0,
-            ditolak: data.laporanByStatus?.ditolak || 0,
+            baru: data.laporan?.baru || 0,
+            proses: data.laporan?.proses || 0,
+            selesai: data.laporan?.selesai || 0,
+            ditolak: data.laporan?.ditolak || 0,
           },
           tickets: {
             total: data.totalTiket || 0,
-            pending: data.tiketByStatus?.pending || 0,
-            proses: data.tiketByStatus?.proses || 0,
-            selesai: data.tiketByStatus?.selesai || 0,
-            ditolak: data.tiketByStatus?.ditolak || 0,
+            pending: data.tiket?.pending || 0,
+            proses: data.tiket?.proses || 0,
+            selesai: data.tiket?.selesai || 0,
+            ditolak: data.tiket?.ditolak || 0,
           },
         })
       }
     } catch (error) {
-      console.log('Case service not available, using mock data')
+      console.log('Case service not available, using mock data:', error)
     }
 
     // Return mock data if case service not available
