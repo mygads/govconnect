@@ -133,3 +133,113 @@ export async function checkCaseServiceHealth(): Promise<boolean> {
     return false;
   }
 }
+
+export interface ComplaintStatusResponse {
+  data: {
+    complaint_id: string;
+    kategori: string;
+    alamat: string | null;
+    status: string;
+    admin_notes: string | null;
+    created_at: string;
+    updated_at: string;
+  } | null;
+}
+
+export interface TicketStatusResponse {
+  data: {
+    ticket_id: string;
+    jenis: string;
+    status: string;
+    admin_notes: string | null;
+    data_json: any;
+    created_at: string;
+    updated_at: string;
+  } | null;
+}
+
+/**
+ * Get complaint status by complaint_id (e.g., LAP-20251201-001)
+ */
+export async function getComplaintStatus(complaintId: string): Promise<ComplaintStatusResponse['data']> {
+  logger.info('Fetching complaint status from Case Service', {
+    complaint_id: complaintId,
+  });
+  
+  try {
+    const url = `${config.caseServiceUrl}/laporan/${complaintId}`;
+    const response = await axios.get<ComplaintStatusResponse>(
+      url,
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+    
+    logger.info('✅ Complaint status fetched successfully', {
+      complaint_id: complaintId,
+      status: response.data.data?.status,
+    });
+    
+    return response.data.data;
+  } catch (error: any) {
+    if (error.response?.status === 404) {
+      logger.info('Complaint not found', { complaint_id: complaintId });
+      return null;
+    }
+    
+    logger.error('❌ Failed to fetch complaint status', {
+      complaint_id: complaintId,
+      error: error.message,
+      status: error.response?.status,
+    });
+    
+    return null;
+  }
+}
+
+/**
+ * Get ticket status by ticket_id (e.g., TIK-20251201-001)
+ */
+export async function getTicketStatus(ticketId: string): Promise<TicketStatusResponse['data']> {
+  logger.info('Fetching ticket status from Case Service', {
+    ticket_id: ticketId,
+  });
+  
+  try {
+    const url = `${config.caseServiceUrl}/tiket/${ticketId}`;
+    const response = await axios.get<TicketStatusResponse>(
+      url,
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+    
+    logger.info('✅ Ticket status fetched successfully', {
+      ticket_id: ticketId,
+      status: response.data.data?.status,
+    });
+    
+    return response.data.data;
+  } catch (error: any) {
+    if (error.response?.status === 404) {
+      logger.info('Ticket not found', { ticket_id: ticketId });
+      return null;
+    }
+    
+    logger.error('❌ Failed to fetch ticket status', {
+      ticket_id: ticketId,
+      error: error.message,
+      status: error.response?.status,
+    });
+    
+    return null;
+  }
+}

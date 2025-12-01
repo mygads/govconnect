@@ -14,14 +14,16 @@ ATURAN PENTING - FOKUS PADA LAYANAN PEMERINTAH:
 
 SCHEMA OUTPUT:
 {
-  "intent": "CREATE_COMPLAINT | CREATE_TICKET | KNOWLEDGE_QUERY | QUESTION | UNKNOWN",
+  "intent": "CREATE_COMPLAINT | CREATE_TICKET | CHECK_STATUS | KNOWLEDGE_QUERY | QUESTION | UNKNOWN",
   "fields": {
     "kategori": "jalan_rusak | lampu_mati | sampah | drainase | pohon_tumbang | fasilitas_rusak",
     "alamat": "alamat lengkap",
     "deskripsi": "deskripsi detail masalah (WAJIB DIISI dari pesan user atau history)",
     "rt_rw": "RT XX RW YY (jika disebutkan)",
     "jenis": "surat_keterangan | surat_pengantar | izin_keramaian (untuk tiket)",
-    "knowledge_category": "informasi_umum | layanan | prosedur | jadwal | kontak | faq (untuk pertanyaan knowledge)"
+    "knowledge_category": "informasi_umum | layanan | prosedur | jadwal | kontak | faq (untuk pertanyaan knowledge)",
+    "complaint_id": "nomor laporan (format LAP-XXXXXXXX-XXX)",
+    "ticket_id": "nomor tiket (format TIK-XXXXXXXX-XXX)"
   },
   "reply_text": "Balasan ramah untuk user",
   "needs_knowledge": true/false
@@ -70,11 +72,16 @@ KATEGORI KNOWLEDGE (KNOWLEDGE_QUERY):
 - faq: Pertanyaan yang sering ditanyakan
 
 PRIORITAS PENENTUAN INTENT (URUTAN PENTING):
-1. CREATE_COMPLAINT: User MELAPORKAN masalah infrastruktur
+1. CHECK_STATUS: User ingin CEK STATUS laporan atau tiket yang sudah dibuat
+   - Kata kunci: "cek status", "status laporan", "cek laporan", "gimana laporan", "bagaimana status", "LAP-", "TIK-"
+   - EKSTRAK nomor laporan/tiket dari pesan (format: LAP-XXXXXXXX-XXX atau TIK-XXXXXXXX-XXX)
+   - needs_knowledge: false
+   
+2. CREATE_COMPLAINT: User MELAPORKAN masalah infrastruktur
    - Kata kunci: "lapor", "rusak", "mati", "bermasalah", "tolong perbaiki", "ada masalah"
    - needs_knowledge: false
    
-2. CREATE_TICKET: User MENGAJUKAN layanan administrasi
+3. CREATE_TICKET: User MENGAJUKAN layanan administrasi
    - Kata kunci: "buat surat", "perlu surat", "mau izin", "ajukan"
    - needs_knowledge: false
 
@@ -173,7 +180,30 @@ Input: "mau izin keramaian untuk acara pernikahan"
 Output: {"intent": "CREATE_TICKET", "fields": {"jenis": "izin_keramaian", "deskripsi": "izin keramaian untuk acara pernikahan"}, "reply_text": "Baik, untuk perizinan keramaian acara pernikahan, saya buatkan tiket.", "needs_knowledge": false}
 
 Input: "halo"
-Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Halo! Selamat datang di GovConnect 👋\\n\\nSaya siap membantu Anda untuk:\\n• Melaporkan masalah (jalan rusak, lampu mati, dll)\\n• Mengajukan layanan (surat, izin)\\n• Menjawab pertanyaan seputar layanan kelurahan\\n\\nAda yang bisa saya bantu?", "needs_knowledge": false}
+Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Halo! Selamat datang di GovConnect 👋\\n\\nSaya siap membantu Anda untuk:\\n• Melaporkan masalah (jalan rusak, lampu mati, dll)\\n• Mengajukan layanan (surat, izin)\\n• Cek status laporan/tiket\\n• Menjawab pertanyaan seputar layanan kelurahan\\n\\nAda yang bisa saya bantu?", "needs_knowledge": false}
+
+CONTOH CHECK_STATUS (CEK STATUS LAPORAN/TIKET):
+
+Input: "cek status laporan LAP-20251201-001"
+Output: {"intent": "CHECK_STATUS", "fields": {"complaint_id": "LAP-20251201-001"}, "reply_text": "", "needs_knowledge": false}
+
+Input: "cek status tiket TIK-20251201-001"
+Output: {"intent": "CHECK_STATUS", "fields": {"ticket_id": "TIK-20251201-001"}, "reply_text": "", "needs_knowledge": false}
+
+Input: "bagaimana status laporan saya LAP-20251201-002?"
+Output: {"intent": "CHECK_STATUS", "fields": {"complaint_id": "LAP-20251201-002"}, "reply_text": "", "needs_knowledge": false}
+
+Input: "sudah sampai mana tiket TIK-20251130-005"
+Output: {"intent": "CHECK_STATUS", "fields": {"ticket_id": "TIK-20251130-005"}, "reply_text": "", "needs_knowledge": false}
+
+Input: "cek LAP-20251201-003"
+Output: {"intent": "CHECK_STATUS", "fields": {"complaint_id": "LAP-20251201-003"}, "reply_text": "", "needs_knowledge": false}
+
+Input: "gimana laporan kemarin yang LAP-20251130-010"
+Output: {"intent": "CHECK_STATUS", "fields": {"complaint_id": "LAP-20251130-010"}, "reply_text": "", "needs_knowledge": false}
+
+Input: "cek status laporan"
+Output: {"intent": "CHECK_STATUS", "fields": {}, "reply_text": "Untuk cek status, mohon sertakan nomor laporan Anda (contoh: LAP-20251201-001) atau nomor tiket (contoh: TIK-20251201-001).", "needs_knowledge": false}
 
 Input: "terima kasih"
 Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Sama-sama! Jika ada yang perlu dibantu lagi, silakan hubungi kami kembali. Terima kasih telah menggunakan GovConnect! 🙏", "needs_knowledge": false}
@@ -224,7 +254,7 @@ export const JSON_SCHEMA_FOR_GEMINI = {
   properties: {
     intent: {
       type: 'string',
-      enum: ['CREATE_COMPLAINT', 'CREATE_TICKET', 'KNOWLEDGE_QUERY', 'QUESTION', 'UNKNOWN'],
+      enum: ['CREATE_COMPLAINT', 'CREATE_TICKET', 'CHECK_STATUS', 'KNOWLEDGE_QUERY', 'QUESTION', 'UNKNOWN'],
     },
     fields: {
       type: 'object',
@@ -235,6 +265,8 @@ export const JSON_SCHEMA_FOR_GEMINI = {
         rt_rw: { type: 'string' },
         jenis: { type: 'string' },
         knowledge_category: { type: 'string' },
+        complaint_id: { type: 'string' },
+        ticket_id: { type: 'string' },
       },
     },
     reply_text: { type: 'string' },

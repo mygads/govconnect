@@ -2,7 +2,7 @@ import logger from '../utils/logger';
 import { MessageReceivedEvent } from '../types/event.types';
 import { buildContext, buildKnowledgeQueryContext } from './context-builder.service';
 import { callGemini } from './llm.service';
-import { createComplaint, createTicket } from './case-client.service';
+import { createComplaint, createTicket, getComplaintStatus, getTicketStatus } from './case-client.service';
 import { publishAIReply } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { searchKnowledge, buildKnowledgeContext } from './knowledge.service';
@@ -293,6 +293,10 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
         finalReplyText = await handleTicketCreation(wa_user_id, llmResponse);
         break;
       
+      case 'CHECK_STATUS':
+        finalReplyText = await handleStatusCheck(wa_user_id, llmResponse);
+        break;
+      
       case 'KNOWLEDGE_QUERY':
         // Need to fetch knowledge and do second LLM call
         finalReplyText = await handleKnowledgeQuery(wa_user_id, message, llmResponse);
@@ -572,4 +576,162 @@ async function handleKnowledgeQuery(wa_user_id: string, message: string, llmResp
     
     return 'Maaf, terjadi kesalahan saat mencari informasi. Mohon coba lagi dalam beberapa saat.';
   }
+}
+
+/**
+ * Format relative time in Indonesian
+ */
+function formatRelativeTime(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  
+  if (diffSeconds < 60) {
+    return 'baru saja';
+  } else if (diffMinutes < 60) {
+    return `${diffMinutes} menit yang lalu`;
+  } else if (diffHours < 24) {
+    return `${diffHours} jam yang lalu`;
+  } else if (diffDays === 1) {
+    return 'kemarin';
+  } else if (diffDays < 7) {
+    return `${diffDays} hari yang lalu`;
+  } else {
+    return date.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  }
+}
+
+/**
+ * Format kategori to readable label
+ */
+function formatKategori(kategori: string): string {
+  const kategoriMap: Record<string, string> = {
+    'jalan_rusak': 'Jalan Rusak',
+    'lampu_mati': 'Lampu Jalan Mati',
+    'sampah': 'Masalah Sampah',
+    'drainase': 'Saluran Air/Drainase',
+    'pohon_tumbang': 'Pohon Tumbang',
+    'fasilitas_rusak': 'Fasilitas Umum Rusak',
+    'banjir': 'Banjir',
+    'lainnya': 'Lainnya',
+  };
+  return kategoriMap[kategori] || kategori.replace(/_/g, ' ');
+}
+
+/**
+ * Format jenis tiket to readable label
+ */
+function formatJenisTiket(jenis: string): string {
+  const jenisMap: Record<string, string> = {
+    'surat_keterangan': 'Surat Keterangan',
+    'surat_pengantar': 'Surat Pengantar',
+    'izin_keramaian': 'Izin Keramaian',
+  };
+  return jenisMap[jenis] || jenis.replace(/_/g, ' ');
+}
+
+/**
+ * Format status to readable label with emoji
+ */
+function formatStatus(status: string): string {
+  const statusMap: Record<string, string> = {
+    'baru': '🆕 BARU',
+    'pending': '⏳ PENDING',
+    'proses': '🔄 PROSES',
+    'selesai': '✅ SELESAI',
+    'ditolak': '❌ DITOLAK',
+  };
+  return statusMap[status] || status.toUpperCase();
+}
+
+/**
+ * Handle status check for complaints and tickets
+ */
+async function handleStatusCheck(wa_user_id: string, llmResponse: any): Promise<string> {
+  const { complaint_id, ticket_id } = llmResponse.fields;
+  
+  logger.info('Handling status check', {
+    wa_user_id,
+    complaint_id,
+    ticket_id,
+  });
+  
+  // If no ID provided, return LLM's reply (which should ask for the ID)
+  if (!complaint_id && !ticket_id) {
+    if (llmResponse.reply_text) {
+      return llmResponse.reply_text;
+    }
+    return 'Untuk cek status, mohon sertakan nomor laporan Anda (contoh: LAP-20251201-001) atau nomor tiket (contoh: TIK-20251201-001).';
+  }
+  
+  // Check complaint status
+  if (complaint_id) {
+    const complaint = await getComplaintStatus(complaint_id);
+    
+    if (!complaint) {
+      return `⚠️ Maaf, laporan dengan nomor *${complaint_id}* tidak ditemukan.\n\nPastikan nomor laporan sudah benar. Contoh format: LAP-20251201-001`;
+    }
+    
+    const updatedAt = new Date(complaint.updated_at);
+    const relativeTime = formatRelativeTime(updatedAt);
+    
+    let statusMessage = `📋 *Status Laporan ${complaint.complaint_id}*\n\n`;
+    statusMessage += `📌 Kategori: ${formatKategori(complaint.kategori)}\n`;
+    
+    if (complaint.alamat) {
+      statusMessage += `📍 Lokasi: ${complaint.alamat}\n`;
+    }
+    
+    statusMessage += `⏳ Status: ${formatStatus(complaint.status)}\n`;
+    
+    if (complaint.admin_notes) {
+      statusMessage += `📝 Catatan Admin: ${complaint.admin_notes}\n`;
+    }
+    
+    statusMessage += `🕐 Update terakhir: ${relativeTime}`;
+    
+    return statusMessage;
+  }
+  
+  // Check ticket status
+  if (ticket_id) {
+    const ticket = await getTicketStatus(ticket_id);
+    
+    if (!ticket) {
+      return `⚠️ Maaf, tiket dengan nomor *${ticket_id}* tidak ditemukan.\n\nPastikan nomor tiket sudah benar. Contoh format: TIK-20251201-001`;
+    }
+    
+    const updatedAt = new Date(ticket.updated_at);
+    const relativeTime = formatRelativeTime(updatedAt);
+    
+    let statusMessage = `🎫 *Status Tiket ${ticket.ticket_id}*\n\n`;
+    statusMessage += `📌 Jenis: ${formatJenisTiket(ticket.jenis)}\n`;
+    
+    // Extract deskripsi from data_json if available
+    if (ticket.data_json && typeof ticket.data_json === 'object') {
+      const dataJson = ticket.data_json as Record<string, any>;
+      if (dataJson.deskripsi) {
+        statusMessage += `📄 Keterangan: ${dataJson.deskripsi}\n`;
+      }
+    }
+    
+    statusMessage += `⏳ Status: ${formatStatus(ticket.status)}\n`;
+    
+    if (ticket.admin_notes) {
+      statusMessage += `📝 Catatan Admin: ${ticket.admin_notes}\n`;
+    }
+    
+    statusMessage += `🕐 Update terakhir: ${relativeTime}`;
+    
+    return statusMessage;
+  }
+  
+  return 'Maaf, terjadi kesalahan. Mohon coba lagi.';
 }
