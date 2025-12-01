@@ -6,8 +6,7 @@
   "users": [
     {
       "name": "admin",
-      "password_hash": "iuCbK8JTQxJvZE15zQKpKfXXVxKoS8P3QRnvO7kgUd/mVGN2",
-      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "password": "rabbitmq_secret_2025",
       "tags": ["administrator"]
     }
   ],

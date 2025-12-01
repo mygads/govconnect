@@ -10,6 +10,7 @@ import {
   FileText,
   Ticket,
   BarChart3,
+  Settings,
   ChevronRight,
 } from "lucide-react"
 
@@ -73,6 +74,16 @@ export function GovConnectSidebar() {
           title: "List Tiket",
           url: "/dashboard/tiket",
           icon: Ticket,
+        },
+      ],
+    },
+    {
+      title: "Account",
+      items: [
+        {
+          title: "Settings",
+          url: "/dashboard/settings",
+          icon: Settings,
         },
       ],
     },
