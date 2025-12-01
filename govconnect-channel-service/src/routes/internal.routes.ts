@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getMessages, sendMessage } from '../controllers/internal.controller';
+import { getMessages, sendMessage, setTyping } from '../controllers/internal.controller';
 import {
   getStatus,
   connect,
@@ -32,6 +32,13 @@ router.get('/messages', validateGetMessages, getMessages);
  * Send a message via WhatsApp
  */
 router.post('/send', validateSendMessage, sendMessage);
+
+/**
+ * POST /internal/typing
+ * Send typing indicator
+ * Body: { wa_user_id: "628xxx", state: "composing" | "paused" | "stop" }
+ */
+router.post('/typing', setTyping);
 
 // =====================================================
 // WhatsApp Session Management Routes

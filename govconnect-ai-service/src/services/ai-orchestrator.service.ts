@@ -6,6 +6,7 @@ import { createComplaint, createTicket } from './case-client.service';
 import { publishAIReply } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { searchKnowledge, buildKnowledgeContext } from './knowledge.service';
+import { startTyping, stopTyping } from './channel-client.service';
 
 /**
  * Main orchestration logic - processes incoming WhatsApp messages
@@ -31,6 +32,9 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       return; // Exit without processing or replying
     }
     
+    // Step 0.5: Send typing indicator BEFORE processing
+    await startTyping(wa_user_id);
+    
     // Step 1: Build context (fetch history + format prompt)
     const { systemPrompt, messageCount } = await buildContext(wa_user_id, message);
     
@@ -41,6 +45,9 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     
     // Step 2: Call LLM for initial intent detection
     const { response: llmResponse, metrics } = await callGemini(systemPrompt);
+    
+    // Stop typing after LLM responds
+    await stopTyping(wa_user_id);
     
     logger.info('LLM response received', {
       wa_user_id,
@@ -54,7 +61,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     
     switch (llmResponse.intent) {
       case 'CREATE_COMPLAINT':
-        finalReplyText = await handleComplaintCreation(wa_user_id, llmResponse);
+        finalReplyText = await handleComplaintCreation(wa_user_id, llmResponse, message);
         break;
       
       case 'CREATE_TICKET':
@@ -94,6 +101,9 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       intent: llmResponse.intent,
     });
   } catch (error: any) {
+    // Stop typing indicator on error
+    await stopTyping(wa_user_id);
+    
     logger.error('❌ Failed to process message', {
       wa_user_id,
       message_id,
@@ -111,11 +121,32 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
 /**
  * Handle complaint creation
  */
-async function handleComplaintCreation(wa_user_id: string, llmResponse: any): Promise<string> {
-  const { kategori, alamat, deskripsi, rt_rw } = llmResponse.fields;
+async function handleComplaintCreation(wa_user_id: string, llmResponse: any, currentMessage: string): Promise<string> {
+  const { kategori, alamat, rt_rw } = llmResponse.fields;
+  let { deskripsi } = llmResponse.fields;
   
-  // Check if we have enough information
-  if (!kategori || !deskripsi) {
+  // Fallback: if deskripsi is empty but we have kategori, generate default description
+  if (!deskripsi && kategori) {
+    // Use kategori as base for description
+    const kategoriMap: Record<string, string> = {
+      'jalan_rusak': 'Laporan jalan rusak',
+      'lampu_mati': 'Laporan lampu jalan mati',
+      'sampah': 'Laporan masalah sampah',
+      'drainase': 'Laporan saluran air tersumbat',
+      'pohon_tumbang': 'Laporan pohon tumbang',
+      'fasilitas_rusak': 'Laporan fasilitas umum rusak',
+    };
+    deskripsi = kategoriMap[kategori] || `Laporan ${kategori.replace(/_/g, ' ')}`;
+    
+    logger.info('Generated default deskripsi from kategori', {
+      wa_user_id,
+      kategori,
+      deskripsi,
+    });
+  }
+  
+  // Check if we have enough information (only kategori is required now)
+  if (!kategori) {
     logger.info('Incomplete complaint data, asking for more info', {
       wa_user_id,
       hasKategori: !!kategori,
@@ -128,13 +159,13 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any): Pr
   const complaintId = await createComplaint({
     wa_user_id,
     kategori,
-    deskripsi,
+    deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
     alamat: alamat || '',
     rt_rw: rt_rw || '',
   });
   
   if (complaintId) {
-    return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.\\n\\n${llmResponse.reply_text}`;
+    return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.\n\n${llmResponse.reply_text}`;
   } else {
     return `⚠️ Maaf, terjadi kendala saat memproses laporan Anda. Mohon coba lagi atau hubungi kantor kelurahan langsung.`;
   }

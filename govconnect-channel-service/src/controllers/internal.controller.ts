@@ -4,7 +4,7 @@ import {
   saveOutgoingMessage,
   logSentMessage,
 } from '../services/message.service';
-import { sendTextMessage } from '../services/wa.service';
+import { sendTextMessage, sendTypingIndicator } from '../services/wa.service';
 import logger from '../utils/logger';
 
 /**
@@ -82,6 +82,34 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
     }
   } catch (error: any) {
     logger.error('Send message error', { error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * Send typing indicator
+ * POST /internal/typing
+ * Body: { wa_user_id: "628xxx", state: "composing" | "paused" | "stop" }
+ */
+export async function setTyping(req: Request, res: Response): Promise<void> {
+  try {
+    const { wa_user_id, state = 'composing' } = req.body;
+    
+    // Map 'stop' to 'paused' since WA API doesn't have 'stop'
+    const waState = state === 'stop' ? 'paused' : state;
+
+    const result = await sendTypingIndicator(wa_user_id, waState);
+
+    if (result) {
+      logger.debug('Typing indicator sent', { wa_user_id, state });
+      res.json({ status: 'ok', state });
+    } else {
+      // Typing indicator might be disabled, still return ok
+      logger.debug('Typing indicator skipped (disabled)', { wa_user_id });
+      res.json({ status: 'ok', state, note: 'typing_disabled' });
+    }
+  } catch (error: any) {
+    logger.error('Typing indicator error', { error: error.message });
     res.status(500).json({ error: 'Internal server error' });
   }
 }

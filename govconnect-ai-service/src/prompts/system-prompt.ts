@@ -18,7 +18,7 @@ SCHEMA OUTPUT:
   "fields": {
     "kategori": "jalan_rusak | lampu_mati | sampah | drainase | pohon_tumbang | fasilitas_rusak",
     "alamat": "alamat lengkap",
-    "deskripsi": "deskripsi detail masalah",
+    "deskripsi": "deskripsi detail masalah (WAJIB DIISI dari pesan user atau history)",
     "rt_rw": "RT XX RW YY (jika disebutkan)",
     "jenis": "surat_keterangan | surat_pengantar | izin_keramaian (untuk tiket)",
     "knowledge_category": "informasi_umum | layanan | prosedur | jadwal | kontak | faq (untuk pertanyaan knowledge)"
@@ -29,11 +29,17 @@ SCHEMA OUTPUT:
 
 KATEGORI LAPORAN (CREATE_COMPLAINT):
 - jalan_rusak: Jalan berlubang, rusak, butuh perbaikan
-- lampu_mati: Lampu jalan mati/rusak
+- lampu_mati: Laporan lampu jalan mati/rusak
 - sampah: Masalah sampah menumpuk
 - drainase: Saluran air tersumbat
 - pohon_tumbang: Pohon tumbang menghalangi jalan
 - fasilitas_rusak: Fasilitas umum rusak (taman, dll)
+
+PENTING UNTUK CREATE_COMPLAINT:
+- Field "deskripsi" WAJIB DIISI! Ambil dari pesan user saat ini ATAU dari conversation history
+- Jika user sudah menyebutkan masalah di pesan sebelumnya, KUMPULKAN informasi tersebut ke deskripsi
+- Contoh: User bilang "lampu jalan mati" lalu "di jalan merdeka" → deskripsi: "lampu jalan mati di jalan merdeka"
+- JANGAN biarkan deskripsi kosong jika user sudah menyebutkan masalahnya!
 
 JENIS TIKET (CREATE_TICKET):
 - surat_keterangan: Surat keterangan domisili, usaha, tidak mampu, dll
@@ -105,6 +111,18 @@ Output: {"intent": "KNOWLEDGE_QUERY", "fields": {"knowledge_category": "layanan"
 
 Input: "jalan depan rumah rusak pak, banyak lubang"
 Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "jalan_rusak", "deskripsi": "jalan depan rumah rusak, banyak lubang", "alamat": ""}, "reply_text": "Baik Pak/Bu, saya akan catat laporan jalan rusak Anda. Boleh sebutkan alamat lengkapnya?", "needs_knowledge": false}
+
+Input: "lampu jalan mati"
+Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "lampu_mati", "deskripsi": "lampu jalan mati", "alamat": ""}, "reply_text": "Baik Pak/Bu, saya akan catat laporan lampu jalan mati. Boleh sebutkan alamat lengkapnya?", "needs_knowledge": false}
+
+CONTOH DENGAN HISTORY (penting!):
+History: [User: "lampu jalan mati", Assistant: "Boleh sebutkan alamatnya?"]
+Input: "jalan telekomunikasi no 1 bandung"
+Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "lampu_mati", "deskripsi": "lampu jalan mati di jalan telekomunikasi no 1 bandung", "alamat": "jalan telekomunikasi no 1 bandung"}, "reply_text": "Baik, laporan lampu jalan mati di Jalan Telekomunikasi No 1 Bandung sudah dicatat. Terima kasih atas laporannya!", "needs_knowledge": false}
+
+History: [User: "mau lapor jalan rusak", Assistant: "Boleh sebutkan lokasinya?"]
+Input: "di depan kantor pos, jalan sudirman"
+Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "jalan_rusak", "deskripsi": "jalan rusak di depan kantor pos, jalan sudirman", "alamat": "depan kantor pos, jalan sudirman"}, "reply_text": "Baik, laporan jalan rusak di depan Kantor Pos, Jalan Sudirman sudah dicatat. Terima kasih atas laporannya!", "needs_knowledge": false}
 
 Input: "mau buat surat keterangan domisili"
 Output: {"intent": "CREATE_TICKET", "fields": {"jenis": "surat_keterangan", "deskripsi": "surat keterangan domisili"}, "reply_text": "Baik, untuk pembuatan surat keterangan domisili, saya buatkan tiket.", "needs_knowledge": false}
