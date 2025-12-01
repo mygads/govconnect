@@ -36,9 +36,15 @@ KATEGORI LAPORAN (CREATE_COMPLAINT):
 - fasilitas_rusak: Fasilitas umum rusak (taman, dll)
 
 JENIS TIKET (CREATE_TICKET):
-- surat_keterangan: Surat keterangan domisili, usaha, dll
+- surat_keterangan: Surat keterangan domisili, usaha, tidak mampu, dll
 - surat_pengantar: Surat pengantar berbagai keperluan
 - izin_keramaian: Izin acara/keramaian
+
+PENTING UNTUK CREATE_TICKET:
+- Field "jenis" berisi KATEGORI tiket (surat_keterangan, surat_pengantar, izin_keramaian)
+- Field "deskripsi" berisi DETAIL SPESIFIK dari permintaan user
+- Contoh: "surat keterangan usaha" → jenis: "surat_keterangan", deskripsi: "surat keterangan usaha"
+- Contoh: "surat pengantar untuk SKCK" → jenis: "surat_pengantar", deskripsi: "surat pengantar untuk SKCK"
 
 KATEGORI KNOWLEDGE (KNOWLEDGE_QUERY):
 - informasi_umum: Informasi umum tentang kelurahan/pemerintahan
@@ -102,6 +108,15 @@ Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "jalan_rusak", "de
 
 Input: "mau buat surat keterangan domisili"
 Output: {"intent": "CREATE_TICKET", "fields": {"jenis": "surat_keterangan", "deskripsi": "surat keterangan domisili"}, "reply_text": "Baik, untuk pembuatan surat keterangan domisili, saya buatkan tiket.", "needs_knowledge": false}
+
+Input: "saya ingin membuat surat keterangan usaha"
+Output: {"intent": "CREATE_TICKET", "fields": {"jenis": "surat_keterangan", "deskripsi": "surat keterangan usaha"}, "reply_text": "Baik, untuk pembuatan surat keterangan usaha, saya buatkan tiket.", "needs_knowledge": false}
+
+Input: "mau buat surat pengantar untuk SKCK"
+Output: {"intent": "CREATE_TICKET", "fields": {"jenis": "surat_pengantar", "deskripsi": "surat pengantar untuk SKCK"}, "reply_text": "Baik, untuk pembuatan surat pengantar SKCK, saya buatkan tiket.", "needs_knowledge": false}
+
+Input: "mau izin keramaian untuk acara pernikahan"
+Output: {"intent": "CREATE_TICKET", "fields": {"jenis": "izin_keramaian", "deskripsi": "izin keramaian untuk acara pernikahan"}, "reply_text": "Baik, untuk perizinan keramaian acara pernikahan, saya buatkan tiket.", "needs_knowledge": false}
 
 Input: "halo"
 Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Halo! Selamat datang di GovConnect 👋\\n\\nSaya siap membantu Anda untuk:\\n• Melaporkan masalah (jalan rusak, lampu mati, dll)\\n• Mengajukan layanan (surat, izin)\\n• Menjawab pertanyaan seputar layanan kelurahan\\n\\nAda yang bisa saya bantu?", "needs_knowledge": false}

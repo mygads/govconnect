@@ -155,11 +155,20 @@ async function handleTicketCreation(wa_user_id: string, llmResponse: any): Promi
     return llmResponse.reply_text;
   }
   
+  // Use deskripsi from LLM, or construct from jenis if empty
+  const finalDeskripsi = deskripsi || jenis.replace(/_/g, ' ');
+  
+  logger.info('Creating ticket in Case Service', {
+    wa_user_id,
+    jenis,
+    deskripsi: finalDeskripsi,
+  });
+  
   // Create ticket in Case Service (SYNC call)
   const ticketId = await createTicket({
     wa_user_id,
     jenis,
-    data_json: { deskripsi: deskripsi || '' },
+    data_json: { deskripsi: finalDeskripsi },
   });
   
   if (ticketId) {
