@@ -82,6 +82,14 @@ class ApiClient {
     const response = await this.client.get('/statistics/overview')
     return response.data
   }
+
+  // Trend Analysis
+  async getTrends(period: 'weekly' | 'monthly' = 'weekly') {
+    const response = await this.client.get('/statistics/trends', {
+      params: { period },
+    })
+    return response.data
+  }
 }
 
 // Create singleton instance

@@ -7,6 +7,8 @@ import { publishAIReply } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { searchKnowledge, buildKnowledgeContext } from './knowledge.service';
 import { startTyping, stopTyping, isUserInTakeover } from './channel-client.service';
+import { rateLimiterService } from './rate-limiter.service';
+import { aiAnalyticsService } from './ai-analytics.service';
 
 // In-memory cache for address confirmation state
 // Key: wa_user_id, Value: { alamat: string, kategori: string, deskripsi: string, timestamp: number, foto_url?: string }
@@ -292,6 +294,16 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     // Stop typing after LLM responds
     await stopTyping(wa_user_id);
     
+    // Track analytics (intent, timing, token usage)
+    aiAnalyticsService.recordIntent(
+      wa_user_id,
+      llmResponse.intent,
+      metrics.durationMs,
+      systemPrompt.length,
+      llmResponse.reply_text.length,
+      metrics.model
+    );
+    
     logger.info('LLM response received', {
       wa_user_id,
       intent: llmResponse.intent,
@@ -304,6 +316,16 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     
     switch (llmResponse.intent) {
       case 'CREATE_COMPLAINT':
+        // Check rate limit before creating complaint
+        const rateLimitCheck = rateLimiterService.checkRateLimit(wa_user_id);
+        if (!rateLimitCheck.allowed) {
+          finalReplyText = rateLimitCheck.message || 'Anda telah mencapai batas laporan hari ini.';
+          logger.warn('Rate limit exceeded for complaint creation', {
+            wa_user_id,
+            reason: rateLimitCheck.reason,
+          });
+          break;
+        }
         // Pass media_public_url for Dashboard to display (not internal Docker URL)
         finalReplyText = await handleComplaintCreation(wa_user_id, llmResponse, message, media_public_url || media_url);
         break;
@@ -511,9 +533,16 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
   });
   
   if (complaintId) {
+    // Record successful report for rate limiting
+    rateLimiterService.recordReport(wa_user_id);
+    // Record success for analytics
+    aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
+    
     const withPhoto = mediaUrl ? ' 📷' : '';
     return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan segera menindaklanjuti laporan Anda di ${alamat}.`;
   } else {
+    // Record failure for analytics
+    aiAnalyticsService.recordFailure('CREATE_COMPLAINT');
     return `⚠️ Maaf, terjadi kendala saat memproses laporan Anda. Mohon coba lagi atau hubungi kantor kelurahan langsung.`;
   }
 }
@@ -550,8 +579,12 @@ async function handleTicketCreation(wa_user_id: string, llmResponse: any): Promi
   });
   
   if (ticketId) {
+    // Record success for analytics
+    aiAnalyticsService.recordSuccess('CREATE_TICKET');
     return `🎫 Tiket Anda telah dibuat dengan nomor ${ticketId}.\n\nPetugas kami akan segera memproses permintaan Anda.`;
   } else {
+    // Record failure for analytics
+    aiAnalyticsService.recordFailure('CREATE_TICKET');
     return `⚠️ Maaf, terjadi kendala saat membuat tiket Anda. Mohon coba lagi atau hubungi kantor kelurahan langsung.`;
   }
 }

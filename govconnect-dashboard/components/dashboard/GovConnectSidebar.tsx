@@ -17,6 +17,9 @@ import {
   Activity,
   MessageCircle,
   Download,
+  TrendingUp,
+  Shield,
+  Brain,
 } from "lucide-react"
 
 import {
@@ -42,10 +45,20 @@ export function GovConnectSidebar() {
   const { user } = useAuth()
 
   const isActivePath = (path: string) => {
+    // Exact match for dashboard home
     if (path === "/dashboard") {
       return pathname === path
     }
-    return pathname.startsWith(path)
+    // Exact match for statistik (not its children)
+    if (path === "/dashboard/statistik") {
+      return pathname === path
+    }
+    // For other paths, use startsWith but ensure it's a complete segment
+    if (pathname === path) {
+      return true
+    }
+    // Check if path is a parent of current pathname (must be followed by /)
+    return pathname.startsWith(path + "/")
   }
 
   const menuItems = [
@@ -61,6 +74,11 @@ export function GovConnectSidebar() {
           title: "Statistik",
           url: "/dashboard/statistik",
           icon: BarChart3,
+        },
+        {
+          title: "Trend Analysis",
+          url: "/dashboard/statistik/analytics",
+          icon: TrendingUp,
         },
       ],
     },
@@ -115,6 +133,11 @@ export function GovConnectSidebar() {
           icon: Bot,
         },
         {
+          title: "AI Analytics",
+          url: "/dashboard/ai-analytics",
+          icon: Brain,
+        },
+        {
           title: "AI Usage Log",
           url: "/dashboard/ai-usage",
           icon: Activity,
@@ -123,6 +146,11 @@ export function GovConnectSidebar() {
           title: "Knowledge Base",
           url: "/dashboard/knowledge",
           icon: BookOpen,
+        },
+        {
+          title: "Rate Limit",
+          url: "/dashboard/settings/rate-limit",
+          icon: Shield,
         },
       ],
     }] : []),
@@ -195,7 +223,7 @@ export function GovConnectSidebar() {
                     `}
                   >
                     <Link href={item.url} className="flex items-center gap-3 w-full">
-                      <item.icon className={`h-4 w-4 flex-shrink-0 transition-colors ${
+                      <item.icon className={`h-4 w-4 shrink-0 transition-colors ${
                         isActivePath(item.url) ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
                       }`} />
                       <span className="flex-1">{item.title}</span>

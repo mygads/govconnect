@@ -15,6 +15,11 @@ interface Config {
   llmMaxTokens: number;
   llmTimeoutMs: number;
   maxHistoryMessages: number;
+  // Rate limiting
+  rateLimitEnabled: boolean;
+  maxReportsPerDay: number;
+  cooldownSeconds: number;
+  autoBlacklistViolations: number;
 }
 
 function validateEnv(): Config {
@@ -48,12 +53,20 @@ function validateEnv(): Config {
     llmMaxTokens: parseInt(process.env.LLM_MAX_TOKENS || '1000', 10),
     llmTimeoutMs: parseInt(process.env.LLM_TIMEOUT_MS || '30000', 10),
     maxHistoryMessages: parseInt(process.env.MAX_HISTORY_MESSAGES || '30', 10),
+    // Rate limiting - defaults: enabled with 5 reports/day, 30s cooldown
+    rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== 'false', // Default: true
+    maxReportsPerDay: parseInt(process.env.MAX_REPORTS_PER_DAY || '5', 10),
+    cooldownSeconds: parseInt(process.env.COOLDOWN_SECONDS || '30', 10),
+    autoBlacklistViolations: parseInt(process.env.AUTO_BLACKLIST_VIOLATIONS || '10', 10),
   };
 
   logger.info('✅ Environment configuration validated', {
     port: config.port,
     nodeEnv: config.nodeEnv,
     llmModel: config.llmModel,
+    rateLimitEnabled: config.rateLimitEnabled,
+    maxReportsPerDay: config.maxReportsPerDay,
+    cooldownSeconds: config.cooldownSeconds,
   });
 
   return config;

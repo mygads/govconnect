@@ -3,6 +3,8 @@ import logger from './utils/logger';
 import { isConnected as isRabbitMQConnected } from './services/rabbitmq.service';
 import { checkCaseServiceHealth } from './services/case-client.service';
 import { modelStatsService } from './services/model-stats.service';
+import { rateLimiterService } from './services/rate-limiter.service';
+import { aiAnalyticsService } from './services/ai-analytics.service';
 import axios from 'axios';
 import { config } from './config/env';
 
@@ -116,6 +118,211 @@ app.get('/stats/models/:modelName', (req: Request, res: Response) => {
   }
 });
 
+// ===========================================
+// AI Analytics Endpoints
+// ===========================================
+
+// Get AI analytics summary
+app.get('/stats/analytics', (req: Request, res: Response) => {
+  try {
+    const summary = aiAnalyticsService.getSummary();
+    res.json(summary);
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get analytics',
+      message: error.message,
+    });
+  }
+});
+
+// Get intent distribution
+app.get('/stats/analytics/intents', (req: Request, res: Response) => {
+  try {
+    const distribution = aiAnalyticsService.getIntentDistribution();
+    res.json(distribution);
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get intent distribution',
+      message: error.message,
+    });
+  }
+});
+
+// Get conversation flow patterns
+app.get('/stats/analytics/flow', (req: Request, res: Response) => {
+  try {
+    const flow = aiAnalyticsService.getConversationFlow();
+    res.json(flow);
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get conversation flow',
+      message: error.message,
+    });
+  }
+});
+
+// Get token usage breakdown
+app.get('/stats/analytics/tokens', (req: Request, res: Response) => {
+  try {
+    const tokens = aiAnalyticsService.getTokenUsageBreakdown();
+    res.json(tokens);
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get token usage',
+      message: error.message,
+    });
+  }
+});
+
+// Get all analytics data (for export)
+app.get('/stats/analytics/full', (req: Request, res: Response) => {
+  try {
+    const data = aiAnalyticsService.getAllAnalytics();
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get full analytics',
+      message: error.message,
+    });
+  }
+});
+
+// ===========================================
+// Rate Limiter Endpoints
+// ===========================================
+
+// Get rate limiter config and stats
+app.get('/rate-limit', (req: Request, res: Response) => {
+  try {
+    const stats = rateLimiterService.getStats();
+    res.json({
+      config: {
+        enabled: config.rateLimitEnabled,
+        maxReportsPerDay: config.maxReportsPerDay,
+        cooldownSeconds: config.cooldownSeconds,
+        autoBlacklistViolations: config.autoBlacklistViolations,
+      },
+      stats,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get rate limit stats',
+      message: error.message,
+    });
+  }
+});
+
+// Check rate limit for specific user
+app.get('/rate-limit/check/:wa_user_id', (req: Request, res: Response) => {
+  try {
+    const { wa_user_id } = req.params;
+    const result = rateLimiterService.checkRateLimit(wa_user_id);
+    const userInfo = rateLimiterService.getUserInfo(wa_user_id);
+    
+    res.json({
+      ...result,
+      user: userInfo,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to check rate limit',
+      message: error.message,
+    });
+  }
+});
+
+// Get blacklist
+app.get('/rate-limit/blacklist', (req: Request, res: Response) => {
+  try {
+    const blacklist = rateLimiterService.getBlacklist();
+    res.json({
+      total: blacklist.length,
+      entries: blacklist,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get blacklist',
+      message: error.message,
+    });
+  }
+});
+
+// Add to blacklist
+app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
+  try {
+    const { wa_user_id, reason, expiresInDays } = req.body;
+    
+    if (!wa_user_id || !reason) {
+      res.status(400).json({
+        error: 'wa_user_id and reason are required',
+      });
+      return;
+    }
+    
+    rateLimiterService.addToBlacklist(wa_user_id, reason, 'admin', expiresInDays);
+    
+    res.json({
+      success: true,
+      message: `User ${wa_user_id} added to blacklist`,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to add to blacklist',
+      message: error.message,
+    });
+  }
+});
+
+// Remove from blacklist
+app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) => {
+  try {
+    const { wa_user_id } = req.params;
+    const removed = rateLimiterService.removeFromBlacklist(wa_user_id);
+    
+    if (removed) {
+      res.json({
+        success: true,
+        message: `User ${wa_user_id} removed from blacklist`,
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'User not found in blacklist',
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to remove from blacklist',
+      message: error.message,
+    });
+  }
+});
+
+// Reset user violations
+app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
+  try {
+    const { wa_user_id } = req.params;
+    const reset = rateLimiterService.resetUserViolations(wa_user_id);
+    
+    if (reset) {
+      res.json({
+        success: true,
+        message: `Violations reset for user ${wa_user_id}`,
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to reset violations',
+      message: error.message,
+    });
+  }
+});
+
 // Root endpoint
 app.get('/', (req: Request, res: Response) => {
   res.json({
@@ -127,6 +334,13 @@ app.get('/', (req: Request, res: Response) => {
       health: '/health',
       modelStats: '/stats/models',
       modelStatsDetail: '/stats/models/:modelName',
+      analytics: '/stats/analytics',
+      analyticsIntents: '/stats/analytics/intents',
+      analyticsFlow: '/stats/analytics/flow',
+      analyticsTokens: '/stats/analytics/tokens',
+      rateLimit: '/rate-limit',
+      rateLimitCheck: '/rate-limit/check/:wa_user_id',
+      blacklist: '/rate-limit/blacklist',
     },
   });
 });
