@@ -2,6 +2,7 @@
  * LLM Service - Handles Gemini API calls with ROBUST retry mechanism
  * 
  * Features:
+ * - Primary/Fallback model from Dashboard Settings
  * - Dynamic model priority based on success rates (tracked in model-stats.service)
  * - Infinite retry (NEVER returns error to user)
  * - Model usage statistics tracking
@@ -14,25 +15,32 @@ import { config } from '../config/env';
 import { LLMResponse, LLMResponseSchema, LLMMetrics } from '../types/llm-response.types';
 import { JSON_SCHEMA_FOR_GEMINI } from '../prompts/system-prompt';
 import { modelStatsService } from './model-stats.service';
+import { getSettings } from './settings.service';
 
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
-// Available models pool (will be dynamically sorted by success rate)
-// Based on official Gemini API documentation (December 2025)
+// Available models pool - December 2025
+// Models are sorted by: 1) Dashboard settings (primary first), 2) Success rate
+// https://ai.google.dev/pricing
 const AVAILABLE_MODELS = [
-  'gemini-2.5-flash',              // Primary - best price/performance, fast & smart
-  'gemini-2.5-flash-lite',         // Fastest, cost-efficient, high throughput
-  'gemini-2.5-pro',                // Advanced thinking, complex reasoning
-  'gemini-2.0-flash',              // 2nd gen flagship, 1M context
-  'gemini-2.0-flash-lite',         // 2nd gen fast, cost-efficient
+  'gemini-2.5-flash',         // Hybrid reasoning, 1M context, $0.30/$2.50 per 1M tokens
+  'gemini-2.5-flash-lite',    // Smallest, cost-efficient, $0.10/$0.40 per 1M tokens
+  'gemini-2.0-flash',         // Balanced multimodal, 1M context, $0.10/$0.40 per 1M tokens
+  'gemini-2.0-flash-lite',    // Legacy cost-efficient, $0.075/$0.30 per 1M tokens
 ];
 
-// Model capabilities reference:
-// - gemini-2.5-flash: Structured output ✓, Function calling ✓, Thinking ✓
-// - gemini-2.5-flash-lite: Structured output ✓, Function calling ✓, Thinking ✓  
-// - gemini-2.5-pro: Structured output ✓, Function calling ✓, Thinking ✓
-// - gemini-2.0-flash: Structured output ✓, Function calling ✓
-// - gemini-2.0-flash-lite: Structured output ✓, Function calling ✓
+// Model pricing reference per 1M tokens (USD) - December 2025:
+// ┌─────────────────────────┬──────────┬───────────┬─────────────────────────────────────┐
+// │ Model                   │ Input    │ Output    │ Description                         │
+// ├─────────────────────────┼──────────┼───────────┼─────────────────────────────────────┤
+// │ gemini-2.5-flash        │ $0.30    │ $2.50     │ Hybrid reasoning, thinking budget   │
+// │ gemini-2.5-flash-lite   │ $0.10    │ $0.40     │ Smallest, high throughput           │
+// │ gemini-2.0-flash        │ $0.10    │ $0.40     │ Balanced multimodal                 │
+// │ gemini-2.0-flash-lite   │ $0.075   │ $0.30     │ Legacy cost-efficient               │
+// └─────────────────────────┴──────────┴───────────┴─────────────────────────────────────┘
+//
+// All models support: Structured output ✓, Function calling ✓
+// 2.5 models also support: Thinking/Reasoning ✓
 
 // Retry configuration - AGGRESSIVE to ensure NEVER fail
 const MAX_RETRIES_PER_MODEL = 2;     // Max retries per model before switching
@@ -48,10 +56,47 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Get dynamically sorted model priority based on success rates
+ * Get dynamically sorted model priority based on:
+ * 1. Dashboard settings (primary model first, then fallback)
+ * 2. Success rates from model stats
  */
-function getModelPriority(): string[] {
-  return modelStatsService.getModelPriority(AVAILABLE_MODELS);
+async function getModelPriority(): Promise<string[]> {
+  try {
+    // Get settings from dashboard
+    const settings = await getSettings();
+    const primaryModel = settings.ai_model_primary || 'gemini-2.5-flash';
+    const fallbackModel = settings.ai_model_fallback || 'gemini-2.0-flash';
+    
+    // Build priority list: primary first, then fallback, then others
+    const priorityModels: string[] = [];
+    
+    // Add primary if it's in available models
+    if (AVAILABLE_MODELS.includes(primaryModel)) {
+      priorityModels.push(primaryModel);
+    }
+    
+    // Add fallback if different from primary and in available models
+    if (fallbackModel !== primaryModel && AVAILABLE_MODELS.includes(fallbackModel)) {
+      priorityModels.push(fallbackModel);
+    }
+    
+    // Add remaining models sorted by success rate
+    const remainingModels = AVAILABLE_MODELS.filter(m => !priorityModels.includes(m));
+    const sortedRemaining = modelStatsService.getModelPriority(remainingModels);
+    
+    const finalPriority = [...priorityModels, ...sortedRemaining];
+    
+    logger.debug('📊 Model priority calculated', {
+      primary: primaryModel,
+      fallback: fallbackModel,
+      priority: finalPriority,
+    });
+    
+    return finalPriority;
+  } catch (error) {
+    logger.warn('⚠️ Failed to get settings, using default priority', { error });
+    return modelStatsService.getModelPriority(AVAILABLE_MODELS);
+  }
 }
 
 /**
@@ -64,8 +109,8 @@ export async function callGemini(systemPrompt: string): Promise<{ response: LLMR
   let totalAttempts = 0;
   let lastError: string = '';
   
-  // Get dynamically sorted model priority based on success rates
-  const modelPriority = getModelPriority();
+  // Get dynamically sorted model priority based on settings and success rates
+  let modelPriority = await getModelPriority();
   
   logger.info('🎯 Starting LLM call with dynamic model priority', {
     priority: modelPriority,
@@ -80,9 +125,9 @@ export async function callGemini(systemPrompt: string): Promise<{ response: LLMR
       await sleep(CYCLE_DELAY_MS);
       
       // Re-fetch priority (might have changed based on recent failures)
-      const updatedPriority = getModelPriority();
+      modelPriority = await getModelPriority();
       logger.info('📊 Updated model priority for new cycle', {
-        priority: updatedPriority,
+        priority: modelPriority,
       });
     }
     

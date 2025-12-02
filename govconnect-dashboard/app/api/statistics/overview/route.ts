@@ -20,12 +20,18 @@ export async function GET(request: NextRequest) {
 
     // Try to forward request to case service
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 25000) // 25 second timeout
+      
       const response = await fetch(`${CASE_SERVICE_URL}/statistics/overview`, {
         method: 'GET',
         headers: {
           'x-internal-api-key': INTERNAL_API_KEY,
         },
+        signal: controller.signal,
       })
+      
+      clearTimeout(timeoutId)
 
       if (response.ok) {
         const data = await response.json()

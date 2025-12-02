@@ -35,6 +35,9 @@ import {
   Image as ImageIcon,
   ChevronDown,
   Trash2,
+  Loader2,
+  AlertTriangle,
+  RotateCcw,
 } from "lucide-react"
 
 interface Conversation {
@@ -45,6 +48,9 @@ interface Conversation {
   last_message_at: string
   unread_count: number
   is_takeover: boolean
+  ai_status: string | null // null | "processing" | "error"
+  ai_error_message: string | null
+  pending_message_id: string | null
 }
 
 interface Message {
@@ -79,6 +85,7 @@ export default function LiveChatPage() {
   const [takeoverReason, setTakeoverReason] = useState("")
   const [takeoverReasonTemplate, setTakeoverReasonTemplate] = useState("")
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isRetryingAI, setIsRetryingAI] = useState(false)
   
   // Takeover reason templates
   const takeoverReasonTemplates = [
@@ -508,6 +515,44 @@ export default function LiveChatPage() {
     }
   }
 
+  // Retry AI processing
+  const handleRetryAI = async (wa_user_id: string) => {
+    setIsRetryingAI(true)
+    try {
+      const token = localStorage.getItem("token")
+      const response = await fetch(
+        `/api/livechat/conversations/${encodeURIComponent(wa_user_id)}/retry`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      )
+
+      const data = await response.json()
+      if (data.success) {
+        toast({
+          title: "Proses Ulang AI",
+          description: "Pesan sedang diproses ulang oleh AI.",
+        })
+        
+        // Refresh conversations to update status
+        fetchConversationsSilent()
+      } else {
+        throw new Error(data.error || "Gagal memproses ulang")
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Gagal memproses ulang AI",
+        variant: "destructive",
+      })
+    } finally {
+      setIsRetryingAI(false)
+    }
+  }
+
   // Filter conversations by search
   const filteredConversations = conversations.filter((conv) => {
     const searchLower = searchQuery.toLowerCase()
@@ -702,12 +747,35 @@ export default function LiveChatPage() {
                             </Badge>
                           )}
                         </div>
-                        <div className="mt-1">
+                        <div className="mt-1 flex items-center gap-1 flex-wrap">
                           {conv.is_takeover ? (
                             <Badge variant="outline" className="text-orange-600 border-orange-300 text-xs py-0">
                               <Hand className="h-3 w-3 mr-1" />
                               Takeover
                             </Badge>
+                          ) : conv.ai_status === 'processing' ? (
+                            <Badge variant="outline" className="text-blue-600 border-blue-300 text-xs py-0 animate-pulse">
+                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              AI Memproses...
+                            </Badge>
+                          ) : conv.ai_status === 'error' ? (
+                            <div className="flex items-center gap-1">
+                              <Badge variant="outline" className="text-red-600 border-red-300 text-xs py-0">
+                                <AlertTriangle className="h-3 w-3 mr-1" />
+                                AI Error
+                              </Badge>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleRetryAI(conv.wa_user_id)
+                                }}
+                                disabled={isRetryingAI}
+                                className="inline-flex items-center text-xs text-blue-600 hover:text-blue-800 hover:underline disabled:opacity-50"
+                              >
+                                <RotateCcw className={`h-3 w-3 mr-0.5 ${isRetryingAI ? 'animate-spin' : ''}`} />
+                                Retry
+                              </button>
+                            </div>
                           ) : (
                             <Badge variant="outline" className="text-green-600 border-green-300 text-xs py-0">
                               <Bot className="h-3 w-3 mr-1" />

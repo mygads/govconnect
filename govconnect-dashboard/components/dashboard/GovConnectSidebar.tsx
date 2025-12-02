@@ -14,7 +14,6 @@ import {
   BookOpen,
   Bot,
   Smartphone,
-  Activity,
   MessageCircle,
   Download,
   TrendingUp,
@@ -136,11 +135,6 @@ export function GovConnectSidebar() {
           title: "AI Analytics",
           url: "/dashboard/ai-analytics",
           icon: Brain,
-        },
-        {
-          title: "AI Usage Log",
-          url: "/dashboard/ai-usage",
-          icon: Activity,
         },
         {
           title: "Knowledge Base",

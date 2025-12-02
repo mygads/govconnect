@@ -13,14 +13,17 @@ import path from 'path';
 import logger from '../utils/logger';
 
 // Gemini pricing per 1M tokens (in USD) - December 2025
-// https://ai.google.dev/pricing
-const GEMINI_PRICING = {
-  'gemini-2.5-flash': { input: 0.075, output: 0.30 },
-  'gemini-2.5-flash-lite': { input: 0.02, output: 0.10 },
-  'gemini-2.5-pro': { input: 1.25, output: 10.00 },
-  'gemini-2.0-flash': { input: 0.10, output: 0.40 },
-  'gemini-2.0-flash-lite': { input: 0.02, output: 0.10 },
-  'default': { input: 0.10, output: 0.40 },
+// https://ai.google.dev/pricing - Updated December 2025
+const GEMINI_PRICING: Record<string, { input: number; output: number; description: string }> = {
+  // Gemini 2.5 Flash - Hybrid reasoning model, 1M context, best price/performance
+  'gemini-2.5-flash': { input: 0.30, output: 2.50, description: 'Hybrid reasoning, 1M context, thinking budget' },
+  // Gemini 2.5 Flash-Lite - Smallest, most cost-efficient
+  'gemini-2.5-flash-lite': { input: 0.10, output: 0.40, description: 'Smallest, cost-efficient, high throughput' },
+  'gemini-2.0-flash': { input: 0.10, output: 0.40, description: 'Balanced multimodal, 1M context' },
+  // Gemini 2.0 Flash-Lite - Legacy cost-efficient
+  'gemini-2.0-flash-lite': { input: 0.075, output: 0.30, description: 'Legacy cost-efficient' },
+  // Default fallback
+  'default': { input: 0.10, output: 0.40, description: 'Default pricing' },
 };
 
 // Estimated tokens per character (rough estimate for Indonesian text)

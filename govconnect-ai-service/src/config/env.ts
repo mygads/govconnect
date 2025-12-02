@@ -9,8 +9,6 @@ interface Config {
   caseServiceUrl: string;
   dashboardServiceUrl: string;
   internalApiKey: string;
-  llmModel: string;
-  llmFallbackModel: string;
   llmTemperature: number;
   llmMaxTokens: number;
   llmTimeoutMs: number;
@@ -47,8 +45,6 @@ function validateEnv(): Config {
     caseServiceUrl: process.env.CASE_SERVICE_URL!,
     dashboardServiceUrl: process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:3000',
     internalApiKey: process.env.INTERNAL_API_KEY!,
-    llmModel: process.env.LLM_MODEL || 'gemini-2.5-flash',
-    llmFallbackModel: process.env.LLM_FALLBACK_MODEL || 'gemini-2.5-flash-lite',
     llmTemperature: parseFloat(process.env.LLM_TEMPERATURE || '0.3'),
     llmMaxTokens: parseInt(process.env.LLM_MAX_TOKENS || '1000', 10),
     llmTimeoutMs: parseInt(process.env.LLM_TIMEOUT_MS || '30000', 10),
@@ -63,7 +59,6 @@ function validateEnv(): Config {
   logger.info('✅ Environment configuration validated', {
     port: config.port,
     nodeEnv: config.nodeEnv,
-    llmModel: config.llmModel,
     rateLimitEnabled: config.rateLimitEnabled,
     maxReportsPerDay: config.maxReportsPerDay,
     cooldownSeconds: config.cooldownSeconds,

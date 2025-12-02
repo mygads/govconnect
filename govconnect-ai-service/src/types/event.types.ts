@@ -17,3 +17,8 @@ export interface AIReplyEvent {
   wa_user_id: string;
   reply_text: string;
 }
+
+export interface AIErrorEvent {
+  wa_user_id: string;
+  error_message: string;
+}

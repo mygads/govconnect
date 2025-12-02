@@ -6,7 +6,6 @@ interface SystemSettings {
   ai_chatbot_enabled: string;
   ai_model_primary: string;
   ai_model_fallback: string;
-  welcome_message?: string;
 }
 
 // Cache settings for performance (refresh every 60 seconds)

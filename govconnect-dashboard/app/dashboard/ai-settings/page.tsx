@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -16,22 +15,44 @@ import {
 } from "@/components/ui/select"
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
-import { Bot, Settings2, Loader2, CheckCircle, Sparkles, Cpu, MessageSquare } from "lucide-react"
+import { Bot, Loader2, CheckCircle, Sparkles, Cpu, DollarSign, Info } from "lucide-react"
 import { redirect } from "next/navigation"
 
 interface SystemSettings {
   ai_chatbot_enabled: string
   ai_model_primary: string
   ai_model_fallback: string
-  welcome_message: string
 }
 
 const AI_MODELS = [
-  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Most capable model' },
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Fast & efficient' },
-  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', description: 'Lightweight' },
-  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', description: 'Stable & reliable' },
-  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite', description: 'Fastest' },
+  { 
+    value: 'gemini-2.5-flash', 
+    label: 'Gemini 2.5 Flash', 
+    description: 'Hybrid reasoning, 1M context',
+    pricing: { input: 0.30, output: 2.50 },
+    recommended: true,
+  },
+  { 
+    value: 'gemini-2.5-flash-lite', 
+    label: 'Gemini 2.5 Flash Lite', 
+    description: 'Smallest & cost-efficient',
+    pricing: { input: 0.10, output: 0.40 },
+    recommended: false,
+  },
+  { 
+    value: 'gemini-2.0-flash', 
+    label: 'Gemini 2.0 Flash', 
+    description: 'Balanced multimodal, 1M context',
+    pricing: { input: 0.10, output: 0.40 },
+    recommended: false,
+  },
+  { 
+    value: 'gemini-2.0-flash-lite', 
+    label: 'Gemini 2.0 Flash Lite', 
+    description: 'Legacy cost-efficient',
+    pricing: { input: 0.075, output: 0.30 },
+    recommended: false,
+  },
 ]
 
 export default function AISettingsPage() {
@@ -43,7 +64,6 @@ export default function AISettingsPage() {
     ai_chatbot_enabled: 'true',
     ai_model_primary: 'gemini-2.5-flash',
     ai_model_fallback: 'gemini-2.0-flash',
-    welcome_message: '',
   })
 
   // Redirect non-superadmin
@@ -237,16 +257,28 @@ export default function AISettingsPage() {
                 <SelectContent>
                   {AI_MODELS.map((model) => (
                     <SelectItem key={model.value} value={model.value}>
-                      <div className="flex flex-col">
-                        <span>{model.label}</span>
-                        <span className="text-xs text-muted-foreground">{model.description}</span>
+                      <div className="flex items-center justify-between w-full gap-4">
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{model.label}</span>
+                            {model.recommended && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
+                                Recommended
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs text-muted-foreground">{model.description}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          ${model.pricing.input}/${model.pricing.output} per 1M tokens
+                        </span>
                       </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                This model will be used first for all AI operations
+                This model will be used first for all AI operations. Pricing shows input/output cost per 1M tokens.
               </p>
             </div>
           </CardContent>
@@ -276,46 +308,79 @@ export default function AISettingsPage() {
                 <SelectContent>
                   {AI_MODELS.map((model) => (
                     <SelectItem key={model.value} value={model.value}>
-                      <div className="flex flex-col">
-                        <span>{model.label}</span>
-                        <span className="text-xs text-muted-foreground">{model.description}</span>
+                      <div className="flex items-center justify-between w-full gap-4">
+                        <div className="flex flex-col">
+                          <span className="font-medium">{model.label}</span>
+                          <span className="text-xs text-muted-foreground">{model.description}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          ${model.pricing.input}/${model.pricing.output} per 1M tokens
+                        </span>
                       </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Used when the primary model encounters errors or rate limits
+                Used when the primary model encounters errors or rate limits. Pricing shows input/output cost per 1M tokens.
               </p>
             </div>
           </CardContent>
         </Card>
-
-        {/* Welcome Message Card */}
+        {/* How Model Pool Works */}
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <MessageSquare className="h-5 w-5 text-green-500" />
-              Welcome Message
+              <Info className="h-5 w-5 text-blue-500" />
+              How Model Selection Works
             </CardTitle>
             <CardDescription>
-              Custom greeting message for new users (optional)
+              Understanding the AI model pool and automatic failover
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="welcome_message">Message Template</Label>
-              <Textarea
-                id="welcome_message"
-                value={systemSettings.welcome_message}
-                onChange={(e) => setSystemSettings({ ...systemSettings, welcome_message: e.target.value })}
-                placeholder="Selamat datang di GovConnect! Saya siap membantu Anda dengan layanan pemerintah..."
-                rows={4}
-                className="resize-none"
-              />
-              <p className="text-xs text-muted-foreground">
-                Leave empty to use the default AI-generated welcome message
-              </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="p-4 rounded-lg border bg-muted/30">
+                <h4 className="font-medium mb-2 flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold dark:bg-blue-900 dark:text-blue-300">1</div>
+                  Primary Model First
+                </h4>
+                <p className="text-sm text-muted-foreground">
+                  The system always tries your selected Primary Model first for every request.
+                </p>
+              </div>
+              <div className="p-4 rounded-lg border bg-muted/30">
+                <h4 className="font-medium mb-2 flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-xs font-bold dark:bg-orange-900 dark:text-orange-300">2</div>
+                  Automatic Failover
+                </h4>
+                <p className="text-sm text-muted-foreground">
+                  If primary fails, the system automatically switches to the Fallback Model.
+                </p>
+              </div>
+              <div className="p-4 rounded-lg border bg-muted/30">
+                <h4 className="font-medium mb-2 flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xs font-bold dark:bg-purple-900 dark:text-purple-300">3</div>
+                  Dynamic Priority
+                </h4>
+                <p className="text-sm text-muted-foreground">
+                  Models are dynamically prioritized based on their success rates. Better performing models are tried first.
+                </p>
+              </div>
+              <div className="p-4 rounded-lg border bg-muted/30">
+                <h4 className="font-medium mb-2 flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold dark:bg-green-900 dark:text-green-300">4</div>
+                  Never Fail
+                </h4>
+                <p className="text-sm text-muted-foreground">
+                  The system has aggressive retry logic to ensure users always get a response, even if it takes multiple attempts.
+                </p>
+              </div>
+            </div>
+            <Separator />
+            <div className="text-sm text-muted-foreground">
+              <strong>Note:</strong> Settings saved here are stored in the database and take effect immediately.
+              The AI service reads these settings and adjusts its model selection accordingly.
             </div>
           </CardContent>
         </Card>

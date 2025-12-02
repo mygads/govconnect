@@ -20,6 +20,7 @@ import {
   handleAdminSendMessage,
   handleMarkAsRead,
   handleDeleteConversation,
+  handleRetryAI,
 } from '../controllers/livechat.controller';
 import { internalAuth } from '../middleware/auth.middleware';
 import {
@@ -157,6 +158,12 @@ router.post('/conversations/:wa_user_id/send', handleAdminSendMessage);
  * Mark a conversation as read
  */
 router.post('/conversations/:wa_user_id/read', handleMarkAsRead);
+
+/**
+ * POST /internal/conversations/:wa_user_id/retry
+ * Retry AI processing for a failed message
+ */
+router.post('/conversations/:wa_user_id/retry', handleRetryAI);
 
 /**
  * DELETE /internal/conversations/:wa_user_id

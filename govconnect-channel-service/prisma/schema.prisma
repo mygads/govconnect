@@ -69,17 +69,21 @@ model TakeoverSession {
 
 // Conversation summary for live chat list
 model Conversation {
-  id              String   @id @default(cuid())
-  wa_user_id      String   @unique
-  user_name       String?  // WhatsApp push name
-  last_message    String?  @db.Text
-  last_message_at DateTime @default(now())
-  unread_count    Int      @default(0)
-  is_takeover     Boolean  @default(false)
-  created_at      DateTime @default(now())
-  updated_at      DateTime @default(now()) @updatedAt
+  id                   String   @id @default(cuid())
+  wa_user_id           String   @unique
+  user_name            String?  // WhatsApp push name
+  last_message         String?  @db.Text
+  last_message_at      DateTime @default(now())
+  unread_count         Int      @default(0)
+  is_takeover          Boolean  @default(false)
+  ai_status            String?  // null | "processing" | "error"
+  ai_error_message     String?  @db.Text // Error message if AI failed
+  pending_message_id   String?  // Message ID that needs AI retry
+  created_at           DateTime @default(now())
+  updated_at           DateTime @default(now()) @updatedAt
   
   @@index([is_takeover])
   @@index([last_message_at])
+  @@index([ai_status])
   @@map("conversations")
 }

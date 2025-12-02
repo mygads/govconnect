@@ -19,6 +19,9 @@ export interface ConversationSummary {
   last_message_at: Date;
   unread_count: number;
   is_takeover: boolean;
+  ai_status: string | null; // null | "processing" | "error"
+  ai_error_message: string | null;
+  pending_message_id: string | null;
 }
 
 /**
@@ -238,5 +241,101 @@ export async function deleteConversationHistory(wa_user_id: string): Promise<voi
   } catch (error: any) {
     logger.error('Failed to delete conversation history', { error: error.message, wa_user_id });
     throw error;
+  }
+}
+
+/**
+ * Set AI processing status to "processing"
+ */
+export async function setAIProcessing(wa_user_id: string, message_id: string): Promise<void> {
+  try {
+    await prisma.conversation.upsert({
+      where: { wa_user_id },
+      update: {
+        ai_status: 'processing',
+        pending_message_id: message_id,
+        ai_error_message: null,
+      },
+      create: {
+        wa_user_id,
+        ai_status: 'processing',
+        pending_message_id: message_id,
+      },
+    });
+    logger.info('AI processing started', { wa_user_id, message_id });
+  } catch (error: any) {
+    logger.error('Failed to set AI processing status', { error: error.message, wa_user_id });
+  }
+}
+
+/**
+ * Clear AI processing status (success)
+ */
+export async function clearAIStatus(wa_user_id: string): Promise<void> {
+  try {
+    await prisma.conversation.update({
+      where: { wa_user_id },
+      data: {
+        ai_status: null,
+        ai_error_message: null,
+        pending_message_id: null,
+      },
+    });
+    logger.info('AI status cleared', { wa_user_id });
+  } catch (error: any) {
+    logger.debug('Could not clear AI status', { wa_user_id });
+  }
+}
+
+/**
+ * Set AI error status (failed)
+ */
+export async function setAIError(wa_user_id: string, error_message: string, message_id?: string): Promise<void> {
+  try {
+    await prisma.conversation.update({
+      where: { wa_user_id },
+      data: {
+        ai_status: 'error',
+        ai_error_message: error_message.substring(0, 500),
+        pending_message_id: message_id || undefined,
+      },
+    });
+    logger.info('AI error status set', { wa_user_id, error_message });
+  } catch (error: any) {
+    logger.error('Failed to set AI error status', { error: error.message, wa_user_id });
+  }
+}
+
+/**
+ * Get pending message for retry
+ */
+export async function getPendingMessage(wa_user_id: string): Promise<{ message_id: string; message_text: string } | null> {
+  try {
+    const conversation = await prisma.conversation.findUnique({
+      where: { wa_user_id },
+    });
+
+    if (!conversation?.pending_message_id) {
+      return null;
+    }
+
+    const message = await prisma.message.findFirst({
+      where: {
+        wa_user_id,
+        message_id: conversation.pending_message_id,
+      },
+    });
+
+    if (!message) {
+      return null;
+    }
+
+    return {
+      message_id: message.message_id,
+      message_text: message.message_text,
+    };
+  } catch (error: any) {
+    logger.error('Failed to get pending message', { error: error.message, wa_user_id });
+    return null;
   }
 }

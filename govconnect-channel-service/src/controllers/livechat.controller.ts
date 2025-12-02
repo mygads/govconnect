@@ -270,3 +270,51 @@ export async function handleDeleteConversation(req: Request, res: Response): Pro
     res.status(500).json({ error: 'Failed to delete conversation' });
   }
 }
+
+/**
+ * Retry AI processing for a failed message
+ * POST /internal/conversations/:wa_user_id/retry
+ */
+export async function handleRetryAI(req: Request, res: Response): Promise<void> {
+  try {
+    const { wa_user_id } = req.params;
+
+    if (!wa_user_id) {
+      res.status(400).json({ error: 'wa_user_id is required' });
+      return;
+    }
+
+    const { getPendingMessage, setAIProcessing } = await import('../services/takeover.service');
+    const { publishEvent } = await import('../services/rabbitmq.service');
+    const { rabbitmqConfig } = await import('../config/rabbitmq');
+    
+    // Get the pending message that failed
+    const pendingMessage = await getPendingMessage(wa_user_id);
+    
+    if (!pendingMessage) {
+      res.status(404).json({ error: 'No pending message found for retry' });
+      return;
+    }
+
+    // Set AI processing status again
+    await setAIProcessing(wa_user_id, pendingMessage.message_id);
+
+    // Re-publish the message to AI service queue
+    await publishEvent(rabbitmqConfig.ROUTING_KEYS.MESSAGE_RECEIVED, {
+      wa_user_id,
+      message_id: pendingMessage.message_id,
+      message_text: pendingMessage.message_text,
+      is_retry: true,
+    });
+    
+    logger.info('AI retry requested', { wa_user_id, message_id: pendingMessage.message_id });
+    
+    res.json({
+      success: true,
+      message: 'AI processing retry initiated',
+    });
+  } catch (error: any) {
+    logger.error('Failed to retry AI', { error: error.message });
+    res.status(500).json({ error: 'Failed to retry AI processing' });
+  }
+}

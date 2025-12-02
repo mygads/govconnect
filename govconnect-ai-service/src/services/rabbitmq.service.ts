@@ -2,7 +2,7 @@ import amqplib from 'amqplib';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
-import { MessageReceivedEvent, AIReplyEvent } from '../types/event.types';
+import { MessageReceivedEvent, AIReplyEvent, AIErrorEvent } from '../types/event.types';
 
 let connection: any = null;
 let channel: any = null;
@@ -133,6 +133,37 @@ export async function publishAIReply(payload: AIReplyEvent): Promise<void> {
     });
   } catch (error: any) {
     logger.error('❌ Failed to publish AI reply', {
+      error: error.message,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Publish AI error event (when AI processing fails)
+ */
+export async function publishAIError(payload: AIErrorEvent): Promise<void> {
+  if (!channel) {
+    throw new Error('RabbitMQ channel not initialized');
+  }
+  
+  try {
+    const message = Buffer.from(JSON.stringify(payload));
+    
+    channel.publish(
+      RABBITMQ_CONFIG.EXCHANGE_NAME,
+      RABBITMQ_CONFIG.ROUTING_KEY_AI_ERROR,
+      message,
+      { persistent: true }
+    );
+    
+    logger.info('📤 AI error event published', {
+      routingKey: RABBITMQ_CONFIG.ROUTING_KEY_AI_ERROR,
+      wa_user_id: payload.wa_user_id,
+      error: payload.error_message,
+    });
+  } catch (error: any) {
+    logger.error('❌ Failed to publish AI error', {
       error: error.message,
     });
     throw error;

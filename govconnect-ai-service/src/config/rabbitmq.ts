@@ -8,6 +8,7 @@ export const RABBITMQ_CONFIG = {
   
   // Publisher
   ROUTING_KEY_AI_REPLY: 'govconnect.ai.reply',
+  ROUTING_KEY_AI_ERROR: 'govconnect.ai.error',
   
   // Options
   QUEUE_OPTIONS: {

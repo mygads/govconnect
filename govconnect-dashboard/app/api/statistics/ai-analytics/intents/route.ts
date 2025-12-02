@@ -35,6 +35,29 @@ export async function GET(request: NextRequest) {
 
       if (response.ok) {
         const data = await response.json()
+        
+        // The AI service returns an array, we need to map it to dashboard format
+        // Format: { intents: { [intent]: { total, success, failure } }, total: number }
+        if (Array.isArray(data)) {
+          const intentsMap: Record<string, { total: number; success: number; failure: number }> = {}
+          let totalCount = 0
+          
+          for (const item of data) {
+            intentsMap[item.intent] = {
+              total: item.count || 0,
+              success: item.count || 0, // Assume success if no failure data
+              failure: 0,
+            }
+            totalCount += item.count || 0
+          }
+          
+          return NextResponse.json({
+            intents: intentsMap,
+            total: totalCount,
+          })
+        }
+        
+        // If already in correct format
         return NextResponse.json(data)
       }
     } catch (error) {

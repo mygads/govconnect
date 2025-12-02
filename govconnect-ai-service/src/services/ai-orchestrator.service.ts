@@ -3,7 +3,7 @@ import { MessageReceivedEvent } from '../types/event.types';
 import { buildContext, buildKnowledgeQueryContext } from './context-builder.service';
 import { callGemini } from './llm.service';
 import { createComplaint, createTicket, getComplaintStatus, getTicketStatus, cancelComplaint, cancelTicket, getUserHistory, HistoryItem } from './case-client.service';
-import { publishAIReply } from './rabbitmq.service';
+import { publishAIReply, publishAIError } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { searchKnowledge, buildKnowledgeContext } from './knowledge.service';
 import { startTyping, stopTyping, isUserInTakeover } from './channel-client.service';
@@ -388,10 +388,11 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       error: error.message,
     });
     
-    // Send fallback reply
-    await publishAIReply({
+    // DON'T send error message to user - let admin handle via dashboard
+    // Instead, publish error status event for channel service to update conversation
+    await publishAIError({
       wa_user_id,
-      reply_text: 'Maaf, terjadi kesalahan saat memproses pesan Anda. Mohon coba lagi dalam beberapa saat.',
+      error_message: error.message || 'Unknown error',
     });
   }
 }
