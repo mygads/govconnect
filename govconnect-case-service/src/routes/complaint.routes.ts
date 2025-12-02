@@ -31,6 +31,7 @@ router.post(
         'pohon_tumbang',
         'fasilitas_rusak',
         'banjir',
+        'tindakan_kriminal',
         'lainnya',
       ])
       .withMessage('Invalid kategori'),

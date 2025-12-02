@@ -17,6 +17,7 @@ export const URGENT_CATEGORIES = [
   'kecelakaan',
   'keamanan',
   'kriminalitas',
+  'tindakan_kriminal', // pencurian, perampokan, vandalisme
   'kesehatan_darurat',
   'banjir',
   'tanah_longsor',

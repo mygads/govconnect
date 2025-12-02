@@ -2,14 +2,12 @@ import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import logger from '../utils/logger';
 import { sendNotification, sendAdminUrgentAlert } from '../services/notification.service';
 import {
-  buildAIReplyMessage,
   buildComplaintCreatedMessage,
   buildTicketCreatedMessage,
   buildStatusUpdatedMessage,
   buildUrgentAlertMessage
 } from '../services/template.service';
 import {
-  AIReplyEvent,
   ComplaintCreatedEvent,
   TicketCreatedEvent,
   StatusUpdatedEvent,
@@ -18,9 +16,8 @@ import {
 
 export async function handleEvent(routingKey: string, data: any): Promise<void> {
   switch (routingKey) {
-    case RABBITMQ_CONFIG.routingKeys.aiReply:
-      await handleAIReply(data as AIReplyEvent);
-      break;
+    // NOTE: aiReply is handled by Channel Service directly, not here
+    // This prevents double response to user
 
     case RABBITMQ_CONFIG.routingKeys.complaintCreated:
       await handleComplaintCreated(data as ComplaintCreatedEvent);
@@ -41,18 +38,6 @@ export async function handleEvent(routingKey: string, data: any): Promise<void> 
     default:
       logger.warn('Unknown routing key', { routingKey });
   }
-}
-
-async function handleAIReply(event: AIReplyEvent): Promise<void> {
-  logger.info('Handling AI reply event', { wa_user_id: event.wa_user_id });
-
-  const message = buildAIReplyMessage(event.reply_text);
-
-  await sendNotification({
-    wa_user_id: event.wa_user_id,
-    message,
-    notificationType: 'ai_reply'
-  });
 }
 
 async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<void> {

@@ -16,7 +16,7 @@ SCHEMA OUTPUT:
 {
   "intent": "CREATE_COMPLAINT | CREATE_TICKET | CHECK_STATUS | CANCEL_COMPLAINT | HISTORY | KNOWLEDGE_QUERY | QUESTION | UNKNOWN",
   "fields": {
-    "kategori": "jalan_rusak | lampu_mati | sampah | drainase | pohon_tumbang | fasilitas_rusak",
+    "kategori": "jalan_rusak | lampu_mati | sampah | drainase | pohon_tumbang | fasilitas_rusak | banjir | tindakan_kriminal | lainnya",
     "alamat": "alamat lengkap",
     "deskripsi": "deskripsi detail masalah (WAJIB DIISI dari pesan user atau history)",
     "rt_rw": "RT XX RW YY (jika disebutkan)",
@@ -38,6 +38,7 @@ KATEGORI LAPORAN (CREATE_COMPLAINT):
 - pohon_tumbang: Pohon tumbang menghalangi jalan
 - fasilitas_rusak: Fasilitas umum rusak (taman, dll)
 - banjir: Laporan banjir, genangan air
+- tindakan_kriminal: Pencurian, perampokan, vandalisme, kriminalitas, kejahatan
 - lainnya: Masalah lain yang tidak masuk kategori di atas (bencana, ledakan, dll)
 
 PENTING UNTUK CREATE_COMPLAINT - EKSTRAKSI DATA DARI HISTORY:

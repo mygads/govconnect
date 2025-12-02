@@ -58,12 +58,9 @@ export async function createComplaint(data: CreateComplaintData) {
     },
   });
   
-  // Publish event untuk notification service
-  await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_CREATED, {
-    wa_user_id: data.wa_user_id,
-    complaint_id: complaint.complaint_id,
-    kategori: complaint.kategori,
-  });
+  // NOTE: We don't publish COMPLAINT_CREATED event anymore because AI Service
+  // already sends the response to user via publishAIReply. Publishing this event
+  // would cause double response to the user.
   
   // Check if this is an urgent category and publish urgent alert
   if (isUrgentCategory(data.kategori)) {
