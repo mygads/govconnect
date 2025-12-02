@@ -6,7 +6,7 @@ import { createComplaint, createTicket, getComplaintStatus, getTicketStatus, can
 import { publishAIReply } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { searchKnowledge, buildKnowledgeContext } from './knowledge.service';
-import { startTyping, stopTyping } from './channel-client.service';
+import { startTyping, stopTyping, isUserInTakeover } from './channel-client.service';
 
 // In-memory cache for address confirmation state
 // Key: wa_user_id, Value: { alamat: string, kategori: string, deskripsi: string, timestamp: number, foto_url?: string }
@@ -167,6 +167,17 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
         message_id,
       });
       return; // Exit without processing or replying
+    }
+    
+    // Step 0.1: Check if user is in takeover mode (admin handling)
+    const takeover = await isUserInTakeover(wa_user_id);
+    
+    if (takeover) {
+      logger.info('👤 User is in takeover mode, admin will handle this message', {
+        wa_user_id,
+        message_id,
+      });
+      return; // Exit - admin is handling this conversation
     }
     
     // Step 0.3: Check if there's a pending address confirmation

@@ -49,3 +49,37 @@ model wa_settings {
   
   @@map("wa_settings")
 }
+
+// Takeover sessions - when admin takes over conversation from AI
+model TakeoverSession {
+  id           String    @id @default(cuid())
+  wa_user_id   String    // User being taken over
+  admin_id     String    // Admin user ID who took over
+  admin_name   String?   // Admin display name
+  started_at   DateTime  @default(now())
+  ended_at     DateTime? // null = still active
+  reason       String?   // Optional reason for takeover
+  
+  @@index([wa_user_id])
+  @@index([admin_id])
+  @@index([started_at])
+  @@index([wa_user_id, ended_at]) // For finding active takeover
+  @@map("takeover_sessions")
+}
+
+// Conversation summary for live chat list
+model Conversation {
+  id              String   @id @default(cuid())
+  wa_user_id      String   @unique
+  user_name       String?  // WhatsApp push name
+  last_message    String?  @db.Text
+  last_message_at DateTime @default(now())
+  unread_count    Int      @default(0)
+  is_takeover     Boolean  @default(false)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @default(now()) @updatedAt
+  
+  @@index([is_takeover])
+  @@index([last_message_at])
+  @@map("conversations")
+}

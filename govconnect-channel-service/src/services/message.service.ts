@@ -46,7 +46,7 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
  * Save outgoing message with FIFO enforcement
  */
 export async function saveOutgoingMessage(
-  data: MessageData & { source: 'AI' | 'SYSTEM' }
+  data: MessageData & { source: 'AI' | 'SYSTEM' | 'ADMIN' }
 ): Promise<any> {
   const message = await prisma.message.create({
     data: {

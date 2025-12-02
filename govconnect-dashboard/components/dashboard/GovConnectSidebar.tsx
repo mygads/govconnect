@@ -12,10 +12,10 @@ import {
   BarChart3,
   ChevronRight,
   BookOpen,
-  Settings,
   Bot,
   Smartphone,
   Activity,
+  MessageCircle,
 } from "lucide-react"
 
 import {
@@ -91,6 +91,11 @@ export function GovConnectSidebar() {
           title: "Device",
           url: "/dashboard/whatsapp",
           icon: Smartphone,
+        },
+        {
+          title: "Live Chat",
+          url: "/dashboard/livechat",
+          icon: MessageCircle,
         },
       ],
     }] : []),

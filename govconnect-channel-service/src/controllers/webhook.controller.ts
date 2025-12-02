@@ -9,6 +9,7 @@ import {
   isAutoReadEnabled,
 } from '../services/wa.service';
 import { processMediaFromWebhook, MediaInfo } from '../services/media.service';
+import { updateConversation } from '../services/takeover.service';
 import { rabbitmqConfig } from '../config/rabbitmq';
 import logger from '../utils/logger';
 import { 
@@ -134,6 +135,11 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       message_text: message,
       timestamp: timestamp,
     });
+
+    // Update conversation for live chat
+    // Extract push name from payload for user display name
+    const pushName = payload.event?.Info.PushName || undefined;
+    await updateConversation(waUserId, message, pushName, true);
 
     // Publish event to RabbitMQ with media info
     await publishEvent(rabbitmqConfig.ROUTING_KEYS.MESSAGE_RECEIVED, {
