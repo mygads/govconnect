@@ -5,18 +5,27 @@
 # Semua services dalam 1 file dengan Docker Compose profiles
 #
 # USAGE:
-#   Development (core only):     docker compose up -d
-#   With monitoring:             docker compose --profile monitoring up -d
-#   With logging:                docker compose --profile logging up -d
-#   With Traefik (production):   docker compose --profile production up -d
-#   Full stack:                  docker compose --profile monitoring --profile logging up -d
-#   All profiles:                docker compose --profile monitoring --profile logging --profile production up -d
+# ┌─────────────────────────────────────────────────────────────────────────────────┐
+# │ DEVELOPMENT (local):                                                            │
+# │   docker compose up -d                                                          │
+# │   → Otomatis load docker-compose.override.yml (NODE_ENV=development, DEV badge) │
+# │                                                                                 │
+# │ PRODUCTION (server):                                                            │
+# │   docker compose -f docker-compose.yml --profile production \                   │
+# │     --profile monitoring --profile logging up -d                                │
+# │   → NODE_ENV=production, Traefik SSL, Full monitoring & logging                 │
+# └─────────────────────────────────────────────────────────────────────────────────┘
 #
 # PROFILES:
 #   - (default)    : Core services (postgres, rabbitmq, 5 microservices)
-#   - monitoring   : Prometheus, Grafana, cAdvisor, Node Exporter
+#   - monitoring   : Prometheus, Grafana, cAdvisor, Node Exporter, Alertmanager
 #   - logging      : Loki, Promtail
-#   - production   : Traefik API Gateway with SSL
+#   - production   : Traefik API Gateway with SSL (Let's Encrypt)
+#
+# QUICK COMMANDS:
+#   Dev only core:    docker compose up -d
+#   Dev + monitoring: docker compose --profile monitoring up -d  
+#   Production full:  docker compose -f docker-compose.yml --profile production --profile monitoring --profile logging up -d
 #
 # ===================================================================================
 
@@ -89,7 +98,7 @@ services:
     ports:
       - "3001:3001"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3001
       SERVICE_NAME: channel-service
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_secret_2025}@postgres:5432/govconnect?schema=channel
@@ -122,6 +131,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.channel.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/channel`)"
+      - "traefik.http.routers.channel.entrypoints=websecure"
+      - "traefik.http.routers.channel.tls.certresolver=letsencrypt"
       - "traefik.http.services.channel.loadbalancer.server.port=3001"
 
   # Service 2: AI Orchestrator (Stateless)
@@ -133,7 +144,7 @@ services:
     ports:
       - "3002:3002"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3002
       SERVICE_NAME: ai-service
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-rabbitmq_secret_2025}@rabbitmq:5672/govconnect
@@ -166,6 +177,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ai.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/ai`)"
+      - "traefik.http.routers.ai.entrypoints=websecure"
+      - "traefik.http.routers.ai.tls.certresolver=letsencrypt"
       - "traefik.http.services.ai.loadbalancer.server.port=3002"
 
   # Service 3: Case Service (Laporan & Tiket)
@@ -177,7 +190,7 @@ services:
     ports:
       - "3003:3003"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3003
       SERVICE_NAME: case-service
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_secret_2025}@postgres:5432/govconnect?schema=cases
@@ -200,6 +213,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.case.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/case`)"
+      - "traefik.http.routers.case.entrypoints=websecure"
+      - "traefik.http.routers.case.tls.certresolver=letsencrypt"
       - "traefik.http.services.case.loadbalancer.server.port=3003"
 
   # Service 4: Dashboard (Next.js)
@@ -235,6 +250,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.dashboard.rule=Host(`govconnect.my.id`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.services.dashboard.loadbalancer.server.port=3000"
 
   # Service 5: Notification Service
@@ -246,7 +263,7 @@ services:
     ports:
       - "3004:3004"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3004
       SERVICE_NAME: notification-service
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_secret_2025}@postgres:5432/govconnect?schema=notification
@@ -272,6 +289,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.notification.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/notification`)"
+      - "traefik.http.routers.notification.entrypoints=websecure"
+      - "traefik.http.routers.notification.tls.certresolver=letsencrypt"
       - "traefik.http.services.notification.loadbalancer.server.port=3004"
 
   # ===================================================================================
@@ -298,6 +317,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.prometheus.rule=Host(`prometheus.govconnect.my.id`)"
+      - "traefik.http.routers.prometheus.entrypoints=websecure"
+      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
       - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
 
   grafana:
@@ -323,6 +344,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`grafana.govconnect.my.id`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
   node-exporter:
