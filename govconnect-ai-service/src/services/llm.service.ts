@@ -279,14 +279,26 @@ async function callGeminiWithModel(
     const endTime = Date.now();
     const durationMs = endTime - startTime;
     
-    logger.debug('Gemini raw response', {
+    // Log full response for debugging newline issues
+    logger.info('Gemini raw response (full)', {
       model: modelName,
       responseLength: responseText.length,
       durationMs,
+      responsePreview: responseText.substring(0, 500), // First 500 chars
     });
     
     // Parse JSON response
     const parsedResponse = JSON.parse(responseText);
+    
+    // Log parsed guidance_text specifically for newline debugging
+    if (parsedResponse.guidance_text) {
+      logger.info('Parsed guidance_text', {
+        model: modelName,
+        guidanceText: parsedResponse.guidance_text,
+        hasNewlines: parsedResponse.guidance_text.includes('\n'),
+        hasEscapedNewlines: parsedResponse.guidance_text.includes('\\n'),
+      });
+    }
     
     // Validate with Zod schema
     const validatedResponse = LLMResponseSchema.parse(parsedResponse);

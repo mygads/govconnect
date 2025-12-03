@@ -16,9 +16,11 @@ export interface MessageReceivedEvent {
 export interface AIReplyEvent {
   wa_user_id: string;
   reply_text: string;
+  guidance_text?: string;  // Optional second bubble for guidance/follow-up
 }
 
 export interface AIErrorEvent {
   wa_user_id: string;
   error_message: string;
+  pending_message_id?: string;  // Message ID that failed processing
 }

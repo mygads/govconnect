@@ -35,6 +35,13 @@ setInterval(() => {
 /**
  * Check if an address is too vague/incomplete
  * Returns true if address needs confirmation
+ * 
+ * NOTE: We are MORE LENIENT now - informal addresses with landmarks are ACCEPTED
+ * Examples that are VALID:
+ * - "depan masjid al ikhlas"
+ * - "gang sebelah warung bu ani"
+ * - "dekat SMAN 1 margahayu"
+ * - "pertigaan toko bangunan jaya"
  */
 function isVagueAddress(alamat: string): boolean {
   if (!alamat) return true;
@@ -56,38 +63,46 @@ function isVagueAddress(alamat: string): boolean {
     return true; // This is not an address, it's complaint description
   }
   
-  // List of patterns that are too vague
-  const vaguePatterns = [
-    /^jalan\s*raya$/i,
-    /^jln\s*raya$/i,
-    /^jl\.?\s*raya$/i,
-    /^tps\s+\w+$/i,  // TPS kelurahan, TPS desa
-    /^dekat\s+\w+$/i, // dekat pasar, dekat sekolah
-    /^sekitar\s+\w+$/i,
-    /^di\s+\w+$/i, // di kelurahan, di desa
-    /^kelurahan$/i,
-    /^kecamatan$/i,
-    /^desa$/i,
-    /kelurahan$/i, // ends with kelurahan
-    /kecamatan$/i, // ends with kecamatan
+  // FIRST: Check if address contains a LANDMARK - if so, it's VALID!
+  // Landmarks are specific enough for local petugas to find
+  const landmarkPatterns = [
+    /masjid\s+\w+/i,           // masjid al-ikhlas, masjid nurul iman
+    /mushola/i,                // mushola, musholla
+    /gereja\s+\w+/i,           // gereja bethel
+    /sekolah\s+\w+/i,          // sekolah dasar negeri
+    /sd\s*n?\s*\d*/i,          // SDN 1, SD 5
+    /smp\s*n?\s*\d*/i,         // SMPN 2
+    /sma\s*n?\s*\d*/i,         // SMAN 1
+    /smk\s*n?\s*\d*/i,         // SMKN 3
+    /warung\s+\w+/i,           // warung bu ani
+    /toko\s+\w+/i,             // toko bangunan jaya
+    /pasar\s+\w+/i,            // pasar tradisional
+    /kantor\s+\w+/i,           // kantor kelurahan
+    /puskesmas/i,              // puskesmas
+    /posyandu/i,               // posyandu
+    /lapangan\s+\w*/i,         // lapangan bola
+    /taman\s+\w+/i,            // taman kota
+    /makam\s+\w*/i,            // makam pahlawan
+    /kuburan/i,                // kuburan
+    /pertigaan/i,              // pertigaan
+    /perempatan/i,             // perempatan
+    /bundaran/i,               // bundaran
+    /jembatan\s+\w*/i,         // jembatan merah
+    /terminal\s+\w*/i,         // terminal bus
+    /stasiun\s+\w*/i,          // stasiun kereta
+    /bank\s+\w+/i,             // bank bca
+    /atm\s+\w*/i,              // atm mandiri
+    /alfamart/i,               // alfamart
+    /indomaret/i,              // indomaret
+    /spbu/i,                   // spbu
   ];
   
-  // Check against vague patterns
-  if (vaguePatterns.some(pattern => pattern.test(cleanAlamat))) {
-    return true;
+  if (landmarkPatterns.some(pattern => pattern.test(cleanAlamat))) {
+    return false; // Has landmark - VALID address!
   }
   
-  // Check if address is too short (less than 15 chars usually means incomplete)
-  if (cleanAlamat.length < 15) {
-    // Exception: if it contains number (like RT/RW, nomor), might be specific enough
-    const hasNumber = /\d/.test(cleanAlamat);
-    if (!hasNumber) {
-      return true;
-    }
-  }
-  
-  // Check if address lacks specific identifiers
-  const hasSpecificIdentifiers = [
+  // Check for street/location identifiers
+  const hasLocationIdentifiers = [
     /\bno\.?\s*\d+/i,           // no. 123, no 45
     /\bnomor\s*\d+/i,          // nomor 5
     /\brt\s*\.?\s*\d+/i,       // RT 01, RT.02
@@ -97,52 +112,88 @@ function isVagueAddress(alamat: string): boolean {
     /\bgg\.?\s*\w+/i,          // Gg. Mawar
     /\bkomplek\s+\w+/i,        // Komplek Permata
     /\bperumahan\s+\w+/i,      // Perumahan Indah
-    /\bjalan\s+[a-z]+\s+[a-z]+/i, // Jalan Ahmad Yani (street with at least 2 name parts)
-    /\bjln\.?\s+[a-z]+\s+[a-z]+/i, // Jln Sudirman
-    /\bjl\.?\s+[a-z]+\s+[a-z]+/i, // Jl. Merdeka
+    /\bjalan\s+[a-z]+/i,       // Jalan Merdeka
+    /\bjln\.?\s+[a-z]+/i,      // Jln Sudirman
+    /\bjl\.?\s+[a-z]+/i,       // Jl. Merdeka
+    /depan\s+\w+\s+\w+/i,      // depan rumah pak X
+    /sebelah\s+\w+/i,          // sebelah warung
+    /belakang\s+\w+/i,         // belakang masjid
+    /samping\s+\w+/i,          // samping sekolah
   ].some(pattern => pattern.test(cleanAlamat));
   
-  // If it doesn't have specific identifiers, it's likely vague
-  if (!hasSpecificIdentifiers) {
-    // Check for common vague words without specifics
-    const hasVagueWordOnly = [
-      /^(di\s+)?jalan\s+\w+$/i,  // just "jalan raya", "di jalan utama"
-      /^(di\s+)?depan\s+\w+$/i,
-      /^(di\s+)?belakang\s+\w+$/i,
-      /^(di\s+)?samping\s+\w+$/i,
-      /jalan\s+raya/i,           // "jalan raya" anywhere
-    ].some(pattern => pattern.test(cleanAlamat));
-    
-    if (hasVagueWordOnly) {
-      return true;
-    }
+  if (hasLocationIdentifiers) {
+    return false; // Has location identifiers - VALID!
   }
   
+  // List of patterns that are truly TOO vague
+  const vaguePatterns = [
+    /^jalan\s*raya$/i,         // just "jalan raya" without name
+    /^jln\s*raya$/i,
+    /^jl\.?\s*raya$/i,
+    /^kelurahan$/i,            // just "kelurahan"
+    /^kecamatan$/i,            // just "kecamatan" 
+    /^desa$/i,                 // just "desa"
+    /^di\s*sini$/i,            // "di sini"
+    /^sini$/i,                 // "sini"
+  ];
+  
+  if (vaguePatterns.some(pattern => pattern.test(cleanAlamat))) {
+    return true;
+  }
+  
+  // If address is very short (< 5 chars), it's probably too vague
+  if (cleanAlamat.length < 5) {
+    return true;
+  }
+  
+  // Default: Accept the address (be lenient)
   return false;
 }
 
 /**
- * Check if message is a confirmation response (ya, ok, lanjutkan, etc.)
+ * Check if message is a confirmation response (ya, ok, lanjutkan, sudah cukup, etc.)
  */
 function isConfirmationResponse(message: string): boolean {
+  const cleanMessage = message.trim().toLowerCase();
+  
   const confirmPatterns = [
     /^ya$/i,
     /^iya$/i,
+    /^yap$/i,
+    /^yup$/i,
     /^ok$/i,
     /^oke$/i,
+    /^okey$/i,
+    /^okay$/i,
     /^baik$/i,
     /^lanjut$/i,
     /^lanjutkan$/i,
     /^setuju$/i,
     /^boleh$/i,
     /^silakan$/i,
+    /^siap$/i,
     /^buat\s*(saja|aja)?$/i,
-    /^proses$/i,
-    /^kirim$/i,
+    /^proses\s*(saja|aja)?$/i,
+    /^kirim\s*(saja|aja)?$/i,
     /^ya,?\s*(lanjutkan|lanjut|buat|proses)/i,
+    // New patterns for address confirmation
+    /^sudah\s*(cukup)?$/i,
+    /^cukup$/i,
+    /^itu\s*(saja|aja)$/i,
+    /^(itu|ini)\s*(sudah|udah)$/i,
+    /^(sudah|udah)$/i,
+    /^(sudah|udah)\s*(itu|ini)$/i,
+    /^(udah|sudah)\s*(cukup|lengkap)$/i,
+    /^segitu\s*(saja|aja)?$/i,
+    /^ya\s*(sudah|udah|cukup)/i,
+    /^tidak\s*(perlu)?\s*(tambah|detail)/i,
+    /^ga\s*(perlu|usah)/i,
+    /^gak\s*(perlu|usah)/i,
+    /^nggak\s*(perlu|usah)/i,
+    /^engga[k]?\s*(perlu|usah)/i,
   ];
   
-  return confirmPatterns.some(pattern => pattern.test(message.trim()));
+  return confirmPatterns.some(pattern => pattern.test(cleanMessage));
 }
 
 /**
@@ -214,13 +265,13 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
         
         await stopTyping(wa_user_id);
         
-        let finalReply: string;
-        if (complaintId) {
-          const withPhoto = pendingConfirm.foto_url ? ' 📷' : '';
-          finalReply = `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan segera menindaklanjuti laporan Anda.`;
-        } else {
-          finalReply = '⚠️ Maaf, terjadi kendala saat memproses laporan. Mohon coba lagi.';
+        if (!complaintId) {
+          // DON'T send error to user - throw error to trigger AI error event
+          throw new Error('Failed to create complaint after address confirmation');
         }
+        
+        const withPhoto = pendingConfirm.foto_url ? ' 📷' : '';
+        const finalReply = `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan segera menindaklanjuti laporan Anda.`;
         
         await publishAIReply({ wa_user_id, reply_text: finalReply });
         return;
@@ -256,13 +307,13 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
           
           await stopTyping(wa_user_id);
           
-          let finalReply: string;
-          if (complaintId) {
-            const withPhoto = pendingConfirm.foto_url ? ' 📷' : '';
-            finalReply = `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan segera menindaklanjuti laporan di ${message.trim()}.`;
-          } else {
-            finalReply = '⚠️ Maaf, terjadi kendala saat memproses laporan. Mohon coba lagi.';
+          if (!complaintId) {
+            // DON'T send error to user - throw error to trigger AI error event
+            throw new Error('Failed to create complaint with updated address');
           }
+          
+          const withPhoto = pendingConfirm.foto_url ? ' 📷' : '';
+          const finalReply = `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan segera menindaklanjuti laporan di ${message.trim()}.`;
           
           await publishAIReply({ wa_user_id, reply_text: finalReply });
           return;
@@ -313,6 +364,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     
     // Step 3: Handle intent
     let finalReplyText = llmResponse.reply_text;
+    let guidanceText = llmResponse.guidance_text || '';
     
     switch (llmResponse.intent) {
       case 'CREATE_COMPLAINT':
@@ -368,15 +420,18 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     }
     
     // Step 4: Publish AI reply event (for Notification Service)
+    // Include guidance_text if present - it will be sent as a separate bubble
     await publishAIReply({
       wa_user_id,
       reply_text: finalReplyText,
+      guidance_text: guidanceText || undefined,
     });
     
     logger.info('✅ Message processed successfully', {
       wa_user_id,
       message_id,
       intent: llmResponse.intent,
+      hasGuidance: !!guidanceText,
     });
   } catch (error: any) {
     // Stop typing indicator on error
@@ -415,14 +470,13 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
     currentMessage: currentMessage.substring(0, 100),
   });
   
-  // SMART ALAMAT DETECTION: If LLM didn't extract alamat but current message looks like an address
+  // SMART ALAMAT DETECTION: If LLM didn't extract alamat, try to detect from current message
   if (!alamat) {
-    // First, check if message is ONLY an address (short message without complaint keywords)
     const complaintKeywords = /menumpuk|tumpukan|rusak|berlubang|mati|padam|tersumbat|banjir|tumbang|roboh|sampah|limbah|genangan|menghalangi/i;
-    const isJustAddress = !complaintKeywords.test(currentMessage) && currentMessage.length < 80;
+    const isJustAddress = !complaintKeywords.test(currentMessage) && currentMessage.length < 100;
     
     if (isJustAddress) {
-      // Check if message contains address indicators
+      // Check formal address indicators
       const addressPatterns = [
         /jalan/i, /jln/i, /jl\./i,
         /\bno\b/i, /nomor/i,
@@ -431,18 +485,50 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
         /komplek/i, /perumahan/i, /blok/i,
       ];
       
-      const looksLikeAddress = addressPatterns.some(pattern => pattern.test(currentMessage));
+      const looksLikeFormalAddress = addressPatterns.some(pattern => pattern.test(currentMessage));
       
-      if (looksLikeAddress) {
+      if (looksLikeFormalAddress) {
         alamat = currentMessage.trim();
-        logger.info('Smart alamat detection: message appears to be just an address', {
+        logger.info('Smart alamat detection: formal address detected', {
           wa_user_id,
           detectedAlamat: alamat,
         });
+      } else {
+        // Check for informal location patterns (e.g., "di margahayu bandung", "depan masjid")
+        const informalAddressPatterns = [
+          /^di\s+/i,                      // starts with "di "
+          /dekat|depan|belakang|samping/i, // near, front, back, beside
+          /margahayu|cimahi|bandung|jakarta|surabaya|semarang/i, // city/area names
+          /masjid|mushola|sekolah|kantor|warung|toko/i,  // landmarks
+        ];
+        
+        const looksLikeInformalAddress = informalAddressPatterns.some(pattern => pattern.test(currentMessage));
+        
+        // Also check if message is short and NOT a confirmation (e.g., not just "ya", "oke", "sudah")
+        const confirmationWords = /^(ya|iya|yak|yup|oke|ok|siap|sudah|cukup|proses|lanjut)$/i;
+        const isNotConfirmation = !confirmationWords.test(currentMessage.trim());
+        
+        if ((looksLikeInformalAddress || (isJustAddress && currentMessage.length >= 5)) && isNotConfirmation) {
+          // Clean up the message to use as address
+          alamat = currentMessage.trim()
+            .replace(/^(di|ke)\s+/i, '') // remove leading "di " or "ke "
+            .replace(/kak$/i, '')         // remove trailing "kak"
+            .trim();
+          
+          if (alamat.length >= 3) {
+            logger.info('Smart alamat detection: informal address/location detected', {
+              wa_user_id,
+              originalMessage: currentMessage,
+              detectedAlamat: alamat,
+            });
+          } else {
+            alamat = ''; // Too short, probably not an address
+          }
+        }
       }
     } else {
       // Try to extract address part from complaint message
-      // Look for patterns like "di Jalan X", "di komplek Y", etc.
+      // Look for patterns like "di Jalan X", "di komplek Y", "di margahayu", etc.
       const addressRegex = /(?:di\s+)?(jalan|jln|jl\.?|komplek|perumahan|gang|gg\.)\s+[a-zA-Z0-9\s]+(?:\s+(?:no|nomor|rt|rw|blok)[\s\.]*[\d\/a-zA-Z]+)*/i;
       const match = currentMessage.match(addressRegex);
       
@@ -453,6 +539,34 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
           originalMessage: currentMessage.substring(0, 50),
           detectedAlamat: alamat,
         });
+      } else {
+        // Try to extract location names (city/area) from complaint message
+        // Pattern: "di [location]" where location is a known city/area or landmark
+        const locationMatch = currentMessage.match(/(?:di|ke)\s+((?:margahayu|cimahi|bandung|jakarta|surabaya|semarang|bekasi|tangerang|depok|bogor)[a-z\s]*)/i);
+        if (locationMatch && locationMatch[1].length >= 3) {
+          alamat = locationMatch[1].trim();
+          logger.info('Smart alamat detection: city/area extraction', {
+            wa_user_id,
+            originalMessage: currentMessage.substring(0, 50),
+            detectedAlamat: alamat,
+          });
+        } else {
+          // Try landmark extraction: "di depan/dekat [landmark]"
+          const landmarkMatch = currentMessage.match(/(?:di\s+)?(depan|dekat|belakang|samping|sebelah)\s+([a-zA-Z0-9\s]+?)(?:\s+kak|\s*$)/i);
+          if (landmarkMatch && landmarkMatch[2].length >= 3) {
+            // Make sure extracted text doesn't contain complaint keywords
+            const extractedText = landmarkMatch[2].trim();
+            const hasComplaintKeyword = /menumpuk|tumpukan|rusak|berlubang|mati|padam|tersumbat|banjir|tumbang|roboh|sampah|limbah|genangan|menghalangi|lampu|jalan|ada/i.test(extractedText);
+            if (!hasComplaintKeyword) {
+              alamat = `${landmarkMatch[1]} ${extractedText}`.trim();
+              logger.info('Smart alamat detection: landmark extraction', {
+                wa_user_id,
+                originalMessage: currentMessage.substring(0, 50),
+                detectedAlamat: alamat,
+              });
+            }
+          }
+        }
       }
     }
   }
@@ -544,7 +658,8 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
   } else {
     // Record failure for analytics
     aiAnalyticsService.recordFailure('CREATE_COMPLAINT');
-    return `⚠️ Maaf, terjadi kendala saat memproses laporan Anda. Mohon coba lagi atau hubungi kantor kelurahan langsung.`;
+    // DON'T send error to user - throw error to trigger AI error event for dashboard handling
+    throw new Error('Failed to create complaint in Case Service');
   }
 }
 
@@ -586,7 +701,8 @@ async function handleTicketCreation(wa_user_id: string, llmResponse: any): Promi
   } else {
     // Record failure for analytics
     aiAnalyticsService.recordFailure('CREATE_TICKET');
-    return `⚠️ Maaf, terjadi kendala saat membuat tiket Anda. Mohon coba lagi atau hubungi kantor kelurahan langsung.`;
+    // DON'T send error to user - throw error to trigger AI error event for dashboard handling
+    throw new Error('Failed to create ticket in Case Service');
   }
 }
 
@@ -944,7 +1060,7 @@ async function handleHistory(wa_user_id: string): Promise<string> {
   const history = await getUserHistory(wa_user_id);
   
   if (!history || history.total === 0) {
-    return `Halo Kak! 👋\n\nKakak belum memiliki riwayat laporan atau tiket nih.\n\nMau melaporkan masalah atau mengajukan layanan? Langsung chat aja ya Kak! 😊`;
+    return `📋 *Riwayat Laporan*\n\nBelum ada riwayat laporan atau tiket.\n\nMau lapor masalah? Langsung chat aja!`;
   }
   
   return buildHistoryResponse(history.combined, history.total);
@@ -954,8 +1070,7 @@ async function handleHistory(wa_user_id: string): Promise<string> {
  * Build natural response for user history
  */
 function buildHistoryResponse(items: HistoryItem[], total: number): string {
-  let message = `Halo Kak! 👋\n\n`;
-  message += `Berikut riwayat laporan dan tiket Kakak (${total} total):\n\n`;
+  let message = `📋 *Riwayat Laporan* (${total} total)\n\n`;
   
   // Group by type for better presentation
   const complaints = items.filter(i => i.type === 'complaint');
@@ -965,34 +1080,36 @@ function buildHistoryResponse(items: HistoryItem[], total: number): string {
   
   // Show complaints first
   if (complaints.length > 0) {
-    message += `📋 *LAPORAN:*\n`;
+    message += `*LAPORAN:*\n`;
     for (const item of complaints.slice(0, 10)) { // Limit to 10 per type
       const statusEmoji = getStatusEmoji(item.status);
       const shortDesc = truncateDescription(item.description, 25);
       message += `${index}. ${item.display_id}\n`;
       message += `   📍 ${shortDesc}\n`;
-      message += `   ${statusEmoji} ${formatStatusLabel(item.status)}\n\n`;
+      message += `   ${statusEmoji} ${formatStatusLabel(item.status)}\n`;
       index++;
     }
     if (complaints.length > 10) {
-      message += `   ... dan ${complaints.length - 10} laporan lainnya\n\n`;
+      message += `   ... dan ${complaints.length - 10} laporan lainnya\n`;
     }
+    message += `\n`;
   }
   
   // Show tickets
   if (tickets.length > 0) {
-    message += `🎫 *TIKET LAYANAN:*\n`;
+    message += `*TIKET LAYANAN:*\n`;
     for (const item of tickets.slice(0, 10)) { // Limit to 10 per type
       const statusEmoji = getStatusEmoji(item.status);
       const shortDesc = truncateDescription(item.description, 25);
       message += `${index}. ${item.display_id}\n`;
       message += `   📍 ${shortDesc}\n`;
-      message += `   ${statusEmoji} ${formatStatusLabel(item.status)}\n\n`;
+      message += `   ${statusEmoji} ${formatStatusLabel(item.status)}\n`;
       index++;
     }
     if (tickets.length > 10) {
-      message += `   ... dan ${tickets.length - 10} tiket lainnya\n\n`;
+      message += `   ... dan ${tickets.length - 10} tiket lainnya\n`;
     }
+    message += `\n`;
   }
   
   message += `💡 *Tips:* Ketik "cek status [nomor]" untuk melihat detail, contoh: _cek status LAP-20251201-001_`;

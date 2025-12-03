@@ -97,6 +97,7 @@ export function isConnected(): boolean {
 interface AIReplyEvent {
   wa_user_id: string;
   reply_text: string;
+  guidance_text?: string;  // Optional second message for guidance/follow-up
   intent?: string;
   complaint_id?: string;
 }
@@ -136,33 +137,88 @@ export async function startConsumingAIReply(): Promise<void> {
       try {
         const payload: AIReplyEvent = JSON.parse(msg.content.toString());
         
+        // Normalize and format text for WhatsApp
+        const formatText = (text: string): string => {
+          if (!text) return text;
+          
+          // First, convert any escaped \n to actual newlines
+          let formatted = text.replace(/\\n/g, '\n');
+          
+          // If text contains emoji list items without newlines, add them
+          // Detect pattern: emoji + text immediately followed by another emoji
+          // e.g., "📋 Item 1📋 Item 2" -> "📋 Item 1\n\n📋 Item 2"
+          const emojiPattern = /([\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}])/gu;
+          
+          // Check if text contains multiple emojis without proper spacing
+          const emojis = formatted.match(emojiPattern);
+          if (emojis && emojis.length > 1) {
+            // Add double newline before each emoji that follows text without newline
+            formatted = formatted.replace(/([^\n])(📋|🎫|📍|🔍|💡|✅|⚠️|📝|🕐|•)/g, '$1\n\n$2');
+          }
+          
+          return formatted;
+        };
+        
+        const replyText = formatText(payload.reply_text);
+        const guidanceText = formatText(payload.guidance_text || '');
+        
         logger.info('📨 AI reply event received', {
           wa_user_id: payload.wa_user_id,
           intent: payload.intent,
-          messageLength: payload.reply_text?.length,
+          messageLength: replyText?.length,
+          hasGuidance: !!guidanceText,
+          guidancePreview: guidanceText?.substring(0, 100),
         });
 
-        // Send message via WhatsApp
-        const result = await sendTextMessage(payload.wa_user_id, payload.reply_text);
+        // Send main reply message via WhatsApp
+        const result = await sendTextMessage(payload.wa_user_id, replyText);
 
         if (result.success) {
           // Save outgoing message to database
           await saveOutgoingMessage({
             wa_user_id: payload.wa_user_id,
             message_id: result.message_id || `ai_reply_${Date.now()}`,
-            message_text: payload.reply_text,
+            message_text: replyText,
             source: 'AI',
           });
-
-          // Update conversation summary with AI response and mark as read (AI handled it)
-          await updateConversation(payload.wa_user_id, payload.reply_text, undefined, false);
-          await markConversationAsRead(payload.wa_user_id);
-          await clearAIStatus(payload.wa_user_id);
 
           logger.info('✅ AI reply sent successfully', {
             wa_user_id: payload.wa_user_id,
             message_id: result.message_id,
           });
+          
+          // If there's a guidance message, send it as a separate bubble after a short delay
+          if (guidanceText && guidanceText.trim()) {
+            // Small delay to ensure messages appear in order
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            const guidanceResult = await sendTextMessage(payload.wa_user_id, guidanceText);
+            
+            if (guidanceResult.success) {
+              // Save guidance message to database
+              await saveOutgoingMessage({
+                wa_user_id: payload.wa_user_id,
+                message_id: guidanceResult.message_id || `ai_guidance_${Date.now()}`,
+                message_text: guidanceText,
+                source: 'AI',
+              });
+              
+              logger.info('✅ AI guidance message sent successfully', {
+                wa_user_id: payload.wa_user_id,
+                message_id: guidanceResult.message_id,
+              });
+            } else {
+              logger.warn('⚠️ Failed to send AI guidance message', {
+                wa_user_id: payload.wa_user_id,
+                error: guidanceResult.error,
+              });
+            }
+          }
+
+          // Update conversation summary with AI response and mark as read (AI handled it)
+          await updateConversation(payload.wa_user_id, replyText, undefined, false);
+          await markConversationAsRead(payload.wa_user_id);
+          await clearAIStatus(payload.wa_user_id);
         } else {
           logger.error('❌ Failed to send AI reply', {
             wa_user_id: payload.wa_user_id,
