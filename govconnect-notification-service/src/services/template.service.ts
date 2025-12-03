@@ -8,13 +8,12 @@ export function buildComplaintCreatedMessage(data: {
 }): string {
   const kategoriText = formatKategori(data.kategori).toLowerCase();
   
-  return `Halo Kak! 👋
+  return `✅ *Laporan Diterima*
 
-Laporan ${kategoriText} Anda sudah kami terima dengan nomor *${data.complaint_id}*.
+No: *${data.complaint_id}*
+Kategori: ${kategoriText}
 
-Kami akan segera menindaklanjuti laporan ini. Tenang saja, Kakak akan mendapat kabar update langsung di WhatsApp ini ya!
-
-Terima kasih sudah melapor 🙏`;
+Kami akan segera menindaklanjuti. Anda akan dinotifikasi saat selesai.`;
 }
 
 export function buildTicketCreatedMessage(data: {
@@ -23,13 +22,13 @@ export function buildTicketCreatedMessage(data: {
 }): string {
   const jenisText = formatJenis(data.jenis).toLowerCase();
   
-  return `Halo Kak! 👋
+  return `✅ *Tiket Dibuat*
 
-Permintaan ${jenisText} Anda sudah kami catat dengan nomor tiket *${data.ticket_id}*.
+No: *${data.ticket_id}*
+Jenis: ${jenisText}
 
-Silakan datang ke kantor kelurahan dengan menyebutkan nomor tiket ini ya. Jam pelayanan kami Senin-Jumat pukul 08:00-15:00.
-
-Sampai jumpa di kantor kelurahan! 🏛️`;
+Silakan datang ke kantor kelurahan dengan nomor tiket ini.
+📍 Senin-Jumat, 08:00-15:00`;
 }
 
 export function buildStatusUpdatedMessage(data: {
@@ -50,52 +49,48 @@ function buildNaturalStatusMessage(
   adminNotes?: string,
   isComplaint: boolean = true
 ): string {
-  const type = isComplaint ? 'laporan' : 'tiket';
+  const type = isComplaint ? 'Laporan' : 'Tiket';
   
+  // Only 'selesai' will be sent as notification (other statuses are skipped)
+  // But keep other cases for internal use / future changes
   switch (status) {
+    case 'selesai':
+      let selesaiMsg = `✅ *${type} Selesai*\n\n*${id}* telah selesai ditangani.`;
+      if (adminNotes) {
+        selesaiMsg += `\n\n📝 _${adminNotes}_`;
+      }
+      selesaiMsg += `\n\nTerima kasih telah menggunakan layanan kami.`;
+      return selesaiMsg;
+    
     case 'baru':
-      return `Halo Kak! 👋\n\n${isComplaint ? 'Laporan' : 'Tiket'} *${id}* sudah kami terima dan akan segera kami proses.\n\nKami akan kabari perkembangannya ya! 📱`;
+      return `📥 *${type} Diterima*\n\n*${id}* sudah kami terima.`;
     
     case 'pending':
-      let pendingMsg = `Halo Kak! 📋\n\nUntuk ${type} *${id}*, saat ini sedang dalam tahap verifikasi oleh tim kami.`;
+      let pendingMsg = `⏳ *${type} Pending*\n\n*${id}* sedang diverifikasi.`;
       if (adminNotes) {
-        pendingMsg += `\n\n💬 _"${adminNotes}"_`;
+        pendingMsg += `\n\n📝 _${adminNotes}_`;
       }
-      pendingMsg += `\n\nMohon ditunggu ya, kami akan segera mengabari! 🙏`;
       return pendingMsg;
     
     case 'proses':
-      let prosesMsg = `Halo Kak! 🔔\n\nKabar baik! ${isComplaint ? 'Laporan' : 'Tiket'} *${id}* sudah dalam proses penanganan.`;
+      let prosesMsg = `🔄 *${type} Diproses*\n\n*${id}* sedang ditangani.`;
       if (adminNotes) {
-        prosesMsg += `\n\n💬 Catatan dari petugas:\n_"${adminNotes}"_`;
-      } else {
-        prosesMsg += `\n\nTim kami sedang menindaklanjuti ${type} Kakak.`;
+        prosesMsg += `\n\n📝 _${adminNotes}_`;
       }
-      prosesMsg += `\n\nKami akan kabari lagi kalau sudah selesai ya! 👍`;
       return prosesMsg;
     
-    case 'selesai':
-      let selesaiMsg = `Halo Kak! ✅\n\nYeay! ${isComplaint ? 'Laporan' : 'Tiket'} *${id}* sudah selesai ditangani!`;
-      if (adminNotes) {
-        selesaiMsg += `\n\n💬 Catatan petugas:\n_"${adminNotes}"_`;
-      }
-      selesaiMsg += `\n\nTerima kasih sudah menggunakan layanan GovConnect. Jangan ragu untuk melapor lagi jika ada kendala lainnya ya! 🙏`;
-      return selesaiMsg;
-    
     case 'ditolak':
-      let ditolakMsg = `Halo Kak 🙏\n\nMohon maaf, ${type} *${id}* tidak dapat kami proses.`;
+      let ditolakMsg = `❌ *${type} Ditolak*\n\n*${id}* tidak dapat diproses.`;
       if (adminNotes) {
-        ditolakMsg += `\n\n💬 Alasan:\n_"${adminNotes}"_`;
+        ditolakMsg += `\n\n📝 Alasan: _${adminNotes}_`;
       }
-      ditolakMsg += `\n\nJika ada pertanyaan, silakan hubungi kantor kelurahan langsung atau kirim pesan baru ke sini ya.`;
       return ditolakMsg;
     
+    case 'dibatalkan':
+      return `🔴 *${type} Dibatalkan*\n\n*${id}* telah dibatalkan.`;
+    
     default:
-      let defaultMsg = `Halo Kak! 📢\n\nAda update untuk ${type} *${id}* dengan status: ${status}.`;
-      if (adminNotes) {
-        defaultMsg += `\n\n💬 _"${adminNotes}"_`;
-      }
-      return defaultMsg;
+      return `📢 *Update ${type}*\n\n*${id}*: ${status}`;
   }
 }
 

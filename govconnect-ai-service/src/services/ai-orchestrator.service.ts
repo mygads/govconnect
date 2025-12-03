@@ -1308,7 +1308,7 @@ async function handleHistory(wa_user_id: string): Promise<string> {
   const history = await getUserHistory(wa_user_id);
   
   if (!history || history.total === 0) {
-    return `📋 *Riwayat Laporan*\n\nBelum ada riwayat laporan atau tiket.\n\nMau lapor masalah? Langsung chat aja!`;
+    return `📋 *Riwayat Anda*\n\nBelum ada laporan atau tiket.\nKetik pesan untuk memulai.`;
   }
   
   return buildHistoryResponse(history.combined, history.total);
@@ -1318,49 +1318,39 @@ async function handleHistory(wa_user_id: string): Promise<string> {
  * Build natural response for user history
  */
 function buildHistoryResponse(items: HistoryItem[], total: number): string {
-  let message = `📋 *Riwayat Laporan* (${total} total)\n\n`;
+  let message = `📋 *Riwayat Anda* (${total})\n`;
   
   // Group by type for better presentation
   const complaints = items.filter(i => i.type === 'complaint');
   const tickets = items.filter(i => i.type === 'ticket');
   
-  let index = 1;
-  
   // Show complaints first
   if (complaints.length > 0) {
-    message += `*LAPORAN:*\n`;
-    for (const item of complaints.slice(0, 10)) { // Limit to 10 per type
+    message += `\n*LAPORAN*\n`;
+    for (const item of complaints.slice(0, 5)) {
       const statusEmoji = getStatusEmoji(item.status);
-      const shortDesc = truncateDescription(item.description, 25);
-      message += `${index}. ${item.display_id}\n`;
-      message += `   📍 ${shortDesc}\n`;
-      message += `   ${statusEmoji} ${formatStatusLabel(item.status)}\n`;
-      index++;
+      const shortDesc = truncateDescription(item.description, 20);
+      message += `• *${item.display_id}* ${statusEmoji}\n  ${shortDesc}\n`;
     }
-    if (complaints.length > 10) {
-      message += `   ... dan ${complaints.length - 10} laporan lainnya\n`;
+    if (complaints.length > 5) {
+      message += `  _+${complaints.length - 5} lainnya_\n`;
     }
-    message += `\n`;
   }
   
   // Show tickets
   if (tickets.length > 0) {
-    message += `*TIKET LAYANAN:*\n`;
-    for (const item of tickets.slice(0, 10)) { // Limit to 10 per type
+    message += `\n*TIKET*\n`;
+    for (const item of tickets.slice(0, 5)) {
       const statusEmoji = getStatusEmoji(item.status);
-      const shortDesc = truncateDescription(item.description, 25);
-      message += `${index}. ${item.display_id}\n`;
-      message += `   📍 ${shortDesc}\n`;
-      message += `   ${statusEmoji} ${formatStatusLabel(item.status)}\n`;
-      index++;
+      const shortDesc = truncateDescription(item.description, 20);
+      message += `• *${item.display_id}* ${statusEmoji}\n  ${shortDesc}\n`;
     }
-    if (tickets.length > 10) {
-      message += `   ... dan ${tickets.length - 10} tiket lainnya\n`;
+    if (tickets.length > 5) {
+      message += `  _+${tickets.length - 5} lainnya_\n`;
     }
-    message += `\n`;
   }
   
-  message += `💡 *Tips:* Ketik "cek status [nomor]" untuk melihat detail, contoh: _cek status LAP-20251201-001_`;
+  message += `\n💡 Ketik nomor untuk cek detail`;
   
   return message;
 }

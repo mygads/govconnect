@@ -84,6 +84,16 @@ async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
     status: event.status
   });
 
+  // Only send notification for completed status
+  // Skip notifications for: proses, pending, dibatalkan (by admin)
+  if (event.status !== 'selesai') {
+    logger.info('Skipping notification - only notify on completion', {
+      status: event.status,
+      id: event.complaint_id || event.ticket_id
+    });
+    return;
+  }
+
   const message = buildStatusUpdatedMessage({
     complaint_id: event.complaint_id,
     ticket_id: event.ticket_id,
