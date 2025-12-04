@@ -6,7 +6,7 @@
   "users": [
     {
       "name": "admin",
-      "password": "rabbitmq_secret_2025",
+      "password": "rabbitmq_govconnect",
       "tags": ["administrator"]
     }
   ],
