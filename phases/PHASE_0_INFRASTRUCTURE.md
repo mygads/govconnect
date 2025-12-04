@@ -394,7 +394,6 @@ WA_WEBHOOK_SECRET=
 
 # AI Provider (fill in Phase 2)
 GEMINI_API_KEY=
-OPENROUTER_API_KEY=
 
 # Dashboard JWT (fill in Phase 5)
 JWT_SECRET=

@@ -93,7 +93,6 @@ GENFITY_ACCOUNT_ID=your_account_id
 
 # LLM API
 GEMINI_API_KEY=your_gemini_api_key
-OPENROUTER_API_KEY=your_openrouter_api_key
 ```
 
 ### Step 5: SSL Certificate Setup
