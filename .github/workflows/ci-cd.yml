@@ -53,21 +53,21 @@ jobs:
             ${{ runner.os }}-pnpm-store-${{ matrix.service }}-
 
       - name: Install dependencies
-        working-directory: govconnect/govconnect-${{ matrix.service }}
+        working-directory: govconnect-${{ matrix.service }}
         run: pnpm install --frozen-lockfile
 
       - name: Lint
-        working-directory: govconnect/govconnect-${{ matrix.service }}
+        working-directory: govconnect-${{ matrix.service }}
         run: pnpm lint
         continue-on-error: true
 
       - name: Type check
-        working-directory: govconnect/govconnect-${{ matrix.service }}
+        working-directory: govconnect-${{ matrix.service }}
         run: pnpm tsc --noEmit
         continue-on-error: true
 
       - name: Run tests
-        working-directory: govconnect/govconnect-${{ matrix.service }}
+        working-directory: govconnect-${{ matrix.service }}
         run: pnpm test
         continue-on-error: true
         env:
@@ -120,7 +120,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: govconnect/govconnect-${{ matrix.service }}
+          context: govconnect-${{ matrix.service }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -143,7 +143,7 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
-          scan-ref: 'govconnect/'
+          scan-ref: '.'
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
           format: 'table'
@@ -170,8 +170,8 @@ jobs:
           script: |
             cd /opt/govconnect
             git pull origin main
-            docker-compose -f docker-compose.prod.yml pull
-            docker-compose -f docker-compose.prod.yml up -d
+            docker compose pull
+            docker compose up -d
             docker system prune -f
             echo "Staging deployment completed at $(date)"
         continue-on-error: true
