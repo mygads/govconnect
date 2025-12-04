@@ -13,19 +13,14 @@
 # │ 1. Initialize Swarm (sekali saja):                                              │
 # │    docker swarm init                                                            │
 # │                                                                                 │
-# │ 2. Create secrets:                                                              │
-# │    echo "your-password" | docker secret create postgres_password -              │
-# │    echo "your-password" | docker secret create rabbitmq_password -              │
-# │    echo "your-key" | docker secret create internal_api_key -                    │
-# │    echo "your-key" | docker secret create gemini_api_key -                      │
-# │    echo "your-secret" | docker secret create jwt_secret -                       │
+# │ 2. Copy .env.production to server:                                              │
+# │    scp .env.production server:/opt/govconnect/.env                              │
 # │                                                                                 │
 # │ 3. Deploy stack:                                                                │
 # │    docker stack deploy -c docker-compose.swarm.yml govconnect                   │
 # │                                                                                 │
 # │ 4. Update service (auto rolling update):                                        │
-# │    docker service update --image ghcr.io/mygads/govconnect-ai-service:latest \  │
-# │      govconnect_ai-service                                                      │
+# │    docker service update --force govconnect_ai-service                          │
 # │                                                                                 │
 # │ 5. Rollback if needed:                                                          │
 # │    docker service rollback govconnect_ai-service                                │
@@ -52,10 +47,8 @@ services:
       - "max_connections=200"
     environment:
       POSTGRES_DB: govconnect
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-    secrets:
-      - postgres_password
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgree_govconnect}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/init-databases.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -86,11 +79,9 @@ services:
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     environment:
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS_FILE: /run/secrets/rabbitmq_password
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbitmq_govconnect}
       RABBITMQ_DEFAULT_VHOST: govconnect
-    secrets:
-      - rabbitmq_password
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -127,16 +118,19 @@ services:
 
   channel-service:
     image: ghcr.io/mygads/govconnect-channel-service:${IMAGE_TAG:-latest}
+    build:
+      context: ./govconnect-channel-service
+      dockerfile: Dockerfile
     ports:
       - "3001:3001"
     environment:
       NODE_ENV: production
       PORT: 3001
       SERVICE_NAME: channel-service
-      DATABASE_URL: postgresql://postgres:postgree_govconnect@postgres:5432/govconnect?schema=channel
-      RABBITMQ_URL: amqp://admin:rabbitmq_govconnect@rabbitmq:5672/govconnect
-      INTERNAL_API_KEY_FILE: /run/secrets/internal_api_key
-      WA_WEBHOOK_VERIFY_TOKEN: ${WA_WEBHOOK_VERIFY_TOKEN:-govconnect_verify_token_2025}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgree_govconnect}@postgres:5432/govconnect?schema=channel
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-rabbitmq_govconnect}@rabbitmq:5672/govconnect
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-internal_api_key_govconnect}
+      WA_WEBHOOK_VERIFY_TOKEN: ${WA_WEBHOOK_VERIFY_TOKEN:-}
       WA_API_URL: ${WA_API_URL:-https://api-wa.genfity.com/wa}
       WA_ACCESS_TOKEN: ${WA_ACCESS_TOKEN:-govconnect}
       CASE_SERVICE_URL: http://case-service:3003
@@ -144,12 +138,9 @@ services:
       MEDIA_STORAGE_PATH: /app/uploads
       MEDIA_INTERNAL_URL: http://channel-service:3001/uploads
       MEDIA_PUBLIC_URL: ${MEDIA_PUBLIC_URL:-https://govconnect.my.id/uploads}
-      # Message batching - wait for more messages before sending to AI
       MESSAGE_BATCH_DELAY_MS: ${MESSAGE_BATCH_DELAY_MS:-5000}
       MAX_BATCH_SIZE: ${MAX_BATCH_SIZE:-10}
-      LOG_LEVEL: info
-    secrets:
-      - internal_api_key
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - channel-uploads:/app/uploads
     networks:
@@ -185,26 +176,26 @@ services:
 
   ai-service:
     image: ghcr.io/mygads/govconnect-ai-service:${IMAGE_TAG:-latest}
+    build:
+      context: ./govconnect-ai-service
+      dockerfile: Dockerfile
     ports:
       - "3002:3002"
     environment:
       NODE_ENV: production
       PORT: 3002
       SERVICE_NAME: ai-service
-      RABBITMQ_URL: amqp://admin:rabbitmq_govconnect@rabbitmq:5672/govconnect
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-rabbitmq_govconnect}@rabbitmq:5672/govconnect
       CHANNEL_SERVICE_URL: http://channel-service:3001
       CASE_SERVICE_URL: http://case-service:3003
       DASHBOARD_SERVICE_URL: http://dashboard:3000
-      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
-      INTERNAL_API_KEY_FILE: /run/secrets/internal_api_key
-      LLM_TEMPERATURE: 0.3
-      LLM_MAX_TOKENS: 2000
-      LLM_TIMEOUT_MS: 30000
-      MAX_HISTORY_MESSAGES: 30
-      LOG_LEVEL: info
-    secrets:
-      - internal_api_key
-      - gemini_api_key
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-internal_api_key_govconnect}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.3}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-2000}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-30000}
+      MAX_HISTORY_MESSAGES: ${MAX_HISTORY_MESSAGES:-30}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ai-service-data:/app/data
     networks:
@@ -240,18 +231,19 @@ services:
 
   case-service:
     image: ghcr.io/mygads/govconnect-case-service:${IMAGE_TAG:-latest}
+    build:
+      context: ./govconnect-case-service
+      dockerfile: Dockerfile
     ports:
       - "3003:3003"
     environment:
       NODE_ENV: production
       PORT: 3003
       SERVICE_NAME: case-service
-      DATABASE_URL: postgresql://postgres:postgree_govconnect@postgres:5432/govconnect?schema=cases
-      RABBITMQ_URL: amqp://admin:rabbitmq_govconnect@rabbitmq:5672/govconnect
-      INTERNAL_API_KEY_FILE: /run/secrets/internal_api_key
-      LOG_LEVEL: info
-    secrets:
-      - internal_api_key
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgree_govconnect}@postgres:5432/govconnect?schema=cases
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-rabbitmq_govconnect}@rabbitmq:5672/govconnect
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-internal_api_key_govconnect}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     networks:
       - govconnect-network
     healthcheck:
@@ -285,19 +277,20 @@ services:
 
   notification-service:
     image: ghcr.io/mygads/govconnect-notification-service:${IMAGE_TAG:-latest}
+    build:
+      context: ./govconnect-notification-service
+      dockerfile: Dockerfile
     ports:
       - "3004:3004"
     environment:
       NODE_ENV: production
       PORT: 3004
       SERVICE_NAME: notification-service
-      DATABASE_URL: postgresql://postgres:postgree_govconnect@postgres:5432/govconnect?schema=notification
-      RABBITMQ_URL: amqp://admin:rabbitmq_govconnect@rabbitmq:5672/govconnect
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgree_govconnect}@postgres:5432/govconnect?schema=notification
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-rabbitmq_govconnect}@rabbitmq:5672/govconnect
       CHANNEL_SERVICE_URL: http://channel-service:3001
-      INTERNAL_API_KEY_FILE: /run/secrets/internal_api_key
-      LOG_LEVEL: info
-    secrets:
-      - internal_api_key
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-internal_api_key_govconnect}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     networks:
       - govconnect-network
     healthcheck:
@@ -331,20 +324,20 @@ services:
 
   dashboard:
     image: ghcr.io/mygads/govconnect-dashboard:${IMAGE_TAG:-latest}
+    build:
+      context: ./govconnect-dashboard
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgree_govconnect@postgres:5432/govconnect?schema=dashboard
-      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgree_govconnect}@postgres:5432/govconnect?schema=dashboard
+      JWT_SECRET: ${JWT_SECRET:-jwt_secret_govconnect}
       CASE_SERVICE_URL: http://case-service:3003
       CHANNEL_SERVICE_URL: http://channel-service:3001
       AI_SERVICE_URL: http://ai-service:3002
-      INTERNAL_API_KEY_FILE: /run/secrets/internal_api_key
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-internal_api_key_govconnect}
       NEXT_PUBLIC_APP_NAME: "GovConnect Dashboard"
-    secrets:
-      - internal_api_key
-      - jwt_secret
     networks:
       - govconnect-network
     healthcheck:
@@ -425,21 +418,6 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
-
-# ===================================================================================
-# SECRETS (Encrypted, secure)
-# ===================================================================================
-secrets:
-  postgres_password:
-    external: true
-  rabbitmq_password:
-    external: true
-  internal_api_key:
-    external: true
-  gemini_api_key:
-    external: true
-  jwt_secret:
-    external: true
 
 # ===================================================================================
 # NETWORKS
