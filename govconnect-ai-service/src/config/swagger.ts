@@ -35,8 +35,13 @@ AI Service adalah **otak AI** untuk sistem GovConnect.
       { url: 'https://api.govconnect.my.id/api/ai', description: 'Production' },
     ],
     tags: [
-      { name: 'AI', description: 'AI processing endpoints' },
-      { name: 'Health', description: 'Health checks' },
+      { name: 'Health', description: 'Health check endpoints' },
+      { name: 'Model Stats', description: 'LLM model statistics' },
+      { name: 'Analytics', description: 'AI analytics and usage data' },
+      { name: 'Rate Limit', description: 'Rate limiting and blacklist management' },
+      { name: 'Embeddings', description: 'Embedding and vector stats' },
+      { name: 'Circuit Breaker', description: 'Circuit breaker status' },
+      { name: 'Document Processing', description: 'Internal document processing and embedding endpoints' },
     ],
     components: {
       securitySchemes: {
@@ -105,7 +110,7 @@ AI Service adalah **otak AI** untuk sistem GovConnect.
       },
     },
   },
-  apis: ['./src/routes/*.ts'],
+  apis: ['./src/app.ts', './src/routes/*.ts'],
 };
 
 export const swaggerSpec = swaggerJsdoc(options);

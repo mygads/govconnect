@@ -92,7 +92,7 @@ Notification Service mengelola **pengiriman notifikasi** ke warga melalui WhatsA
       },
     },
   },
-  apis: ['./src/routes/*.ts'],
+  apis: ['./src/app.ts', './src/routes/*.ts'],
 };
 
 export const swaggerSpec = swaggerJsdoc(options);

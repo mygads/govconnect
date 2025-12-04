@@ -34,21 +34,109 @@ const router = Router();
 router.use(internalAuth);
 
 /**
- * GET /internal/messages?wa_user_id=xxx&limit=30
- * Get message history for a user
+ * @swagger
+ * /internal/messages:
+ *   get:
+ *     tags: [Internal]
+ *     summary: Get message history
+ *     description: Get message history for a specific WhatsApp user (FIFO 30 messages)
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: query
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: WhatsApp user ID (phone number)
+ *         example: "6281234567890"
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 30
+ *         description: Maximum number of messages to return
+ *     responses:
+ *       200:
+ *         description: Message history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 messages:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Message'
+ *       401:
+ *         description: Unauthorized - Invalid API key
+ *       400:
+ *         description: Bad request - Missing wa_user_id
  */
 router.get('/messages', validateGetMessages, getMessages);
 
 /**
- * POST /internal/send
- * Send a message via WhatsApp
+ * @swagger
+ * /internal/send:
+ *   post:
+ *     tags: [Internal]
+ *     summary: Send WhatsApp message
+ *     description: Send a message to a WhatsApp user via Genfity gateway
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/SendMessageRequest'
+ *     responses:
+ *       200:
+ *         description: Message sent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SendMessageResponse'
+ *       401:
+ *         description: Unauthorized
+ *       400:
+ *         description: Bad request
+ *       500:
+ *         description: Failed to send message
  */
 router.post('/send', validateSendMessage, sendMessage);
 
 /**
- * POST /internal/typing
- * Send typing indicator
- * Body: { wa_user_id: "628xxx", state: "composing" | "paused" | "stop" }
+ * @swagger
+ * /internal/typing:
+ *   post:
+ *     tags: [Internal]
+ *     summary: Send typing indicator
+ *     description: Send typing indicator to show bot is processing
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - wa_user_id
+ *               - state
+ *             properties:
+ *               wa_user_id:
+ *                 type: string
+ *                 example: "6281234567890"
+ *               state:
+ *                 type: string
+ *                 enum: [composing, paused, stop]
+ *                 example: "composing"
+ *     responses:
+ *       200:
+ *         description: Typing indicator sent
+ *       401:
+ *         description: Unauthorized
  */
 router.post('/typing', setTyping);
 
@@ -57,50 +145,150 @@ router.post('/typing', setTyping);
 // =====================================================
 
 /**
- * GET /internal/whatsapp/status
- * Get WhatsApp session status
+ * @swagger
+ * /internal/whatsapp/status:
+ *   get:
+ *     tags: [WhatsApp Session]
+ *     summary: Get WhatsApp session status
+ *     description: Get current WhatsApp connection status and info
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: Session status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 connected:
+ *                   type: boolean
+ *                 phone:
+ *                   type: string
+ *                 name:
+ *                   type: string
  */
 router.get('/whatsapp/status', getStatus);
 
 /**
- * POST /internal/whatsapp/connect
- * Connect WhatsApp session
+ * @swagger
+ * /internal/whatsapp/connect:
+ *   post:
+ *     tags: [WhatsApp Session]
+ *     summary: Connect WhatsApp session
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: Connection initiated
  */
 router.post('/whatsapp/connect', connect);
 
 /**
- * POST /internal/whatsapp/disconnect
- * Disconnect WhatsApp session (keeps session data)
+ * @swagger
+ * /internal/whatsapp/disconnect:
+ *   post:
+ *     tags: [WhatsApp Session]
+ *     summary: Disconnect WhatsApp session
+ *     description: Disconnect but keep session data for reconnection
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: Disconnected
  */
 router.post('/whatsapp/disconnect', disconnect);
 
 /**
- * POST /internal/whatsapp/logout
- * Logout WhatsApp session (requires QR rescan)
+ * @swagger
+ * /internal/whatsapp/logout:
+ *   post:
+ *     tags: [WhatsApp Session]
+ *     summary: Logout WhatsApp session
+ *     description: Full logout - requires QR scan to reconnect
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: Logged out
  */
 router.post('/whatsapp/logout', logout);
 
 /**
- * GET /internal/whatsapp/qr
- * Get QR code for authentication
+ * @swagger
+ * /internal/whatsapp/qr:
+ *   get:
+ *     tags: [WhatsApp Session]
+ *     summary: Get QR code for authentication
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: QR code data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 qr:
+ *                   type: string
+ *                   description: QR code string or base64 image
  */
 router.get('/whatsapp/qr', getQR);
 
 /**
- * POST /internal/whatsapp/pairphone
- * Pair phone for authentication
+ * @swagger
+ * /internal/whatsapp/pairphone:
+ *   post:
+ *     tags: [WhatsApp Session]
+ *     summary: Pair phone for authentication
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               phone:
+ *                 type: string
+ *                 example: "6281234567890"
+ *     responses:
+ *       200:
+ *         description: Pairing code sent
  */
 router.post('/whatsapp/pairphone', pair);
 
 /**
- * GET /internal/whatsapp/settings
- * Get session settings
+ * @swagger
+ * /internal/whatsapp/settings:
+ *   get:
+ *     tags: [WhatsApp Session]
+ *     summary: Get session settings
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: Current settings
  */
 router.get('/whatsapp/settings', getSettings);
 
 /**
- * PATCH /internal/whatsapp/settings
- * Update session settings
+ * @swagger
+ * /internal/whatsapp/settings:
+ *   patch:
+ *     tags: [WhatsApp Session]
+ *     summary: Update session settings
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Settings updated
  */
 router.patch('/whatsapp/settings', updateSettings);
 
@@ -109,65 +297,269 @@ router.patch('/whatsapp/settings', updateSettings);
 // =====================================================
 
 /**
- * POST /internal/takeover/:wa_user_id
- * Start takeover for a user (admin takes control from AI)
- * Body: { admin_id: string, admin_name: string, reason?: string }
+ * @swagger
+ * /internal/takeover/{wa_user_id}:
+ *   post:
+ *     tags: [Live Chat]
+ *     summary: Start takeover
+ *     description: Admin takes control of conversation from AI
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: "6281234567890"
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - admin_id
+ *               - admin_name
+ *             properties:
+ *               admin_id:
+ *                 type: string
+ *               admin_name:
+ *                 type: string
+ *               reason:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Takeover started
+ *       409:
+ *         description: Already in takeover by another admin
  */
 router.post('/takeover/:wa_user_id', handleStartTakeover);
 
 /**
- * DELETE /internal/takeover/:wa_user_id
- * End takeover for a user (return control to AI)
+ * @swagger
+ * /internal/takeover/{wa_user_id}:
+ *   delete:
+ *     tags: [Live Chat]
+ *     summary: End takeover
+ *     description: Return control to AI
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Takeover ended
  */
 router.delete('/takeover/:wa_user_id', handleEndTakeover);
 
 /**
- * GET /internal/takeover
- * Get all active takeover sessions
+ * @swagger
+ * /internal/takeover:
+ *   get:
+ *     tags: [Live Chat]
+ *     summary: Get active takeovers
+ *     description: List all conversations currently in takeover mode
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: List of active takeovers
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   wa_user_id:
+ *                     type: string
+ *                   admin_id:
+ *                     type: string
+ *                   admin_name:
+ *                     type: string
+ *                   started_at:
+ *                     type: string
+ *                     format: date-time
  */
 router.get('/takeover', handleGetActiveTakeovers);
 
 /**
- * GET /internal/takeover/:wa_user_id/status
- * Check if a user is in takeover mode
+ * @swagger
+ * /internal/takeover/{wa_user_id}/status:
+ *   get:
+ *     tags: [Live Chat]
+ *     summary: Check takeover status
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Takeover status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 is_takeover:
+ *                   type: boolean
+ *                 admin_id:
+ *                   type: string
+ *                 admin_name:
+ *                   type: string
  */
 router.get('/takeover/:wa_user_id/status', handleCheckTakeover);
 
 /**
- * GET /internal/conversations
- * Get all conversations
- * Query: { status?: 'all' | 'ai' | 'takeover' }
+ * @swagger
+ * /internal/conversations:
+ *   get:
+ *     tags: [Live Chat]
+ *     summary: Get all conversations
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [all, ai, takeover]
+ *         description: Filter by conversation status
+ *     responses:
+ *       200:
+ *         description: List of conversations
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Conversation'
  */
 router.get('/conversations', handleGetConversations);
 
 /**
- * GET /internal/conversations/:wa_user_id
- * Get a specific conversation with message history
+ * @swagger
+ * /internal/conversations/{wa_user_id}:
+ *   get:
+ *     tags: [Live Chat]
+ *     summary: Get conversation detail
+ *     description: Get a specific conversation with message history
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Conversation with messages
  */
 router.get('/conversations/:wa_user_id', handleGetConversation);
 
 /**
- * POST /internal/conversations/:wa_user_id/send
- * Send a message to a user (admin sending)
- * Body: { message: string }
+ * @swagger
+ * /internal/conversations/{wa_user_id}/send:
+ *   post:
+ *     tags: [Live Chat]
+ *     summary: Admin send message
+ *     description: Send a message as admin (during takeover)
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - message
+ *             properties:
+ *               message:
+ *                 type: string
+ *                 example: "Terima kasih, laporan Anda sudah kami terima"
+ *     responses:
+ *       200:
+ *         description: Message sent
  */
 router.post('/conversations/:wa_user_id/send', handleAdminSendMessage);
 
 /**
- * POST /internal/conversations/:wa_user_id/read
- * Mark a conversation as read
+ * @swagger
+ * /internal/conversations/{wa_user_id}/read:
+ *   post:
+ *     tags: [Live Chat]
+ *     summary: Mark as read
+ *     description: Mark a conversation as read
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Marked as read
  */
 router.post('/conversations/:wa_user_id/read', handleMarkAsRead);
 
 /**
- * POST /internal/conversations/:wa_user_id/retry
- * Retry AI processing for a failed message
+ * @swagger
+ * /internal/conversations/{wa_user_id}/retry:
+ *   post:
+ *     tags: [Live Chat]
+ *     summary: Retry AI processing
+ *     description: Retry AI processing for a failed message
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Retry initiated
  */
 router.post('/conversations/:wa_user_id/retry', handleRetryAI);
 
 /**
- * DELETE /internal/conversations/:wa_user_id
- * Delete conversation and all message history for a user
+ * @swagger
+ * /internal/conversations/{wa_user_id}:
+ *   delete:
+ *     tags: [Live Chat]
+ *     summary: Delete conversation
+ *     description: Delete conversation and all message history
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Conversation deleted
  */
 router.delete('/conversations/:wa_user_id', handleDeleteConversation);
 

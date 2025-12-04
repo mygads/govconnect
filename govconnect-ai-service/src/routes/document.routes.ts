@@ -43,8 +43,41 @@ function verifyInternalKey(req: Request, res: Response, next: Function) {
 }
 
 /**
- * POST /api/internal/process-document
- * Process a document: chunk text and generate embeddings
+ * @swagger
+ * /api/internal/process-document:
+ *   post:
+ *     tags: [Document Processing]
+ *     summary: Process a document
+ *     description: Process a document - chunk text and generate embeddings
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - documentId
+ *               - content
+ *             properties:
+ *               documentId:
+ *                 type: string
+ *               content:
+ *                 type: string
+ *               mimeType:
+ *                 type: string
+ *               title:
+ *                 type: string
+ *               category:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Document processed successfully
+ *       400:
+ *         description: Invalid request
+ *       403:
+ *         description: Unauthorized
  */
 router.post('/process-document', verifyInternalKey, async (req: Request, res: Response) => {
   const { documentId, content, mimeType, title, category } = req.body;
@@ -118,8 +151,37 @@ router.post('/process-document', verifyInternalKey, async (req: Request, res: Re
 });
 
 /**
- * POST /api/internal/embed-knowledge
- * Generate embedding for a single knowledge item
+ * @swagger
+ * /api/internal/embed-knowledge:
+ *   post:
+ *     tags: [Document Processing]
+ *     summary: Embed single knowledge item
+ *     description: Generate embedding for a single knowledge item
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - knowledgeId
+ *               - content
+ *             properties:
+ *               knowledgeId:
+ *                 type: string
+ *               content:
+ *                 type: string
+ *               title:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Embedding generated successfully
+ *       400:
+ *         description: Invalid request
+ *       403:
+ *         description: Unauthorized
  */
 router.post('/embed-knowledge', verifyInternalKey, async (req: Request, res: Response) => {
   const { knowledgeId, content, title } = req.body;
@@ -176,8 +238,19 @@ router.post('/embed-knowledge', verifyInternalKey, async (req: Request, res: Res
 });
 
 /**
- * POST /api/internal/embed-all-knowledge
- * Generate embeddings for all knowledge items that don't have embeddings
+ * @swagger
+ * /api/internal/embed-all-knowledge:
+ *   post:
+ *     tags: [Document Processing]
+ *     summary: Embed all knowledge items
+ *     description: Generate embeddings for all knowledge items without embeddings
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: Batch embedding completed
+ *       403:
+ *         description: Unauthorized
  */
 router.post('/embed-all-knowledge', verifyInternalKey, async (req: Request, res: Response) => {
   logger.info('Starting bulk knowledge embedding');
@@ -298,8 +371,44 @@ async function updateDocumentStatus(
 // ==================== SEMANTIC CHUNKING ENDPOINTS ====================
 
 /**
- * POST /api/internal/process-document-semantic
- * Process document using semantic chunking (paragraph-aware)
+ * @swagger
+ * /api/internal/process-document-semantic:
+ *   post:
+ *     tags: [Document Processing]
+ *     summary: Process document with semantic chunking
+ *     description: Process document using paragraph-aware semantic chunking
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - documentId
+ *               - content
+ *             properties:
+ *               documentId:
+ *                 type: string
+ *               content:
+ *                 type: string
+ *               mimeType:
+ *                 type: string
+ *               title:
+ *                 type: string
+ *               category:
+ *                 type: string
+ *               maxChunkSize:
+ *                 type: integer
+ *                 default: 1500
+ *     responses:
+ *       200:
+ *         description: Document processed with semantic chunking
+ *       400:
+ *         description: Invalid request
+ *       403:
+ *         description: Unauthorized
  */
 router.post('/process-document-semantic', verifyInternalKey, async (req: Request, res: Response) => {
   const { documentId, content, mimeType, title, category, maxChunkSize } = req.body;
@@ -377,8 +486,34 @@ router.post('/process-document-semantic', verifyInternalKey, async (req: Request
 // ==================== EMBEDDING JOB QUEUE ENDPOINTS ====================
 
 /**
- * POST /api/internal/embedding-jobs/knowledge
- * Queue embedding job for a knowledge item (async, non-blocking)
+ * @swagger
+ * /api/internal/embedding-jobs/knowledge:
+ *   post:
+ *     tags: [Document Processing]
+ *     summary: Queue knowledge embedding job
+ *     description: Queue async embedding job for a knowledge item
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - knowledgeId
+ *             properties:
+ *               knowledgeId:
+ *                 type: string
+ *               priority:
+ *                 type: integer
+ *               waitForCompletion:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Job queued or completed
+ *       403:
+ *         description: Unauthorized
  */
 router.post('/embedding-jobs/knowledge', verifyInternalKey, async (req: Request, res: Response) => {
   const { knowledgeId, priority, waitForCompletion } = req.body;
@@ -417,8 +552,34 @@ router.post('/embedding-jobs/knowledge', verifyInternalKey, async (req: Request,
 });
 
 /**
- * POST /api/internal/embedding-jobs/document
- * Queue embedding job for a document (async, non-blocking)
+ * @swagger
+ * /api/internal/embedding-jobs/document:
+ *   post:
+ *     tags: [Document Processing]
+ *     summary: Queue document embedding job
+ *     description: Queue async embedding job for a document
+ *     security:
+ *       - InternalApiKey: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - documentId
+ *             properties:
+ *               documentId:
+ *                 type: string
+ *               priority:
+ *                 type: integer
+ *               waitForCompletion:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Job queued or completed
+ *       403:
+ *         description: Unauthorized
  */
 router.post('/embedding-jobs/document', verifyInternalKey, async (req: Request, res: Response) => {
   const { documentId, priority, waitForCompletion } = req.body;
@@ -457,8 +618,19 @@ router.post('/embedding-jobs/document', verifyInternalKey, async (req: Request, 
 });
 
 /**
- * POST /api/internal/embedding-jobs/batch-knowledge
- * Queue batch embedding regeneration for all knowledge items
+ * @swagger
+ * /api/internal/embedding-jobs/batch-knowledge:
+ *   post:
+ *     tags: [Document Processing]
+ *     summary: Queue batch knowledge embedding
+ *     description: Queue batch embedding regeneration for all knowledge items
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: Batch job queued
+ *       403:
+ *         description: Unauthorized
  */
 router.post('/embedding-jobs/batch-knowledge', verifyInternalKey, async (req: Request, res: Response) => {
   logger.info('Queueing batch knowledge embedding job');
@@ -473,8 +645,27 @@ router.post('/embedding-jobs/batch-knowledge', verifyInternalKey, async (req: Re
 });
 
 /**
- * GET /api/internal/embedding-jobs/:jobId
- * Get status of an embedding job
+ * @swagger
+ * /api/internal/embedding-jobs/{jobId}:
+ *   get:
+ *     tags: [Document Processing]
+ *     summary: Get embedding job status
+ *     description: Get status of an embedding job
+ *     security:
+ *       - InternalApiKey: []
+ *     parameters:
+ *       - in: path
+ *         name: jobId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Job status
+ *       404:
+ *         description: Job not found
+ *       403:
+ *         description: Unauthorized
  */
 router.get('/embedding-jobs/:jobId', verifyInternalKey, async (req: Request, res: Response) => {
   const { jobId } = req.params;
@@ -489,8 +680,19 @@ router.get('/embedding-jobs/:jobId', verifyInternalKey, async (req: Request, res
 });
 
 /**
- * GET /api/internal/embedding-jobs-stats
- * Get embedding job queue statistics
+ * @swagger
+ * /api/internal/embedding-jobs-stats:
+ *   get:
+ *     tags: [Document Processing]
+ *     summary: Get embedding job queue stats
+ *     description: Get embedding job queue statistics
+ *     security:
+ *       - InternalApiKey: []
+ *     responses:
+ *       200:
+ *         description: Queue statistics
+ *       403:
+ *         description: Unauthorized
  */
 router.get('/embedding-jobs-stats', verifyInternalKey, async (req: Request, res: Response) => {
   const stats = getEmbeddingQueueStats();

@@ -54,6 +54,14 @@ Channel Service adalah **pintu gerbang WhatsApp** untuk sistem GovConnect.
         description: 'Internal service-to-service APIs',
       },
       {
+        name: 'WhatsApp Session',
+        description: 'WhatsApp session management (connect, disconnect, QR)',
+      },
+      {
+        name: 'Live Chat',
+        description: 'Live chat takeover and conversation management',
+      },
+      {
         name: 'Health',
         description: 'Health check endpoints',
       },

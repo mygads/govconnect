@@ -36,7 +36,21 @@ app.get('/api-docs.json', (req, res) => {
   res.send(swaggerSpec);
 });
 
-// Health check endpoint
+/**
+ * @swagger
+ * /health:
+ *   get:
+ *     tags: [Health]
+ *     summary: Basic health check
+ *     description: Returns basic service health status
+ *     responses:
+ *       200:
+ *         description: Service is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ */
 app.get('/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
@@ -45,7 +59,27 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
-// RabbitMQ health check
+/**
+ * @swagger
+ * /health/rabbitmq:
+ *   get:
+ *     tags: [Health]
+ *     summary: RabbitMQ health check
+ *     description: Check RabbitMQ connectivity status
+ *     responses:
+ *       200:
+ *         description: RabbitMQ status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   enum: [connected, disconnected]
+ *                 service:
+ *                   type: string
+ */
 app.get('/health/rabbitmq', (req: Request, res: Response) => {
   const connected = isRabbitMQConnected();
   res.json({
@@ -54,7 +88,34 @@ app.get('/health/rabbitmq', (req: Request, res: Response) => {
   });
 });
 
-// Services health check
+/**
+ * @swagger
+ * /health/services:
+ *   get:
+ *     tags: [Health]
+ *     summary: Dependent services health check
+ *     description: Check connectivity to Channel Service and Case Service
+ *     responses:
+ *       200:
+ *         description: Services status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   enum: [ok, degraded]
+ *                 services:
+ *                   type: object
+ *                   properties:
+ *                     channelService:
+ *                       type: string
+ *                       enum: [healthy, unhealthy]
+ *                     caseService:
+ *                       type: string
+ *                       enum: [healthy, unhealthy]
+ */
 app.get('/health/services', async (req: Request, res: Response) => {
   try {
     // Check Channel Service
@@ -80,7 +141,44 @@ app.get('/health/services', async (req: Request, res: Response) => {
   }
 });
 
-// LLM Model Statistics endpoint
+/**
+ * @swagger
+ * /stats/models:
+ *   get:
+ *     tags: [Model Stats]
+ *     summary: Get all LLM model statistics
+ *     description: Returns statistics for all LLM models used by the AI service
+ *     responses:
+ *       200:
+ *         description: Model statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 summary:
+ *                   type: object
+ *                   properties:
+ *                     totalRequests:
+ *                       type: integer
+ *                     lastUpdated:
+ *                       type: string
+ *                     totalModels:
+ *                       type: integer
+ *                 models:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       model:
+ *                         type: string
+ *                       successRate:
+ *                         type: string
+ *                       totalCalls:
+ *                         type: integer
+ *                       avgResponseTimeMs:
+ *                         type: number
+ */
 app.get('/stats/models', (req: Request, res: Response) => {
   try {
     const stats = modelStatsService.getAllStats();
@@ -118,7 +216,26 @@ app.get('/stats/models', (req: Request, res: Response) => {
   }
 });
 
-// Detailed model stats (including error history)
+/**
+ * @swagger
+ * /stats/models/{modelName}:
+ *   get:
+ *     tags: [Model Stats]
+ *     summary: Get detailed model statistics
+ *     description: Returns detailed stats including error history for a specific model
+ *     parameters:
+ *       - in: path
+ *         name: modelName
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Model name (e.g., gemini-1.5-flash)
+ *     responses:
+ *       200:
+ *         description: Detailed model statistics
+ *       404:
+ *         description: Model not found
+ */
 app.get('/stats/models/:modelName', (req: Request, res: Response) => {
   try {
     const { modelName } = req.params;
@@ -146,7 +263,17 @@ app.get('/stats/models/:modelName', (req: Request, res: Response) => {
 // AI Analytics Endpoints
 // ===========================================
 
-// Get AI analytics summary
+/**
+ * @swagger
+ * /stats/analytics:
+ *   get:
+ *     tags: [Analytics]
+ *     summary: Get AI analytics summary
+ *     description: Returns overall AI processing analytics summary
+ *     responses:
+ *       200:
+ *         description: Analytics summary
+ */
 app.get('/stats/analytics', (req: Request, res: Response) => {
   try {
     const summary = aiAnalyticsService.getSummary();
@@ -159,7 +286,17 @@ app.get('/stats/analytics', (req: Request, res: Response) => {
   }
 });
 
-// Get intent distribution
+/**
+ * @swagger
+ * /stats/analytics/intents:
+ *   get:
+ *     tags: [Analytics]
+ *     summary: Get intent distribution
+ *     description: Returns distribution of detected intents
+ *     responses:
+ *       200:
+ *         description: Intent distribution data
+ */
 app.get('/stats/analytics/intents', (req: Request, res: Response) => {
   try {
     const distribution = aiAnalyticsService.getIntentDistribution();
@@ -172,7 +309,17 @@ app.get('/stats/analytics/intents', (req: Request, res: Response) => {
   }
 });
 
-// Get conversation flow patterns
+/**
+ * @swagger
+ * /stats/analytics/flow:
+ *   get:
+ *     tags: [Analytics]
+ *     summary: Get conversation flow patterns
+ *     description: Returns analysis of conversation flow patterns
+ *     responses:
+ *       200:
+ *         description: Conversation flow data
+ */
 app.get('/stats/analytics/flow', (req: Request, res: Response) => {
   try {
     const flow = aiAnalyticsService.getConversationFlow();
@@ -185,7 +332,17 @@ app.get('/stats/analytics/flow', (req: Request, res: Response) => {
   }
 });
 
-// Get token usage breakdown
+/**
+ * @swagger
+ * /stats/analytics/tokens:
+ *   get:
+ *     tags: [Analytics]
+ *     summary: Get token usage breakdown
+ *     description: Returns breakdown of token usage by model
+ *     responses:
+ *       200:
+ *         description: Token usage data
+ */
 app.get('/stats/analytics/tokens', (req: Request, res: Response) => {
   try {
     const tokens = aiAnalyticsService.getTokenUsageBreakdown();
@@ -198,7 +355,17 @@ app.get('/stats/analytics/tokens', (req: Request, res: Response) => {
   }
 });
 
-// Get all analytics data (for export)
+/**
+ * @swagger
+ * /stats/analytics/full:
+ *   get:
+ *     tags: [Analytics]
+ *     summary: Get full analytics data
+ *     description: Returns all analytics data for export purposes
+ *     responses:
+ *       200:
+ *         description: Full analytics data
+ */
 app.get('/stats/analytics/full', (req: Request, res: Response) => {
   try {
     const data = aiAnalyticsService.getAllAnalytics();
@@ -215,7 +382,17 @@ app.get('/stats/analytics/full', (req: Request, res: Response) => {
 // Rate Limiter Endpoints
 // ===========================================
 
-// Get rate limiter config and stats
+/**
+ * @swagger
+ * /rate-limit:
+ *   get:
+ *     tags: [Rate Limit]
+ *     summary: Get rate limiter config and stats
+ *     description: Returns rate limiter configuration and current statistics
+ *     responses:
+ *       200:
+ *         description: Rate limit configuration and stats
+ */
 app.get('/rate-limit', (req: Request, res: Response) => {
   try {
     const stats = rateLimiterService.getStats();
@@ -236,7 +413,24 @@ app.get('/rate-limit', (req: Request, res: Response) => {
   }
 });
 
-// Check rate limit for specific user
+/**
+ * @swagger
+ * /rate-limit/check/{wa_user_id}:
+ *   get:
+ *     tags: [Rate Limit]
+ *     summary: Check rate limit for user
+ *     description: Check rate limit status for a specific WhatsApp user
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: WhatsApp User ID
+ *     responses:
+ *       200:
+ *         description: User rate limit status
+ */
 app.get('/rate-limit/check/:wa_user_id', (req: Request, res: Response) => {
   try {
     const { wa_user_id } = req.params;
@@ -255,7 +449,17 @@ app.get('/rate-limit/check/:wa_user_id', (req: Request, res: Response) => {
   }
 });
 
-// Get blacklist
+/**
+ * @swagger
+ * /rate-limit/blacklist:
+ *   get:
+ *     tags: [Rate Limit]
+ *     summary: Get blacklist
+ *     description: Returns all blacklisted users
+ *     responses:
+ *       200:
+ *         description: Blacklist entries
+ */
 app.get('/rate-limit/blacklist', (req: Request, res: Response) => {
   try {
     const blacklist = rateLimiterService.getBlacklist();
@@ -271,7 +475,35 @@ app.get('/rate-limit/blacklist', (req: Request, res: Response) => {
   }
 });
 
-// Add to blacklist
+/**
+ * @swagger
+ * /rate-limit/blacklist:
+ *   post:
+ *     tags: [Rate Limit]
+ *     summary: Add user to blacklist
+ *     description: Add a WhatsApp user to the blacklist
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - wa_user_id
+ *               - reason
+ *             properties:
+ *               wa_user_id:
+ *                 type: string
+ *               reason:
+ *                 type: string
+ *               expiresInDays:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: User added to blacklist
+ *       400:
+ *         description: Missing required fields
+ */
 app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
   try {
     const { wa_user_id, reason, expiresInDays } = req.body;
@@ -297,7 +529,25 @@ app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
   }
 });
 
-// Remove from blacklist
+/**
+ * @swagger
+ * /rate-limit/blacklist/{wa_user_id}:
+ *   delete:
+ *     tags: [Rate Limit]
+ *     summary: Remove user from blacklist
+ *     description: Remove a WhatsApp user from the blacklist
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: User removed from blacklist
+ *       404:
+ *         description: User not in blacklist
+ */
 app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) => {
   try {
     const { wa_user_id } = req.params;
@@ -322,7 +572,25 @@ app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) =>
   }
 });
 
-// Reset user violations
+/**
+ * @swagger
+ * /rate-limit/reset/{wa_user_id}:
+ *   post:
+ *     tags: [Rate Limit]
+ *     summary: Reset user violations
+ *     description: Reset violation count for a WhatsApp user
+ *     parameters:
+ *       - in: path
+ *         name: wa_user_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Violations reset successfully
+ *       404:
+ *         description: User not found
+ */
 app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
   try {
     const { wa_user_id } = req.params;
@@ -354,7 +622,17 @@ app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
 // Mount document processing routes
 app.use('/api/internal', documentRoutes);
 
-// Embedding stats
+/**
+ * @swagger
+ * /stats/embeddings:
+ *   get:
+ *     tags: [Embeddings]
+ *     summary: Get embedding stats
+ *     description: Returns embedding service and vector cache statistics
+ *     responses:
+ *       200:
+ *         description: Embedding statistics
+ */
 app.get('/stats/embeddings', (req: Request, res: Response) => {
   try {
     const embeddingStats = getEmbeddingStats();
@@ -376,7 +654,17 @@ app.get('/stats/embeddings', (req: Request, res: Response) => {
 // Circuit Breaker Endpoints
 // ===========================================
 
-// Get circuit breaker status
+/**
+ * @swagger
+ * /stats/circuit-breaker:
+ *   get:
+ *     tags: [Circuit Breaker]
+ *     summary: Get circuit breaker status
+ *     description: Returns circuit breaker state and statistics
+ *     responses:
+ *       200:
+ *         description: Circuit breaker status
+ */
 app.get('/stats/circuit-breaker', (req: Request, res: Response) => {
   try {
     const stats = resilientHttp.getStats();
