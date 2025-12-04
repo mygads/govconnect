@@ -66,6 +66,14 @@ data:
   
   definitions.json: |
     {
+      "users": [
+        {
+          "name": "admin",
+          "password_hash": "BxJdvNbLDNYoQHNV/IyT7k5dVGHxRNHNPpyXaIXGfABGt4q4",
+          "hashing_algorithm": "rabbit_password_hashing_sha256",
+          "tags": ["administrator"]
+        }
+      ],
       "vhosts": [
         { "name": "govconnect" }
       ],
