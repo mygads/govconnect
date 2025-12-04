@@ -162,30 +162,6 @@ router.get('/by-status', async (req: Request, res: Response) => {
 })
 
 router.get('/trends', async (req: Request, res: Response) => {
- *         description: Trend analysis
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 period:
- *                   type: string
- *                 labels:
- *                   type: array
- *                   items:
- *                     type: string
- *                 trends:
- *                   type: object
- *                 predictions:
- *                   type: object
- *                 peakAnalysis:
- *                   type: object
- *                 categoryTrends:
- *                   type: array
- *                 summary:
- *                   type: object
- */
-router.get('/trends', async (req: Request, res: Response) => {
   try {
     const period = (req.query.period as string) || 'weekly' // weekly, monthly
     const now = new Date()
