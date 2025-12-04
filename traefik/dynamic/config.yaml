@@ -127,6 +127,59 @@ http:
       tls:
         certResolver: letsencrypt
 
+    # ==================== SWAGGER / API DOCS ====================
+    # Swagger UI for Channel Service
+    swagger-channel:
+      rule: "Host(`api.govconnect.my.id`) && PathPrefix(`/docs/channel`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - rewrite-docs-channel
+        - security-headers
+      service: channel-service
+      priority: 60
+      tls:
+        certResolver: letsencrypt
+
+    # Swagger UI for AI Service
+    swagger-ai:
+      rule: "Host(`api.govconnect.my.id`) && PathPrefix(`/docs/ai`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - rewrite-docs-ai
+        - security-headers
+      service: ai-service
+      priority: 60
+      tls:
+        certResolver: letsencrypt
+
+    # Swagger UI for Case Service
+    swagger-case:
+      rule: "Host(`api.govconnect.my.id`) && PathPrefix(`/docs/cases`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - rewrite-docs-cases
+        - security-headers
+      service: case-service
+      priority: 60
+      tls:
+        certResolver: letsencrypt
+
+    # Swagger UI for Notification Service
+    swagger-notification:
+      rule: "Host(`api.govconnect.my.id`) && PathPrefix(`/docs/notifications`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - rewrite-docs-notifications
+        - security-headers
+      service: notification-service
+      priority: 60
+      tls:
+        certResolver: letsencrypt
+
     # ==================== HEALTH ENDPOINTS ====================
     health-main:
       rule: "Host(`api.govconnect.my.id`) && Path(`/health`)"
@@ -417,6 +470,27 @@ http:
       stripPrefix:
         prefixes:
           - /api/notifications
+
+    # Rewrites for Swagger Docs - redirect to api-docs
+    rewrite-docs-channel:
+      replacePathRegex:
+        regex: "^/docs/channel(.*)"
+        replacement: "/api-docs$1"
+
+    rewrite-docs-ai:
+      replacePathRegex:
+        regex: "^/docs/ai(.*)"
+        replacement: "/api-docs$1"
+
+    rewrite-docs-cases:
+      replacePathRegex:
+        regex: "^/docs/cases(.*)"
+        replacement: "/api-docs$1"
+
+    rewrite-docs-notifications:
+      replacePathRegex:
+        regex: "^/docs/notifications(.*)"
+        replacement: "/api-docs$1"
 
     # Dashboard Basic Auth
     # admin:govconnect2025
