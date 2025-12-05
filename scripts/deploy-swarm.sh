@@ -27,11 +27,17 @@ if [ ! -f .env ]; then
   cp .env.production .env
 fi
 
-# 3. Stop existing docker-compose containers (if any)
+# 3. Load environment variables
+echo ">>> Loading environment variables..."
+set -a
+source .env
+set +a
+
+# 4. Stop existing docker-compose containers (if any)
 echo ">>> Stopping existing containers..."
 docker compose down --remove-orphans 2>/dev/null || true
 
-# 4. Initialize Swarm if not already
+# 5. Initialize Swarm if not already
 if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
   echo ">>> Initializing Docker Swarm..."
   INTERNAL_IP=$(hostname -I | awk '{print $1}')
@@ -40,22 +46,22 @@ else
   echo ">>> Docker Swarm already active"
 fi
 
-# 5. Build images locally
+# 6. Build images locally
 echo ""
 echo ">>> Building images..."
 docker compose -f docker-compose.swarm.yml build
 
-# 6. Deploy stack
+# 7. Deploy stack (env vars already loaded)
 echo ""
 echo ">>> Deploying stack..."
 docker stack deploy -c docker-compose.swarm.yml govconnect
 
-# 7. Wait for services to start
+# 8. Wait for services to start
 echo ""
 echo ">>> Waiting for services to start (30s)..."
 sleep 30
 
-# 8. Check service status
+# 9. Check service status
 echo ""
 echo "--- Service Status ---"
 docker stack services govconnect

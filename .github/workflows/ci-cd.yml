@@ -195,6 +195,11 @@ jobs:
             cd /opt/govconnect
             git pull origin main
             
+            # Load environment variables from .env
+            set -a
+            source .env
+            set +a
+            
             # Check what changed
             CHANNEL_CHANGED="${{ needs.detect-changes.outputs.channel-service }}"
             AI_CHANGED="${{ needs.detect-changes.outputs.ai-service }}"
