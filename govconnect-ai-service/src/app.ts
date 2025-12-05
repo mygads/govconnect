@@ -1,7 +1,16 @@
 import express, { Request, Response } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import logger from './utils/logger';
-import { isConnected as isRabbitMQConnected } from './services/rabbitmq.service';
+import { 
+  isConnected as isRabbitMQConnected, 
+  getRetryQueueStatus, 
+  getAIRetryQueueStatus,
+  getFailedMessages,
+  getFailedMessage,
+  retryFailedMessage,
+  retryAllFailedMessages,
+  clearFailedMessages,
+} from './services/rabbitmq.service';
 import { checkCaseServiceHealth } from './services/case-client.service';
 import { modelStatsService } from './services/model-stats.service';
 import { rateLimiterService } from './services/rate-limiter.service';
@@ -46,10 +55,169 @@ app.get('/health', (req: Request, res: Response) => {
 
 app.get('/health/rabbitmq', (req: Request, res: Response) => {
   const connected = isRabbitMQConnected();
+  const publishRetryQueue = getRetryQueueStatus();
+  const aiRetryQueue = getAIRetryQueueStatus();
+  
   res.json({
     status: connected ? 'connected' : 'disconnected',
     service: 'ai-orchestrator',
+    queues: {
+      publishRetry: publishRetryQueue,
+      aiMessageRetry: {
+        queueSize: aiRetryQueue.queueSize,
+        oldestItem: aiRetryQueue.oldestItem ? new Date(aiRetryQueue.oldestItem).toISOString() : null,
+        pendingCount: aiRetryQueue.pendingMessages.length,
+      },
+    },
   });
+});
+
+/**
+ * Get AI message retry queue status
+ * Shows messages that are waiting to be reprocessed after AI failures
+ */
+app.get('/stats/retry-queue', (req: Request, res: Response) => {
+  try {
+    const aiRetryQueue = getAIRetryQueueStatus();
+    const publishRetryQueue = getRetryQueueStatus();
+    
+    res.json({
+      aiMessageRetry: {
+        queueSize: aiRetryQueue.queueSize,
+        maxRetryAttempts: 10,
+        pendingMessages: aiRetryQueue.pendingMessages.map(msg => ({
+          wa_user_id: msg.wa_user_id,
+          message_id: msg.message_id,
+          attempts: msg.attempts,
+          maxAttempts: 10,
+          willRetry: msg.attempts < 10,
+        })),
+      },
+      publishRetry: {
+        queueSize: publishRetryQueue.queueSize,
+        oldestItem: publishRetryQueue.oldestItem ? new Date(publishRetryQueue.oldestItem).toISOString() : null,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get retry queue status',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * ==================== ADMIN FAILED MESSAGES ENDPOINTS ====================
+ * For Dashboard to manage messages that exceeded max retries
+ */
+
+/**
+ * Get all failed messages (for admin dashboard)
+ */
+app.get('/admin/failed-messages', (req: Request, res: Response) => {
+  try {
+    const messages = getFailedMessages();
+    
+    res.json({
+      count: messages.length,
+      messages: messages.map(msg => ({
+        message_id: msg.event.message_id,
+        wa_user_id: msg.event.wa_user_id,
+        attempts: msg.attempts,
+        status: msg.status,
+        lastError: msg.lastError,
+        firstAttempt: new Date(msg.firstAttempt).toISOString(),
+        lastAttempt: new Date(msg.lastAttempt).toISOString(),
+        failedAt: new Date(msg.failedAt).toISOString(),
+        originalMessage: msg.event.is_batched 
+          ? `[Batched: ${msg.event.batched_message_ids?.length || 0} messages]`
+          : msg.event.message_text?.substring(0, 100),
+      })),
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get failed messages',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Retry a specific failed message (admin manual retry)
+ */
+app.post('/admin/failed-messages/:messageId/retry', async (req: Request, res: Response) => {
+  try {
+    const { messageId } = req.params;
+    
+    logger.info('Admin retry requested', { messageId });
+    
+    const result = await retryFailedMessage(messageId);
+    
+    if (result.success) {
+      res.json({
+        status: 'success',
+        message: 'Message retried successfully',
+        messageId,
+      });
+    } else {
+      res.status(400).json({
+        status: 'failed',
+        message: result.error,
+        messageId,
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to retry message',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Retry all failed messages (admin bulk retry)
+ */
+app.post('/admin/failed-messages/retry-all', async (req: Request, res: Response) => {
+  try {
+    logger.info('Admin retry all requested');
+    
+    const results = await retryAllFailedMessages();
+    
+    res.json({
+      status: 'completed',
+      results,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to retry all messages',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Clear failed messages (admin cleanup)
+ * Query param: all=true to clear all, otherwise only cleared resolved
+ */
+app.delete('/admin/failed-messages', (req: Request, res: Response) => {
+  try {
+    const clearAll = req.query.all === 'true';
+    
+    logger.info('Admin clear failed messages', { clearAll });
+    
+    const count = clearFailedMessages(clearAll);
+    
+    res.json({
+      status: 'success',
+      cleared: count,
+      clearType: clearAll ? 'all' : 'resolved-only',
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to clear messages',
+      message: error.message,
+    });
+  }
 });
 
 app.get('/health/services', async (req: Request, res: Response) => {

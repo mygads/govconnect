@@ -268,6 +268,353 @@ interface QueuedMessage {
 const retryQueue: QueuedMessage[] = [];
 const MAX_RETRY_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 5000;      // 5 seconds between retries
+
+/**
+ * ==================== AI MESSAGE RETRY QUEUE ====================
+ * For retrying AI processing when LLM/RAG fails
+ * Messages are NOT dropped - they are retried until success or max attempts
+ */
+
+interface AIMessageRetry {
+  event: MessageReceivedEvent;
+  attempts: number;
+  firstAttempt: number;
+  lastAttempt: number;
+  lastError: string;
+}
+
+// AI message retry queue - for messages that failed AI processing
+// Layer 2: Cron every 10 minutes, max 10 retries, then mark as FAILED
+const aiMessageRetryQueue: AIMessageRetry[] = [];
+const AI_MAX_RETRY_ATTEMPTS = 10;         // Max retries before marking as failed
+const AI_RETRY_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes between retries
+const AI_MAX_QUEUE_SIZE = 500;            // Max messages in retry queue
+let aiRetryIntervalId: NodeJS.Timeout | null = null;
+
+/**
+ * ==================== FAILED MESSAGES STORAGE ====================
+ * For messages that exceeded max retries
+ * Admin can manually retry these from Dashboard
+ */
+
+interface FailedMessage extends AIMessageRetry {
+  failedAt: number;
+  status: 'failed' | 'retrying' | 'resolved';
+}
+
+// Failed messages storage - for admin dashboard
+const failedMessages: Map<string, FailedMessage> = new Map();
+const FAILED_MESSAGES_MAX_SIZE = 1000; // Max failed messages to store
+let aiMessageHandler: ((event: MessageReceivedEvent) => Promise<void>) | null = null;
+
+/**
+ * Add to failed messages storage (for admin dashboard)
+ */
+function addToFailedMessages(item: AIMessageRetry): void {
+  const key = item.event.message_id;
+  
+  // Limit size
+  if (failedMessages.size >= FAILED_MESSAGES_MAX_SIZE) {
+    // Remove oldest entry
+    const oldestKey = failedMessages.keys().next().value;
+    if (oldestKey) failedMessages.delete(oldestKey);
+  }
+  
+  failedMessages.set(key, {
+    ...item,
+    failedAt: Date.now(),
+    status: 'failed',
+  });
+}
+
+/**
+ * Get all failed messages (for admin dashboard)
+ */
+export function getFailedMessages(): FailedMessage[] {
+  return Array.from(failedMessages.values()).sort((a, b) => b.failedAt - a.failedAt);
+}
+
+/**
+ * Get failed message by ID
+ */
+export function getFailedMessage(messageId: string): FailedMessage | undefined {
+  return failedMessages.get(messageId);
+}
+
+/**
+ * Admin manual retry - retry a specific failed message
+ * Returns true if retry was initiated, false if not found
+ */
+export async function retryFailedMessage(messageId: string): Promise<{ success: boolean; error?: string }> {
+  const failed = failedMessages.get(messageId);
+  
+  if (!failed) {
+    return { success: false, error: 'Message not found in failed messages' };
+  }
+  
+  if (failed.status === 'retrying') {
+    return { success: false, error: 'Message is already being retried' };
+  }
+  
+  if (!aiMessageHandler) {
+    return { success: false, error: 'AI message handler not initialized' };
+  }
+  
+  // Mark as retrying
+  failed.status = 'retrying';
+  
+  logger.info('🔄 Admin retry: Processing failed message', {
+    wa_user_id: failed.event.wa_user_id,
+    message_id: failed.event.message_id,
+    previousAttempts: failed.attempts,
+  });
+  
+  try {
+    await aiMessageHandler(failed.event);
+    
+    // Success - remove from failed messages
+    failedMessages.delete(messageId);
+    
+    logger.info('✅ Admin retry: Message processed successfully', {
+      wa_user_id: failed.event.wa_user_id,
+      message_id: failed.event.message_id,
+    });
+    
+    return { success: true };
+  } catch (error: any) {
+    // Failed again - put back in queue or mark as failed
+    failed.status = 'failed';
+    failed.attempts++;
+    failed.lastAttempt = Date.now();
+    failed.lastError = error.message || 'Unknown error';
+    
+    logger.error('❌ Admin retry: Failed', {
+      wa_user_id: failed.event.wa_user_id,
+      message_id: failed.event.message_id,
+      error: failed.lastError,
+    });
+    
+    return { success: false, error: failed.lastError };
+  }
+}
+
+/**
+ * Admin manual retry all failed messages
+ */
+export async function retryAllFailedMessages(): Promise<{ total: number; success: number; failed: number }> {
+  const results = { total: 0, success: 0, failed: 0 };
+  
+  for (const [messageId] of failedMessages) {
+    results.total++;
+    const result = await retryFailedMessage(messageId);
+    if (result.success) {
+      results.success++;
+    } else {
+      results.failed++;
+    }
+  }
+  
+  return results;
+}
+
+/**
+ * Clear resolved or all failed messages
+ */
+export function clearFailedMessages(all: boolean = false): number {
+  if (all) {
+    const count = failedMessages.size;
+    failedMessages.clear();
+    return count;
+  }
+  
+  // Only clear resolved
+  let count = 0;
+  for (const [key, value] of failedMessages) {
+    if (value.status === 'resolved') {
+      failedMessages.delete(key);
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Start AI message retry worker
+ * Runs every 10 minutes to process failed messages
+ * Max 10 retries per message, no fallback message to user
+ */
+function startAIRetryWorker(onMessage: (event: MessageReceivedEvent) => Promise<void>): void {
+  if (aiRetryIntervalId) return;
+  
+  // Save message handler for admin manual retry
+  aiMessageHandler = onMessage;
+  
+  // Run worker every 10 minutes (AI_RETRY_INTERVAL_MS)
+  aiRetryIntervalId = setInterval(async () => {
+    if (aiMessageRetryQueue.length === 0) return;
+    
+    const now = Date.now();
+    
+    // Process up to 5 messages per cycle
+    const toProcess: AIMessageRetry[] = [];
+    const remaining: AIMessageRetry[] = [];
+    
+    for (const item of aiMessageRetryQueue) {
+      // Check if enough time has passed since last attempt (10 minutes)
+      if (now - item.lastAttempt >= AI_RETRY_INTERVAL_MS && toProcess.length < 5) {
+        toProcess.push(item);
+      } else {
+        remaining.push(item);
+      }
+    }
+    
+    // Update queue with remaining items
+    aiMessageRetryQueue.length = 0;
+    aiMessageRetryQueue.push(...remaining);
+    
+    // Process selected items
+    for (const item of toProcess) {
+      item.attempts++;
+      item.lastAttempt = now;
+      
+      logger.info('🔄 AI retry: Processing message', {
+        wa_user_id: item.event.wa_user_id,
+        message_id: item.event.message_id,
+        attempt: item.attempts,
+        maxAttempts: AI_MAX_RETRY_ATTEMPTS,
+      });
+      
+      try {
+        await onMessage(item.event);
+        
+        logger.info('✅ AI retry: Message processed successfully', {
+          wa_user_id: item.event.wa_user_id,
+          message_id: item.event.message_id,
+          attempts: item.attempts,
+        });
+      } catch (error: any) {
+        item.lastError = error.message || 'Unknown error';
+        
+        if (item.attempts < AI_MAX_RETRY_ATTEMPTS) {
+          // Re-queue for later retry
+          aiMessageRetryQueue.push(item);
+          
+          logger.warn('⚠️ AI retry: Failed, will retry in 10 minutes', {
+            wa_user_id: item.event.wa_user_id,
+            message_id: item.event.message_id,
+            attempts: item.attempts,
+            maxAttempts: AI_MAX_RETRY_ATTEMPTS,
+            error: item.lastError,
+          });
+        } else {
+          // Max retries exceeded - mark as FAILED (no message to user)
+          logger.error('❌ AI retry: Max attempts exceeded, marking as FAILED', {
+            wa_user_id: item.event.wa_user_id,
+            message_id: item.event.message_id,
+            attempts: item.attempts,
+            lastError: item.lastError,
+          });
+          
+          // Add to failed messages list for admin monitoring/manual retry
+          addToFailedMessages(item);
+          
+          // Publish error for dashboard monitoring (admin can manually retry)
+          await publishAIError({
+            wa_user_id: item.event.wa_user_id,
+            error_message: `FAILED after ${AI_MAX_RETRY_ATTEMPTS} retries: ${item.lastError}`,
+            pending_message_id: item.event.message_id,
+            batched_message_ids: item.event.is_batched ? item.event.batched_message_ids : undefined,
+            can_retry: true, // Flag for dashboard to show retry button
+          });
+        }
+      }
+    }
+  }, AI_RETRY_INTERVAL_MS); // Check every 10 minutes
+  
+  logger.info('🔄 AI message retry worker started (interval: 10 minutes, max retries: 10)');
+}
+
+/**
+ * Stop AI message retry worker
+ */
+function stopAIRetryWorker(): void {
+  if (aiRetryIntervalId) {
+    clearInterval(aiRetryIntervalId);
+    aiRetryIntervalId = null;
+    logger.info('🛑 AI message retry worker stopped');
+  }
+}
+
+/**
+ * Add message to AI retry queue
+ * Called when AI processing fails
+ */
+export function addToAIRetryQueue(event: MessageReceivedEvent, error: string): void {
+  // Check if message is already in queue (by message_id)
+  const existingIndex = aiMessageRetryQueue.findIndex(
+    item => item.event.message_id === event.message_id
+  );
+  
+  if (existingIndex >= 0) {
+    // Update existing entry
+    const existing = aiMessageRetryQueue[existingIndex];
+    existing.attempts++;
+    existing.lastAttempt = Date.now();
+    existing.lastError = error;
+    
+    logger.info('📥 AI retry: Updated existing entry', {
+      wa_user_id: event.wa_user_id,
+      message_id: event.message_id,
+      attempts: existing.attempts,
+    });
+    return;
+  }
+  
+  // Check queue size limit
+  if (aiMessageRetryQueue.length >= AI_MAX_QUEUE_SIZE) {
+    // Drop oldest message
+    const dropped = aiMessageRetryQueue.shift();
+    logger.warn('⚠️ AI retry queue full, dropped oldest message', {
+      droppedMessageId: dropped?.event.message_id,
+      queueSize: aiMessageRetryQueue.length,
+    });
+  }
+  
+  // Add new entry
+  aiMessageRetryQueue.push({
+    event,
+    attempts: 1,
+    firstAttempt: Date.now(),
+    lastAttempt: Date.now(),
+    lastError: error,
+  });
+  
+  logger.info('📥 AI retry: Message added to queue', {
+    wa_user_id: event.wa_user_id,
+    message_id: event.message_id,
+    queueSize: aiMessageRetryQueue.length,
+    error,
+  });
+}
+
+/**
+ * Get AI retry queue status
+ */
+export function getAIRetryQueueStatus(): {
+  queueSize: number;
+  oldestItem: number | null;
+  pendingMessages: Array<{ wa_user_id: string; message_id: string; attempts: number }>;
+} {
+  return {
+    queueSize: aiMessageRetryQueue.length,
+    oldestItem: aiMessageRetryQueue.length > 0 ? aiMessageRetryQueue[0].firstAttempt : null,
+    pendingMessages: aiMessageRetryQueue.map(item => ({
+      wa_user_id: item.event.wa_user_id,
+      message_id: item.event.message_id,
+      attempts: item.attempts,
+    })),
+  };
+}
 const MAX_QUEUE_SIZE = 1000;       // Prevent memory overflow
 let retryIntervalId: NodeJS.Timeout | null = null;
 
@@ -454,6 +801,9 @@ export async function startConsuming(
   
   // Store handler for reconnection
   messageHandler = onMessage;
+  
+  // Start AI retry worker with the message handler
+  startAIRetryWorker(onMessage);
   
   try {
     // Assert queue
@@ -706,13 +1056,25 @@ export async function disconnectRabbitMQ(): Promise<void> {
   try {
     logger.info('🛑 Starting graceful RabbitMQ shutdown...');
     
-    // Stop retry worker first
+    // Stop retry workers first
     stopRetryWorker();
+    stopAIRetryWorker();
     
-    // Log any remaining items in retry queue
+    // Log any remaining items in retry queues
     if (retryQueue.length > 0) {
-      logger.warn('⚠️ Disconnecting with items in retry queue', {
+      logger.warn('⚠️ Disconnecting with items in publish retry queue', {
         queueSize: retryQueue.length,
+      });
+    }
+    
+    if (aiMessageRetryQueue.length > 0) {
+      logger.warn('⚠️ Disconnecting with items in AI message retry queue', {
+        queueSize: aiMessageRetryQueue.length,
+        pendingMessages: aiMessageRetryQueue.map(item => ({
+          wa_user_id: item.event.wa_user_id,
+          message_id: item.event.message_id,
+          attempts: item.attempts,
+        })),
       });
     }
     

@@ -720,15 +720,15 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       isBatched: is_batched,
     });
     
-    // DON'T send error message to user - let admin handle via dashboard
-    // Instead, publish error status event for channel service to update conversation
-    await publishAIError({
-      wa_user_id,
-      error_message: error.message || 'Unknown error',
-      batched_message_ids: is_batched ? batched_message_ids : undefined,
-    });
+    // Add to AI retry queue instead of immediately publishing error
+    // This ensures the message will be retried and user won't receive error message
+    const { addToAIRetryQueue } = await import('./rabbitmq.service');
+    addToAIRetryQueue(event, error.message || 'Unknown error');
     
-    // Mark messages as failed
+    // DON'T publish error or fallback message here
+    // The retry queue will handle retries and only send fallback after max attempts
+    
+    // Mark messages as failed (will be updated to completed on successful retry)
     if (is_batched && batched_message_ids) {
       await publishMessageStatus({
         wa_user_id,

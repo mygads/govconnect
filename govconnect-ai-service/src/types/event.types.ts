@@ -30,6 +30,7 @@ export interface AIErrorEvent {
   error_message: string;
   pending_message_id?: string;  // Message ID that failed processing
   batched_message_ids?: string[];  // All message IDs if batched
+  can_retry?: boolean;  // Flag for dashboard to show retry button
 }
 
 // Event to notify channel service about message status

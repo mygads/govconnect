@@ -427,6 +427,13 @@ function calculateConfidence(
  * @param topK - Number of results to return
  * @returns Re-ranked and truncated results
  */
+/**
+ * Escape special regex characters to prevent RegExp errors
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function rerankResults(
   results: VectorSearchResult[],
   query: string,
@@ -447,11 +454,17 @@ function rerankResults(
 
     // Term frequency scoring
     for (const word of queryWords) {
-      const regex = new RegExp(word, 'gi');
-      const matches = contentLower.match(regex);
-      if (matches) {
-        // TF-IDF inspired: log(1 + tf)
-        keywordScore += Math.log(1 + matches.length);
+      try {
+        // Escape regex special characters to prevent errors
+        const escapedWord = escapeRegExp(word);
+        const regex = new RegExp(escapedWord, 'gi');
+        const matches = contentLower.match(regex);
+        if (matches) {
+          // TF-IDF inspired: log(1 + tf)
+          keywordScore += Math.log(1 + matches.length);
+        }
+      } catch (regexError) {
+        // If regex still fails somehow, skip this word silently
       }
     }
 

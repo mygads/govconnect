@@ -42,12 +42,14 @@ const AVAILABLE_MODELS = [
 // All models support: Structured output ✓, Function calling ✓
 // 2.5 models also support: Thinking/Reasoning ✓
 
-// Retry configuration - AGGRESSIVE to ensure NEVER fail
-const MAX_RETRIES_PER_MODEL = 3;     // Max retries per model before switching
+// Retry configuration - Optimized for efficiency
+// Layer 1: 4 models × 2 retries × 1 cycle = 8 attempts MAX
+// If all fail, message goes to Layer 2 retry queue (cron every 10 min)
+const MAX_RETRIES_PER_MODEL = 2;     // Max retries per model before switching
 const BASE_RETRY_DELAY_MS = 1000;    // Base delay for exponential backoff (1 second)
-const MAX_RETRY_DELAY_MS = 10000;    // Max delay cap (10 seconds)
-const MAX_CYCLES = 5;                // Max full cycles through all models
-const CYCLE_DELAY_MS = 5000;         // 5 seconds delay before new cycle
+const MAX_RETRY_DELAY_MS = 5000;     // Max delay cap (5 seconds)
+const MAX_CYCLES = 1;                // Only 1 cycle through all models
+const CYCLE_DELAY_MS = 2000;         // 2 seconds delay (not used with 1 cycle)
 const JSON_RETRY_EXTRA_DELAY_MS = 500; // Extra delay for JSON parsing errors
 
 /**
@@ -294,6 +296,40 @@ async function callGeminiWithModel(
     
     // Parse JSON response
     const parsedResponse = JSON.parse(responseText);
+    
+    // Sanitize "null" strings - Gemini sometimes returns "null" instead of empty string
+    const sanitizeNullString = (value: any): any => {
+      if (value === 'null' || value === 'NULL' || value === 'Null') return '';
+      if (value === null || value === undefined) return undefined;
+      return value;
+    };
+    
+    // Clean up common fields that might have "null" string
+    if (parsedResponse.guidance_text) {
+      parsedResponse.guidance_text = sanitizeNullString(parsedResponse.guidance_text);
+    }
+    if (parsedResponse.fields) {
+      if (parsedResponse.fields.rt_rw) {
+        parsedResponse.fields.rt_rw = sanitizeNullString(parsedResponse.fields.rt_rw);
+      }
+      if (parsedResponse.fields.alamat) {
+        parsedResponse.fields.alamat = sanitizeNullString(parsedResponse.fields.alamat);
+      }
+      if (parsedResponse.fields.deskripsi) {
+        parsedResponse.fields.deskripsi = sanitizeNullString(parsedResponse.fields.deskripsi);
+      }
+      if (parsedResponse.fields.knowledge_category) {
+        parsedResponse.fields.knowledge_category = sanitizeNullString(parsedResponse.fields.knowledge_category);
+      }
+      if (parsedResponse.fields.ticket_id) {
+        parsedResponse.fields.ticket_id = sanitizeNullString(parsedResponse.fields.ticket_id);
+      }
+      // Clean up missing_info array - remove "null" strings
+      if (parsedResponse.fields.missing_info && Array.isArray(parsedResponse.fields.missing_info)) {
+        parsedResponse.fields.missing_info = parsedResponse.fields.missing_info
+          .filter((item: any) => item !== 'null' && item !== 'NULL' && item !== null && item !== undefined);
+      }
+    }
     
     // Log parsed guidance_text specifically for newline debugging
     if (parsedResponse.guidance_text) {
