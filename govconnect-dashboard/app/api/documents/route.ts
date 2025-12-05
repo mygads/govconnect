@@ -4,6 +4,12 @@ import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
 import { randomUUID } from 'crypto'
 
+// Force Node.js runtime for file uploads
+export const runtime = 'nodejs'
+
+// Disable body parsing - we handle formData manually
+export const dynamic = 'force-dynamic'
+
 // Document upload and management API
 // Requires admin authentication
 
