@@ -230,30 +230,32 @@ jobs:
             # Login to GHCR
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Build changed services locally (faster than pulling pre-built)
+            # Pull pre-built images from GHCR (best practice - faster & consistent)
+            REGISTRY="ghcr.io/mygads"
+            
             if [ "$CHANNEL_CHANGED" == "true" ]; then
-              echo ">>> Building channel-service..."
-              docker compose -f docker-compose.swarm.yml build channel-service
+              echo ">>> Pulling channel-service from GHCR..."
+              docker pull ${REGISTRY}/govconnect-channel-service:latest
             fi
             
             if [ "$AI_CHANGED" == "true" ]; then
-              echo ">>> Building ai-service..."
-              docker compose -f docker-compose.swarm.yml build ai-service
+              echo ">>> Pulling ai-service from GHCR..."
+              docker pull ${REGISTRY}/govconnect-ai-service:latest
             fi
             
             if [ "$CASE_CHANGED" == "true" ]; then
-              echo ">>> Building case-service..."
-              docker compose -f docker-compose.swarm.yml build case-service
+              echo ">>> Pulling case-service from GHCR..."
+              docker pull ${REGISTRY}/govconnect-case-service:latest
             fi
             
             if [ "$NOTIFICATION_CHANGED" == "true" ]; then
-              echo ">>> Building notification-service..."
-              docker compose -f docker-compose.swarm.yml build notification-service
+              echo ">>> Pulling notification-service from GHCR..."
+              docker pull ${REGISTRY}/govconnect-notification-service:latest
             fi
             
             if [ "$DASHBOARD_CHANGED" == "true" ]; then
-              echo ">>> Building dashboard..."
-              docker compose -f docker-compose.swarm.yml build dashboard
+              echo ">>> Pulling dashboard from GHCR..."
+              docker pull ${REGISTRY}/govconnect-dashboard:latest
             fi
             
             # Deploy/Update the stack with zero-downtime rolling updates
@@ -264,38 +266,37 @@ jobs:
             echo ">>> Waiting for services to stabilize..."
             sleep 10
             
+            # Update services with new images from GHCR
+            if [ "$CHANNEL_CHANGED" == "true" ]; then
+              echo ""
+              echo ">>> Updating Channel Service with new image..."
+              docker service update --image ${REGISTRY}/govconnect-channel-service:latest --force govconnect_channel-service
+            fi
+            if [ "$AI_CHANGED" == "true" ]; then
+              echo ""
+              echo ">>> Updating AI Service with new image..."
+              docker service update --image ${REGISTRY}/govconnect-ai-service:latest --force govconnect_ai-service
+            fi
+            if [ "$CASE_CHANGED" == "true" ]; then
+              echo ""
+              echo ">>> Updating Case Service with new image..."
+              docker service update --image ${REGISTRY}/govconnect-case-service:latest --force govconnect_case-service
+            fi
+            if [ "$NOTIFICATION_CHANGED" == "true" ]; then
+              echo ""
+              echo ">>> Updating Notification Service with new image..."
+              docker service update --image ${REGISTRY}/govconnect-notification-service:latest --force govconnect_notification-service
+            fi
+            if [ "$DASHBOARD_CHANGED" == "true" ]; then
+              echo ""
+              echo ">>> Updating Dashboard with new image..."
+              docker service update --image ${REGISTRY}/govconnect-dashboard:latest --force govconnect_dashboard
+            fi
+            
             # Check service status
             echo ""
             echo "--- Service Status ---"
             docker service ls --filter name=govconnect
-            
-            # Show update status for changed services
-            UPDATE_SERVICES=""
-            if [ "$CHANNEL_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Channel Service Update Status:"
-              docker service update --force govconnect_channel-service 2>/dev/null || true
-            fi
-            if [ "$AI_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> AI Service Update Status:"
-              docker service update --force govconnect_ai-service 2>/dev/null || true
-            fi
-            if [ "$CASE_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Case Service Update Status:"
-              docker service update --force govconnect_case-service 2>/dev/null || true
-            fi
-            if [ "$NOTIFICATION_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Notification Service Update Status:"
-              docker service update --force govconnect_notification-service 2>/dev/null || true
-            fi
-            if [ "$DASHBOARD_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Dashboard Update Status:"
-              docker service update --force govconnect_dashboard 2>/dev/null || true
-            fi
             
             # Cleanup old images
             docker system prune -f --volumes=false
