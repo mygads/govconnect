@@ -61,8 +61,56 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
     // Only process "Message" type events (incoming messages)
     if (payload.type !== 'Message') {
-      logger.info('Non-message webhook received', { type: payload.type });
-      res.json({ status: 'ok', message: `Event type: ${payload.type}` });
+      // Skip status notifications, receipts, etc. silently
+      logger.debug('Non-message webhook received, ignoring', { type: payload.type });
+      res.json({ status: 'ok', message: `Ignored event type: ${payload.type}` });
+      return;
+    }
+
+    // ============================================
+    // FILTER: Only process PRIVATE messages
+    // Skip group messages, broadcasts, and status updates
+    // ============================================
+    const chatJid = payload.event?.Info?.Chat || '';
+    const isGroup = payload.event?.Info?.IsGroup || false;
+    
+    // Check IsGroup flag first (most reliable)
+    if (isGroup) {
+      logger.debug('Skipping group message (IsGroup=true)', { 
+        chat: chatJid,
+        type: 'group'
+      });
+      res.json({ status: 'ok', message: 'Group message ignored' });
+      return;
+    }
+    
+    // Group messages end with @g.us
+    if (chatJid.endsWith('@g.us')) {
+      logger.debug('Skipping group message (@g.us)', { 
+        chat: chatJid,
+        type: 'group'
+      });
+      res.json({ status: 'ok', message: 'Group message ignored' });
+      return;
+    }
+    
+    // Broadcast messages end with @broadcast
+    if (chatJid.endsWith('@broadcast')) {
+      logger.debug('Skipping broadcast message', { 
+        chat: chatJid,
+        type: 'broadcast'
+      });
+      res.json({ status: 'ok', message: 'Broadcast message ignored' });
+      return;
+    }
+    
+    // Status updates have chat like "status@broadcast"
+    if (chatJid.includes('status@') || chatJid === 'status@broadcast') {
+      logger.debug('Skipping status update', { 
+        chat: chatJid,
+        type: 'status'
+      });
+      res.json({ status: 'ok', message: 'Status update ignored' });
       return;
     }
 
