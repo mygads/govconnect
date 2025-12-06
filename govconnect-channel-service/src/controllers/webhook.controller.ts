@@ -319,13 +319,52 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
     }
 
     // Extract sender JID - Chat field contains the conversation JID
-    const from = info.Chat; // e.g., "628123456789@s.whatsapp.net"
+    // For LID format (e.g., "93849498181695@lid"), use SenderAlt which contains the real phone
+    let from = info.Chat; // e.g., "628123456789@s.whatsapp.net" or "93849498181695@lid"
+    
+    // Check if Chat is in LID format (@lid suffix)
+    const isLIDFormat = from && (from.endsWith('@lid') || from.includes('@lid'));
+    
+    // Helper function to extract clean phone number from JID
+    // Handles formats like: "6281233784490:24@s.whatsapp.net" -> "6281233784490"
+    // Also handles: "6281233784490@s.whatsapp.net" -> "6281233784490"
+    const extractCleanPhone = (jid: string): string => {
+      // First split by @ to get the user part
+      const userPart = jid.split('@')[0];
+      // Then split by : to remove device ID if present
+      return userPart.split(':')[0];
+    };
+    
+    // If LID format, prefer SenderAlt which has the actual phone number
+    if (isLIDFormat && info.SenderAlt) {
+      // Clean the SenderAlt to get proper JID format for 'from'
+      const cleanPhone = extractCleanPhone(info.SenderAlt);
+      from = `${cleanPhone}@s.whatsapp.net`; // Reconstruct clean JID
+      logger.debug('LID format detected, using SenderAlt', { 
+        originalChat: info.Chat, 
+        originalSenderAlt: info.SenderAlt,
+        cleanFrom: from 
+      });
+    }
     
     // Extract sender and chat phone for auto-read feature
-    // Sender is an object: { User: "6281233784490", Server: "s.whatsapp.net", AD?: boolean }
-    // Chat format: "6281233784490@s.whatsapp.net"
-    const senderPhone = info.Sender?.User || null;
-    const chatPhone = info.Chat ? info.Chat.split('@')[0] : null;
+    // For LID: Sender might be "93849498181695:24@lid", use SenderAlt instead
+    // Sender can be an object or string
+    let senderPhone: string | null = null;
+    if (typeof info.Sender === 'object' && info.Sender?.User) {
+      senderPhone = info.Sender.User;
+    } else if (typeof info.Sender === 'string' && info.SenderAlt) {
+      // LID format: extract clean phone from SenderAlt
+      senderPhone = extractCleanPhone(info.SenderAlt);
+    }
+    
+    // For chatPhone, use SenderAlt if available (LID case), otherwise use Chat
+    let chatPhone: string | null = null;
+    if (isLIDFormat && info.SenderAlt) {
+      chatPhone = extractCleanPhone(info.SenderAlt);
+    } else if (info.Chat) {
+      chatPhone = extractCleanPhone(info.Chat);
+    }
 
     // Extract message ID
     const messageId = info.ID;

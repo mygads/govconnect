@@ -36,12 +36,14 @@ export interface GenfityEvent {
 export interface GenfityMessageInfo {
   ID: string;
   Timestamp: string;
-  Chat: string; // JID format: "628xxx@s.whatsapp.net"
+  Chat: string; // JID format: "628xxx@s.whatsapp.net" or LID "93849498181695@lid"
   Sender?: {
     User: string;
     Server: string;
     AD?: boolean;
-  };
+  } | string; // Can be object or string like "93849498181695:24@lid"
+  SenderAlt?: string; // Alternative sender JID for LID: "6281233784490@s.whatsapp.net"
+  RecipientAlt?: string; // Alternative recipient JID for LID
   IsFromMe: boolean;
   IsGroup: boolean;
   PushName?: string;
