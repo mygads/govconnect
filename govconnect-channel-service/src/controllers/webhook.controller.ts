@@ -76,7 +76,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     
     // Check IsGroup flag first (most reliable)
     if (isGroup) {
-      logger.debug('Skipping group message (IsGroup=true)', { 
+      logger.info('Skipping group message (IsGroup=true)', { 
         chat: chatJid,
         type: 'group'
       });
@@ -84,9 +84,9 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       return;
     }
     
-    // Group messages end with @g.us
-    if (chatJid.endsWith('@g.us')) {
-      logger.debug('Skipping group message (@g.us)', { 
+    // Group messages end with @g.us OR contain @g.us (safety check)
+    if (chatJid.endsWith('@g.us') || chatJid.includes('@g.us')) {
+      logger.info('Skipping group message (@g.us detected)', { 
         chat: chatJid,
         type: 'group'
       });
@@ -146,6 +146,18 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
     // Extract phone number from JID (remove @s.whatsapp.net)
     const waUserId = extractPhoneFromJID(from);
+
+    // Final safety check: Ensure waUserId doesn't look like a group ID
+    // Group IDs are typically longer (18+ digits) vs phone numbers (10-15 digits)
+    if (waUserId.length > 16 || !/^[\d]+$/.test(waUserId)) {
+      logger.warn('Suspicious wa_user_id detected, may be group or invalid', {
+        original_jid: from,
+        extracted_id: waUserId,
+        length: waUserId.length,
+      });
+      res.json({ status: 'ok', message: 'Invalid user ID format' });
+      return;
+    }
 
     // ============================================
     // STEP 1: DON'T READ MESSAGE YET
@@ -421,7 +433,12 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
  * e.g., "628123456789@s.whatsapp.net" -> "628123456789"
  */
 function extractPhoneFromJID(jid: string): string {
-  return jid.replace(/@s\.whatsapp\.net$/i, '').replace(/@c\.us$/i, '');
+  // Remove all known WhatsApp JID suffixes
+  return jid
+    .replace(/@s\.whatsapp\.net$/i, '')
+    .replace(/@c\.us$/i, '')
+    .replace(/@g\.us$/i, '') // Group JID (should be filtered before reaching here)
+    .replace(/@broadcast$/i, ''); // Broadcast JID
 }
 
 /**
