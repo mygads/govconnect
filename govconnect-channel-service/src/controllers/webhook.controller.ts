@@ -148,10 +148,11 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // Extract phone number from JID (remove @s.whatsapp.net)
     const waUserId = extractPhoneFromJID(from);
 
-    // Final safety check: Ensure waUserId doesn't look like a group ID
-    // Group IDs are typically longer (18+ digits) vs phone numbers (10-15 digits)
-    if (waUserId.length > 16 || !/^[\d]+$/.test(waUserId)) {
-      logger.warn('Suspicious wa_user_id detected, may be group or invalid', {
+    // Final safety check: Ensure waUserId is numeric only
+    // LID format can be up to 20 digits, phone numbers are 10-15 digits
+    // Group IDs were already filtered above by @g.us check
+    if (!/^[\d]+$/.test(waUserId)) {
+      logger.warn('Invalid wa_user_id format (non-numeric)', {
         original_jid: from,
         extracted_id: waUserId,
         length: waUserId.length,
@@ -439,7 +440,8 @@ function extractPhoneFromJID(jid: string): string {
     .replace(/@s\.whatsapp\.net$/i, '')
     .replace(/@c\.us$/i, '')
     .replace(/@g\.us$/i, '') // Group JID (should be filtered before reaching here)
-    .replace(/@broadcast$/i, ''); // Broadcast JID
+    .replace(/@broadcast$/i, '') // Broadcast JID
+    .replace(/@lid$/i, ''); // Linked Device ID (new WhatsApp format)
 }
 
 /**
