@@ -5,14 +5,6 @@ on:
     branches: [main, develop]
     paths:
       - 'govconnect-*/**'
-      - 'docker-compose.yml'
-      - 'docker-compose.swarm.yml'
-      - 'docker/**'
-      - 'k8s/**'
-      - 'traefik/**'
-      - 'monitoring/**'
-      - 'prometheus/**'
-      - 'grafana/**'
       - '.github/workflows/ci-cd.yml'
   pull_request:
     branches: [main]
@@ -34,10 +26,6 @@ jobs:
       notification-service: ${{ steps.filter.outputs.notification-service }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
       any-service: ${{ steps.filter.outputs.any-service }}
-      infrastructure: ${{ steps.filter.outputs.infrastructure }}
-      traefik: ${{ steps.filter.outputs.traefik }}
-      monitoring: ${{ steps.filter.outputs.monitoring }}
-      docker-compose: ${{ steps.filter.outputs.docker-compose }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -54,27 +42,6 @@ jobs:
               - 'govconnect-notification-service/**'
             dashboard:
               - 'govconnect-dashboard/**'
-            infrastructure:
-              - 'docker-compose.yml'
-              - 'docker/**'
-              - 'k8s/**'
-              - 'traefik/**'
-              - 'monitoring/**'
-              - 'prometheus/**'
-              - 'grafana/**'
-            traefik:
-              - 'traefik/**'
-            monitoring:
-              - 'monitoring/**'
-              - 'prometheus/**'
-              - 'grafana/**'
-              - 'docker/alertmanager/**'
-              - 'docker/loki/**'
-              - 'docker/promtail/**'
-            docker-compose:
-              - 'docker-compose.yml'
-              - 'docker-compose.swarm.yml'
-              - 'docker-compose.*.yml'
             any-service:
               - 'govconnect-*/**'
 
@@ -177,7 +144,7 @@ jobs:
       always() && 
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' && 
-      (needs.detect-changes.outputs.any-service == 'true' || needs.detect-changes.outputs.infrastructure == 'true') &&
+      needs.detect-changes.outputs.any-service == 'true' &&
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     environment: staging
 
@@ -223,7 +190,6 @@ jobs:
             CASE_CHANGED="${{ needs.detect-changes.outputs.case-service }}"
             NOTIFICATION_CHANGED="${{ needs.detect-changes.outputs.notification-service }}"
             DASHBOARD_CHANGED="${{ needs.detect-changes.outputs.dashboard }}"
-            DOCKER_COMPOSE_CHANGED="${{ needs.detect-changes.outputs.docker-compose }}"
             
             echo "=========================================="
             echo "  GovConnect Docker Swarm Deployment"
@@ -235,7 +201,6 @@ jobs:
             echo "Case Service: $CASE_CHANGED"
             echo "Notification Service: $NOTIFICATION_CHANGED"
             echo "Dashboard: $DASHBOARD_CHANGED"
-            echo "Docker Compose: $DOCKER_COMPOSE_CHANGED"
             echo ""
             
             # Ensure Swarm is initialized

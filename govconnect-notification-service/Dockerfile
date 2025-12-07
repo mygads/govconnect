@@ -65,5 +65,6 @@ EXPOSE 3004
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3004/health || exit 1
 
-# Start application
-CMD ["node", "dist/server.js"]
+# Run migrations and start application
+# Uses migrate deploy if migrations exist, otherwise db push
+CMD ["sh", "-c", "if [ -d prisma/migrations ]; then npx prisma migrate deploy; else npx prisma db push --accept-data-loss; fi && node dist/server.js"]

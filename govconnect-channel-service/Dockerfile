@@ -24,4 +24,5 @@ COPY . .
 EXPOSE 3001
 
 # Run migrations and start server
-CMD ["sh", "-c", "pnpm prisma migrate deploy && pnpm dev"]
+# Uses migrate deploy if migrations exist, otherwise db push
+CMD ["sh", "-c", "if [ -d prisma/migrations ]; then pnpm prisma migrate deploy; else pnpm prisma db push --accept-data-loss; fi && pnpm dev"]

@@ -55,5 +55,6 @@ EXPOSE 3003
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3003/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start server
-CMD ["node", "dist/server.js"]
+# Run migrations and start server
+# Uses migrate deploy if migrations exist, otherwise db push
+CMD ["sh", "-c", "if [ -d prisma/migrations ]; then npx prisma migrate deploy; else npx prisma db push --accept-data-loss; fi && node dist/server.js"]

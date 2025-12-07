@@ -136,19 +136,59 @@ curl http://localhost:3000/api/health  # Dashboard
 
 ## 📊 Database
 
-**Single PostgreSQL instance** dengan schema-per-service:
+**Separate PostgreSQL databases** for each service:
 
-| Service | Schema | Port (Host/Docker) |
-|---------|--------|-------------------|
-| Channel | `channel` | 5433 / 5432 |
-| Case | `cases` | 5433 / 5432 |
-| Notification | `notification` | 5433 / 5432 |
-| Dashboard | `dashboard` | 5433 / 5432 |
+| Service | Database | Description |
+|---------|----------|-------------|
+| Channel | `gc_channel` | Messages, send logs, conversations |
+| Case | `gc_case` | Complaints, tickets |
+| Notification | `gc_notification` | Notification logs, templates |
+| Dashboard | `gc_dashboard` | Admin users, settings, RAG embeddings |
 
 Connection string format:
 ```
-postgresql://postgres:postgres_secret_2025@localhost:5433/govconnect?schema={schema}
+postgresql://postgres:password@postgres:5432/gc_{service}?schema=public
 ```
+
+### 🔄 Database Migrations (CI/CD Auto-Migrate)
+
+Setiap service menggunakan **Prisma ORM** dan akan auto-migrate saat container start:
+
+```
+Container Start → Check migrations folder → Run migrate/push → Start Server
+```
+
+**Cara menambah/mengubah table:**
+
+```bash
+# 1. Masuk ke folder service
+cd govconnect-channel-service
+
+# 2. Edit schema.prisma
+nano prisma/schema.prisma
+
+# 3. Generate migration file (development)
+pnpm prisma migrate dev --name add_new_table
+
+# 4. Commit migration files ke Git
+git add prisma/migrations/
+git commit -m "feat: add new table"
+
+# 5. Push ke main branch
+git push origin main
+# → CI/CD akan build image baru
+# → Container restart akan menjalankan prisma migrate deploy
+```
+
+**Untuk perubahan cepat tanpa migration file:**
+- Container akan otomatis menjalankan `prisma db push` jika tidak ada folder `migrations/`
+- Ini cocok untuk development tapi tidak recommended untuk production
+
+### pgvector Support
+
+Dashboard service menggunakan **pgvector** untuk RAG/embeddings:
+- Extension otomatis di-enable di database `gc_dashboard`
+- Schema Prisma menggunakan `extensions = [pgvector(map: "vector")]`
 
 ## 🐰 RabbitMQ Events
 
