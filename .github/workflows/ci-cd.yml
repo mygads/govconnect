@@ -1,353 +1,353 @@
-name: GovConnect CI/CD
+# name: GovConnect CI/CD
 
-on:
-  push:
-    branches: [main, develop]
-    paths:
-      - 'govconnect-*/**'
-      - '.github/workflows/ci-cd.yml'
-  pull_request:
-    branches: [main]
-  workflow_dispatch:  # Manual trigger
+# on:
+#   push:
+#     branches: [main, develop]
+#     paths:
+#       - 'govconnect-*/**'
+#       - '.github/workflows/ci-cd.yml'
+#   pull_request:
+#     branches: [main]
+#   workflow_dispatch:  # Manual trigger
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository_owner }}/govconnect
+# env:
+#   REGISTRY: ghcr.io
+#   IMAGE_PREFIX: ${{ github.repository_owner }}/govconnect
 
-jobs:
-  # ==================== DETECT CHANGES ====================
-  detect-changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    outputs:
-      channel-service: ${{ steps.filter.outputs.channel-service }}
-      ai-service: ${{ steps.filter.outputs.ai-service }}
-      case-service: ${{ steps.filter.outputs.case-service }}
-      notification-service: ${{ steps.filter.outputs.notification-service }}
-      dashboard: ${{ steps.filter.outputs.dashboard }}
-      any-service: ${{ steps.filter.outputs.any-service }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            channel-service:
-              - 'govconnect-channel-service/**'
-            ai-service:
-              - 'govconnect-ai-service/**'
-            case-service:
-              - 'govconnect-case-service/**'
-            notification-service:
-              - 'govconnect-notification-service/**'
-            dashboard:
-              - 'govconnect-dashboard/**'
-            any-service:
-              - 'govconnect-*/**'
+# jobs:
+#   # ==================== DETECT CHANGES ====================
+#   detect-changes:
+#     name: Detect Changes
+#     runs-on: ubuntu-latest
+#     outputs:
+#       channel-service: ${{ steps.filter.outputs.channel-service }}
+#       ai-service: ${{ steps.filter.outputs.ai-service }}
+#       case-service: ${{ steps.filter.outputs.case-service }}
+#       notification-service: ${{ steps.filter.outputs.notification-service }}
+#       dashboard: ${{ steps.filter.outputs.dashboard }}
+#       any-service: ${{ steps.filter.outputs.any-service }}
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dorny/paths-filter@v3
+#         id: filter
+#         with:
+#           filters: |
+#             channel-service:
+#               - 'govconnect-channel-service/**'
+#             ai-service:
+#               - 'govconnect-ai-service/**'
+#             case-service:
+#               - 'govconnect-case-service/**'
+#             notification-service:
+#               - 'govconnect-notification-service/**'
+#             dashboard:
+#               - 'govconnect-dashboard/**'
+#             any-service:
+#               - 'govconnect-*/**'
 
-  # ==================== BUILD DOCKER IMAGES ====================
-  build:
-    name: Build - ${{ matrix.service }}
-    runs-on: ubuntu-latest
-    needs: detect-changes
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.any-service == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: channel-service
-            changed: ${{ needs.detect-changes.outputs.channel-service }}
-          - service: ai-service
-            changed: ${{ needs.detect-changes.outputs.ai-service }}
-          - service: case-service
-            changed: ${{ needs.detect-changes.outputs.case-service }}
-          - service: notification-service
-            changed: ${{ needs.detect-changes.outputs.notification-service }}
-          - service: dashboard
-            changed: ${{ needs.detect-changes.outputs.dashboard }}
+#   # ==================== BUILD DOCKER IMAGES ====================
+#   build:
+#     name: Build - ${{ matrix.service }}
+#     runs-on: ubuntu-latest
+#     needs: detect-changes
+#     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect-changes.outputs.any-service == 'true'
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         include:
+#           - service: channel-service
+#             changed: ${{ needs.detect-changes.outputs.channel-service }}
+#           - service: ai-service
+#             changed: ${{ needs.detect-changes.outputs.ai-service }}
+#           - service: case-service
+#             changed: ${{ needs.detect-changes.outputs.case-service }}
+#           - service: notification-service
+#             changed: ${{ needs.detect-changes.outputs.notification-service }}
+#           - service: dashboard
+#             changed: ${{ needs.detect-changes.outputs.dashboard }}
 
-    permissions:
-      contents: read
-      packages: write
+#     permissions:
+#       contents: read
+#       packages: write
 
-    steps:
-      - name: Skip if not changed
-        if: matrix.changed != 'true'
-        run: echo "Skipping ${{ matrix.service }} - no changes detected"
+#     steps:
+#       - name: Skip if not changed
+#         if: matrix.changed != 'true'
+#         run: echo "Skipping ${{ matrix.service }} - no changes detected"
 
-      - name: Checkout code
-        if: matrix.changed == 'true'
-        uses: actions/checkout@v4
+#       - name: Checkout code
+#         if: matrix.changed == 'true'
+#         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        if: matrix.changed == 'true'
-        uses: docker/setup-buildx-action@v3
+#       - name: Set up Docker Buildx
+#         if: matrix.changed == 'true'
+#         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Container Registry
-        if: matrix.changed == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+#       - name: Log in to Container Registry
+#         if: matrix.changed == 'true'
+#         uses: docker/login-action@v3
+#         with:
+#           registry: ${{ env.REGISTRY }}
+#           username: ${{ github.actor }}
+#           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        if: matrix.changed == 'true'
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
-          tags: |
-            type=sha,prefix=
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
+#       - name: Extract metadata
+#         if: matrix.changed == 'true'
+#         id: meta
+#         uses: docker/metadata-action@v5
+#         with:
+#           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
+#           tags: |
+#             type=sha,prefix=
+#             type=ref,event=branch
+#             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Docker image
-        if: matrix.changed == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: govconnect-${{ matrix.service }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
+#       - name: Build and push Docker image
+#         if: matrix.changed == 'true'
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: govconnect-${{ matrix.service }}
+#           push: true
+#           tags: ${{ steps.meta.outputs.tags }}
+#           labels: ${{ steps.meta.outputs.labels }}
+#           cache-from: type=gha
+#           cache-to: type=gha,mode=max
+#           platforms: linux/amd64
 
-  # ==================== SECURITY SCAN ====================
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+#   # ==================== SECURITY SCAN ====================
+#   security-scan:
+#     name: Security Scan
+#     runs-on: ubuntu-latest
+#     needs: build
+#     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          format: 'table'
-        continue-on-error: true
+#       - name: Run Trivy vulnerability scanner
+#         uses: aquasecurity/trivy-action@master
+#         with:
+#           scan-type: 'fs'
+#           scan-ref: '.'
+#           severity: 'CRITICAL,HIGH'
+#           ignore-unfixed: true
+#           format: 'table'
+#         continue-on-error: true
 
-  # ==================== DEPLOY TO STAGING (Docker Swarm) ====================
-  deploy-staging:
-    name: Deploy to Staging (Swarm)
-    runs-on: ubuntu-latest
-    needs: [detect-changes, build]
-    if: |
-      always() && 
-      github.event_name == 'push' && 
-      github.ref == 'refs/heads/main' && 
-      needs.detect-changes.outputs.any-service == 'true' &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped')
-    environment: staging
+#   # ==================== DEPLOY TO STAGING (Docker Swarm) ====================
+#   deploy-staging:
+#     name: Deploy to Staging (Swarm)
+#     runs-on: ubuntu-latest
+#     needs: [detect-changes, build]
+#     if: |
+#       always() && 
+#       github.event_name == 'push' && 
+#       github.ref == 'refs/heads/main' && 
+#       needs.detect-changes.outputs.any-service == 'true' &&
+#       (needs.build.result == 'success' || needs.build.result == 'skipped')
+#     environment: staging
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Sync Environment Variables to Server
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: ${{ secrets.STAGING_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            # Create .env file from GitHub Secret
-            cat > /opt/govconnect/.env << 'ENVEOF'
-            ${{ secrets.ENV_PRODUCTION }}
-            ENVEOF
+#       - name: Sync Environment Variables to Server
+#         uses: appleboy/ssh-action@v1.0.0
+#         with:
+#           host: ${{ secrets.STAGING_HOST }}
+#           username: ${{ secrets.SSH_USERNAME }}
+#           key: ${{ secrets.SSH_PRIVATE_KEY }}
+#           script: |
+#             # Create .env file from GitHub Secret
+#             cat > /opt/govconnect/.env << 'ENVEOF'
+#             ${{ secrets.ENV_PRODUCTION }}
+#             ENVEOF
             
-            # Fix permissions
-            chmod 600 /opt/govconnect/.env
+#             # Fix permissions
+#             chmod 600 /opt/govconnect/.env
             
-            echo "✅ Environment variables synced from GitHub Secrets"
+#             echo "✅ Environment variables synced from GitHub Secrets"
 
-      - name: Deploy to Staging via SSH (Docker Swarm)
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: ${{ secrets.STAGING_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /opt/govconnect
-            git pull origin main
+#       - name: Deploy to Staging via SSH (Docker Swarm)
+#         uses: appleboy/ssh-action@v1.0.0
+#         with:
+#           host: ${{ secrets.STAGING_HOST }}
+#           username: ${{ secrets.SSH_USERNAME }}
+#           key: ${{ secrets.SSH_PRIVATE_KEY }}
+#           script: |
+#             cd /opt/govconnect
+#             git pull origin main
             
-            # Load environment variables from .env (synced from GitHub Secrets)
-            set -a
-            source .env
-            set +a
+#             # Load environment variables from .env (synced from GitHub Secrets)
+#             set -a
+#             source .env
+#             set +a
             
-            # Check what changed
-            CHANNEL_CHANGED="${{ needs.detect-changes.outputs.channel-service }}"
-            AI_CHANGED="${{ needs.detect-changes.outputs.ai-service }}"
-            CASE_CHANGED="${{ needs.detect-changes.outputs.case-service }}"
-            NOTIFICATION_CHANGED="${{ needs.detect-changes.outputs.notification-service }}"
-            DASHBOARD_CHANGED="${{ needs.detect-changes.outputs.dashboard }}"
+#             # Check what changed
+#             CHANNEL_CHANGED="${{ needs.detect-changes.outputs.channel-service }}"
+#             AI_CHANGED="${{ needs.detect-changes.outputs.ai-service }}"
+#             CASE_CHANGED="${{ needs.detect-changes.outputs.case-service }}"
+#             NOTIFICATION_CHANGED="${{ needs.detect-changes.outputs.notification-service }}"
+#             DASHBOARD_CHANGED="${{ needs.detect-changes.outputs.dashboard }}"
             
-            echo "=========================================="
-            echo "  GovConnect Docker Swarm Deployment"
-            echo "=========================================="
-            echo ""
-            echo "--- Changes Detected ---"
-            echo "Channel Service: $CHANNEL_CHANGED"
-            echo "AI Service: $AI_CHANGED"
-            echo "Case Service: $CASE_CHANGED"
-            echo "Notification Service: $NOTIFICATION_CHANGED"
-            echo "Dashboard: $DASHBOARD_CHANGED"
-            echo ""
+#             echo "=========================================="
+#             echo "  GovConnect Docker Swarm Deployment"
+#             echo "=========================================="
+#             echo ""
+#             echo "--- Changes Detected ---"
+#             echo "Channel Service: $CHANNEL_CHANGED"
+#             echo "AI Service: $AI_CHANGED"
+#             echo "Case Service: $CASE_CHANGED"
+#             echo "Notification Service: $NOTIFICATION_CHANGED"
+#             echo "Dashboard: $DASHBOARD_CHANGED"
+#             echo ""
             
-            # Ensure Swarm is initialized
-            if ! docker info | grep -q "Swarm: active"; then
-              echo ">>> Initializing Docker Swarm..."
-              docker swarm init --advertise-addr $(hostname -I | awk '{print $1}') || true
-            fi
+#             # Ensure Swarm is initialized
+#             if ! docker info | grep -q "Swarm: active"; then
+#               echo ">>> Initializing Docker Swarm..."
+#               docker swarm init --advertise-addr $(hostname -I | awk '{print $1}') || true
+#             fi
             
-            # Login to GHCR
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+#             # Login to GHCR
+#             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Pull pre-built images from GHCR (best practice - faster & consistent)
-            REGISTRY="ghcr.io/mygads"
+#             # Pull pre-built images from GHCR (best practice - faster & consistent)
+#             REGISTRY="ghcr.io/mygads"
             
-            if [ "$CHANNEL_CHANGED" == "true" ]; then
-              echo ">>> Pulling channel-service from GHCR..."
-              docker pull ${REGISTRY}/govconnect-channel-service:latest
-            fi
+#             if [ "$CHANNEL_CHANGED" == "true" ]; then
+#               echo ">>> Pulling channel-service from GHCR..."
+#               docker pull ${REGISTRY}/govconnect-channel-service:latest
+#             fi
             
-            if [ "$AI_CHANGED" == "true" ]; then
-              echo ">>> Pulling ai-service from GHCR..."
-              docker pull ${REGISTRY}/govconnect-ai-service:latest
-            fi
+#             if [ "$AI_CHANGED" == "true" ]; then
+#               echo ">>> Pulling ai-service from GHCR..."
+#               docker pull ${REGISTRY}/govconnect-ai-service:latest
+#             fi
             
-            if [ "$CASE_CHANGED" == "true" ]; then
-              echo ">>> Pulling case-service from GHCR..."
-              docker pull ${REGISTRY}/govconnect-case-service:latest
-            fi
+#             if [ "$CASE_CHANGED" == "true" ]; then
+#               echo ">>> Pulling case-service from GHCR..."
+#               docker pull ${REGISTRY}/govconnect-case-service:latest
+#             fi
             
-            if [ "$NOTIFICATION_CHANGED" == "true" ]; then
-              echo ">>> Pulling notification-service from GHCR..."
-              docker pull ${REGISTRY}/govconnect-notification-service:latest
-            fi
+#             if [ "$NOTIFICATION_CHANGED" == "true" ]; then
+#               echo ">>> Pulling notification-service from GHCR..."
+#               docker pull ${REGISTRY}/govconnect-notification-service:latest
+#             fi
             
-            if [ "$DASHBOARD_CHANGED" == "true" ]; then
-              echo ">>> Pulling dashboard from GHCR..."
-              docker pull ${REGISTRY}/govconnect-dashboard:latest
-            fi
+#             if [ "$DASHBOARD_CHANGED" == "true" ]; then
+#               echo ">>> Pulling dashboard from GHCR..."
+#               docker pull ${REGISTRY}/govconnect-dashboard:latest
+#             fi
             
-            # Deploy/Update the stack with zero-downtime rolling updates
-            echo ">>> Deploying stack with rolling update..."
-            docker stack deploy -c docker-compose.swarm.yml govconnect --with-registry-auth
+#             # Deploy/Update the stack with zero-downtime rolling updates
+#             echo ">>> Deploying stack with rolling update..."
+#             docker stack deploy -c docker-compose.swarm.yml govconnect --with-registry-auth
             
-            # Wait for services to stabilize
-            echo ">>> Waiting for services to stabilize..."
-            sleep 10
+#             # Wait for services to stabilize
+#             echo ">>> Waiting for services to stabilize..."
+#             sleep 10
             
-            # Update services with new images from GHCR
-            if [ "$CHANNEL_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Updating Channel Service with new image..."
-              docker service update --image ${REGISTRY}/govconnect-channel-service:latest --force govconnect_channel-service
-            fi
-            if [ "$AI_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Updating AI Service with new image..."
-              docker service update --image ${REGISTRY}/govconnect-ai-service:latest --force govconnect_ai-service
-            fi
-            if [ "$CASE_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Updating Case Service with new image..."
-              docker service update --image ${REGISTRY}/govconnect-case-service:latest --force govconnect_case-service
-            fi
-            if [ "$NOTIFICATION_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Updating Notification Service with new image..."
-              docker service update --image ${REGISTRY}/govconnect-notification-service:latest --force govconnect_notification-service
-            fi
-            if [ "$DASHBOARD_CHANGED" == "true" ]; then
-              echo ""
-              echo ">>> Updating Dashboard with new image..."
-              docker service update --image ${REGISTRY}/govconnect-dashboard:latest --force govconnect_dashboard
-            fi
+#             # Update services with new images from GHCR
+#             if [ "$CHANNEL_CHANGED" == "true" ]; then
+#               echo ""
+#               echo ">>> Updating Channel Service with new image..."
+#               docker service update --image ${REGISTRY}/govconnect-channel-service:latest --force govconnect_channel-service
+#             fi
+#             if [ "$AI_CHANGED" == "true" ]; then
+#               echo ""
+#               echo ">>> Updating AI Service with new image..."
+#               docker service update --image ${REGISTRY}/govconnect-ai-service:latest --force govconnect_ai-service
+#             fi
+#             if [ "$CASE_CHANGED" == "true" ]; then
+#               echo ""
+#               echo ">>> Updating Case Service with new image..."
+#               docker service update --image ${REGISTRY}/govconnect-case-service:latest --force govconnect_case-service
+#             fi
+#             if [ "$NOTIFICATION_CHANGED" == "true" ]; then
+#               echo ""
+#               echo ">>> Updating Notification Service with new image..."
+#               docker service update --image ${REGISTRY}/govconnect-notification-service:latest --force govconnect_notification-service
+#             fi
+#             if [ "$DASHBOARD_CHANGED" == "true" ]; then
+#               echo ""
+#               echo ">>> Updating Dashboard with new image..."
+#               docker service update --image ${REGISTRY}/govconnect-dashboard:latest --force govconnect_dashboard
+#             fi
             
-            # Check service status
-            echo ""
-            echo "--- Service Status ---"
-            docker service ls --filter name=govconnect
+#             # Check service status
+#             echo ""
+#             echo "--- Service Status ---"
+#             docker service ls --filter name=govconnect
             
-            # Cleanup old images
-            docker system prune -f --volumes=false
+#             # Cleanup old images
+#             docker system prune -f --volumes=false
             
-            echo ""
-            echo "=========================================="
-            echo "  Swarm Deployment completed at $(date)"
-            echo "  Zero-downtime rolling update applied!"
-            echo "=========================================="
-        continue-on-error: true
+#             echo ""
+#             echo "=========================================="
+#             echo "  Swarm Deployment completed at $(date)"
+#             echo "  Zero-downtime rolling update applied!"
+#             echo "=========================================="
+#         continue-on-error: true
 
-  # ==================== DEPLOY TO PRODUCTION ====================
-  deploy-production:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: deploy-staging
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: 
-      name: production
-      url: https://govconnect.my.id
+#   # ==================== DEPLOY TO PRODUCTION ====================
+#   deploy-production:
+#     name: Deploy to Production
+#     runs-on: ubuntu-latest
+#     needs: deploy-staging
+#     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+#     environment: 
+#       name: production
+#       url: https://govconnect.my.id
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+#       - name: Authenticate to Google Cloud
+#         uses: google-github-actions/auth@v2
+#         with:
+#           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
+#       - name: Set up Google Cloud SDK
+#         uses: google-github-actions/setup-gcloud@v2
+#         with:
+#           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Configure Docker for GCP
-        run: gcloud auth configure-docker asia-southeast2-docker.pkg.dev
-        continue-on-error: true
+#       - name: Configure Docker for GCP
+#         run: gcloud auth configure-docker asia-southeast2-docker.pkg.dev
+#         continue-on-error: true
 
-      - name: Health check
-        run: |
-          echo "Waiting for services to be healthy..."
-          sleep 10
-          # Health check via SSH since we deploy to VM not GKE
-          echo "Services deployed via staging step"
-        continue-on-error: true
+#       - name: Health check
+#         run: |
+#           echo "Waiting for services to be healthy..."
+#           sleep 10
+#           # Health check via SSH since we deploy to VM not GKE
+#           echo "Services deployed via staging step"
+#         continue-on-error: true
 
-      - name: Notify deployment success
-        run: |
-          echo "✅ GovConnect deployed successfully!"
-          echo "Dashboard: https://govconnect.my.id"
-          echo "API: https://api.govconnect.my.id"
+#       - name: Notify deployment success
+#         run: |
+#           echo "✅ GovConnect deployed successfully!"
+#           echo "Dashboard: https://govconnect.my.id"
+#           echo "API: https://api.govconnect.my.id"
 
-  # ==================== CLEANUP ====================
-  cleanup:
-    name: Cleanup Old Images
-    runs-on: ubuntu-latest
-    needs: deploy-production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+#   # ==================== CLEANUP ====================
+#   cleanup:
+#     name: Cleanup Old Images
+#     runs-on: ubuntu-latest
+#     needs: deploy-production
+#     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
-    permissions:
-      packages: write
+#     permissions:
+#       packages: write
 
-    steps:
-      - name: Delete old container images
-        uses: actions/delete-package-versions@v4
-        with:
-          package-name: govconnect-channel-service
-          package-type: container
-          min-versions-to-keep: 5
-          delete-only-untagged-versions: true
-        continue-on-error: true
+#     steps:
+#       - name: Delete old container images
+#         uses: actions/delete-package-versions@v4
+#         with:
+#           package-name: govconnect-channel-service
+#           package-type: container
+#           min-versions-to-keep: 5
+#           delete-only-untagged-versions: true
+#         continue-on-error: true
