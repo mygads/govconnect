@@ -23,6 +23,9 @@
 export const API_BASE_URL = process.env.API_BASE_URL || 'http://traefik';
 export const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'govconnect-internal-2025-secret';
 
+// Auth token storage
+let authToken: string | null = null;
+
 // Service path prefixes
 export const ServicePath = {
   CHANNEL: '/channel',
@@ -568,8 +571,9 @@ export const livechat = {
   },
 };
 
-// Export default
-export default {
+// Named export for backward compatibility
+// These are shorthand methods that map to the service methods
+export const apiClient = {
   channel,
   case: caseService,
   ai,
@@ -580,4 +584,61 @@ export default {
   ServicePath,
   API_BASE_URL,
   INTERNAL_API_KEY,
+  
+  // Shorthand methods for backward compatibility
+  async getComplaints() {
+    const response = await caseService.getLaporan();
+    return response.json();
+  },
+  
+  async getComplaintById(id: string) {
+    const response = await caseService.getLaporanById(id);
+    return response.json();
+  },
+  
+  async updateComplaintStatus(id: string, data: { status: string; admin_notes?: string }) {
+    const response = await caseService.updateLaporanStatus(id, { status: data.status, notes: data.admin_notes });
+    return response.json();
+  },
+  
+  async getTickets() {
+    const response = await caseService.getTiket();
+    return response.json();
+  },
+  
+  async getTicketById(id: string) {
+    const response = await caseService.getTiketById(id);
+    return response.json();
+  },
+  
+  async updateTicketStatus(id: string, data: { status: string; admin_notes?: string }) {
+    const response = await caseService.updateTiketStatus(id, { status: data.status, notes: data.admin_notes });
+    return response.json();
+  },
+  
+  async getStatistics() {
+    const response = await caseService.getOverview();
+    return response.json();
+  },
+  
+  async getTrends(period: string = 'week') {
+    const response = await caseService.getTrends(period);
+    return response.json();
+  },
+  
+  // Auth token management
+  setAuthToken(token: string) {
+    authToken = token;
+  },
+  
+  clearAuthToken() {
+    authToken = null;
+  },
+  
+  getAuthToken() {
+    return authToken;
+  },
 };
+
+// Export default
+export default apiClient;

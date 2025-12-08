@@ -78,8 +78,8 @@ export async function POST(
         documentId: id,
         content,
         mimeType: document.mime_type,
-        title: document.title,
-        category: document.category,
+        title: document.title || 'Untitled',
+        category: document.category || 'general',
       })
 
       if (!response.ok) {

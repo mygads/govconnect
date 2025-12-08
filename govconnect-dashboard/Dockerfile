@@ -30,10 +30,11 @@ COPY . .
 
 # Generate Prisma Client
 ENV DATABASE_URL="postgresql://postgres:postgres@localhost:5432/dummy?schema=dashboard"
-RUN npx prisma generate
+RUN pnpm prisma generate
 
 # Build Next.js app
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_DISABLE_TURBOPACK=1
 RUN pnpm build
 
 # ===============================================
@@ -46,6 +47,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Install pnpm for prisma commands
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
@@ -54,6 +58,8 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+
+# Copy Prisma schema for migrations
 COPY --from=builder /app/prisma ./prisma
 
 # Set proper permissions
@@ -66,6 +72,5 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Run migrations and start server
-# Uses migrate deploy if migrations exist, otherwise db push
-CMD ["sh", "-c", "if [ -d prisma/migrations ]; then npx prisma migrate deploy; else npx prisma db push --accept-data-loss; fi && node server.js"]
+# Just start the server (migrations should be run separately)
+CMD ["node", "server.js"]
