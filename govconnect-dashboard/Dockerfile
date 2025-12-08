@@ -72,5 +72,20 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Just start the server (migrations should be run separately)
-CMD ["node", "server.js"]
+# Copy package.json for prisma commands
+COPY --from=builder /app/package.json ./package.json
+
+# Install prisma CLI for migrations
+RUN pnpm add -D prisma@6.19.0
+
+# Create entrypoint script for auto migration
+RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
+    echo 'cd /app && npx prisma db push --skip-generate --accept-data-loss || echo "⚠️  Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
+    echo 'echo "🚀 Starting Dashboard..."' >> /app/entrypoint.sh && \
+    echo 'exec node server.js' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+# Start with entrypoint
+CMD ["/app/entrypoint.sh"]

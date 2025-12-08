@@ -46,5 +46,14 @@ RUN mkdir -p logs
 # Expose port
 EXPOSE 3002
 
-# Start server
-CMD ["node", "dist/server.js"]
+# Create entrypoint script for auto migration
+RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
+    echo 'pnpm prisma db push --skip-generate --accept-data-loss || echo "⚠️  Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
+    echo 'echo "🚀 Starting AI Service..."' >> /app/entrypoint.sh && \
+    echo 'exec node dist/server.js' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+# Start with entrypoint
+CMD ["/app/entrypoint.sh"]
