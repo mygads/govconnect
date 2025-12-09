@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { writeFile, mkdir } from 'fs/promises'
-import path from 'path'
+import { ai } from '@/lib/api-client'
 import { randomUUID } from 'crypto'
 
 // Force Node.js runtime for file uploads
@@ -19,7 +18,6 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(request: NextRequest) {
   try {
-    // TODO: Add auth check
     const searchParams = request.nextUrl.searchParams
     const status = searchParams.get('status')
     const category = searchParams.get('category')
@@ -57,7 +55,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/documents
- * Upload a new document
+ * Upload a new document - forwards to AI service for processing
  */
 export async function POST(request: NextRequest) {
   try {
@@ -100,43 +98,94 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Generate unique filename
-    const ext = getExtension(file.name)
-    const filename = `${randomUUID()}.${ext}`
+    // Generate document ID
+    const documentId = randomUUID()
     
-    // Create uploads directory if not exists
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'documents')
-    await mkdir(uploadDir, { recursive: true })
-    
-    // Save file
-    const filePath = path.join(uploadDir, filename)
-    const bytes = await file.arrayBuffer()
-    await writeFile(filePath, Buffer.from(bytes))
-    
-    // Create database record
+    // Create database record first (pending status)
     const document = await prisma.knowledge_documents.create({
       data: {
-        filename,
+        id: documentId,
+        filename: `${documentId}.${getExtension(file.name)}`,
         original_name: file.name,
         mime_type: file.type,
         file_size: file.size,
-        file_url: `/uploads/documents/${filename}`,
-        title: title || file.name.replace(/\.[^/.]+$/, ''), // Remove extension
+        file_url: '', // Will be updated by AI service
+        title: title || file.name.replace(/\.[^/.]+$/, ''),
         description,
         category,
-        status: 'pending',
+        status: 'processing',
       },
     })
 
-    return NextResponse.json({
-      success: true,
-      data: document,
-      message: 'Document uploaded successfully. Processing will start shortly.',
-    })
-  } catch (error) {
+    // Forward file to AI service for processing
+    const aiFormData = new FormData()
+    aiFormData.append('file', file)
+    aiFormData.append('documentId', documentId)
+    if (title) aiFormData.append('title', title)
+    if (category) aiFormData.append('category', category)
+
+    try {
+      const aiResponse = await ai.uploadDocument(aiFormData)
+      
+      if (!aiResponse.ok) {
+        const errorData = await aiResponse.json()
+        
+        // Update status to failed
+        await prisma.knowledge_documents.update({
+          where: { id: documentId },
+          data: {
+            status: 'failed',
+            error_message: errorData.error || errorData.details || 'AI processing failed',
+          },
+        })
+        
+        return NextResponse.json({
+          success: false,
+          data: document,
+          error: errorData.error || 'AI processing failed',
+        }, { status: 500 })
+      }
+
+      const result = await aiResponse.json()
+      
+      // Update document with success status
+      const updatedDoc = await prisma.knowledge_documents.update({
+        where: { id: documentId },
+        data: {
+          status: 'completed',
+          total_chunks: result.chunksCount || 0,
+          file_url: result.filename || '',
+        },
+      })
+
+      return NextResponse.json({
+        success: true,
+        data: updatedDoc,
+        chunksCount: result.chunksCount,
+        message: 'Document uploaded and processed successfully.',
+      })
+    } catch (aiError: any) {
+      console.error('AI service error:', aiError)
+      
+      // Update status to failed
+      await prisma.knowledge_documents.update({
+        where: { id: documentId },
+        data: {
+          status: 'failed',
+          error_message: aiError.message || 'Failed to connect to AI service',
+        },
+      })
+      
+      return NextResponse.json({
+        success: false,
+        data: document,
+        error: 'Failed to process document: ' + (aiError.message || 'AI service unavailable'),
+      }, { status: 500 })
+    }
+  } catch (error: any) {
     console.error('Error uploading document:', error)
     return NextResponse.json(
-      { error: 'Failed to upload document' },
+      { error: 'Failed to upload document', details: error.message },
       { status: 500 }
     )
   }

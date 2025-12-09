@@ -75,19 +75,10 @@ export default function LandingPage() {
   const [isDark, setIsDark] = useState(false);
   const whatsappLink = generateWhatsAppLink();
 
-  // Check authentication and redirect if logged in
+  // Set initial theme on mount
   useEffect(() => {
-    const checkAuth = () => {
-      const token = localStorage.getItem("token") || document.cookie.includes("auth-token");
-      if (token) {
-        router.push("/dashboard");
-      }
-    };
-    checkAuth();
-    
-    // Set initial theme
     document.documentElement.classList.remove("dark");
-  }, [router]);
+  }, []);
 
   const toggleTheme = () => {
     setIsDark(!isDark);

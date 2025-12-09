@@ -421,13 +421,10 @@ export default function KnowledgePage() {
       const result = await response.json()
       setUploadProgress(100)
 
-      toast({ title: "Success", description: "Document uploaded" })
+      toast({ title: "Success", description: "Document uploaded and processing started" })
       setIsUploadOpen(false)
       resetUploadForm()
       fetchDocuments()
-
-      // Auto-trigger processing
-      if (result.data?.id) await triggerProcessing(result.data.id)
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" })
     } finally {
@@ -438,13 +435,36 @@ export default function KnowledgePage() {
 
   const triggerProcessing = async (documentId: string) => {
     try {
-      await fetch(`/api/documents/${documentId}/process`, {
+      toast({ title: "Processing", description: "Starting document processing..." })
+      
+      const response = await fetch(`/api/documents/${documentId}/process`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
       })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        toast({ 
+          title: "Processing Failed", 
+          description: result.error || result.details || 'Unknown error',
+          variant: "destructive" 
+        })
+      } else {
+        toast({ 
+          title: "Success", 
+          description: `Document processed: ${result.chunksCount || 0} chunks created` 
+        })
+      }
+      
       fetchDocuments()
-    } catch (error) {
+    } catch (error: any) {
       console.error('Processing failed:', error)
+      toast({ 
+        title: "Error", 
+        description: error.message || 'Processing failed',
+        variant: "destructive" 
+      })
     }
   }
 

@@ -350,6 +350,30 @@ export const ai = {
   },
 
   /**
+   * Upload document to AI service for processing
+   */
+  async uploadDocument(formData: FormData) {
+    const url = buildUrl(ServicePath.AI, '/api/upload/document');
+    return fetch(url, {
+      method: 'POST',
+      headers: {
+        'x-internal-api-key': INTERNAL_API_KEY,
+      },
+      body: formData,
+    });
+  },
+
+  /**
+   * Delete document vectors from AI service
+   */
+  async deleteDocumentVectors(documentId: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/api/upload/document/${documentId}`), {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+  },
+
+  /**
    * Get AI usage stats by model
    */
   async getUsageByModel(model: string) {

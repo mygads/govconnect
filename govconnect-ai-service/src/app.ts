@@ -22,6 +22,7 @@ import documentRoutes from './routes/document.routes';
 import knowledgeRoutes from './routes/knowledge.routes';
 import documentsRoutes from './routes/documents.routes';
 import searchRoutes from './routes/search.routes';
+import uploadRoutes from './routes/upload.routes';
 import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
 import { config } from './config/env';
@@ -509,6 +510,7 @@ app.use('/api/internal', documentRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/documents', documentsRoutes);
 app.use('/api/search', searchRoutes);
+app.use('/api/upload', uploadRoutes);
 
 app.get('/stats/embeddings', async (req: Request, res: Response) => {
   try {

@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { unlink } from 'fs/promises'
-import path from 'path'
-import { deleteDocumentVectors } from '@/lib/ai-service'
+import { ai } from '@/lib/api-client'
 
 /**
  * GET /api/documents/[id]
@@ -26,15 +24,10 @@ export async function GET(
       )
     }
 
-    // Get chunks count
-    const chunksCount = await prisma.$queryRaw<[{ count: bigint }]>`
-      SELECT COUNT(*) as count FROM document_chunks WHERE document_id = ${id}
-    `
-
     return NextResponse.json({
       data: {
         ...document,
-        chunks_count: Number(chunksCount[0]?.count || 0),
+        chunks_count: document.total_chunks || 0,
       },
     })
   } catch (error) {
@@ -84,7 +77,7 @@ export async function PUT(
 
 /**
  * DELETE /api/documents/[id]
- * Delete a document and its file
+ * Delete a document and its vectors from AI service
  */
 export async function DELETE(
   request: NextRequest,
@@ -93,7 +86,7 @@ export async function DELETE(
   try {
     const { id } = await params
 
-    // Get document to find file path
+    // Get document
     const document = await prisma.knowledge_documents.findUnique({
       where: { id },
     })
@@ -105,37 +98,27 @@ export async function DELETE(
       )
     }
 
-    // Delete chunks first
-    await prisma.$executeRaw`
-      DELETE FROM document_chunks WHERE document_id = ${id}
-    `
+    // Delete vectors from AI Service first
+    try {
+      await ai.deleteDocumentVectors(id)
+    } catch (err) {
+      console.error('Failed to delete document vectors from AI Service:', err)
+      // Continue with deletion even if AI service fails
+    }
 
-    // Delete document record
+    // Delete document record from database
     await prisma.knowledge_documents.delete({
       where: { id },
     })
-
-    // Delete vectors from AI Service
-    deleteDocumentVectors(id).catch(err => {
-      console.error('Failed to delete document vectors from AI Service:', err)
-    })
-
-    // Try to delete file (don't fail if file doesn't exist)
-    try {
-      const filePath = path.join(process.cwd(), 'public', document.file_url)
-      await unlink(filePath)
-    } catch (e) {
-      console.warn('Could not delete file:', e)
-    }
 
     return NextResponse.json({
       success: true,
       message: 'Document deleted successfully',
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error deleting document:', error)
     return NextResponse.json(
-      { error: 'Failed to delete document' },
+      { error: 'Failed to delete document', details: error.message },
       { status: 500 }
     )
   }
