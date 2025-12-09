@@ -206,16 +206,22 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       sectionTitle: chunk.sectionTitle,
     })));
     
+    // Build the file URL for viewing
+    // This URL will be accessible via the static file serving in app.ts
+    const fileUrl = `/uploads/documents/${file.filename}`;
+    
     logger.info('Document processing completed', {
       documentId,
       chunksCount: embeddedChunks.length,
       filename: file.filename,
+      fileUrl,
     });
     
     return res.json({
       success: true,
       documentId,
       filename: file.filename,
+      fileUrl, // Full path for viewing the document
       originalName: file.originalname,
       fileSize: file.size,
       mimeType: file.mimetype,

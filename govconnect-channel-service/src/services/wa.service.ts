@@ -462,13 +462,33 @@ export async function sendTypingIndicator(
 
 /**
  * Mark messages as read
+ * Note: Always reload settings from database to ensure we have the latest value
  */
 export async function markMessageAsRead(
   messageIds: string[],
   chatPhone: string,
   senderPhone: string
 ): Promise<boolean> {
+  // Always reload settings from database to get latest value
+  // This ensures setting changes from dashboard are reflected immediately
+  try {
+    const settings = await prisma.wa_settings.findFirst({
+      where: { id: 'default' },
+    });
+    
+    if (settings) {
+      sessionSettings.autoReadMessages = settings.auto_read_messages;
+    }
+  } catch (error) {
+    logger.debug('Could not reload settings, using cached value');
+  }
+  
   if (!sessionSettings.autoReadMessages) {
+    logger.debug('Auto read is disabled, skipping mark as read', { 
+      chatPhone, 
+      messageCount: messageIds.length,
+      autoReadEnabled: sessionSettings.autoReadMessages 
+    });
     return false;
   }
   
@@ -491,7 +511,7 @@ export async function markMessageAsRead(
       timeout: 5000,
     });
 
-    logger.debug('Messages marked as read', { messageIds, chatPhone });
+    logger.info('Messages marked as read', { messageIds, chatPhone, autoReadEnabled: true });
     return true;
   } catch (error: any) {
     logger.error('Failed to mark messages as read', {

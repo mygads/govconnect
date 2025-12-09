@@ -148,13 +148,20 @@ export async function POST(request: NextRequest) {
 
       const result = await aiResponse.json()
       
+      // Build the full URL for viewing the document
+      // AI service serves files at /uploads/documents/<filename>
+      const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:3002'
+      const fileUrl = result.fileUrl 
+        ? `${aiServiceUrl}${result.fileUrl}` 
+        : (result.filename ? `${aiServiceUrl}/uploads/documents/${result.filename}` : '')
+      
       // Update document with success status
       const updatedDoc = await prisma.knowledge_documents.update({
         where: { id: documentId },
         data: {
           status: 'completed',
           total_chunks: result.chunksCount || 0,
-          file_url: result.filename || '',
+          file_url: fileUrl,
         },
       })
 

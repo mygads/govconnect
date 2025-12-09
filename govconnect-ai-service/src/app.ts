@@ -503,6 +503,30 @@ app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
 // Embedding & RAG Endpoints
 // ===========================================
 
+// Serve uploaded documents as static files
+// Files are accessible at /uploads/documents/<filename>
+import path from 'path';
+const uploadsDir = path.join(process.cwd(), 'uploads', 'documents');
+app.use('/uploads/documents', express.static(uploadsDir, {
+  setHeaders: (res, filePath) => {
+    // Set appropriate content-type based on file extension
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === '.pdf') {
+      res.setHeader('Content-Type', 'application/pdf');
+    } else if (ext === '.docx') {
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    } else if (ext === '.doc') {
+      res.setHeader('Content-Type', 'application/msword');
+    } else if (ext === '.txt' || ext === '.md') {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    } else if (ext === '.csv') {
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    }
+    // Allow inline viewing for PDFs
+    res.setHeader('Content-Disposition', 'inline');
+  }
+}));
+
 // Mount document processing routes (legacy)
 app.use('/api/internal', documentRoutes);
 

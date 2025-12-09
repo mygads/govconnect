@@ -1,7 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { SYSTEM_PROMPT_TEMPLATE, SYSTEM_PROMPT_WITH_KNOWLEDGE } from '../prompts/system-prompt';
+import { SYSTEM_PROMPT_WITH_KNOWLEDGE, getFullSystemPrompt } from '../prompts/system-prompt';
 import { RAGContext } from '../types/embedding.types';
 
 interface Message {
@@ -38,8 +38,8 @@ export async function buildContext(
     // Build knowledge section with confidence-aware instructions
     const knowledgeSection = buildKnowledgeSection(ragContext);
     
-    // Build full prompt
-    const systemPrompt = SYSTEM_PROMPT_TEMPLATE
+    // Build full prompt using complete system prompt (all parts combined)
+    const systemPrompt = getFullSystemPrompt()
       .replace('{knowledge_context}', knowledgeSection)
       .replace('{history}', conversationHistory)
       .replace('{user_message}', currentMessage);
@@ -69,7 +69,7 @@ export async function buildContext(
     });
     
     // Fallback: return prompt without history
-    const fallbackPrompt = SYSTEM_PROMPT_TEMPLATE
+    const fallbackPrompt = getFullSystemPrompt()
       .replace('{knowledge_context}', '')
       .replace('{history}', '(No conversation history available)')
       .replace('{user_message}', currentMessage);
@@ -209,17 +209,71 @@ async function fetchMessageHistory(wa_user_id: string, limit: number): Promise<M
 }
 
 /**
+ * Extract user's name from conversation history
+ * Looks for patterns like "nama saya X", "saya X", "panggil saya X"
+ */
+function extractUserName(messages: Message[]): string | null {
+  // Patterns to detect name introduction
+  const namePatterns = [
+    /nama\s+(?:saya|aku|gue|gw)\s+(?:adalah\s+)?([a-zA-Z]+)/i,
+    /(?:saya|aku|gue|gw)\s+([a-zA-Z]+)(?:\s+kak)?$/i,
+    /panggil\s+(?:saya|aku)\s+([a-zA-Z]+)/i,
+    /(?:^|\s)([a-zA-Z]+)\s+(?:kak|pak|bu)?\s*$/i,  // Simple name at end of message
+  ];
+  
+  // Check user messages (IN direction) for name patterns
+  for (const msg of messages) {
+    if (msg.direction !== 'IN') continue;
+    const text = msg.message_text.trim();
+    
+    // Skip if message is too long (probably not just a name)
+    if (text.length > 50) continue;
+    
+    // Skip common non-name responses
+    const skipPatterns = [
+      /^(ya|iya|ok|oke|baik|siap|terima kasih|makasih|halo|hai|hi|hello)$/i,
+      /^(mau|ingin|butuh|perlu|tolong|bantu)/i,
+      /^(jalan|lampu|sampah|rusak|mati)/i,
+    ];
+    if (skipPatterns.some(p => p.test(text))) continue;
+    
+    for (const pattern of namePatterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const name = match[1].trim();
+        // Validate: name should be 2-20 chars, only letters
+        if (name.length >= 2 && name.length <= 20 && /^[a-zA-Z]+$/.test(name)) {
+          // Capitalize first letter
+          return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+        }
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Format conversation history for LLM
  * Includes timestamp context and message summarization for long histories
+ * Now also extracts and highlights user's name if found
  */
 function formatConversationHistory(messages: Message[]): string {
   if (messages.length === 0) {
     return '(Ini adalah percakapan pertama dengan user)';
   }
   
+  // Extract user's name from history
+  const userName = extractUserName(messages);
+  
   // If history is very long, summarize older messages
   const MAX_DETAILED_MESSAGES = 10;
   let formatted = '';
+  
+  // Add user name context at the top if found
+  if (userName) {
+    formatted += `[INFO USER: Nama user adalah "${userName}" - GUNAKAN nama ini untuk memanggil!]\n\n`;
+  }
   
   if (messages.length > MAX_DETAILED_MESSAGES) {
     // Summarize older messages
@@ -240,7 +294,7 @@ function formatConversationHistory(messages: Message[]): string {
     }).join('\n');
   } else {
     // Format all messages normally
-    formatted = messages.map(msg => {
+    formatted += messages.map(msg => {
       const role = msg.direction === 'IN' ? 'User' : 'Assistant';
       return `${role}: ${msg.message_text}`;
     }).join('\n');
@@ -254,6 +308,12 @@ function formatConversationHistory(messages: Message[]): string {
  */
 function extractKeyInfo(messages: Message[]): string {
   const info: string[] = [];
+  
+  // First, try to extract user's name
+  const userName = extractUserName(messages);
+  if (userName) {
+    info.push(`- Nama user: ${userName} (GUNAKAN nama ini!)`);
+  }
   
   // Look for addresses mentioned
   const addressPatterns = [
