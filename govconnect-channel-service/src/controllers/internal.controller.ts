@@ -115,6 +115,54 @@ export async function setTyping(req: Request, res: Response): Promise<void> {
 }
 
 /**
+ * Store AI reply message in database
+ * POST /internal/messages
+ * Body: { wa_user_id: "628xxx", message_text: "text", direction: "OUT", message_type: "text", status: "sent", metadata: {...} }
+ * 
+ * This is called by AI service to store AI replies in database
+ * Used in testing mode to maintain conversation history without sending to WhatsApp
+ */
+export async function storeMessage(req: Request, res: Response): Promise<void> {
+  try {
+    const { wa_user_id, message_text, direction, message_type, status, metadata } = req.body;
+    
+    if (!wa_user_id || !message_text) {
+      res.status(400).json({ 
+        error: 'wa_user_id and message_text are required' 
+      });
+      return;
+    }
+    
+    // Generate a unique message ID for stored messages
+    const message_id = `ai-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    
+    // Save outgoing message
+    const message = await saveOutgoingMessage({
+      wa_user_id,
+      message_id,
+      message_text,
+      source: 'AI',
+    });
+    
+    logger.info('AI reply stored in database', { 
+      wa_user_id, 
+      message_id,
+      testing_mode: metadata?.testing_mode,
+      ai_generated: metadata?.ai_generated,
+    });
+    
+    res.status(201).json({ 
+      status: 'stored',
+      message_id,
+      id: message.id,
+    });
+  } catch (error: any) {
+    logger.error('Store message error', { error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
  * Mark messages as read in WhatsApp
  * POST /internal/messages/read
  * Body: { wa_user_id: "628xxx", message_ids: ["msgid1", "msgid2"] }

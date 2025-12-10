@@ -22,11 +22,15 @@ interface ComplaintResponse {
 
 /**
  * Create complaint in Case Service (SYNC call with Circuit Breaker)
+ * 
+ * TESTING MODE: Data is still saved to database for dashboard visibility.
+ * Only WhatsApp message sending is skipped (handled in rabbitmq.service.ts).
  */
 export async function createComplaint(data: ComplaintData): Promise<string | null> {
   logger.info('Creating complaint in Case Service', {
     wa_user_id: data.wa_user_id,
     kategori: data.kategori,
+    testingMode: config.testingMode,
   });
   
   try {
@@ -53,10 +57,19 @@ export async function createComplaint(data: ComplaintData): Promise<string | nul
     
     const complaintId = response.data.data.complaint_id;
     
-    logger.info('✅ Complaint created successfully', {
-      wa_user_id: data.wa_user_id,
-      complaint_id: complaintId,
-    });
+    if (config.testingMode) {
+      logger.info('🧪 TESTING MODE: Complaint created in database', {
+        wa_user_id: data.wa_user_id,
+        complaint_id: complaintId,
+        kategori: data.kategori,
+        alamat: data.alamat,
+      });
+    } else {
+      logger.info('✅ Complaint created successfully', {
+        wa_user_id: data.wa_user_id,
+        complaint_id: complaintId,
+      });
+    }
     
     return complaintId;
   } catch (error: any) {
@@ -275,3 +288,5 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
     return null;
   }
 }
+
+

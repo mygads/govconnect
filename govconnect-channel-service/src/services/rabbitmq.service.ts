@@ -542,11 +542,19 @@ export async function startConsumingMessageStatus(): Promise<void> {
         switch (payload.status) {
           case 'completed':
             await markMessagesAsCompleted(payload.message_ids);
+            // Clear AI processing status when completed
+            await clearAIStatus(payload.wa_user_id);
+            logger.info('✅ Messages completed and removed from pending queue', {
+              count: payload.message_ids.length,
+              messageIds: payload.message_ids,
+            });
             break;
           case 'failed':
             for (const msgId of payload.message_ids) {
               await markMessageAsFailed(msgId, payload.error_message || 'Unknown error');
             }
+            // Set AI error status when failed
+            await setAIError(payload.wa_user_id, payload.error_message || 'Unknown error', payload.message_ids[0]);
             break;
           case 'processing':
             // No action needed - already marked when published to queue

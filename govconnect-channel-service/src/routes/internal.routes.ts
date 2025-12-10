@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getMessages, sendMessage, setTyping, markMessagesRead } from '../controllers/internal.controller';
+import { getMessages, sendMessage, setTyping, markMessagesRead, storeMessage } from '../controllers/internal.controller';
 import {
   getStatus,
   connect,
@@ -35,6 +35,7 @@ router.use(internalAuth);
 
 // Message routes
 router.get('/messages', validateGetMessages, getMessages);
+router.post('/messages', storeMessage);  // Store AI reply in database
 router.post('/send', validateSendMessage, sendMessage);
 router.post('/typing', setTyping);
 router.post('/messages/read', markMessagesRead);

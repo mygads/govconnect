@@ -355,7 +355,78 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     }
     
     // Sanitize user input to prevent prompt injection
-    const sanitizedMessage = sanitizeUserInput(message);
+    let sanitizedMessage = sanitizeUserInput(message);
+    
+    // Enhanced typo correction for common mistakes
+    const typoCorrections: Record<string, string> = {
+      // Document typos
+      'srat': 'surat',
+      'surat': 'surat', // keep correct
+      'domisili': 'domisili', // already correct
+      'keterangan': 'keterangan', // keep correct
+      'sktm': 'SKTM',
+      'skd': 'SKD',
+      
+      // Informal language
+      'gw': 'saya',
+      'gue': 'saya', 
+      'gua': 'saya',
+      'aku': 'saya',
+      'w': 'saya', // single letter
+      
+      // Time expressions
+      'bsk': 'besok',
+      'besok': 'besok', // keep correct
+      'lusa': 'lusa', // keep correct
+      
+      // Location/address
+      'jln': 'jalan',
+      'jl': 'jalan',
+      'gg': 'gang',
+      'rt': 'RT',
+      'rw': 'RW',
+      
+      // Greetings
+      'hlo': 'halo',
+      'hai': 'halo',
+      'hi': 'halo',
+      'hello': 'halo',
+      
+      // Common words
+      'mau': 'mau', // keep correct
+      'pengen': 'ingin',
+      'butuh': 'perlu',
+      'bikin': 'buat',
+      'gimana': 'bagaimana',
+      'gmn': 'bagaimana',
+      'bisa': 'bisa', // keep correct
+      
+      // Negation
+      'ga': 'tidak',
+      'gak': 'tidak',
+      'nggak': 'tidak',
+      'engga': 'tidak',
+      'enggak': 'tidak',
+      
+      // Politeness
+      'kak': 'kak', // keep correct
+      'bang': 'bang', // keep correct
+      'pak': 'pak', // keep correct
+      
+      // Common typos
+      'nih': 'nih', // keep correct
+      'dong': 'dong', // keep correct
+      'ya': 'ya', // keep correct
+      'iya': 'iya', // keep correct
+      'ok': 'oke',
+      'okay': 'oke',
+    };
+    
+    // Apply typo corrections (word boundaries to avoid partial matches)
+    for (const [typo, correct] of Object.entries(typoCorrections)) {
+      const regex = new RegExp(`\\b${typo}\\b`, 'gi');
+      sanitizedMessage = sanitizedMessage.replace(regex, correct);
+    }
     
     // Step 0.25: Language detection (regional Indonesian languages)
     const languageDetection = detectLanguage(sanitizedMessage);
@@ -772,9 +843,49 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
 }
 
 /**
+ * Detect if complaint is an emergency that needs immediate attention
+ */
+function detectEmergencyComplaint(deskripsi: string, message: string, kategori: string): boolean {
+  const combinedText = `${deskripsi} ${message}`.toLowerCase();
+  
+  // Emergency keywords that indicate immediate danger or blocking situation
+  const emergencyKeywords = [
+    /darurat/i,
+    /bahaya/i,
+    /menghalangi\s+jalan/i,
+    /tidak\s+bisa\s+lewat/i,
+    /banjir\s+besar/i,
+    /banjir\s+tinggi/i,
+    /kebakaran/i,
+    /pohon\s+tumbang.*menghalangi/i,
+    /pohon\s+tumbang.*jalan/i,
+    /listrik\s+nyetrum/i,
+    /kabel\s+putus/i,
+    /gas\s+bocor/i,
+    /longsor/i,
+    /runtuh/i,
+    /ambruk/i,
+  ];
+  
+  // Check if any emergency keyword matches
+  const hasEmergencyKeyword = emergencyKeywords.some(pattern => pattern.test(combinedText));
+  
+  // Certain categories are automatically high priority if they block access
+  const highPriorityCategories = ['pohon_tumbang', 'banjir'];
+  const isHighPriorityCategory = highPriorityCategories.includes(kategori);
+  
+  // Check for blocking/access keywords
+  const blockingKeywords = /menghalangi|menutupi|tidak\s+bisa\s+lewat|terhalang|tertutup/i;
+  const hasBlockingKeyword = blockingKeywords.test(combinedText);
+  
+  // Emergency if: has emergency keyword OR (high priority category AND blocking)
+  return hasEmergencyKeyword || (isHighPriorityCategory && hasBlockingKeyword);
+}
+
+/**
  * Handle complaint creation
  */
-async function handleComplaintCreation(wa_user_id: string, llmResponse: any, currentMessage: string, mediaUrl?: string): Promise<string> {
+export async function handleComplaintCreation(wa_user_id: string, llmResponse: any, currentMessage: string, mediaUrl?: string): Promise<string> {
   const { kategori, rt_rw } = llmResponse.fields;
   let { alamat, deskripsi } = llmResponse.fields;
   
@@ -847,8 +958,9 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
       }
     } else {
       // Try to extract address part from complaint message
-      // Look for patterns like "di Jalan X", "di komplek Y", "di margahayu", etc.
-      const addressRegex = /(?:di\s+)?(jalan|jln|jl\.?|komplek|perumahan|gang|gg\.)\s+[a-zA-Z0-9\s]+(?:\s+(?:no|nomor|rt|rw|blok)[\s\.]*[\d\/a-zA-Z]+)*/i;
+      // Look for patterns like "di Jalan X", "di komplek Y", "di gang X rt Y", etc.
+      // IMPORTANT: Avoid matching "jalan" in "lampu jalan" or "jalan rusak"
+      const addressRegex = /(?:di\s+)?(gang|gg\.|komplek|perumahan|blok)\s+[a-zA-Z0-9\s]+(?:\s+(?:no|nomor|rt|rw|blok)[\s\.]*[\d\/a-zA-Z]+)*/i;
       const match = currentMessage.match(addressRegex);
       
       if (match) {
@@ -859,6 +971,30 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
           detectedAlamat: alamat,
         });
       } else {
+        // Try "di jalan X" pattern but only if "jalan" is followed by a proper name (capitalized or specific)
+        // IMPORTANT: Make sure "jalan" is not preceded by complaint keywords like "lampu", "penerangan"
+        const jalanMatch = currentMessage.match(/(?:di\s+)?(jalan|jln|jl\.?)\s+([A-Z][a-zA-Z0-9\s]+(?:\s+(?:no|nomor|rt|rw)[\s\.]*[\d\/a-zA-Z]+)*)/i);
+        if (jalanMatch && jalanMatch[2] && jalanMatch[2].length >= 3) {
+          // Make sure it's not "jalan rusak" or "jalan mati"
+          const roadName = jalanMatch[2].trim();
+          // Also check if "jalan" is preceded by complaint keywords
+          const matchIndex = currentMessage.indexOf(jalanMatch[0]);
+          const textBefore = currentMessage.substring(Math.max(0, matchIndex - 20), matchIndex).toLowerCase();
+          const hasComplaintBefore = /lampu|penerangan|listrik|cahaya/i.test(textBefore);
+          
+          if (!hasComplaintBefore && !/^(rusak|mati|berlubang|retak|padam)/i.test(roadName)) {
+            alamat = `${jalanMatch[1]} ${roadName}`.trim();
+            logger.info('Smart alamat detection: jalan extraction', {
+              wa_user_id,
+              originalMessage: currentMessage.substring(0, 50),
+              detectedAlamat: alamat,
+            });
+          }
+        }
+      }
+      
+      // If still no alamat, try other patterns
+      if (!alamat) {
         // Try to extract location names (city/area) from complaint message
         // Pattern: "di [location]" where location is a known city/area or landmark
         const locationMatch = currentMessage.match(/(?:di|ke)\s+((?:margahayu|cimahi|bandung|jakarta|surabaya|semarang|bekasi|tangerang|depok|bogor)[a-z\s]*)/i);
@@ -956,6 +1092,9 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
     return `📍 Alamat "${alamat}" sepertinya kurang spesifik untuk laporan ${kategoriLabel}.${photoNote}\n\nApakah Anda ingin menambahkan detail alamat (nomor rumah, RT/RW, nama jalan lengkap) atau ketik "ya" untuk tetap menggunakan alamat ini?`;
   }
   
+  // Check if this is an emergency complaint (priority triage)
+  const isEmergency = detectEmergencyComplaint(deskripsi, currentMessage, kategori);
+  
   // Create complaint in Case Service (SYNC call)
   const complaintId = await createComplaint({
     wa_user_id,
@@ -973,7 +1112,14 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
     
     const withPhoto = mediaUrl ? ' 📷' : '';
-    return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan segera menindaklanjuti laporan Anda di ${alamat}.`;
+    
+    // Different response for emergency vs normal complaints
+    if (isEmergency) {
+      logger.info('🚨 Emergency complaint detected', { wa_user_id, complaintId, kategori, deskripsi });
+      return `🚨 PRIORITAS TINGGI\n\nTerima kasih laporannya Kak! Ini situasi darurat yang perlu penanganan segera.\n\nSaya sudah catat sebagai LAPORAN PRIORITAS dengan nomor ${complaintId}.${withPhoto}\n\nTim kami akan segera ke lokasi ${alamat}.\n\n⚠️ Untuk keamanan, mohon hindari area tersebut dulu ya Kak.`;
+    } else {
+      return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan survey lokasi dalam 1-3 hari kerja di ${alamat}.`;
+    }
   } else {
     // Record failure for analytics
     aiAnalyticsService.recordFailure('CREATE_COMPLAINT');
@@ -983,37 +1129,669 @@ async function handleComplaintCreation(wa_user_id: string, llmResponse: any, cur
 }
 
 /**
+ * Extract address using LLM as fallback when regex fails
+ */
+async function extractAddressWithLLM(userMessages: string): Promise<string | null> {
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const { config } = await import('../config/env');
+    
+    const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    
+    const prompt = `Ekstrak ALAMAT LENGKAP dari percakapan berikut. Jika user menyebutkan alamat dengan format "tinggal di [alamat]", ekstrak SEMUA detail alamat yang disebutkan (jalan, nomor, RT, RW, dll).
+
+Percakapan:
+${userMessages}
+
+ATURAN:
+1. Ekstrak ALAMAT LENGKAP yang disebutkan user
+2. Jika ada "tinggal di jalan melati no 50 rt 07 rw 05" → return "jalan melati no 50 rt 07 rw 05"
+3. Jika tidak ada alamat → return "TIDAK_ADA"
+4. Return HANYA alamatnya, tanpa kata "tinggal di" atau kata lain
+
+Alamat:`;
+
+    const result = await model.generateContent(prompt);
+    const response = result.response.text().trim();
+    
+    if (response && response !== 'TIDAK_ADA' && response.length >= 5 && response.length <= 200) {
+      return response;
+    }
+    
+    return null;
+  } catch (error: any) {
+    logger.error('LLM address extraction error', { error: error.message });
+    return null;
+  }
+}
+
+/**
+ * Extract citizen data from conversation history
+ * This is a fallback when LLM doesn't fill the fields properly
+ */
+export async function extractCitizenDataFromHistory(wa_user_id: string): Promise<{
+  nama_lengkap?: string;
+  nik?: string;
+  alamat?: string;
+  no_hp?: string;
+  keperluan?: string;
+} | null> {
+  try {
+    const axios = (await import('axios')).default;
+    const { config } = await import('../config/env');
+    
+    const url = `${config.channelServiceUrl}/internal/messages`;
+    const response = await axios.get(url, {
+      params: { wa_user_id, limit: 20 },
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      timeout: 5000,
+    });
+    
+    const messages = response.data?.messages || [];
+    const result: {
+      nama_lengkap?: string;
+      nik?: string;
+      alamat?: string;
+      no_hp?: string;
+      keperluan?: string;
+    } = {};
+    
+    // Combine all user messages for extraction
+    const userMessages = messages
+      .filter((m: any) => m.direction === 'IN')
+      .map((m: any) => m.message_text)
+      .join(' ');
+    
+    // DEBUG: Log full user messages for analysis
+    logger.info('🔍 DEBUG: Full user messages for extraction', { 
+      wa_user_id, 
+      userMessages,
+      messageCount: messages.filter((m: any) => m.direction === 'IN').length 
+    });
+    
+    // Extract NIK (16 digits) with validation
+    // Support formats: "nik 3207...", "nik:3207...", "nik gw 3207..."
+    const nikPatterns = [
+      /(?:nik|NIK)[\s:]+(\d{16})/,  // nik: 3207... or nik 3207...
+      /\b(\d{16})\b/,                // standalone 16 digits
+    ];
+    
+    let nikCandidates: string[] = [];
+    for (const pattern of nikPatterns) {
+      const matches = userMessages.match(new RegExp(pattern, 'g'));
+      if (matches) {
+        for (const match of matches) {
+          const nikMatch = match.match(/(\d{16})/);
+          if (nikMatch) {
+            nikCandidates.push(nikMatch[1]);
+          }
+        }
+      }
+    }
+    
+    if (nikCandidates.length > 0) {
+      // Remove duplicates
+      nikCandidates = [...new Set(nikCandidates)];
+      
+      // Validate and pick the best one
+      for (const nik of nikCandidates) {
+        // Basic validation: NIK should start with valid province code (11-99)
+        const provinceCode = parseInt(nik.substring(0, 2));
+        if (provinceCode >= 11 && provinceCode <= 99) {
+          result.nik = nik;
+          logger.info('✅ NIK extracted', { wa_user_id, nik });
+          break;
+        }
+      }
+      // If no valid NIK found, use the first one anyway
+      if (!result.nik && nikCandidates.length > 0) {
+        result.nik = nikCandidates[0];
+        logger.info('✅ NIK extracted (unvalidated)', { wa_user_id, nik: nikCandidates[0] });
+      }
+    }
+    
+    // Extract phone number (Indonesian format) with better pattern
+    // Support formats: 08xxx, 628xxx, +628xxx, with/without spaces/dashes
+    const phonePatterns = [
+      /\b(08\d{8,11})\b/,           // 08xxxxxxxxxx
+      /\b(628\d{8,11})\b/,          // 628xxxxxxxxxx
+      /\+?(62)\s*8\d{8,11}/,        // +62 8xxxxxxxxxx
+      /(?:hp|no|nomer|telp|phone)[\s:]*(\d{10,13})/i, // hp: 08xxxxxxxxxx
+    ];
+    
+    for (const pattern of phonePatterns) {
+      const match = userMessages.match(pattern);
+      if (match) {
+        let phone = match[1] || match[0];
+        // Normalize: remove spaces, dashes, plus
+        phone = phone.replace(/[\s\-\+]/g, '');
+        // Convert 628xxx to 08xxx
+        if (phone.startsWith('628')) {
+          phone = '0' + phone.substring(2);
+        } else if (phone.startsWith('62')) {
+          phone = '0' + phone.substring(2);
+        }
+        // Validate length (10-13 digits for Indonesian numbers)
+        if (phone.length >= 10 && phone.length <= 13 && phone.startsWith('08')) {
+          result.no_hp = phone;
+          logger.info('✅ Phone extracted', { wa_user_id, no_hp: phone });
+          break;
+        }
+      }
+    }
+    
+    // Extract name patterns - ENHANCED for better multi-step conversation support
+    const namePatterns = [
+      // "nama saya X" - most reliable, stop at specific terminators
+      /nama\s+saya\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)(?:\s+(?:mau|ingin|nik|alamat|hp|no|tinggal|telp|buat|bikin)|\s*[,.]|\s*$)/i,
+      // "saya X" at start of line or after newline - more restrictive
+      /(?:^|\n)\s*saya\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+(?:mau|ingin|nik|alamat|hp|no|tinggal|telp|buat|bikin)|\s*[,.]|\s*$)/i,
+      // "nama: X" or "nama X" (key:value format)
+      /nama[\s:]+([A-Za-z]+(?:\s+[A-Za-z]+)?)(?:\s+(?:mau|ingin|nik|alamat|hp|no|tinggal|telp|buat|bikin)|\s*[,.]|\s*$)/i,
+      // "gw/gue X" - ENHANCED: capture full name with better termination
+      /(?:gw|gue|gua)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)(?:\s+(?:mau|ingin|nik|alamat|hp|no|tinggal|telp|buat|bikin)|\s*[,.]|\s*$)/i,
+      // "bang gw X" pattern - specific for informal greetings
+      /(?:bang|pak|kak)\s+(?:gw|gue|gua)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)(?:\s+(?:mau|ingin|nik|alamat|hp|no|tinggal|telp|buat|bikin)|\s*[,.]|\s*$)/i,
+      // NEW: "X mau buat" pattern - name at beginning
+      /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:mau|ingin|pengen|butuh|perlu)\s+(?:buat|bikin|urus)/i,
+      // NEW: "halo, saya X" pattern
+      /(?:halo|hai|hi)[\s,]*saya\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)(?:\s*[,.]|\s*$)/i,
+    ];
+    
+    for (const pattern of namePatterns) {
+      const match = userMessages.match(pattern);
+      if (match && match[1]) {
+        const name = match[1].trim();
+        
+        // Improved validation - less strict for real names
+        const invalidWords = [
+          'bingung', 'cara', 'bantu', 'tolong', 'gimana', 'bagaimana',
+          'legalitas', 'pendaftaran', 'surat', 'keterangan', 'domisili'
+        ];
+        
+        // Check if it's clearly not a name (starts with action words)
+        const startsWithActionWord = /^(mau|ingin|buat|bikin|untuk|keperluan|bingung|cara|gimana)/i.test(name);
+        
+        const isValidName = name.length >= 2 && 
+                           name.length <= 50 && // More reasonable max length
+                           !/\d/.test(name) && // No digits
+                           !startsWithActionWord && // Don't start with action words
+                           !invalidWords.some(word => name.toLowerCase().includes(word)) && // No clearly invalid words
+                           /^[A-Za-z\s.]+$/.test(name) && // Letters, spaces, and dots (for titles)
+                           !/^(saya|aku|gw|gue|kak|pak|bang)$/i.test(name.trim()); // Not just pronouns/titles
+        
+        if (isValidName) {
+          result.nama_lengkap = name;
+          logger.info('✅ Name extracted', { wa_user_id, nama_lengkap: name, pattern: namePatterns.indexOf(pattern) });
+          break;
+        } else {
+          logger.warn('❌ Name candidate rejected', { 
+            wa_user_id, 
+            candidate: name, 
+            reason: 'validation failed',
+            length: name.length,
+            hasDigits: /\d/.test(name),
+            hasInvalidWords: invalidWords.some(word => name.toLowerCase().includes(word))
+          });
+        }
+      }
+    }
+    
+    // Extract address patterns - MULTI-STRATEGY APPROACH
+    // Strategy: Find "tinggal di X" with various terminators
+    logger.info('🔍 Starting address extraction...', { wa_user_id });
+    
+    const addressPatterns = [
+      // Pattern 1: "tinggal di X, untuk Y" (stop at untuk but include more address)
+      { regex: /tinggal\s+di\s+(.+?)(?:\s*,?\s*untuk\s+(?:keperluan|buat|bikin))/i, name: 'tinggal-untuk' },
+      // Pattern 2: "tinggal di X, mau Y" (stop at mau)
+      { regex: /tinggal\s+di\s+(.+?)(?:\s*,?\s*mau\s+)/i, name: 'tinggal-mau' },
+      // Pattern 3: "tinggal di X, besok/lusa" (date after address)
+      { regex: /tinggal\s+di\s+(.+?)(?:\s*,?\s*(?:besok|lusa|bsk|jam))\b/i, name: 'tinggal-date' },
+      // Pattern 4: "tinggal di X, nik/hp" (nik or hp after address)
+      { regex: /tinggal\s+di\s+(.+?)(?:\s*,?\s*(?:nik|hp|nomer|telp|no))\b/i, name: 'tinggal-nik-hp' },
+      // Pattern 5: "tinggal di X," (with comma - most reliable)
+      { regex: /tinggal\s+di\s+([^,]+),/i, name: 'tinggal-comma' },
+      // Pattern 6: "alamat: X" or "alamat X" (key:value format)
+      { regex: /alamat[\s:]+(?:di\s+)?(.+?)(?:\s*,?\s*(?:hp|nik|untuk|keperluan|besok|lusa|mau)|$)/i, name: 'alamat-keyvalue' },
+      // Pattern 7: "alamatnya X"
+      { regex: /alamat(?:nya)\s+(?:di\s+)?([^,]+)/i, name: 'alamat-direct' },
+      // Pattern 8: "di jalan/gang X" (address with indicator)
+      { regex: /\bdi\s+(jalan|jln|jl|gang|gg|komplek|perumahan|blok)\s+([^,]+?)(?:\s*,?\s*(?:untuk|mau|hp|nik|no|besok)|\?|$)/i, name: 'di-address' },
+      // Pattern 9: "tinggal di X" until end or question mark (last resort)
+      { regex: /tinggal\s+di\s+(.+?)(?:\?|$)/i, name: 'tinggal-end' },
+      // Pattern 10: NEW - Handle "X rt Y rw Z" format better
+      { regex: /(?:tinggal\s+di\s+|alamat\s+)?(.+?(?:rt|rw)\s*\d+(?:\s*(?:rt|rw)\s*\d+)?)(?:\s*,?\s*(?:hp|nik|untuk|keperluan|besok|lusa|mau|buat|bikin)|\s*$)/i, name: 'rt-rw-format' },
+      // Pattern 11: NEW - Better handling of informal addresses with landmarks
+      { regex: /(?:tinggal\s+di\s+|alamat\s+)?((?:depan|dekat|belakang|samping|sebelah)\s+[^,]+?)(?:\s*,?\s*(?:hp|nik|untuk|keperluan|besok|lusa|mau|buat|bikin)|\s*$)/i, name: 'landmark-address' },
+      // Pattern 12: NEW - Multi-step conversation: "alamat saya di X" or "rumah saya di X"
+      { regex: /(?:alamat|rumah)\s+saya\s+(?:di\s+)?(.+?)(?:\s*,?\s*(?:hp|nik|untuk|keperluan|besok|lusa|mau|buat|bikin)|\s*[,.]|\s*$)/i, name: 'alamat-saya' },
+      // Pattern 13: NEW - Direct address mention in complaint context
+      { regex: /(?:di|ke)\s+(jalan|jln|jl|gang|gg|komplek|perumahan|blok)\s+([^,]+?)(?:\s+(?:ada|rusak|mati|bermasalah|tumbang|tersumbat))/i, name: 'complaint-location' },
+      // Pattern 14: NEW - Address in response to location question
+      { regex: /^(?:di\s+)?(.+?(?:jalan|jln|jl|gang|gg|komplek|perumahan|blok|rt|rw|no|nomor).+?)(?:\s*[,.]|\s*$)/i, name: 'location-response' },
+    ];
+    
+    let addressFound = false;
+    for (const { regex, name } of addressPatterns) {
+      const match = userMessages.match(regex);
+      if (match) {
+        let addr = '';
+        if (name === 'di-address') {
+          // For "di jalan X" pattern, combine both groups
+          addr = `${match[1]} ${match[2]}`.trim();
+        } else {
+          addr = match[1].trim();
+        }
+        
+        // Clean up the address - remove trailing punctuation and unwanted data
+        addr = addr.replace(/[,;.]+\s*$/, '').trim(); // Remove trailing comma, semicolon, period
+        
+        // Remove trailing phone numbers that might be captured (e.g., "gang mawar 12 rt 02 rw 03 hp 085...")
+        addr = addr.replace(/\s+(?:hp|no|nomer|telp|phone)[\s:]*\d+.*$/i, '').trim();
+        
+        // Remove trailing NIK that might be captured
+        addr = addr.replace(/\s+nik[\s:]*\d+.*$/i, '').trim();
+        
+        // Normalize RT/RW format: "rt05/rw02" -> "rt 05 rw 02"
+        addr = addr.replace(/rt\s*(\d+)\s*\/\s*rw\s*(\d+)/gi, 'rt $1 rw $2');
+        
+        // Normalize "jl." to "jalan"
+        addr = addr.replace(/\bjl\.\s*/gi, 'jalan ');
+        
+        // Normalize "gg." to "gang"
+        addr = addr.replace(/\bgg\.\s*/gi, 'gang ');
+        
+        // Remove extra spaces
+        addr = addr.replace(/\s+/g, ' ').trim();
+        
+        // Final cleanup: remove trailing comma again (in case normalization added it)
+        addr = addr.replace(/,\s*$/, '').trim();
+        
+        logger.info(`🔍 Address pattern matched: ${name}`, { 
+          wa_user_id, 
+          pattern: name,
+          rawMatch: match[0], 
+          extracted: addr 
+        });
+        
+        // Validate: should be at least 5 chars (relaxed from 8)
+        if (addr.length >= 5 && addr.length <= 200) {
+          // Check if it contains address indicators OR is long enough to be an address
+          const hasAddressIndicators = /jalan|jln|jl|gang|gg|komplek|perumahan|blok|no|nomor|rt|rw/i.test(addr);
+          const isLongEnough = addr.length >= 10; // If 10+ chars, likely an address
+          
+          if (hasAddressIndicators || isLongEnough) {
+            result.alamat = addr;
+            logger.info('✅ Address extracted from history', { 
+              wa_user_id, 
+              pattern: name,
+              alamat: addr,
+              hasIndicators: hasAddressIndicators,
+              length: addr.length
+            });
+            addressFound = true;
+            break;
+          } else {
+            logger.warn(`Address candidate rejected (no indicators, too short)`, { 
+              wa_user_id, 
+              pattern: name,
+              addr, 
+              length: addr.length 
+            });
+          }
+        } else {
+          logger.warn(`Address candidate rejected (length invalid)`, { 
+            wa_user_id, 
+            pattern: name,
+            addr, 
+            length: addr.length 
+          });
+        }
+      }
+    }
+    
+    if (!addressFound) {
+      logger.warn('❌ No address match found with any pattern', { 
+        wa_user_id, 
+        userMessagesPreview: userMessages.substring(0, 300),
+        patternsAttempted: addressPatterns.length
+      });
+    }
+    
+    // Extract keperluan (purpose) - improved to handle various formats
+    const keperluanPatterns = [
+      // "untuk X" or "keperluan X" - most reliable
+      /(?:untuk|keperluan)\s+([a-z\s]+?)(?:,|\.|$|nik|alamat|hp|no|nama|tinggal|telp|besok|lusa)/i,
+      // "buat X" (informal) - be more specific
+      /buat\s+([a-z\s]+?)(?:,|\.|$|nik|alamat|hp|no|nama|tinggal|telp|besok|lusa|jam)/i,
+    ];
+    
+    // List of service codes to exclude from keperluan
+    const serviceCodes = ['SKD', 'SKU', 'SKTM', 'SKBM', 'IKR', 'SPKTP', 'SPKK', 'SPSKCK', 'SPAKTA', 'SKK', 'SPP'];
+    
+    for (const pattern of keperluanPatterns) {
+      const match = userMessages.match(pattern);
+      if (match && match[1]) {
+        let keperluan = match[1].trim();
+        
+        // Clean up: remove trailing "nih", "ya", "kak", etc.
+        keperluan = keperluan.replace(/\s+(nih|ya|kak|bang|pak|dong|sih)$/i, '').trim();
+        
+        // Validate: 3-100 chars, not just action words or service codes
+        const invalidWords = ['bikin', 'buat', 'mau', 'ingin', 'butuh', 'perlu', 'surat', 'keterangan'];
+        const isServiceCode = serviceCodes.includes(keperluan.toUpperCase());
+        const isValidKeperluan = keperluan.length >= 3 && 
+                                 keperluan.length <= 100 && 
+                                 !invalidWords.includes(keperluan.toLowerCase()) &&
+                                 !isServiceCode &&
+                                 !/^(bikin|buat|mau)\s/i.test(keperluan); // Don't start with action words
+        
+        if (isValidKeperluan) {
+          result.keperluan = keperluan;
+          logger.info('✅ Keperluan extracted', { wa_user_id, keperluan });
+          break;
+        }
+      }
+    }
+    
+    // FALLBACK: If no address found with regex, try LLM extraction
+    if (!result.alamat && userMessages.length > 0) {
+      logger.info('🤖 Attempting LLM-based address extraction as fallback...', { wa_user_id });
+      try {
+        const llmAddress = await extractAddressWithLLM(userMessages);
+        if (llmAddress) {
+          result.alamat = llmAddress;
+          logger.info('✅ Address extracted via LLM fallback', { wa_user_id, alamat: llmAddress });
+        }
+      } catch (error: any) {
+        logger.warn('LLM address extraction failed', { wa_user_id, error: error.message });
+      }
+    }
+    
+    logger.info('📊 Final extraction result', { wa_user_id, result });
+    return Object.keys(result).length > 0 ? result : null;
+  } catch (error: any) {
+    logger.warn('Failed to fetch history for citizen data extraction', { wa_user_id, error: error.message });
+    return null;
+  }
+}
+
+/**
+ * Extract date from text like "besok", "lusa", "10 Desember 2025", etc.
+ */
+function extractDateFromText(text: string): string | null {
+  const today = new Date();
+  const cleanText = text.toLowerCase();
+  
+  // Handle relative dates
+  if (/besok/i.test(cleanText)) {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  }
+  if (/lusa/i.test(cleanText)) {
+    const dayAfter = new Date(today);
+    dayAfter.setDate(dayAfter.getDate() + 2);
+    return dayAfter.toISOString().split('T')[0];
+  }
+  
+  // Handle "Tanggal: 10 Desember 2025" format from reply_text
+  const dateMatch = text.match(/(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+(\d{4})/i);
+  if (dateMatch) {
+    const months: Record<string, number> = {
+      'januari': 0, 'februari': 1, 'maret': 2, 'april': 3, 'mei': 4, 'juni': 5,
+      'juli': 6, 'agustus': 7, 'september': 8, 'oktober': 9, 'november': 10, 'desember': 11
+    };
+    const day = parseInt(dateMatch[1]);
+    const month = months[dateMatch[2].toLowerCase()];
+    const year = parseInt(dateMatch[3]);
+    const date = new Date(year, month, day);
+    return date.toISOString().split('T')[0];
+  }
+  
+  // Handle YYYY-MM-DD format
+  const isoMatch = text.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return isoMatch[0];
+  }
+  
+  return null;
+}
+
+/**
+ * Extract time from text like "jam 9 pagi", "09:00", etc.
+ */
+function extractTimeFromText(text: string): string | null {
+  const cleanText = text.toLowerCase();
+  
+  // Handle "jam X pagi/siang/sore"
+  const jamMatch = cleanText.match(/jam\s*(\d{1,2})(?::(\d{2}))?\s*(pagi|siang|sore|malam)?/i);
+  if (jamMatch) {
+    let hour = parseInt(jamMatch[1]);
+    const minute = jamMatch[2] ? parseInt(jamMatch[2]) : 0;
+    const period = jamMatch[3]?.toLowerCase();
+    
+    // Adjust for period
+    if (period === 'sore' && hour < 12) hour += 12;
+    if (period === 'malam' && hour < 12) hour += 12;
+    if (period === 'pagi' && hour === 12) hour = 0;
+    
+    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  }
+  
+  // Handle HH:MM format
+  const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+  if (timeMatch) {
+    const hour = parseInt(timeMatch[1]);
+    const minute = parseInt(timeMatch[2]);
+    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  }
+  
+  // Handle "X WIB" format
+  const wibMatch = text.match(/(\d{1,2})(?::(\d{2}))?\s*WIB/i);
+  if (wibMatch) {
+    const hour = parseInt(wibMatch[1]);
+    const minute = wibMatch[2] ? parseInt(wibMatch[2]) : 0;
+    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  }
+  
+  return null;
+}
+
+/**
  * Handle reservation creation
  */
-async function handleReservationCreation(wa_user_id: string, llmResponse: any): Promise<string> {
-  const { service_code, citizen_data, reservation_date, reservation_time, missing_info } = llmResponse.fields;
+export async function handleReservationCreation(wa_user_id: string, llmResponse: any): Promise<string> {
+  // Handle both old format (fields.service_code) and new 2-layer format (fields as extracted_data)
+  const fields = llmResponse.fields || {};
+  let { service_code, citizen_data, reservation_date, reservation_time, missing_info } = fields;
+  
+  // For 2-layer architecture, fields IS the extracted_data, so service_code is directly accessible
+  service_code = service_code || fields.service_code;
+  
+  // DEBUG: Log the actual structure to understand the issue
+  logger.debug('DEBUG handleReservationCreation', {
+    wa_user_id,
+    fieldsKeys: Object.keys(fields),
+    service_code,
+    service_code_type: typeof service_code,
+    fields_sample: JSON.stringify(fields).substring(0, 200)
+  });
+  
+  // Valid service codes
+  const VALID_SERVICE_CODES = ['SKD', 'SKU', 'SKTM', 'SKBM', 'IKR', 'SPKTP', 'SPKK', 'SPSKCK', 'SPAKTA', 'SKK', 'SPP'];
+  
+  // Validate service_code - handle both string and array
+  let cleanServiceCode = '';
+  let isValidServiceCode = false;
+  
+  if (Array.isArray(service_code)) {
+    // Multiple services requested - take the first valid one for now
+    const validService = service_code.find(code => 
+      typeof code === 'string' && VALID_SERVICE_CODES.includes(code.trim().toUpperCase())
+    );
+    if (validService) {
+      cleanServiceCode = validService.trim().toUpperCase();
+      isValidServiceCode = true;
+    }
+  } else if (typeof service_code === 'string') {
+    cleanServiceCode = service_code.trim().toUpperCase();
+    isValidServiceCode = VALID_SERVICE_CODES.includes(cleanServiceCode);
+  } else if (service_code) {
+    // Convert to string as fallback
+    cleanServiceCode = String(service_code).trim().toUpperCase();
+    isValidServiceCode = VALID_SERVICE_CODES.includes(cleanServiceCode);
+  }
+  
+  // SMART EXTRACTION: If LLM didn't fill date/time but reply_text contains them, extract!
+  const replyText = llmResponse.reply_text || '';
+  
+  if (!reservation_date && replyText) {
+    const extractedDate = extractDateFromText(replyText);
+    if (extractedDate) {
+      reservation_date = extractedDate;
+      logger.info('Smart extraction: date from reply_text', { wa_user_id, extractedDate });
+    }
+  }
+  
+  if (!reservation_time && replyText) {
+    const extractedTime = extractTimeFromText(replyText);
+    if (extractedTime) {
+      reservation_time = extractedTime;
+      logger.info('Smart extraction: time from reply_text', { wa_user_id, extractedTime });
+    }
+  }
   
   // Check if we have enough information
-  if (!service_code || !citizen_data || !reservation_date || !reservation_time || (missing_info && missing_info.length > 0)) {
+  const hasCitizenData = citizen_data && Object.keys(citizen_data).length > 0;
+  let hasRequiredCitizenData = hasCitizenData && citizen_data.nama_lengkap && citizen_data.nik;
+  
+  logger.info('🔍 Checking citizen_data status', { 
+    wa_user_id, 
+    hasCitizenData, 
+    hasRequiredCitizenData,
+    citizen_data_keys: citizen_data ? Object.keys(citizen_data) : [],
+    citizen_data
+  });
+  
+  // Check if reply_text indicates successful reservation (LLM thinks data is complete)
+  const looksLikeSuccess = /reservasi.*berhasil|sudah.*dibuat|sudah.*diproses|✅/i.test(replyText);
+  
+  // ALWAYS try to extract from history if citizen_data is missing or incomplete
+  // This is a fallback because LLM often doesn't fill citizen_data properly
+  if (!hasRequiredCitizenData) {
+    logger.info('🔍 Will attempt history extraction (citizen_data incomplete)', { wa_user_id });
+    citizen_data = citizen_data || {};
+    
+    // Try to extract nama from reply_text
+    const namaMatch = replyText.match(/Nama:\s*([^\n•]+)/i);
+    if (namaMatch && !citizen_data.nama_lengkap) {
+      citizen_data.nama_lengkap = namaMatch[1].trim();
+      logger.info('Smart extraction: nama from reply_text', { wa_user_id, nama: citizen_data.nama_lengkap });
+    }
+    
+    // ALWAYS fetch from conversation history to fill missing data (especially alamat!)
+    // This is critical because LLM often doesn't fill citizen_data.alamat properly
+    try {
+      const historyData = await extractCitizenDataFromHistory(wa_user_id);
+      if (historyData) {
+        if (!citizen_data.nama_lengkap && historyData.nama_lengkap) {
+          citizen_data.nama_lengkap = historyData.nama_lengkap;
+          logger.info('Smart extraction: nama from history', { wa_user_id, nama: citizen_data.nama_lengkap });
+        }
+        if (!citizen_data.nik && historyData.nik) {
+          citizen_data.nik = historyData.nik;
+          logger.info('Smart extraction: nik from history', { wa_user_id, nik: citizen_data.nik });
+        }
+        if (!citizen_data.alamat && historyData.alamat) {
+          citizen_data.alamat = historyData.alamat;
+          logger.info('Smart extraction: alamat from history', { wa_user_id, alamat: citizen_data.alamat });
+        }
+        if (!citizen_data.no_hp && historyData.no_hp) {
+          citizen_data.no_hp = historyData.no_hp;
+          logger.info('Smart extraction: no_hp from history', { wa_user_id, no_hp: citizen_data.no_hp });
+        }
+        if (!citizen_data.keperluan && historyData.keperluan) {
+          citizen_data.keperluan = historyData.keperluan;
+          logger.info('Smart extraction: keperluan from history', { wa_user_id, keperluan: citizen_data.keperluan });
+        }
+      }
+    } catch (err: any) {
+      logger.warn('Failed to extract citizen data from history', { wa_user_id, error: err.message });
+    }
+    
+    // Recalculate
+    hasRequiredCitizenData = citizen_data.nama_lengkap && citizen_data.nik;
+  }
+  
+  // Final check
+  const finalHasCitizenData = citizen_data && Object.keys(citizen_data).length > 0;
+  const finalHasRequiredCitizenData = finalHasCitizenData && citizen_data.nama_lengkap && citizen_data.nik;
+  
+  if (!isValidServiceCode || !finalHasRequiredCitizenData || !reservation_date || !reservation_time || (missing_info && missing_info.length > 0)) {
     logger.info('Incomplete reservation data, asking for more info', {
       wa_user_id,
       service_code,
-      hasCitizenData: !!citizen_data,
+      cleanServiceCode,
+      isValidServiceCode,
+      hasCitizenData: finalHasRequiredCitizenData,
       hasDate: !!reservation_date,
       hasTime: !!reservation_time,
       missingInfo: missing_info,
+      looksLikeSuccess,
     });
     return llmResponse.reply_text;
   }
   
   logger.info('Creating reservation in Case Service', {
     wa_user_id,
-    service_code,
+    service_code: cleanServiceCode,
     reservation_date,
     reservation_time,
   });
   
   try {
+    // Validate and clean citizen_data before sending
+    const cleanedCitizenData = {
+      nama_lengkap: citizen_data.nama_lengkap?.trim() || '',
+      nik: citizen_data.nik?.trim() || '',
+      alamat: citizen_data.alamat?.trim() || '',
+      no_hp: citizen_data.no_hp?.trim() || '',
+      keperluan: citizen_data.keperluan?.trim() || '',
+      // Add other fields if they exist
+      ...Object.fromEntries(
+        Object.entries(citizen_data).filter(([key, value]) => 
+          !['nama_lengkap', 'nik', 'alamat', 'no_hp', 'keperluan'].includes(key) && 
+          value !== null && 
+          value !== undefined && 
+          value !== ''
+        )
+      )
+    };
+    
+    // Log the data being sent for debugging
+    logger.info('Sending reservation data to Case Service', {
+      wa_user_id,
+      service_code: cleanServiceCode,
+      reservation_date,
+      reservation_time,
+      citizen_data_keys: Object.keys(cleanedCitizenData),
+      citizen_data_preview: {
+        nama_lengkap: cleanedCitizenData.nama_lengkap,
+        nik: cleanedCitizenData.nik ? `${cleanedCitizenData.nik.substring(0, 4)}****` : '',
+        alamat: cleanedCitizenData.alamat?.substring(0, 20) + '...',
+        no_hp: cleanedCitizenData.no_hp ? `${cleanedCitizenData.no_hp.substring(0, 4)}****` : '',
+        keperluan: cleanedCitizenData.keperluan,
+      }
+    });
+    
     // Create reservation in Case Service (SYNC call)
     const response = await caseServiceClient.post('/reservasi/create', {
       wa_user_id,
-      service_code,
-      citizen_data,
+      service_code: cleanServiceCode,
+      citizen_data: cleanedCitizenData,
       reservation_date,
       reservation_time,
     });
@@ -1023,27 +1801,99 @@ async function handleReservationCreation(wa_user_id: string, llmResponse: any): 
     if (reservation?.reservation_id) {
       // Record success for analytics
       aiAnalyticsService.recordSuccess('CREATE_RESERVATION');
-      return `✅ Reservasi berhasil dibuat!\n\n📋 *Detail Reservasi:*\n• Nomor: ${reservation.reservation_id}\n• Layanan: ${reservation.service?.name || service_code}\n• Tanggal: ${new Date(reservation_date).toLocaleDateString('id-ID')}\n• Jam: ${reservation_time} WIB\n• Antrian: #${reservation.queue_number}\n\nSampai jumpa di kelurahan! 👋`;
+      
+      // Build proactive success message
+      const dateStr = new Date(reservation_date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      const serviceName = reservation.service?.name || cleanServiceCode;
+      
+      let successMessage = `✅ Reservasi berhasil dibuat!\n\n📋 *Detail Reservasi:*\n• Nomor: ${reservation.reservation_id}\n• Layanan: ${serviceName}\n• Tanggal: ${dateStr}\n• Jam: ${reservation_time} WIB\n• Antrian: #${reservation.queue_number}\n\n`;
+      
+      // Add proactive reminders based on service type
+      if (cleanServiceCode === 'SKD' || cleanServiceCode === 'SKTM' || cleanServiceCode === 'SKU') {
+        successMessage += `📄 *Jangan lupa bawa:*\n• KTP asli + fotokopi\n• Kartu Keluarga (KK)\n• Surat Pengantar RT/RW\n\n`;
+      } else if (cleanServiceCode?.startsWith('SP')) {
+        successMessage += `📄 *Jangan lupa bawa:*\n• KTP asli + fotokopi\n• Dokumen pendukung lainnya\n\n`;
+      }
+      
+      successMessage += `Sampai jumpa di kelurahan! 👋\n\n💡 Simpan nomor reservasi ini ya Kak`;
+      
+      return successMessage;
     } else {
       throw new Error('No reservation ID returned');
     }
   } catch (error: any) {
     // Record failure for analytics
     aiAnalyticsService.recordFailure('CREATE_RESERVATION');
-    logger.error('Failed to create reservation', { error: error.message });
     
-    // Return user-friendly error message
-    if (error.message?.includes('tidak tersedia')) {
-      return `Mohon maaf, ${error.message}. Silakan pilih waktu lain atau hubungi kantor kelurahan langsung.`;
+    // Log detailed error information
+    logger.error('Failed to create reservation', { 
+      wa_user_id,
+      error: error.message,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      responseData: error.response?.data,
+      requestData: {
+        service_code: cleanServiceCode,
+        reservation_date,
+        reservation_time,
+      }
+    });
+    
+    // Handle specific error cases
+    if (error.response?.status === 400) {
+      const errorData = error.response?.data;
+      
+      // Check for specific validation errors
+      if (errorData?.message?.includes('NIK')) {
+        return `Mohon maaf Kak, format NIK tidak valid 🙏\n\nNIK harus 16 digit angka. Silakan periksa kembali NIK Kakak.\n\nMau input ulang data?`;
+      }
+      
+      if (errorData?.message?.includes('service_code') || errorData?.message?.includes('layanan')) {
+        return `Mohon maaf Kak, layanan ${cleanServiceCode} tidak tersedia saat ini 🙏\n\nSilakan pilih layanan lain atau hubungi kantor kelurahan untuk informasi lebih lanjut.`;
+      }
+      
+      if (errorData?.message?.includes('tanggal') || errorData?.message?.includes('date')) {
+        return `Mohon maaf Kak, tanggal yang dipilih tidak valid 🙏\n\nSilakan pilih tanggal yang akan datang (hari kerja: Senin-Jumat).\n\nMau pilih tanggal lain?`;
+      }
+      
+      if (errorData?.message?.includes('jam') || errorData?.message?.includes('time')) {
+        return `Mohon maaf Kak, jam yang dipilih tidak tersedia 🙏\n\nJam layanan: 08:00-15:00 (Senin-Jumat)\n\nMau pilih jam lain?`;
+      }
+      
+      // Generic 400 error
+      return `Mohon maaf Kak, ada kesalahan dalam data yang diberikan 🙏\n\nSilakan periksa kembali:\n• NIK (16 digit)\n• Tanggal (hari kerja)\n• Jam (08:00-15:00)\n\nMau coba lagi?`;
     }
-    return 'Mohon maaf, terjadi kesalahan saat membuat reservasi. Silakan coba lagi atau hubungi kantor kelurahan langsung.';
+    
+    if (error.response?.status === 404) {
+      return `Mohon maaf Kak, layanan reservasi sedang tidak tersedia 🙏\n\nSilakan:\n• Coba lagi dalam beberapa saat\n• Atau datang langsung ke kantor kelurahan\n• Hubungi: (021) 1234-5678`;
+    }
+    
+    if (error.response?.status === 409 || error.message?.includes('tidak tersedia') || error.message?.includes('penuh')) {
+      // Slot unavailable - suggest alternatives
+      const dateObj = new Date(reservation_date);
+      const dayName = dateObj.toLocaleDateString('id-ID', { weekday: 'long' });
+      
+      return `Mohon maaf Kak, slot waktu ${dayName}, ${reservation_time} WIB sudah penuh 🙏\n\n💡 *Saran:*\n• Coba jam lain di hari yang sama\n• Atau pilih hari lain\n• Atau datang langsung tanpa reservasi (mungkin perlu antri)\n\nMau saya carikan waktu lain yang tersedia?`;
+    }
+    
+    if (error.message?.includes('libur') || error.message?.includes('tutup')) {
+      return `Mohon maaf Kak, tanggal tersebut kantor kelurahan libur/tutup 🙏\n\nKantor buka Senin-Jumat, jam 08:00-15:00.\n\nMau pilih tanggal lain?`;
+    }
+    
+    // Network or timeout errors
+    if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+      return `Mohon maaf Kak, sistem sedang sibuk 🙏\n\nSilakan:\n• Coba lagi dalam 1-2 menit\n• Atau datang langsung ke kantor kelurahan\n\nJam kerja: Senin-Jumat 08:00-15:00`;
+    }
+    
+    // Generic error
+    return 'Mohon maaf Kak, terjadi kendala teknis saat membuat reservasi 🙏\n\nSilakan:\n• Coba lagi dalam beberapa saat\n• Atau hubungi kantor kelurahan langsung\n• Atau datang langsung pada jam kerja\n\nJam kerja: Senin-Jumat 08:00-15:00';
   }
 }
 
 /**
  * Handle reservation cancellation
  */
-async function handleReservationCancellation(wa_user_id: string, llmResponse: any): Promise<string> {
+export async function handleReservationCancellation(wa_user_id: string, llmResponse: any): Promise<string> {
   const { reservation_id, cancel_reason } = llmResponse.fields;
   
   if (!reservation_id) {
@@ -1072,7 +1922,7 @@ async function handleReservationCancellation(wa_user_id: string, llmResponse: an
 /**
  * Handle knowledge query - fetch relevant knowledge and do second LLM call
  */
-async function handleKnowledgeQuery(wa_user_id: string, message: string, llmResponse: any): Promise<string> {
+export async function handleKnowledgeQuery(wa_user_id: string, message: string, llmResponse: any): Promise<string> {
   logger.info('Handling knowledge query', {
     wa_user_id,
     knowledgeCategory: llmResponse.fields.knowledge_category,
@@ -1193,7 +2043,7 @@ function formatJenisTiket(jenis: string): string {
 /**
  * Handle status check for complaints and reservations
  */
-async function handleStatusCheck(wa_user_id: string, llmResponse: any): Promise<string> {
+export async function handleStatusCheck(wa_user_id: string, llmResponse: any): Promise<string> {
   const { complaint_id, reservation_id } = llmResponse.fields;
   
   logger.info('Handling status check', {
@@ -1346,7 +2196,7 @@ function getStatusInfo(status: string): { emoji: string; text: string; descripti
 /**
  * Handle cancellation of complaints
  */
-async function handleCancellation(wa_user_id: string, llmResponse: any): Promise<string> {
+export async function handleCancellation(wa_user_id: string, llmResponse: any): Promise<string> {
   const { complaint_id, cancel_reason } = llmResponse.fields;
   
   logger.info('Handling cancellation request', {
@@ -1414,7 +2264,7 @@ function buildCancelErrorResponse(
 /**
  * Handle user history request
  */
-async function handleHistory(wa_user_id: string): Promise<string> {
+export async function handleHistory(wa_user_id: string): Promise<string> {
   logger.info('Handling history request', { wa_user_id });
   
   const history = await getUserHistory(wa_user_id);

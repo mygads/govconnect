@@ -11,6 +11,15 @@ export async function sendTypingIndicator(
   wa_user_id: string,
   state: 'composing' | 'paused' | 'stop' = 'composing'
 ): Promise<boolean> {
+  // Skip WhatsApp API calls in testing mode
+  if (config.testingMode) {
+    logger.debug('TESTING MODE: Skipping typing indicator', {
+      wa_user_id,
+      state,
+    });
+    return true;
+  }
+
   try {
     const url = `${config.channelServiceUrl}/internal/typing`;
     
@@ -70,6 +79,15 @@ export async function markMessagesAsRead(
   wa_user_id: string,
   message_ids: string[]
 ): Promise<boolean> {
+  // Skip WhatsApp API calls in testing mode
+  if (config.testingMode) {
+    logger.debug('TESTING MODE: Skipping mark messages as read', {
+      wa_user_id,
+      count: message_ids.length,
+    });
+    return true;
+  }
+
   try {
     const url = `${config.channelServiceUrl}/internal/messages/read`;
     
@@ -110,6 +128,14 @@ export async function markMessagesAsRead(
  * @returns true if user is in takeover mode, false otherwise
  */
 export async function isUserInTakeover(wa_user_id: string): Promise<boolean> {
+  // Skip takeover check in testing mode (assume AI always processes)
+  if (config.testingMode) {
+    logger.debug('TESTING MODE: Skipping takeover check (AI processes)', {
+      wa_user_id,
+    });
+    return false;
+  }
+
   try {
     const url = `${config.channelServiceUrl}/internal/takeover/${encodeURIComponent(wa_user_id)}/status`;
     

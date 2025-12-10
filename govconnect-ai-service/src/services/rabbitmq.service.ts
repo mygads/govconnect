@@ -962,6 +962,32 @@ async function publishMessageStatusDirect(payload: MessageStatusEvent): Promise<
  * Publish AI reply event with retry support
  */
 export async function publishAIReply(payload: AIReplyEvent): Promise<void> {
+  // ALWAYS store AI reply in database first (both testing and production mode)
+  try {
+    await storeAIReplyInDatabase(payload);
+    logger.info('✅ AI reply stored in database', {
+      wa_user_id: payload.wa_user_id,
+      testing_mode: config.testingMode,
+    });
+  } catch (error: any) {
+    logger.error('❌ Failed to store AI reply in database', {
+      wa_user_id: payload.wa_user_id,
+      error: error.message,
+    });
+    // Continue with WhatsApp publishing even if database storage fails
+  }
+
+  // In testing mode, don't send to WhatsApp but still store in database
+  if (config.testingMode) {
+    logger.info('🧪 TESTING MODE: AI Reply stored in DB, not sent to WhatsApp', {
+      wa_user_id: payload.wa_user_id,
+      reply_text: payload.reply_text.substring(0, 100) + (payload.reply_text.length > 100 ? '...' : ''),
+      guidance_text: payload.guidance_text?.substring(0, 50) + (payload.guidance_text && payload.guidance_text.length > 50 ? '...' : ''),
+      hasGuidance: !!payload.guidance_text,
+    });
+    return;
+  }
+
   try {
     if (!channel) {
       // Channel not available, queue for retry
@@ -991,6 +1017,16 @@ export async function publishAIReply(payload: AIReplyEvent): Promise<void> {
  * Publish AI error event with retry support
  */
 export async function publishAIError(payload: AIErrorEvent): Promise<void> {
+  // In testing mode, just log the error instead of publishing
+  if (config.testingMode) {
+    logger.info('🧪 TESTING MODE: AI Error (not published)', {
+      wa_user_id: payload.wa_user_id,
+      error_message: payload.error_message,
+
+    });
+    return;
+  }
+
   try {
     if (!channel) {
       logger.warn('⚠️ RabbitMQ channel not available, queuing for retry');
@@ -1020,6 +1056,19 @@ export async function publishAIError(payload: AIErrorEvent): Promise<void> {
  * Publish message status event with retry support
  */
 export async function publishMessageStatus(payload: MessageStatusEvent): Promise<void> {
+  // NOTE: In testing mode, we STILL publish status updates!
+  // The dashboard needs to know when processing is completed.
+  // Only AI replies and errors are skipped in testing mode.
+  if (config.testingMode) {
+    logger.info('🧪 TESTING MODE: Message Status (still published for dashboard)', {
+      wa_user_id: payload.wa_user_id,
+      status: payload.status,
+      message_ids: payload.message_ids?.length || 0,
+      error_message: payload.error_message,
+    });
+    // Continue with normal publishing - don't return here!
+  }
+
   try {
     if (!channel) {
       logger.warn('⚠️ RabbitMQ channel not available, queuing for retry');
@@ -1148,6 +1197,107 @@ export function isConnected(): boolean {
  */
 export function isShuttingDownRabbitMQ(): boolean {
   return isShuttingDown;
+}
+
+
+
+/**
+ * Store AI reply in database (for both testing and production mode)
+ * This ensures complete conversation history is maintained
+ */
+async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
+  try {
+    const axios = (await import('axios')).default;
+    
+    logger.info('🔄 Attempting to store AI reply in database', {
+      wa_user_id: payload.wa_user_id,
+      channel_service_url: config.channelServiceUrl,
+      testing_mode: config.testingMode,
+      reply_length: payload.reply_text.length,
+    });
+    
+    // Store main reply message
+    const mainReplyData = {
+      wa_user_id: payload.wa_user_id,
+      message_text: payload.reply_text,
+      direction: 'OUT',
+      message_type: 'text',
+      status: 'sent',
+      metadata: {
+        source: 'ai_service',
+        testing_mode: config.testingMode,
+        batched_message_ids: payload.batched_message_ids,
+        ai_generated: true,
+        timestamp: new Date().toISOString(),
+      }
+    };
+
+    const response1 = await axios.post(`${config.channelServiceUrl}/internal/messages`, mainReplyData, {
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+    
+    logger.info('✅ Main AI reply stored successfully', {
+      wa_user_id: payload.wa_user_id,
+      status: response1.status,
+      response_data: response1.data,
+    });
+    
+    // Store guidance text as separate message if present
+    if (payload.guidance_text && payload.guidance_text.trim()) {
+      const guidanceData = {
+        wa_user_id: payload.wa_user_id,
+        message_text: payload.guidance_text,
+        direction: 'OUT',
+        message_type: 'text',
+        status: 'sent',
+        metadata: {
+          source: 'ai_service',
+          testing_mode: config.testingMode,
+          is_guidance: true,
+          batched_message_ids: payload.batched_message_ids,
+          ai_generated: true,
+          timestamp: new Date().toISOString(),
+        }
+      };
+
+      const response2 = await axios.post(`${config.channelServiceUrl}/internal/messages`, guidanceData, {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      });
+      
+      logger.info('✅ Guidance text stored successfully', {
+        wa_user_id: payload.wa_user_id,
+        status: response2.status,
+      });
+    }
+    
+    logger.info('✅ AI reply stored in database successfully', {
+      wa_user_id: payload.wa_user_id,
+      hasGuidance: !!payload.guidance_text,
+      testing_mode: config.testingMode,
+    });
+  } catch (error: any) {
+    logger.error('❌ Failed to store AI reply in database', {
+      wa_user_id: payload.wa_user_id,
+      error: error.message,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      url: `${config.channelServiceUrl}/internal/messages`,
+      headers: {
+        'x-internal-api-key': config.internalApiKey ? 'present' : 'missing',
+      },
+    });
+    
+    // Don't throw error - continue with WhatsApp publishing even if database storage fails
+    // This prevents the entire message processing from failing
+  }
 }
 
 /**

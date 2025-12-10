@@ -43,10 +43,12 @@ const SKIP_RAG_PATTERNS = [
 
 // Spam/malicious content patterns - skip processing entirely
 const SPAM_PATTERNS = [
-  /(.{1,5})\1{10,}/,                    // Repeated characters/words (aaaaaaa, hahahahaha)
-  /^[^a-zA-Z0-9]+$/,                    // Only symbols
-  /(http|https|www\.|bit\.ly|t\.co)/i, // URLs (potential spam/phishing)
-  /\b(promo|diskon|gratis|hadiah|menang|undian|transfer|bank|rekening)\s*(uang|rupiah|jutaan)?/i, // Scam keywords
+  /(.)\1{30,}/,                         // 30+ repeated single characters (was 25+, now more lenient)
+  /^[^\w\s]+$/,                         // Only symbols (no letters/numbers/spaces)
+  /(http|https|www\.|bit\.ly|t\.co|tinyurl)/i,  // URLs (potential spam/phishing)
+  /\b(viagra|casino|poker|judi|togel|slot|xxx|porn)\b/i, // Adult/gambling content (added word boundaries)
+  /\b(click\s+here|klik\s+disini|download\s+now|claim\s+now)\b/i, // Spam call-to-action (added word boundaries)
+  /\b(menang\s+jutaan|hadiah\s+milyar|transfer\s+sekarang|bonus\s+besar)\b/i, // Scam phrases (added word boundaries)
 ];
 
 /**
@@ -54,7 +56,7 @@ const SPAM_PATTERNS = [
  */
 export function isSpamMessage(message: string): boolean {
   if (!message || message.length < 2) return true;
-  if (message.length > 2000) return true; // Too long
+  if (message.length > 3000) return true; // Increased from 2000 to 3000 (more lenient)
   
   for (const pattern of SPAM_PATTERNS) {
     if (pattern.test(message)) {

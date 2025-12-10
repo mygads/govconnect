@@ -18,6 +18,8 @@ interface Config {
   maxReportsPerDay: number;
   cooldownSeconds: number;
   autoBlacklistViolations: number;
+  // Testing mode
+  testingMode: boolean;
 }
 
 function validateEnv(): Config {
@@ -54,6 +56,8 @@ function validateEnv(): Config {
     maxReportsPerDay: parseInt(process.env.MAX_REPORTS_PER_DAY || '5', 10),
     cooldownSeconds: parseInt(process.env.COOLDOWN_SECONDS || '30', 10),
     autoBlacklistViolations: parseInt(process.env.AUTO_BLACKLIST_VIOLATIONS || '10', 10),
+    // Testing mode - defaults: false (production mode)
+    testingMode: process.env.TESTING_MODE === 'true', // Default: false
   };
 
   logger.info('✅ Environment configuration validated', {
@@ -62,6 +66,7 @@ function validateEnv(): Config {
     rateLimitEnabled: config.rateLimitEnabled,
     maxReportsPerDay: config.maxReportsPerDay,
     cooldownSeconds: config.cooldownSeconds,
+    testingMode: config.testingMode,
   });
 
   return config;

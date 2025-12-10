@@ -38,11 +38,20 @@ export async function buildContext(
     // Build knowledge section with confidence-aware instructions
     const knowledgeSection = buildKnowledgeSection(ragContext);
     
+    // Calculate current date and tomorrow for prompt
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const currentDate = today.toISOString().split('T')[0]; // YYYY-MM-DD
+    const tomorrowDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
+    
     // Build full prompt using complete system prompt (all parts combined)
     const systemPrompt = getFullSystemPrompt()
       .replace('{knowledge_context}', knowledgeSection)
       .replace('{history}', conversationHistory)
-      .replace('{user_message}', currentMessage);
+      .replace('{user_message}', currentMessage)
+      .replace(/\{\{current_date\}\}/g, currentDate)
+      .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate);
     
     // Log the formatted history for debugging
     logger.debug('Conversation history formatted', {

@@ -1,16 +1,17 @@
 /**
- * Case Service Client with Circuit Breaker
+ * Case Service Client with Circuit Breaker and Testing Mode Support
  */
 
 import { createHttpClient } from '../shared/http-client';
 import { config } from '../config/env';
+import logger from '../utils/logger';
 
-const caseServiceClient = createHttpClient('case-service', {
+const originalCaseServiceClient = createHttpClient('case-service', {
   baseURL: config.caseServiceUrl,
   timeout: 10000,
   retries: 3,
   headers: {
-    'X-API-Key': config.internalApiKey,
+    'x-internal-api-key': config.internalApiKey,
   },
   circuitBreakerOptions: {
     failureThreshold: 5,
@@ -19,6 +20,39 @@ const caseServiceClient = createHttpClient('case-service', {
     resetTimeout: 30000,
   },
 });
+
+
+
+/**
+ * Wrapper client - Testing mode now saves to database normally
+ * Only WhatsApp message sending is skipped (handled in rabbitmq.service.ts)
+ */
+const caseServiceClient = {
+  // GET requests - pass through normally
+  get: (url: string, config?: any) => {
+    return originalCaseServiceClient.get(url, config);
+  },
+  
+  // POST requests - pass through normally (data saved to database)
+  post: async (url: string, data?: any, config?: any) => {
+    // Log testing mode for debugging
+    if (config?.testingMode) {
+      logger.info('🧪 TESTING MODE: POST request (saving to database)', {
+        url,
+        wa_user_id: data?.wa_user_id,
+      });
+    }
+    
+    // Pass through to actual case service - data will be saved to database
+    return originalCaseServiceClient.post(url, data, config);
+  },
+  
+  // Other methods pass through
+  put: originalCaseServiceClient.put,
+  delete: originalCaseServiceClient.delete,
+  patch: originalCaseServiceClient.patch,
+  getMetrics: originalCaseServiceClient.getMetrics,
+};
 
 /**
  * Get case by ID
@@ -40,7 +74,7 @@ export function getCaseServiceMetrics() {
   return caseServiceClient.getMetrics();
 }
 
-// Export the client for direct use
+// Export the wrapper client
 export { caseServiceClient };
 
 export default {

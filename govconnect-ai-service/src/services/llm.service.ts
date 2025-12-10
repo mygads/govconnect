@@ -78,8 +78,9 @@ async function getModelPriority(): Promise<string[]> {
   try {
     // Get settings from dashboard
     const settings = await getSettings();
-    const primaryModel = settings.ai_model_primary || 'gemini-2.5-flash';
-    const fallbackModel = settings.ai_model_fallback || 'gemini-2.0-flash';
+    // Default ke gemini-2.0-flash yang lebih stabil untuk JSON output
+    const primaryModel = settings.ai_model_primary || 'gemini-2.0-flash';
+    const fallbackModel = settings.ai_model_fallback || 'gemini-2.0-flash-lite';
     
     // Build priority list: primary first, then fallback, then others
     const priorityModels: string[] = [];
@@ -221,7 +222,7 @@ export async function callGemini(systemPrompt: string): Promise<{ response: LLMR
   });
   
   // Final attempt sequence with longer delays - prioritize most reliable models
-  const finalModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+  const finalModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
   
   for (const model of finalModels) {
     await sleep(5000); // Wait 5 seconds
@@ -294,8 +295,103 @@ async function callGeminiWithModel(
       responsePreview: responseText.substring(0, 500), // First 500 chars
     });
     
-    // Parse JSON response
-    const parsedResponse = JSON.parse(responseText);
+    // Parse JSON response with robust error handling
+    let parsedResponse;
+    try {
+      parsedResponse = JSON.parse(responseText);
+    } catch (jsonError: any) {
+      // Try to fix common JSON issues
+      let fixedText = responseText;
+      
+      // Fix unterminated strings by finding and closing them
+      if (jsonError.message.includes('Unterminated string')) {
+        logger.warn('🔧 Attempting to fix unterminated string in JSON', {
+          model: modelName,
+          originalLength: responseText.length,
+          error: jsonError.message,
+        });
+        
+        // Find the last quote and add closing quote if needed
+        const lastQuoteIndex = fixedText.lastIndexOf('"');
+        const lastBraceIndex = fixedText.lastIndexOf('}');
+        
+        if (lastQuoteIndex > lastBraceIndex) {
+          // There's an unterminated string, try to close it
+          fixedText = fixedText + '"';
+          
+          // Also ensure proper JSON structure
+          if (!fixedText.endsWith('}')) {
+            fixedText = fixedText + '}';
+          }
+        }
+        
+        // Try parsing the fixed text
+        try {
+          parsedResponse = JSON.parse(fixedText);
+          logger.info('✅ Successfully fixed unterminated string', {
+            model: modelName,
+            fixedLength: fixedText.length,
+          });
+        } catch (secondError: any) {
+          // If still fails, try more aggressive fixes
+          logger.warn('🔧 Attempting more aggressive JSON fixes', {
+            model: modelName,
+            secondError: secondError.message,
+          });
+          
+          // Try to extract just the JSON part if there's extra text
+          const jsonMatch = fixedText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              parsedResponse = JSON.parse(jsonMatch[0]);
+              logger.info('✅ Successfully extracted and parsed JSON', {
+                model: modelName,
+              });
+            } catch (thirdError: any) {
+              // Last resort: create a fallback response
+              logger.error('❌ All JSON fixes failed, creating fallback response', {
+                model: modelName,
+                originalError: jsonError.message,
+                secondError: secondError.message,
+                thirdError: thirdError.message,
+              });
+              
+              parsedResponse = {
+                intent: 'UNKNOWN',
+                fields: {},
+                reply_text: 'Maaf, terjadi kesalahan teknis. Silakan ulangi pertanyaan Anda.',
+                guidance_text: '',
+                needs_knowledge: false,
+              };
+            }
+          } else {
+            // No JSON found, create fallback
+            parsedResponse = {
+              intent: 'UNKNOWN',
+              fields: {},
+              reply_text: 'Maaf, terjadi kesalahan teknis. Silakan ulangi pertanyaan Anda.',
+              guidance_text: '',
+              needs_knowledge: false,
+            };
+          }
+        }
+      } else {
+        // Other JSON errors, create fallback response
+        logger.error('❌ JSON parsing failed, creating fallback response', {
+          model: modelName,
+          error: jsonError.message,
+          responsePreview: responseText.substring(0, 200),
+        });
+        
+        parsedResponse = {
+          intent: 'UNKNOWN',
+          fields: {},
+          reply_text: 'Maaf, terjadi kesalahan teknis. Silakan ulangi pertanyaan Anda.',
+          guidance_text: '',
+          needs_knowledge: false,
+        };
+      }
+    }
     
     // Sanitize "null" strings - Gemini sometimes returns "null" instead of empty string
     const sanitizeNullString = (value: any): any => {

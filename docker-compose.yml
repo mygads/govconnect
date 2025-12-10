@@ -83,6 +83,8 @@ services:
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS}
       MAX_HISTORY_MESSAGES: ${MAX_HISTORY_MESSAGES}
       LOG_LEVEL: ${LOG_LEVEL}
+      USE_2_LAYER_ARCHITECTURE: ${USE_2_LAYER_ARCHITECTURE}
+      TESTING_MODE: ${TESTING_MODE}
     networks:
       - govconnect-network
       - infra-network
