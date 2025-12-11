@@ -748,6 +748,19 @@ export default function LiveChatPage() {
                           )}
                         </div>
                         <div className="mt-1 flex items-center gap-1 flex-wrap">
+                          {/* Channel Badge */}
+                          {conv.wa_user_id.startsWith('web_') ? (
+                            <Badge variant="outline" className="text-purple-600 border-purple-300 text-xs py-0">
+                              <MessageCircle className="h-3 w-3 mr-1" />
+                              Webchat
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-emerald-600 border-emerald-300 text-xs py-0">
+                              <MessageCircle className="h-3 w-3 mr-1" />
+                              WhatsApp
+                            </Badge>
+                          )}
+                          {/* Status Badge */}
                           {conv.is_takeover ? (
                             <Badge variant="outline" className="text-orange-600 border-orange-300 text-xs py-0">
                               <Hand className="h-3 w-3 mr-1" />
@@ -813,9 +826,16 @@ export default function LiveChatPage() {
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium text-sm">
-                      {selectedConversation.user_name || selectedConversation.wa_user_id}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm">
+                        {selectedConversation.user_name || selectedConversation.wa_user_id}
+                      </p>
+                      {selectedConversation.wa_user_id.startsWith('web_') && (
+                        <Badge variant="outline" className="text-purple-600 border-purple-300 text-xs py-0">
+                          Webchat
+                        </Badge>
+                      )}
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       {selectedConversation.wa_user_id}
                     </p>

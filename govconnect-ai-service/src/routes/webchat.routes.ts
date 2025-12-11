@@ -6,11 +6,19 @@
  * IMPORTANT: Menggunakan unified-message-processor.service.ts untuk konsistensi
  * dengan WhatsApp flow. Semua logic NLU, intent detection, RAG, dll dipusatkan
  * di unified processor.
+ * 
+ * LIVE CHAT INTEGRATION: Messages are synced to Channel Service database
+ * so they appear in Live Chat dashboard and admin can takeover.
  */
 
 import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
 import { processUnifiedMessage } from '../services/unified-message-processor.service';
+import {
+  saveWebchatMessage,
+  updateWebchatConversation,
+  checkWebchatTakeover,
+} from '../services/webchat-sync.service';
 
 const router = Router();
 
@@ -70,6 +78,34 @@ router.post('/', async (req: Request, res: Response) => {
       channel: channel || 'webchat',
     });
 
+    // Check if admin has taken over this conversation
+    const takeoverStatus = await checkWebchatTakeover(session_id);
+    if (takeoverStatus.is_takeover) {
+      // Save user message to database but don't process with AI
+      await saveWebchatMessage({
+        session_id,
+        message,
+        direction: 'IN',
+        source: 'USER',
+      });
+      
+      logger.info('🛑 Webchat takeover active, skipping AI', {
+        session_id,
+        admin_id: takeoverStatus.admin_id,
+      });
+      
+      res.json({
+        success: true,
+        response: '', // Empty response - admin will reply
+        intent: 'TAKEOVER',
+        metadata: {
+          session_id,
+          is_takeover: true,
+          admin_name: takeoverStatus.admin_name,
+        },
+      });
+      return;
+    }
     
     // Get or create session
     let session = webChatSessions.get(session_id);
@@ -90,13 +126,21 @@ router.post('/', async (req: Request, res: Response) => {
     });
     session.lastActivity = new Date();
     
+    // Save incoming message to Channel Service (for Live Chat dashboard)
+    saveWebchatMessage({
+      session_id,
+      message,
+      direction: 'IN',
+      source: 'USER',
+    }).catch(() => {}); // Don't block on sync failure
+    
     // Process message using UNIFIED processor (same as WhatsApp)
     // This ensures consistent NLU, intent detection, RAG, prompts, etc.
     const result = await processUnifiedMessage({
       userId: session_id,
       message: message,
       channel: 'webchat',
-      conversationHistory: session.messages.map(m => ({
+      conversationHistory: session.messages.map((m) => ({
         role: m.role,
         content: m.content,
       })),
@@ -108,6 +152,21 @@ router.post('/', async (req: Request, res: Response) => {
       content: result.response,
       timestamp: new Date(),
     });
+    
+    // Save AI response to Channel Service (for Live Chat dashboard)
+    saveWebchatMessage({
+      session_id,
+      message: result.response,
+      direction: 'OUT',
+      source: 'AI',
+    }).catch(() => {}); // Don't block on sync failure
+    
+    // Update conversation in Channel Service
+    updateWebchatConversation({
+      session_id,
+      last_message: result.response.substring(0, 100),
+      unread_count: 0,
+    }).catch(() => {}); // Don't block on sync failure
     
     const processingTime = Date.now() - startTime;
     
@@ -200,6 +259,77 @@ router.get('/stats', (_req: Request, res: Response) => {
     success: true,
     activeSessions: webChatSessions.size,
   });
+});
+
+/**
+ * Poll for new messages (admin messages when takeover is active)
+ * GET /api/webchat/:session_id/poll
+ * 
+ * This endpoint is used by webchat to check for:
+ * 1. Admin takeover status
+ * 2. New messages from admin
+ */
+router.get('/:session_id/poll', async (req: Request, res: Response) => {
+  try {
+    const { session_id } = req.params;
+    const since = req.query.since ? new Date(req.query.since as string) : undefined;
+    
+    if (!session_id.startsWith('web_')) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid session_id format',
+      });
+      return;
+    }
+    
+    // Check takeover status
+    const takeoverStatus = await checkWebchatTakeover(session_id);
+    
+    // Get admin messages if in takeover
+    let adminMessages: Array<{ message: string; admin_name?: string; timestamp: Date }> = [];
+    if (takeoverStatus.is_takeover) {
+      const { getAdminMessages } = await import('../services/webchat-sync.service');
+      adminMessages = await getAdminMessages(session_id, since);
+      
+      // Add admin messages to local session for consistency
+      const session = webChatSessions.get(session_id);
+      if (session && adminMessages.length > 0) {
+        for (const msg of adminMessages) {
+          // Check if message already exists in session
+          const exists = session.messages.some(
+            m => m.role === 'assistant' && m.content === msg.message && 
+                 Math.abs(m.timestamp.getTime() - msg.timestamp.getTime()) < 1000
+          );
+          if (!exists) {
+            session.messages.push({
+              role: 'assistant',
+              content: msg.message,
+              timestamp: msg.timestamp,
+            });
+          }
+        }
+        session.lastActivity = new Date();
+      }
+    }
+    
+    res.json({
+      success: true,
+      is_takeover: takeoverStatus.is_takeover,
+      admin_name: takeoverStatus.admin_name,
+      messages: adminMessages.map(m => ({
+        content: m.message,
+        admin_name: m.admin_name,
+        timestamp: m.timestamp.toISOString(),
+      })),
+    });
+    
+  } catch (error: any) {
+    logger.error('Poll error', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to poll for messages',
+    });
+  }
 });
 
 export default router;

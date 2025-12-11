@@ -162,6 +162,8 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
     isTyping,
     unreadCount,
     isLoaded,
+    isTakeover,
+    adminName,
     openChat,
     closeChat,
     minimizeChat,
@@ -286,8 +288,12 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                     <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 border-2 border-white rounded-full" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-sm">GovConnect Assistant</h3>
-                    <p className="text-xs text-white/80">Online • Siap membantu</p>
+                    <h3 className="font-semibold text-sm">
+                      {isTakeover ? (adminName || 'Admin') : 'GovConnect Assistant'}
+                    </h3>
+                    <p className="text-xs text-white/80">
+                      {isTakeover ? '🟢 Admin sedang membantu Anda' : 'Online • Siap membantu'}
+                    </p>
                   </div>
                 </div>
                 

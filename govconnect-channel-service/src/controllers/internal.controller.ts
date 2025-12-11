@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
 import {
   getMessageHistory,
+  saveIncomingMessage,
   saveOutgoingMessage,
   logSentMessage,
 } from '../services/message.service';
+import { updateConversation } from '../services/takeover.service';
 import { sendTextMessage, sendTypingIndicator, markMessageAsRead } from '../services/wa.service';
 import logger from '../utils/logger';
 
@@ -115,16 +117,16 @@ export async function setTyping(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * Store AI reply message in database
+ * Store message in database (supports both IN and OUT)
  * POST /internal/messages
- * Body: { wa_user_id: "628xxx", message_text: "text", direction: "OUT", message_type: "text", status: "sent", metadata: {...} }
+ * Body: { wa_user_id: "628xxx", message_text: "text", direction: "IN"|"OUT", source: "USER"|"AI"|"ADMIN", metadata: {...} }
  * 
- * This is called by AI service to store AI replies in database
- * Used in testing mode to maintain conversation history without sending to WhatsApp
+ * This is called by AI service to store messages in database
+ * Used for webchat integration and testing mode
  */
 export async function storeMessage(req: Request, res: Response): Promise<void> {
   try {
-    const { wa_user_id, message_text, direction, message_type, status, metadata } = req.body;
+    const { wa_user_id, message_id, message_text, direction, source, metadata } = req.body;
     
     if (!wa_user_id || !message_text) {
       res.status(400).json({ 
@@ -133,27 +135,47 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
       return;
     }
     
-    // Generate a unique message ID for stored messages
-    const message_id = `ai-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    // Generate a unique message ID if not provided
+    const finalMessageId = message_id || `${direction === 'IN' ? 'in' : 'ai'}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     
-    // Save outgoing message
-    const message = await saveOutgoingMessage({
+    let message;
+    if (direction === 'IN') {
+      // Save incoming message (from user)
+      message = await saveIncomingMessage({
+        wa_user_id,
+        message_id: finalMessageId,
+        message_text,
+      });
+    } else {
+      // Save outgoing message (from AI or admin)
+      message = await saveOutgoingMessage({
+        wa_user_id,
+        message_id: finalMessageId,
+        message_text,
+        source: source || 'AI',
+      });
+    }
+    
+    // Update conversation
+    const userName = metadata?.channel === 'webchat' ? `Web User ${wa_user_id.substring(4, 12)}` : undefined;
+    await updateConversation(
       wa_user_id,
-      message_id,
-      message_text,
-      source: 'AI',
-    });
+      message_text.substring(0, 100),
+      userName,
+      direction === 'IN' // incrementUnread only for incoming messages
+    );
     
-    logger.info('AI reply stored in database', { 
+    logger.info('Message stored in database', { 
       wa_user_id, 
-      message_id,
-      testing_mode: metadata?.testing_mode,
-      ai_generated: metadata?.ai_generated,
+      message_id: finalMessageId,
+      direction,
+      source,
+      channel: metadata?.channel,
     });
     
     res.status(201).json({ 
       status: 'stored',
-      message_id,
+      message_id: finalMessageId,
       id: message.id,
     });
   } catch (error: any) {

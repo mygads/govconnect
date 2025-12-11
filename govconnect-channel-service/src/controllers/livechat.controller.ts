@@ -164,6 +164,10 @@ export async function handleGetConversation(req: Request, res: Response): Promis
 /**
  * Admin sends message to user
  * POST /internal/conversations/:wa_user_id/send
+ * 
+ * Supports both WhatsApp users (628xxx) and Webchat users (web_xxx)
+ * - WhatsApp: Sends via WhatsApp API
+ * - Webchat: Stores in database, user polls for new messages
  */
 export async function handleAdminSendMessage(req: Request, res: Response): Promise<void> {
   try {
@@ -178,14 +182,14 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     // Check if takeover is active (optional - can still send without takeover)
     const isTakeover = await isUserInTakeover(wa_user_id);
     
-    // Send message via WhatsApp
-    const result = await sendTextMessage(wa_user_id, message);
-
-    if (result.success) {
-      // Generate message ID if not provided by WA
-      const messageId = result.message_id || `admin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    // Check if this is a webchat user (starts with web_)
+    const isWebchatUser = wa_user_id.startsWith('web_');
+    
+    if (isWebchatUser) {
+      // For webchat users, just save to database
+      // User will poll for new messages via webchat endpoint
+      const messageId = `admin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       
-      // Save message to database so it appears in chat history
       await saveOutgoingMessage({
         wa_user_id,
         message_id: messageId,
@@ -196,24 +200,61 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       // Update conversation summary
       await updateConversation(wa_user_id, message, undefined, false);
 
-      logger.info('Admin sent message', {
+      logger.info('Admin sent webchat message', {
         wa_user_id,
         admin_id,
         admin_name,
         is_takeover: isTakeover,
         message_id: messageId,
+        channel: 'webchat',
       });
 
       res.json({
         success: true,
         message_id: messageId,
         is_takeover: isTakeover,
+        channel: 'webchat',
       });
     } else {
-      res.status(500).json({ 
-        error: 'Failed to send message',
-        details: result.error,
-      });
+      // For WhatsApp users, send via WhatsApp API
+      const result = await sendTextMessage(wa_user_id, message);
+
+      if (result.success) {
+        // Generate message ID if not provided by WA
+        const messageId = result.message_id || `admin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        
+        // Save message to database so it appears in chat history
+        await saveOutgoingMessage({
+          wa_user_id,
+          message_id: messageId,
+          message_text: message,
+          source: 'ADMIN',
+        });
+
+        // Update conversation summary
+        await updateConversation(wa_user_id, message, undefined, false);
+
+        logger.info('Admin sent WhatsApp message', {
+          wa_user_id,
+          admin_id,
+          admin_name,
+          is_takeover: isTakeover,
+          message_id: messageId,
+          channel: 'whatsapp',
+        });
+
+        res.json({
+          success: true,
+          message_id: messageId,
+          is_takeover: isTakeover,
+          channel: 'whatsapp',
+        });
+      } else {
+        res.status(500).json({ 
+          error: 'Failed to send message',
+          details: result.error,
+        });
+      }
     }
   } catch (error: any) {
     logger.error('Failed to send admin message', { error: error.message });

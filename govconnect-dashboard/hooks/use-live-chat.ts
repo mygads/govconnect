@@ -275,6 +275,56 @@ export function useLiveChat() {
     setState(prev => ({ ...prev, unreadCount: 0 }));
   }, []);
 
+  // Track takeover status
+  const [isTakeover, setIsTakeover] = useState(false);
+  const [adminName, setAdminName] = useState<string | null>(null);
+  const lastPollRef = useRef<Date>(new Date());
+
+  // Poll for admin messages when takeover is active
+  useEffect(() => {
+    if (!state.session?.sessionId || !state.isOpen) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(
+          `/api/webchat/poll?sessionId=${state.session?.sessionId}&since=${lastPollRef.current.toISOString()}`
+        );
+        
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        
+        // Update takeover status
+        setIsTakeover(data.is_takeover || false);
+        setAdminName(data.admin_name || null);
+        
+        // Add new admin messages
+        if (data.messages && data.messages.length > 0) {
+          for (const msg of data.messages) {
+            // Check if message already exists
+            const exists = state.session?.messages.some(
+              m => m.role === 'assistant' && m.content === msg.content
+            );
+            
+            if (!exists) {
+              addMessage({
+                content: msg.content,
+                role: 'assistant',
+                status: 'delivered',
+              });
+            }
+          }
+          lastPollRef.current = new Date();
+        }
+      } catch (error) {
+        // Silently fail - polling is best effort
+        console.debug('Poll error:', error);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [state.session?.sessionId, state.isOpen, state.session?.messages, addMessage]);
+
   return {
     // State
     isOpen: state.isOpen,
@@ -284,6 +334,8 @@ export function useLiveChat() {
     isTyping: state.isTyping,
     unreadCount: state.unreadCount,
     isLoaded,
+    isTakeover,
+    adminName,
     
     // Actions
     openChat,
