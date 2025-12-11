@@ -3,6 +3,7 @@ import { generateComplaintId } from '../utils/id-generator';
 import { publishEvent } from './rabbitmq.service';
 import { RABBITMQ_CONFIG, isUrgentCategory } from '../config/rabbitmq';
 import logger from '../utils/logger';
+import { invalidateStatsCache } from './query-batcher.service';
 
 export interface CreateComplaintData {
   wa_user_id: string;
@@ -82,6 +83,9 @@ export async function createComplaint(data: CreateComplaintData) {
   }
   
   logger.info('Complaint created', { complaint_id });
+  
+  // Invalidate stats cache
+  invalidateStatsCache();
   
   return complaint;
 }
@@ -163,6 +167,9 @@ export async function updateComplaintStatus(
     complaint_id: complaint.complaint_id,
     status: updateData.status,
   });
+  
+  // Invalidate stats cache
+  invalidateStatsCache();
   
   return complaint;
 }

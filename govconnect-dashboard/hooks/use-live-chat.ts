@@ -15,6 +15,13 @@ import {
   generateMessageId,
 } from '@/lib/live-chat-types';
 
+// Processing status from AI service
+interface ProcessingStatus {
+  stage: 'receiving' | 'reading' | 'searching' | 'thinking' | 'preparing' | 'sending' | 'completed' | 'error';
+  message: string;
+  progress: number;
+}
+
 const INITIAL_STATE: LiveChatState = {
   isOpen: false,
   isMinimized: false,
@@ -26,7 +33,9 @@ const INITIAL_STATE: LiveChatState = {
 export function useLiveChat() {
   const [state, setState] = useState<LiveChatState>(INITIAL_STATE);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const statusPollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load session from localStorage on mount
   useEffect(() => {
@@ -216,6 +225,28 @@ export function useLiveChat() {
     // Set typing indicator
     setState(prev => ({ ...prev, isTyping: true }));
 
+    // Start polling for processing status
+    const sessionId = currentSession?.sessionId || state.session?.sessionId;
+    if (sessionId) {
+      statusPollingRef.current = setInterval(async () => {
+        try {
+          const statusResponse = await fetch(`/api/webchat/status?sessionId=${sessionId}`);
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            if (statusData.success && statusData.data?.status) {
+              setProcessingStatus({
+                stage: statusData.data.status.stage,
+                message: statusData.data.status.message,
+                progress: statusData.data.status.progress,
+              });
+            }
+          }
+        } catch (e) {
+          // Silently fail - status polling is best effort
+        }
+      }, 500);
+    }
+
     try {
       // Update user message status to sent
       updateMessageStatus(userMessage.id, 'sent');
@@ -267,6 +298,12 @@ export function useLiveChat() {
         status: 'delivered',
       });
     } finally {
+      // Stop status polling
+      if (statusPollingRef.current) {
+        clearInterval(statusPollingRef.current);
+        statusPollingRef.current = null;
+      }
+      setProcessingStatus(null);
       setState(prev => ({ ...prev, isTyping: false }));
     }
   }, [state.session, initSession, addMessage, updateMessageStatus]);
@@ -350,6 +387,7 @@ export function useLiveChat() {
     session: state.session,
     messages: state.session?.messages || [],
     isTyping: state.isTyping,
+    processingStatus, // Real-time AI processing status
     unreadCount: state.unreadCount,
     isLoaded,
     isTakeover,

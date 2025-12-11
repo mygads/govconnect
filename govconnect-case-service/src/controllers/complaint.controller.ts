@@ -7,6 +7,7 @@ import {
   getComplaintStatistics,
   cancelComplaint,
 } from '../services/complaint.service';
+import { checkDuplicateComplaint, checkGlobalDuplicate } from '../services/complaint-deduplication.service';
 import logger from '../utils/logger';
 
 /**
@@ -15,14 +16,61 @@ import logger from '../utils/logger';
  */
 export async function handleCreateComplaint(req: Request, res: Response) {
   try {
+    const { wa_user_id, kategori, deskripsi, alamat, rt_rw, foto_url } = req.body;
+
+    // Check for duplicate complaint
+    const duplicateCheck = await checkDuplicateComplaint({
+      wa_user_id,
+      kategori,
+      deskripsi,
+      alamat,
+      rt_rw,
+    });
+
+    if (duplicateCheck.isDuplicate) {
+      logger.info('Duplicate complaint rejected', {
+        wa_user_id,
+        existingId: duplicateCheck.existingId,
+        similarity: duplicateCheck.similarity,
+      });
+
+      return res.status(409).json({
+        status: 'duplicate',
+        error: 'Laporan serupa sudah ada',
+        data: {
+          existing_complaint_id: duplicateCheck.existingId,
+          message: duplicateCheck.reason,
+        },
+      });
+    }
+
+    // Check for global similar complaints (informational)
+    const globalCheck = await checkGlobalDuplicate({
+      wa_user_id,
+      kategori,
+      deskripsi,
+      alamat,
+      rt_rw,
+    });
+
     const complaint = await createComplaint(req.body);
+
+    // Include info about similar reports if any
+    const responseData: any = {
+      complaint_id: complaint.complaint_id,
+      status: complaint.status,
+    };
+
+    if (globalCheck.hasSimilar && globalCheck.similarCount > 0) {
+      responseData.similar_reports = {
+        count: globalCheck.similarCount,
+        message: `Ada ${globalCheck.similarCount} laporan serupa di lokasi yang sama`,
+      };
+    }
     
     return res.status(201).json({
       status: 'success',
-      data: {
-        complaint_id: complaint.complaint_id,
-        status: complaint.status,
-      },
+      data: responseData,
     });
   } catch (error: any) {
     logger.error('Create complaint error', { error: error.message });

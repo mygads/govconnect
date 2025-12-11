@@ -2,9 +2,12 @@
  * Processing Status Routes
  * 
  * API endpoints for real-time processing status:
- * - GET /status/:userId - Get current processing status for a user
  * - GET /status/summary - Get overall processing summary (for dashboard)
  * - GET /status/active - Get all active processing statuses
+ * - GET /status/stream/:userId - SSE for real-time updates
+ * - GET /status/:userId - Get current processing status for a user
+ * 
+ * IMPORTANT: Static routes (/summary, /active) MUST be defined BEFORE dynamic routes (/:userId)
  */
 
 import { Router, Request, Response } from 'express';
@@ -20,52 +23,9 @@ import {
 const router = Router();
 
 /**
- * GET /status/:userId
- * Get current processing status for a specific user
- */
-router.get('/:userId', (req: Request, res: Response) => {
-  const { userId } = req.params;
-  
-  try {
-    const status = getStatus(userId);
-    
-    if (!status) {
-      return res.json({
-        success: true,
-        data: {
-          userId,
-          isProcessing: false,
-          status: null,
-        },
-      });
-    }
-    
-    return res.json({
-      success: true,
-      data: {
-        userId,
-        isProcessing: isProcessing(userId),
-        status: {
-          stage: status.stage,
-          message: status.message,
-          progress: status.progress,
-          elapsedMs: Date.now() - status.startTime,
-          estimatedTimeMs: status.estimatedTimeMs,
-        },
-      },
-    });
-  } catch (error: any) {
-    logger.error('[StatusRoutes] Error getting status', { userId, error: error.message });
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to get processing status',
-    });
-  }
-});
-
-/**
  * GET /status/summary
  * Get overall processing summary for dashboard
+ * MUST be before /:userId to avoid being caught by dynamic route
  */
 router.get('/summary', (_req: Request, res: Response) => {
   try {
@@ -170,6 +130,51 @@ router.get('/stream/:userId', (req: Request, res: Response) => {
   req.on('close', () => {
     clearInterval(heartbeat);
   });
+});
+
+/**
+ * GET /status/:userId
+ * Get current processing status for a specific user
+ * MUST be LAST because it's a catch-all dynamic route
+ */
+router.get('/:userId', (req: Request, res: Response) => {
+  const { userId } = req.params;
+  
+  try {
+    const status = getStatus(userId);
+    
+    if (!status) {
+      return res.json({
+        success: true,
+        data: {
+          userId,
+          isProcessing: false,
+          status: null,
+        },
+      });
+    }
+    
+    return res.json({
+      success: true,
+      data: {
+        userId,
+        isProcessing: isProcessing(userId),
+        status: {
+          stage: status.stage,
+          message: status.message,
+          progress: status.progress,
+          elapsedMs: Date.now() - status.startTime,
+          estimatedTimeMs: status.estimatedTimeMs,
+        },
+      },
+    });
+  } catch (error: any) {
+    logger.error('[StatusRoutes] Error getting status', { userId, error: error.message });
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to get processing status',
+    });
+  }
 });
 
 export default router;

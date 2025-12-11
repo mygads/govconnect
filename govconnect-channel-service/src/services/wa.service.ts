@@ -636,38 +636,6 @@ function normalizePhoneNumber(phone: string): string {
   return normalized;
 }
 
-// =====================================================
-// LEGACY FUNCTIONS (Kept for backward compatibility)
-// =====================================================
-
-/**
- * Parse webhook payload and extract message
- * @deprecated Use parseGenfityPayload in webhook.controller.ts instead
- */
-export function parseWebhookPayload(payload: WhatsAppWebhookPayload): {
-  message: WhatsAppMessage | null;
-  from: string | null;
-} {
-  try {
-    const entry = payload.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-    const message = value?.messages?.[0];
-
-    if (!message) {
-      return { message: null, from: null };
-    }
-
-    return {
-      message,
-      from: message.from,
-    };
-  } catch (error: any) {
-    logger.error('Error parsing webhook payload', { error: error.message });
-    return { message: null, from: null };
-  }
-}
-
 /**
  * Validate webhook signature (optional, for production)
  */
@@ -679,35 +647,4 @@ export function validateWebhookSignature(
   // TODO: Implement HMAC signature verification
   // For now, return true (skip verification in development)
   return true;
-}
-
-/**
- * Check if message should be processed
- * @deprecated Now handled directly in webhook.controller.ts
- */
-export function shouldProcessMessage(message: WhatsAppMessage): {
-  shouldProcess: boolean;
-  reason?: string;
-} {
-  // Only process text messages
-  if (message.type !== 'text') {
-    return {
-      shouldProcess: false,
-      reason: 'Not a text message',
-    };
-  }
-
-  // Check if message is too old (> 5 minutes)
-  const messageTime = parseInt(message.timestamp) * 1000;
-  const now = Date.now();
-  const fiveMinutes = 5 * 60 * 1000;
-
-  if (now - messageTime > fiveMinutes) {
-    return {
-      shouldProcess: false,
-      reason: 'Message too old',
-    };
-  }
-
-  return { shouldProcess: true };
 }

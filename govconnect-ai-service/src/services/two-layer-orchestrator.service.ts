@@ -292,9 +292,8 @@ async function enhanceLayer1Output(layer1Output: Layer1Output, wa_user_id: strin
   });
   
   try {
-    // Import the enhanced extraction function from original orchestrator
-    const { extractCitizenDataFromHistory } = await import('./ai-orchestrator.service');
-    const historyData = await extractCitizenDataFromHistory(wa_user_id);
+    // Extract citizen data from conversation history
+    const historyData = await extractCitizenDataFromHistoryInternal(wa_user_id);
     
     if (historyData) {
       // Merge history data with Layer 1 extracted data (history data fills gaps)
@@ -312,8 +311,8 @@ async function enhanceLayer1Output(layer1Output: Layer1Output, wa_user_id: strin
         const shouldUseHistoryValue = 
           !currentValue || 
           currentValue === '' ||
-          (typeof currentValue === 'string' && currentValue.length < 3 && value && value.length > currentValue.length) ||
-          (key === 'alamat' && (!currentValue || currentValue.length < 5) && value && value.length >= 5);
+          (typeof currentValue === 'string' && currentValue.length < 3 && value && value.toString().length > currentValue.length) ||
+          (key === 'alamat' && (!currentValue || currentValue.length < 5) && value && value.toString().length >= 5);
         
         if (shouldUseHistoryValue && value) {
           (enhanced.extracted_data as any)[key] = value;
@@ -369,6 +368,69 @@ async function enhanceLayer1Output(layer1Output: Layer1Output, wa_user_id: strin
   }
   
   return layer1Output;
+}
+
+/**
+ * Extract citizen data from conversation history (internal implementation)
+ */
+async function extractCitizenDataFromHistoryInternal(wa_user_id: string): Promise<{
+  nama_lengkap?: string;
+  nik?: string;
+  alamat?: string;
+  no_hp?: string;
+  keperluan?: string;
+} | null> {
+  const axios = (await import('axios')).default;
+  const { config } = await import('../config/env');
+  
+  try {
+    const url = `${config.channelServiceUrl}/internal/messages`;
+    const response = await axios.get(url, {
+      params: { wa_user_id, limit: 20 },
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      timeout: 5000,
+    });
+    
+    const messages = response.data?.messages || [];
+    const result: { nama_lengkap?: string; nik?: string; alamat?: string; no_hp?: string; keperluan?: string } = {};
+    
+    const userMessages = messages
+      .filter((m: any) => m.direction === 'IN')
+      .map((m: any) => m.message_text)
+      .join(' ');
+    
+    // Extract NIK
+    const nikMatch = userMessages.match(/(?:nik|NIK)[\s:]+(\d{16})/);
+    if (nikMatch) result.nik = nikMatch[1];
+    else {
+      const standaloneNik = userMessages.match(/\b(\d{16})\b/);
+      if (standaloneNik) result.nik = standaloneNik[1];
+    }
+    
+    // Extract phone
+    const phoneMatch = userMessages.match(/\b(08\d{8,11})\b/);
+    if (phoneMatch) result.no_hp = phoneMatch[1];
+    
+    // Extract name
+    const nameMatch = userMessages.match(/nama\s+saya\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)/i);
+    if (nameMatch && nameMatch[1]) {
+      const name = nameMatch[1].trim();
+      if (name.length >= 2 && name.length <= 50 && !/\d/.test(name)) {
+        result.nama_lengkap = name;
+      }
+    }
+    
+    // Extract address
+    const addressMatch = userMessages.match(/tinggal\s+di\s+(.+?)(?:\s*,?\s*(?:untuk|mau|nik|hp)|\s*$)/i);
+    if (addressMatch && addressMatch[1].length >= 5) {
+      result.alamat = addressMatch[1].trim().replace(/,\s*$/, '');
+    }
+    
+    return Object.keys(result).length > 0 ? result : null;
+  } catch (error: any) {
+    logger.warn('Failed to extract citizen data from history', { wa_user_id, error: error.message });
+    return null;
+  }
 }
 
 /**

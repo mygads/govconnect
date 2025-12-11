@@ -16,6 +16,7 @@ import { fastClassifyIntent, FastClassifyResult, isSimpleConfirmation, isSimpleT
 import { getCachedResponse, setCachedResponse, getCacheStats, preWarmCache } from './response-cache.service';
 import { extractAllEntities, mergeEntities, ExtractionResult } from './entity-extractor.service';
 import { ProcessMessageInput, ProcessMessageResult } from './unified-message-processor.service';
+import { matchTemplate } from './response-templates.service';
 
 // ==================== TYPES ====================
 
@@ -85,7 +86,36 @@ export function preProcessMessage(
     });
   }
   
-  // 2. Check Response Cache (only for cacheable intents)
+  // 2. Check Response Templates (pattern-based, no LLM needed)
+  const templateMatch = matchTemplate(message);
+  if (templateMatch.matched && templateMatch.response) {
+    optimizationApplied.push('template_match');
+    shouldSkipLLM = true;
+    
+    logger.info('[AIOptimizer] Template matched', {
+      userId,
+      intent: templateMatch.intent,
+      confidence: templateMatch.confidence,
+    });
+    
+    return {
+      shouldSkipLLM: true,
+      fastIntent: fastIntent || {
+        intent: templateMatch.intent || 'UNKNOWN',
+        confidence: templateMatch.confidence,
+        skipLLM: true,
+        extractedFields: {},
+        reason: 'Template matched',
+      },
+      cachedResponse: {
+        response: templateMatch.response,
+        intent: templateMatch.intent || 'UNKNOWN',
+      },
+      optimizationApplied,
+    };
+  }
+  
+  // 3. Check Response Cache (only for cacheable intents)
   if (fastIntent && ['KNOWLEDGE_QUERY', 'GREETING'].includes(fastIntent.intent)) {
     const cached = getCachedResponse(message, fastIntent.intent);
     if (cached) {
@@ -110,7 +140,7 @@ export function preProcessMessage(
     }
   }
   
-  // 3. Entity Pre-extraction
+  // 4. Entity Pre-extraction
   const extractedEntities = extractAllEntities(message, conversationHistory);
   if (extractedEntities.extractedCount > 0) {
     optimizationApplied.push('entity_extraction');
