@@ -1013,33 +1013,7 @@ export default function LandingPage() {
         </div>
       </footer>
 
-      {/* Floating WhatsApp Button - Right Side */}
-      <motion.div
-        initial={{ scale: 0, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ delay: 1, duration: 0.3 }}
-        className="fixed bottom-6 right-6 z-50"
-      >
-        <motion.div
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-          className="relative"
-        >
-          {/* Pulse ring */}
-          <span className="absolute inset-0 rounded-full bg-green-500 animate-ping opacity-25" />
-          <Button
-            asChild
-            size="lg"
-            className="relative rounded-full bg-gradient-to-br from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white shadow-xl shadow-green-500/30 h-14 w-14 p-0"
-          >
-            <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
-              <WhatsAppIcon className="h-7 w-7" />
-            </a>
-          </Button>
-        </motion.div>
-      </motion.div>
-
-      {/* Live Chat Widget - Left Side */}
+      {/* Live Chat Widget - Right Side */}
       <LiveChatWidget isDark={isDark} />
     </div>
   );

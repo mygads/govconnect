@@ -177,6 +177,14 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
   const [inputValue, setInputValue] = useState("");
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto scroll to bottom when messages change
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+  }, [messages, isTyping]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -218,14 +226,14 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
 
   return (
     <>
-      {/* Chat Button */}
+      {/* Chat Button - Right Side */}
       <AnimatePresence>
         {(!isOpen || isMinimized) && (
           <motion.div
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
-            className="fixed bottom-6 left-6 z-50"
+            className="fixed bottom-6 right-6 z-50"
           >
             <Button
               onClick={isMinimized ? maximizeChat : openChat}
@@ -238,7 +246,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
-                  className="absolute -top-1 -right-1 w-5 h-5 bg-destructive text-destructive-foreground text-xs font-bold rounded-full flex items-center justify-center"
+                  className="absolute -top-1 -left-1 w-5 h-5 bg-destructive text-destructive-foreground text-xs font-bold rounded-full flex items-center justify-center"
                 >
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </motion.span>
@@ -248,22 +256,22 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
               <span className="absolute inset-0 rounded-full bg-secondary/30 animate-ping" />
             </Button>
             
-            {/* Tooltip */}
+            {/* Tooltip - Left Side */}
             <motion.div
-              initial={{ opacity: 0, x: -10 }}
+              initial={{ opacity: 0, x: 10 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 1 }}
-              className="absolute left-full ml-3 top-1/2 -translate-y-1/2 bg-card border border-border shadow-lg rounded-lg px-3 py-2 whitespace-nowrap"
+              className="absolute right-full mr-3 top-1/2 -translate-y-1/2 bg-card border border-border shadow-lg rounded-lg px-3 py-2 whitespace-nowrap"
             >
               <p className="text-sm font-medium">Chat dengan kami! 💬</p>
-              <div className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-card border-l border-b border-border rotate-45" />
+              <div className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-card border-r border-t border-border rotate-45" />
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
 
-      {/* Chat Window */}
+      {/* Chat Window - Right Side */}
       <AnimatePresence>
         {isOpen && !isMinimized && (
           <motion.div
@@ -271,7 +279,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            className="fixed bottom-6 left-6 z-50 w-[380px] max-w-[calc(100vw-48px)] h-[600px] max-h-[calc(100vh-100px)] bg-card border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+            className="fixed bottom-6 right-6 z-50 w-[380px] max-w-[calc(100vw-48px)] h-[600px] max-h-[calc(100vh-100px)] bg-card border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col"
           >
             {/* Header */}
             <div className="bg-gradient-to-r from-secondary to-primary p-4 text-white">
@@ -370,7 +378,10 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
 
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto py-4 space-y-2 bg-gradient-to-b from-background to-muted/30">
+            <div 
+              ref={messagesContainerRef}
+              className="flex-1 overflow-y-auto py-4 space-y-2 bg-gradient-to-b from-background to-muted/30"
+            >
               {messages.length === 0 ? (
                 <WelcomeMessage />
               ) : (

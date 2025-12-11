@@ -60,10 +60,23 @@ export function useLiveChat() {
     }
   }, [state.session, isLoaded]);
 
-  // Scroll to bottom when new messages arrive
+  // Scroll to bottom when new messages arrive - always scroll to latest
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [state.session?.messages]);
+    // Use setTimeout to ensure DOM is updated before scrolling
+    const scrollToBottom = () => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+    };
+    
+    // Immediate scroll
+    scrollToBottom();
+    
+    // Also scroll after a short delay to handle any rendering delays
+    const timeoutId = setTimeout(scrollToBottom, 100);
+    
+    return () => clearTimeout(timeoutId);
+  }, [state.session?.messages, state.session?.messages?.length]);
 
 
   // Initialize new session
@@ -157,6 +170,11 @@ export function useLiveChat() {
 
       return { ...prev, session: updatedSession, unreadCount };
     });
+
+    // Force scroll to bottom after adding message
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, 50);
 
     return newMessage;
   }, []);
