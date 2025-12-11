@@ -29,7 +29,7 @@ export interface Layer1Input {
 }
 
 export interface Layer1Output {
-  intent: 'CREATE_COMPLAINT' | 'CREATE_RESERVATION' | 'CHECK_STATUS' | 'CANCEL_COMPLAINT' | 'CANCEL_RESERVATION' | 'HISTORY' | 'KNOWLEDGE_QUERY' | 'QUESTION' | 'UNKNOWN';
+  intent: 'CREATE_COMPLAINT' | 'CREATE_RESERVATION' | 'UPDATE_RESERVATION' | 'CHECK_STATUS' | 'CANCEL_COMPLAINT' | 'CANCEL_RESERVATION' | 'HISTORY' | 'KNOWLEDGE_QUERY' | 'QUESTION' | 'UNKNOWN';
   normalized_message: string;
   extracted_data: {
     nama_lengkap?: string;

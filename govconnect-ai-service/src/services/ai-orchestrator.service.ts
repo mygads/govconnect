@@ -26,6 +26,7 @@ export {
   handleComplaintCreation,
   handleReservationCreation,
   handleReservationCancellation,
+  handleReservationUpdate,
   handleStatusCheck,
   handleCancellation,
   handleHistory,

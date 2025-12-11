@@ -32,6 +32,7 @@ import {
   handleStatusCheck,
   handleCancellation,
   handleReservationCancellation,
+  handleReservationUpdate,
   handleHistory,
   handleKnowledgeQuery,
 } from './ai-orchestrator.service';
@@ -472,6 +473,9 @@ async function handleAction(
       
       case 'CANCEL_RESERVATION':
         return await handleReservationCancellation(wa_user_id, mockLlmResponse);
+      
+      case 'UPDATE_RESERVATION':
+        return await handleReservationUpdate(wa_user_id, mockLlmResponse);
       
       case 'HISTORY':
         return await handleHistory(wa_user_id);

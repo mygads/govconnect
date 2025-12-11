@@ -849,14 +849,128 @@ export async function handleReservationCancellation(userId: string, llmResponse:
       cancel_reason: cancel_reason || 'Dibatalkan oleh pemohon',
     });
     
-    if (response.data?.success) {
-      return `✅ Reservasi ${reservation_id} berhasil dibatalkan.`;
+    if (response.data?.status === 'success') {
+      return `✅ Reservasi ${reservation_id} berhasil dibatalkan.\n\nJika Kakak ingin membuat reservasi baru, silakan beritahu saya layanan apa yang dibutuhkan ya! 😊`;
     } else {
       return response.data?.message || 'Gagal membatalkan reservasi.';
     }
   } catch (error: any) {
-    logger.error('Failed to cancel reservation', { error: error.message });
+    logger.error('Failed to cancel reservation', { error: error.message, response: error.response?.data });
+    
+    // Handle specific error responses from case service
+    const errorData = error.response?.data;
+    if (errorData) {
+      const errorCode = errorData.error;
+      const currentStatus = errorData.current_status;
+      
+      // Pesan error yang informatif berdasarkan status
+      if (errorCode === 'NOT_FOUND') {
+        return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor reservasi biasanya seperti ini: RSV-20251211-001`;
+      }
+      
+      if (errorCode === 'NOT_OWNER') {
+        return `Maaf Kak, reservasi *${reservation_id}* ini bukan milik Kakak, jadi tidak bisa dibatalkan ya 🙏`;
+      }
+      
+      if (errorCode === 'CANNOT_CANCEL' || errorCode === 'ALREADY_COMPLETED') {
+        // Pesan berdasarkan status saat ini
+        const statusMessages: Record<string, string> = {
+          'completed': `Maaf Kak, reservasi *${reservation_id}* sudah selesai dilayani dan tidak bisa dibatalkan lagi.\n\n💡 Jika Kakak butuh layanan yang sama, silakan buat reservasi baru ya!`,
+          'cancelled': `Reservasi *${reservation_id}* sudah dibatalkan sebelumnya Kak.\n\n💡 Jika Kakak ingin membuat reservasi baru, silakan beritahu saya layanan apa yang dibutuhkan!`,
+          'no_show': `Reservasi *${reservation_id}* ditandai tidak hadir dan tidak bisa dibatalkan.\n\n💡 Silakan buat reservasi baru jika Kakak masih membutuhkan layanan ini.`,
+          'arrived': `Maaf Kak, reservasi *${reservation_id}* tidak bisa dibatalkan karena Kakak sudah hadir di lokasi.\n\n📍 Silakan hubungi petugas langsung di kelurahan ya!`,
+        };
+        
+        return statusMessages[currentStatus] || errorData.message || 'Reservasi tidak dapat dibatalkan.';
+      }
+    }
+    
     return 'Mohon maaf, terjadi kesalahan saat membatalkan reservasi. Pastikan nomor reservasi benar.';
+  }
+}
+
+/**
+ * Handle reservation time/date update
+ * 
+ * Status yang TIDAK BISA diubah:
+ * - completed (sudah selesai)
+ * - cancelled (sudah dibatalkan)
+ * - no_show (tidak hadir)
+ * - arrived (sudah hadir di lokasi)
+ */
+export async function handleReservationUpdate(userId: string, llmResponse: any): Promise<string> {
+  const { reservation_id, new_reservation_date, new_reservation_time } = llmResponse.fields;
+  
+  if (!reservation_id) {
+    return llmResponse.reply_text || 'Mohon berikan nomor reservasi yang ingin diubah jadwalnya (contoh: RSV-20251208-001)';
+  }
+  
+  if (!new_reservation_date && !new_reservation_time) {
+    return llmResponse.reply_text || 'Mau diubah ke tanggal dan jam berapa Kak? (contoh: besok jam 10 pagi)';
+  }
+  
+  try {
+    // First get current reservation to get current date/time if only one is being changed
+    const currentRes = await caseServiceClient.get(`/reservasi/${reservation_id}`);
+    const current = currentRes.data?.data;
+    
+    if (!current) {
+      return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor reservasi biasanya seperti ini: RSV-20251211-001`;
+    }
+    
+    // Use current values if new ones not provided
+    const finalDate = new_reservation_date || current.reservation_date.split('T')[0];
+    const finalTime = new_reservation_time || current.reservation_time;
+    
+    const response = await caseServiceClient.patch(`/reservasi/${reservation_id}/time`, {
+      wa_user_id: userId,
+      reservation_date: finalDate,
+      reservation_time: finalTime,
+    });
+    
+    if (response.data?.status === 'success') {
+      const dateObj = new Date(finalDate);
+      const dateStr = dateObj.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      
+      return `✅ Jadwal reservasi *${reservation_id}* berhasil diubah!\n\n📅 Tanggal baru: ${dateStr}\n🕐 Jam baru: ${finalTime} WIB\n\nSampai jumpa di kelurahan ya Kak! 👋`;
+    } else {
+      return response.data?.message || 'Gagal mengubah jadwal reservasi.';
+    }
+  } catch (error: any) {
+    logger.error('Failed to update reservation time', { error: error.message, response: error.response?.data });
+    
+    // Handle specific error responses from case service
+    const errorData = error.response?.data;
+    if (errorData) {
+      const errorCode = errorData.error;
+      const currentStatus = errorData.current_status;
+      
+      if (errorCode === 'NOT_FOUND') {
+        return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor reservasi biasanya seperti ini: RSV-20251211-001`;
+      }
+      
+      if (errorCode === 'NOT_OWNER') {
+        return `Maaf Kak, reservasi *${reservation_id}* ini bukan milik Kakak, jadi tidak bisa diubah ya 🙏`;
+      }
+      
+      if (errorCode === 'CANNOT_MODIFY') {
+        // Pesan berdasarkan status saat ini
+        const statusMessages: Record<string, string> = {
+          'completed': `Maaf Kak, reservasi *${reservation_id}* sudah selesai dilayani dan tidak bisa diubah lagi.\n\n💡 Jika Kakak butuh layanan yang sama, silakan buat reservasi baru dengan jadwal yang diinginkan!`,
+          'cancelled': `Reservasi *${reservation_id}* sudah dibatalkan sebelumnya Kak.\n\n💡 Silakan buat reservasi baru dengan jadwal yang diinginkan!`,
+          'no_show': `Reservasi *${reservation_id}* ditandai tidak hadir dan tidak bisa diubah.\n\n💡 Silakan buat reservasi baru dengan jadwal yang diinginkan.`,
+          'arrived': `Maaf Kak, reservasi *${reservation_id}* tidak bisa diubah karena Kakak sudah hadir di lokasi.\n\n📍 Silakan hubungi petugas langsung di kelurahan ya!`,
+        };
+        
+        return statusMessages[currentStatus] || errorData.message || 'Reservasi tidak dapat diubah.';
+      }
+      
+      if (errorCode === 'SLOT_UNAVAILABLE' || errorCode === 'TIME_UNAVAILABLE') {
+        return `Maaf Kak, slot waktu yang dipilih tidak tersedia 😔\n\nCoba pilih waktu lain ya! Jam operasional kelurahan: 08:00 - 15:00 WIB (Senin-Jumat).`;
+      }
+    }
+    
+    return 'Mohon maaf, terjadi kesalahan saat mengubah jadwal reservasi. Pastikan nomor reservasi benar.';
   }
 }
 
@@ -1570,6 +1684,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         finalReplyText = await handleReservationCancellation(userId, llmResponse);
         break;
       
+      case 'UPDATE_RESERVATION':
+        finalReplyText = await handleReservationUpdate(userId, llmResponse);
+        break;
+      
       case 'CHECK_STATUS':
         finalReplyText = await handleStatusCheck(userId, llmResponse);
         break;
@@ -1849,6 +1967,7 @@ export default {
   handleComplaintCreation,
   handleReservationCreation,
   handleReservationCancellation,
+  handleReservationUpdate,
   handleStatusCheck,
   handleCancellation,
   handleHistory,

@@ -295,13 +295,14 @@ export async function handleCancelReservation(req: Request, res: Response) {
     if (!result.success) {
       const statusCode = result.error === 'NOT_FOUND' ? 404 
         : result.error === 'NOT_OWNER' ? 403 
-        : result.error === 'ALREADY_COMPLETED' ? 400 
+        : ['CANNOT_CANCEL', 'ALREADY_COMPLETED'].includes(result.error || '') ? 400 
         : 500;
       
       return res.status(statusCode).json({
         status: 'error',
         error: result.error,
         message: result.message,
+        current_status: (result as any).current_status,
       });
     }
     
@@ -313,6 +314,54 @@ export async function handleCancelReservation(req: Request, res: Response) {
     });
   } catch (error: any) {
     logger.error('Cancel reservation error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * PATCH /reservasi/:id/time
+ * Update reservation time by user
+ */
+export async function handleUpdateReservationTime(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { wa_user_id, reservation_date, reservation_time } = req.body;
+    
+    if (!wa_user_id) {
+      return res.status(400).json({ error: 'wa_user_id is required' });
+    }
+    
+    if (!reservation_date || !reservation_time) {
+      return res.status(400).json({ error: 'reservation_date dan reservation_time diperlukan' });
+    }
+    
+    const { updateReservationTime } = await import('../services/reservation.service');
+    const result = await updateReservationTime(id, wa_user_id, new Date(reservation_date), reservation_time);
+    
+    if (!result.success) {
+      const statusCode = result.error === 'NOT_FOUND' ? 404 
+        : result.error === 'NOT_OWNER' ? 403 
+        : ['CANNOT_MODIFY', 'SLOT_UNAVAILABLE', 'TIME_UNAVAILABLE'].includes(result.error || '') ? 400 
+        : 500;
+      
+      return res.status(statusCode).json({
+        status: 'error',
+        error: result.error,
+        message: result.message,
+        current_status: (result as any).current_status,
+      });
+    }
+    
+    return res.json({
+      status: 'success',
+      data: {
+        reservation_id: result.reservation_id,
+        reservation_date: result.reservation_date,
+        reservation_time: result.reservation_time,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Update reservation time error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

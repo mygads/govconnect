@@ -4,6 +4,7 @@ export const LLMResponseSchema = z.object({
   intent: z.enum([
     'CREATE_COMPLAINT', 
     'CREATE_RESERVATION', 
+    'UPDATE_RESERVATION',
     'CHECK_STATUS', 
     'CANCEL_COMPLAINT', 
     'CANCEL_RESERVATION',
@@ -30,6 +31,10 @@ export const LLMResponseSchema = z.object({
     }).passthrough().optional(), // passthrough allows additional fields per service
     reservation_date: z.string().optional(),
     reservation_time: z.string().optional(),
+    
+    // For UPDATE_RESERVATION
+    new_reservation_date: z.string().optional(),
+    new_reservation_time: z.string().optional(),
     
     // For KNOWLEDGE_QUERY
     knowledge_category: z.string().optional(),

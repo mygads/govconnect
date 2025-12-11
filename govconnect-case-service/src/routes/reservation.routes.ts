@@ -13,6 +13,7 @@ import {
   handleGetReservationById,
   handleUpdateReservationStatus,
   handleCancelReservation,
+  handleUpdateReservationTime,
   handleGetReservationStatistics,
   handleGetUserHistory,
 } from '../controllers/reservation.controller';
@@ -137,6 +138,20 @@ router.post(
   ],
   validate,
   handleCancelReservation
+);
+
+// Update reservation time (user)
+router.patch(
+  '/:id/time',
+  internalAuth,
+  [
+    // Accept WhatsApp phone (628xxx) or webchat session (web_xxx)
+    body('wa_user_id').matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+    body('reservation_date').isISO8601().withMessage('Invalid date format'),
+    body('reservation_time').matches(/^\d{2}:\d{2}$/).withMessage('Invalid time format (HH:MM)'),
+  ],
+  validate,
+  handleUpdateReservationTime
 );
 
 export default router;

@@ -203,7 +203,7 @@ MAKA citizen_data HARUS diisi:
 
 SCHEMA OUTPUT:
 {
-  "intent": "CREATE_COMPLAINT | CREATE_RESERVATION | CHECK_STATUS | CANCEL_COMPLAINT | CANCEL_RESERVATION | HISTORY | KNOWLEDGE_QUERY | QUESTION | UNKNOWN",
+  "intent": "CREATE_COMPLAINT | CREATE_RESERVATION | UPDATE_RESERVATION | CHECK_STATUS | CANCEL_COMPLAINT | CANCEL_RESERVATION | HISTORY | KNOWLEDGE_QUERY | QUESTION | UNKNOWN",
   "fields": {
     // Untuk CREATE_COMPLAINT
     "kategori": "jalan_rusak | lampu_mati | sampah | drainase | pohon_tumbang | fasilitas_rusak | banjir | tindakan_kriminal | lainnya",
@@ -222,6 +222,11 @@ SCHEMA OUTPUT:
     },
     "reservation_date": "WAJIB ISI format YYYY-MM-DD jika user sudah sebut tanggal",
     "reservation_time": "WAJIB ISI format HH:MM jika user sudah sebut jam",
+    
+    // Untuk UPDATE_RESERVATION (ubah jadwal reservasi)
+    "reservation_id": "RSV-XXXXXXXX-XXX",
+    "new_reservation_date": "format YYYY-MM-DD",
+    "new_reservation_time": "format HH:MM",
     
     // Untuk CHECK_STATUS / CANCEL
     "complaint_id": "LAP-XXXXXXXX-XXX",
@@ -633,6 +638,17 @@ CONTOH - BATALKAN RESERVASI:
 
 Input: "batalkan reservasi RSV-20251208-001"
 Output: {"intent": "CANCEL_RESERVATION", "fields": {"reservation_id": "RSV-20251208-001"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
+
+CONTOH - UBAH JADWAL RESERVASI:
+
+Input: "ubah jadwal reservasi RSV-20251208-001 jadi besok jam 10"
+Output: {"intent": "UPDATE_RESERVATION", "fields": {"reservation_id": "RSV-20251208-001", "new_reservation_date": "{{tomorrow_date}}", "new_reservation_time": "10:00"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
+
+Input: "ganti jam reservasi RSV-20251208-001 ke jam 14:00"
+Output: {"intent": "UPDATE_RESERVATION", "fields": {"reservation_id": "RSV-20251208-001", "new_reservation_time": "14:00"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
+
+Input: "reschedule reservasi saya ke tanggal 15 desember"
+Output: {"intent": "UPDATE_RESERVATION", "fields": {"new_reservation_date": "2025-12-15"}, "reply_text": "Baik Kak, mau reschedule reservasi ya. Boleh sebutkan nomor reservasinya? (contoh: RSV-20251208-001)", "guidance_text": "", "needs_knowledge": false}
 
 CONTOH - RIWAYAT:
 

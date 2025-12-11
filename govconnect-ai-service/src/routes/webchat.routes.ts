@@ -154,21 +154,23 @@ router.post('/', async (req: Request, res: Response) => {
     });
     
     // Only the primary request should process the message
-    // Secondary requests (from batched messages) should wait for the primary to finish
+    // Secondary requests (from batched messages) should NOT send any response to user
+    // The primary request will handle the actual processing and response
     if (!batchResult.isPrimary) {
-      logger.info('📦 [Webchat] Secondary request, returning batched response', { session_id });
-      // Return a simple acknowledgment for secondary requests
-      // The primary request will handle the actual processing
+      logger.info('📦 [Webchat] Secondary request, returning silent acknowledgment', { session_id });
+      // Return empty response - frontend should ignore this
+      // This prevents duplicate/confusing messages to user
       res.json({
         success: true,
-        response: 'Pesan Anda sudah diterima dan sedang diproses bersama pesan sebelumnya.',
+        response: '', // Empty - don't show anything to user
         guidanceText: '',
-        intent: 'BATCHED',
+        intent: 'BATCHED_SILENT', // Frontend should ignore this
         metadata: {
           session_id,
           processingTimeMs: Date.now() - startTime,
           isBatched: true,
           isPrimary: false,
+          silent: true, // Flag to indicate this should not be displayed
         },
       });
       return;

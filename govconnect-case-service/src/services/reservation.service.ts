@@ -447,6 +447,16 @@ export async function updateReservationStatus(
 
 /**
  * Cancel reservation by user
+ * 
+ * Status yang TIDAK BISA dibatalkan:
+ * - completed (sudah selesai)
+ * - cancelled (sudah dibatalkan)
+ * - no_show (tidak hadir)
+ * - arrived (sudah hadir di lokasi)
+ * 
+ * Status yang BISA dibatalkan:
+ * - pending (menunggu konfirmasi)
+ * - confirmed (dikonfirmasi)
  */
 export async function cancelReservation(
   id: string,
@@ -463,8 +473,21 @@ export async function cancelReservation(
     return { success: false, error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk membatalkan reservasi ini' };
   }
   
-  if (['completed', 'cancelled'].includes(reservation.status)) {
-    return { success: false, error: 'ALREADY_COMPLETED', message: 'Reservasi sudah selesai atau dibatalkan' };
+  // Status yang tidak bisa dibatalkan dengan pesan yang informatif
+  const nonCancellableStatuses: Record<string, string> = {
+    'completed': 'Reservasi sudah selesai dilayani. Silakan buat reservasi baru jika diperlukan.',
+    'cancelled': 'Reservasi ini sudah dibatalkan sebelumnya. Silakan buat reservasi baru jika diperlukan.',
+    'no_show': 'Reservasi ini ditandai tidak hadir. Silakan buat reservasi baru jika diperlukan.',
+    'arrived': 'Reservasi tidak dapat dibatalkan karena Anda sudah hadir di lokasi. Silakan hubungi petugas langsung.',
+  };
+  
+  if (nonCancellableStatuses[reservation.status]) {
+    return { 
+      success: false, 
+      error: 'CANNOT_CANCEL', 
+      message: nonCancellableStatuses[reservation.status],
+      current_status: reservation.status,
+    };
   }
   
   const updated = await prisma.reservation.update({
@@ -486,6 +509,94 @@ export async function cancelReservation(
   logger.info('Reservation cancelled', { reservation_id: updated.reservation_id });
   
   return { success: true, reservation_id: updated.reservation_id };
+}
+
+/**
+ * Update reservation time by user
+ * 
+ * Status yang TIDAK BISA diubah jamnya:
+ * - completed (sudah selesai)
+ * - cancelled (sudah dibatalkan)
+ * - no_show (tidak hadir)
+ * - arrived (sudah hadir di lokasi)
+ * 
+ * Status yang BISA diubah jamnya:
+ * - pending (menunggu konfirmasi)
+ * - confirmed (dikonfirmasi)
+ */
+export async function updateReservationTime(
+  id: string,
+  wa_user_id: string,
+  new_date: Date,
+  new_time: string
+) {
+  const reservation = await getReservationById(id);
+  
+  if (!reservation) {
+    return { success: false, error: 'NOT_FOUND', message: 'Reservasi tidak ditemukan' };
+  }
+  
+  if (reservation.wa_user_id !== wa_user_id) {
+    return { success: false, error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk mengubah reservasi ini' };
+  }
+  
+  // Status yang tidak bisa diubah dengan pesan yang informatif
+  const nonModifiableStatuses: Record<string, string> = {
+    'completed': 'Reservasi sudah selesai dilayani. Silakan buat reservasi baru dengan jadwal yang diinginkan.',
+    'cancelled': 'Reservasi ini sudah dibatalkan. Silakan buat reservasi baru dengan jadwal yang diinginkan.',
+    'no_show': 'Reservasi ini ditandai tidak hadir. Silakan buat reservasi baru dengan jadwal yang diinginkan.',
+    'arrived': 'Reservasi tidak dapat diubah karena Anda sudah hadir di lokasi. Silakan hubungi petugas langsung.',
+  };
+  
+  if (nonModifiableStatuses[reservation.status]) {
+    return { 
+      success: false, 
+      error: 'CANNOT_MODIFY', 
+      message: nonModifiableStatuses[reservation.status],
+      current_status: reservation.status,
+    };
+  }
+  
+  // Check slot availability for new time
+  const availability = await getAvailableSlots(reservation.service.code, new_date);
+  if (!availability.available) {
+    return { success: false, error: 'SLOT_UNAVAILABLE', message: availability.message };
+  }
+  
+  if (!availability.available_slots?.includes(new_time)) {
+    return { success: false, error: 'TIME_UNAVAILABLE', message: 'Slot waktu yang dipilih tidak tersedia' };
+  }
+  
+  const updated = await prisma.reservation.update({
+    where: { id: reservation.id },
+    data: {
+      reservation_date: new_date,
+      reservation_time: new_time,
+    },
+    include: { service: true },
+  });
+  
+  await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED, {
+    type: 'reservation',
+    wa_user_id: updated.wa_user_id,
+    reservation_id: updated.reservation_id,
+    status: updated.status,
+    reservation_date: new_date,
+    reservation_time: new_time,
+  });
+  
+  logger.info('Reservation time updated', { 
+    reservation_id: updated.reservation_id,
+    new_date,
+    new_time,
+  });
+  
+  return { 
+    success: true, 
+    reservation_id: updated.reservation_id,
+    reservation_date: new_date,
+    reservation_time: new_time,
+  };
 }
 
 /**
