@@ -41,6 +41,7 @@ export interface BatchResult {
   combinedMessage: string;
   messageCount: number;
   isBatched: boolean;
+  isPrimary: boolean; // Only the primary request should process the message
 }
 
 // In-memory batch storage (per session)
@@ -159,15 +160,15 @@ function processBatch(session_id: string): void {
       .join('\n');
   }
   
-  const result: BatchResult = {
-    combinedMessage,
-    messageCount: messages.length,
-    isBatched: messages.length > 1,
-  };
-  
-  // Resolve all pending responses with the same result
-  for (const pending of pendingResponses) {
-    pending.resolve(result);
+  // Resolve all pending responses - only the first one is primary
+  for (let i = 0; i < pendingResponses.length; i++) {
+    const result: BatchResult = {
+      combinedMessage,
+      messageCount: messages.length,
+      isBatched: messages.length > 1,
+      isPrimary: i === 0, // Only the first request should process
+    };
+    pendingResponses[i].resolve(result);
   }
   
   logger.info('✅ [Webchat] Batch processed', {

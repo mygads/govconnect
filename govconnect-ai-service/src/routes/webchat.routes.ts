@@ -148,9 +148,31 @@ router.post('/', async (req: Request, res: Response) => {
     logger.info('📦 Webchat batch result', {
       session_id,
       isBatched: batchResult.isBatched,
+      isPrimary: batchResult.isPrimary,
       messageCount: batchResult.messageCount,
       combinedLength: batchResult.combinedMessage.length,
     });
+    
+    // Only the primary request should process the message
+    // Secondary requests (from batched messages) should wait for the primary to finish
+    if (!batchResult.isPrimary) {
+      logger.info('📦 [Webchat] Secondary request, returning batched response', { session_id });
+      // Return a simple acknowledgment for secondary requests
+      // The primary request will handle the actual processing
+      res.json({
+        success: true,
+        response: 'Pesan Anda sudah diterima dan sedang diproses bersama pesan sebelumnya.',
+        guidanceText: '',
+        intent: 'BATCHED',
+        metadata: {
+          session_id,
+          processingTimeMs: Date.now() - startTime,
+          isBatched: true,
+          isPrimary: false,
+        },
+      });
+      return;
+    }
     
     // Process batched message using UNIFIED processor (same as WhatsApp)
     // This ensures consistent NLU, intent detection, RAG, prompts, etc.

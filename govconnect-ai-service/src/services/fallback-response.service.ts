@@ -24,7 +24,7 @@ import { getContext, ConversationState } from './conversation-fsm.service';
 const FALLBACK_TEMPLATES: Record<string, string[]> = {
   // === GREETING ===
   'GREETING': [
-    'Halo Kak! 👋 Saya Yoga dari Kelurahan. Ada yang bisa dibantu hari ini?',
+    'Halo Kak! 👋 Saya Gana dari Kelurahan. Ada yang bisa dibantu hari ini?',
     'Hai Kak! 👋 Selamat datang di GovConnect. Saya siap membantu untuk laporan atau reservasi surat.',
     'Halo! 👋 Saya asisten virtual kelurahan. Mau lapor masalah atau urus surat hari ini?',
   ],

@@ -24,7 +24,7 @@ export interface TemplateMatch {
 // ==================== GREETING TEMPLATES ====================
 
 const GREETING_RESPONSES = [
-  'Halo Kak! 👋 Saya Yoga dari Kelurahan. Ada yang bisa dibantu hari ini?\n\n📋 Lapor masalah\n🎫 Reservasi surat\n📍 Info kelurahan',
+  'Halo Kak! 👋 Saya Gana dari Kelurahan. Ada yang bisa dibantu hari ini?\n\n📋 Lapor masalah\n🎫 Reservasi surat\n📍 Info kelurahan',
   'Hai Kak! 👋 Selamat datang di layanan Kelurahan. Mau lapor masalah, reservasi surat, atau tanya info?',
   'Halo! 👋 Saya siap bantu Kakak. Silakan sampaikan keperluannya ya!',
 ];

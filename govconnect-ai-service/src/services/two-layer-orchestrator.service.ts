@@ -531,7 +531,7 @@ async function getConversationContext(wa_user_id: string): Promise<string> {
     
     const messages = response.data?.messages || [];
     return messages
-      .map((m: any) => `${m.direction === 'IN' ? 'User' : 'Yoga'}: ${m.message_text}`)
+      .map((m: any) => `${m.direction === 'IN' ? 'User' : 'Gana'}: ${m.message_text}`)
       .join('\n');
   } catch (error) {
     return 'Percakapan baru';

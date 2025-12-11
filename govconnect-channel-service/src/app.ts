@@ -79,6 +79,10 @@ export function createApp(): Application {
     });
   });
 
+  // Also mount webhook at root for backward compatibility
+  // This allows webhook URL to be just the domain without /webhook/whatsapp
+  app.use('/', webhookRoutes);
+
   // Error handlers (must be last)
   app.use(notFoundHandler);
   app.use(errorHandler);

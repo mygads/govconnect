@@ -4,7 +4,13 @@ import { validateWebhookPayload } from '../middleware/validation.middleware';
 
 const router = Router();
 
+// Routes with /whatsapp path
 router.get('/whatsapp', verifyWebhook);
 router.post('/whatsapp', validateWebhookPayload, handleWebhook);
+
+// Also support root path for backward compatibility
+// This allows webhook URL to be configured without /whatsapp suffix
+router.get('/', verifyWebhook);
+router.post('/', validateWebhookPayload, handleWebhook);
 
 export default router;

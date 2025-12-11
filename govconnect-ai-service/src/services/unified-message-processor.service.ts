@@ -635,7 +635,9 @@ function extractAddressFromComplaintMessage(message: string, userId: string): st
 /**
  * Handle reservation creation
  */
-export async function handleReservationCreation(userId: string, llmResponse: any): Promise<string> {
+export async function handleReservationCreation(userId: string, llmResponse: any, conversationHistory?: Array<{role: string; content: string}>): Promise<string> {
+  logger.info('[Reservation] Handler called', { userId, fields: llmResponse.fields, reply_text: llmResponse.reply_text?.substring(0, 100), hasConversationHistory: !!conversationHistory });
+  
   const fields = llmResponse.fields || {};
   let { service_code, citizen_data, reservation_date, reservation_time, missing_info } = fields;
   service_code = service_code || fields.service_code;
@@ -672,33 +674,113 @@ export async function handleReservationCreation(userId: string, llmResponse: any
   const hasCitizenData = citizen_data && Object.keys(citizen_data).length > 0;
   let hasRequiredCitizenData = hasCitizenData && citizen_data.nama_lengkap && citizen_data.nik;
   
-  // Try to extract from history if incomplete
-  if (!hasRequiredCitizenData) {
-    citizen_data = citizen_data || {};
-    
-    const namaMatch = replyText.match(/Nama:\s*([^\n•]+)/i);
-    if (namaMatch && !citizen_data.nama_lengkap) {
-      citizen_data.nama_lengkap = namaMatch[1].trim();
-    }
-    
-    try {
-      const historyData = await extractCitizenDataFromHistory(userId);
-      if (historyData) {
-        if (!citizen_data.nama_lengkap && historyData.nama_lengkap) citizen_data.nama_lengkap = historyData.nama_lengkap;
-        if (!citizen_data.nik && historyData.nik) citizen_data.nik = historyData.nik;
-        if (!citizen_data.alamat && historyData.alamat) citizen_data.alamat = historyData.alamat;
-        if (!citizen_data.no_hp && historyData.no_hp) citizen_data.no_hp = historyData.no_hp;
-        if (!citizen_data.keperluan && historyData.keperluan) citizen_data.keperluan = historyData.keperluan;
-      }
-    } catch (err: any) {
-      logger.warn('Failed to extract citizen data from history', { userId, error: err.message });
-    }
-    
-    hasRequiredCitizenData = citizen_data.nama_lengkap && citizen_data.nik;
+  // Always try to extract from history to fill missing data
+  citizen_data = citizen_data || {};
+  
+  const namaMatch = replyText.match(/Nama:\s*([^\n•]+)/i);
+  if (namaMatch && !citizen_data.nama_lengkap) {
+    citizen_data.nama_lengkap = namaMatch[1].trim();
   }
+  
+  // First try to extract from conversationHistory (for webchat)
+  if (conversationHistory && conversationHistory.length > 0) {
+    const userMessages = conversationHistory
+      .filter(m => m.role === 'user')
+      .map(m => m.content)
+      .join(' ');
+    
+    logger.info('[Reservation] Extracting from conversationHistory', { userId, userMessagesLength: userMessages.length });
+    
+    // Extract NIK
+    if (!citizen_data.nik) {
+      const nikMatch = userMessages.match(/\b(\d{16})\b/);
+      if (nikMatch) citizen_data.nik = nikMatch[1];
+    }
+    
+    // Extract phone
+    if (!citizen_data.no_hp) {
+      const phoneMatch = userMessages.match(/\b(08\d{8,12})\b/);
+      if (phoneMatch) citizen_data.no_hp = phoneMatch[1];
+    }
+    
+    // Extract name - look for standalone name messages
+    if (!citizen_data.nama_lengkap) {
+      const namePatterns = [
+        /nama\s+(?:saya|aku)\s+(?:adalah\s+)?([A-Za-z]+(?:\s+[A-Za-z]+){0,3})/i,
+        /(?:saya|aku)\s+([A-Za-z]+(?:\s+[A-Za-z]+){0,3})(?:\s+(?:mau|ingin|nik|alamat)|\s*$)/i,
+      ];
+      for (const pattern of namePatterns) {
+        const match = userMessages.match(pattern);
+        if (match && match[1] && match[1].length >= 2) {
+          citizen_data.nama_lengkap = match[1].trim();
+          break;
+        }
+      }
+      
+      // Also check individual messages for standalone names
+      if (!citizen_data.nama_lengkap) {
+        const excludeWords = ['ya', 'iya', 'ok', 'oke', 'tidak', 'bukan', 'mau', 'ingin', 'sudah', 'belum', 'sip', 'siap', 'baik', 'terima', 'kasih', 'halo', 'hai', 'hi'];
+        for (const msg of conversationHistory.filter(m => m.role === 'user')) {
+          const content = msg.content.trim();
+          if (/^[A-Za-z]+(?:\s+[A-Za-z]+){0,3}$/.test(content) && content.length >= 2 && content.length <= 50) {
+            if (!excludeWords.includes(content.toLowerCase())) {
+              citizen_data.nama_lengkap = content;
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    // Extract address
+    if (!citizen_data.alamat) {
+      const addressMatch = userMessages.match(/(?:alamat|tinggal|domisili)\s+(?:di\s+)?(.+?)(?:\s*,?\s*(?:untuk|mau|nik|hp)|\s*$)/i);
+      if (addressMatch && addressMatch[1] && addressMatch[1].length >= 5) {
+        citizen_data.alamat = addressMatch[1].trim();
+      }
+    }
+    
+    logger.info('[Reservation] Extracted from conversationHistory', { userId, citizen_data });
+  }
+  
+  // Then try to extract from channel-service history (for WhatsApp)
+  try {
+    const historyData = await extractCitizenDataFromHistory(userId);
+    logger.info('[Reservation] Extracted citizen data from channel-service', { userId, historyData });
+    
+    if (historyData) {
+      if (!citizen_data.nama_lengkap && historyData.nama_lengkap) citizen_data.nama_lengkap = historyData.nama_lengkap;
+      if (!citizen_data.nik && historyData.nik) citizen_data.nik = historyData.nik;
+      if (!citizen_data.alamat && historyData.alamat) citizen_data.alamat = historyData.alamat;
+      if (!citizen_data.no_hp && historyData.no_hp) citizen_data.no_hp = historyData.no_hp;
+      if (!citizen_data.keperluan && historyData.keperluan) citizen_data.keperluan = historyData.keperluan;
+    }
+  } catch (err: any) {
+    logger.warn('Failed to extract citizen data from channel-service', { userId, error: err.message });
+  }
+  
+  hasRequiredCitizenData = citizen_data.nama_lengkap && citizen_data.nik;
+  
+  logger.info('[Reservation] Data check', { 
+    userId, 
+    isValidServiceCode, 
+    hasRequiredCitizenData,
+    citizen_data,
+    reservation_date,
+    reservation_time,
+    missing_info
+  });
   
   // Check if we have enough info
   if (!isValidServiceCode || !hasRequiredCitizenData || !reservation_date || !reservation_time || (missing_info && missing_info.length > 0)) {
+    logger.info('[Reservation] Missing required data, returning LLM reply', { 
+      userId,
+      missingServiceCode: !isValidServiceCode,
+      missingCitizenData: !hasRequiredCitizenData,
+      missingDate: !reservation_date,
+      missingTime: !reservation_time,
+      hasMissingInfo: missing_info && missing_info.length > 0
+    });
     return llmResponse.reply_text;
   }
   
@@ -965,35 +1047,42 @@ async function extractCitizenDataFromHistory(userId: string): Promise<{
     
     const url = `${config.channelServiceUrl}/internal/messages`;
     const response = await axios.get(url, {
-      params: { wa_user_id: userId, limit: 20 },
+      params: { wa_user_id: userId, limit: 30 },
       headers: { 'x-internal-api-key': config.internalApiKey },
       timeout: 5000,
     });
     
-    const messages = response.data?.messages || [];
+    const messages = response.data?.data?.messages || response.data?.messages || [];
     const result: { nama_lengkap?: string; nik?: string; alamat?: string; no_hp?: string; keperluan?: string } = {};
     
-    const userMessages = messages
+    // Get individual user messages for better extraction
+    const userMessagesList = messages
       .filter((m: any) => m.direction === 'IN')
-      .map((m: any) => m.message_text)
-      .join(' ');
+      .map((m: any) => m.message_text?.trim())
+      .filter((m: string) => m && m.length > 0);
     
-    // Extract NIK
+    const userMessages = userMessagesList.join(' ');
+    
+    logger.debug('[ExtractHistory] User messages', { userId, messageCount: userMessagesList.length, userMessages: userMessages.substring(0, 200) });
+    
+    // Extract NIK (16 digit number)
     const nikMatch = userMessages.match(/(?:nik|NIK)[\s:]+(\d{16})/);
-    if (nikMatch) result.nik = nikMatch[1];
-    else {
+    if (nikMatch) {
+      result.nik = nikMatch[1];
+    } else {
       const standaloneNik = userMessages.match(/\b(\d{16})\b/);
       if (standaloneNik) result.nik = standaloneNik[1];
     }
     
-    // Extract phone
-    const phoneMatch = userMessages.match(/\b(08\d{8,11})\b/);
+    // Extract phone (Indonesian format)
+    const phoneMatch = userMessages.match(/\b(08\d{8,12})\b/);
     if (phoneMatch) result.no_hp = phoneMatch[1];
     
-    // Extract name
+    // Extract name - more flexible patterns
     const namePatterns = [
-      /nama\s+saya\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)(?:\s+(?:mau|ingin|nik|alamat)|\s*[,.]|\s*$)/i,
-      /(?:gw|gue|gua)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)(?:\s+(?:mau|ingin|nik|alamat)|\s*[,.]|\s*$)/i,
+      /nama\s+(?:saya|aku|gw|gue|gua)\s+(?:adalah\s+)?([A-Za-z]+(?:\s+[A-Za-z]+){0,3})/i,
+      /(?:saya|aku|gw|gue|gua)\s+([A-Za-z]+(?:\s+[A-Za-z]+){0,3})(?:\s+(?:mau|ingin|nik|alamat|tinggal)|\s*[,.]|\s*$)/i,
+      /(?:panggil\s+(?:saya|aku)\s+)([A-Za-z]+(?:\s+[A-Za-z]+)?)/i,
     ];
     
     for (const pattern of namePatterns) {
@@ -1007,11 +1096,38 @@ async function extractCitizenDataFromHistory(userId: string): Promise<{
       }
     }
     
-    // Extract address
-    const addressMatch = userMessages.match(/tinggal\s+di\s+(.+?)(?:\s*,?\s*(?:untuk|mau|nik|hp)|\s*$)/i);
-    if (addressMatch && addressMatch[1].length >= 5) {
-      result.alamat = addressMatch[1].trim().replace(/,\s*$/, '');
+    // If no name found with patterns, check for standalone name after AI asks for name
+    // Look for short messages that could be just a name (after AI asked "siapa nama lengkap")
+    if (!result.nama_lengkap) {
+      for (let i = 0; i < userMessagesList.length; i++) {
+        const msg = userMessagesList[i];
+        // Check if message is a potential name (1-4 words, all letters, 2-50 chars)
+        if (msg && /^[A-Za-z]+(?:\s+[A-Za-z]+){0,3}$/.test(msg) && msg.length >= 2 && msg.length <= 50) {
+          // Exclude common words that are not names
+          const excludeWords = ['ya', 'iya', 'ok', 'oke', 'tidak', 'bukan', 'mau', 'ingin', 'sudah', 'belum', 'sip', 'siap', 'baik', 'terima', 'kasih'];
+          if (!excludeWords.includes(msg.toLowerCase())) {
+            result.nama_lengkap = msg;
+            break;
+          }
+        }
+      }
     }
+    
+    // Extract address - more flexible patterns
+    const addressPatterns = [
+      /(?:alamat|tinggal|domisili)\s+(?:di\s+)?(.+?)(?:\s*,?\s*(?:untuk|mau|nik|hp|nomor)|\s*$)/i,
+      /(?:di|daerah)\s+([A-Za-z]+(?:\s+[A-Za-z]+){1,5})(?:\s+(?:mau|untuk|nik)|\s*$)/i,
+    ];
+    
+    for (const pattern of addressPatterns) {
+      const match = userMessages.match(pattern);
+      if (match && match[1] && match[1].length >= 5) {
+        result.alamat = match[1].trim().replace(/,\s*$/, '');
+        break;
+      }
+    }
+    
+    logger.debug('[ExtractHistory] Extracted data', { userId, result });
     
     return Object.keys(result).length > 0 ? result : null;
   } catch (error: any) {
@@ -1447,7 +1563,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         break;
       
       case 'CREATE_RESERVATION':
-        finalReplyText = await handleReservationCreation(userId, llmResponse);
+        finalReplyText = await handleReservationCreation(userId, llmResponse, conversationHistory);
         break;
       
       case 'CANCEL_RESERVATION':
