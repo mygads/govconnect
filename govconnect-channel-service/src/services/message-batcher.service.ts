@@ -17,7 +17,7 @@ import { rabbitmqConfig } from '../config/rabbitmq';
 import { getPendingMessagesForUser, markMessagesAsProcessing } from './pending-message.service';
 
 // Configuration
-const BATCH_DELAY_MS = parseInt(process.env.MESSAGE_BATCH_DELAY_MS || '5000', 10); // 5 seconds default
+const BATCH_DELAY_MS = parseInt(process.env.MESSAGE_BATCH_DELAY_MS || '3000', 10); // 3 seconds default
 const MAX_BATCH_SIZE = parseInt(process.env.MAX_BATCH_SIZE || '10', 10); // Max messages per batch
 
 interface BatchedMessage {

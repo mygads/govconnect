@@ -43,6 +43,28 @@ import {
 import { fastClassifyIntent } from './fast-intent-classifier.service';
 import { extractAllEntities } from './entity-extractor.service';
 
+// User Profile & Context imports
+import { 
+  getProfile, 
+  recordInteraction, 
+  learnFromMessage, 
+  saveDefaultAddress,
+  getProfileContext,
+  recordServiceUsage,
+} from './user-profile.service';
+import { 
+  getEnhancedContext, 
+  updateContext, 
+  recordClarification,
+  recordDataCollected,
+  recordCompletedAction,
+  getContextForLLM,
+} from './conversation-context.service';
+import { 
+  adaptResponse, 
+  buildAdaptationContext,
+} from './response-adapter.service';
+
 // ==================== TYPES ====================
 
 export type ChannelType = 'whatsapp' | 'webchat' | 'telegram' | 'other';
@@ -438,6 +460,19 @@ export async function handleComplaintCreation(
   if (complaintId) {
     rateLimiterService.recordReport(userId);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
+    
+    // Save address to user profile for future auto-fill
+    saveDefaultAddress(userId, alamat, rt_rw);
+    
+    // Record service usage for profile
+    recordServiceUsage(userId, kategori);
+    
+    // Record completed action in conversation context
+    recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
+    
+    // Record collected data
+    recordDataCollected(userId, 'kategori', kategori);
+    recordDataCollected(userId, 'alamat', alamat);
     
     const withPhoto = mediaUrl ? ' 📷' : '';
     
@@ -1180,9 +1215,31 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const sentiment = analyzeSentiment(sanitizedMessage, userId);
     const sentimentContext = getSentimentContext(sentiment);
     
+    // Step 5.5: User Profile & Context Enhancement
+    // Learn from message (extract NIK, phone, detect style)
+    learnFromMessage(userId, message);
+    
+    // Record interaction for profile
+    recordInteraction(userId, sentiment.score, optimization?.fastIntent?.intent);
+    
+    // Get profile context for LLM
+    const profileContext = getProfileContext(userId);
+    
+    // Get enhanced conversation context
+    const conversationCtx = getEnhancedContext(userId);
+    const conversationContextStr = getContextForLLM(userId);
+    
+    // Build adaptation context (sentiment + profile + conversation)
+    const adaptationContext = buildAdaptationContext(userId, sentiment);
+    
     // Check if user needs human escalation
-    if (needsHumanEscalation(userId)) {
-      logger.warn('🚨 User needs human escalation', { userId, sentiment: sentiment.level });
+    if (needsHumanEscalation(userId) || conversationCtx.needsHumanHelp) {
+      logger.warn('🚨 User needs human escalation', { 
+        userId, 
+        sentiment: sentiment.level,
+        clarificationCount: conversationCtx.clarificationCount,
+        isStuck: conversationCtx.isStuck,
+      });
     }
     
     // Step 6: Pre-fetch RAG context if needed
@@ -1220,12 +1277,19 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       messageCount = contextResult.messageCount;
     }
     
-    // Inject language and sentiment context
-    if (languageContext || sentimentContext) {
-      const additionalContext = `${languageContext}${sentimentContext}`;
+    // Inject language, sentiment, profile, and conversation context
+    const allContexts = [
+      languageContext,
+      sentimentContext,
+      profileContext,
+      conversationContextStr,
+      adaptationContext,
+    ].filter(Boolean).join('\n');
+    
+    if (allContexts) {
       systemPrompt = systemPrompt.replace(
         'PESAN TERAKHIR USER:',
-        `${additionalContext}\n\nPESAN TERAKHIR USER:`
+        `${allContexts}\n\nPESAN TERAKHIR USER:`
       );
     }
     
@@ -1309,9 +1373,22 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const validatedReply = validateResponse(finalReplyText);
     const validatedGuidance = guidanceText ? validateResponse(guidanceText) : undefined;
     
-    // Step 10.5: Post-process - Cache response for future use (only for cacheable intents)
+    // Step 10.5: Adapt response based on sentiment, profile, and context
+    const adaptedResult = adaptResponse(validatedReply, userId, sentiment, validatedGuidance);
+    const finalResponse = adaptedResult.response;
+    const finalGuidance = adaptedResult.guidanceText;
+    
+    // Step 10.6: Update conversation context
+    updateContext(userId, {
+      currentIntent: llmResponse.intent,
+      intentConfidence: optimization?.fastIntent?.confidence || 0.8,
+      collectedData: llmResponse.fields,
+      missingFields: llmResponse.fields?.missing_info || [],
+    });
+    
+    // Step 10.7: Post-process - Cache response for future use (only for cacheable intents)
     if (['KNOWLEDGE_QUERY', 'GREETING', 'QUESTION'].includes(llmResponse.intent)) {
-      postProcessResponse(message, validatedReply, llmResponse.intent, validatedGuidance);
+      postProcessResponse(message, finalResponse, llmResponse.intent, finalGuidance);
     }
     
     const processingTimeMs = Date.now() - startTime;
@@ -1326,8 +1403,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     return {
       success: true,
-      response: validatedReply,
-      guidanceText: validatedGuidance,
+      response: finalResponse,
+      guidanceText: finalGuidance,
       intent: llmResponse.intent,
       fields: llmResponse.fields,
       metadata: {
@@ -1337,6 +1414,9 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         knowledgeConfidence: typeof preloadedRAGContext === 'object' ? preloadedRAGContext.confidence?.level : undefined,
         sentiment: sentiment.level !== 'neutral' ? sentiment.level : undefined,
         language: languageDetection.primary !== 'indonesian' ? languageDetection.primary : undefined,
+        // New metadata
+        adaptationsApplied: adaptedResult.adaptationsApplied.length > 0 ? adaptedResult.adaptationsApplied : undefined,
+        shouldOfferHumanHelp: adaptedResult.shouldOfferHumanHelp || undefined,
       },
     };
     
@@ -1350,9 +1430,27 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       processingTimeMs,
     });
     
+    // Use smart fallback based on context
+    const { getSmartFallback, getErrorFallback } = await import('./fallback-response.service');
+    
+    // Determine error type for better fallback
+    let errorType: string | undefined;
+    if (error.message?.includes('timeout') || error.message?.includes('ETIMEDOUT')) {
+      errorType = 'TIMEOUT';
+    } else if (error.message?.includes('rate limit') || error.message?.includes('429')) {
+      errorType = 'RATE_LIMIT';
+    } else if (error.message?.includes('ECONNREFUSED') || error.message?.includes('503')) {
+      errorType = 'SERVICE_DOWN';
+    }
+    
+    // Get smart fallback - tries to continue conversation flow if possible
+    const fallbackResponse = errorType 
+      ? getErrorFallback(errorType)
+      : getSmartFallback(userId, optimization?.fastIntent?.intent, message);
+    
     return {
       success: false,
-      response: getFallbackResponse(message),
+      response: fallbackResponse,
       intent: 'ERROR',
       metadata: { processingTimeMs, hasKnowledge: false },
       error: error.message,
@@ -1477,27 +1575,41 @@ async function buildContextWithHistory(
 
 /**
  * Fallback responses when AI is unavailable
+ * Now uses the smart fallback service for better context-aware responses
  */
 function getFallbackResponse(message: string): string {
+  // Import dynamically to avoid circular dependency
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getFallbackByIntent } = require('./fallback-response.service');
+  
   const lowerMessage = message.toLowerCase();
   
+  // Detect intent from message for better fallback
   if (/^(halo|hai|hi|hello|selamat|assalam)/i.test(lowerMessage)) {
-    return 'Halo! Selamat datang di GovConnect. Saya asisten virtual yang siap membantu Anda dengan layanan kelurahan. Ada yang bisa saya bantu hari ini? 😊';
+    return getFallbackByIntent('GREETING');
   }
   
-  if (lowerMessage.includes('surat') || lowerMessage.includes('dokumen') || lowerMessage.includes('keterangan')) {
-    return `Untuk pengajuan surat, GovConnect menyediakan layanan:\n\n📄 Surat Keterangan Domisili (SKD)\n📄 Surat Keterangan Tidak Mampu (SKTM)\n📄 Surat Pengantar\n📄 Dan lainnya\n\nSilakan hubungi kami via WhatsApp untuk memulai pengajuan.`;
+  if (lowerMessage.includes('surat') || lowerMessage.includes('dokumen') || lowerMessage.includes('keterangan') || lowerMessage.includes('reservasi')) {
+    return getFallbackByIntent('CREATE_RESERVATION');
   }
   
-  if (lowerMessage.includes('lapor') || lowerMessage.includes('keluhan') || lowerMessage.includes('aduan')) {
-    return `Untuk melaporkan keluhan atau aduan, Anda bisa:\n\n1. Via WhatsApp - Klik tombol WhatsApp\n2. Langsung - Datang ke kantor kelurahan\n\nLaporan Anda akan ditindaklanjuti oleh petugas kami. 🙏`;
+  if (lowerMessage.includes('lapor') || lowerMessage.includes('keluhan') || lowerMessage.includes('aduan') || lowerMessage.includes('rusak') || lowerMessage.includes('mati')) {
+    return getFallbackByIntent('CREATE_COMPLAINT');
   }
   
-  if (lowerMessage.includes('jam') || lowerMessage.includes('buka') || lowerMessage.includes('operasional')) {
-    return `⏰ Jam Operasional Kantor Kelurahan:\n\nSenin - Jumat: 08:00 - 16:00 WIB\nSabtu & Minggu: Tutup`;
+  if (lowerMessage.includes('status') || lowerMessage.includes('cek') || /LAP-|RSV-/i.test(lowerMessage)) {
+    return getFallbackByIntent('CHECK_STATUS');
   }
   
-  return `Terima kasih telah menghubungi GovConnect!\n\nSaya siap membantu Anda dengan:\n• Informasi layanan kelurahan\n• Pengajuan surat keterangan\n• Laporan keluhan/aduan\n• Informasi jam operasional\n\nSilakan sampaikan kebutuhan Anda. 😊`;
+  if (lowerMessage.includes('jam') || lowerMessage.includes('buka') || lowerMessage.includes('operasional') || lowerMessage.includes('syarat')) {
+    return getFallbackByIntent('KNOWLEDGE_QUERY');
+  }
+  
+  if (lowerMessage.includes('terima kasih') || lowerMessage.includes('makasih')) {
+    return getFallbackByIntent('THANKS');
+  }
+  
+  return getFallbackByIntent('UNKNOWN');
 }
 
 export default {

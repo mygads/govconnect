@@ -2,7 +2,7 @@ import prisma from '../config/database';
 import logger from '../utils/logger';
 
 export interface HistoryItem {
-  type: 'complaint' | 'ticket';
+  type: 'complaint' | 'reservation' | 'ticket';
   id: string;
   display_id: string;
   description: string;
@@ -13,22 +13,26 @@ export interface HistoryItem {
 
 export interface UserHistoryResult {
   complaints: any[];
+  reservations: any[];
+  /** @deprecated Use reservations instead. Kept for backward compatibility with old data */
   tickets: any[];
   combined: HistoryItem[];
   total: number;
 }
 
 /**
- * Get user's complaint and ticket history
+ * Get user's complaint and reservation history
+ * Note: tickets are legacy and only shown if user has old ticket data
  */
 export async function getUserHistory(wa_user_id: string): Promise<UserHistoryResult> {
   try {
-    // Fetch complaints and tickets in parallel
-    const [complaints, tickets] = await Promise.all([
+    // Fetch complaints, reservations, and legacy tickets in parallel
+    const [complaints, reservations, tickets] = await Promise.all([
+      // Complaints
       prisma.complaint.findMany({
         where: { wa_user_id },
         orderBy: { created_at: 'desc' },
-        take: 20, // Limit to last 20 items
+        take: 20,
         select: {
           id: true,
           complaint_id: true,
@@ -40,10 +44,33 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
           updated_at: true,
         },
       }),
+      // Reservations (new system)
+      prisma.reservation.findMany({
+        where: { wa_user_id },
+        orderBy: { created_at: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          reservation_id: true,
+          service_code: true,
+          reservation_date: true,
+          reservation_time: true,
+          queue_number: true,
+          status: true,
+          created_at: true,
+          updated_at: true,
+          service: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      }),
+      // Legacy tickets (only fetch if needed for backward compatibility)
       prisma.ticket.findMany({
         where: { wa_user_id },
         orderBy: { created_at: 'desc' },
-        take: 20, // Limit to last 20 items
+        take: 10, // Limit legacy tickets
         select: {
           id: true,
           ticket_id: true,
@@ -58,6 +85,7 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
 
     // Combine and sort by date
     const combined: HistoryItem[] = [
+      // Complaints
       ...complaints.map((c) => ({
         type: 'complaint' as const,
         id: c.id,
@@ -67,6 +95,17 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
         created_at: c.created_at,
         updated_at: c.updated_at,
       })),
+      // Reservations
+      ...reservations.map((r) => ({
+        type: 'reservation' as const,
+        id: r.id,
+        display_id: r.reservation_id,
+        description: getReservationDescription(r),
+        status: r.status,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      })),
+      // Legacy tickets (only if any exist)
       ...tickets.map((t) => ({
         type: 'ticket' as const,
         id: t.id,
@@ -81,14 +120,16 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
     logger.info('User history fetched', {
       wa_user_id,
       complaints: complaints.length,
+      reservations: reservations.length,
       tickets: tickets.length,
     });
 
     return {
       complaints,
-      tickets,
+      reservations,
+      tickets, // Legacy, kept for backward compatibility
       combined,
-      total: complaints.length + tickets.length,
+      total: complaints.length + reservations.length + tickets.length,
     };
   } catch (error: any) {
     logger.error('Failed to fetch user history', {
@@ -117,7 +158,46 @@ function getKategoriLabel(kategori: string): string {
 }
 
 /**
+ * Get reservation description
+ */
+function getReservationDescription(reservation: {
+  service_code: string;
+  reservation_date: Date;
+  reservation_time: string;
+  queue_number: number | null;
+  service?: { name: string } | null;
+}): string {
+  const serviceName = reservation.service?.name || getServiceLabel(reservation.service_code);
+  const dateStr = reservation.reservation_date.toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'short',
+  });
+  return `${serviceName} - ${dateStr} ${reservation.reservation_time}`;
+}
+
+/**
+ * Get service label from code
+ */
+function getServiceLabel(serviceCode: string): string {
+  const labels: Record<string, string> = {
+    SKD: 'Surat Keterangan Domisili',
+    SKTM: 'Surat Keterangan Tidak Mampu',
+    SKU: 'Surat Keterangan Usaha',
+    SKBM: 'Surat Keterangan Belum Menikah',
+    SPKTP: 'Surat Pengantar KTP',
+    SPKK: 'Surat Pengantar KK',
+    SPSKCK: 'Surat Pengantar SKCK',
+    SPAKTA: 'Surat Pengantar Akta',
+    IKR: 'Izin Keramaian',
+    SKK: 'Surat Keterangan Kematian',
+    SPP: 'Surat Pengantar Pindah',
+  };
+  return labels[serviceCode] || serviceCode;
+}
+
+/**
  * Get ticket description from jenis and data_json
+ * @deprecated Legacy function for old ticket data
  */
 function getTicketDescription(jenis: string, data_json: any): string {
   // Try to get description from data_json first

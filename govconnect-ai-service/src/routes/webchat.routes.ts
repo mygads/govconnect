@@ -19,6 +19,10 @@ import {
   updateWebchatConversation,
   checkWebchatTakeover,
 } from '../services/webchat-sync.service';
+import {
+  addWebchatMessageToBatch,
+  cancelWebchatBatch,
+} from '../services/webchat-batcher.service';
 
 const router = Router();
 
@@ -81,6 +85,9 @@ router.post('/', async (req: Request, res: Response) => {
     // Check if admin has taken over this conversation
     const takeoverStatus = await checkWebchatTakeover(session_id);
     if (takeoverStatus.is_takeover) {
+      // Cancel any pending batch when takeover is active
+      cancelWebchatBatch(session_id);
+      
       // Save user message to database but don't process with AI
       await saveWebchatMessage({
         session_id,
@@ -118,7 +125,7 @@ router.post('/', async (req: Request, res: Response) => {
       webChatSessions.set(session_id, session);
     }
     
-    // Add user message to session
+    // Add user message to session immediately (for history)
     session.messages.push({
       role: 'user',
       content: message,
@@ -134,11 +141,22 @@ router.post('/', async (req: Request, res: Response) => {
       source: 'USER',
     }).catch(() => {}); // Don't block on sync failure
     
-    // Process message using UNIFIED processor (same as WhatsApp)
+    // Use message batching - wait for more messages within 3 seconds
+    // This combines multiple rapid messages into one AI request
+    const batchResult = await addWebchatMessageToBatch(session_id, message);
+    
+    logger.info('📦 Webchat batch result', {
+      session_id,
+      isBatched: batchResult.isBatched,
+      messageCount: batchResult.messageCount,
+      combinedLength: batchResult.combinedMessage.length,
+    });
+    
+    // Process batched message using UNIFIED processor (same as WhatsApp)
     // This ensures consistent NLU, intent detection, RAG, prompts, etc.
     const result = await processUnifiedMessage({
       userId: session_id,
-      message: message,
+      message: batchResult.combinedMessage, // Use combined message from batch
       channel: 'webchat',
       conversationHistory: session.messages.map((m) => ({
         role: m.role,
@@ -190,6 +208,9 @@ router.post('/', async (req: Request, res: Response) => {
         hasKnowledge: result.metadata.hasKnowledge,
         knowledgeConfidence: result.metadata.knowledgeConfidence,
         sentiment: result.metadata.sentiment,
+        // Batch info
+        isBatched: batchResult.isBatched,
+        batchedMessageCount: batchResult.messageCount,
       },
     });
     
