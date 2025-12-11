@@ -110,6 +110,46 @@ export async function getComplaintById(id: string) {
 }
 
 /**
+ * Get complaint by ID with ownership validation
+ * Only returns complaint if the user is the owner
+ */
+export async function getComplaintByIdWithOwnership(id: string, wa_user_id: string): Promise<{
+  success: boolean;
+  error?: 'NOT_FOUND' | 'NOT_OWNER';
+  message?: string;
+  data?: any;
+}> {
+  const complaint = await getComplaintById(id);
+  
+  if (!complaint) {
+    return {
+      success: false,
+      error: 'NOT_FOUND',
+      message: 'Laporan tidak ditemukan',
+    };
+  }
+  
+  // Validate ownership
+  if (complaint.wa_user_id !== wa_user_id) {
+    logger.warn('Get complaint rejected: not owner', {
+      complaint_id: id,
+      owner: complaint.wa_user_id,
+      requester: wa_user_id,
+    });
+    return {
+      success: false,
+      error: 'NOT_OWNER',
+      message: 'Anda tidak memiliki akses untuk melihat laporan ini. Silakan cek nomor laporan Anda.',
+    };
+  }
+  
+  return {
+    success: true,
+    data: complaint,
+  };
+}
+
+/**
  * Get complaints list with filters and pagination
  */
 export async function getComplaintsList(filters: ComplaintFilters) {

@@ -358,6 +358,46 @@ export async function getReservationById(id: string) {
 }
 
 /**
+ * Get reservation by ID with ownership validation
+ * Only returns reservation if the user is the owner
+ */
+export async function getReservationByIdWithOwnership(id: string, wa_user_id: string): Promise<{
+  success: boolean;
+  error?: 'NOT_FOUND' | 'NOT_OWNER';
+  message?: string;
+  data?: any;
+}> {
+  const reservation = await getReservationById(id);
+  
+  if (!reservation) {
+    return {
+      success: false,
+      error: 'NOT_FOUND',
+      message: 'Reservasi tidak ditemukan',
+    };
+  }
+  
+  // Validate ownership
+  if (reservation.wa_user_id !== wa_user_id) {
+    logger.warn('Get reservation rejected: not owner', {
+      reservation_id: id,
+      owner: reservation.wa_user_id,
+      requester: wa_user_id,
+    });
+    return {
+      success: false,
+      error: 'NOT_OWNER',
+      message: 'Anda tidak memiliki akses untuk melihat reservasi ini. Silakan cek nomor reservasi Anda.',
+    };
+  }
+  
+  return {
+    success: true,
+    data: reservation,
+  };
+}
+
+/**
  * Get reservations list with filters
  */
 export async function getReservationsList(filters: ReservationFilters) {

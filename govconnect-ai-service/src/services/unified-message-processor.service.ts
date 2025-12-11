@@ -976,6 +976,7 @@ export async function handleReservationUpdate(userId: string, llmResponse: any):
 
 /**
  * Handle status check for complaints and reservations
+ * Now includes ownership validation - user can only check their own tickets
  */
 export async function handleStatusCheck(userId: string, llmResponse: any): Promise<string> {
   const { complaint_id, reservation_id } = llmResponse.fields;
@@ -986,28 +987,39 @@ export async function handleStatusCheck(userId: string, llmResponse: any): Promi
   }
   
   if (complaint_id) {
-    const complaint = await getComplaintStatus(complaint_id);
+    // Use ownership validation - user can only check their own complaints
+    const { getComplaintStatusWithOwnership } = await import('./case-client.service');
+    const result = await getComplaintStatusWithOwnership(complaint_id, userId);
     
-    if (!complaint) {
-      return `Hmm, kami tidak menemukan laporan dengan nomor *${complaint_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor laporan biasanya seperti ini: LAP-20251201-001`;
+    if (!result.success) {
+      if (result.error === 'NOT_FOUND') {
+        return `Hmm, kami tidak menemukan laporan dengan nomor *${complaint_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor laporan biasanya seperti ini: LAP-20251201-001`;
+      }
+      if (result.error === 'NOT_OWNER') {
+        return `Maaf Kak, laporan *${complaint_id}* bukan milik Kakak ya 🙏\n\nSilakan cek kembali nomor laporan Anda. Jika lupa, ketik "riwayat" untuk melihat daftar laporan Anda.`;
+      }
+      return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';
     }
     
-    return buildNaturalStatusResponse(complaint);
+    return buildNaturalStatusResponse(result.data);
   }
   
   if (reservation_id) {
-    try {
-      const response = await caseServiceClient.get(`/reservasi/${reservation_id}`);
-      const reservation = response.data?.data;
-      
-      if (!reservation) {
-        return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔`;
+    // Use ownership validation - user can only check their own reservations
+    const { getReservationStatusWithOwnership } = await import('./case-client.service');
+    const result = await getReservationStatusWithOwnership(reservation_id, userId);
+    
+    if (!result.success) {
+      if (result.error === 'NOT_FOUND') {
+        return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor reservasi biasanya seperti ini: RSV-20251201-001`;
       }
-      
-      return buildNaturalReservationStatusResponse(reservation);
-    } catch (error) {
-      return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔`;
+      if (result.error === 'NOT_OWNER') {
+        return `Maaf Kak, reservasi *${reservation_id}* bukan milik Kakak ya 🙏\n\nSilakan cek kembali nomor reservasi Anda. Jika lupa, ketik "riwayat" untuk melihat daftar reservasi Anda.`;
+      }
+      return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';
     }
+    
+    return buildNaturalReservationStatusResponse(result.data);
   }
   
   return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';

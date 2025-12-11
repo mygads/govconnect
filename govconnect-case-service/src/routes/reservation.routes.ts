@@ -11,6 +11,7 @@ import {
   handleCreateReservation,
   handleGetReservations,
   handleGetReservationById,
+  handleCheckReservationStatus,
   handleUpdateReservationStatus,
   handleCancelReservation,
   handleUpdateReservationTime,
@@ -111,8 +112,20 @@ router.get('/statistics', handleGetReservationStatistics);
 // Get user history
 router.get('/history/:wa_user_id', handleGetUserHistory);
 
-// Get reservation by ID
+// Get reservation by ID (admin/dashboard - no ownership check)
 router.get('/:id', handleGetReservationById);
+
+// Check reservation status with ownership validation (user via AI)
+router.post(
+  '/:id/check',
+  internalAuth,
+  [
+    // Accept WhatsApp phone (628xxx) or webchat session (web_xxx)
+    body('wa_user_id').matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+  ],
+  validate,
+  handleCheckReservationStatus
+);
 
 // Update reservation status (dashboard)
 router.patch(

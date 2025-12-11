@@ -131,6 +131,7 @@ export interface CancelResult {
 
 /**
  * Get complaint status by complaint_id (e.g., LAP-20251201-001)
+ * NOTE: This is for admin/internal use without ownership check
  */
 export async function getComplaintStatus(complaintId: string): Promise<ComplaintStatusResponse['data']> {
   logger.info('Fetching complaint status from Case Service', {
@@ -169,6 +170,122 @@ export async function getComplaintStatus(complaintId: string): Promise<Complaint
     });
     
     return null;
+  }
+}
+
+/**
+ * Get complaint status with ownership validation
+ * Only returns complaint if the user is the owner
+ */
+export async function getComplaintStatusWithOwnership(
+  complaintId: string,
+  wa_user_id: string
+): Promise<{ success: boolean; error?: string; message?: string; data?: ComplaintStatusResponse['data'] }> {
+  logger.info('Fetching complaint status with ownership check', {
+    complaint_id: complaintId,
+    wa_user_id,
+  });
+  
+  try {
+    const url = `${config.caseServiceUrl}/laporan/${complaintId}/check`;
+    const response = await axios.post(
+      url,
+      { wa_user_id },
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+    
+    logger.info('✅ Complaint status fetched successfully with ownership', {
+      complaint_id: complaintId,
+      status: response.data.data?.status,
+    });
+    
+    return { success: true, data: response.data.data };
+  } catch (error: any) {
+    const errorData = error.response?.data;
+    
+    if (error.response?.status === 404) {
+      return { success: false, error: 'NOT_FOUND', message: 'Laporan tidak ditemukan' };
+    }
+    
+    if (error.response?.status === 403) {
+      return { 
+        success: false, 
+        error: 'NOT_OWNER', 
+        message: errorData?.message || 'Anda tidak memiliki akses untuk melihat laporan ini' 
+      };
+    }
+    
+    logger.error('❌ Failed to fetch complaint status with ownership', {
+      complaint_id: complaintId,
+      error: error.message,
+      status: error.response?.status,
+    });
+    
+    return { success: false, error: 'INTERNAL_ERROR', message: 'Terjadi kesalahan saat mengecek status' };
+  }
+}
+
+/**
+ * Get reservation status with ownership validation
+ * Only returns reservation if the user is the owner
+ */
+export async function getReservationStatusWithOwnership(
+  reservationId: string,
+  wa_user_id: string
+): Promise<{ success: boolean; error?: string; message?: string; data?: any }> {
+  logger.info('Fetching reservation status with ownership check', {
+    reservation_id: reservationId,
+    wa_user_id,
+  });
+  
+  try {
+    const url = `${config.caseServiceUrl}/reservasi/${reservationId}/check`;
+    const response = await axios.post(
+      url,
+      { wa_user_id },
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+    
+    logger.info('✅ Reservation status fetched successfully with ownership', {
+      reservation_id: reservationId,
+      status: response.data.data?.status,
+    });
+    
+    return { success: true, data: response.data.data };
+  } catch (error: any) {
+    const errorData = error.response?.data;
+    
+    if (error.response?.status === 404) {
+      return { success: false, error: 'NOT_FOUND', message: 'Reservasi tidak ditemukan' };
+    }
+    
+    if (error.response?.status === 403) {
+      return { 
+        success: false, 
+        error: 'NOT_OWNER', 
+        message: errorData?.message || 'Anda tidak memiliki akses untuk melihat reservasi ini' 
+      };
+    }
+    
+    logger.error('❌ Failed to fetch reservation status with ownership', {
+      reservation_id: reservationId,
+      error: error.message,
+      status: error.response?.status,
+    });
+    
+    return { success: false, error: 'INTERNAL_ERROR', message: 'Terjadi kesalahan saat mengecek status' };
   }
 }
 

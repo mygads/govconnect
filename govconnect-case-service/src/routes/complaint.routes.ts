@@ -4,6 +4,7 @@ import {
   handleCreateComplaint,
   handleGetComplaints,
   handleGetComplaintById,
+  handleCheckComplaintStatus,
   handleUpdateComplaintStatus,
   handleGetComplaintStatistics,
   handleCancelComplaint,
@@ -53,6 +54,18 @@ router.post(
 router.get('/', handleGetComplaints);
 router.get('/statistics', handleGetComplaintStatistics);
 router.get('/:id', handleGetComplaintById);
+
+// Check complaint status with ownership validation (user via AI)
+router.post(
+  '/:id/check',
+  internalAuth,
+  [
+    // Accept WhatsApp phone (628xxx) or webchat session (web_xxx)
+    body('wa_user_id').matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+  ],
+  validate,
+  handleCheckComplaintStatus
+);
 
 router.patch(
   '/:id/status',

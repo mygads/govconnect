@@ -111,7 +111,7 @@ export async function handleGetComplaints(req: Request, res: Response) {
 
 /**
  * GET /laporan/:id
- * Get complaint by ID
+ * Get complaint by ID (for admin/dashboard - no ownership check)
  */
 export async function handleGetComplaintById(req: Request, res: Response) {
   try {
@@ -125,6 +125,38 @@ export async function handleGetComplaintById(req: Request, res: Response) {
     return res.json({ data: complaint });
   } catch (error: any) {
     logger.error('Get complaint error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * POST /laporan/:id/check
+ * Get complaint by ID with ownership validation (for user via AI)
+ */
+export async function handleCheckComplaintStatus(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { wa_user_id } = req.body;
+    
+    if (!wa_user_id) {
+      return res.status(400).json({ error: 'wa_user_id is required' });
+    }
+    
+    const { getComplaintByIdWithOwnership } = await import('../services/complaint.service');
+    const result = await getComplaintByIdWithOwnership(id, wa_user_id);
+    
+    if (!result.success) {
+      const statusCode = result.error === 'NOT_FOUND' ? 404 : 403;
+      return res.status(statusCode).json({
+        status: 'error',
+        error: result.error,
+        message: result.message,
+      });
+    }
+    
+    return res.json({ data: result.data });
+  } catch (error: any) {
+    logger.error('Check complaint status error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

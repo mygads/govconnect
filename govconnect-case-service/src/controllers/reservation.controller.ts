@@ -238,7 +238,7 @@ export async function handleGetReservations(req: Request, res: Response) {
 
 /**
  * GET /reservasi/:id
- * Get reservation by ID
+ * Get reservation by ID (for admin/dashboard - no ownership check)
  */
 export async function handleGetReservationById(req: Request, res: Response) {
   try {
@@ -252,6 +252,38 @@ export async function handleGetReservationById(req: Request, res: Response) {
     return res.json({ data: reservation });
   } catch (error: any) {
     logger.error('Get reservation error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * POST /reservasi/:id/check
+ * Get reservation by ID with ownership validation (for user via AI)
+ */
+export async function handleCheckReservationStatus(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { wa_user_id } = req.body;
+    
+    if (!wa_user_id) {
+      return res.status(400).json({ error: 'wa_user_id is required' });
+    }
+    
+    const { getReservationByIdWithOwnership } = await import('../services/reservation.service');
+    const result = await getReservationByIdWithOwnership(id, wa_user_id);
+    
+    if (!result.success) {
+      const statusCode = result.error === 'NOT_FOUND' ? 404 : 403;
+      return res.status(statusCode).json({
+        status: 'error',
+        error: result.error,
+        message: result.message,
+      });
+    }
+    
+    return res.json({ data: result.data });
+  } catch (error: any) {
+    logger.error('Check reservation status error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

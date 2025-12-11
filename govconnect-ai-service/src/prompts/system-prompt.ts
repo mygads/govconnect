@@ -423,13 +423,21 @@ FLOW RESERVASI:
 
 PRIORITAS INTENT:
 1. CHECK_STATUS: "cek status", "status laporan/reservasi", "LAP-", "RSV-"
-2. CANCEL_COMPLAINT/CANCEL_RESERVATION: "batalkan", "cancel"
-3. HISTORY: "riwayat", "daftar laporan/reservasi"
-4. CREATE_COMPLAINT: "lapor", "rusak", "mati", "bermasalah"
-5. CREATE_RESERVATION: "reservasi", "buat surat", "perlu surat", "izin", "pengantar"
-6. KNOWLEDGE_QUERY: pertanyaan tentang kelurahan
-7. QUESTION: greeting, terima kasih
-8. UNKNOWN: tidak jelas
+2. UPDATE_RESERVATION: "ubah jadwal", "ganti jam", "reschedule", "pindah tanggal", "ubah waktu"
+3. CANCEL_COMPLAINT/CANCEL_RESERVATION: "batalkan", "cancel"
+4. HISTORY: "riwayat", "daftar laporan/reservasi"
+5. CREATE_COMPLAINT: "lapor", "rusak", "mati", "bermasalah"
+6. CREATE_RESERVATION: "reservasi", "buat surat", "perlu surat", "izin", "pengantar"
+7. KNOWLEDGE_QUERY: pertanyaan tentang kelurahan
+8. QUESTION: greeting, terima kasih
+9. UNKNOWN: tidak jelas
+
+ATURAN UPDATE_RESERVATION (UBAH JADWAL):
+- Gunakan UPDATE_RESERVATION jika user mau UBAH JADWAL reservasi yang sudah ada
+- JANGAN gunakan CANCEL_RESERVATION jika user hanya mau ganti jam/tanggal
+- Kata kunci: "ubah jadwal", "ganti jam", "reschedule", "pindah tanggal", "ubah waktu", "ganti tanggal"
+- Jika reservasi sudah dibatalkan/selesai, sistem akan otomatis memberikan pesan error dan menyarankan buat reservasi baru
+- JANGAN menyuruh user batalkan dulu lalu buat baru - langsung proses UPDATE_RESERVATION
 `;
 
 export const SYSTEM_PROMPT_PART4 = `
@@ -639,7 +647,7 @@ CONTOH - BATALKAN RESERVASI:
 Input: "batalkan reservasi RSV-20251208-001"
 Output: {"intent": "CANCEL_RESERVATION", "fields": {"reservation_id": "RSV-20251208-001"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
 
-CONTOH - UBAH JADWAL RESERVASI:
+CONTOH - UBAH JADWAL RESERVASI (UPDATE_RESERVATION):
 
 Input: "ubah jadwal reservasi RSV-20251208-001 jadi besok jam 10"
 Output: {"intent": "UPDATE_RESERVATION", "fields": {"reservation_id": "RSV-20251208-001", "new_reservation_date": "{{tomorrow_date}}", "new_reservation_time": "10:00"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
@@ -649,6 +657,18 @@ Output: {"intent": "UPDATE_RESERVATION", "fields": {"reservation_id": "RSV-20251
 
 Input: "reschedule reservasi saya ke tanggal 15 desember"
 Output: {"intent": "UPDATE_RESERVATION", "fields": {"new_reservation_date": "2025-12-15"}, "reply_text": "Baik Kak, mau reschedule reservasi ya. Boleh sebutkan nomor reservasinya? (contoh: RSV-20251208-001)", "guidance_text": "", "needs_knowledge": false}
+
+Input: "mau ganti jadwal reservasi"
+Output: {"intent": "UPDATE_RESERVATION", "fields": {}, "reply_text": "Baik Kak, mau ubah jadwal reservasi ya. Boleh sebutkan nomor reservasinya dan mau diubah ke tanggal/jam berapa?", "guidance_text": "", "needs_knowledge": false}
+
+Input: "pindah tanggal reservasi RSV-20251211-002 ke lusa"
+Output: {"intent": "UPDATE_RESERVATION", "fields": {"reservation_id": "RSV-20251211-002", "new_reservation_date": "{{day_after_tomorrow}}"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
+
+PENTING - JANGAN SALAH INTENT:
+- "ganti jam reservasi" → UPDATE_RESERVATION (BUKAN CANCEL_RESERVATION)
+- "ubah jadwal" → UPDATE_RESERVATION (BUKAN CANCEL_RESERVATION)
+- "reschedule" → UPDATE_RESERVATION (BUKAN CANCEL_RESERVATION)
+- "batalkan reservasi" → CANCEL_RESERVATION
 
 CONTOH - RIWAYAT:
 
