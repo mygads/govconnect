@@ -14,6 +14,7 @@
 import logger from '../utils/logger';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
+import { modelStatsService } from './model-stats.service';
 
 // Layer 1 uses the smallest, cheapest models first
 const LAYER1_MODEL_PRIORITY = [
@@ -196,6 +197,9 @@ export async function callLayer1LLM(input: Layer1Input): Promise<Layer1Output | 
 
       const durationMs = Date.now() - startTime;
       
+      // Record success in model stats
+      modelStatsService.recordSuccess(model, durationMs);
+      
       logger.info('✅ Layer 1 LLM success', {
         wa_user_id: input.wa_user_id,
         model,
@@ -208,6 +212,11 @@ export async function callLayer1LLM(input: Layer1Input): Promise<Layer1Output | 
       return parsedResponse;
       
     } catch (error: any) {
+      const durationMs = Date.now() - startTime;
+      
+      // Record failure in model stats
+      modelStatsService.recordFailure(model, error.message, durationMs);
+      
       logger.warn('❌ Layer 1 model failed', {
         wa_user_id: input.wa_user_id,
         model,

@@ -15,15 +15,14 @@ import logger from '../utils/logger';
 import { MessageReceivedEvent } from '../types/event.types';
 import { callLayer1LLM, Layer1Output, applyTypoCorrections } from './layer1-llm.service';
 import { callLayer2LLM, Layer2Output, generateFallbackResponse } from './layer2-llm.service';
-import { publishAIReply, publishAIError, publishMessageStatus } from './rabbitmq.service';
+import { publishAIReply, publishMessageStatus } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { startTyping, stopTyping, isUserInTakeover, markMessagesAsRead } from './channel-client.service';
-import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { isSpamMessage } from './rag.service';
 import { sanitizeUserInput } from './context-builder.service';
-import { detectLanguage, getLanguageContext } from './language-detection.service';
-import { analyzeSentiment, getSentimentContext, needsHumanEscalation } from './sentiment-analysis.service';
+import { detectLanguage } from './language-detection.service';
+import { analyzeSentiment, needsHumanEscalation } from './sentiment-analysis.service';
 
 // Import action handlers from original orchestrator
 import { 
@@ -41,7 +40,8 @@ import {
  * Main 2-Layer processing function
  */
 export async function processTwoLayerMessage(event: MessageReceivedEvent): Promise<void> {
-  const { wa_user_id, message, message_id, has_media, media_url, media_public_url, media_type, media_caption, is_batched, batched_message_ids, original_messages } = event;
+  const startTime = Date.now(); // Track processing start time for analytics
+  const { wa_user_id, message, message_id, has_media, media_url, media_public_url, media_type, is_batched, batched_message_ids } = event;
   
   // Validate required fields
   if (!wa_user_id || !message || !message_id) {
@@ -130,7 +130,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     });
     
     // Step 0.3: Language and sentiment analysis
-    const languageDetection = detectLanguage(sanitizedMessage);
+    detectLanguage(sanitizedMessage); // For logging purposes
     const sentiment = analyzeSentiment(sanitizedMessage, wa_user_id);
     
     if (needsHumanEscalation(wa_user_id)) {
@@ -222,10 +222,11 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     }
     
     // Step 8: Record analytics
+    const processingDurationMs = Date.now() - startTime;
     aiAnalyticsService.recordIntent(
       wa_user_id,
       enhancedLayer1Output.intent,
-      Date.now(), // We'll calculate duration in analytics
+      processingDurationMs,
       sanitizedMessage.length,
       finalReplyText.length,
       'two-layer-architecture'

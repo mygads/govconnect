@@ -103,6 +103,7 @@ class AIAnalyticsService {
 
   constructor() {
     this.data = this.loadData();
+    this.validateAndFixData(); // Fix any corrupted data on startup
     this.startPeriodicSave();
     this.startSessionCleanup();
     logger.info('📊 AI Analytics Service initialized');
@@ -231,6 +232,11 @@ class AIAnalyticsService {
     outputLength: number,
     model: string
   ): void {
+    // Validate processingTimeMs - should be reasonable (< 5 minutes = 300000ms)
+    const validProcessingTime = processingTimeMs > 0 && processingTimeMs < 300000 
+      ? processingTimeMs 
+      : 3000; // Default to 3 seconds if invalid
+    
     // Update intent stats
     if (!this.data.intents[intent]) {
       this.data.intents[intent] = {
@@ -245,7 +251,7 @@ class AIAnalyticsService {
     
     const stats = this.data.intents[intent];
     stats.count++;
-    stats.totalProcessingTimeMs += processingTimeMs;
+    stats.totalProcessingTimeMs += validProcessingTime;
     stats.avgProcessingTimeMs = Math.round(stats.totalProcessingTimeMs / stats.count);
 
     // Update session tracking
@@ -257,9 +263,29 @@ class AIAnalyticsService {
     // Update accuracy tracking
     this.data.accuracy.totalClassifications++;
     if (!this.data.accuracy.byIntent[intent]) {
-      this.data.accuracy.byIntent[intent] = { total: 0, correct: 0, accuracy: 100 };
+      this.data.accuracy.byIntent[intent] = { total: 0, correct: 0, accuracy: 0 };
     }
     this.data.accuracy.byIntent[intent].total++;
+    
+    // Auto-mark non-action intents as "successful" since they don't have explicit success/fail
+    // Only action intents (CREATE_*, CHECK_*, CANCEL_*, HISTORY) need explicit success tracking
+    const actionIntents = ['CREATE_COMPLAINT', 'CREATE_RESERVATION', 'CHECK_STATUS', 'CANCEL_COMPLAINT', 'CANCEL_RESERVATION', 'UPDATE_RESERVATION', 'HISTORY'];
+    if (!actionIntents.includes(intent)) {
+      // Non-action intents (QUESTION, GREETING, KNOWLEDGE_QUERY, UNKNOWN) are auto-successful
+      this.data.accuracy.byIntent[intent].correct++;
+      this.data.accuracy.correctClassifications++;
+    }
+    
+    // Recalculate accuracy for this intent
+    const intentStats = this.data.accuracy.byIntent[intent];
+    intentStats.accuracy = intentStats.total > 0 
+      ? Math.round((intentStats.correct / intentStats.total) * 100) 
+      : 0;
+    
+    // Recalculate overall accuracy
+    this.data.accuracy.overallAccuracy = this.data.accuracy.totalClassifications > 0
+      ? Math.round((this.data.accuracy.correctClassifications / this.data.accuracy.totalClassifications) * 100)
+      : 0;
 
     this.isDirty = true;
   }
@@ -583,6 +609,83 @@ class AIAnalyticsService {
         .sort((a, b) => b.calls - a.calls),
       last30Days,
     };
+  }
+
+  /**
+   * Reset all analytics data (for fixing corrupted data)
+   */
+  resetAnalytics(): void {
+    logger.warn('🔄 Resetting all AI analytics data');
+    this.data = this.getDefaultStorage();
+    this.sessions.clear();
+    this.saveData();
+    logger.info('✅ AI Analytics reset complete');
+  }
+
+  /**
+   * Validate and fix corrupted data
+   */
+  validateAndFixData(): void {
+    let fixed = false;
+    
+    // Fix corrupted processing times (should be < 5 minutes = 300000ms)
+    for (const [intent, stats] of Object.entries(this.data.intents)) {
+      if (stats.avgProcessingTimeMs > 300000 || stats.totalProcessingTimeMs > 300000 * stats.count) {
+        logger.warn('🔧 Fixing corrupted processing time for intent', { intent, avgMs: stats.avgProcessingTimeMs });
+        stats.avgProcessingTimeMs = 3000; // Default to 3 seconds
+        stats.totalProcessingTimeMs = stats.count * 3000;
+        fixed = true;
+      }
+    }
+    
+    // Fix accuracy calculations - recalculate correct counts for non-action intents
+    const actionIntents = ['CREATE_COMPLAINT', 'CREATE_RESERVATION', 'CHECK_STATUS', 'CANCEL_COMPLAINT', 'CANCEL_RESERVATION', 'UPDATE_RESERVATION', 'HISTORY'];
+    let totalCorrect = 0;
+    
+    for (const [intent, stats] of Object.entries(this.data.accuracy.byIntent)) {
+      // For non-action intents, correct should equal total (auto-success)
+      if (!actionIntents.includes(intent)) {
+        if (stats.correct !== stats.total) {
+          logger.warn('🔧 Fixing correct count for non-action intent', { intent, was: stats.correct, now: stats.total });
+          stats.correct = stats.total;
+          fixed = true;
+        }
+      }
+      
+      // Recalculate accuracy
+      const expectedAccuracy = stats.total > 0 
+        ? Math.round((stats.correct / stats.total) * 100) 
+        : 0;
+      if (stats.accuracy !== expectedAccuracy) {
+        logger.warn('🔧 Fixing accuracy for intent', { intent, was: stats.accuracy, now: expectedAccuracy });
+        stats.accuracy = expectedAccuracy;
+        fixed = true;
+      }
+      
+      totalCorrect += stats.correct;
+    }
+    
+    // Fix correctClassifications total
+    if (this.data.accuracy.correctClassifications !== totalCorrect) {
+      logger.warn('🔧 Fixing correctClassifications', { was: this.data.accuracy.correctClassifications, now: totalCorrect });
+      this.data.accuracy.correctClassifications = totalCorrect;
+      fixed = true;
+    }
+    
+    // Recalculate overall accuracy
+    const expectedOverall = this.data.accuracy.totalClassifications > 0
+      ? Math.round((this.data.accuracy.correctClassifications / this.data.accuracy.totalClassifications) * 100)
+      : 0;
+    if (this.data.accuracy.overallAccuracy !== expectedOverall) {
+      logger.warn('🔧 Fixing overall accuracy', { was: this.data.accuracy.overallAccuracy, now: expectedOverall });
+      this.data.accuracy.overallAccuracy = expectedOverall;
+      fixed = true;
+    }
+    
+    if (fixed) {
+      this.saveData();
+    }
+    logger.info('✅ Analytics data validation and fix complete');
   }
 
   /**

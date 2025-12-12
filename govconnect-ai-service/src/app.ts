@@ -373,6 +373,30 @@ app.get('/stats/analytics/full', (req: Request, res: Response) => {
   }
 });
 
+app.post('/stats/analytics/reset', (req: Request, res: Response) => {
+  try {
+    aiAnalyticsService.resetAnalytics();
+    res.json({ status: 'success', message: 'Analytics data has been reset' });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to reset analytics',
+      message: error.message,
+    });
+  }
+});
+
+app.post('/stats/analytics/fix', (req: Request, res: Response) => {
+  try {
+    aiAnalyticsService.validateAndFixData();
+    res.json({ status: 'success', message: 'Analytics data has been validated and fixed' });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to fix analytics',
+      message: error.message,
+    });
+  }
+});
+
 // ===========================================
 // Rate Limiter Endpoints
 app.get('/rate-limit', (req: Request, res: Response) => {

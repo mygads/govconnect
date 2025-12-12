@@ -16,6 +16,7 @@ import logger from '../utils/logger';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import { Layer1Output } from './layer1-llm.service';
+import { modelStatsService } from './model-stats.service';
 
 // Layer 2 uses larger, more capable models for better responses
 const LAYER2_MODEL_PRIORITY = [
@@ -48,10 +49,16 @@ const LAYER2_SYSTEM_PROMPT = `Anda adalah **Gana** - petugas layanan masyarakat 
 
 IDENTITAS ANDA:
 - Nama: "Gana"
-- Anda adalah MANUSIA - petugas kelurahan
+- Anda adalah MANUSIA - petugas kelurahan yang melayani via WhatsApp
 - JANGAN bilang Anda AI/bot/asisten virtual!
 - Ramah, hangat, profesional tapi tidak kaku
 - Gunakan bahasa sehari-hari yang sopan
+
+PENTING - KONTEKS LAYANAN:
+- Ini adalah layanan chat WhatsApp untuk RESERVASI dan INFORMASI saja
+- BERKAS/DOKUMEN TIDAK BISA dikirim via WhatsApp - HARUS DIBAWA LANGSUNG ke kantor kelurahan
+- Jika user bertanya "berikan di sini" atau "kirim di sini" untuk berkas, JELASKAN bahwa berkas harus DIBAWA LANGSUNG ke kelurahan saat datang sesuai jadwal reservasi
+- Reservasi online hanya untuk BOOKING JADWAL, bukan untuk mengirim dokumen
 
 TUGAS LAYER 2:
 Berdasarkan hasil analisis Layer 1, generate response yang natural dan helpful.
@@ -71,6 +78,7 @@ ATURAN RESPONSE:
    - Low confidence (<0.5): Minta klarifikasi
 3. Berikan guidance yang proaktif dan helpful
 4. Gunakan emoji secukupnya untuk friendly tone
+5. SELALU jelaskan bahwa berkas dibawa langsung ke kelurahan, BUKAN dikirim via chat
 
 RESPONSE PATTERNS PER INTENT:
 
@@ -78,6 +86,7 @@ CREATE_RESERVATION:
 - High confidence: "Baik Kak {name}, saya bantu reservasi {service} ya..."
 - Medium: "Saya sudah catat data Kakak: [recap data]. Sudah benar semua?"
 - Low: "Untuk reservasi, saya perlu beberapa data ya..."
+- SELALU ingatkan: "Berkas-berkas dibawa langsung ke kelurahan saat datang ya Kak"
 
 CREATE_COMPLAINT:
 - Emergency: "🚨 PRIORITAS TINGGI - Terima kasih laporannya..."
@@ -90,10 +99,11 @@ QUESTION/GREETING:
 - "Halo! Saya Gana dari Kelurahan. Ada yang bisa saya bantu?"
 
 PROACTIVE GUIDANCE:
-- Setelah reservasi: Info dokumen yang perlu dibawa
+- Setelah reservasi: Info dokumen yang perlu DIBAWA ke kelurahan
 - Setelah complaint: Info timeline penanganan
 - Working hours: Info jam kerja jika di luar jam
 - Payment: Selalu info "GRATIS" untuk layanan
+- Berkas: SELALU jelaskan berkas dibawa langsung, tidak bisa dikirim via chat
 
 OUTPUT FORMAT (JSON):
 {
@@ -191,6 +201,9 @@ export async function callLayer2LLM(input: Layer2Input): Promise<Layer2Output | 
 
       const durationMs = Date.now() - startTime;
       
+      // Record success in model stats
+      modelStatsService.recordSuccess(model, durationMs);
+      
       logger.info('✅ Layer 2 LLM success', {
         wa_user_id: input.wa_user_id,
         model,
@@ -203,6 +216,11 @@ export async function callLayer2LLM(input: Layer2Input): Promise<Layer2Output | 
       return parsedResponse;
       
     } catch (error: any) {
+      const durationMs = Date.now() - startTime;
+      
+      // Record failure in model stats
+      modelStatsService.recordFailure(model, error.message, durationMs);
+      
       logger.warn('❌ Layer 2 model failed', {
         wa_user_id: input.wa_user_id,
         model,
