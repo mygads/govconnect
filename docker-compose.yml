@@ -205,8 +205,11 @@ services:
       NODE_ENV: ${NODE_ENV}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_dashboard
       JWT_SECRET: ${JWT_SECRET}
-      # API Gateway via Traefik (internal Docker network)
-      API_BASE_URL: ${API_BASE_URL}
+      # Direct service URLs (bypasses Traefik for internal calls)
+      CHANNEL_SERVICE_URL: http://channel-service:3001
+      AI_SERVICE_URL: http://ai-service:3002
+      CASE_SERVICE_URL: http://case-service:3003
+      NOTIFICATION_SERVICE_URL: http://notification-service:3004
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       NEXT_PUBLIC_APP_NAME: "GovConnect Dashboard"
       NEXTAUTH_URL: ${NEXTAUTH_URL}
