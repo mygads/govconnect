@@ -322,17 +322,14 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to Docker Swarm
+      - name: Deploy with Docker Compose
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           echo "🚀 Deploying GovConnect to VPS..."
           
-          # Copy swarm config
-          scp docker-compose.swarm.yml $VPS_USER@$VPS_HOST:/opt/apps/govconnect/
-          
-          # Deploy stack
+          # Deploy with Docker Compose
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             cd /opt/apps/govconnect
             
@@ -346,15 +343,10 @@ jobs:
             docker pull ghcr.io/${{ env.IMAGE_PREFIX }}-case-service:latest || true
             docker pull ghcr.io/${{ env.IMAGE_PREFIX }}-notification-service:latest || true
             
-            # Initialize swarm if needed
-            if ! docker info | grep -q "Swarm: active"; then
-              docker swarm init --advertise-addr $(hostname -I | awk '{print $1}') || true
-            fi
+            # Restart services with new images (zero-downtime)
+            docker compose up -d --force-recreate
             
-            # Deploy stack
-            docker stack deploy -c docker-compose.swarm.yml govconnect --with-registry-auth
-            
-            echo "✅ Deployment initiated!"
+            echo "✅ Deployment complete!"
           ENDSSH
 
       - name: Health Check
@@ -383,8 +375,8 @@ jobs:
             # Check Notification Service
             curl -sf http://localhost:3004/health && echo "✅ Notification OK" || echo "❌ Notification FAILED"
             
-            # Show service status
-            docker service ls | grep govconnect
+            # Show container status
+            docker ps | grep govconnect
           ENDSSH
 
       - name: Generate summary

@@ -233,6 +233,8 @@ services:
 # ===================================================================================
 # NETWORKS
 # ===================================================================================
+# Note: These networks are created as overlay networks by Docker Swarm
+# Docker Compose containers can connect to overlay networks with --attachable flag
 networks:
   govconnect-network:
     external: true
