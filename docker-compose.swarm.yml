@@ -23,7 +23,7 @@ services:
   # Service 1: Channel Service (WhatsApp Gateway)
   # ===================================================================================
   channel-service:
-    image: ghcr.io/mygads/govconnect-channel-service:${IMAGE_TAG}
+    image: ghcr.io/mygads/govconnect-channel-service:${IMAGE_TAG:-latest}
     environment:
       NODE_ENV: ${NODE_ENV}
       PORT: 3001
@@ -95,7 +95,7 @@ services:
   # Service 2: AI Orchestrator (with Vector Database)
   # ===================================================================================
   ai-service:
-    image: ghcr.io/mygads/govconnect-ai-service:${IMAGE_TAG}
+    image: ghcr.io/mygads/govconnect-ai-service:${IMAGE_TAG:-latest}
     environment:
       NODE_ENV: ${NODE_ENV}
       PORT: 3002
@@ -163,7 +163,7 @@ services:
   # Service 3: Case Service (Laporan & Tiket)
   # ===================================================================================
   case-service:
-    image: ghcr.io/mygads/govconnect-case-service:${IMAGE_TAG}
+    image: ghcr.io/mygads/govconnect-case-service:${IMAGE_TAG:-latest}
     environment:
       NODE_ENV: ${NODE_ENV}
       PORT: 3003
@@ -218,7 +218,7 @@ services:
   # Service 4: Notification Service
   # ===================================================================================
   notification-service:
-    image: ghcr.io/mygads/govconnect-notification-service:${IMAGE_TAG}
+    image: ghcr.io/mygads/govconnect-notification-service:${IMAGE_TAG:-latest}
     environment:
       NODE_ENV: ${NODE_ENV}
       PORT: 3004
@@ -274,7 +274,7 @@ services:
   # Service 5: Dashboard (Next.js)
   # ===================================================================================
   dashboard:
-    image: ghcr.io/mygads/govconnect-dashboard:${IMAGE_TAG}
+    image: ghcr.io/mygads/govconnect-dashboard:${IMAGE_TAG:-latest}
     environment:
       NODE_ENV: ${NODE_ENV}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_dashboard
