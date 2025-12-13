@@ -1,32 +1,38 @@
 /**
- * API Client - Single Endpoint untuk semua service
+ * API Client - Multi-Service Direct Connection
  * 
- * Dashboard berkomunikasi ke semua backend services melalui 1 endpoint saja (Traefik)
+ * Dashboard berkomunikasi langsung ke masing-masing backend service
+ * untuk internal Docker network communication.
  * 
  * ROUTING:
  * ┌─────────────────────────────────────────────────────────────────────────────────┐
- * │  API_BASE_URL (Traefik)                                                        │
+ * │  Direct Service URLs (Internal Docker Network)                                 │
  * │  ─────────────────────────────────────────────────────────────────────────────  │
- * │  /channel/*      → Channel Service (WhatsApp, Messages)                        │
- * │  /ai/*           → AI Service (Knowledge, Documents, Embeddings)               │
- * │  /case/*         → Case Service (Laporan, Tiket, Statistics)                   │
- * │  /notification/* → Notification Service                                        │
+ * │  CHANNEL_SERVICE_URL  → Channel Service (WhatsApp, Messages)                   │
+ * │  AI_SERVICE_URL       → AI Service (Knowledge, Documents, Embeddings)          │
+ * │  CASE_SERVICE_URL     → Case Service (Laporan, Tiket, Statistics)              │
+ * │  NOTIFICATION_SERVICE_URL → Notification Service                               │
  * └─────────────────────────────────────────────────────────────────────────────────┘
  * 
  * ENVIRONMENT:
- * - Local Dev: http://localhost:80 (Traefik) atau langsung ke service
- * - Docker: http://traefik (internal Docker network)
- * - Production: https://api.govconnect.my.id
+ * - Docker: Direct service URLs (http://channel-service:3001, etc.)
+ * - Fallback: API_BASE_URL with path prefix (for backward compatibility)
  */
 
-// Single endpoint - Traefik gateway
+// Service URLs - Direct connection to each service
+export const CHANNEL_SERVICE_URL = process.env.CHANNEL_SERVICE_URL || '';
+export const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
+export const CASE_SERVICE_URL = process.env.CASE_SERVICE_URL || '';
+export const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || '';
+
+// Fallback to single endpoint (backward compatibility)
 export const API_BASE_URL = process.env.API_BASE_URL || 'http://traefik';
 export const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'govconnect-internal-2025-secret';
 
 // Auth token storage
 let authToken: string | null = null;
 
-// Service path prefixes
+// Service path prefixes (for fallback mode)
 export const ServicePath = {
   CHANNEL: '/channel',
   AI: '/ai',
@@ -36,12 +42,29 @@ export const ServicePath = {
 
 export type ServicePathType = typeof ServicePath[keyof typeof ServicePath];
 
+// Map service path to direct URL
+const serviceUrlMap: Record<ServicePathType, string> = {
+  '/channel': CHANNEL_SERVICE_URL,
+  '/ai': AI_SERVICE_URL,
+  '/case': CASE_SERVICE_URL,
+  '/notification': NOTIFICATION_SERVICE_URL,
+};
+
 /**
  * Build full URL untuk service
+ * Prioritas: Direct service URL > API_BASE_URL with path prefix
  */
 export function buildUrl(service: ServicePathType, path: string): string {
   // Pastikan path dimulai dengan /
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  
+  // Use direct service URL if available
+  const directUrl = serviceUrlMap[service];
+  if (directUrl) {
+    return `${directUrl}${normalizedPath}`;
+  }
+  
+  // Fallback to API_BASE_URL with path prefix
   return `${API_BASE_URL}${service}${normalizedPath}`;
 }
 
