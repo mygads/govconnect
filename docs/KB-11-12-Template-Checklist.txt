@@ -1,0 +1,441 @@
+# KNOWLEDGE BASE SISTEM CHATBOT PELAYANAN PUBLIK
+## Dokumen 11-12: TEMPLATE SURAT & CHECKLIST VALIDASI DOKUMEN
+
+---
+
+## DOKUMEN 11: TEMPLATE EMAIL & SURAT RESMI
+
+### **TEMPLATE 1: EMAIL PERTANYAAN UMUM KE DISDUKCAPIL**
+
+```
+Subjek: Pertanyaan Mengenai Pengurusan [JENIS LAYANAN]
+
+Kepada Yth. Disdukcapil Kota Bandung,
+
+Saya bernama [NAMA LENGKAP] dengan NIK [NIK/nomor identitas].
+
+Saya ingin menanyakan mengenai prosedur pengurusan [JENIS LAYANAN: contoh: KTP-el baru/Surat Pindah/Akta Kelahiran terlambat].
+
+Berikut detail yang saya lampirkan:
+- Jenis layanan: [SEBUTKAN]
+- Alasan pengurusan: [SEBUTKAN]
+- Data pribadi: [NAMA, TTL, NIK, ALAMAT]
+- Dokumen yang akan saya bawa: [SEBUTKAN DOKUMEN]
+
+Berapa lama waktu yang diperlukan untuk pengurusan ini? Apakah ada persyaratan tambahan yang belum saya sebutkan?
+
+Terima kasih atas perhatian dan bantuan Bapak/Ibu.
+
+Hormat saya,
+[NAMA LENGKAP]
+[NOMOR TELEPON]
+[EMAIL]
+```
+
+---
+
+### **TEMPLATE 2: EMAIL LAPORAN PENGADUAN LAYANAN**
+
+```
+Subjek: PENGADUAN PELAYANAN DISDUKCAPIL - [TANGGAL KEJADIAN]
+
+Kepada Yth. Disdukcapil Kota Bandung,
+
+Saya bernama [NAMA LENGKAP], NIK [NIK], menngajukan pengaduan formal mengenai:
+
+**A. IDENTITAS PELAPOR**
+- Nama: [NAMA LENGKAP]
+- NIK: [NIK]
+- No. HP: [NOMOR TELEPON]
+- Email: [EMAIL]
+
+**B. DETAIL KEJADIAN**
+- Tanggal Kejadian: [TANGGAL & JAM]
+- Lokasi: [KANTOR PUSAT/KECAMATAN MANA]
+- Nama Petugas: [NAMA JIKA DIKETAHUI/DESKRIPSI PENAMPILAN]
+- Nomor Loket: [NOMOR JIKA DIKETAHUI]
+
+**C. KRONOLOGI KEJADIAN**
+[JELASKAN DETAIL APA YANG TERJADI - MINIMAL 3-5 KALIMAT]
+
+Contoh: Saya datang untuk membuat Surat Pindah pada tanggal [X]. Saya sudah membawa semua dokumen yang diminta. Namun, petugas [DESKRIPSI APA YANG TERJADI - contoh: tidak ramah, meminta biaya tambahan, dokumen tidak jadi tepat waktu, dll].
+
+**D. BUKTI PENDUKUNG**
+- Foto/screenshot: [JIKA ADA, JELASKAN]
+- Bukti pembayaran: [JIKA ADA]
+- Nomor antrian: [JIKA MASIH DISIMPAN]
+- Saksi: [NAMA SAKSI JIKA ADA]
+
+**E. TINDAKAN YANG DIHARAPKAN**
+[SEBUTKAN SOLUSI YANG DIINGINKAN]
+- Permintaan maaf dari petugas
+- Pengembalian biaya (jika ada yang dikenakan tidak sesuai)
+- Perbaikan dokumen
+- Tindakan tegas ke petugas
+- [SESUAIKAN DENGAN KASUS]
+
+Saya berharap pengaduan ini ditanggapi dalam waktu [SEBUTKAN: contoh 7 hari, 14 hari] dan diberikan solusi yang adil.
+
+Demikian pengaduan saya, terima kasih.
+
+Hormat saya,
+[NAMA LENGKAP]
+[NOMOR TELEPON]
+[EMAIL]
+
+---
+Lampiran: [SEBUTKAN DOKUMEN/BUKTI YANG DILAMPIRKAN]
+```
+
+---
+
+### **TEMPLATE 3: SURAT PERNYATAAN PENGAJUAN [STANDAR FORMAT]**
+
+```
+SURAT PERNYATAAN
+
+Yang bertanda tangan di bawah ini:
+
+Nama            : [NAMA LENGKAP]
+Tempat/Tgl Lahir: [TEMPAT, TANGGAL BULAN TAHUN]
+Jenis Kelamin   : [LAKI-LAKI/PEREMPUAN]
+NIK             : [NIK - 16 DIGIT]
+Alamat Rumah    : [ALAMAT LENGKAP]
+Pekerjaan       : [PEKERJAAN]
+Agama           : [AGAMA]
+
+Dengan ini menyatakan bahwa:
+
+1. [URAIAN PERNYATAAN SESUAI KEPERLUAN]
+   Contoh: "Saya belum pernah membuat Surat Pindah sebelumnya"
+   atau "Data saya sudah terdaftar di Sistem SIAK"
+   atau "Saya adalah orang tua dari anak bernama [NAMA ANAK]"
+
+2. Semua data yang saya sampaikan adalah BENAR dan DAPAT DIPERTANGGUNGJAWABKAN.
+
+3. Apabila di kemudian hari terbukti ada data atau informasi yang tidak benar, saya bersedia menerima sanksi sesuai hukum yang berlaku.
+
+4. Surat Pernyataan ini saya buat dengan sadar dan tanpa paksaan dari siapa pun.
+
+Demikian Surat Pernyataan ini saya buat untuk keperluan [SEBUTKAN KEPERLUAN].
+
+[KOTA], [TANGGAL BULAN TAHUN]
+
+                                    Pihak yang Menyatakan,
+
+
+                                    [NAMA LENGKAP]
+                                    Cap/Jempol Tangan
+
+Diketahui,
+
+Petugas RT/RW/Kelurahan:            Disdukcapil Kota Bandung:
+
+_______________________            _______________________
+```
+
+---
+
+## DOKUMEN 12: CHECKLIST VALIDASI DOKUMEN UNTUK CS AI
+
+### **A. CHECKLIST VALIDASI KTP-el BARU**
+
+**SYARAT UMUM**:
+- [ ] Pemohon berusia minimal 17 tahun ATAU sudah menikah
+- [ ] Pemohon memiliki NIK yang valid di sistem SIAK
+- [ ] Kartu Keluarga (KK) pemohon aktif & tercatat
+
+**DOKUMEN YANG HARUS DIBAWA**:
+- [ ] Fotokopi Kartu Keluarga (halaman 1 & 2, terang & jelas)
+- [ ] Pas foto 4x6 cm:
+  - [ ] Berwarna
+  - [ ] Latar merah
+  - [ ] Muka jelas & menghadap ke depan
+  - [ ] Ekspresi netral/senyum alami
+  - [ ] Tidak memakai topi/aksesoris penuh wajah
+  - [ ] Tidak menggunakan kacamata gelap
+  - [ ] Jumlah: Minimal 3-4 lembar
+- [ ] KTP lama (jika ada/ganti):
+  - [ ] Asli untuk verifikasi
+  - [ ] Fotokopi untuk arsip
+- [ ] Bukti identitas tambahan (jika diperlukan):
+  - [ ] Surat Keterangan dari RT/RW (jika alamat berubah)
+  - [ ] Akta Cerai/Surat Nikah (jika ada perubahan status)
+
+**KONDISI DOKUMEN**:
+- [ ] Semua dokumen fotokopi di kertas putih, A4
+- [ ] Hasil fotokopi terang, dapat dibaca dengan jelas (tidak gelap/buram)
+- [ ] Fotokopi dalam kondisi rapi (tidak sobek/basah/kusam)
+- [ ] Jika ada dokumen asli, dibawa dalam kondisi baik
+
+**VERIFIKASI DATA**:
+- [ ] Nama pemohon di SIAK sama dengan di KK
+- [ ] NIK pemohon valid & tidak duplikat
+- [ ] Alamat pemohon di KK sesuai dengan data terbaru
+- [ ] Status perkawinan tercatat di sistem
+- [ ] Tidak ada catatan negatif/masalah administrasi
+
+**HASIL VALIDASI**:
+- [ ] ✅ VALID - Semua syarat terpenuhi, lanjut ke proses perekaman
+- [ ] ❌ TIDAK VALID - Ada yang kurang, sebutkan apa yang perlu dilengkapi
+
+**CATATAN PETUGAS**: [ISI JIKA ADA MASALAH/KETERANGAN]
+
+---
+
+### **B. CHECKLIST VALIDASI SURAT PINDAH ANTAR KELURAHAN**
+
+**SYARAT UMUM**:
+- [ ] Kepala Keluarga yang mengajukan
+- [ ] Tidak ada tunggakan retribusi/iuran di Kelurahan asal
+- [ ] Dokumentasi lengkap dari RT/RW
+
+**DOKUMEN YANG HARUS DIBAWA**:
+- [ ] Kartu Keluarga (Asli & Fotokopi):
+  - [ ] Asli untuk verifikasi
+  - [ ] Fotokopi di kertas A4, terang
+- [ ] KTP-el semua anggota keluarga (Fotokopi):
+  - [ ] Fotokopi semua anggota KK (minimal KTP KK, istri, anak)
+  - [ ] Terang & jelas
+  - [ ] Di kertas A4
+- [ ] Surat Pengantar dari RT/RW Alamat BARU:
+  - [ ] Asli/fotokopi
+  - [ ] Sudah ditanda tangan RT/RW
+  - [ ] Dengan stempel RT/RW
+  - [ ] Berisi: nama, NIK, alamat baru yang jelas
+- [ ] Bukti Kepemilikan/Sewa Rumah Alamat Baru (PILIH SALAH SATU):
+  - [ ] Sertifikat Tanah:
+    - [ ] Asli untuk verifikasi
+    - [ ] Fotokopi 2 lembar
+    - [ ] Terang & semua halaman ada
+  - [ ] Bukti Pembayaran PBB Terakhir:
+    - [ ] Fotokopi struk/bukti
+    - [ ] Sudah dibayar untuk tahun berjalan
+  - [ ] Akta Jual Beli (AJB):
+    - [ ] Asli untuk verifikasi
+    - [ ] Fotokopi 2 lembar
+  - [ ] Surat Perjanjian Sewa (jika sewa):
+    - [ ] Asli atau fotokopi
+    - [ ] Sudah ditanda tangan pemilik & penyewa
+    - [ ] Ada tanggal sewa mulai & berapa lama
+  - [ ] Fotokopi KTP Pemilik Rumah (jika sewa)
+
+**KETERANGAN DARI KELURAHAN ASAL**:
+- [ ] Surat Keterangan Tidak Ada Tunggakan:
+  - [ ] Asli dari Kelurahan
+  - [ ] Sudah ditanda tangan Lurah
+  - [ ] Dengan stempel Kelurahan
+  - [ ] Tidak lebih dari 1 bulan yang lalu
+
+**VERIFIKASI DATA**:
+- [ ] Nama kepala KK sesuai di KTP
+- [ ] Alamat asal (di KK) sudah benar
+- [ ] Semua anggota keluarga di KK tercatat
+- [ ] Tidak ada masalah administrasi/tunggakan
+- [ ] Alamat baru jelas & bisa diverifikasi RT/RW
+- [ ] Bukti kepemilikan/sewa atas nama kepala KK
+
+**KUALITAS DOKUMEN**:
+- [ ] Semua fotokopi terang & jelas
+- [ ] Tidak ada halaman yang hilang/sobek
+- [ ] Tulisan/teks dapat dibaca dengan baik
+- [ ] Ukuran kertas A4 (21 x 29.7 cm)
+
+**HASIL VALIDASI**:
+- [ ] ✅ VALID - Semua syarat terpenuhi, lanjut ke pembuatan Surat Pindah
+- [ ] ❌ TIDAK VALID - Ada yang kurang, sebutkan:
+  1. [DOKUMEN YANG KURANG]
+  2. [DOKUMEN YANG KURANG]
+  3. [DOKUMEN YANG KURANG]
+
+**CATATAN PETUGAS**: [ISI JIKA ADA MASALAH/CATATAN KHUSUS]
+
+---
+
+### **C. CHECKLIST VALIDASI PERIZINAN USAHA (NIB/SIUP)**
+
+**UNTUK PENGURUSAN NIB (NOMOR INDUK BERUSAHA)**
+
+**SYARAT UMUM**:
+- [ ] Pemohon WNI berusia minimal 18 tahun
+- [ ] Pemohon tidak dalam status pailit/pengawasan
+- [ ] Alamat usaha jelas & dapat diverifikasi
+
+**DOKUMEN NIB (PERSEORANGAN)**:
+- [ ] Fotokopi KTP:
+  - [ ] KTP asli masih berlaku
+  - [ ] Fotokopi jelas & terang
+  - [ ] Tidak ada data yang hilang/blur
+- [ ] Fotokopi KK:
+  - [ ] KK asli masih berlaku
+  - [ ] Fotokopi halaman 1 & 2
+  - [ ] Pemohon terdaftar sebagai KK/anggota
+- [ ] Surat Pernyataan (dari sistem OSS):
+  - [ ] Sudah diunduh dari portal OSS
+  - [ ] Sudah ditanda tangan tangan & cap jempol pemohon
+  - [ ] Tanggal pernyataan jelas
+
+**VERIFIKASI DATA**:
+- [ ] Nama pemohon sesuai di KTP
+- [ ] NIK pada KTP valid (16 digit)
+- [ ] Alamat di KTP jelas & lengkap
+- [ ] Data di formulir OSS sesuai KTP/KK
+- [ ] Tidak ada data yang bertanda tanya/??
+
+**UNTUK PENGURUSAN SIUP (SURAT IZIN USAHA PERDAGANGAN)**
+
+**DOKUMEN SIUP (TAMBAHAN dari NIB)**:
+- [ ] NIB (sudah diterbitkan):
+  - [ ] Fotokopi NIB
+- [ ] Bukti Sewa/Milik Tempat Usaha:
+  - [ ] Sertifikat/AJB/Surat Sewa (asli & fotokopi)
+  - [ ] Atas nama pemilik usaha atau pemilik tempat
+  - [ ] Jelas lokasi/alamat tempat usaha
+- [ ] Denah Lokasi Usaha:
+  - [ ] Gambar sederhana lokasi toko/usaha
+  - [ ] Menunjukkan lokasi di jalan, RT/RW/Kelurahan
+  - [ ] Bisa dibuat tangan, jelas & mudah dipahami
+- [ ] Surat Pernyataan Usaha:
+  - [ ] Sudah diunduh dari OSS/Dinas
+  - [ ] Ditanda tangan pemilik
+  - [ ] Sesuai jenis usaha yang ditentukan
+
+**VERIFIKASI AWAL SURVEY LAPANGAN**:
+- [ ] Alamat usaha benar-benar ada & sesuai data
+- [ ] Tempat usaha layak/memenuhi standar hygiene (untuk tertentu)
+- [ ] Tidak berada di area terlarang (sekolah, rumah sakit, zona larangan)
+- [ ] Tidak ada masalah lingkungan/gangguan tetangga
+
+**HASIL VALIDASI**:
+- [ ] ✅ VALID - Lanjut ke proses verifikasi lapangan atau penerbitan
+- [ ] ❌ TIDAK VALID - Alasan: [SEBUTKAN MASALAHNYA]
+
+**CATATAN PETUGAS/SURVEYOR**: [ISI CATATAN LAPANGAN JIKA ADA]
+
+---
+
+### **D. CHECKLIST VALIDASI AKTA KELAHIRAN (PENDAFTARAN TERLAMBAT)**
+
+**PERSYARATAN KELAHIRAN TERLAMBAT (>30 HARI)**:
+
+**DOKUMEN UTAMA**:
+- [ ] Surat Keterangan Lahir dari:
+  - [ ] Rumah Sakit (jika lahir di RS):
+    - [ ] Form ER.01 lengkap
+    - [ ] Ada tanda tangan dokter/bidan
+    - [ ] Ada stempel RS
+  - [ ] Bidan/Dukun Bayi (jika lahir di rumah):
+    - [ ] Form ER.01 lengkap
+    - [ ] Ada tanda tangan bidan
+    - [ ] Ada nama & alamat bidan yang jelas
+
+**IDENTITAS ORANG TUA**:
+- [ ] KTP Ayah (fotokopi):
+  - [ ] Masih berlaku
+  - [ ] Jelas & terang
+- [ ] KTP Ibu (fotokopi):
+  - [ ] Masih berlaku
+  - [ ] Jelas & terang
+- [ ] KK (fotokopi):
+  - [ ] Halaman 1 & 2
+  - [ ] Orang tua tercatat sebagai kepala KK/anggota
+
+**BUKU NIKAH/AKTA PERKAWINAN**:
+- [ ] Asli untuk verifikasi
+- [ ] Fotokopi 2 lembar
+- [ ] Tanggal perkawinan jelas
+- [ ] Nama orang tua sesuai KTP
+
+**UNTUK ANAK LAHIR DARI IBU BELUM MENIKAH**:
+- [ ] Surat Pernyataan dari Ibu (Form ER.05):
+  - [ ] Sudah diisi lengkap
+  - [ ] Ditanda tangan & cap jempol ibu
+- [ ] 2 Saksi Lahir:
+  - [ ] Fotokopi KTP saksi 1
+  - [ ] Fotokopi KTP saksi 2
+  - [ ] Sudah ditanda tangan kedua saksi
+- [ ] Bukti Pengakuan Anak (jika ada):
+  - [ ] Surat Pengakuan Anak dari Ayah
+  - [ ] Atau Putusan Pengadilan Pengakuan Anak
+
+**VERIFIKASI DATA KHUSUS (UNTUK TERLAMBAT)**:
+- [ ] TTL anak sudah pasti/jelas (tidak perkiraan)
+- [ ] Ada bukti medis/administrasi tempat lahir
+- [ ] Nama orang tua sesuai dokumen resmi
+- [ ] Tidak ada perubahan nama dalam permohonan
+- [ ] Bukti sahih bahwa anak ini benar-benar anak dari orang tua ini
+
+**HASIL VALIDASI**:
+- [ ] ✅ VALID - Kelengkapan cukup untuk pembuatan Akta Kelahiran Terlambat
+- [ ] ❌ TIDAK VALID - Perlu dokumen tambahan:
+  1. [DOKUMEN YANG KURANG]
+  2. [DOKUMEN YANG KURANG]
+
+**CATATAN PETUGAS**: [ISI CATATAN JIKA PERLU VERIFIKASI LEBIH LANJUT]
+
+---
+
+### **E. CHECKLIST VALIDASI UMUM (TEMPLATE FLEKSIBEL)**
+
+Dapat digunakan untuk validasi layanan apapun.
+
+**IDENTITAS PEMOHON**:
+- [ ] Nama: ________________________
+- [ ] NIK: _________________________
+- [ ] No. Telepon: __________________
+- [ ] Alamat: _______________________
+
+**JENIS LAYANAN**:
+- [ ] [SEBUTKAN JENIS LAYANAN]
+
+**KELENGKAPAN DOKUMEN**:
+- [ ] Dokumen 1: _________________ [ADA/TIDAK]
+- [ ] Dokumen 2: _________________ [ADA/TIDAK]
+- [ ] Dokumen 3: _________________ [ADA/TIDAK]
+- [ ] Dokumen 4: _________________ [ADA/TIDAK]
+- [ ] Dokumen 5: _________________ [ADA/TIDAK]
+
+**KUALITAS DOKUMEN**:
+- [ ] Semua dokumen fotokopi jelas & terang
+- [ ] Tidak ada halaman yang hilang
+- [ ] Ukuran kertas A4
+- [ ] Tidak ada tanda bukaan/kusam
+
+**VERIFIKASI DATA**:
+- [ ] Data di form sesuai dengan dokumen asli
+- [ ] Tidak ada tanda tanya/data yang tidak jelas
+- [ ] Alamat dapat diidentifikasi
+- [ ] Nama penuh & konsisten
+
+**KETERANGAN KHUSUS**:
+- [ ] [SESUAIKAN DENGAN LAYANAN]
+
+**HASIL AKHIR**:
+- [ ] ✅ VALID - LAYAK PROSES
+- [ ] ❌ TIDAK VALID - PERLU PERBAIKAN/KELENGKAPAN
+
+**JIKA TIDAK VALID, DOKUMEN YANG PERLU DILENGKAPI**:
+1. ________________________________
+2. ________________________________
+3. ________________________________
+
+**PETUGAS YANG MELAKUKAN VALIDASI**: ________________
+**TANGGAL VALIDASI**: ________________
+**TANDA TANGAN**: ________________
+
+---
+
+**PANDUAN PENGGUNAAN CHECKLIST UNTUK CS AI CHATBOT**:
+
+1. **Saat User Bertanya Persyaratan**: Gunakan checklist yang sesuai untuk menjawab dokumen apa yang perlu disiapkan
+2. **Saat User Mengupload BUKTI**: Validasi menggunakan checklist apakah dokumen sudah memenuhi syarat
+3. **Saat Ada KELENGKAPAN**: Informasikan ke user dokumen mana yang masih kurang berdasarkan checklist
+4. **Saat VALID**: Informasikan user bahwa dokumen sudah lengkap & dapat dilanjutkan ke proses berikutnya
+5. **TRACKING**: Catat tanggal validasi untuk follow-up jika ada perubahan status
+
+---
+
+**Document Version**: 1.0  
+**Last Updated**: Desember 2025  
+**Status**: Valid & Aktif untuk AI CS Validation  
+**Purpose**: Template & Checklist untuk Internal CS AI System

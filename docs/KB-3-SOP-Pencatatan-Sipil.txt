@@ -1,0 +1,648 @@
+# KNOWLEDGE BASE SISTEM CHATBOT PELAYANAN PUBLIK
+## Dokumen 3: SOP PENCATATAN SIPIL (Kelahiran, Perkawinan, Kematian, Perceraian)
+
+**Sumber**: UU No. 8 Tahun 1997 tentang Pencatatan Sipil + Perwal Bandung No. 90 Tahun 2022
+
+---
+
+## I. DEFINISI PENCATATAN SIPIL
+
+**Pencatatan Sipil** adalah pencatatan peristiwa-peristiwa penting yang dialami oleh seseorang dalam register catatan sipil pada instansi pelaksana.
+
+**Peristiwa Penting yang Dicatat**:
+1. **Kelahiran** - Anak lahir hidup
+2. **Lahir Mati** (Stillborn) - Bayi lahir dalam kondisi meninggal
+3. **Perkawinan** - Pernikahan yang sah menurut hukum
+4. **Perceraian** - Perpisahan suami-istri yang sah
+5. **Pembatalan Perkawinan** - Pembatalan nikah oleh pengadilan
+6. **Kematian** - Wafatnya seseorang
+7. **Pengakuan Anak** - Anak yang diakui oleh bapak biologis
+8. **Pengesahan Anak** - Anak yang sah setelah perkawinan orang tuanya
+9. **Pengangkatan Anak** - Adopsi anak yang sah
+10. **Perubahan Nama** - Perubahan nama lengkap
+11. **Perubahan Kewarganegaraan** - Naturalisasi atau pemberian kewarganegaraan
+
+---
+
+## II. PENCATATAN KELAHIRAN
+
+### A. DEFINISI & SYARAT CAKUPAN
+
+**Kelahiran**: Peristiwa keluarnya anak dari rahim ibu, ditandai dengan tanda-tanda kehidupan (bernafas, denyut jantung, atau gerakan otot).
+
+**Yang Harus Dicatat**:
+- Kelahiran anak dari ibu & ayah yang tercatat di Indonesia
+- Kelahiran anak dari ibu WNI & ayah WNA
+- Kelahiran anak dari ayah WNI & ibu WNA
+- Kelahiran anak dari orang tua yang belum menikah (ibu terdaftar)
+- Kelahiran anak hasil perkawinan campuran
+
+**Waktu Pencatatan**: 
+- **Ideal**: Maksimal **30 hari** sejak kelahiran (gratis)
+- **Lewat waktu**: 30 hari - 3 tahun (masih gratis tapi perlu surat keterangan)
+- **Sangat lewat**: >3 tahun (perlu permohonan pengadilan)
+
+### B. PERSYARATAN PENCATATAN KELAHIRAN
+
+#### **Jika Anak Lahir di Rumah Sakit/Klinik**:
+- Surat keterangan lahir dari rumah sakit/bidan (Form ER.01)
+- Buku nikah kedua orang tua (asli & fotokopi)
+- KTP kedua orang tua (fotokopi)
+- KK orang tua (fotokopi)
+- Kartu vaksin/akte lahir bayi (jika ada)
+
+#### **Jika Anak Lahir di Rumah**:
+- Surat keterangan lahir dari bidan/dukun bayi (Form ER.01)
+- Buku nikah kedua orang tua (asli & fotokopi)
+- KTP kedua orang tua (fotokopi)
+- KK orang tua (fotokopi)
+- 2 saksi (tetangga atau orang yang menyaksikan kelahiran) dengan fotokopi KTP
+
+#### **Anak Lahir dari Ibu Belum Menikah**:
+- Surat keterangan lahir dari rumah sakit/bidan
+- KTP ibu (asli & fotokopi)
+- KK ibu (fotokopi)
+- Surat pernyataan dari ibu (telah disediakan form)
+- 2 saksi dengan fotokopi KTP
+- **Pengakuan bapak** (Form ER.05) - jika sudah diakui
+
+#### **Anak Lahir dari Perkawinan Campuran (WNI-WNA)**:
+- Surat keterangan lahir
+- Buku nikah (yang didaftar di Dinas Catatan Sipil)
+- KTP/Paspor kedua orang tua (fotokopi)
+- Dokumen kewarganegaraan orang asing (fotokopi)
+- Surat izin dari Imigrasi (jika diperlukan)
+
+### C. PROSEDUR PENCATATAN KELAHIRAN
+
+```
+TAHAP 1: PERSIAPAN DOKUMEN (DI RUMAH)
+├─ Kumpulkan surat keterangan lahir dari rumah sakit/bidan
+├─ Fotokopi semua dokumen (KTP, KK, Buku Nikah)
+└─ Siapkan identitas 2 saksi (jika diperlukan)
+
+TAHAP 2: DATANG KE DISDUKCAPIL
+├─ Bawa asli + fotokopi semua dokumen
+├─ Ambil nomor urut antrian
+└─ Tunggu dipanggil ke loket pencatatan sipil
+
+TAHAP 3: VERIFIKASI DOKUMEN
+├─ Petugas cek kelengkapan & keaslian dokumen
+├─ Verifikasi data orang tua di sistem SIAK
+├─ Tanyakan klarifikasi jika ada yang tidak jelas
+└─ Catat dalam buku register
+
+TAHAP 4: PENGISIAN FORMULIR
+├─ Petugas isi Formulir Pencatatan Kelahiran (ER.03)
+├─ Ibu & Ayah tanda tangan formulir
+├─ 2 Saksi tanda tangan sebagai pengecek
+└─ Formulir diserahkan ke bagian pencatatan
+
+TAHAP 5: PEMBUATAN AKTA
+├─ Data diinput ke sistem Akta Sipil digital
+├─ Akta dicetak & divalidasi (tidak boleh ada typo)
+├─ Kepala Disdukcapil tandatangan & stempel
+├─ Nomor akta dicatat di register buku induk
+└─ Akta siap diserahkan
+
+TAHAP 6: SERAH TERIMA
+├─ Petugas serahkan Akta Kelahiran (asli) ke orang tua
+├─ Berikan penjelasan singkat tentang akta
+├─ Minta paraf bukti serah terima
+├─ Catat data akta di bukti terima
+└─ Arsip semua dokumen
+
+TAHAP 7: PENCETAKAN KUTIPAN AKTA
+├─ Orang tua bisa minta kutipan akta (fotokopi sah)
+├─ Gratis 2 lembar kutipan pertama
+├─ Jika perlu lebih, bayar Rp 30.000 per lembar (tarifnya bisa berubah)
+└─ Kutipan diberikan sesuai permintaan
+```
+
+**Waktu Pelayanan**: 
+- **Jika tepat waktu (< 30 hari)**: **1-2 hari kerja**
+- **Jika lewat waktu (30 hari - 3 tahun)**: **5-7 hari kerja** (perlu verifikasi lebih teliti)
+
+**Biaya**: 
+- **GRATIS** jika pencatatan dalam 30 hari sejak kelahiran
+- Biaya penjilidan untuk kutipan akta tambahan: Rp 30.000/lembar
+
+**Hasil**: 
+- Akta Kelahiran (asli)
+- Nomor Registrasi Akta Kelahiran (nomor yang unik & permanen)
+- Kutipan Akta Kelahiran (fotokopi sah yang bisa diminta)
+
+**Format Akta Kelahiran**:
+- Nama lengkap anak
+- Tempat & tanggal kelahiran
+- Nama orang tua (ayah & ibu)
+- Alamat orang tua
+- Nama 2 saksi
+- Tanda tangan pembuat akta
+- Stempel & nomor registrasi
+
+---
+
+## III. PENCATATAN PERKAWINAN
+
+### A. DEFINISI & DASAR HUKUM
+
+**Perkawinan** adalah ikatan lahir batin antara seorang pria dan wanita sebagai suami istri dengan tujuan membentuk keluarga (rumah tangga) yang bahagia dan kekal berdasarkan Ketuhanan Yang Maha Esa.
+
+**Dasar Hukum**:
+- UU No. 1 Tahun 1974 tentang Perkawinan
+- UU No. 8 Tahun 1997 tentang Pencatatan Sipil
+- UU No. 16 Tahun 2019 tentang Perubahan UU Perkawinan (usia minimal perkawinan)
+
+**Usia Minimal Perkawinan**:
+- **Pria**: Minimal 19 tahun
+- **Wanita**: Minimal 19 tahun
+- **Pengecualian**: Bisa lebih muda dengan dispensasi pengadilan (kasus khusus)
+
+### B. SYARAT-SYARAT PERKAWINAN
+
+#### **Syarat Materil**:
+1. Tidak ada hubungan darah (tidak saudara)
+2. Tidak ada hubungan semenda (tidak keluarga dari pernikahan sebelumnya)
+3. Tidak ada hubungan "sepersusuan" (tidak disusui oleh ibu yang sama)
+4. Beda jenis kelamin (satu pria & satu wanita)
+5. Tidak saling menikah karena dipaksa (persetujuan sukarela)
+6. Tidak sedang terikat dalam perkawinan lain (monogami)
+7. Jika pernah menikah sebelumnya: 
+   - Cerai: Sudah ada bukti cerai sah
+   - Duda: Istri meninggal & ada akta kematian
+
+#### **Syarat Formal**:
+1. Sudah cukup umur (lihat aturan usia)
+2. Tidak ada larangan perkawinan
+3. Ada izin orang tua (jika umur kurang dari 21 tahun)
+4. Pendaftaran awal ke Kantor Urusan Agama (KUA) atau Dinas Catatan Sipil
+5. Pengumuman perkawinan (minimal 10 hari sebelum)
+
+### C. PERSYARATAN PENDAFTARAN PERKAWINAN
+
+#### **Dokumen yang Diperlukan**:
+| Dokumen | Asli | Fotokopi | Keterangan |
+|---------|------|----------|-----------|
+| Surat Permohonan | - | ✅ | Sudah disediakan form |
+| Surat Nikah/Akta Perkawinan | ✅ | ✅ | Dari KUA/Pejabat Pencatat |
+| KTP Masing-masing | ✅ | ✅ | Yang masih berlaku |
+| Kartu Keluarga | - | ✅ | KK masing-masing pihak |
+| Buku Nikah Lama | ✅ | ✅ | Jika pernah menikah sebelumnya |
+| Akta Cerai/Kematian | ✅ | ✅ | Jika pernah menikah |
+| Izin Orang Tua | ✅ | ✅ | Jika <21 tahun (Form ER.11) |
+| Surat Dispesasi Umur | ✅ | ✅ | Jika <19 tahun |
+| Dokumen Warga Asing | ✅ | ✅ | Paspor, visa (jika WNA) |
+
+### D. PROSEDUR PENCATATAN PERKAWINAN
+
+```
+TAHAP 1: PERSIAPAN (SEBELUM MENIKAH)
+├─ Daftar di KUA (untuk pasangan muslim)
+├─ Atau Dinas Catatan Sipil (untuk pasangan non-muslim)
+├─ Pengumuman perkawinan diumumkan 10 hari
+├─ Tunggu jadwal pernikahan Anda
+└─ Pelaksanaan pernikahan (oleh KUA atau Pejabat Pencatat)
+
+TAHAP 2: SETELAH PERNIKAHAN
+├─ Ambil Surat Nikah dari KUA/Pejabat Pencatat
+├─ Kumpulkan semua dokumen persyaratan
+├─ Fotokopi dokumen
+└─ Persiapkan identitas 2 saksi (yang menyaksikan pernikahan)
+
+TAHAP 3: DATANG KE DISDUKCAPIL
+├─ Bawa asli + fotokopi semua dokumen
+├─ Bawa Surat Nikah dari KUA/Pejabat Pencatat
+├─ Ambil nomor urut antrian
+└─ Tunggu dipanggil ke loket pencatatan
+
+TAHAP 4: VERIFIKASI DOKUMEN
+├─ Petugas cek kelengkapan dokumen
+├─ Verifikasi Surat Nikah dari KUA/Pejabat Pencatat
+├─ Cek tidak ada larangan perkawinan ulang (dari sistem)
+├─ Tanyakan klarifikasi jika ada perbedaan data
+└─ Catat dalam buku register
+
+TAHAP 5: PENGISIAN FORMULIR
+├─ Petugas isi Formulir Pendaftaran Perkawinan (ER.07)
+├─ Data dari Surat Nikah dimasukkan ke formulir
+├─ Suami & Istri tanda tangan formulir
+├─ 2 Saksi tanda tangan sebagai penyaksian
+└─ Formulir diserahkan ke bagian pencatatan
+
+TAHAP 6: PEMBUATAN AKTA PERKAWINAN
+├─ Data diinput ke sistem Akta Sipil
+├─ Akta Perkawinan dicetak & divalidasi
+├─ Tidak boleh ada kesalahan data nama, tanggal, lokasi
+├─ Kepala Disdukcapil tandatangan & stempel
+├─ Nomor akta dicatat di register buku induk
+└─ Akta siap diserahkan
+
+TAHAP 7: SERAH TERIMA
+├─ Petugas serahkan Akta Perkawinan (asli) ke pasangan
+├─ Jelaskan bahwa akta ini bukti perkawinan sah
+├─ Minta paraf bukti serah terima
+├─ Catat data akta di bukti terima
+└─ Arsip semua dokumen
+```
+
+**Waktu Pelayanan**: **1-2 hari kerja** (jika dokumen lengkap)
+
+**Biaya**: GRATIS (untuk pencatatan perkawinan)
+
+**Hasil**: 
+- Akta Perkawinan (asli)
+- Nomor Registrasi Akta Perkawinan
+- Kutipan Akta Perkawinan (bisa diminta, 2 lembar gratis)
+- Update Buku Nikah dengan data Disdukcapil (jika diperlukan)
+
+---
+
+## IV. PENCATATAN KEMATIAN
+
+### A. DEFINISI & PERSYARATAN
+
+**Kematian** adalah hilangnya semua tanda-tanda kehidupan secara permanen yang terjadi setelah kelahiran hidup.
+
+**Batas Waktu Pencatatan**:
+- **Ideal**: Maksimal **30 hari** sejak kematian (gratis)
+- **Lewat waktu**: 30 hari - 5 tahun (masih bisa, perlu verifikasi lebih)
+- **Sangat lewat**: >5 tahun (perlu permohonan pengadilan)
+
+### B. PERSYARATAN PENCATATAN KEMATIAN
+
+#### **Jika Meninggal di Rumah Sakit/Klinik**:
+- Surat Keterangan Kematian dari Rumah Sakit (Form SR.01 atau SR.02)
+- KTP almarhum (asli & fotokopi)
+- Kartu Keluarga (fotokopi)
+- Surat Pernyataan dari keluarga (Form ER.26)
+- Identitas pelapor (keluarga)
+
+#### **Jika Meninggal di Rumah**:
+- Surat Keterangan Kematian dari dokter/bidan/dukun bayi (Form SR.02)
+- KTP almarhum (asli & fotokopi)
+- Kartu Keluarga (fotokopi)
+- Surat Pernyataan dari keluarga
+- 2 saksi (tetangga atau orang yang mengetahui kematian) dengan KTP
+
+#### **Kematian yang Tidak Jelas Sebabnya (Suspect)**:
+- Visum et Repertum (laporan otopsi) dari Rumah Sakit/Pemeriksa Mayat
+- Izin dari Keluarga untuk pemeriksaan
+- Laporan Polisi (jika ada indikasi kriminal)
+- Dokumen identitas almarhum
+
+#### **Kematian di Luar Negeri**:
+- Dokumen Kematian dari negara setempat
+- Dokumen Kewarganegaraan almarhum
+- Surat dari Kedutaan Indonesia setempat
+- Dokumen pengiriman jenazah (jika dibawa pulang)
+
+### C. PROSEDUR PENCATATAN KEMATIAN
+
+```
+TAHAP 1: PERSIAPAN DOKUMEN
+├─ Ambil Surat Keterangan Kematian dari rumah sakit/dokter
+├─ Fotokopi KTP almarhum
+├─ Fotokopi KK
+├─ Siapkan identitas pelapor (keluarga)
+└─ Siapkan identitas 2 saksi (jika diperlukan)
+
+TAHAP 2: DATANG KE DISDUKCAPIL/KELURAHAN
+├─ Bawa asli + fotokopi semua dokumen
+├─ Ambil nomor urut antrian
+└─ Tunggu dipanggil ke loket pencatatan
+
+TAHAP 3: VERIFIKASI DOKUMEN
+├─ Petugas cek kelengkapan dokumen
+├─ Verifikasi Surat Keterangan Kematian
+├─ Verifikasi data almarhum di sistem SIAK
+├─ Tanyakan data-data yang diperlukan (tempat mati, penyebab, dsb)
+└─ Catat dalam buku register
+
+TAHAP 4: PENGISIAN FORMULIR
+├─ Petugas isi Formulir Pendaftaran Kematian (ER.29)
+├─ Data nama, TTL, penyebab mati, tempat mati diisi
+├─ Pelapor (keluarga) tanda tangan formulir
+├─ 2 Saksi tanda tangan (jika diperlukan)
+└─ Formulir diserahkan ke bagian pencatatan
+
+TAHAP 5: PEMBUATAN AKTA KEMATIAN
+├─ Data diinput ke sistem Akta Sipil
+├─ Akta Kematian dicetak & divalidasi
+├─ Kepala Disdukcapil tandatangan & stempel
+├─ Nomor akta dicatat di register buku induk
+└─ Akta siap diserahkan
+
+TAHAP 6: SERAH TERIMA
+├─ Petugas serahkan Akta Kematian (asli) ke keluarga
+├─ Jelaskan penggunaan akta untuk keperluan administrasi
+├─ Minta paraf bukti serah terima
+├─ Catat dalam bukti terima
+└─ Arsip semua dokumen
+```
+
+**Waktu Pelayanan**: 
+- **Jika tepat waktu (< 30 hari)**: **1-2 hari kerja**
+- **Jika lewat waktu**: **3-7 hari kerja**
+
+**Biaya**: GRATIS
+
+**Hasil**: 
+- Akta Kematian (asli)
+- Nomor Registrasi Akta Kematian
+- Kutipan Akta Kematian (dapat diminta, 2 lembar gratis)
+
+**Penggunaan Akta Kematian**:
+- Pengurusan waris & warisan
+- Klaim asuransi
+- Pengurusan pensiun
+- Perpajakan warisan
+- Pencairan tabungan almarhum
+- Pengurusan administrasi lainnya
+
+---
+
+## V. PENCATATAN PERCERAIAN
+
+### A. DEFINISI & DASAR HUKUM
+
+**Perceraian** adalah putusnya perkawinan karena ada keputusan pengadilan yang berkekuatan hukum tetap.
+
+**Dasar Hukum**:
+- UU No. 1 Tahun 1974 tentang Perkawinan (Pasal 38-41)
+- KHI (Kompilasi Hukum Islam) - untuk pasangan muslim
+- UU No. 8 Tahun 1997 tentang Pencatatan Sipil
+
+**Jenis Perceraian**:
+1. **Cerai Talak** - Inisiatif suami (untuk pasangan muslim)
+2. **Cerai Gugat** - Inisiatif istri
+3. **Cerai Melalui Pengadilan Negeri** - Untuk pasangan non-muslim
+
+### B. PERSYARATAN PENCATATAN PERCERAIAN
+
+#### **Dokumen yang Diperlukan**:
+- Surat Putusan Pengadilan (Penetapan Cerai) yang sudah berkekuatan hukum tetap
+- Buku Nikah (asli & fotokopi)
+- KTP mantan suami (fotokopi)
+- KTP mantan istri (fotokopi)
+- KK (fotokopi)
+- Akta Perkawinan (fotokopi)
+- Surat Keterangan Cerai dari Pengadilan/Catatan Sipil
+- Identitas pelapor (salah satu pihak)
+
+### C. PROSEDUR PENCATATAN PERCERAIAN
+
+```
+TAHAP 1: PERSIAPAN SETELAH PUTUSAN PENGADILAN
+├─ Tunggu putusan pengadilan menjadi tetap (14 hari)
+├─ Ambil salinan putusan dari Pengadilan
+├─ Fotokopi semua dokumen (Buku Nikah, KTP, KK)
+└─ Siapkan pelapor (salah satu pihak)
+
+TAHAP 2: DATANG KE DISDUKCAPIL
+├─ Bawa asli + fotokopi semua dokumen
+├─ Bawa Putusan Pengadilan original atau salinan resmi
+├─ Ambil nomor urut antrian
+└─ Tunggu dipanggil ke loket pencatatan
+
+TAHAP 3: VERIFIKASI DOKUMEN
+├─ Petugas cek kelengkapan dokumen
+├─ Verifikasi Putusan Pengadilan (asli atau salinan resmi)
+├─ Cek Buku Nikah & data perkawinan di sistem
+├─ Tanyakan tanggal putusan & alasan perceraian
+└─ Catat dalam buku register
+
+TAHAP 4: PENGISIAN FORMULIR
+├─ Petugas isi Formulir Pencatatan Perceraian (ER.36)
+├─ Data dari Putusan Pengadilan & Buku Nikah dimasukkan
+├─ Mantan Suami atau Mantan Istri tanda tangan (pelapor)
+└─ Formulir diserahkan ke bagian pencatatan
+
+TAHAP 5: PEMBUATAN AKTA PERCERAIAN
+├─ Data diinput ke sistem Akta Sipil
+├─ Akta Perceraian dicetak & divalidasi
+├─ Kepala Disdukcapil tandatangan & stempel
+├─ Nomor akta dicatat di register buku induk
+├─ Buku Nikah lama diperbarui/dibatalkan
+└─ Akta siap diserahkan
+
+TAHAP 6: SERAH TERIMA
+├─ Petugas serahkan Akta Perceraian ke pelapor
+├─ Serahkan Buku Nikah yang sudah diubah statusnya
+├─ Jelaskan bahwa sekarang mereka berstatus janda/duda
+├─ Minta paraf bukti serah terima
+└─ Arsip semua dokumen
+```
+
+**Waktu Pelayanan**: **1-2 hari kerja** (jika dokumen lengkap & Putusan Pengadilan sudah tetap)
+
+**Biaya**: GRATIS
+
+**Hasil**: 
+- Akta Perceraian (asli)
+- Nomor Registrasi Akta Perceraian
+- Buku Nikah yang sudah diubah statusnya
+- Kutipan Akta Perceraian (dapat diminta)
+
+**Catatan Penting**:
+- Hanya Putusan Pengadilan yang sudah mempunyai kekuatan hukum tetap yang dapat dicatat
+- Jika masih dalam proses banding, belum bisa dicatat
+- Perceraian tidak sah jika belum dicatat di Disdukcapil
+- Setelah cerai, Anda berstatus janda/duda & bisa menikah lagi (tapi tunggu masa tunggu/idah dahulu jika perlu)
+
+---
+
+## VI. PENCATATAN PENGAKUAN ANAK
+
+### A. DEFINISI
+
+**Pengakuan Anak** adalah perbuatan hukum seorang pria untuk mengakui anak di luar nikah sebagai anak sah, yang dilakukan sesuai dengan peraturan perundang-undangan.
+
+**Anak yang Diakui**:
+- Anak yang lahir dari ibu WNI & ayah WNA
+- Anak yang lahir dari ibu belum menikah
+- Anak yang lahir sebelum orang tuanya menikah
+- Anak yang lahir dari perkawinan yang belum tercatat
+
+### B. PERSYARATAN PENGAKUAN ANAK
+
+#### **Dokumen yang Diperlukan**:
+- Akta Kelahiran anak (asli & fotokopi)
+- Surat Pernyataan Pengakuan Anak (Form ER.09) - dari ayah
+- KTP Ayah (asli & fotokopi)
+- KK Ayah (fotokopi)
+- Buku Nikah (asli & fotokopi) - jika orang tua sudah menikah
+- Identitas ibu (KTP fotokopi)
+- Persetujuan ibu tertulis
+- 2 Saksi dengan KTP
+
+### C. PROSEDUR PENCATATAN PENGAKUAN ANAK
+
+```
+TAHAP 1: PERSIAPAN DOKUMEN
+├─ Siapkan Formulir Pengakuan Anak (ER.09)
+├─ Ibu & Ayah sepakat untuk mengakui
+├─ Kumpulkan semua dokumen (Akta Kelahiran, KTP, KK)
+├─ Fotokopi semua dokumen
+└─ Siapkan identitas 2 saksi
+
+TAHAP 2: DATANG KE DISDUKCAPIL
+├─ Bawa asli + fotokopi semua dokumen
+├─ Bawa Akta Kelahiran anak
+├─ Ambil nomor urut antrian
+└─ Tunggu dipanggil ke loket pencatatan
+
+TAHAP 3: VERIFIKASI DOKUMEN
+├─ Petugas cek kelengkapan dokumen
+├─ Verifikasi Akta Kelahiran di sistem
+├─ Tanyakan hubungan ayah biologis dengan anak
+├─ Tanyakan apakah sudah ada pengakuan sebelumnya
+└─ Catat dalam buku register
+
+TAHAP 4: PENGISIAN FORMULIR
+├─ Petugas isi Formulir Pengakuan Anak (ER.09)
+├─ Ayah biologi tanda tangan formulir sebagai pengaku
+├─ Ibu tanda tangan sebagai persetujuan
+├─ 2 Saksi tanda tangan
+└─ Formulir diserahkan ke bagian pencatatan
+
+TAHAP 5: PEMBUATAN AKTA PENGAKUAN
+├─ Data diinput ke sistem Akta Sipil
+├─ Akta Pengakuan Anak dicetak & divalidasi
+├─ Kepala Disdukcapil tandatangan & stempel
+├─ Data anak di Akta Kelahiran diperbarui (nama ayah ditambahkan)
+├─ Nomor akta dicatat di register buku induk
+└─ Akta siap diserahkan
+
+TAHAP 6: SERAH TERIMA
+├─ Petugas serahkan Akta Pengakuan Anak ke ayah
+├─ Serahkan Akta Kelahiran yang sudah diperbarui
+├─ Jelaskan bahwa anak sekarang mempunyai ayah sah
+├─ Minta paraf bukti serah terima
+└─ Arsip semua dokumen
+```
+
+**Waktu Pelayanan**: **1-3 hari kerja**
+
+**Biaya**: GRATIS
+
+**Hasil**: 
+- Akta Pengakuan Anak (asli)
+- Akta Kelahiran yang diperbarui dengan nama ayah
+- Nomor Registrasi Akta Pengakuan
+
+---
+
+## VII. PERUBAHAN NAMA
+
+### A. SYARAT PERUBAHAN NAMA
+
+Perubahan nama dapat dilakukan berdasarkan alasan:
+- Untuk menghindari kerancuan dengan nama lain
+- Karena perbedaan penulisan nama
+- Perubahan agama (nama disesuaikan dengan budaya agama baru)
+- Alasan pribadi/budaya lainnya
+
+### B. PERSYARATAN
+
+#### **Dokumen Minimal**:
+- Akta Kelahiran (asli & fotokopi)
+- KTP (asli & fotokopi)
+- Permohonan Pengadilan Negeri (Penetapan Perubahan Nama)
+- 2 Saksi dengan KTP
+
+### C. PROSEDUR PERUBAHAN NAMA
+
+Prosedur sama dengan Pengakuan Anak:
+1. Persiapan dokumen & Putusan Pengadilan
+2. Datang ke Disdukcapil dengan dokumen lengkap
+3. Verifikasi dokumen di loket
+4. Isi formulir perubahan nama
+5. Pembuatan akta baru dengan nama baru
+6. Serah terima akta perubahan nama & Akta Kelahiran yang diperbarui
+
+**Waktu Pelayanan**: **1-3 hari kerja** (setelah Putusan Pengadilan tetap)
+
+**Biaya**: GRATIS
+
+---
+
+## VIII. KETENTUAN UMUM PENCATATAN SIPIL
+
+### A. BATASAN WAKTU & BIAYA
+
+| Jenis Peristiwa | Waktu Pendaftaran | Biaya |
+|-----------------|-------------------|-------|
+| Kelahiran | < 30 hari | GRATIS |
+| Kelahiran | 30 hari - 3 tahun | GRATIS (proses lebih lama) |
+| Kelahiran | > 3 tahun | Perlu Putusan Pengadilan |
+| Kematian | < 30 hari | GRATIS |
+| Kematian | 30 hari - 5 tahun | GRATIS (proses lebih lama) |
+| Kematian | > 5 tahun | Perlu Putusan Pengadilan |
+| Perkawinan | - | GRATIS |
+| Perceraian | - | GRATIS |
+| Pengakuan Anak | - | GRATIS |
+| Perubahan Nama | - | GRATIS |
+
+### B. KUTIPAN AKTA SIPIL
+
+**Definisi**: Kutipan Akta adalah fotokopi sah dari Akta Sipil yang dapat digunakan untuk keperluan administratif.
+
+**Biaya Kutipan**:
+- **2 lembar pertama**: GRATIS
+- **Lembar ke-3 dan seterusnya**: Rp 30.000 per lembar
+
+**Cara Mendapatkan Kutipan**:
+- Datang langsung ke Disdukcapil dengan membawa:
+  - KTP pemohon
+  - Akta original (jika ada)
+  - Surat permohonan (bisa diisi di tempat)
+  - Rp 30.000 per lembar (jika lebih dari 2 lembar)
+
+**Masa Berlaku Kutipan**:
+- Kutipan Akta berlaku selamanya (selama tidak dicuri/hilang)
+- Tidak perlu diperpanjang
+- Berlaku di seluruh Indonesia & internasional (untuk keperluan tertentu)
+
+---
+
+## IX. FREKUENSI PERTANYAAN TENTANG PENCATATAN SIPIL
+
+**Q: Berapa lama akta kelahiran terbit?**
+A: Jika mendaftar dalam 30 hari pertama, biasanya terbit 1-2 hari kerja.
+
+**Q: Apa jika saya terlambat mendaftar kelahiran anak?**
+A: Bisa diperpanjang sampai 3 tahun. Prosesnya lebih lama (5-7 hari) karena perlu verifikasi khusus.
+
+**Q: Boleh ganti nama di KTP setelah perubahan nama dicatat?**
+A: Ya, setelah Akta Perubahan Nama diterbitkan, Anda bisa membuat KTP-el baru dengan nama baru. Dokumen lama tetap berlaku sampai masa berlaku habis.
+
+**Q: Bagaimana jika anak lahir sebelum orang tuanya menikah?**
+A: Anak bisa dicatat atas nama ibu. Setelah orang tua menikah, bisa dilakukan Pengakuan Anak oleh ayah agar nama ayah tercantum.
+
+**Q: Apakah Akta Kematian diperlukan untuk semua keperluan waris?**
+A: Ya, untuk pengurusan waris harus ada Akta Kematian dari Disdukcapil. Ini bukti resmi kematian seseorang.
+
+---
+
+## X. LOKASI & KONTAK PENCATATAN SIPIL
+
+**DISDUKCAPIL KOTA BANDUNG - BAGIAN PENCATATAN SIPIL**
+
+Alamat: Jl. Kampung Baru, Bandung  
+Telepon: (022) XXXX-XXXX (bagian sipil)  
+Email: sipil@disdukcapil.bandung.go.id  
+Website: disdukcapil.bandung.go.id
+
+**Jam Kerja**:
+- Senin - Jumat: 08:00 - 16:00 WIB (istirahat 12:00-13:00)
+- Sabtu: 08:00 - 12:00 WIB
+- Minggu & Hari Libur: TUTUP
+
+---
+
+**Document Version**: 1.0  
+**Last Updated**: Desember 2025  
+**Source**: UU No. 8/1997 tentang Pencatatan Sipil + Perwal Bandung No. 90/2022  
+**Status**: Valid & Aktif  
+**Next Document**: KB-4-SOP-Surat-Pindah

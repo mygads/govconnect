@@ -1,0 +1,282 @@
+# KNOWLEDGE BASE SISTEM CHATBOT PELAYANAN PUBLIK
+## Dokumen 4: SOP LAYANAN SURAT PINDAH & ADMINISTRASI PINDAH DATANG
+
+**Sumber**: Perwal Bandung No. 90 Tahun 2022 + UU No. 8 Tahun 1997
+
+---
+
+## I. LAYANAN SURAT PINDAH DOMISILI
+
+### A. DEFINISI & JENIS
+
+**Surat Pindah** adalah surat keterangan yang menyatakan penduduk pindah dari satu alamat ke alamat lain.
+
+**Jenis Surat Pindah**:
+1. **Surat Pindah Antar Kelurahan (Dalam Kecamatan)** - Pindah dalam 1 kecamatan
+2. **Surat Pindah Antar Kecamatan (Dalam Kota)** - Pindah dalam Kota Bandung tapi kecamatan beda
+3. **Surat Pindah Antar Daerah (Luar Kota)** - Pindah ke kota/kabupaten lain di Jawa Barat
+4. **Surat Pindah Keluar Provinsi** - Pindah ke provinsi lain di Indonesia
+5. **Surat Pindah ke Luar Negeri** - Pindah ke negara lain
+
+### B. PERSYARATAN SURAT PINDAH ANTAR KELURAHAN
+
+**Dokumen yang Diperlukan**:
+- Kartu Keluarga (asli & fotokopi)
+- KTP-el semua anggota keluarga (fotokopi)
+- Surat pengantar dari RT/RW di alamat baru (Form RT.01)
+- Bukti kepemilikan/sewa rumah di alamat baru:
+  - **Jika milik sendiri**: Sertifikat tanah, bukti pembayaran PBB, atau risalah tanah
+  - **Jika sewa**: Surat perjanjian sewa & fotokopi KTP pemilik
+  - **Jika menumpang**: Surat persetujuan pemilik rumah
+- Surat Keterangan Tidak Ada Tunggakan dari Kelurahan/RT lama
+
+**Tidak perlu biaya untuk surat pindah.**
+
+### C. PROSEDUR PENGAJUAN SURAT PINDAH ANTAR KELURAHAN
+
+```
+TAHAP 1: PERSIAPAN DI RUMAH LAMA
+├─ Ambil surat pengantar dari RT lama (Form RT.01)
+├─ Dapatkan surat keterangan tidak ada tunggakan
+├─ Fotokopi semua dokumen (KK, KTP, bukti sewa/milik)
+└─ Siapkan tanda tangan kepala keluarga
+
+TAHAP 2: DATANG KE KELURAHAN ALAMAT LAMA
+├─ Bawa asli + fotokopi semua dokumen
+├─ Isi formulir permohonan surat pindah (F-KP-01)
+├─ Kepala keluarga tanda tangan formulir
+├─ Serahkan ke petugas kelurahan
+└─ Tunggu proses verifikasi (biasanya langsung)
+
+TAHAP 3: VERIFIKASI PETUGAS KELURAHAN LAMA
+├─ Petugas verifikasi data di sistem SIAK
+├─ Cek tidak ada tunggakan retribusi/iuran
+├─ Verifikasi alamat lama di KK sudah sesuai
+├─ Lihat apakah ada masalah administrasi
+└─ Jika OK, lanjut ke tahap 4
+
+TAHAP 4: PEMBUATAN SURAT PINDAH
+├─ Petugas input data pindah ke sistem SIAK
+├─ Surat Pindah dicetak (biasanya Form SKP)
+├─ Kepala Kelurahan / Lurah tandatangan & stempel
+├─ Nomor surat dicatat di register buku pindah
+└─ Surat siap diserahkan
+
+TAHAP 5: SERAH TERIMA SURAT PINDAH
+├─ Petugas serahkan Surat Pindah ke pemohon
+├─ Jelaskan proses selanjutnya di kelurahan baru
+├─ Minta paraf bukti serah terima
+└─ Catat waktu penerimaan surat
+
+TAHAP 6: MENDAFTAR DI KELURAHAN ALAMAT BARU
+├─ Datang ke Kelurahan alamat baru
+├─ Bawa Surat Pindah dari Kelurahan lama
+├─ Bawa bukti kepemilikan/sewa rumah baru
+├─ Bawa KK & KTP keluarga
+└─ Tunggu dipanggil petugas registrasi
+
+TAHAP 7: VERIFIKASI DI KELURAHAN BARU
+├─ Petugas verifikasi Surat Pindah dari kelurahan lama
+├─ Verifikasi bukti kepemilikan/sewa rumah baru
+├─ Cek alamat tujuan sudah sesuai
+├─ Tanyakan data-data penduduk pindatan
+└─ Catat dalam buku daftar pindatan
+
+TAHAP 8: UPDATE DATA DI SISTEM SIAK
+├─ Petugas input data pindatan ke sistem SIAK
+├─ KK & KTP diresgister di alamat baru
+├─ Data lama di kelurahan asal otomatis ter-update
+├─ Sistem SIAK sinkronisasi antar kelurahan
+└─ Proses selesai
+```
+
+**Waktu Pelayanan**: 
+- **Surat Pindah dari Kelurahan lama**: **1 hari kerja** (kadang langsung jadi)
+- **Update data di kelurahan baru**: **1-2 hari kerja**
+
+**Biaya**: GRATIS
+
+**Hasil**: 
+- Surat Keterangan Pindah (SKP) dari Kelurahan asal
+- KK & KTP ter-update alamat baru di sistem
+
+---
+
+### D. PROSEDUR SURAT PINDAH ANTAR KECAMATAN / ANTAR DAERAH
+
+```
+Prosedur sama dengan ANTAR KELURAHAN, hanya:
+
+PERBEDAAN:
+├─ Jika antar kecamatan di Kota Bandung:
+│  └─ Verifikasi bisa melalui UPTD Disdukcapil Kecamatan
+│  
+├─ Jika antar daerah (kota/kabupaten lain):
+│  ├─ Surat Pindah dibuat di Disdukcapil asal
+│  ├─ Keluarga harus mendatangi Disdukcapil tujuan
+│  └─ Bawa Surat Pindah asli dari Disdukcapil asal
+│
+└─ Waktu pelayanan bisa lebih lama (3-5 hari) karena koordinasi antar dinas
+```
+
+---
+
+### E. SURAT PINDAH KE LUAR NEGERI
+
+**Persyaratan Tambahan**:
+- Paspor (asli & fotokopi)
+- Visa/Izin Tinggal di negara tujuan (fotokopi)
+- Dokumen sponsorship (jika ada)
+- Surat pengantar dari kedutaan/konsulat (jika ada)
+
+**Proses**:
+1. Persiapan dokumen (KK, KTP, Paspor, Visa, bukti sponsor)
+2. Datang ke Disdukcapil (bukan kelurahan)
+3. Isi formulir Surat Pindah Luar Negeri
+4. Verifikasi dokumen oleh petugas Disdukcapil
+5. Pembuatan Surat Pindah Luar Negeri & Dokumen Konsuler Lainnya
+6. Serah terima dokumen
+
+**Waktu**: **3-5 hari kerja**
+
+**Catatan**: Jika pulang dari luar negeri, perlu daftar ulang di Disdukcapil dengan membawa:
+- Paspor (asli & fotokopi)
+- Surat Keterangan Pindah dari Kedutaan (SKPLN)
+- Akta Kelahiran (jika ada)
+- Surat pengantar RT/RW
+
+---
+
+## II. PERUBAHAN ALAMAT (TANPA PINDAH KELURAHAN)
+
+### A. DEFINISI
+
+**Perubahan Alamat** adalah perubahan no. rumah atau nama jalan dalam 1 kelurahan yang sama (masih di Kelurahan A, tapi no. rumah atau alamatnya berubah).
+
+### B. PERSYARATAN
+
+- Kartu Keluarga (asli & fotokopi)
+- KTP semua anggota keluarga (fotokopi)
+- Surat keterangan dari RT/RW lama
+- Surat keterangan dari RT/RW baru
+- Bukti perubahan alamat (jika ada, contoh: surat dari dinas tata ruang)
+
+### C. PROSEDUR
+
+```
+1. DATANG KE KELURAHAN
+2. ISI FORMULIR PERUBAHAN ALAMAT
+3. VERIFIKASI PETUGAS
+4. UPDATE DATA DI SISTEM SIAK
+5. CETAK KK & KTP BARU (JIKA DIPERLUKAN)
+6. SERAH TERIMA
+```
+
+**Waktu**: **1 hari kerja**  
+**Biaya**: GRATIS
+
+---
+
+## III. PENGURUSAN KEPINDAHAN ANTAR KELURAHAN UNTUK KTP-el BARU
+
+Setelah pindah, Anda bisa membuat KTP-el baru dengan alamat baru.
+
+**Persyaratan**:
+- Surat Pindah dari Kelurahan asal
+- KK baru (sudah ter-update alamat baru)
+- Pas foto 4x6 (latar merah)
+- KTP-el lama (jika ada)
+
+**Proses sama dengan Penerbitan KTP-el pada Dokumen 2**
+
+---
+
+## IV. PERSYARATAN KHUSUS UNTUK KATEGORI TERTENTU
+
+### A. **PINDAH DARI LUAR NEGERI**
+
+**Persyaratan Tambahan**:
+- Paspor (asli & fotokopi)
+- Surat Keterangan Pindah dari Kedutaan/Konsulat (SKPLN)
+- Akta Kelahiran (asli & fotokopi)
+- Bukti kepemilikan/sewa rumah di Indonesia
+
+### B. **PINDAH SEBAGAI PENCARI KERJA**
+
+**Persyaratan Tambahan**:
+- Surat sponsorship dari pemberi kerja / perusahaan
+- Kontrak kerja (fotokopi)
+- Surat domisili dari perusahaan
+
+### C. **PINDAH DENGAN KELUARGA BESAR**
+
+Setiap anggota keluarga harus tercatat di KK & memiliki KTP sendiri (minimal 17 tahun atau sudah kawin).
+
+**Jika ada anggota keluarga yang belum tercatat**:
+- Harus didaftarkan di Disdukcapil asal terlebih dahulu
+- Baru bisa pindah bersama keluarga
+
+---
+
+## V. KESALAHAN UMUM & CARA MENGATASINYA
+
+### Kesalahan: Data di KK Tidak Sesuai dengan Surat Pindah
+
+**Solusi**:
+1. Minta koreksi data di Kelurahan asal
+2. Buat Surat Pindah baru yang benar
+3. Daftarkan ke Kelurahan baru
+
+### Kesalahan: Alamat di Surat Pindah Tidak Jelas
+
+**Solusi**:
+1. Ambil surat pengantar RT/RW baru yang jelas
+2. Datang ke Kelurahan asal untuk perbaikan
+3. Minta Surat Pindah yang sudah diperbaiki
+
+### Kesalahan: Dokumen Bukti Milik/Sewa Rumah Tidak Ada
+
+**Solusi**:
+- **Jika punya tanah/sertifikat**: Bawa sertifikat
+- **Jika sewa**: Buat surat perjanjian sewa & minta tanda tangan pemilik
+- **Jika menumpang**: Minta surat persetujuan dari pemilik rumah + fotokopi KTP
+
+---
+
+## VI. FREKUENSI PERTANYAAN SURAT PINDAH
+
+**Q: Berapa lama proses Surat Pindah?**
+A: Biasanya langsung 1 hari atau malah 1 jam, tergantung kesibukannya. Untuk pindah antar daerah bisa 3-5 hari.
+
+**Q: Apakah harus datang sendiri atau bisa lewat orang lain?**
+A: Bisa, tapi harus bawa surat kuasa dari kepala keluarga & fotokopi identitas penerima kuasa.
+
+**Q: Apa jika saya sudah pindah tapi lupa lapor ke kelurahan?**
+A: Segera lapor ke Kelurahan baru Anda. Bawa KK lama & bukti kepemilikan/sewa rumah baru. Petugas akan memprosesnya (mungkin perlu proses yang sedikit lebih lama karena verifikasi).
+
+**Q: Apakah harus bayar untuk Surat Pindah?**
+A: Tidak, semua gratis. Jika ada yang minta biaya, itu kejanggalan.
+
+**Q: Setelah pindah, kapan saya harus lapor?**
+A: Sebaiknya dalam 30 hari setelah pindah. Jika lebih lama, tidak apa-apa tapi prosesnya bisa lebih teliti.
+
+**Q: Apakah KTP lama masih berlaku setelah pindah?**
+A: Ya, KTP masih berlaku sampai masa berlakunya habis. Tapi sebaiknya buatkan KTP baru dengan alamat terbaru untuk keperluan administrasi.
+
+**Q: Bagaimana jika hanya pindah no. rumah dalam kelurahan yang sama?**
+A: Tidak perlu Surat Pindah formal. Cukup datang ke Kelurahan & minta perubahan alamat. Prosesnya lebih simpel & cepat.
+
+---
+
+## VII. KONTAK & LOKASI LAYANAN SURAT PINDAH
+
+**Layanan di Kelurahan**: Setiap kelurahan di Bandung  
+**Layanan di Kecamatan**: UPTD Disdukcapil setiap kecamatan  
+**Layanan di Pusat**: Disdukcapil Kota Bandung (untuk pindah antar daerah/luar negeri)
+
+---
+
+**Document Version**: 1.0  
+**Last Updated**: Desember 2025  
+**Status**: Valid & Aktif  
+**Next Document**: KB-5-SOP-Perizinan-Usaha

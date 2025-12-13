@@ -1,0 +1,635 @@
+# KNOWLEDGE BASE SISTEM CHATBOT PELAYANAN PUBLIK
+## Dokumen 2: SOP LAYANAN ADMINISTRASI KEPENDUDUKAN (KK, KTP-el, KIA)
+
+**Sumber**: Perwal Kota Bandung No. 90 Tahun 2022 tentang Administrasi Kependudukan
+
+---
+
+## I. LAYANAN ADMINISTRASI KEPENDUDUKAN DI KOTA BANDUNG
+
+Administrasi Kependudukan adalah rangkaian kegiatan penataan & penertiban dalam:
+- **Penerbitan Dokumen Kependudukan**
+- **Pendaftaran Penduduk**
+- **Pencatatan Sipil**
+- **Pengelolaan Informasi**
+
+**Penyelenggara**: Dinas Kependudukan dan Pencatatan Sipil (Disdukcapil) Kota Bandung
+
+**Tempat Pelayanan**:
+1. Kantor Disdukcapil Pusat (Jl. Kampung Baru)
+2. UPTD Disdukcapil di Kecamatan
+3. Kelurahan (petugas registrasi)
+4. **Geulis** (Gerai Layanan Istimewa) di Mall/DPRD
+5. **Mepeling** (Mobil Pelayanan Keliling) ke berbagai lokasi
+
+---
+
+## II. JENIS-JENIS LAYANAN ADMINISTRASI KEPENDUDUKAN
+
+### A. PENDAFTARAN PENDUDUK (Jenis Layanan Utama)
+
+#### 1. **PENCATATAN BIODATA PENDUDUK**
+
+**Untuk siapa?**
+- Warga Negara Indonesia (WNI) di Kota Bandung
+- WNI dari luar Kota Bandung yang pindah ke Bandung
+- Orang Asing (WNA) dengan Izin Tinggal Terbatas atau Tetap
+
+**Persyaratan**:
+| Kategori | Persyaratan |
+|----------|-----------|
+| **WNI Baru** | • Surat pengantar RT/RW<br>• Dokumen bukti peristiwa penting<br>• Bukti pendidikan terakhir |
+| **WNI Pindah dari Luar Negeri** | • Paspor/Dokumen perjalanan RI<br>• Surat Keterangan Pindah dari Kedutaan (SKPLN) |
+| **Orang Asing** | • Paspor/Dokumen perjalanan<br>• Izin Tinggal Terbatas/Tetap |
+
+**Prosedur Pendaftaran**:
+```
+1. PEMOHON MENGISI FORMULIR
+   └─ Isi Form Biodata Keluarga (F-1.01)
+   └─ Tanda tangan formulir
+
+2. PERSIAPAN DOKUMEN
+   └─ Kumpulkan semua persyaratan sesuai kategori
+   └─ Fotokopi dokumen yang diperlukan
+
+3. DATANG KE KANTOR DISDUKCAPIL
+   └─ Bawa asli + fotokopi dokumen
+   └─ Ambil nomor urut antrian
+   └─ Tunggu dipanggil ke loket pendaftaran
+
+4. VERIFIKASI PETUGAS
+   └─ Petugas cek kelengkapan dokumen
+   └─ Validasi data pribadi
+   └─ Tanyakan pertanyaan klarifikasi jika perlu
+
+5. PENCATATAN DATA
+   └─ Petugas input data ke sistem SIAK
+   └─ Data diproses ke basis data kependudukan
+
+6. CETAK & VERIFIKASI
+   └─ Cetak biodata penduduk (jika diminta)
+   └─ Kepala Disdukcapil menandatangani
+   └─ Stempel resmi ditambahkan
+
+7. SERAH TERIMA
+   └─ Biodata diserahkan ke pemohon
+   └─ Beri penjelasan singkat tentang dokumen
+   └─ Minta tanda tangan/paraf bukti serah terima
+```
+
+**Waktu Pelayanan**: **1-2 hari kerja** (jika dokumen lengkap)
+
+**Biaya**: GRATIS
+
+**Hasil/Produk**: 
+- Biodata Penduduk (Printout)
+- Nomor Induk Kependudukan (NIK) yang valid
+
+---
+
+#### 2. **PENERBITAN KARTU KELUARGA (KK)**
+
+**Definisi**: Kartu Keluarga adalah kartu identitas keluarga yang memuat data nama, susunan, hubungan anggota keluarga & identitas masing-masing anggota.
+
+**Jenis Penerbitan KK**:
+
+| Jenis | Alasan | Persyaratan Khusus |
+|------|--------|-------------------|
+| **KK Baru** | • Membentuk keluarga baru<br>• Penggantian kepala keluarga<br>• Pisah KK<br>• Pindah datang<br>• Dari luar negeri<br>• Perubahan status kewarganegaraan | • Buku Nikah/Akta Perkawinan<br>• Surat Keterangan Pindah<br>• Surat pernyataan belum tercatat |
+| **KK Perubahan Data** | • Peristiwa Kependudukan (pindah, perubahan alamat)<br>• Peristiwa Penting (lahir, menikah, mati)<br>• Perubahan nama/jenis kelamin | • KK lama<br>• Bukti perubahan data<br>• Akta perubahan (jika ada) |
+| **KK Hilang/Rusak** | • KK hilang<br>• KK rusak/sobek | • Surat keterangan hilang dari Polisi<br>• KTP-el yang masih berlaku |
+
+**Prosedur Penerbitan KK**:
+
+```
+TAHAP 1: PERSIAPAN DI RUMAH
+├─ Cek jenis penerbitan KK yang dibutuhkan
+├─ Siapkan semua dokumen persyaratan
+└─ Fotokopi dokumen yang diperlukan (A4)
+
+TAHAP 2: DATANG KE DISDUKCAPIL
+├─ Bawa asli + fotokopi semua dokumen
+├─ Ambil nomor urut antrian
+└─ Tunggu dipanggil
+
+TAHAP 3: VERIFIKASI DI LOKET
+├─ Petugas cek kelengkapan dokumen
+├─ Verifikasi data di sistem SIAK
+├─ Tanyakan pertanyaan klarifikasi jika ada perbedaan data
+└─ Catat nomor urut dalam buku register
+
+TAHAP 4: PENGISIAN FORMULIR
+├─ Petugas isi form biodata keluarga (F-1.01)
+├─ Pemohon tanda tangan formulir
+└─ Diserahkan ke bagian pengolahan data
+
+TAHAP 5: PENGOLAHAN DATA
+├─ Data diinput ke sistem SIAK
+├─ Cross-check dengan data SIAK sebelumnya
+├─ Cetak draft KK untuk verifikasi
+└─ Perbaikan jika ada kesalahan
+
+TAHAP 6: PENERBITAN KK
+├─ Kepala Disdukcapil validasi & tandatangan
+├─ Stempel resmi ditambahkan pada KK
+├─ Nomor seri KK dicatat di register
+└─ KK siap diserah terima
+
+TAHAP 7: SERAH TERIMA
+├─ Petugas serahkan KK ke pemohon
+├─ Beri penjelasan singkat (no KK, masa berlaku)
+├─ Minta paraf bukti serah terima
+└─ Arsip bukti serah terima
+```
+
+**Waktu Pelayanan**: **3-5 hari kerja** (jika dokumen lengkap)
+
+**Biaya**: GRATIS (untuk penerbitan KK)
+
+**Hasil**: 
+- Kartu Keluarga (KK) Fisik
+- Nomor KK yang baru (jika KK baru)
+
+**Format KK**:
+- **Ukuran**: A4 (210 mm x 297 mm)
+- **Warna**: Putih dengan header warna biru
+- **Berisi**: Nama kepala KK, anggota keluarga, hubungan keluarga, NIK, status perkawinan, pekerjaan, agama, pendidikan, tempat/tanggal lahir, alamat domisili
+
+---
+
+#### 3. **PENERBITAN KARTU TANDA PENDUDUK ELEKTRONIK (KTP-el)**
+
+**Definisi**: KTP-el adalah identitas resmi penduduk sebagai bukti diri yang dilengkapi dengan chip elektronik.
+
+**Persyaratan Umum**:
+- Usia minimal **17 tahun** atau sudah kawin
+- Sudah memiliki NIK
+- Kartu Keluarga (KK) aktif
+- Kartu tanda bukti rekam muka (foto standar)
+- Fotokopi KK
+
+**Jenis Penerbitan KTP-el**:
+
+| Jenis | Alasan | Persyaratan Tambahan |
+|------|--------|-------------------|
+| **KTP-el Baru** | • Pertama kali membuat<br>• Ganti karena rusak/hilang<br>• Sudah 17 tahun | • Pas foto 4x6 (berwarna, latar merah)<br>• Fotokopi KK<br>• Keterangan Polisi (jika hilang) |
+| **KTP-el Pindah** | • Perpindahan alamat dalam/luar negara | • Surat Keterangan Pindah (SKP)<br>• KTP-el lama |
+| **KTP-el Perubahan Data** | • Perubahan nama (pernikahan, pengadilan)<br>• Perubahan status perkawinan | • Akta perubahan nama<br>• Surat nikah/cerai |
+| **KTP-el Perpanjangan** | • KTP-el habis masa berlaku | • KTP-el lama<br>• Pas foto terbaru<br>• KK |
+
+**Prosedur Penerbitan KTP-el**:
+
+```
+TAHAP 1: PERSIAPAN
+├─ Siapkan pas foto 4x6 (3-4 lembar), latar merah
+├─ Fotokopi KK (A4, jelas)
+├─ KTP-el lama jika ada (untuk rujukan)
+└─ Bawa asli semua dokumen
+
+TAHAP 2: DATANG KE DISDUKCAPIL ATAU KELURAHAN
+├─ Ambil nomor urut antrian
+├─ Tunggu dipanggil ke loket perekaman data
+
+TAHAP 3: VERIFIKASI DATA
+├─ Petugas verifikasi data pemohon di SIAK
+├─ Cek kecocokan data antara pemohon & SIAK
+├─ Tanyakan klarifikasi data jika ada perbedaan
+└─ Lakukan pemeriksaan dokumen persyaratan
+
+TAHAP 4: PEREKAMAN BIOMETRIK
+├─ Petugas siapkan alat perekaman (scanner sidik jari & iris mata)
+├─ Pemohon menempatkan jari pada scanner (semua jari)
+├─ Perekaman iris mata kedua mata
+├─ Pemohon tandatangan digital pada layar tablet
+└─ Data disimpan & dikirim ke pusat untuk pembuatan chip
+
+TAHAP 5: PENGISIAN FORMULIR
+├─ Petugas isi formulir permohonan (F-1.04)
+├─ Pemohon tanda tangan & paraf formulir
+└─ Formulir diserahkan ke bagian pencetak
+
+TAHAP 6: PEMBUATAN KARTU
+├─ Data & foto diproses oleh mesin cetak KTP-el
+├─ Chip elektronik diprogram & dipasang
+├─ Kartu dipotong & dilaminating
+├─ Tanda tangan digital Kepala Disdukcapil ditambahkan
+└─ KTP-el siap diserahkan
+
+TAHAP 7: SERAH TERIMA
+├─ Petugas cek kesesuaian data pada KTP-el
+├─ Serahkan KTP-el ke pemohon
+├─ Pemohon verifikasi & tanda tangan bukti terima
+└─ Jelaskan masa berlaku & tata cara penggunaan
+```
+
+**Waktu Pelayanan**:
+- **Pembuatan baru/perubahan**: **5-7 hari kerja**
+- **Perpanjangan**: **5-7 hari kerja**
+- **Ganti hilang/rusak**: **5-7 hari kerja**
+
+**Biaya**: GRATIS
+
+**Masa Berlaku**:
+- **KTP-el Penduduk**: 30 tahun (sesuai UU)
+- **KTP-el Anak**: Sampai usia 17 tahun atau kawin
+
+**Hasil**: 
+- Kartu Tanda Penduduk Elektronik (KTP-el)
+
+**Spesifikasi KTP-el**:
+- **Ukuran**: 85.6 mm x 54 mm (kartu ATM)
+- **Warna**: Putih dengan logo & warna resmi
+- **Berisi**: Foto, NIK, nama, TTL, alamat, status perkawinan, agama, pekerjaan, ibu kandung, masa berlaku, tanda tangan & cap jempol digital
+- **Chip**: Berisi data biometrik (sidik jari, iris mata) yang terenkripsi
+
+---
+
+#### 4. **PENERBITAN KARTU IDENTITAS ANAK (KIA)**
+
+**Definisi**: KIA adalah identitas resmi anak sebagai bukti diri untuk anak usia <17 tahun & belum menikah.
+
+**Syarat Pembuatan KIA**:
+- Usia anak: **0-17 tahun**
+- Belum menikah
+- Sudah memiliki Akta Kelahiran
+- Orang tua/Wali memiliki NIK & KK
+
+**Persyaratan Dokumen**:
+| Dokumen | Untuk | Keterangan |
+|---------|-------|-----------|
+| Akta Kelahiran (asli & fotokopi) | Semua anak | Wajib |
+| Kartu Keluarga (fotokopi) | Semua anak | Fotokopi halaman 1 & 2 |
+| KTP-el Orang Tua (fotokopi) | Semua anak | Ibu dan Ayah |
+| Pas foto anak 4x6 (2 lembar) | Semua anak | Berwarna, latar merah |
+| KTP-el Wali (fotokopi) | Jika orang tua tidak ada | Jika anak yatim piatu/ditinggal |
+| Paspor/Dokumen Perjalanan (fotokopi) | WNA | Untuk anak orang asing |
+| Izin Tinggal (fotokopi) | WNA | Untuk anak orang asing |
+
+**Prosedur Penerbitan KIA**:
+
+```
+PERSIAPAN
+├─ Siapkan semua dokumen persyaratan
+├─ Fotokopi dokumen (A4, jelas & terang)
+├─ Siapkan pas foto anak (latar merah, natural)
+└─ Bawa asli untuk verifikasi
+
+PENDAFTARAN
+├─ Datang ke Disdukcapil/Kelurahan/Geulis
+├─ Ambil nomor urut antrian
+└─ Tunggu dipanggil petugas
+
+VERIFIKASI DOKUMEN
+├─ Petugas cek kelengkapan dokumen
+├─ Verifikasi data anak di sistem SIAK
+├─ Tanyakan identitas orang tua/wali
+└─ Catat dalam buku register pengajuan
+
+PENGISIAN FORMULIR
+├─ Petugas/orang tua isi formulir permohonan KIA (F-1.07)
+├─ Data nama, TTL, alamat, data orang tua diisi lengkap
+├─ Orang tua tanda tangan formulir
+└─ Formulir diserahkan ke bagian pengolahan
+
+PEREKAMAN DATA ANAK
+├─ Jika anak usia >6 tahun: rekam sidik jari (jempol kanan)
+├─ Rekam iris mata (opsional untuk anak kecil)
+├─ Ambil foto close-up dengan latar merah (jika belum ada)
+└─ Data disimpan dalam sistem
+
+PENGOLAHAN & PENCETAKAN
+├─ Data diproses & divalidasi
+├─ Kartu dicetak dengan foto & data anak
+├─ Tanda tangan digital Kepala Disdukcapil ditambahkan
+└─ Kartu siap diserahkan
+
+SERAH TERIMA
+├─ Petugas verifikasi data pada KIA
+├─ Serahkan KIA ke orang tua/wali
+├─ Orang tua tanda tangan bukti terima
+├─ Jelaskan masa berlaku KIA
+└─ Arsip bukti serah terima
+```
+
+**Waktu Pelayanan**: **3-5 hari kerja** (jika dokumen lengkap)
+
+**Biaya**: GRATIS
+
+**Masa Berlaku**:
+- **KIA Anak Usia 0-6 tahun**: Sampai usia 6 tahun
+- **KIA Anak Usia 7-12 tahun**: Sampai usia 12 tahun
+- **KIA Anak Usia 13-17 tahun**: Sampai usia 17 tahun atau kawin
+
+**Hasil**: Kartu Identitas Anak (KIA) Fisik
+
+**Spesifikasi KIA**:
+- **Ukuran**: 85.6 mm x 54 mm (kartu ATM)
+- **Warna**: Biru dengan logo anak
+- **Berisi**: Foto anak, NIK, nama, TTL, alamat, nama orang tua, masa berlaku
+
+---
+
+### B. PENCATATAN SIPIL (Peristiwa Penting)
+
+Pencatatan Sipil adalah pencatatan Peristiwa Penting yang dialami penduduk:
+
+1. **KELAHIRAN** - Anak baru lahir
+2. **LAHIR MATI** - Bayi meninggal saat lahir
+3. **PERKAWINAN** - Pernikahan
+4. **PERCERAIAN** - Cerai hidup
+5. **PEMBATALAN PERKAWINAN** - Batal nikah
+6. **KEMATIAN** - Wafatnya penduduk
+7. **PENGAKUAN ANAK** - Diakui oleh ayah biologis
+8. **PENGESAHAN ANAK** - Anak sah setelah perkawinan
+9. **PENGANGKATAN ANAK** - Adopsi anak
+10. **PERUBAHAN NAMA** - Ganti nama lengkap
+11. **PERUBAHAN STATUS KEWARGANEGARAAN** - Naturalisasi, pemberian kewarganegaraan
+
+**Untuk SOP Pencatatan Sipil, lihat Dokumen 3 Knowledge Base.**
+
+---
+
+## III. LOKASI & JAM OPERASIONAL PELAYANAN
+
+### A. DISDUKCAPIL KOTA BANDUNG (PUSAT)
+
+**Alamat**: Jl. Kampung Baru, Bandung  
+**Telepon**: (022) XXXX-XXXX  
+**Email**: disdukcapil@bandung.go.id  
+**Website**: disdukcapil.bandung.go.id
+
+**Jam Operasional**:
+- **Senin - Jumat**: 08:00 - 16:00 WIB (Istirahat 12:00-13:00)
+- **Sabtu**: 08:00 - 12:00 WIB
+- **Minggu & Hari Libur**: TUTUP
+
+---
+
+### B. UPTD DISDUKCAPIL DI KECAMATAN
+
+**Lokasi**: Setiap kecamatan di Kota Bandung memiliki 1 UPTD  
+**Jam Operasional**: Sama dengan kantor pusat  
+**Layanan**: Penerbitan KK, KTP-el, KIA (layanan terbatas untuk pencatatan sipil merujuk ke pusat)
+
+**Daftar Kecamatan**:
+- Kecamatan Andir
+- Kecamatan Astana Anyar
+- Kecamatan Bandung Kidul
+- Kecamatan Bandung Kulon
+- Kecamatan Bandung Tengah
+- Kecamatan Bandung Wetan
+- Kecamatan Cibeureum
+- Kecamatan Cicendo
+- Kecamatan Cinambo
+- Kecamatan Cipageran
+- Kecamatan Ciseureuh
+- Kecamatan Coblong
+- Kecamatan Gedebage
+- Kecamatan Kiaracondong
+- Kecamatan Mandala
+- Kecamatan Panyileukan
+- Kecamatan Rancasari
+- Kecamatan Regol
+- Kecamatan Sampa
+- Kecamatan Sumur Bandung
+- Kecamatan Ujungjaya
+
+---
+
+### C. KELURAHAN
+
+Setiap kelurahan menyediakan:
+- Petugas Registrasi untuk pencatatan biodata dasar
+- Surat pengantar untuk permohonan ke Disdukcapil
+- Distribusi formulir
+
+---
+
+### D. GEULIS (Gerai Layanan Istimewa)
+
+**Lokasi**:
+- Bandung Indah Plaza (BIP) Mall
+- DPRD Kota Bandung
+
+**Jam Operasional**: Menyesuaikan jam operasional mall/kantor  
+**Layanan**: Penerbitan KK, KTP-el, KIA (layanan cepat/prioritas)
+
+---
+
+### E. MEPELING (Mobil Pelayanan Keliling)
+
+**Jadwal**: Dipublikasikan via Instagram, Twitter, Facebook resmi Disdukcapil  
+**Layanan**: Penerbitan KK, KTP-el, KIA (untuk warga di lokasi rawan)  
+**Gratis**: Tidak ada biaya tambahan, sama seperti kantor pusat
+
+---
+
+## IV. PERSYARATAN UNTUK KATEGORI KHUSUS
+
+### A. **ANAK DARI PERKAWINAN YANG BELUM TERCATAT**
+
+**Persyaratan Tambahan**:
+- Surat Pernyataan Tanggung Jawab Mutlak (F-1.05) dari orang tua
+- Buku/Akta Perkawinan (jika ada)
+- Bukti pengakuan anak (jika diperlukan)
+
+---
+
+### B. **ANAK HASIL PERKAWINAN CAMPURAN**
+
+**Persyaratan Tambahan**:
+- Akta Perkawinan (yang didaftar di Pengadilan Agama/Dinas Catatan Sipil)
+- Paspor salah satu orang tua (jika dari luar negeri)
+- Surat izin/permohonan dari Imigrasi (jika orang asing)
+
+---
+
+### C. **PENDUDUK KORBAN BENCANA ALAM/SOSIAL**
+
+**Persyaratan Khusus**:
+- Surat Keterangan Penganti Tanda Identitas (SKPTI) - Formulir BR.101
+- Dikeluarkan untuk orang terlantar, komunitas terpencil, korban bencana
+- Berlaku sebagai pengganti KTP, KK, akta sipil sampai dokumen asli terbit
+
+---
+
+### D. **PENDUDUK RENTAN ADMINISTRASI KEPENDUDUKAN**
+
+Kategori rentan:
+- Korban Bencana Alam (gempa, banjir, longsor, dll)
+- Korban Bencana Sosial (kerusuhan, teror)
+- Orang Terlantar
+- Komunitas Terpencil
+- Penduduk di kawasan hutan/tanah negara/kasus pertanahan
+
+**Layanan Khusus**:
+- Pendataan mobile ke lokasi (tidak harus datang ke kantor)
+- Penerbitan SKPTI (surat pengganti identitas)
+- Gratis tanpa biaya
+- Diprioritaskan dalam penerbitan dokumen
+
+---
+
+## V. LAYANAN DARING (ONLINE)
+
+### A. LAYANAN ONLINE YANG TERSEDIA
+
+Berdasarkan Peraturan Menteri Dalam Negeri No. 7 Tahun 2019:
+
+**Layanan Daring yang Bisa Dilakukan**:
+1. Pencatatan biodata penduduk (untuk WNI tertentu)
+2. Penerbitan surat keterangan kependudukan
+3. Perubahan data (nama, alamat, status)
+
+**Layanan yang TIDAK Bisa Online**:
+- Penerbitan KK (harus datang/biometrik di tempat)
+- Penerbitan KTP-el (harus datang untuk perekaman biometrik)
+- Penerbitan KIA (harus datang untuk perekaman biometrik)
+- Pencatatan sipil (harus datang untuk verifikasi)
+
+### B. CARA MENGAKSES LAYANAN ONLINE
+
+```
+1. BUKA PORTAL LAYANAN
+   └─ https://bandung.online.dukcapil.go.id
+   └─ atau aplikasi mobile Disdukcapil
+
+2. REGISTRASI AKUN
+   └─ Masukkan email & NIK
+   └─ Buat password kuat
+   └─ Verifikasi via email (link konfirmasi)
+
+3. MASUK KE AKUN
+   └─ Login dengan email & password
+   └─ Jika lupa password, klik "Lupa Password"
+
+4. PILIH JENIS LAYANAN
+   └─ Klik menu "Permohonan Baru"
+   └─ Pilih jenis layanan yang dibutuhkan
+   └─ Contoh: "Surat Keterangan Pindah"
+
+5. ISI FORMULIR ONLINE
+   └─ Lengkapi semua data yang diminta
+   └─ Upload dokumen yang diperlukan (format PDF/JPG)
+   └─ Pastikan file <5 MB per dokumen
+
+6. VERIFIKASI DATA
+   └─ Review kembali semua data yang diisi
+   └─ Pastikan tidak ada kesalahan
+   └─ Klik "SUBMIT PERMOHONAN"
+
+7. TUNGGU NOMOR REFERENSI
+   └─ Sistem otomatis memberi nomor referensi
+   └─ Catat/screenshot nomor tersebut
+   └─ Email konfirmasi akan dikirim
+
+8. MONITORING STATUS
+   └─ Kembali ke portal dengan login akun
+   └─ Klik "Status Permohonan"
+   └─ Lihat progress pengajuan (Submitted > Diproses > Siap Diambil > Selesai)
+
+9. PENGAMBILAN DOKUMEN
+   └─ Ketika status "Siap Diambil", datang ke kantor
+   └─ Bawa printout bukti pengajuan & bukti identitas
+   └─ Ambil dokumen di loket yang ditunjukkan
+
+10. PENILAIAN LAYANAN (OPSIONAL)
+    └─ Setelah selesai, Anda bisa beri rating & komentar
+    └─ Membantu meningkatkan kualitas layanan
+```
+
+### C. KEUNTUNGAN LAYANAN ONLINE
+
+✅ Hemat waktu antri  
+✅ Bisa diajukan kapan saja 24/7  
+✅ Transparansi real-time status  
+✅ Notifikasi otomatis via email  
+✅ Dokumen disiapkan sebelum datang ke kantor  
+
+---
+
+## VI. PENGADUAN & KELUHAN LAYANAN
+
+### A. JIKA TIDAK PUAS DENGAN LAYANAN
+
+Anda punya hak untuk mengadukan:
+- Petugas yang tidak ramah/kasar
+- Layanan yang terlambat dari jadwal
+- Dokumen yang salah/tidak sesuai
+- Petugas yang minta uang tambahan (KORUPSI)
+- Persyaratan yang terlalu ribet/tidak jelas
+
+### B. CARA MENGADUKAN
+
+**Opsi 1: Langsung ke Kantor**
+- Minta kertas pengaduan di loket
+- Isi dengan jelas keluhan Anda
+- Serahkan ke bagian pengaduan
+- Dapatkan bukti tertulis pengaduan
+
+**Opsi 2: Telepon**
+- Hubungi Disdukcapil: (022) XXXX-XXXX
+- Jelaskan keluhan dengan detail
+- Minta nama petugas yang ditangani
+- Minta nomor referensi pengaduan
+
+**Opsi 3: Email**
+- Kirim ke: pengaduan@disdukcapil.bandung.go.id
+- Subject: "PENGADUAN PELAYANAN DISDUKCAPIL"
+- Isi: Tanggal kejadian, lokasi, nama petugas, kronologi kejadian, bukti (foto/bukti pembayaran)
+
+**Opsi 4: WhatsApp**
+- Chat ke nomor layanan Disdukcapil
+- Jelaskan keluhan dengan foto bukti
+- Tunggu respon dari tim
+
+**Opsi 5: Media Sosial**
+- Mention @disdukcapilbdg di Instagram/Twitter
+- Atau DM (Direct Message) dengan detail keluhan
+- Biasanya direspon dalam 24 jam
+
+**Opsi 6: Ombudsman Jawa Barat**
+- Website: www.ombudsman.go.id
+- Alamat: Jl. Lombok No. 96, Bandung
+- Telepon: (022) 4265-100
+- Email: ombudsman.jabarprov@ombudsman.go.id
+
+### C. BATAS WAKTU PENYELESAIAN
+
+- **Maksimal 30 hari** sejak pengaduan diterima
+- Untuk keluhan mendesak bisa dipercepat
+- Status pengaduan dapat dipantau via email atau portal
+
+---
+
+## VII. LAMPIRAN: FORMULIR YANG DIGUNAKAN
+
+| Formulir | Nama | Untuk |
+|----------|------|-------|
+| F-1.01 | Formulir Biodata Keluarga | Pencatatan biodata & penerbitan KK |
+| F-1.04 | Formulir Permohonan KTP-el | Penerbitan KTP-el |
+| F-1.05 | Surat Pernyataan Tanggung Jawab Mutlak | Anak dari perkawinan belum tercatat |
+| F-1.07 | Formulir Permohonan KIA | Penerbitan Kartu Identitas Anak |
+| BR.101 | SKPTI (Surat Pengganti Tanda Identitas) | Penduduk rentan administrasi |
+
+**Catatan**: Semua formulir dapat diunduh di website Disdukcapil atau langsung diminta di kantor tanpa biaya.
+
+---
+
+## VIII. CATATAN PENTING
+
+✅ **Semua layanan GRATIS** (tidak ada biaya rahasia)  
+✅ **Dokumen harus ASLI** untuk verifikasi (bawa fotokopi untuk diarsipkan)  
+✅ **Pas foto harus memenuhi standar** (latar merah, muka jelas, tidak tertutup)  
+✅ **Jangan percaya penawaran cepat dari calo** - semua layanan hanya dari kantor resmi  
+✅ **Jika diminta uang tambahan = LAPOR** ke Disdukcapil atau Ombudsman  
+✅ **Data pribadi aman** - disimpan dalam sistem terenkripsi SIAK  
+✅ **Jika ada perubahan alamat** - segera lapor ke kelurahan agar KK & KTP tetap valid  
+
+---
+
+**Document Version**: 1.0  
+**Last Updated**: Desember 2025  
+**Source**: Perwal Kota Bandung No. 90/2022  
+**Status**: Valid & Aktif  
+**Next Document**: KB-3-SOP-Pencatatan-Sipil

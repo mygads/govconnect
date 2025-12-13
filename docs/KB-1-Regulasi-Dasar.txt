@@ -1,0 +1,353 @@
+# KNOWLEDGE BASE SISTEM CHATBOT PELAYANAN PUBLIK
+## Dokumen 1: REGULASI DASAR PENYELENGGARAAN PELAYANAN PUBLIK
+
+**Sumber**: Perda Prov. Jawa Barat Nomor 6 Tahun 2010 + Perwal Kota Bandung Nomor 90 Tahun 2022
+
+---
+
+## 1. PENDAHULUAN
+
+Dokumen ini merupakan bagian dari Knowledge Base untuk sistem chatbot AI yang fokus pada pelayanan publik di tingkat kelurahan, kecamatan, dan pemerintahan Jawa Barat (khususnya Kota Bandung).
+
+---
+
+## 2. PRINSIP-PRINSIP PELAYANAN PUBLIK
+
+Berdasarkan Perda Prov. Jawa Barat No. 6 Tahun 2010, penyelenggaraan pelayanan publik berlandaskan pada prinsip:
+
+### A. Asas Pelayanan Publik
+1. **Kepentingan Umum** - Pelayanan yang diutamakan untuk kepentingan masyarakat
+2. **Kepastian Hukum** - Adanya jaminan hukum atas dokumen yang diterbitkan
+3. **Kesamaan Hak** - Semua masyarakat mendapat perlakuan yang sama
+4. **Keseimbangan Hak & Kewajiban** - Ada keseimbangan antara hak penerima layanan dan kewajiban pemberi layanan
+5. **Keprofesionalan** - Petugas harus profesional dan kompeten
+6. **Partisipatif** - Masyarakat dapat berpartisipasi dalam peningkatan kualitas layanan
+7. **Persamaan Perlakuan/Non-Diskriminatif** - Tidak ada pembedaan dalam pemberian layanan
+8. **Transparansi** - Proses layanan harus jelas dan terbuka
+9. **Akuntabilitas** - Adanya pertanggungjawaban atas layanan yang diberikan
+10. **Fasilitas & Perlakuan Khusus** - Ada untuk kelompok rentan (disabilitas, lansia, hamil, balita)
+
+### B. Prinsip Operasional Pelayanan
+- **Kesederhanaan** - Prosedur mudah dipahami
+- **Kejelasan** - Informasi jelas dan mudah dimengerti
+- **Kepastian Waktu** - Waktu pelayanan pasti dan terjadwal
+- **Akurasi** - Hasil pelayanan akurat dan sesuai standar
+- **Keamanan** - Dokumen dan data aman terjaga
+- **Tanggungjawab** - Petugas bertanggungjawab atas pelayanan
+- **Kemudahan Akses** - Mudah diakses oleh masyarakat
+- **Kedisiplinan, Kesopanan, Keramahan** - Petugas bersikap profesional
+- **Kenyamanan** - Lingkungan pelayanan nyaman dan aman
+
+---
+
+## 3. JENIS-JENIS PELAYANAN PUBLIK
+
+Pelayanan publik di pemerintahan daerah terdiri dari 3 jenis:
+
+### A. Pelayanan Barang Publik
+Pelayanan yang menghasilkan bentuk/jenis barang yang digunakan publik sesuai dengan kewenangan Pemerintah Daerah.
+
+**Contoh**: Penyediaan air bersih, listrik, jalan, sarana publik.
+
+### B. Pelayanan Jasa Publik
+Pelayanan yang menghasilkan berbagai bentuk jasa yang dibutuhkan publik.
+
+**Contoh**: Layanan kesehatan, pendidikan, transportasi umum.
+
+### C. Pelayanan Administratif
+Pelayanan yang menghasilkan dokumen resmi yang dibutuhkan publik untuk perlindungan pribadi, keluarga, kehormatan, martabat, dan harta benda.
+
+**Contoh**: 
+- Surat Keterangan Domisili
+- Surat Pindah
+- Kartu Keluarga (KK)
+- Kartu Tanda Penduduk (KTP)
+- Akta Kelahiran
+- Surat Nikah
+- Izin Usaha
+- Surat Suara
+
+---
+
+## 4. KOMPONEN STANDAR PELAYANAN PUBLIK
+
+Setiap layanan publik harus memiliki standar yang memuat komponen-komponen berikut:
+
+| No | Komponen | Penjelasan |
+|---|---|---|
+| 1 | Dasar Hukum | Peraturan atau ketentuan yang menjadi landasan pelayanan |
+| 2 | Persyaratan | Dokumen dan syarat yang harus dipenuhi pemohon |
+| 3 | Sistem, Mekanisme & Prosedur | Alur/tahapan pelayanan mulai dari pengajuan hingga serah terima |
+| 4 | Jangka Waktu Penyelesaian | Batas waktu maksimal pelayanan diselesaikan |
+| 5 | Biaya/Tarif | Biaya yang dikenakan (jika ada) |
+| 6 | Produk Pelayanan | Hasil akhir/dokumen yang diterima pemohon |
+| 7 | Sarana, Prasarana & Fasilitas | Peralatan/fasilitas yang disediakan untuk melayani |
+| 8 | Kompetensi Pelaksana | Keahlian & kualifikasi petugas yang melayani |
+| 9 | Pengawasan Internal | Mekanisme pengecekan kualitas layanan |
+| 10 | Penanganan Pengaduan | Prosedur jika ada komplain/keluhan masyarakat |
+| 11 | Jumlah Pelaksana | Berapa banyak petugas yang tersedia |
+| 12 | Jaminan Pelayanan | Komitmen bahwa layanan dilakukan sesuai standar |
+| 13 | Jaminan Keamanan & Keselamatan | Rasa aman & bebas risiko dalam layanan |
+| 14 | Evaluasi Kinerja | Penilaian kualitas pelayanan secara berkala |
+
+---
+
+## 5. ORGANISASI PENYELENGGARA PELAYANAN
+
+### A. Tingkatan Organisasi
+
+**1. Level Provinsi (Jawa Barat)**
+- Gubernur bertindak sebagai Pembina
+- OPD (Organisasi Perangkat Daerah) sebagai penyelenggara
+
+**2. Level Kota/Kabupaten (Bandung)**
+- Wali Kota/Bupati sebagai Pembina
+- OPD seperti Disdukcapil, Dinas Perizinan, dsb
+
+**3. Level Kecamatan**
+- Camat sebagai penyelenggara/koordinator
+- Melayani layanan administratif dasar
+
+**4. Level Kelurahan**
+- Lurah sebagai penyelenggara layanan dasar
+- Petugas Registrasi/TU Kelurahan sebagai pelaksana
+
+### B. Tugas Penyelenggara
+- Menyusun & menetapkan standar pelayanan
+- Menyusun & mempublikasikan Maklumat Pelayanan
+- Memberikan jaminan kepastian hukum atas dokumen
+- Menyediakan sarana & prasarana yang mendukung
+- Memberikan pelayanan berkualitas sesuai asas-asas
+- Mengelola pengaduan masyarakat
+- Melakukan evaluasi kinerja secara berkala
+
+### C. Tugas Pelaksana (Petugas)
+- Melakukan kegiatan pelayanan sesuai penugasan
+- Bertanggungjawab atas pelaksanaan pelayanan
+- Memberikan informasi terkait pelayanan
+- Menanggapi dan mengelola pengaduan masyarakat
+- Melakukan evaluasi dan laporan kinerja
+
+---
+
+## 6. HAK DAN KEWAJIBAN MASYARAKAT
+
+### A. Hak Masyarakat Penerima Layanan
+1. Mendapat pelayanan berkualitas sesuai asas dan tujuan
+2. Mengetahui kebenaran substansi standar pelayanan
+3. Mengawasi pelaksanaan standar pelayanan
+4. Mendapatkan jaminan kepastian hukum atas dokumen
+5. Mendapatkan tanggapan atas pengaduan yang diajukan
+6. Mendapatkan advokasi dan perlindungan pelayanan
+7. Menyarankan perbaikan kepada petugas
+8. Menerima informasi terkait pelayanan
+9. Mengadukan petugas yang menyimpang standar ke Pembina/Ombudsman
+10. Menggugat penyelenggara yang merugikan melalui mekanisme hukum
+
+### B. Kewajiban Masyarakat Penerima Layanan
+1. Mematuhi ketentuan yang dipersyaratkan dalam standar pelayanan
+2. Menjaga sarana, prasarana, dan fasilitas pelayanan publik
+3. Berpartisipasi aktif dan mematuhi peraturan terkait pelayanan
+
+---
+
+## 7. LARANGAN BAGI PETUGAS PELAYANAN
+
+Petugas pelayanan dilarang:
+1. Merangkap jabatan di organisasi usaha lain
+2. Meninggalkan tugas tanpa alasan yang jelas dan sah
+3. Membuat perjanjian kerja dengan pihak lain tanpa izin
+4. Melanggar asas-asas penyelenggaraan pelayanan publik
+5. **MENERIMA IMBALAN/UANG DALAM BENTUK APAPUN** yang terkait dengan pelayanan (KORUPSI)
+
+---
+
+## 8. INDEKS KEPUASAN MASYARAKAT (IKM)
+
+Ukuran kepuasan masyarakat terhadap pelayanan didasarkan pada kriteria:
+
+1. **Prosedur Pelayanan** - Kemudahan alur pengajuan
+2. **Persyaratan Pelayanan** - Kejelasan dokumen yang dibutuhkan
+3. **Kejelasan Petugas** - Pengetahuan petugas tentang layanan
+4. **Kedisiplinan Petugas** - Kehadiran dan fokus petugas
+5. **Tanggungjawab Petugas** - Komitmen menyelesaikan layanan
+6. **Kemampuan Petugas** - Kecakapan dalam melayani
+7. **Kecepatan Pelayanan** - Waktu yang cepat & sesuai jadwal
+8. **Keadilan Mendapat Pelayanan** - Tidak ada prioritas/pengecualian
+9. **Kesopanan & Keramahan Petugas** - Sikap positif & ramah
+10. **Kewajaran Biaya** - Tarif yang jelas & terjangkau
+11. **Kepastian Biaya** - Biaya tidak berubah-ubah
+12. **Kepastian Jadual** - Jam operasional jelas & konsisten
+13. **Kenyamanan Lingkungan** - Tempat pelayanan bersih & nyaman
+14. **Keamanan Pelayanan** - Merasa aman & percaya pada petugas
+
+**Skala Pengukuran**: 1 (Sangat Tidak Puas) - 4 (Sangat Puas)
+
+---
+
+## 9. PENANGANAN PENGADUAN MASYARAKAT
+
+### A. Mekanisme Penanganan Pengaduan
+1. **Penerima Pengaduan** - Petugas khusus atau bagian pengaduan
+2. **Pencatatan Pengaduan** - Dicatat nomor, waktu, keluhan, identitas pengadu
+3. **Pengalihan ke Tim Teknis** - Diteruskan ke bagian yang berwenang
+4. **Penyelidikan** - Tim melakukan pengecikan/penelitian masalah
+5. **Komunikasi Berkala** - Pengadu diinformasikan progress penyelesaian
+6. **Penyelesaian** - Masalah dituntaskan dengan solusi/penjelasan
+7. **Pelaporan Hasil** - Pengadu diberitahu hasil akhir pengaduan
+
+### B. Prinsip Penanganan Pengaduan
+- **Objektivitas** - Berdasarkan fakta nyata
+- **Koordinasi** - Melibatkan semua pihak terkait
+- **Efektivitas & Efisiensi** - Cepat & tepat sasaran
+- **Akuntabilitas** - Pertanggungjawaban jelas
+- **Transparan** - Proses terbuka dan dapat dipantau
+
+### C. Batas Waktu Penyelesaian
+- **Standar**: Maksimal **30 hari** sejak pengaduan diterima
+- **Pengaduan Mendesak**: Dapat dipercepat sesuai situasi
+
+### D. Sarana Pengaduan (Kontak Alternatif)
+- **Langsung**: Datang ke kantor pelayanan
+- **Telepon**: Hubungi nomor hotline yang tersedia
+- **SMS/WhatsApp**: Lapor via aplikasi pesan
+- **Email**: Kirim via surat elektronik
+- **Kotak Pengaduan Fisik**: Kotak di kantor untuk surat tertulis
+- **Website**: Melalui portal resmi pemerintah
+- **Media Sosial**: Lapor via Instagram/Facebook resmi
+
+---
+
+## 10. MAKLUMAT PELAYANAN
+
+**Maklumat Pelayanan** adalah pernyataan tertulis berisi:
+- Keseluruhan rincian KEWAJIBAN penyelenggara
+- Janji/KOMITMEN petugas kepada masyarakat
+- Standar pelayanan yang akan diberikan
+
+**Maklumat harus dipublikasikan di tempat yang jelas & mudah dilihat** (papan informasi, website, dsb).
+
+---
+
+## 11. POLA PENYELENGGARAAN PELAYANAN
+
+Ada 4 pola penyelenggaraan pelayanan publik:
+
+### A. Pola Fungsional
+- Pelayanan diberikan oleh masing-masing penyelenggara sesuai tugas & fungsinya
+- Contoh: Disdukcapil mengurus KTP, Dinas Kesehatan mengurus vaksin
+
+### B. Pola Terpusat
+- Pelayanan tunggal oleh satu penyelenggara berdasarkan pelimpahan wewenang
+- Contoh: DPMPTSP (Dinas Perizinan) menangani semua perizinan
+
+### C. Pola Terpadu
+**1. Terpadu Satu Atap** - Berbagai layanan di satu tempat, beda pintu
+**2. Terpadu Satu Pintu** - Berbagai layanan terkait di satu tempat, satu pintu masuk
+
+### D. Pola Gugus Tugas
+- Petugas ditempatkan di lokasi tertentu untuk melayani masyarakat setempat
+- Contoh: Mepeling (Mobil Pelayanan Keliling) ke kecamatan
+
+---
+
+## 12. JAMINAN KEPASTIAN HUKUM
+
+Setiap dokumen yang diterbitkan oleh penyelenggara pelayanan publik HARUS memiliki:
+
+1. **Dasar Hukum Jelas** - Peraturan yang mengatur penerbitan dokumen
+2. **Tanggal Diterbitkan** - Kapan dokumen dibuat
+3. **Tanda Tangan Resmi** - Tanda tangan pejabat yang berwenang
+4. **Nomor Registrasi** - Nomor urut/referensi dokumen
+5. **Stempel Instansi** - Tanda resmi lembaga penerbit
+6. **Data Lengkap** - Semua informasi penduduk terisi dengan benar
+7. **Masa Berlaku** - Kapan dokumen berlaku (jika ada batasan)
+
+---
+
+## 13. AKSESIBILITAS UNTUK KELOMPOK RENTAN
+
+Penyelenggara WAJIB menyediakan akses khusus untuk:
+- **Penyandang Disabilitas** (fisik, mental, sensorik, intelektual)
+- **Lansia** (65 tahun ke atas)
+- **Wanita Hamil** & Ibu menyusui
+- **Balita** (di bawah 5 tahun)
+- **Korban Bencana Alam/Sosial**
+
+**Penyediaan Akses Meliputi**:
+- Ramp/jalur khusus untuk kursi roda
+- Toilet aksesibel
+- Ruang laktasi untuk ibu menyusui
+- Tempat duduk prioritas
+- Petugas yang terlatih menangani kelompok rentan
+- Layanan prioritas/express
+
+---
+
+## 14. KERJASAMA PENYELENGGARA
+
+### A. Kerjasama Antar Penyelenggara
+- Dilakukan untuk meningkatkan efisiensi & efektivitas layanan
+- Diatur dalam perjanjian kerja sama sesuai peraturan
+- Contoh: Koordinasi Disdukcapil dengan BPJS untuk data peserta
+
+### B. Kerjasama dengan Pihak Ketiga
+- Penyelenggara dapat menyerahkan sebagian tugas ke pihak lain (outsourcing)
+- Pihak lain harus berbadan hukum Indonesia
+- Proses pemilihan transparan, non-diskriminatif, & adil
+- **TIDAK BOLEH** membebani masyarakat (biaya tambahan)
+- Penyelenggara tetap bertanggungjawab atas keseluruhan layanan
+
+---
+
+## 15. PEMBIAYAAN PELAYANAN PUBLIK
+
+1. **Pembiayaan dari APBD** - Biaya operasional dari anggaran daerah (GRATIS untuk masyarakat)
+2. **Pembiayaan dari APBN** - Biaya dari anggaran nasional (GRATIS)
+3. **Tarif Retribusi/Biaya** - Biaya yang dikenakan ke masyarakat (jika ada)
+4. **Pembiayaan Umum** - Dibiayai dari sumber lain sesuai peraturan
+
+**Penetapan Tarif** harus disetujui DPRD dan sesuai peraturan perundang-undangan.
+
+---
+
+## 16. FREKUENSI & FORMAT EVALUASI PELAYANAN
+
+### A. Evaluasi Berkala
+- Dilakukan **setiap bulan, 3 bulan, 6 bulan, atau tahunan** sesuai jenis layanan
+- Hasil dituangkan dalam laporan kinerja
+
+### B. Aspek yang Dievaluasi
+1. **Masukan (Input)** - Efisiensi sumber daya
+2. **Proses** - Kejelasan prosedur, kecepatan, efektivitas biaya
+3. **Keluaran (Output)** - Kepuasan pelayanan, peningkatan kualitas
+
+### C. Indikator Evaluasi
+- Persentase penyelesaian tepat waktu
+- Tingkat kepuasan masyarakat (IKM)
+- Jumlah pengaduan yang masuk
+- Resolusi waktu pengaduan
+- Tingkat kepatuhan standar
+- Kompetensi petugas
+- Kondisi sarana & prasarana
+
+---
+
+## CATATAN PENTING UNTUK CHATBOT
+
+Dokumen ini adalah dasar regulasi umum. Untuk setiap **jenis layanan spesifik** (KTP, Surat Pindah, Izin Usaha, dsb), ada **SOP dan persyaratan terperinci** yang tersedia di dokumen Knowledge Base berikutnya.
+
+Pastikan chatbot dapat:
+1. ✅ Menjelaskan prinsip-prinsip umum pelayanan
+2. ✅ Mengarahkan ke SOP spesifik yang ditanyakan
+3. ✅ Memberikan informasi hak-kewajiban masyarakat
+4. ✅ Menjelaskan prosedur pengaduan jika tidak puas
+5. ✅ Mencantumkan kontak/lokasi kantor pelayanan
+6. ✅ Menyampaikan persyaratan lengkap sesuai SOP
+
+---
+
+**Document Version**: 1.0  
+**Last Updated**: Desember 2025  
+**Source**: Perda Prov. Jawa Barat No. 6/2010 + Perwal Bandung No. 90/2022  
+**Status**: Valid & Aktif untuk Rag System Chatbot

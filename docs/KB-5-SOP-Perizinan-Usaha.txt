@@ -1,0 +1,424 @@
+# KNOWLEDGE BASE SISTEM CHATBOT PELAYANAN PUBLIK
+## Dokumen 5: SOP PENERBITAN IZIN USAHA & PERIZINAN BERUSAHA (OSS)
+
+**Sumber**: PP No. 24 Tahun 2018 (OSS) + Perwal Bandung + Pergub Jawa Barat
+
+---
+
+## I. SISTEM PERIZINAN USAHA TERPADU (OSS)
+
+### A. DEFINISI OSS
+
+**Online Single Submission (OSS)** adalah sistem perizinan online terpadu yang memungkinkan pelaku usaha mendapatkan berbagai izin usaha melalui satu portal online dalam waktu singkat.
+
+**Tujuan OSS**:
+- Mempermudah pengurusan izin usaha
+- Mempercepat waktu perizinan
+- Mengurangi biaya administrasi
+- Meningkatkan transparansi
+- Mencegah korupsi
+
+**Pemegang Tanggung Jawab**:
+- **Nasional**: BPPT (Badan Pembinaan Penyelenggara Perizinan Terpadu)
+- **Lokal (Bandung)**: DPMPTSP Kota Bandung (Dinas Penanaman Modal & Perizinan Terpadu)
+
+---
+
+## II. DOKUMEN DASAR PENGURUSAN USAHA
+
+### A. NOMOR INDUK BERUSAHA (NIB)
+
+**Definisi**: NIB adalah identitas unik pelaku usaha yang diterbitkan oleh BPPT melalui sistem OSS.
+
+**Fungsi NIB**:
+- Identitas resmi usaha/badan usaha
+- Dasar untuk pengurusan semua izin lainnya
+- Berlaku nasional & internasional
+- Gratis & seumur hidup
+
+**Jenis NIB**:
+1. **NIB Perseorangan** - Untuk usaha milik pribadi (PNS, pensiunan, dll)
+2. **NIB CV/Koperasi** - Untuk usaha berbentuk CV atau Koperasi
+3. **NIB PT** - Untuk Perseroan Terbatas
+4. **NIB Usaha Mikro Kecil Menengah (UMKM)** - Untuk usaha skala kecil
+
+### B. PERSYARATAN DASAR PENGURUSAN NIB
+
+#### **Untuk Usaha Perseorangan**:
+- Fotokopi KTP (pemilik usaha)
+- Fotokopi KK
+- Surat pernyataan (yang disediakan OSS)
+- Nomor Pokok Wajib Pajak (NPWP) - jika ada, tidak wajib di awal
+
+#### **Untuk CV/Koperasi**:
+- Fotokopi KTP pemilik
+- Akta pendirian CV/Koperasi dari notaris
+- Fotokopi KK
+- Surat pernyataan dari pemilik
+- NPWP - jika ada
+
+#### **Untuk PT**:
+- Fotokopi KTP pemilik/direktur
+- Akta pendirian PT dari notaris
+- Fotokopi SIUP & TDP lama (jika sebelumnya ada)
+- NPWP Perusahaan
+- Surat pernyataan
+
+---
+
+## III. PENGURUSAN NIB MELALUI PORTAL OSS
+
+### A. CARA AKSES PORTAL OSS
+
+```
+LANGKAH 1: BUKA WEBSITE OSS
+├─ URL: https://www.oss.go.id
+├─ Atau download aplikasi mobile OSS
+└─ Tunggu halaman terbuka (kurang lebih 5-10 detik)
+
+LANGKAH 2: REGISTRASI AKUN (JIKA BELUM PUNYA)
+├─ Klik "Daftar Akun Baru"
+├─ Pilih jenis pengguna: "Pelaku Usaha"
+├─ Masukkan Email & NIK
+├─ Masukkan No. HP (aktif & punya WhatsApp)
+├─ Buat password (minimal 8 karakter, campuran huruf & angka)
+├─ Konfirmasi password
+├─ Klik "DAFTAR"
+└─ Tunggu email verifikasi (cek inbox & spam folder)
+
+LANGKAH 3: VERIFIKASI EMAIL
+├─ Buka email dari noreply@oss.go.id
+├─ Klik link verifikasi di dalam email
+├─ Akun Anda sudah siap digunakan
+└─ Kembali ke website OSS
+
+LANGKAH 4: LOGIN KE AKUN
+├─ Masukkan Email & Password
+├─ Klik "LOGIN"
+├─ Sistem meminta verifikasi 2FA (Two Factor Authentication)
+├─ Masukkan kode OTP yang dikirim ke WhatsApp/SMS
+└─ Anda masuk ke dashboard OSS
+
+LANGKAH 5: PILIH JENIS USAHA
+├─ Klik "Buat Perizinan Baru" atau "Permohonan Baru"
+├─ Pilih jenis izin yang diinginkan:
+│  ├─ Nomor Induk Berusaha (NIB) - WAJIB DULU
+│  ├─ Izin Usaha Mikro & Kecil (IUMK)
+│  ├─ Surat Izin Usaha Perdagangan (SIUP)
+│  ├─ Tanda Daftar Perusahaan (TDP)
+│  ├─ Izin Gangguan (HO)
+│  └─ Izin lainnya sesuai jenis usaha
+└─ Pilih jenis usaha Anda (Perdagangan, Industri, Jasa, dll)
+
+LANGKAH 6: ISI DATA PERMOHONAN
+├─ Lengkapi semua kolom yang ada:
+│  ├─ Nama Pemilik/Perusahaan
+│  ├─ Alamat Usaha (lengkap dengan RT/RW/Kel/Kec)
+│  ├─ Nomor Telepon
+│  ├─ Email
+│  ├─ NPWP (jika ada)
+│  ├─ Jenis Kegiatan Usaha
+│  └─ Data lainnya sesuai formulir
+├─ Pastikan semua data BENAR (tidak boleh ada typo)
+└─ Klik "LANJUTKAN"
+
+LANGKAH 7: UPLOAD DOKUMEN
+├─ Upload fotokopi KTP (format PDF atau JPG, max 5MB)
+├─ Upload fotokopi KK
+├─ Upload surat pernyataan (yang sudah diunduh dari sistem)
+├─ Upload dokumen lain sesuai persyaratan:
+│  ├─ Akta Notaris (jika CV/PT)
+│  ├─ Bukti sewa/milik tempat usaha
+│  └─ Dokumen lain yang diminta sistem
+├─ Pastikan file jelas & terang (jangan blur)
+└─ Klik "SIMPAN"
+
+LANGKAH 8: PERSETUJUAN PERNYATAAN
+├─ Centang checkbox "Saya setuju dengan syarat & ketentuan"
+├─ Centang checkbox "Data yang saya kirim adalah benar"
+├─ Klik "AJUKAN PERMOHONAN"
+├─ Sistem menampilkan nomor referensi permohonan
+└─ CATAT/SCREENSHOT nomor referensi ini
+
+LANGKAH 9: TUNGGU PROSES VERIFIKASI
+├─ Status akan berubah: "Submitted" → "Sedang Diproses" → "Selesai"
+├─ Waktu proses biasanya 1-3 hari kerja
+├─ Petugas OSS akan menghubungi via WhatsApp jika ada yang kurang
+└─ Jika sudah selesai, sistem akan beri notifikasi
+
+LANGKAH 10: DOWNLOAD IZIN DIGITAL
+├─ Masuk ke akun OSS Anda
+├─ Klik "Status Permohonan" atau "Riwayat Permohonan"
+├─ Pilih permohonan yang sudah "SELESAI"
+├─ Klik "Download Izin" atau "Unduh Dokumen"
+├─ Dokumen akan di-download dalam format PDF
+├─ Izin Anda sudah sah & bisa digunakan
+└─ Cetaklah untuk keperluan fisik (jika diperlukan)
+```
+
+---
+
+## IV. JENIS-JENIS IZIN USAHA
+
+### A. NOMOR INDUK BERUSAHA (NIB) - WAJIB
+
+**Untuk Apa**: Identitas usaha  
+**Syarat**: KTP, KK, Surat Pernyataan (Perseorangan)  
+**Waktu**: **1 hari kerja**  
+**Biaya**: GRATIS  
+**Berlaku**: Selamanya (tidak perlu diperpanjang)
+
+---
+
+### B. IZIN USAHA MIKRO & KECIL (IUMK)
+
+**Untuk Apa**: Untuk usaha mikro & kecil dengan omset < Rp 4,8 Miliar/tahun
+
+**Syarat Usaha**:
+- Usaha perseorangan/keluarga
+- Omset tahunan < Rp 4,8 Miliar
+- Aset tidak termasuk tanah & bangunan < Rp 1,2 Miliar
+
+**Persyaratan Dokumen**:
+- KTP pemilik
+- Fotokopi KK
+- Surat pernyataan (dari sistem OSS)
+- Bukti sewa/milik tempat usaha
+
+**Waktu**: **1 hari kerja**  
+**Biaya**: GRATIS  
+**Berlaku**: 5 tahun (harus diperpanjang setelah 5 tahun)
+
+---
+
+### C. SURAT IZIN USAHA PERDAGANGAN (SIUP)
+
+**Untuk Apa**: Untuk usaha perdagangan (toko, warung, distributor, dll)
+
+**Persyaratan Dokumen**:
+- Fotokopi NIB
+- KTP pemilik & fotokopi
+- Fotokopi KK
+- Bukti sewa/milik tempat usaha (sertifikat/AJB/surat sewa)
+- Surat pernyataan dari pemilik usaha (Form SIUP)
+- Denah lokasi usaha (gambar sederhana lokasi toko/usaha)
+
+**Waktu**: **1-3 hari kerja** (tergantung verifikasi lapangan)  
+**Biaya**: 
+- SIUP Kecil (omset < Rp 50 juta): Rp 100.000
+- SIUP Menengah (omset Rp 50-500 juta): Rp 250.000
+- SIUP Besar (omset > Rp 500 juta): Rp 500.000
+
+**Berlaku**: 5 tahun (harus diperpanjang)
+
+---
+
+### D. TANDA DAFTAR PERUSAHAAN (TDP)
+
+**Untuk Apa**: Untuk PT, CV, Koperasi
+
+**Persyaratan Dokumen**:
+- Fotokopi NIB
+- Akta Pendirian dari Notaris (asli + fotokopi)
+- KTP pemilik/direktur + fotokopi
+- Fotokopi NPWP Perusahaan
+- Bukti sewa/milik tempat usaha
+- Surat pernyataan dari pemilik/direktur
+
+**Waktu**: **1-3 hari kerja**  
+**Biaya**: 
+- TDP Perusahaan Kecil: Rp 150.000
+- TDP Perusahaan Menengah: Rp 300.000
+- TDP Perusahaan Besar: Rp 500.000
+
+**Berlaku**: 5 tahun (harus diperpanjang)
+
+---
+
+### E. IZIN GANGGUAN / HOME OFFICE (HO)
+
+**Untuk Apa**: Izin usaha yang diadakan di rumah (home office, laundry rumahan, dll)
+
+**Persyaratan Dokumen**:
+- Fotokopi NIB
+- KTP pemilik + fotokopi
+- Fotokopi KK
+- Surat pernyataan dari pemilik & tetangga (tidak keberatan)
+- Denah lokasi usaha/rumah
+- Surat persetujuan RT/RW
+
+**Waktu**: **5-7 hari kerja** (perlu verifikasi lapangan ke rumah)  
+**Biaya**: Rp 50.000 - 200.000 (tergantung jenis usaha)  
+**Berlaku**: 5 tahun
+
+---
+
+### F. IZIN LOKASI & IZIN LINGKUNGAN
+
+**Untuk Apa**: Untuk usaha industri/manufaktur/pabrik
+
+**Persyaratan Dokumen**:
+- Fotokopi NIB
+- Master Plan/Denah Lokasi Usaha
+- Dokumen lingkungan (AMDAL/UKL-UPL)
+- Bukti kepemilikan/sewa tanah
+- Dokumen perizinan lainnya
+
+**Waktu**: **10-30 hari kerja** (proses lebih lama karena kompleks)  
+**Biaya**: Bervariasi (+ biaya survey & AMDAL)  
+**Berlaku**: Sesuai durasi izin lokasi
+
+---
+
+## V. PROSEDUR LENGKAP PENGURUSAN USAHA (STEP BY STEP)
+
+```
+URUTAN PENGURUSAN IZIN:
+
+STEP 1: BUAT AKUN OSS ✓ (Langkah II poin A)
+
+STEP 2: AJUKAN NIB ✓ (Wajib dulu!)
+├─ Upload: KTP, KK, Surat Pernyataan
+├─ Tunggu 1 hari
+└─ Download NIB digital
+
+STEP 3: PILIH IZIN SESUAI JENIS USAHA
+├─ Jika Usaha Mikro/Kecil (omset < Rp 4,8M): Ajukan IUMK
+├─ Jika Perdagangan: Ajukan SIUP
+├─ Jika PT/CV: Ajukan TDP
+├─ Jika Rumahan: Ajukan HO
+└─ Jika Industri: Ajukan Izin Lingkungan
+
+STEP 4: AJUKAN IZIN KE-2 (IUMK/SIUP/TDP/HO)
+├─ Upload: NIB, KTP, KK, Bukti Sewa/Milik Tempat, Surat Pernyataan
+├─ Tunggu proses (1-7 hari tergantung jenis)
+├─ Petugas mungkin akan survey ke lokasi usaha
+└─ Download izin digital setelah selesai
+
+STEP 5: AJUKAN IZIN TAMBAHAN (JIKA DIPERLUKAN)
+├─ Izin Lingkungan (jika industri)
+├─ Izin Prinsip (untuk industri tertentu)
+├─ Sertifikat HALAL (jika produk makanan)
+└─ Izin lainnya sesuai bisnis
+
+STEP 6: LENGKAPI DATA PAJAK
+├─ Daftarkan ke Kantor Pajak (untuk NPWP Perusahaan)
+├─ Daftarkan ke Kantor Pos (untuk PBB jika ada tanah)
+└─ Daftarkan ke BPJS (untuk tenaga kerja jika ada)
+
+STEP 7: BUAT REKENING BANK ATAS NAMA USAHA
+├─ Datang ke Bank dengan membawa:
+│  ├─ NIB (asli & fotokopi)
+│  ├─ KTP pemilik
+│  ├─ NPWP
+│  └─ Dokumen lainnya sesuai bank
+└─ Rekening usaha siap digunakan
+
+STEP 8: MULAI USAHA! 🎉
+├─ Usaha Anda sudah legal & terdaftar
+├─ Izin digital sudah sah & bisa digunakan
+├─ Cetak izin jika perlu bukti fisik
+└─ Jangan lupa bayar pajak & perpanjang izin setiap 5 tahun
+```
+
+---
+
+## VI. PERPANJANGAN IZIN USAHA
+
+### A. KAPAN HARUS DIPERPANJANG
+
+Izin usaha berlaku **5 tahun**, kemudian harus diperpanjang sebelum habis.
+
+**Waktu Perpanjangan Ideal**: 3 bulan sebelum izin habis
+
+### B. PROSEDUR PERPANJANGAN
+
+```
+1. MASUK KE AKUN OSS
+2. KLIK "PERPANJANG IZIN" atau "RENEWAL"
+3. PILIH IZIN YANG AKAN DIPERPANJANG
+4. UPLOAD DOKUMEN (KTP, KK, bukti sewa terbaru, dll)
+5. BAYAR BIAYA PERPANJANGAN (jika ada)
+6. TUNGGU VERIFIKASI (1-3 hari)
+7. DOWNLOAD IZIN BARU
+```
+
+**Biaya Perpanjangan**: Sama dengan biaya penerbitan awal
+
+---
+
+## VII. KESALAHAN UMUM & SOLUSI
+
+### Kesalahan: Data di Aplikasi OSS Tidak Sesuai KTP
+
+**Solusi**:
+1. Hubungi call center OSS: 1500143
+2. Mintalah koreksi data
+3. Upload dokumen koreksi KTP
+4. Tunggu verifikasi ulang
+
+### Kesalahan: Alamat Usaha Tidak Valid/Tidak Ditemukan
+
+**Solusi**:
+1. Pastikan alamat lengkap (RT/RW/Kel/Kec/Kota)
+2. Sistem mungkin belum ter-update
+3. Hubungi kelurahan/kecamatan untuk verifikasi alamat
+4. Upload bukti sewa/milik tempat yang jelas
+
+### Kesalahan: Dokumen Upload Rejected/Tidak Diterima
+
+**Solusi**:
+1. Pastikan ukuran file < 5MB
+2. Format file: PDF, JPG, PNG
+3. Foto dokumen harus jelas & terang (tidak blur)
+4. Pastikan file tidak corrupt
+5. Upload ulang file yang baru/lebih baik
+
+---
+
+## VIII. FREKUENSI PERTANYAAN PERIZINAN USAHA
+
+**Q: Apakah harus punya NIB dulu sebelum usaha?**
+A: Lebih baik punya NIB dulu, minimal untuk identitas usaha yang jelas & legal.
+
+**Q: Berapa lama proses dari NIB sampai SIUP/IUMK?**
+A: Jika semua dokumen lengkap & benar, sekitar 5-10 hari total (NIB 1 hari + SIUP 3-7 hari).
+
+**Q: Apakah izin digital OSS sudah sah/legal?**
+A: Ya, izin digital OSS sudah sah & berlaku hukum. Sama seperti izin fisik/kertas. Tidak perlu cetak kertas kalau tidak perlu.
+
+**Q: Bagaimana jika izin saya habis & tidak langsung perpanjang?**
+A: Usaha Anda tidak legal sampai izin diperpanjang. Segera perpanjang setelah sadar. Bisa ada denda/teguran dari Dinas.
+
+**Q: Apakah bisa permohonan ditolak?**
+A: Bisa, jika ada masalah seperti:
+- Alamat palsu/tidak valid
+- Data tidak sesuai KTP
+- Tempat usaha di zona yang terlarang (contoh: sekolah)
+- Dokumen tidak lengkap/palsu
+
+---
+
+## IX. KONTAK LAYANAN PERIZINAN USAHA
+
+**DPMPTSP KOTA BANDUNG**
+
+Alamat: Jl. Aceh No. 97, Bandung  
+Telepon: (022) 4204-000  
+Email: perizinan@bandung.go.id  
+Website: portal.bandung.go.id  
+Portal OSS: https://www.oss.go.id  
+Call Center OSS: 1500143
+
+**Jam Kerja**:
+- Senin - Jumat: 08:00 - 16:00 WIB (istirahat 12:00-13:00)
+- Sabtu: 08:00 - 12:00 WIB
+- Minggu & Hari Libur: TUTUP
+
+---
+
+**Document Version**: 1.0  
+**Last Updated**: Desember 2025  
+**Source**: PP No. 24/2018 + Perwal Bandung  
+**Status**: Valid & Aktif  
+**Next Document**: KB-6-SOP-Surat-Administratif
