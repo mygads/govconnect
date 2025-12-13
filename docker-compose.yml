@@ -205,8 +205,8 @@ services:
       NODE_ENV: ${NODE_ENV}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_dashboard
       JWT_SECRET: ${JWT_SECRET}
-      # Single API endpoint via Traefik
-      API_BASE_URL: https://api.govconnect.my.id
+      # API Gateway via Traefik (internal Docker network)
+      API_BASE_URL: ${API_BASE_URL}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       NEXT_PUBLIC_APP_NAME: "GovConnect Dashboard"
       NEXTAUTH_URL: ${NEXTAUTH_URL}
