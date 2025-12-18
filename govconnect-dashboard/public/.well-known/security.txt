@@ -1,0 +1,27 @@
+# GovConnect Security Policy
+# https://govconnect.id
+
+# Contact for security issues
+Contact: mailto:genfity@gmail.com
+Contact: https://wa.me/6285174314023
+
+# Encryption (PGP key if available)
+# Encryption: https://govconnect.id/.well-known/pgp-key.txt
+
+# Acknowledgments page
+# Acknowledgments: https://govconnect.id/security/thanks
+
+# Policy
+# Policy: https://govconnect.id/security/policy
+
+# Hiring
+# Hiring: https://genfity.com/careers
+
+# Preferred Languages
+Preferred-Languages: id, en
+
+# Canonical URL
+Canonical: https://govconnect.id/.well-known/security.txt
+
+# Expiration date
+Expires: 2025-12-31T23:59:59.000Z

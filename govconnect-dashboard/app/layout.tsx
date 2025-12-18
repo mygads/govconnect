@@ -5,6 +5,8 @@ import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { Toaster } from "@/components/ui/toaster";
 import { defaultMetadata, siteConfig } from "@/lib/seo";
+import { GoogleAnalytics, GoogleTagManager, GTMNoScript } from "@/components/analytics";
+import { HomePageJsonLd } from "@/components/seo/JsonLd";
 
 // SEO Metadata
 export const metadata: Metadata = {
@@ -70,6 +72,18 @@ export default function RootLayout({
         <meta name="coverage" content="Indonesia" />
       </head>
       <body className="antialiased font-sans">
+        {/* Google Tag Manager NoScript - Fallback untuk browser tanpa JS */}
+        <GTMNoScript containerId={process.env.NEXT_PUBLIC_GTM_ID || ''} />
+        
+        {/* Google Analytics 4 */}
+        <GoogleAnalytics measurementId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || ''} />
+        
+        {/* Google Tag Manager */}
+        <GoogleTagManager containerId={process.env.NEXT_PUBLIC_GTM_ID || ''} />
+        
+        {/* JSON-LD Structured Data untuk SEO */}
+        <HomePageJsonLd />
+        
         <Providers>{children}</Providers>
         <Toaster />
       </body>

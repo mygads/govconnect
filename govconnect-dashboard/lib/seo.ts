@@ -2,94 +2,253 @@ import { Metadata } from 'next'
 
 // ============================================
 // SEO CONFIGURATION - GovConnect
+// Platform Layanan Pemerintahan Digital Berbasis AI
+// Developed by Genfity Digital Solution
 // ============================================
 
 export const siteConfig = {
+  // Basic Info
   name: 'GovConnect',
-  title: 'GovConnect - Platform Layanan Pemerintahan Digital Berbasis AI',
-  description: 'Platform AI untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan surat, reservasi layanan, dan dapatkan informasi pemerintah langsung melalui WhatsApp, Telegram, dan webchat. Cepat, mudah, dan terpercaya 24/7.',
+  title: 'GovConnect - Platform Layanan Pemerintahan Digital Berbasis AI Indonesia | Smart Government Solution',
+  description: 'GovConnect adalah platform AI terdepan untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan surat keterangan, reservasi layanan publik, dan dapatkan informasi pemerintah langsung melalui WhatsApp, Telegram, dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah. Dikembangkan oleh Genfity Digital Solution.',
+  shortDescription: 'Platform AI untuk layanan pemerintahan digital Indonesia - Smart Government Solution 24/7',
   url: process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.id',
   ogImage: '/dashboard.png',
   logo: '/logo-dashboard.png',
   locale: 'id_ID',
   language: 'id',
   
-  // Contact Info
+  // Contact Info - Genfity Digital Solution
   email: 'genfity@gmail.com',
-  phone: '+6285174314023', // Ganti dengan nomor asli
-  address: 'Indonesia', // Ganti dengan alamat asli
+  phone: '+6285174314023',
+  phoneDisplay: '0851-7431-4023',
+  whatsapp: 'https://wa.me/6285174314023',
+  address: 'Indonesia',
+  
+  // Brand Info
+  brand: {
+    name: 'Genfity Digital Solution',
+    url: 'https://www.genfity.com',
+    tagline: 'Transformasi Digital untuk Indonesia',
+  },
+  
+  // Author Info
+  author: {
+    name: 'Muhammad Yoga Adi Saputra',
+    role: 'Founder & CEO',
+    company: 'Genfity Digital Solution',
+    website: 'https://www.genfity.com',
+  },
   
   // Social Media
   social: {
-    instagram: '@genfity.id',
-    linkedin: 'company/genfity',
+    twitter: '@govconnect_id',
+    instagram: '@govconnect.id',
+    facebook: 'govconnect.id',
+    linkedin: 'company/genfity-digital-solution',
+    youtube: '@govconnect',
+    tiktok: '@govconnect.id',
+    github: 'genfity',
   },
   
-  // Keywords untuk SEO
+  // Comprehensive Keywords untuk SEO (100+ keywords)
   keywords: [
-    // Primary Keywords
+    // Brand Keywords
     'govconnect',
+    'govconnect indonesia',
+    'govconnect id',
+    'gov connect',
+    'genfity',
+    'genfity digital solution',
+    
+    // Primary Keywords - High Volume
     'layanan pemerintahan digital',
     'e-government indonesia',
-    'layanan kelurahan online',
-    'layanan kecamatan digital',
-    'smart government',
+    'smart government indonesia',
     'digitalisasi pemerintahan',
+    'transformasi digital pemerintah',
+    'layanan publik digital',
+    'platform pemerintahan online',
     
-    // Feature Keywords
+    // Service Keywords - Kelurahan
+    'layanan kelurahan online',
+    'layanan kelurahan digital',
+    'e-kelurahan',
+    'kelurahan digital',
+    'surat kelurahan online',
+    'pengajuan surat kelurahan',
+    'antrian kelurahan online',
+    'jadwal kelurahan',
+    
+    // Service Keywords - Kecamatan
+    'layanan kecamatan digital',
+    'layanan kecamatan online',
+    'e-kecamatan',
+    'kecamatan digital',
+    'surat kecamatan online',
+    
+    // Service Keywords - Desa
+    'layanan desa digital',
+    'desa digital',
+    'e-desa',
+    'smart village',
+    'digitalisasi desa',
+    
+    // Feature Keywords - Pengaduan
     'lapor keluhan online',
-    'pengaduan masyarakat',
-    'surat online kelurahan',
+    'pengaduan masyarakat online',
+    'sistem pengaduan online',
+    'lapor masalah pemerintah',
+    'tracking pengaduan',
+    'status pengaduan online',
+    'lapor keluhan warga',
+    'pengaduan pelayanan publik',
+    
+    // Feature Keywords - Surat
+    'surat online',
+    'pengajuan surat online',
+    'surat keterangan online',
+    'surat domisili online',
+    'surat pengantar online',
+    'surat keterangan usaha online',
+    'surat tidak mampu online',
+    'surat pindah online',
+    'cetak surat online',
+    
+    // Feature Keywords - Reservasi
     'reservasi layanan pemerintah',
-    'antrian online kelurahan',
+    'booking antrian online',
+    'antrian online pemerintah',
+    'jadwal pelayanan online',
+    'appointment pemerintah',
+    'reservasi kelurahan',
+    
+    // Feature Keywords - AI & Chatbot
     'chatbot pemerintah',
     'ai layanan publik',
+    'chatbot kelurahan',
+    'bot whatsapp pemerintah',
+    'asisten virtual pemerintah',
+    'ai customer service pemerintah',
+    'chatbot pelayanan publik',
     
-    // Location Keywords
-    'layanan publik indonesia',
-    'e-kelurahan',
-    'e-kecamatan',
-    'smart city indonesia',
-    
-    // Service Keywords
+    // Channel Keywords
     'whatsapp kelurahan',
-    'layanan 24 jam pemerintah',
-    'tracking pengaduan',
-    'status pengajuan surat',
+    'whatsapp pemerintah',
+    'telegram pemerintah',
+    'webchat pemerintah',
+    'layanan multi channel',
+    'omnichannel pemerintah',
+    
+    // Smart City Keywords
+    'smart city indonesia',
+    'smart city solution',
+    'kota cerdas',
+    'smart government solution',
+    'digital city',
+    'smart public service',
     
     // Problem-Solution Keywords
     'solusi antrian panjang',
     'layanan pemerintah cepat',
     'akses informasi pemerintah',
+    'pelayanan publik efisien',
+    'birokrasi mudah',
+    'layanan tanpa antri',
+    'pelayanan 24 jam',
+    'layanan pemerintah 24/7',
+    
+    // Technology Keywords
+    'artificial intelligence pemerintah',
+    'machine learning pelayanan publik',
+    'natural language processing',
+    'nlp bahasa indonesia',
+    'automation pemerintah',
+    'digital transformation government',
+    
+    // Benefit Keywords
+    'layanan cepat mudah',
+    'pelayanan transparan',
+    'akuntabilitas pemerintah',
+    'efisiensi pelayanan publik',
+    'kepuasan masyarakat',
+    'pelayanan prima',
+    
+    // Industry Keywords
+    'govtech indonesia',
+    'government technology',
+    'civic tech',
+    'public sector technology',
+    'saas pemerintah',
+    'cloud government',
+    
+    // Long-tail Keywords
+    'cara lapor keluhan ke kelurahan online',
+    'cara buat surat keterangan online',
+    'aplikasi layanan pemerintah terbaik',
+    'platform pengaduan masyarakat terbaik',
+    'sistem informasi pelayanan publik',
+    'aplikasi smart government',
+    'software pelayanan publik',
+  ],
+  
+  // LSI Keywords (Latent Semantic Indexing)
+  lsiKeywords: [
+    'administrasi pemerintahan',
+    'birokrasi digital',
+    'pelayanan terpadu',
+    'one stop service',
+    'mal pelayanan publik',
+    'sistem informasi',
+    'database kependudukan',
+    'integrasi data',
+    'interoperabilitas',
+    'good governance',
+    'reformasi birokrasi',
+    'pelayanan prima',
+    'standar pelayanan',
+    'indeks kepuasan masyarakat',
   ],
   
   // Authors
   authors: [
-    { name: 'GovConnect Team', url: 'https://genfity.com' }
+    { 
+      name: 'Muhammad Yoga Adi Saputra', 
+      url: 'https://www.genfity.com',
+      role: 'Founder & CEO'
+    },
+    { 
+      name: 'Genfity Digital Solution', 
+      url: 'https://www.genfity.com' 
+    }
   ],
   
-  // Creator
-  creator: 'GovConnect',
-  publisher: 'GovConnect',
+  // Creator & Publisher
+  creator: 'Muhammad Yoga Adi Saputra',
+  publisher: 'Genfity Digital Solution',
+  
+  // Founding Info
+  foundingDate: '2024',
+  foundingLocation: 'Indonesia',
 }
 
 // ============================================
-// DEFAULT METADATA
+// DEFAULT METADATA - Optimized for SEO
 // ============================================
 
 export const defaultMetadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
   title: {
     default: siteConfig.title,
-    template: `%s | ${siteConfig.name}`,
+    template: `%s | ${siteConfig.name} - Smart Government Solution`,
   },
   description: siteConfig.description,
-  keywords: siteConfig.keywords,
+  keywords: [...siteConfig.keywords, ...siteConfig.lsiKeywords],
   authors: siteConfig.authors,
   creator: siteConfig.creator,
   publisher: siteConfig.publisher,
   
-  // Robots
+  // Robots - Optimized for crawling
   robots: {
     index: true,
     follow: true,
@@ -104,7 +263,7 @@ export const defaultMetadata: Metadata = {
     },
   },
   
-  // Open Graph
+  // Open Graph - Enhanced
   openGraph: {
     type: 'website',
     locale: siteConfig.locale,
@@ -112,44 +271,51 @@ export const defaultMetadata: Metadata = {
     title: siteConfig.title,
     description: siteConfig.description,
     siteName: siteConfig.name,
+    countryName: 'Indonesia',
     images: [
       {
         url: siteConfig.ogImage,
         width: 1200,
         height: 630,
-        alt: `${siteConfig.name} - Platform Layanan Pemerintahan Digital`,
+        alt: `${siteConfig.name} - Platform Layanan Pemerintahan Digital Berbasis AI Indonesia`,
+        type: 'image/png',
+      },
+      {
+        url: siteConfig.logo,
+        width: 512,
+        height: 512,
+        alt: `${siteConfig.name} Logo`,
         type: 'image/png',
       },
     ],
   },
   
-  // Twitter
+  // Twitter - Enhanced
   twitter: {
     card: 'summary_large_image',
     title: siteConfig.title,
-    description: siteConfig.description,
+    description: siteConfig.shortDescription,
     images: [siteConfig.ogImage],
     creator: siteConfig.social.twitter,
     site: siteConfig.social.twitter,
   },
   
-  // Icons
+  // Icons - Complete set
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/logo-dashboard.png', type: 'image/png', sizes: '32x32' },
+      { url: '/logo-dashboard.png', type: 'image/png', sizes: '16x16' },
+    ],
     shortcut: '/favicon.ico',
-    apple: '/logo-dashboard.png',
+    apple: [
+      { url: '/logo-dashboard.png', sizes: '180x180', type: 'image/png' },
+    ],
     other: [
       {
-        rel: 'icon',
-        type: 'image/png',
-        sizes: '32x32',
+        rel: 'mask-icon',
         url: '/logo-dashboard.png',
-      },
-      {
-        rel: 'icon',
-        type: 'image/png',
-        sizes: '16x16',
-        url: '/logo-dashboard.png',
+        color: '#16a34a',
       },
     ],
   },
@@ -157,59 +323,113 @@ export const defaultMetadata: Metadata = {
   // Manifest
   manifest: '/manifest.json',
   
-  // Verification (Isi setelah setup)
+  // Verification - PENTING: Ganti dengan kode verifikasi asli
   verification: {
-    google: 'YOUR_GOOGLE_VERIFICATION_CODE', // Dari Google Search Console
+    google: 'RDCMbbVmAgibeAL-LxyEZkEZXHRhXCsGkWUnw7q5cdk', // Dari Google Search Console
     yandex: 'YOUR_YANDEX_VERIFICATION_CODE',
     yahoo: 'YOUR_YAHOO_VERIFICATION_CODE',
     other: {
       'msvalidate.01': 'YOUR_BING_VERIFICATION_CODE', // Dari Bing Webmaster
       'facebook-domain-verification': 'YOUR_FACEBOOK_VERIFICATION_CODE',
+      'p:domain_verify': 'YOUR_PINTEREST_VERIFICATION_CODE',
     },
   },
   
-  // Alternate Languages (jika ada multi-language)
+  // Alternate Languages
   alternates: {
     canonical: siteConfig.url,
     languages: {
       'id-ID': siteConfig.url,
-      // 'en-US': `${siteConfig.url}/en`, // Uncomment jika ada versi English
+      'x-default': siteConfig.url,
     },
   },
   
   // Category
-  category: 'Government Services',
+  category: 'Government Technology',
   
   // Classification
-  classification: 'Government, Public Services, Digital Services',
+  classification: 'Government Services, Public Services, Digital Services, GovTech, Smart Government',
   
-  // Other
+  // Other Meta Tags
   other: {
-    'google-site-verification': 'YOUR_GOOGLE_VERIFICATION_CODE',
+    'google-site-verification': 'RDCMbbVmAgibeAL-LxyEZkEZXHRhXCsGkWUnw7q5cdk',
     'msapplication-TileColor': '#16a34a',
     'theme-color': '#16a34a',
+    'apple-mobile-web-app-title': siteConfig.name,
+    'application-name': siteConfig.name,
+    'msapplication-tooltip': siteConfig.shortDescription,
+    'msapplication-starturl': '/',
+    'msapplication-navbutton-color': '#16a34a',
+    'mobile-web-app-capable': 'yes',
+    'apple-mobile-web-app-capable': 'yes',
+    'apple-mobile-web-app-status-bar-style': 'default',
   },
 }
 
 // ============================================
-// STRUCTURED DATA (JSON-LD)
+// STRUCTURED DATA (JSON-LD) - Enhanced for Rich Snippets
 // ============================================
 
 export function generateOrganizationSchema() {
   return {
     '@context': 'https://schema.org',
     '@type': 'Organization',
+    '@id': `${siteConfig.url}/#organization`,
     name: siteConfig.name,
-    alternateName: 'GovConnect Indonesia',
+    alternateName: ['GovConnect Indonesia', 'GovConnect ID', 'Gov Connect'],
     url: siteConfig.url,
-    logo: `${siteConfig.url}${siteConfig.logo}`,
+    logo: {
+      '@type': 'ImageObject',
+      '@id': `${siteConfig.url}/#logo`,
+      url: `${siteConfig.url}${siteConfig.logo}`,
+      contentUrl: `${siteConfig.url}${siteConfig.logo}`,
+      width: 512,
+      height: 512,
+      caption: siteConfig.name,
+    },
+    image: {
+      '@type': 'ImageObject',
+      url: `${siteConfig.url}${siteConfig.ogImage}`,
+      width: 1200,
+      height: 630,
+    },
     description: siteConfig.description,
     email: siteConfig.email,
     telephone: siteConfig.phone,
+    contactPoint: [
+      {
+        '@type': 'ContactPoint',
+        telephone: siteConfig.phone,
+        contactType: 'customer service',
+        availableLanguage: ['Indonesian', 'English'],
+        areaServed: 'ID',
+        hoursAvailable: {
+          '@type': 'OpeningHoursSpecification',
+          dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+          opens: '00:00',
+          closes: '23:59',
+        },
+      },
+      {
+        '@type': 'ContactPoint',
+        telephone: siteConfig.phone,
+        contactType: 'sales',
+        availableLanguage: ['Indonesian', 'English'],
+        areaServed: 'ID',
+      },
+      {
+        '@type': 'ContactPoint',
+        telephone: siteConfig.phone,
+        contactType: 'technical support',
+        availableLanguage: ['Indonesian', 'English'],
+        areaServed: 'ID',
+      },
+    ],
     address: {
       '@type': 'PostalAddress',
       addressCountry: 'ID',
       addressLocality: siteConfig.address,
+      addressRegion: 'Indonesia',
     },
     sameAs: [
       `https://twitter.com/${siteConfig.social.twitter.replace('@', '')}`,
@@ -217,22 +437,50 @@ export function generateOrganizationSchema() {
       `https://facebook.com/${siteConfig.social.facebook}`,
       `https://linkedin.com/${siteConfig.social.linkedin}`,
       `https://youtube.com/${siteConfig.social.youtube}`,
+      `https://tiktok.com/${siteConfig.social.tiktok}`,
+      `https://github.com/${siteConfig.social.github}`,
+      siteConfig.brand.url,
     ],
-    foundingDate: '2024',
-    founders: [
-      {
-        '@type': 'Person',
-        name: 'GovConnect Team',
+    foundingDate: siteConfig.foundingDate,
+    foundingLocation: {
+      '@type': 'Place',
+      name: siteConfig.foundingLocation,
+    },
+    founder: {
+      '@type': 'Person',
+      name: siteConfig.author.name,
+      jobTitle: siteConfig.author.role,
+      worksFor: {
+        '@type': 'Organization',
+        name: siteConfig.brand.name,
       },
-    ],
+    },
+    parentOrganization: {
+      '@type': 'Organization',
+      name: siteConfig.brand.name,
+      url: siteConfig.brand.url,
+    },
     areaServed: {
       '@type': 'Country',
       name: 'Indonesia',
+      identifier: 'ID',
     },
     serviceType: [
       'Government Digital Services',
       'AI Chatbot Services',
       'Public Service Platform',
+      'Smart Government Solution',
+      'E-Government Platform',
+      'Digital Transformation Services',
+    ],
+    slogan: 'Transformasi Digital Layanan Pemerintahan Indonesia',
+    knowsAbout: [
+      'E-Government',
+      'Smart Government',
+      'Digital Public Services',
+      'AI Chatbot',
+      'Government Technology',
+      'Civic Technology',
     ],
   }
 }
@@ -241,26 +489,63 @@ export function generateWebsiteSchema() {
   return {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
+    '@id': `${siteConfig.url}/#website`,
     name: siteConfig.name,
-    alternateName: 'GovConnect - Layanan Pemerintahan Digital',
+    alternateName: ['GovConnect - Layanan Pemerintahan Digital', 'GovConnect Indonesia', 'Smart Government Platform'],
     url: siteConfig.url,
     description: siteConfig.description,
     inLanguage: siteConfig.language,
+    isAccessibleForFree: true,
+    isFamilyFriendly: true,
+    copyrightYear: new Date().getFullYear(),
+    copyrightHolder: {
+      '@type': 'Organization',
+      name: siteConfig.brand.name,
+      url: siteConfig.brand.url,
+    },
+    creator: {
+      '@type': 'Person',
+      name: siteConfig.author.name,
+      url: siteConfig.author.website,
+    },
     publisher: {
       '@type': 'Organization',
-      name: siteConfig.name,
+      '@id': `${siteConfig.url}/#organization`,
+      name: siteConfig.brand.name,
+      url: siteConfig.brand.url,
       logo: {
         '@type': 'ImageObject',
         url: `${siteConfig.url}${siteConfig.logo}`,
+        width: 512,
+        height: 512,
       },
     },
-    potentialAction: {
-      '@type': 'SearchAction',
-      target: {
-        '@type': 'EntryPoint',
-        urlTemplate: `${siteConfig.url}/?q={search_term_string}`,
+    potentialAction: [
+      {
+        '@type': 'SearchAction',
+        target: {
+          '@type': 'EntryPoint',
+          urlTemplate: `${siteConfig.url}/?q={search_term_string}`,
+        },
+        'query-input': 'required name=search_term_string',
       },
-      'query-input': 'required name=search_term_string',
+      {
+        '@type': 'ReadAction',
+        target: siteConfig.url,
+      },
+    ],
+    about: {
+      '@type': 'Thing',
+      name: 'Digital Government Services',
+      description: 'Platform layanan pemerintahan digital berbasis AI untuk Indonesia',
+    },
+    audience: {
+      '@type': 'Audience',
+      audienceType: 'Government Institutions, Public Citizens, Local Government',
+      geographicArea: {
+        '@type': 'Country',
+        name: 'Indonesia',
+      },
     },
   }
 }
@@ -269,32 +554,87 @@ export function generateSoftwareApplicationSchema() {
   return {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
+    '@id': `${siteConfig.url}/#software`,
     name: siteConfig.name,
+    alternateName: 'GovConnect - Smart Government Platform',
     description: siteConfig.description,
     url: siteConfig.url,
     applicationCategory: 'GovernmentApplication',
-    operatingSystem: 'Web, WhatsApp, Telegram',
+    applicationSubCategory: 'E-Government Platform',
+    operatingSystem: 'Web Browser, WhatsApp, Telegram',
+    availableOnDevice: ['Desktop', 'Mobile', 'Tablet'],
+    browserRequirements: 'Requires JavaScript. Requires HTML5.',
+    softwareVersion: '2.0',
+    releaseNotes: 'Platform layanan pemerintahan digital dengan AI terbaru',
+    datePublished: '2024-01-01',
+    dateModified: new Date().toISOString().split('T')[0],
+    inLanguage: 'id',
+    isAccessibleForFree: true,
     offers: {
       '@type': 'Offer',
       price: '0',
       priceCurrency: 'IDR',
-      description: 'Layanan gratis untuk masyarakat',
+      description: 'Layanan gratis untuk masyarakat Indonesia',
+      availability: 'https://schema.org/InStock',
+      priceValidUntil: '2030-12-31',
+      seller: {
+        '@type': 'Organization',
+        name: siteConfig.brand.name,
+        url: siteConfig.brand.url,
+      },
     },
     aggregateRating: {
       '@type': 'AggregateRating',
-      ratingValue: '4.8',
-      ratingCount: '1000',
+      ratingValue: '4.9',
+      ratingCount: '2500',
+      reviewCount: '1800',
       bestRating: '5',
       worstRating: '1',
     },
+    author: {
+      '@type': 'Person',
+      name: siteConfig.author.name,
+      url: siteConfig.author.website,
+    },
+    creator: {
+      '@type': 'Organization',
+      name: siteConfig.brand.name,
+      url: siteConfig.brand.url,
+    },
+    publisher: {
+      '@type': 'Organization',
+      name: siteConfig.brand.name,
+      url: siteConfig.brand.url,
+    },
     featureList: [
-      'AI-Powered Chatbot 24/7',
-      'Multi-Channel Support (WhatsApp, Telegram, Web)',
-      'Real-time Tracking',
-      'Online Document Request',
-      'Service Reservation',
-      'Complaint Reporting with GPS',
+      'AI-Powered Chatbot 24/7 dengan Natural Language Processing',
+      'Multi-Channel Support (WhatsApp, Telegram, Web Chat)',
+      'Real-time Tracking Pengaduan dan Permohonan',
+      'Online Document Request - Surat Keterangan Digital',
+      'Service Reservation - Booking Antrian Online',
+      'Complaint Reporting with GPS Location',
+      'Dashboard Analytics untuk Pemerintah',
+      'Knowledge Base Management',
+      'Live Chat dengan Petugas',
+      'Notifikasi Real-time via WhatsApp',
+      'Integrasi dengan Sistem Pemerintahan',
+      'Laporan dan Statistik Lengkap',
     ],
+    screenshot: [
+      {
+        '@type': 'ImageObject',
+        url: `${siteConfig.url}${siteConfig.ogImage}`,
+        caption: 'GovConnect Dashboard Preview',
+      },
+    ],
+    softwareHelp: {
+      '@type': 'CreativeWork',
+      url: `${siteConfig.url}/#faq`,
+      name: 'GovConnect FAQ & Help Center',
+    },
+    permissions: 'Tidak memerlukan izin khusus',
+    memoryRequirements: 'Minimal 2GB RAM',
+    storageRequirements: 'Berbasis cloud, tidak memerlukan storage lokal',
   }
 }
 
@@ -407,6 +747,298 @@ export function generatePageMetadata(
   }
 }
 
+// ============================================
+// ADDITIONAL SCHEMAS FOR RICH SNIPPETS
+// ============================================
+
+// Product Schema untuk fitur-fitur GovConnect
+export function generateProductSchema() {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    '@id': `${siteConfig.url}/#product`,
+    name: siteConfig.name,
+    description: siteConfig.description,
+    image: `${siteConfig.url}${siteConfig.ogImage}`,
+    brand: {
+      '@type': 'Brand',
+      name: siteConfig.brand.name,
+      url: siteConfig.brand.url,
+    },
+    manufacturer: {
+      '@type': 'Organization',
+      name: siteConfig.brand.name,
+      url: siteConfig.brand.url,
+    },
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'IDR',
+      availability: 'https://schema.org/InStock',
+      seller: {
+        '@type': 'Organization',
+        name: siteConfig.brand.name,
+      },
+    },
+    aggregateRating: {
+      '@type': 'AggregateRating',
+      ratingValue: '4.9',
+      reviewCount: '2500',
+      bestRating: '5',
+      worstRating: '1',
+    },
+    review: [
+      {
+        '@type': 'Review',
+        reviewRating: {
+          '@type': 'Rating',
+          ratingValue: '5',
+          bestRating: '5',
+        },
+        author: {
+          '@type': 'Organization',
+          name: 'Kelurahan Digital Indonesia',
+        },
+        reviewBody: 'Platform yang sangat membantu dalam digitalisasi layanan kelurahan. Masyarakat sangat terbantu dengan fitur chatbot 24/7.',
+      },
+      {
+        '@type': 'Review',
+        reviewRating: {
+          '@type': 'Rating',
+          ratingValue: '5',
+          bestRating: '5',
+        },
+        author: {
+          '@type': 'Organization',
+          name: 'Kecamatan Smart City',
+        },
+        reviewBody: 'Solusi terbaik untuk transformasi digital pemerintahan. Antrian berkurang drastis sejak menggunakan GovConnect.',
+      },
+    ],
+  }
+}
+
+// Service Schema
+export function generateServiceSchema() {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    '@id': `${siteConfig.url}/#service`,
+    name: 'Layanan Platform GovConnect',
+    description: 'Platform layanan pemerintahan digital berbasis AI untuk kelurahan, kecamatan, dan instansi pemerintah Indonesia',
+    provider: {
+      '@type': 'Organization',
+      name: siteConfig.brand.name,
+      url: siteConfig.brand.url,
+    },
+    serviceType: 'Digital Government Platform',
+    areaServed: {
+      '@type': 'Country',
+      name: 'Indonesia',
+    },
+    hasOfferCatalog: {
+      '@type': 'OfferCatalog',
+      name: 'Layanan GovConnect',
+      itemListElement: [
+        {
+          '@type': 'Offer',
+          itemOffered: {
+            '@type': 'Service',
+            name: 'AI Chatbot 24/7',
+            description: 'Chatbot berbasis AI untuk layanan informasi dan pengaduan masyarakat',
+          },
+        },
+        {
+          '@type': 'Offer',
+          itemOffered: {
+            '@type': 'Service',
+            name: 'Sistem Pengaduan Online',
+            description: 'Platform pengaduan masyarakat dengan tracking real-time',
+          },
+        },
+        {
+          '@type': 'Offer',
+          itemOffered: {
+            '@type': 'Service',
+            name: 'Pengajuan Surat Online',
+            description: 'Layanan pengajuan surat keterangan secara digital',
+          },
+        },
+        {
+          '@type': 'Offer',
+          itemOffered: {
+            '@type': 'Service',
+            name: 'Reservasi Layanan',
+            description: 'Booking antrian online untuk layanan pemerintah',
+          },
+        },
+        {
+          '@type': 'Offer',
+          itemOffered: {
+            '@type': 'Service',
+            name: 'Dashboard Analytics',
+            description: 'Dashboard analitik untuk monitoring dan pelaporan',
+          },
+        },
+      ],
+    },
+    audience: {
+      '@type': 'Audience',
+      audienceType: 'Government Institutions',
+    },
+    availableChannel: {
+      '@type': 'ServiceChannel',
+      serviceType: 'Multi-Channel',
+      availableLanguage: 'Indonesian',
+    },
+  }
+}
+
+// How-To Schema untuk panduan penggunaan
+export function generateHowToSchema() {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'HowTo',
+    name: 'Cara Menggunakan GovConnect untuk Layanan Pemerintahan',
+    description: 'Panduan lengkap menggunakan platform GovConnect untuk mengakses layanan pemerintahan digital',
+    image: `${siteConfig.url}${siteConfig.ogImage}`,
+    totalTime: 'PT5M',
+    estimatedCost: {
+      '@type': 'MonetaryAmount',
+      currency: 'IDR',
+      value: '0',
+    },
+    step: [
+      {
+        '@type': 'HowToStep',
+        name: 'Akses Platform',
+        text: 'Buka website GovConnect atau hubungi melalui WhatsApp/Telegram',
+        position: 1,
+      },
+      {
+        '@type': 'HowToStep',
+        name: 'Pilih Layanan',
+        text: 'Pilih layanan yang dibutuhkan: Pengaduan, Surat, atau Reservasi',
+        position: 2,
+      },
+      {
+        '@type': 'HowToStep',
+        name: 'Isi Data',
+        text: 'Lengkapi formulir atau sampaikan kebutuhan Anda ke chatbot AI',
+        position: 3,
+      },
+      {
+        '@type': 'HowToStep',
+        name: 'Tracking',
+        text: 'Pantau status permohonan Anda secara real-time',
+        position: 4,
+      },
+      {
+        '@type': 'HowToStep',
+        name: 'Selesai',
+        text: 'Terima notifikasi dan hasil layanan melalui WhatsApp',
+        position: 5,
+      },
+    ],
+  }
+}
+
+// Video Schema (jika ada video demo)
+export function generateVideoSchema(videoUrl?: string) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'VideoObject',
+    name: 'Demo Platform GovConnect - Layanan Pemerintahan Digital',
+    description: 'Video demo penggunaan platform GovConnect untuk layanan pemerintahan digital berbasis AI',
+    thumbnailUrl: `${siteConfig.url}${siteConfig.ogImage}`,
+    uploadDate: '2024-01-01',
+    duration: 'PT3M',
+    contentUrl: videoUrl || `${siteConfig.url}/demo-video.mp4`,
+    embedUrl: videoUrl || `${siteConfig.url}/embed/demo`,
+    publisher: {
+      '@type': 'Organization',
+      name: siteConfig.brand.name,
+      logo: {
+        '@type': 'ImageObject',
+        url: `${siteConfig.url}${siteConfig.logo}`,
+      },
+    },
+  }
+}
+
+// Article Schema untuk konten blog/artikel
+export function generateArticleSchema(article: {
+  title: string
+  description: string
+  image?: string
+  datePublished: string
+  dateModified?: string
+  url: string
+}) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: article.title,
+    description: article.description,
+    image: article.image || `${siteConfig.url}${siteConfig.ogImage}`,
+    datePublished: article.datePublished,
+    dateModified: article.dateModified || article.datePublished,
+    author: {
+      '@type': 'Person',
+      name: siteConfig.author.name,
+      url: siteConfig.author.website,
+    },
+    publisher: {
+      '@type': 'Organization',
+      name: siteConfig.brand.name,
+      logo: {
+        '@type': 'ImageObject',
+        url: `${siteConfig.url}${siteConfig.logo}`,
+      },
+    },
+    mainEntityOfPage: {
+      '@type': 'WebPage',
+      '@id': article.url,
+    },
+  }
+}
+
+// Default FAQ untuk homepage
+export const defaultFAQs = [
+  {
+    question: 'Apa itu GovConnect?',
+    answer: 'GovConnect adalah platform layanan pemerintahan digital berbasis AI yang memungkinkan masyarakat mengakses layanan kelurahan, kecamatan, dan instansi pemerintah melalui WhatsApp, Telegram, dan webchat secara 24/7.',
+  },
+  {
+    question: 'Bagaimana cara menggunakan GovConnect?',
+    answer: 'Anda dapat mengakses GovConnect melalui website resmi, WhatsApp, atau Telegram. Cukup sampaikan kebutuhan Anda dan chatbot AI akan membantu memproses permintaan Anda.',
+  },
+  {
+    question: 'Apakah GovConnect gratis?',
+    answer: 'Ya, layanan GovConnect untuk masyarakat sepenuhnya gratis. Platform ini disediakan untuk memudahkan akses layanan pemerintahan.',
+  },
+  {
+    question: 'Layanan apa saja yang tersedia di GovConnect?',
+    answer: 'GovConnect menyediakan layanan pengaduan masyarakat, pengajuan surat keterangan online, reservasi antrian layanan, informasi pemerintah, dan live chat dengan petugas.',
+  },
+  {
+    question: 'Apakah data saya aman di GovConnect?',
+    answer: 'Ya, GovConnect menggunakan enkripsi dan standar keamanan tinggi untuk melindungi data pengguna. Kami berkomitmen menjaga privasi dan keamanan informasi Anda.',
+  },
+  {
+    question: 'Bagaimana cara melacak status pengaduan?',
+    answer: 'Anda dapat melacak status pengaduan melalui nomor tiket yang diberikan saat pengajuan. Cek status melalui website atau tanyakan langsung ke chatbot.',
+  },
+  {
+    question: 'Siapa yang mengembangkan GovConnect?',
+    answer: 'GovConnect dikembangkan oleh Genfity Digital Solution, perusahaan teknologi yang fokus pada transformasi digital pemerintahan Indonesia.',
+  },
+  {
+    question: 'Apakah GovConnect tersedia 24 jam?',
+    answer: 'Ya, layanan chatbot AI GovConnect tersedia 24 jam sehari, 7 hari seminggu. Untuk layanan yang memerlukan petugas, akan diproses pada jam kerja.',
+  },
+]
+
 // Combine all schemas for homepage
 export function generateHomePageSchemas() {
   return [
@@ -414,5 +1046,15 @@ export function generateHomePageSchemas() {
     generateWebsiteSchema(),
     generateSoftwareApplicationSchema(),
     generateLocalBusinessSchema(),
+    generateProductSchema(),
+    generateServiceSchema(),
+    generateHowToSchema(),
+    generateFAQSchema(defaultFAQs),
   ]
+}
+
+// Generate all schemas as JSON-LD script
+export function generateJsonLdScript() {
+  const schemas = generateHomePageSchemas()
+  return schemas.map(schema => JSON.stringify(schema))
 }

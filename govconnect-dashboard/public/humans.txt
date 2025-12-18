@@ -1,0 +1,47 @@
+/* TEAM */
+Founder & CEO: Muhammad Yoga Adi Saputra
+Contact: genfity@gmail.com
+Phone: 0851-7431-4023
+From: Indonesia
+
+/* COMPANY */
+Name: Genfity Digital Solution
+Website: https://www.genfity.com
+Description: Transformasi Digital untuk Indonesia
+
+/* PROJECT */
+Name: GovConnect
+Description: Platform Layanan Pemerintahan Digital Berbasis AI
+URL: https://govconnect.id
+Language: Indonesian (id)
+Doctype: HTML5
+
+/* TECHNOLOGY */
+Framework: Next.js 15
+Language: TypeScript
+Styling: Tailwind CSS
+Database: PostgreSQL
+AI: Natural Language Processing
+Deployment: Docker, Traefik
+
+/* FEATURES */
+- AI-Powered Chatbot 24/7
+- Multi-Channel Support (WhatsApp, Telegram, Web)
+- Online Complaint Reporting
+- Digital Document Request
+- Service Reservation System
+- Real-time Tracking
+- Analytics Dashboard
+
+/* THANKS */
+- Next.js Team
+- Vercel
+- Tailwind CSS
+- Prisma
+- All Open Source Contributors
+
+/* SITE */
+Last update: 2024
+Standards: HTML5, CSS3, ES6+
+Components: React Server Components
+Software: Visual Studio Code, Kiro IDE

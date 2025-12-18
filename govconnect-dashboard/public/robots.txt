@@ -1,7 +1,39 @@
-# GovConnect - Robots.txt
+# ============================================
+# ROBOTS.TXT - GovConnect
+# Platform Layanan Pemerintahan Digital Berbasis AI
 # https://govconnect.id
+# Developed by Genfity Digital Solution
+# ============================================
 
+# Default - Allow all crawlers
 User-agent: *
+Allow: /
+Allow: /#tentang
+Allow: /#fitur
+Allow: /#layanan
+Allow: /#demo
+Allow: /#manfaat
+Allow: /#use-case
+Allow: /#testimoni
+Allow: /#faq
+Allow: /#kontak
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /login
+Disallow: /_next/
+Disallow: /generated/
+Disallow: /*.json$
+Disallow: /private/
+
+# Crawl-delay untuk menghindari overload server
+Crawl-delay: 1
+
+# ============================================
+# SEARCH ENGINE BOTS
+# ============================================
+
+# Google Bot - Prioritas Tinggi
+User-agent: Googlebot
 Allow: /
 Disallow: /api/
 Disallow: /dashboard/
@@ -9,27 +41,56 @@ Disallow: /login
 Disallow: /_next/
 Disallow: /generated/
 
-# Sitemap
-Sitemap: https://govconnect.id/sitemap.xml
-
-# Crawl-delay untuk menghindari overload server
-Crawl-delay: 1
-
-# Google specific
-User-agent: Googlebot
-Allow: /
+# Google Image Bot
+User-agent: Googlebot-Image
+Allow: /dashboard.png
+Allow: /logo-dashboard.png
+Allow: /favicon.ico
 Disallow: /api/
 Disallow: /dashboard/
-Disallow: /login
+Disallow: /_next/
 
-# Bing specific
+# Bing Bot
 User-agent: Bingbot
 Allow: /
 Disallow: /api/
 Disallow: /dashboard/
 Disallow: /login
+Disallow: /_next/
+Disallow: /generated/
 
-# Social Media Bots (untuk preview)
+# Yahoo Slurp
+User-agent: Slurp
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /login
+
+# DuckDuckGo
+User-agent: DuckDuckBot
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /login
+
+# Yandex
+User-agent: YandexBot
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /login
+
+# Baidu
+User-agent: Baiduspider
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /login
+
+# ============================================
+# SOCIAL MEDIA BOTS - Allow untuk Preview
+# ============================================
+
 User-agent: facebookexternalhit
 Allow: /
 
@@ -41,3 +102,55 @@ Allow: /
 
 User-agent: WhatsApp
 Allow: /
+
+User-agent: TelegramBot
+Allow: /
+
+User-agent: Pinterest
+Allow: /
+
+User-agent: Slackbot
+Allow: /
+
+User-agent: Discordbot
+Allow: /
+
+# ============================================
+# BLOCK BAD BOTS (SEO Scrapers)
+# ============================================
+
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DotBot
+Disallow: /
+
+User-agent: BLEXBot
+Disallow: /
+
+User-agent: SearchmetricsBot
+Disallow: /
+
+User-agent: MegaIndex
+Disallow: /
+
+User-agent: Screaming Frog SEO Spider
+Disallow: /
+
+# ============================================
+# SITEMAP
+# ============================================
+
+Sitemap: https://govconnect.id/sitemap.xml
+
+# ============================================
+# HOST
+# ============================================
+
+Host: https://govconnect.id
