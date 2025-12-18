@@ -130,7 +130,7 @@ interface TokenUsage {
   totalOutputTokens: number
   totalTokens: number
   estimatedCostUSD: number
-  byModel: Record<string, { 
+  byModel: Record<string, {
     input: number
     output: number
     cost: number
@@ -217,7 +217,7 @@ export default function AIAnalyticsPage() {
     try {
       setLoading(true)
       setError(null)
-      
+
       const token = localStorage.getItem('token')
       const headers = { 'Authorization': `Bearer ${token}` }
 
@@ -359,7 +359,7 @@ export default function AIAnalyticsPage() {
   const fetchModelDetail = async (modelName: string) => {
     try {
       setLoadingDetail(true)
-      
+
       const response = await fetch(`/api/statistics/ai-usage/${encodeURIComponent(modelName)}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -652,7 +652,7 @@ export default function AIAnalyticsPage() {
                   {optimization.cache?.totalHits || 0} hits / {(optimization.cache?.totalHits || 0) + (optimization.cache?.totalMisses || 0)} total
                 </p>
               </div>
-              
+
               <div className="p-4 bg-background rounded-lg border">
                 <div className="flex items-center gap-2 mb-2">
                   <Activity className="h-4 w-4 text-blue-500" />
@@ -661,7 +661,7 @@ export default function AIAnalyticsPage() {
                 <p className="text-2xl font-bold">{optimization.cache?.cacheSize || 0}</p>
                 <p className="text-xs text-muted-foreground mt-1">cached responses</p>
               </div>
-              
+
               <div className="p-4 bg-background rounded-lg border">
                 <div className="flex items-center gap-2 mb-2">
                   <TrendingUp className="h-4 w-4 text-purple-500" />
@@ -670,7 +670,7 @@ export default function AIAnalyticsPage() {
                 <p className="text-2xl font-bold">{(optimization.cache?.avgHitCount || 0).toFixed(1)}</p>
                 <p className="text-xs text-muted-foreground mt-1">per cached query</p>
               </div>
-              
+
               <div className="p-4 bg-background rounded-lg border">
                 <div className="flex items-center gap-2 mb-2">
                   <Coins className="h-4 w-4 text-yellow-500" />
@@ -682,7 +682,7 @@ export default function AIAnalyticsPage() {
                 <p className="text-xs text-muted-foreground mt-1">LLM cost reduction</p>
               </div>
             </div>
-            
+
             {/* Top Cached Queries */}
             {optimization.topCachedQueries && optimization.topCachedQueries.length > 0 && (
               <div className="mt-4">
@@ -1054,7 +1054,7 @@ export default function AIAnalyticsPage() {
                   const weeklyOutputTokens = last7Days.reduce((sum, d) => sum + (d.output || 0), 0)
                   const weeklyCost = last7Days.reduce((sum, d) => sum + (d.cost || 0), 0)
                   const weeklyMessages = summary?.totalRequests ? Math.round(summary.totalRequests * 7 / 30) : 0
-                  
+
                   return (
                     <div className="space-y-2">
                       <div className="flex justify-between">
@@ -1097,7 +1097,7 @@ export default function AIAnalyticsPage() {
                   const monthlyCost = tokens.last30Days?.reduce((sum, d) => sum + (d.cost || 0), 0) || 0
                   const monthlyMessages = summary?.totalRequests || 0
                   const monthlyUsers = getUniqueUsers()
-                  
+
                   return (
                     <div className="space-y-2">
                       <div className="flex justify-between">
@@ -1232,7 +1232,7 @@ export default function AIAnalyticsPage() {
             </Table>
           </CardContent>
         </Card>
-      )
+      )}
 
       {/* Intent Success Rate Table */}
       {intents?.intents && Object.keys(intents.intents).length > 0 && (
@@ -1259,8 +1259,8 @@ export default function AIAnalyticsPage() {
               </TableHeader>
               <TableBody>
                 {Object.entries(intents.intents).map(([intent, data]) => {
-                  const successRate = data.total > 0 
-                    ? ((data.success / data.total) * 100).toFixed(1) 
+                  const successRate = data.total > 0
+                    ? ((data.success / data.total) * 100).toFixed(1)
                     : '0'
                   return (
                     <TableRow key={intent}>
@@ -1324,8 +1324,8 @@ export default function AIAnalyticsPage() {
                           <Badge className={getSuccessRateBadge(model.successRate)}>
                             {model.successRate}
                           </Badge>
-                          <Progress 
-                            value={successRate} 
+                          <Progress
+                            value={successRate}
                             className="h-1.5 w-16"
                           />
                         </div>
@@ -1356,8 +1356,8 @@ export default function AIAnalyticsPage() {
                       <TableCell className="text-center">
                         <Dialog>
                           <DialogTrigger asChild>
-                            <Button 
-                              variant="ghost" 
+                            <Button
+                              variant="ghost"
                               size="sm"
                               onClick={() => fetchModelDetail(model.model)}
                             >
@@ -1374,7 +1374,7 @@ export default function AIAnalyticsPage() {
                                 Statistik lengkap dan riwayat error untuk model ini
                               </DialogDescription>
                             </DialogHeader>
-                            
+
                             {loadingDetail ? (
                               <div className="space-y-4">
                                 <Skeleton className="h-24 w-full" />
@@ -1448,8 +1448,8 @@ export default function AIAnalyticsPage() {
                                     </h4>
                                     <div className="space-y-2 max-h-60 overflow-y-auto">
                                       {selectedModel.errorHistory.map((err, idx) => (
-                                        <div 
-                                          key={idx} 
+                                        <div
+                                          key={idx}
                                           className="p-3 bg-muted rounded-lg text-sm"
                                         >
                                           <p className="text-xs text-muted-foreground mb-1">

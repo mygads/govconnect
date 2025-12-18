@@ -327,63 +327,6 @@ export default function AISettingsPage() {
             </div>
           </CardContent>
         </Card>
-        {/* How Model Pool Works */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Info className="h-5 w-5 text-blue-500" />
-              How Model Selection Works
-            </CardTitle>
-            <CardDescription>
-              Understanding the AI model pool and automatic failover
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="p-4 rounded-lg border bg-muted/30">
-                <h4 className="font-medium mb-2 flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold dark:bg-blue-900 dark:text-blue-300">1</div>
-                  Primary Model First
-                </h4>
-                <p className="text-sm text-muted-foreground">
-                  The system always tries your selected Primary Model first for every request.
-                </p>
-              </div>
-              <div className="p-4 rounded-lg border bg-muted/30">
-                <h4 className="font-medium mb-2 flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-xs font-bold dark:bg-orange-900 dark:text-orange-300">2</div>
-                  Automatic Failover
-                </h4>
-                <p className="text-sm text-muted-foreground">
-                  If primary fails, the system automatically switches to the Fallback Model.
-                </p>
-              </div>
-              <div className="p-4 rounded-lg border bg-muted/30">
-                <h4 className="font-medium mb-2 flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xs font-bold dark:bg-purple-900 dark:text-purple-300">3</div>
-                  Dynamic Priority
-                </h4>
-                <p className="text-sm text-muted-foreground">
-                  Models are dynamically prioritized based on their success rates. Better performing models are tried first.
-                </p>
-              </div>
-              <div className="p-4 rounded-lg border bg-muted/30">
-                <h4 className="font-medium mb-2 flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold dark:bg-green-900 dark:text-green-300">4</div>
-                  Never Fail
-                </h4>
-                <p className="text-sm text-muted-foreground">
-                  The system has aggressive retry logic to ensure users always get a response, even if it takes multiple attempts.
-                </p>
-              </div>
-            </div>
-            <Separator />
-            <div className="text-sm text-muted-foreground">
-              <strong>Note:</strong> Settings saved here are stored in the database and take effect immediately.
-              The AI service reads these settings and adjusts its model selection accordingly.
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Save Button */}
