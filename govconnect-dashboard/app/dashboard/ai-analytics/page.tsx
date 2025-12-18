@@ -39,6 +39,9 @@ import {
   AlertCircle,
   CheckCircle2,
   Info,
+  Users,
+  DollarSign,
+  Calculator,
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
 import { redirect } from "next/navigation"
@@ -70,6 +73,9 @@ ChartJS.register(
   Legend,
   Filler
 )
+
+// USD to IDR conversion rate
+const USD_TO_IDR = 16700
 
 interface AnalyticsSummary {
   totalRequests: number
@@ -241,7 +247,8 @@ export default function AIAnalyticsPage() {
     fetchData()
   }, [fetchData])
 
-  const formatCurrency = (value: number) => {
+  // Format USD currency
+  const formatUSD = (value: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
@@ -249,8 +256,41 @@ export default function AIAnalyticsPage() {
     }).format(value)
   }
 
+  // Format IDR currency
+  const formatIDR = (value: number) => {
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(value)
+  }
+
+  // Convert USD to IDR
+  const usdToIdr = (usd: number) => usd * USD_TO_IDR
+
+  // Format number with Indonesian locale
   const formatNumber = (value: number) => {
     return new Intl.NumberFormat('id-ID').format(value)
+  }
+
+  // Calculate cost per message
+  const getCostPerMessage = () => {
+    if (!summary?.totalRequests || summary.totalRequests === 0) return 0
+    return summary.totalCostUSD / summary.totalRequests
+  }
+
+  // Calculate cost per user (assuming avg 5 messages per user session)
+  const getCostPerUser = () => {
+    const avgMessagesPerUser = flow?.avgMessagesPerSession || 5
+    return getCostPerMessage() * avgMessagesPerUser
+  }
+
+  // Get unique users count (from sessions)
+  const getUniqueUsers = () => {
+    return flow?.avgMessagesPerSession && summary?.totalRequests
+      ? Math.round(summary.totalRequests / flow.avgMessagesPerSession)
+      : 0
   }
 
   const formatIntent = (intent: string) => {
@@ -349,7 +389,7 @@ export default function AIAnalyticsPage() {
     ],
   }
 
-  // Cost chart data
+  // Cost chart data (in IDR)
   const costChartData = {
     labels: tokens?.byDate?.map(d => {
       const date = new Date(d.date)
@@ -357,8 +397,8 @@ export default function AIAnalyticsPage() {
     }) || [],
     datasets: [
       {
-        label: 'Cost (USD)',
-        data: tokens?.byDate?.map(d => d.cost) || [],
+        label: 'Biaya (IDR)',
+        data: tokens?.byDate?.map(d => d.cost * USD_TO_IDR) || [],
         fill: true,
         borderColor: 'rgb(16, 185, 129)',
         backgroundColor: 'rgba(16, 185, 129, 0.1)',
@@ -444,7 +484,7 @@ export default function AIAnalyticsPage() {
         </Button>
       </div>
 
-      {/* Summary Cards */}
+      {/* Summary Cards - Row 1 */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
@@ -452,8 +492,22 @@ export default function AIAnalyticsPage() {
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Requests</p>
                 <p className="text-3xl font-bold">{formatNumber(summary?.totalRequests || 0)}</p>
+                <p className="text-xs text-muted-foreground mt-1">pesan diproses AI</p>
               </div>
               <MessageSquare className="h-10 w-10 text-blue-500 opacity-80" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Estimasi User</p>
+                <p className="text-3xl font-bold">{formatNumber(getUniqueUsers())}</p>
+                <p className="text-xs text-muted-foreground mt-1">~{flow?.avgMessagesPerSession?.toFixed(1) || 5} pesan/user</p>
+              </div>
+              <Users className="h-10 w-10 text-indigo-500 opacity-80" />
             </div>
           </CardContent>
         </Card>
@@ -481,22 +535,82 @@ export default function AIAnalyticsPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Cost</p>
-                <p className="text-3xl font-bold">{formatCurrency(summary?.totalCostUSD || 0)}</p>
+                <p className="text-sm font-medium text-muted-foreground">Avg Response Time</p>
+                <p className="text-3xl font-bold">{Math.round(summary?.avgProcessingTimeMs || 0)}ms</p>
+                <p className="text-xs text-muted-foreground mt-1">{((summary?.avgProcessingTimeMs || 0) / 1000).toFixed(1)} detik</p>
               </div>
-              <Coins className="h-10 w-10 text-yellow-500 opacity-80" />
+              <Clock className="h-10 w-10 text-purple-500 opacity-80" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Cost Analysis Cards - Row 2 */}
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card className="border-green-200 dark:border-green-900 bg-green-50/50 dark:bg-green-950/20">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Total Biaya (IDR)</p>
+                <p className="text-2xl font-bold text-green-700 dark:text-green-400">
+                  {formatIDR(usdToIdr(summary?.totalCostUSD || 0))}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {formatUSD(summary?.totalCostUSD || 0)}
+                </p>
+              </div>
+              <Coins className="h-10 w-10 text-green-600 opacity-80" />
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/20">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Avg Response Time</p>
-                <p className="text-3xl font-bold">{Math.round(summary?.avgProcessingTimeMs || 0)}ms</p>
+                <p className="text-sm font-medium text-muted-foreground">Biaya per Pesan</p>
+                <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">
+                  {formatIDR(usdToIdr(getCostPerMessage()))}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {formatUSD(getCostPerMessage())}
+                </p>
               </div>
-              <Clock className="h-10 w-10 text-purple-500 opacity-80" />
+              <Calculator className="h-10 w-10 text-blue-600 opacity-80" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-purple-200 dark:border-purple-900 bg-purple-50/50 dark:bg-purple-950/20">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Biaya per User</p>
+                <p className="text-2xl font-bold text-purple-700 dark:text-purple-400">
+                  {formatIDR(usdToIdr(getCostPerUser()))}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  ~{flow?.avgMessagesPerSession?.toFixed(1) || 5} pesan/sesi
+                </p>
+              </div>
+              <Users className="h-10 w-10 text-purple-600 opacity-80" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-orange-200 dark:border-orange-900 bg-orange-50/50 dark:bg-orange-950/20">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Biaya per 1K Pesan</p>
+                <p className="text-2xl font-bold text-orange-700 dark:text-orange-400">
+                  {formatIDR(usdToIdr(getCostPerMessage() * 1000))}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {formatUSD(getCostPerMessage() * 1000)}
+                </p>
+              </div>
+              <DollarSign className="h-10 w-10 text-orange-600 opacity-80" />
             </div>
           </CardContent>
         </Card>
@@ -577,9 +691,130 @@ export default function AIAnalyticsPage() {
                 </div>
               </div>
             )}
+
+            {/* Cost Savings from Cache */}
+            <div className="mt-4 p-4 bg-green-50 dark:bg-green-950/30 rounded-lg border border-green-200 dark:border-green-900">
+              <h4 className="text-sm font-medium mb-2 flex items-center gap-2 text-green-700 dark:text-green-400">
+                💰 Estimasi Penghematan dari Cache
+              </h4>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">LLM Calls Dihemat</p>
+                  <p className="font-bold text-green-600">{formatNumber(optimization.cache?.totalHits || 0)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Est. Biaya Dihemat (USD)</p>
+                  <p className="font-bold text-green-600">
+                    {formatUSD((optimization.cache?.totalHits || 0) * getCostPerMessage())}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Est. Biaya Dihemat (IDR)</p>
+                  <p className="font-bold text-green-600">
+                    {formatIDR(usdToIdr((optimization.cache?.totalHits || 0) * getCostPerMessage()))}
+                  </p>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Cost Efficiency Analysis */}
+      <Card className="border-2 border-green-200 dark:border-green-900 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Calculator className="h-5 w-5 text-green-600" />
+            Analisis Efisiensi Biaya
+          </CardTitle>
+          <CardDescription>
+            Perbandingan biaya AI vs alternatif lain (1 USD = Rp {formatNumber(USD_TO_IDR)})
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {/* AI Cost */}
+            <div className="p-4 bg-white dark:bg-gray-900 rounded-lg border">
+              <div className="flex items-center gap-2 mb-2">
+                <Brain className="h-4 w-4 text-blue-500" />
+                <span className="text-sm font-medium">AI Chatbot</span>
+              </div>
+              <p className="text-2xl font-bold text-blue-600">{formatIDR(usdToIdr(getCostPerUser()))}</p>
+              <p className="text-xs text-muted-foreground">per user/sesi</p>
+              <p className="text-xs text-green-600 mt-1">✓ 24/7 Available</p>
+            </div>
+
+            {/* Human CS Cost Comparison */}
+            <div className="p-4 bg-white dark:bg-gray-900 rounded-lg border">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="h-4 w-4 text-orange-500" />
+                <span className="text-sm font-medium">CS Manual</span>
+              </div>
+              <p className="text-2xl font-bold text-orange-600">{formatIDR(15000)}</p>
+              <p className="text-xs text-muted-foreground">per user/sesi (est.)</p>
+              <p className="text-xs text-muted-foreground mt-1">Jam kerja terbatas</p>
+            </div>
+
+            {/* Savings */}
+            <div className="p-4 bg-green-100 dark:bg-green-900/50 rounded-lg border border-green-300 dark:border-green-700">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="h-4 w-4 text-green-600" />
+                <span className="text-sm font-medium">Penghematan</span>
+              </div>
+              <p className="text-2xl font-bold text-green-600">
+                {Math.round((1 - usdToIdr(getCostPerUser()) / 15000) * 100)}%
+              </p>
+              <p className="text-xs text-muted-foreground">vs CS Manual</p>
+              <p className="text-xs text-green-600 mt-1">
+                {formatIDR(15000 - usdToIdr(getCostPerUser()))}/user
+              </p>
+            </div>
+
+            {/* Monthly Savings */}
+            <div className="p-4 bg-green-100 dark:bg-green-900/50 rounded-lg border border-green-300 dark:border-green-700">
+              <div className="flex items-center gap-2 mb-2">
+                <Coins className="h-4 w-4 text-green-600" />
+                <span className="text-sm font-medium">Hemat/Bulan</span>
+              </div>
+              <p className="text-2xl font-bold text-green-600">
+                {formatIDR((15000 - usdToIdr(getCostPerUser())) * getUniqueUsers())}
+              </p>
+              <p className="text-xs text-muted-foreground">untuk {formatNumber(getUniqueUsers())} user</p>
+            </div>
+          </div>
+
+          {/* Detailed Breakdown */}
+          <div className="mt-4 p-4 bg-white dark:bg-gray-900 rounded-lg border">
+            <h4 className="font-medium mb-3">📊 Rincian Biaya Detail</h4>
+            <div className="grid gap-2 text-sm">
+              <div className="flex justify-between py-1 border-b">
+                <span className="text-muted-foreground">Biaya per Token (Input)</span>
+                <span>~{formatIDR(usdToIdr(0.10 / 1000000))} / token</span>
+              </div>
+              <div className="flex justify-between py-1 border-b">
+                <span className="text-muted-foreground">Biaya per Token (Output)</span>
+                <span>~{formatIDR(usdToIdr(0.40 / 1000000))} / token</span>
+              </div>
+              <div className="flex justify-between py-1 border-b">
+                <span className="text-muted-foreground">Avg Tokens per Pesan</span>
+                <span>~{tokens?.totalTokens && summary?.totalRequests ? Math.round(tokens.totalTokens / summary.totalRequests) : 700} tokens</span>
+              </div>
+              <div className="flex justify-between py-1 border-b">
+                <span className="text-muted-foreground">Biaya per Pesan</span>
+                <span className="font-medium">{formatIDR(usdToIdr(getCostPerMessage()))}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b">
+                <span className="text-muted-foreground">Avg Pesan per User</span>
+                <span>{flow?.avgMessagesPerSession?.toFixed(1) || 5} pesan</span>
+              </div>
+              <div className="flex justify-between py-1 font-medium">
+                <span>Biaya per User Session</span>
+                <span className="text-green-600">{formatIDR(usdToIdr(getCostPerUser()))}</span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Token Usage Stats */}
       <div className="grid gap-4 md:grid-cols-3">
@@ -660,7 +895,7 @@ export default function AIAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Coins className="h-5 w-5" />
-              Estimasi Biaya (7 Hari Terakhir)
+              Estimasi Biaya dalam Rupiah (7 Hari Terakhir)
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -791,16 +1026,16 @@ export default function AIAnalyticsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <BarChart3 className="h-5 w-5" />
-              Ringkasan Penggunaan
+              Ringkasan Penggunaan & Biaya
             </CardTitle>
             <CardDescription>
-              Summary penggunaan token dan biaya per periode
+              Summary penggunaan token dan biaya per periode (1 USD = Rp {formatNumber(USD_TO_IDR)})
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-6 md:grid-cols-2">
               {/* This Week Summary */}
-              <div className="p-4 border rounded-lg">
+              <div className="p-4 border rounded-lg bg-blue-50/30 dark:bg-blue-950/20">
                 <h4 className="font-semibold mb-3 flex items-center gap-2">
                   📅 Minggu Ini (7 Hari Terakhir)
                 </h4>
@@ -809,7 +1044,7 @@ export default function AIAnalyticsPage() {
                   const weeklyInputTokens = last7Days.reduce((sum, d) => sum + (d.input || 0), 0)
                   const weeklyOutputTokens = last7Days.reduce((sum, d) => sum + (d.output || 0), 0)
                   const weeklyCost = last7Days.reduce((sum, d) => sum + (d.cost || 0), 0)
-                  const weeklyRequests = last7Days.length
+                  const weeklyMessages = summary?.totalRequests ? Math.round(summary.totalRequests * 7 / 30) : 0
                   
                   return (
                     <div className="space-y-2">
@@ -825,9 +1060,17 @@ export default function AIAnalyticsPage() {
                         <span className="text-muted-foreground">Total Tokens</span>
                         <span className="font-medium">{formatNumber(weeklyInputTokens + weeklyOutputTokens)}</span>
                       </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Est. Pesan</span>
+                        <span className="font-medium">~{formatNumber(weeklyMessages)}</span>
+                      </div>
                       <div className="flex justify-between border-t pt-2 mt-2">
-                        <span className="text-muted-foreground font-medium">Total Biaya</span>
-                        <span className="font-bold text-green-600">{formatCurrency(weeklyCost)}</span>
+                        <span className="text-muted-foreground font-medium">Biaya (USD)</span>
+                        <span className="font-medium text-blue-600">{formatUSD(weeklyCost)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground font-medium">Biaya (IDR)</span>
+                        <span className="font-bold text-green-600">{formatIDR(usdToIdr(weeklyCost))}</span>
                       </div>
                     </div>
                   )
@@ -835,7 +1078,7 @@ export default function AIAnalyticsPage() {
               </div>
 
               {/* This Month Summary */}
-              <div className="p-4 border rounded-lg">
+              <div className="p-4 border rounded-lg bg-purple-50/30 dark:bg-purple-950/20">
                 <h4 className="font-semibold mb-3 flex items-center gap-2">
                   📆 Bulan Ini (30 Hari Terakhir)
                 </h4>
@@ -843,6 +1086,8 @@ export default function AIAnalyticsPage() {
                   const monthlyInputTokens = tokens.last30Days?.reduce((sum, d) => sum + (d.input || 0), 0) || 0
                   const monthlyOutputTokens = tokens.last30Days?.reduce((sum, d) => sum + (d.output || 0), 0) || 0
                   const monthlyCost = tokens.last30Days?.reduce((sum, d) => sum + (d.cost || 0), 0) || 0
+                  const monthlyMessages = summary?.totalRequests || 0
+                  const monthlyUsers = getUniqueUsers()
                   
                   return (
                     <div className="space-y-2">
@@ -858,13 +1103,50 @@ export default function AIAnalyticsPage() {
                         <span className="text-muted-foreground">Total Tokens</span>
                         <span className="font-medium">{formatNumber(monthlyInputTokens + monthlyOutputTokens)}</span>
                       </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Total Pesan</span>
+                        <span className="font-medium">{formatNumber(monthlyMessages)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Est. User</span>
+                        <span className="font-medium">~{formatNumber(monthlyUsers)}</span>
+                      </div>
                       <div className="flex justify-between border-t pt-2 mt-2">
-                        <span className="text-muted-foreground font-medium">Total Biaya</span>
-                        <span className="font-bold text-green-600">{formatCurrency(monthlyCost)}</span>
+                        <span className="text-muted-foreground font-medium">Biaya (USD)</span>
+                        <span className="font-medium text-blue-600">{formatUSD(monthlyCost)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground font-medium">Biaya (IDR)</span>
+                        <span className="font-bold text-green-600">{formatIDR(usdToIdr(monthlyCost))}</span>
                       </div>
                     </div>
                   )
                 })()}
+              </div>
+            </div>
+
+            {/* Cost Projection */}
+            <div className="mt-6 p-4 border rounded-lg bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-950/30 dark:to-blue-950/30">
+              <h4 className="font-semibold mb-3 flex items-center gap-2">
+                📊 Proyeksi Biaya
+              </h4>
+              <div className="grid gap-4 md:grid-cols-4">
+                <div className="text-center p-3 bg-white/50 dark:bg-gray-900/50 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Per Hari</p>
+                  <p className="font-bold text-lg">{formatIDR(usdToIdr((summary?.totalCostUSD || 0) / 30))}</p>
+                </div>
+                <div className="text-center p-3 bg-white/50 dark:bg-gray-900/50 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Per Minggu</p>
+                  <p className="font-bold text-lg">{formatIDR(usdToIdr((summary?.totalCostUSD || 0) / 30 * 7))}</p>
+                </div>
+                <div className="text-center p-3 bg-white/50 dark:bg-gray-900/50 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Per Bulan</p>
+                  <p className="font-bold text-lg">{formatIDR(usdToIdr(summary?.totalCostUSD || 0))}</p>
+                </div>
+                <div className="text-center p-3 bg-white/50 dark:bg-gray-900/50 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Per Tahun (Est.)</p>
+                  <p className="font-bold text-lg">{formatIDR(usdToIdr((summary?.totalCostUSD || 0) * 12))}</p>
+                </div>
               </div>
             </div>
           </CardContent>
@@ -880,7 +1162,7 @@ export default function AIAnalyticsPage() {
               Detail Biaya per Model
             </CardTitle>
             <CardDescription>
-              Rincian penggunaan token dan biaya per model AI
+              Rincian penggunaan token dan biaya per model AI (1 USD = Rp {formatNumber(USD_TO_IDR)})
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -888,20 +1170,17 @@ export default function AIAnalyticsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Model</TableHead>
-                  <TableHead className="text-right">Jumlah Request</TableHead>
+                  <TableHead className="text-right">Request</TableHead>
                   <TableHead className="text-right">Input Tokens</TableHead>
                   <TableHead className="text-right">Output Tokens</TableHead>
-                  <TableHead className="text-right">Harga Input/1M</TableHead>
-                  <TableHead className="text-right">Harga Output/1M</TableHead>
-                  <TableHead className="text-right">Total Biaya</TableHead>
+                  <TableHead className="text-right">Biaya/Pesan</TableHead>
+                  <TableHead className="text-right">Total (USD)</TableHead>
+                  <TableHead className="text-right">Total (IDR)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {Object.entries(tokens.byModel).map(([model, data]) => {
-                  // Get pricing from data.pricing or fallback to modelPricing
-                  const modelPricing = tokens.modelPricing?.[model]
-                  const inputPrice = data.pricing?.inputPer1M ?? modelPricing?.input ?? 0.10
-                  const outputPrice = data.pricing?.outputPer1M ?? modelPricing?.output ?? 0.40
+                  const costPerMessage = data.calls > 0 ? data.cost / data.calls : 0
                   return (
                     <TableRow key={model}>
                       <TableCell className="font-medium">
@@ -910,14 +1189,14 @@ export default function AIAnalyticsPage() {
                       <TableCell className="text-right">{formatNumber(data.calls || 0)}</TableCell>
                       <TableCell className="text-right">{formatNumber(data.input)}</TableCell>
                       <TableCell className="text-right">{formatNumber(data.output)}</TableCell>
+                      <TableCell className="text-right text-purple-600">
+                        {formatIDR(usdToIdr(costPerMessage))}
+                      </TableCell>
                       <TableCell className="text-right text-blue-600">
-                        ${inputPrice.toFixed(3)}
+                        {formatUSD(data.cost)}
                       </TableCell>
-                      <TableCell className="text-right text-green-600">
-                        ${outputPrice.toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatCurrency(data.cost)}
+                      <TableCell className="text-right font-medium text-green-600">
+                        {formatIDR(usdToIdr(data.cost))}
                       </TableCell>
                     </TableRow>
                   )
@@ -930,10 +1209,14 @@ export default function AIAnalyticsPage() {
                   </TableCell>
                   <TableCell className="text-right">{formatNumber(tokens.totalInputTokens)}</TableCell>
                   <TableCell className="text-right">{formatNumber(tokens.totalOutputTokens)}</TableCell>
-                  <TableCell className="text-right">-</TableCell>
-                  <TableCell className="text-right">-</TableCell>
-                  <TableCell className="text-right text-green-600">
-                    {formatCurrency(tokens.estimatedCostUSD)}
+                  <TableCell className="text-right text-purple-600">
+                    {formatIDR(usdToIdr(getCostPerMessage()))}
+                  </TableCell>
+                  <TableCell className="text-right text-blue-600">
+                    {formatUSD(tokens.estimatedCostUSD)}
+                  </TableCell>
+                  <TableCell className="text-right font-bold text-green-600">
+                    {formatIDR(usdToIdr(tokens.estimatedCostUSD))}
                   </TableCell>
                 </TableRow>
               </TableBody>
@@ -951,7 +1234,7 @@ export default function AIAnalyticsPage() {
               Referensi Harga Model AI (Gemini)
             </CardTitle>
             <CardDescription>
-              Harga per 1 juta token berdasarkan dokumentasi Google AI (Desember 2025)
+              Harga per 1 juta token berdasarkan dokumentasi Google AI (Desember 2025) - 1 USD = Rp {formatNumber(USD_TO_IDR)}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -960,16 +1243,16 @@ export default function AIAnalyticsPage() {
                 <TableRow>
                   <TableHead>Model</TableHead>
                   <TableHead>Deskripsi</TableHead>
-                  <TableHead className="text-right">Input / 1M tokens</TableHead>
-                  <TableHead className="text-right">Output / 1M tokens</TableHead>
-                  <TableHead className="text-right">Est. Cost / 1K Requests</TableHead>
+                  <TableHead className="text-right">Input/1M (USD)</TableHead>
+                  <TableHead className="text-right">Output/1M (USD)</TableHead>
+                  <TableHead className="text-right">Est. Biaya/1K Pesan</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {Object.entries(tokens.modelPricing).map(([model, pricing]) => {
                   const modelDescriptions: Record<string, string> = {
-                    'gemini-2.5-flash': 'Hybrid reasoning, 1M context, thinking budget',
-                    'gemini-2.5-flash-lite': 'Smallest, cost-efficient, high throughput',
+                    'gemini-2.5-flash': 'Hybrid reasoning, 1M context',
+                    'gemini-2.5-flash-lite': 'Smallest, cost-efficient',
                     'gemini-2.0-flash': 'Balanced multimodal, 1M context',
                     'gemini-2.0-flash-lite': 'Legacy cost-efficient',
                   }
@@ -989,8 +1272,11 @@ export default function AIAnalyticsPage() {
                       <TableCell className="text-right text-green-600 font-medium">
                         ${pricing.output.toFixed(2)}
                       </TableCell>
-                      <TableCell className="text-right text-muted-foreground font-mono">
-                        ${estCostPer1K.toFixed(4)}
+                      <TableCell className="text-right font-medium">
+                        <div className="flex flex-col items-end">
+                          <span className="text-purple-600">{formatIDR(usdToIdr(estCostPer1K))}</span>
+                          <span className="text-xs text-muted-foreground">${estCostPer1K.toFixed(4)}</span>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )
@@ -998,7 +1284,7 @@ export default function AIAnalyticsPage() {
               </TableBody>
             </Table>
             <p className="text-xs text-muted-foreground mt-4">
-              * Est. Cost assumes ~500 input tokens and ~200 output tokens per request (typical for chatbot responses).
+              * Estimasi biaya berdasarkan ~500 input tokens dan ~200 output tokens per request (tipikal untuk chatbot).
             </p>
           </CardContent>
         </Card>

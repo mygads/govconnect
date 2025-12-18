@@ -221,7 +221,7 @@ curl -X POST http://localhost:3001/webhook/whatsapp \
 7. Warga menerima jawaban:
    "🏢 Kantor Kelurahan
    Jam Operasional:
-   Senin-Jumat: 08:00-16:00 WIB
+   Senin-Jumat: 08:00-15:00 WIB
    Sabtu: 08:00-12:00 WIB"
 ```
 
