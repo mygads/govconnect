@@ -124,11 +124,12 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
 
 export const JAM_BUKA_RESPONSE = `📍 *Jam Operasional Kelurahan*
 
-🕐 Senin - Kamis: 08.00 - 15.00 WIB
-🕐 Jumat: 08.00 - 11.30 WIB
-🚫 Sabtu & Minggu: Libur
+🕐 Senin - Jumat: 08.00 - 15.00 WIB
+🕐 Sabtu: 08.00 - 12.00 WIB
+🚫 Minggu & Hari Libur: Tutup
+⏸️ Istirahat: 12.00 - 13.00 WIB
 
-💡 Untuk reservasi, silakan datang 15 menit sebelum jam tutup ya Kak!`;
+💡 Waktu terbaik: pagi jam 08.00-10.00 WIB ya Kak!`;
 
 export const LOKASI_RESPONSE = `📍 *Lokasi Kantor Kelurahan*
 

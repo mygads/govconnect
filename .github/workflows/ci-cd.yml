@@ -361,9 +361,26 @@ jobs:
             
             echo "Starting dashboard..."
             docker compose -f docker-compose.prod.yml up -d dashboard
+            sleep 5
             
-            # Cleanup old images
-            docker image prune -f
+            # Comprehensive cleanup - remove old images, volumes, and cache
+            echo "🧹 Cleaning up old Docker resources..."
+            
+            # Remove old SHA-tagged images (keep only latest)
+            for service in dashboard channel-service ai-service case-service notification-service; do
+              # Get all images except latest, then remove them
+              docker images "ghcr.io/mygads/govconnect-$service" --format "{{.ID}} {{.Tag}}" | \
+                grep -v "latest" | awk '{print $1}' | xargs -r docker rmi -f 2>/dev/null || true
+            done
+            
+            # Prune all unused images (not just dangling)
+            docker image prune -af --filter "until=24h"
+            
+            # Prune unused volumes (but not named ones)
+            docker volume prune -f
+            
+            # Prune build cache older than 24h
+            docker builder prune -af --filter "until=24h"
             
             echo "✅ Deployment complete!"
           ENDSSH

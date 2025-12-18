@@ -266,20 +266,7 @@ export function fastClassifyIntent(message: string): FastClassifyResult | null {
     }
   }
   
-  // 9. Check CREATE_RESERVATION (with service code extraction)
-  for (const pattern of KNOWLEDGE_QUERY_PATTERNS) {
-    if (pattern.test(lowerMessage)) {
-      return {
-        intent: 'KNOWLEDGE_QUERY',
-        confidence: 0.85,
-        extractedFields: {},
-        skipLLM: false, // Need LLM + RAG for knowledge response
-        reason: 'Knowledge query pattern matched',
-      };
-    }
-  }
-  
-  // 10. Check KNOWLEDGE_QUERY
+  // 9. Check KNOWLEDGE_QUERY
   for (const pattern of KNOWLEDGE_QUERY_PATTERNS) {
     if (pattern.test(lowerMessage)) {
       return {

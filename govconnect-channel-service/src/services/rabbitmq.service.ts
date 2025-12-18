@@ -3,7 +3,8 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { rabbitmqConfig } from '../config/rabbitmq';
 import { sendTextMessage } from './wa.service';
-import { saveOutgoingMessage } from './message.service';
+// NOTE: saveOutgoingMessage removed - AI Service now handles database storage via storeAIReplyInDatabase()
+// This prevents duplicate messages in live chat dashboard
 import { updateConversation, markConversationAsRead, clearAIStatus, setAIError } from './takeover.service';
 import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.service';
 
@@ -302,23 +303,18 @@ export async function startConsumingAIReply(): Promise<void> {
         });
 
         // Send main reply message via WhatsApp
+        // NOTE: Message is already saved to database by AI Service via storeAIReplyInDatabase()
+        // We only need to send to WhatsApp here - DO NOT save again to avoid duplicates!
         const result = await sendTextMessage(payload.wa_user_id, replyText);
 
         if (result.success) {
-          // Save outgoing message to database
-          await saveOutgoingMessage({
-            wa_user_id: payload.wa_user_id,
-            message_id: result.message_id || `ai_reply_${Date.now()}`,
-            message_text: replyText,
-            source: 'AI',
-          });
-
-          logger.info('✅ AI reply sent successfully', {
+          logger.info('✅ AI reply sent to WhatsApp successfully', {
             wa_user_id: payload.wa_user_id,
             message_id: result.message_id,
           });
           
           // If there's a guidance message, send it as a separate bubble after a short delay
+          // NOTE: Guidance is also already saved by AI Service
           if (guidanceText && guidanceText.trim()) {
             // Small delay to ensure messages appear in order
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -326,20 +322,12 @@ export async function startConsumingAIReply(): Promise<void> {
             const guidanceResult = await sendTextMessage(payload.wa_user_id, guidanceText);
             
             if (guidanceResult.success) {
-              // Save guidance message to database
-              await saveOutgoingMessage({
-                wa_user_id: payload.wa_user_id,
-                message_id: guidanceResult.message_id || `ai_guidance_${Date.now()}`,
-                message_text: guidanceText,
-                source: 'AI',
-              });
-              
-              logger.info('✅ AI guidance message sent successfully', {
+              logger.info('✅ AI guidance message sent to WhatsApp successfully', {
                 wa_user_id: payload.wa_user_id,
                 message_id: guidanceResult.message_id,
               });
             } else {
-              logger.warn('⚠️ Failed to send AI guidance message', {
+              logger.warn('⚠️ Failed to send AI guidance message to WhatsApp', {
                 wa_user_id: payload.wa_user_id,
                 error: guidanceResult.error,
               });

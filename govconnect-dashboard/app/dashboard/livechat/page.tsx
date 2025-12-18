@@ -70,7 +70,7 @@ interface Message {
 
 export default function LiveChatPage() {
   const { toast } = useToast()
-  
+
   // State
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
@@ -78,13 +78,13 @@ export default function LiveChatPage() {
   const [messageInput, setMessageInput] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
   const [activeTab, setActiveTab] = useState<"all" | "takeover" | "bot">("all")
-  
+
   // Loading states - only for initial load
   const [isInitialLoading, setIsInitialLoading] = useState(true)
   const [isInitialMessagesLoading, setIsInitialMessagesLoading] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [isTogglingTakeover, setIsTogglingTakeover] = useState(false)
-  
+
   // Dialog states
   const [showTakeoverDialog, setShowTakeoverDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -92,10 +92,10 @@ export default function LiveChatPage() {
   const [takeoverReasonTemplate, setTakeoverReasonTemplate] = useState("")
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRetryingAI, setIsRetryingAI] = useState(false)
-  
+
   // Processing status state
   const [processingStatuses, setProcessingStatuses] = useState<Record<string, ProcessingStatus>>({})
-  
+
   // Takeover reason templates
   const takeoverReasonTemplates = [
     { value: "", label: "Pilih template atau tulis manual..." },
@@ -109,14 +109,14 @@ export default function LiveChatPage() {
     { value: "Follow-up dari tiket sebelumnya", label: "Follow-up tiket" },
     { value: "Lainnya", label: "Lainnya (tulis manual)" },
   ]
-  
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const selectedConversationRef = useRef<Conversation | null>(null)
   const previousMessagesLengthRef = useRef<number>(0)
-  
+
   // Smart scroll state
   const [isUserScrollingUp, setIsUserScrollingUp] = useState(false)
   const [hasNewMessages, setHasNewMessages] = useState(false)
@@ -128,6 +128,16 @@ export default function LiveChatPage() {
   useEffect(() => {
     selectedConversationRef.current = selectedConversation
   }, [selectedConversation])
+
+  // Dedupe messages by ID (prevent duplicate display)
+  const dedupeMessages = (msgs: Message[]): Message[] => {
+    const seen = new Set<string>()
+    return msgs.filter(msg => {
+      if (seen.has(msg.id)) return false
+      seen.add(msg.id)
+      return true
+    })
+  }
 
   // Check if user is near bottom
   const checkIfNearBottom = useCallback(() => {
@@ -159,19 +169,19 @@ export default function LiveChatPage() {
       const container = messagesContainerRef.current
       const currentScrollTop = container.scrollTop
       const isNearBottom = checkIfNearBottom()
-      
+
       // User scrolled up
       if (currentScrollTop < lastScrollTopRef.current && !isNearBottom) {
         setIsUserScrollingUp(true)
       }
-      
+
       // User scrolled to bottom
       if (isNearBottom) {
         setIsUserScrollingUp(false)
         setHasNewMessages(false)
         setNewMessageCount(0)
       }
-      
+
       lastScrollTopRef.current = currentScrollTop
     }
   }, [checkIfNearBottom])
@@ -179,7 +189,7 @@ export default function LiveChatPage() {
   // Scroll when messages change (smart behavior)
   useEffect(() => {
     const newMessagesCount = messages.length - previousMessagesLengthRef.current
-    
+
     if (newMessagesCount > 0 && previousMessagesLengthRef.current > 0) {
       // Only apply smart scroll for incremental updates, not initial load
       if (isUserScrollingUp) {
@@ -193,7 +203,7 @@ export default function LiveChatPage() {
         }, 50)
       }
     }
-    
+
     previousMessagesLengthRef.current = messages.length
   }, [messages, isUserScrollingUp])
 
@@ -249,7 +259,7 @@ export default function LiveChatPage() {
       const data = await response.json()
       if (data.success) {
         setConversations(data.data || [])
-        
+
         // Update selected conversation if it exists in the new data
         if (selectedConversationRef.current) {
           const updated = (data.data || []).find(
@@ -279,7 +289,7 @@ export default function LiveChatPage() {
 
       const data = await response.json()
       if (data.success) {
-        setMessages(data.data?.messages || [])
+        setMessages(dedupeMessages(data.data?.messages || []))
       }
     } catch (error) {
       console.error("Error fetching messages:", error)
@@ -301,9 +311,9 @@ export default function LiveChatPage() {
 
       const data = await response.json()
       if (data.success) {
-        setMessages(data.data?.messages || [])
+        setMessages(dedupeMessages(data.data?.messages || []))
         previousMessagesLengthRef.current = 0 // Reset so it scrolls
-        
+
         // Mark as read
         await fetch(`/api/livechat/conversations/${encodeURIComponent(wa_user_id)}/read`, {
           method: "POST",
@@ -311,10 +321,10 @@ export default function LiveChatPage() {
             Authorization: `Bearer ${token}`,
           },
         })
-        
+
         // Refresh conversations to update unread count
         fetchConversationsSilent()
-        
+
         // Force scroll to bottom on initial load
         setTimeout(() => scrollToBottom(true), 100)
       }
@@ -380,7 +390,7 @@ export default function LiveChatPage() {
     const messageToSend = messageInput
     setMessageInput("") // Clear immediately for better UX
     setIsSendingMessage(true)
-    
+
     try {
       const token = localStorage.getItem("token")
       const response = await fetch(
@@ -442,13 +452,13 @@ export default function LiveChatPage() {
         setShowTakeoverDialog(false)
         setTakeoverReason("")
         setTakeoverReasonTemplate("")
-        
+
         // Update selected conversation immediately
         setSelectedConversation(prev => prev ? { ...prev, is_takeover: true } : null)
-        
+
         // Refresh conversations
         fetchConversationsSilent()
-        
+
         toast({
           title: "Takeover Aktif",
           description: "Anda sekarang menangani percakapan ini. AI tidak akan membalas.",
@@ -488,10 +498,10 @@ export default function LiveChatPage() {
       if (data.success) {
         // Update selected conversation immediately
         setSelectedConversation(prev => prev ? { ...prev, is_takeover: false } : null)
-        
+
         // Refresh conversations
         fetchConversationsSilent()
-        
+
         toast({
           title: "Takeover Selesai",
           description: "AI Bot akan kembali menangani percakapan ini.",
@@ -532,10 +542,10 @@ export default function LiveChatPage() {
         setShowDeleteDialog(false)
         setSelectedConversation(null)
         setMessages([])
-        
+
         // Refresh conversations list
         fetchConversationsSilent()
-        
+
         toast({
           title: "Riwayat Dihapus",
           description: "Riwayat chat berhasil dihapus.",
@@ -575,7 +585,7 @@ export default function LiveChatPage() {
           title: "Proses Ulang AI",
           description: "Pesan sedang diproses ulang oleh AI.",
         })
-        
+
         // Refresh conversations to update status
         fetchConversationsSilent()
       } else {
@@ -607,7 +617,7 @@ export default function LiveChatPage() {
     const date = new Date(timestamp)
     const now = new Date()
     const isToday = date.toDateString() === now.toDateString()
-    
+
     if (isToday) {
       return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
     }
@@ -624,9 +634,9 @@ export default function LiveChatPage() {
 
   // Check if message contains image URL
   const isImageUrl = (text: string) => {
-    return /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(text) || 
-           text.includes('/uploads/') ||
-           text.startsWith('http') && (text.includes('image') || text.includes('/media/'))
+    return /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(text) ||
+      text.includes('/uploads/') ||
+      text.startsWith('http') && (text.includes('image') || text.includes('/media/'))
   }
 
   // Extract image URL from message
@@ -635,30 +645,30 @@ export default function LiveChatPage() {
     if (isImageUrl(text)) {
       return text.trim()
     }
-    
+
     // Try to find URL in text
     const urlMatch = text.match(/(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp)(\?[^\s]*)?)/i)
     if (urlMatch) {
       return urlMatch[1]
     }
-    
+
     return null
   }
 
   // Render message content (handle images)
   const renderMessageContent = (msg: Message) => {
     const imageUrl = extractImageUrl(msg.message_text)
-    
+
     if (imageUrl) {
       // Get caption (text without the URL)
       const caption = msg.message_text.replace(imageUrl, '').trim()
-      
+
       return (
         <div className="space-y-2">
           <div className="relative rounded-lg overflow-hidden max-w-[280px]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img 
-              src={imageUrl} 
+            <img
+              src={imageUrl}
               alt="Media"
               className="w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
               onClick={() => window.open(imageUrl, '_blank')}
@@ -682,7 +692,7 @@ export default function LiveChatPage() {
         </div>
       )
     }
-    
+
     // Check if message mentions it has an image but URL not directly visible
     if (msg.message_text.includes('[Gambar]') || msg.message_text.includes('[Image]')) {
       return (
@@ -692,7 +702,7 @@ export default function LiveChatPage() {
         </div>
       )
     }
-    
+
     return (
       <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
     )
@@ -757,9 +767,8 @@ export default function LiveChatPage() {
                   <button
                     key={conv.id}
                     onClick={() => handleSelectConversation(conv)}
-                    className={`w-full p-3 text-left hover:bg-accent transition-colors ${
-                      selectedConversation?.id === conv.id ? "bg-accent" : ""
-                    }`}
+                    className={`w-full p-3 text-left hover:bg-accent transition-colors ${selectedConversation?.id === conv.id ? "bg-accent" : ""
+                      }`}
                   >
                     <div className="flex items-start gap-3">
                       <Avatar className="h-10 w-10 shrink-0">
@@ -896,7 +905,7 @@ export default function LiveChatPage() {
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
-                  
+
                   {selectedConversation.is_takeover ? (
                     <Button
                       variant="outline"
@@ -912,7 +921,7 @@ export default function LiveChatPage() {
                       size="sm"
                       onClick={() => setShowTakeoverDialog(true)}
                       disabled={isTogglingTakeover}
-                    >  
+                    >
                       <Hand className="h-4 w-4 mr-1" />
                       <span className="hidden sm:inline">Takeover</span>
                     </Button>
@@ -922,7 +931,7 @@ export default function LiveChatPage() {
 
               {/* Messages Container - Fixed Height with Scroll */}
               <div className="relative flex-1">
-                <div 
+                <div
                   ref={messagesContainerRef}
                   onScroll={handleScroll}
                   className="absolute inset-0 overflow-y-auto p-4 bg-gray-50 dark:bg-gray-900"
@@ -944,16 +953,14 @@ export default function LiveChatPage() {
                           className={`flex ${msg.direction === "OUT" ? "justify-end" : "justify-start"}`}
                         >
                           <div
-                            className={`max-w-[75%] rounded-lg p-3 shadow-sm ${
-                              msg.direction === "OUT"
+                            className={`max-w-[75%] rounded-lg p-3 shadow-sm ${msg.direction === "OUT"
                                 ? "bg-green-500 text-white"
                                 : "bg-white dark:bg-gray-800 border"
-                            }`}
+                              }`}
                           >
                             {renderMessageContent(msg)}
-                            <div className={`flex items-center gap-1 mt-1.5 text-xs ${
-                              msg.direction === "OUT" ? "text-green-100" : "text-muted-foreground"
-                            }`}>
+                            <div className={`flex items-center gap-1 mt-1.5 text-xs ${msg.direction === "OUT" ? "text-green-100" : "text-muted-foreground"
+                              }`}>
                               <span>{formatTime(msg.timestamp)}</span>
                               {msg.direction === "OUT" && (
                                 <>
@@ -993,24 +1000,24 @@ export default function LiveChatPage() {
               </div>
 
               {/* AI Processing Status Indicator */}
-              {selectedConversation && processingStatuses[selectedConversation.wa_user_id] && 
-               processingStatuses[selectedConversation.wa_user_id].stage !== 'completed' && 
-               processingStatuses[selectedConversation.wa_user_id].stage !== 'error' && (
-                <div className="px-3 py-2 border-t bg-blue-50 dark:bg-blue-950 shrink-0">
-                  <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span className="text-sm font-medium">
-                      {processingStatuses[selectedConversation.wa_user_id].message}
-                    </span>
+              {selectedConversation && processingStatuses[selectedConversation.wa_user_id] &&
+                processingStatuses[selectedConversation.wa_user_id].stage !== 'completed' &&
+                processingStatuses[selectedConversation.wa_user_id].stage !== 'error' && (
+                  <div className="px-3 py-2 border-t bg-blue-50 dark:bg-blue-950 shrink-0">
+                    <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm font-medium">
+                        {processingStatuses[selectedConversation.wa_user_id].message}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 bg-blue-200 dark:bg-blue-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${processingStatuses[selectedConversation.wa_user_id].progress}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="mt-1.5 h-1.5 bg-blue-200 dark:bg-blue-800 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-blue-500 rounded-full transition-all duration-500 ease-out"
-                      style={{ width: `${processingStatuses[selectedConversation.wa_user_id].progress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
+                )}
 
               {/* Message Input - Fixed at Bottom */}
               <div className="p-3 border-t bg-card shrink-0">
@@ -1076,8 +1083,8 @@ export default function LiveChatPage() {
           <div className="py-4 space-y-4">
             <div>
               <label className="text-sm font-medium">Template Alasan</label>
-              <Select 
-                value={takeoverReasonTemplate} 
+              <Select
+                value={takeoverReasonTemplate}
                 onValueChange={(value) => {
                   setTakeoverReasonTemplate(value)
                   if (value && value !== "Lainnya") {
@@ -1119,8 +1126,8 @@ export default function LiveChatPage() {
             }}>
               Batal
             </Button>
-            <Button 
-              onClick={handleStartTakeover} 
+            <Button
+              onClick={handleStartTakeover}
               disabled={isTogglingTakeover || (takeoverReasonTemplate === "Lainnya" && !takeoverReason.trim())}
             >
               {isTogglingTakeover ? (
@@ -1157,9 +1164,9 @@ export default function LiveChatPage() {
             <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
               Batal
             </Button>
-            <Button 
+            <Button
               variant="destructive"
-              onClick={handleDeleteConversation} 
+              onClick={handleDeleteConversation}
               disabled={isDeleting}
             >
               {isDeleting ? (

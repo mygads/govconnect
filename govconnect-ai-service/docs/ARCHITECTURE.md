@@ -229,3 +229,42 @@ src/
 - `POST /stats/analyze-complexity` - Analyze message complexity
 - `GET /stats/optimization` - Cache and FSM stats
 - `GET /stats/analytics` - AI analytics summary
+
+## Knowledge Base Reference
+
+Dokumentasi knowledge base tersedia di `/govconnect/docs/`:
+- `KB-1-Regulasi-Dasar.txt` - Regulasi dasar kelurahan
+- `KB-2-SOP-Kependudukan.txt` - SOP layanan kependudukan
+- `KB-3-SOP-Pencatatan-Sipil.txt` - SOP pencatatan sipil
+- `KB-4-SOP-Surat-Pindah.txt` - SOP surat pindah
+- `KB-5-SOP-Perizinan-Usaha.txt` - SOP perizinan usaha
+- `KB-6-10-Koleksi-Lengkap.txt` - Koleksi lengkap KB 6-10
+- `KB-11-12-Template-Checklist.txt` - Template dan checklist
+- `KB-13-SOP-Layanan-Kelurahan.txt` - SOP layanan kelurahan
+- `KB-14-Pengaduan-Infrastruktur.txt` - Pengaduan infrastruktur
+- `KB-15-FAQ-Layanan.txt` - FAQ layanan
+- `KB-16-Info-Kelurahan.txt` - Info umum kelurahan
+- `KB-17-Intent-Mapping.txt` - Intent mapping untuk AI
+- `KB-18-Variasi-Pertanyaan.txt` - Variasi pertanyaan user
+
+### Jam Operasional (Konsisten dengan KB-15 & KB-16)
+- Senin - Jumat: 08:00 - 15:00 WIB
+- Sabtu: 08:00 - 12:00 WIB
+- Minggu & Hari Libur: Tutup
+- Istirahat: 12:00 - 13:00 WIB
+
+## Audit Log (December 2025)
+
+### Redundansi yang Dihapus:
+1. ✅ `query-cache.service.ts` - Dihapus (redundan dengan `response-cache.service.ts`)
+2. ✅ Duplicate KNOWLEDGE_QUERY check di `fast-intent-classifier.service.ts` - Fixed
+3. ✅ Knowledge patterns di `response-templates.service.ts` - Dipindah ke centralized `intent-patterns.ts`
+
+### Inkonsistensi yang Diperbaiki:
+1. ✅ Jam buka di `response-templates.ts` - Dikoreksi sesuai KB docs
+2. ✅ `WEBCHAT_USE_2_LAYER` → `USE_2_LAYER_ARCHITECTURE` - Unified
+
+### Centralized Constants:
+- `constants/intent-patterns.ts` - Semua regex patterns
+- `constants/response-templates.ts` - Semua response templates
+- `services/text-normalizer.service.ts` - Typo corrections
