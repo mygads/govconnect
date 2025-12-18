@@ -7,6 +7,7 @@ import webhookRoutes from './routes/webhook.routes';
 import internalRoutes from './routes/internal.routes';
 import healthRoutes from './routes/health.routes';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.middleware';
+import { metricsHandler, metricsMiddleware } from './middleware/metrics.middleware';
 import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 
@@ -49,6 +50,12 @@ export function createApp(): Application {
   app.use('/webhook', webhookRoutes);
   app.use('/internal', internalRoutes);
   app.use('/health', healthRoutes);
+
+  // Prometheus Metrics endpoint (before metricsMiddleware to avoid tracking itself)
+  app.get('/metrics', metricsHandler);
+
+  // Metrics middleware (tracks all requests after this point)
+  app.use(metricsMiddleware('channel-service'));
 
   // Swagger API Documentation
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {

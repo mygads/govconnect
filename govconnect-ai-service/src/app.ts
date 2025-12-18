@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import swaggerUi from 'swagger-ui-express';
+import promClient from 'prom-client';
 import logger from './utils/logger';
 import {
   isConnected as isRabbitMQConnected,
@@ -30,10 +31,26 @@ import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
 import { config } from './config/env';
 
+// Initialize Prometheus default metrics
+promClient.collectDefaultMetrics({
+  prefix: 'govconnect_',
+  labels: { service: 'ai-service' },
+});
+
 const app = express();
 
 app.use(express.json());
 
+// Prometheus Metrics endpoint
+app.get('/metrics', async (req: Request, res: Response) => {
+  try {
+    res.set('Content-Type', promClient.register.contentType);
+    const metrics = await promClient.register.metrics();
+    res.send(metrics);
+  } catch (error) {
+    res.status(500).send('Error collecting metrics');
+  }
+});
 // Swagger API Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   explorer: true,

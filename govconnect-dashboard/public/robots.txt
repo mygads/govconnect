@@ -1,0 +1,43 @@
+# GovConnect - Robots.txt
+# https://govconnect.id
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /login
+Disallow: /_next/
+Disallow: /generated/
+
+# Sitemap
+Sitemap: https://govconnect.id/sitemap.xml
+
+# Crawl-delay untuk menghindari overload server
+Crawl-delay: 1
+
+# Google specific
+User-agent: Googlebot
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /login
+
+# Bing specific
+User-agent: Bingbot
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /login
+
+# Social Media Bots (untuk preview)
+User-agent: facebookexternalhit
+Allow: /
+
+User-agent: Twitterbot
+Allow: /
+
+User-agent: LinkedInBot
+Allow: /
+
+User-agent: WhatsApp
+Allow: /

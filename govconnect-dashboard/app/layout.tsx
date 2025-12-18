@@ -1,58 +1,27 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { Toaster } from "@/components/ui/toaster";
+import { defaultMetadata, siteConfig } from "@/lib/seo";
 
+// SEO Metadata
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
-  title: "GovConnect - Layanan Kelurahan Digital Terpadu",
-  description: "Laporkan keluhan, ajukan surat, dan dapatkan informasi kelurahan langsung melalui WhatsApp. Cepat, mudah, dan terpercaya.",
-  keywords: ["govconnect", "layanan kelurahan", "whatsapp", "digital", "pemerintah", "surat online", "laporan keluhan"],
-  authors: [{ name: "GovConnect Team" }],
-  creator: "GovConnect",
-  publisher: "GovConnect",
-  openGraph: {
-    type: "website",
-    locale: "id_ID",
-    url: "https://govconnect.id",
-    title: "GovConnect - Layanan Kelurahan Digital Terpadu",
-    description: "Laporkan keluhan, ajukan surat, dan dapatkan informasi kelurahan langsung melalui WhatsApp. Cepat, mudah, dan terpercaya.",
-    siteName: "GovConnect",
-    images: [
-      {
-        url: "/dashboard.png",
-        width: 1200,
-        height: 630,
-        alt: "GovConnect Dashboard Preview",
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "GovConnect - Layanan Kelurahan Digital Terpadu",
-    description: "Laporkan keluhan, ajukan surat, dan dapatkan informasi kelurahan langsung melalui WhatsApp.",
-    images: ["/dashboard.png"],
-    creator: "@govconnect",
-  },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      "max-video-preview": -1,
-      "max-image-preview": "large",
-      "max-snippet": -1,
-    },
-  },
-  icons: {
-    icon: "/favicon.ico",
-    shortcut: "/favicon.ico",
-    apple: "/logo-dashboard.png",
-  },
-  manifest: "/manifest.json",
+  ...defaultMetadata,
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.id'),
+};
+
+// Viewport Configuration
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#16a34a' },
+    { media: '(prefers-color-scheme: dark)', color: '#15803d' },
+  ],
 };
 
 export default function RootLayout({
@@ -62,6 +31,44 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id" suppressHydrationWarning className={`scroll-smooth ${GeistSans.variable} ${GeistMono.variable}`}>
+      <head>
+        {/* Preconnect untuk performance */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        
+        {/* DNS Prefetch */}
+        <link rel="dns-prefetch" href="https://www.google-analytics.com" />
+        <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
+        
+        {/* Canonical URL */}
+        <link rel="canonical" href={siteConfig.url} />
+        
+        {/* Additional Meta Tags untuk SEO */}
+        <meta name="application-name" content={siteConfig.name} />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content={siteConfig.name} />
+        <meta name="format-detection" content="telephone=no" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="msapplication-TileColor" content="#16a34a" />
+        <meta name="msapplication-tap-highlight" content="no" />
+        
+        {/* Geo Tags untuk Local SEO Indonesia */}
+        <meta name="geo.region" content="ID" />
+        <meta name="geo.country" content="Indonesia" />
+        <meta name="language" content="Indonesian" />
+        <meta name="content-language" content="id" />
+        
+        {/* Rating */}
+        <meta name="rating" content="general" />
+        <meta name="revisit-after" content="7 days" />
+        
+        {/* Distribution */}
+        <meta name="distribution" content="global" />
+        <meta name="target" content="all" />
+        <meta name="audience" content="all" />
+        <meta name="coverage" content="Indonesia" />
+      </head>
       <body className="antialiased font-sans">
         <Providers>{children}</Providers>
         <Toaster />

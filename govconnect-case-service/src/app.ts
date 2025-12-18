@@ -1,6 +1,7 @@
 import express, { Application } from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
+import promClient from 'prom-client';
 import complaintRoutes from './routes/complaint.routes';
 import reservationRoutes from './routes/reservation.routes';
 import statisticsRoutes from './routes/statistics.routes';
@@ -11,12 +12,29 @@ import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 import { initializeServices } from './services/reservation.service';
 
+// Initialize Prometheus default metrics
+promClient.collectDefaultMetrics({
+  prefix: 'govconnect_',
+  labels: { service: 'case-service' },
+});
+
 const app: Application = express();
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Prometheus Metrics endpoint
+app.get('/metrics', async (req, res) => {
+  try {
+    res.set('Content-Type', promClient.register.contentType);
+    const metrics = await promClient.register.metrics();
+    res.send(metrics);
+  } catch (error) {
+    res.status(500).send('Error collecting metrics');
+  }
+});
 
 // Request logging
 app.use((req, res, next) => {
