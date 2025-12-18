@@ -6,7 +6,7 @@ import { MetadataRoute } from 'next'
 // ============================================
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.id'
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.my.id'
   const currentDate = new Date()
 
   // Main pages dengan prioritas tinggi

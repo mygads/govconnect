@@ -35,6 +35,11 @@ RUN pnpm prisma generate
 # Build Next.js app
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_DISABLE_TURBOPACK=1
+
+# Build-time environment variables for SEO
+ARG NEXT_PUBLIC_APP_URL=https://govconnect.my.id
+ENV NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+
 RUN pnpm build
 
 # ===============================================
