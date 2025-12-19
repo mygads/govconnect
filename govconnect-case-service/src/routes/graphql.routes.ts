@@ -171,21 +171,24 @@ const COMPLAINT_CATEGORIES = [
 const resolvers = {
   Query: {
     services: async () => {
+      // Always use config-based services (they're the source of truth)
+      // Database is optional for storing additional state like is_active
       try {
-        // Get active services from database
         const dbServices = await reservationService.getActiveServices();
+        const dbServiceMap = new Map(dbServices.map((s: any) => [s.code, s]));
 
-        // Merge with config to include citizen_questions
-        return dbServices.map((dbService: any) => {
-          const configService = getServiceByCode(dbService.code);
+        // Return config services merged with any database overrides
+        return GOVERNMENT_SERVICES.map(configService => {
+          const dbService = dbServiceMap.get(configService.code);
           return {
-            ...dbService,
-            citizen_questions: configService?.citizen_questions || [],
-            all_questions: getQuestionsForService(dbService.code),
+            ...configService,
+            is_active: dbService?.is_active ?? true,
+            is_online_available: dbService?.is_online_available ?? true,
+            all_questions: getQuestionsForService(configService.code),
           };
         });
       } catch (error) {
-        logger.error('Error fetching services:', error);
+        logger.error('Error fetching services from DB, using config only:', error);
         // Fallback to config-based services
         return GOVERNMENT_SERVICES.map(s => ({
           ...s,
