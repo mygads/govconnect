@@ -4,45 +4,44 @@
  * Simple fetch-based client without heavy Apollo dependencies
  */
 
-const GRAPHQL_ENDPOINT = process.env.NEXT_PUBLIC_CASE_SERVICE_URL
-    ? `${process.env.NEXT_PUBLIC_CASE_SERVICE_URL}/graphql`
-    : 'http://localhost:3001/graphql';
+// Use dashboard's API proxy to avoid CORS issues
+const GRAPHQL_ENDPOINT = '/api/graphql';
 
 export interface GraphQLResponse<T> {
-    data?: T;
-    errors?: Array<{
-        message: string;
-        locations?: Array<{ line: number; column: number }>;
-        path?: string[];
-    }>;
+  data?: T;
+  errors?: Array<{
+    message: string;
+    locations?: Array<{ line: number; column: number }>;
+    path?: string[];
+  }>;
 }
 
 export async function graphqlFetch<T>(
-    query: string,
-    variables?: Record<string, any>
+  query: string,
+  variables?: Record<string, any>
 ): Promise<T> {
-    const response = await fetch(GRAPHQL_ENDPOINT, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            query,
-            variables,
-        }),
-    });
+  const response = await fetch(GRAPHQL_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query,
+      variables,
+    }),
+  });
 
-    const result: GraphQLResponse<T> = await response.json();
+  const result: GraphQLResponse<T> = await response.json();
 
-    if (result.errors && result.errors.length > 0) {
-        throw new Error(result.errors[0].message);
-    }
+  if (result.errors && result.errors.length > 0) {
+    throw new Error(result.errors[0].message);
+  }
 
-    if (!result.data) {
-        throw new Error('No data returned from GraphQL');
-    }
+  if (!result.data) {
+    throw new Error('No data returned from GraphQL');
+  }
 
-    return result.data;
+  return result.data;
 }
 
 // ==================== QUERIES ====================
@@ -165,83 +164,83 @@ export const CREATE_RESERVATION = `
 // ==================== TYPES ====================
 
 export interface CitizenQuestion {
-    field: string;
-    question: string;
-    type: 'text' | 'number' | 'date' | 'select';
-    required: boolean;
-    options?: string[];
+  field: string;
+  question: string;
+  type: 'text' | 'number' | 'date' | 'select';
+  required: boolean;
+  options?: string[];
 }
 
 export interface Service {
-    code: string;
-    name: string;
-    description: string;
-    category: string;
-    requirements: string[];
-    sop_steps?: string[];
-    estimated_duration: number;
-    daily_quota: number;
-    is_active?: boolean;
-    is_online_available?: boolean;
-    citizen_questions: CitizenQuestion[];
-    all_questions: CitizenQuestion[];
+  code: string;
+  name: string;
+  description: string;
+  category: string;
+  requirements: string[];
+  sop_steps?: string[];
+  estimated_duration: number;
+  daily_quota: number;
+  is_active?: boolean;
+  is_online_available?: boolean;
+  citizen_questions: CitizenQuestion[];
+  all_questions: CitizenQuestion[];
 }
 
 export interface TimeSlot {
-    time: string;
-    available: boolean;
-    remaining?: number;
+  time: string;
+  available: boolean;
+  remaining?: number;
 }
 
 export interface AvailableSlots {
-    service_code: string;
-    date: string;
-    day_name: string;
-    is_open: boolean;
-    slots: TimeSlot[];
-    daily_quota: number;
-    total_booked: number;
+  service_code: string;
+  date: string;
+  day_name: string;
+  is_open: boolean;
+  slots: TimeSlot[];
+  daily_quota: number;
+  total_booked: number;
 }
 
 export interface ComplaintCategory {
-    code: string;
-    name: string;
-    description: string;
-    icon: string;
+  code: string;
+  name: string;
+  description: string;
+  icon: string;
 }
 
 export interface CreateComplaintInput {
-    kategori: string;
-    deskripsi: string;
-    alamat?: string;
-    rt_rw?: string;
-    foto_url?: string;
-    nama_pelapor: string;
-    no_hp: string;
+  kategori: string;
+  deskripsi: string;
+  alamat?: string;
+  rt_rw?: string;
+  foto_url?: string;
+  nama_pelapor: string;
+  no_hp: string;
 }
 
 export interface CreateReservationInput {
-    service_code: string;
-    reservation_date: string;
-    reservation_time: string;
-    nama_lengkap: string;
-    nik: string;
-    alamat: string;
-    no_hp: string;
-    additional_data?: string;
+  service_code: string;
+  reservation_date: string;
+  reservation_time: string;
+  nama_lengkap: string;
+  nik: string;
+  alamat: string;
+  no_hp: string;
+  additional_data?: string;
 }
 
 export interface CreateComplaintResponse {
-    success: boolean;
-    complaint_id?: string;
-    message?: string;
-    error?: string;
+  success: boolean;
+  complaint_id?: string;
+  message?: string;
+  error?: string;
 }
 
 export interface CreateReservationResponse {
-    success: boolean;
-    reservation_id?: string;
-    queue_number?: number;
-    message?: string;
-    error?: string;
+  success: boolean;
+  reservation_id?: string;
+  queue_number?: number;
+  message?: string;
+  error?: string;
 }

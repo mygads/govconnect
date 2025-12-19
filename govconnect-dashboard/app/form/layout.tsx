@@ -1,70 +1,120 @@
-import { Geist, Geist_Mono } from "next/font/google";
-import "../globals.css";
+"use client";
+
 import Link from "next/link";
-
-const geistSans = Geist({
-    variable: "--font-geist-sans",
-    subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-    variable: "--font-geist-mono",
-    subsets: ["latin"],
-});
-
-export const metadata = {
-    title: "Layanan Publik Online - GovConnect",
-    description: "Form pengaduan dan reservasi layanan pemerintah secara online",
-};
+import Image from "next/image";
+import { useState, useEffect } from "react";
+import { Sun, Moon, Menu, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function FormLayout({
     children,
 }: {
     children: React.ReactNode;
 }) {
-    return (
-        <div className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-teal-50/20 dark:from-slate-950 dark:via-blue-950/20 dark:to-teal-950/10`}>
-            {/* Minimal Header */}
-            <header className="sticky top-0 z-50 backdrop-blur-xl bg-white/70 dark:bg-slate-900/70 border-b border-slate-200/50 dark:border-slate-700/50">
-                <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-                    <Link href="/form" className="flex items-center gap-3 group">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-teal-500 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:shadow-blue-500/40 transition-all duration-300">
-                            <span className="text-white font-bold text-lg">G</span>
-                        </div>
-                        <div>
-                            <h1 className="text-lg font-semibold text-slate-800 dark:text-white">GovConnect</h1>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Layanan Publik Online</p>
-                        </div>
-                    </Link>
+    const [isDark, setIsDark] = useState(false);
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-                    <nav className="flex items-center gap-4">
-                        <Link
-                            href="/form/laporan"
-                            className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                        >
-                            Buat Laporan
+    const toggleTheme = () => {
+        setIsDark(!isDark);
+        document.documentElement.classList.toggle("dark");
+    };
+
+    const navItems = [
+        { href: "/form", label: "Beranda" },
+        { href: "/form/laporan", label: "Buat Laporan" },
+        { href: "/form/reservasi", label: "Reservasi" },
+    ];
+
+    return (
+        <div className="min-h-screen bg-background text-foreground transition-colors duration-300">
+            {/* Navbar - Same style as landing page */}
+            <nav className="fixed top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-xl border-b border-border/50">
+                <div className="max-w-5xl mx-auto px-4 sm:px-6">
+                    <div className="flex items-center justify-between h-14">
+                        <Link href="/" className="flex items-center shrink-0">
+                            <Image
+                                src={isDark ? "/logo-dashboard-dark.png" : "/logo-dashboard.png"}
+                                alt="GovConnect"
+                                width={100}
+                                height={100}
+                                className="object-contain"
+                                priority
+                            />
                         </Link>
-                        <Link
-                            href="/form/reservasi"
-                            className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
-                        >
-                            Reservasi
-                        </Link>
-                    </nav>
+
+                        <div className="hidden md:flex items-center gap-0.5 bg-muted/50 rounded-full px-1.5 py-0.5">
+                            {navItems.map((item) => (
+                                <Link
+                                    key={item.href}
+                                    href={item.href}
+                                    className="text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-background/80 px-3 py-1.5 rounded-full transition-all"
+                                >
+                                    {item.label}
+                                </Link>
+                            ))}
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                            <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full w-8 h-8">
+                                {isDark ? <Sun className="h-4 w-4 text-yellow-500" /> : <Moon className="h-4 w-4 text-slate-600" />}
+                            </Button>
+                            <Button asChild size="sm" className="hidden sm:flex rounded-full bg-secondary hover:bg-secondary/90 text-xs px-4 h-8">
+                                <Link href="/login">Login</Link>
+                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden rounded-full w-8 h-8">
+                                {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+                            </Button>
+                        </div>
+                    </div>
                 </div>
-            </header>
+
+                {/* Mobile Menu */}
+                {mobileMenuOpen && (
+                    <div className="md:hidden bg-background/95 backdrop-blur-xl border-b border-border/50">
+                        <div className="px-4 py-3 space-y-1">
+                            {navItems.map((item) => (
+                                <Link
+                                    key={item.href}
+                                    href={item.href}
+                                    onClick={() => setMobileMenuOpen(false)}
+                                    className="block text-sm text-muted-foreground hover:text-foreground px-3 py-2 rounded-lg hover:bg-muted transition-all"
+                                >
+                                    {item.label}
+                                </Link>
+                            ))}
+                            <Button asChild size="sm" className="w-full mt-2 rounded-full bg-secondary text-xs">
+                                <Link href="/login">Login Dashboard</Link>
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </nav>
 
             {/* Main Content */}
-            <main className="max-w-4xl mx-auto px-4 py-8">
-                {children}
+            <main className="pt-20 pb-12">
+                <div className="max-w-5xl mx-auto px-4 sm:px-6">
+                    {children}
+                </div>
             </main>
 
             {/* Footer */}
-            <footer className="border-t border-slate-200/50 dark:border-slate-700/50 mt-auto">
-                <div className="max-w-4xl mx-auto px-4 py-6 text-center">
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                        © 2024 GovConnect. Layanan Pemerintahan Digital.
-                    </p>
+            <footer className="border-t border-border/50 bg-muted/20">
+                <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <Image
+                                src={isDark ? "/logo-dashboard-dark.png" : "/logo-dashboard.png"}
+                                alt="GovConnect"
+                                width={80}
+                                height={80}
+                                className="object-contain"
+                            />
+                            <span className="text-xs text-muted-foreground">Layanan Publik Online</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            © 2024 GovConnect. Platform Digital untuk Layanan Pemerintahan.
+                        </p>
+                    </div>
                 </div>
             </footer>
         </div>

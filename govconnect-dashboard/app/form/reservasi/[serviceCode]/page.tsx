@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
     ArrowLeft,
@@ -9,12 +8,18 @@ import {
     Calendar,
     Clock,
     FileText,
-    CheckCircle,
+    CheckCircle2,
     AlertCircle,
     Loader2,
     Info,
-    ChevronRight
+    ChevronRight,
+    User,
+    CreditCard,
+    MapPin,
+    Phone
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
     graphqlFetch,
     GET_SERVICE,
@@ -22,7 +27,6 @@ import {
     CREATE_RESERVATION,
     Service,
     AvailableSlots,
-    CitizenQuestion,
     CreateReservationInput,
     CreateReservationResponse,
 } from "@/lib/graphql-client";
@@ -33,7 +37,6 @@ interface PageProps {
 
 export default function ReservationFormPage({ params }: PageProps) {
     const { serviceCode } = use(params);
-    const router = useRouter();
 
     const [service, setService] = useState<Service | null>(null);
     const [availableSlots, setAvailableSlots] = useState<AvailableSlots | null>(null);
@@ -48,7 +51,7 @@ export default function ReservationFormPage({ params }: PageProps) {
     } | null>(null);
 
     // Form state
-    const [step, setStep] = useState(1); // 1: Date, 2: Time, 3: Data, 4: Review
+    const [step, setStep] = useState(1);
     const [selectedDate, setSelectedDate] = useState<string>("");
     const [selectedTime, setSelectedTime] = useState<string>("");
     const [formData, setFormData] = useState<Record<string, string>>({
@@ -106,19 +109,12 @@ export default function ReservationFormPage({ params }: PageProps) {
 
     function isFormComplete() {
         if (!service) return false;
+        if (!formData.nama_lengkap || !formData.nik || !formData.alamat || !formData.no_hp) return false;
+        if (formData.nik.length !== 16) return false;
 
-        // Check common required fields
-        if (!formData.nama_lengkap || !formData.nik || !formData.alamat || !formData.no_hp) {
-            return false;
-        }
-
-        // Check service-specific required fields
         for (const q of service.citizen_questions || []) {
-            if (q.required && !formData[q.field]) {
-                return false;
-            }
+            if (q.required && !formData[q.field]) return false;
         }
-
         return true;
     }
 
@@ -129,7 +125,6 @@ export default function ReservationFormPage({ params }: PageProps) {
         setSubmitting(true);
 
         try {
-            // Prepare additional data (service-specific questions)
             const additionalData: Record<string, string> = {};
             for (const q of service.citizen_questions || []) {
                 if (formData[q.field]) {
@@ -171,10 +166,9 @@ export default function ReservationFormPage({ params }: PageProps) {
         }
     }
 
-    // Generate next 14 days
     const availableDates = Array.from({ length: 14 }, (_, i) => {
         const date = new Date();
-        date.setDate(date.getDate() + i + 1); // Start from tomorrow
+        date.setDate(date.getDate() + i + 1);
         return date.toISOString().split('T')[0];
     });
 
@@ -190,89 +184,79 @@ export default function ReservationFormPage({ params }: PageProps) {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <Loader2 className="w-8 h-8 animate-spin text-teal-600" />
+            <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-secondary" />
+                <p className="text-xs text-muted-foreground">Memuat layanan...</p>
             </div>
         );
     }
 
     if (!service) {
         return (
-            <div className="max-w-xl mx-auto">
-                <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-                    <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                    <div>
-                        <p className="font-medium text-red-700 dark:text-red-300">Layanan Tidak Ditemukan</p>
-                        <p className="text-sm text-red-600 dark:text-red-400 mt-1">
-                            Layanan dengan kode "{serviceCode}" tidak tersedia.
-                        </p>
-                        <Link href="/form/reservasi" className="text-sm text-red-700 dark:text-red-300 underline mt-2 inline-block">
-                            Kembali ke daftar layanan
-                        </Link>
-                    </div>
-                </div>
+            <div className="max-w-md mx-auto py-12">
+                <Card className="border-red-200/50 dark:border-red-800/30">
+                    <CardContent className="p-5">
+                        <div className="flex items-start gap-3">
+                            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                            <div>
+                                <p className="font-semibold text-sm">Layanan Tidak Ditemukan</p>
+                                <p className="text-xs text-muted-foreground mt-1">Kode layanan "{serviceCode}" tidak valid.</p>
+                                <Button variant="outline" size="sm" asChild className="mt-3 text-xs">
+                                    <Link href="/form/reservasi">Kembali ke Daftar Layanan</Link>
+                                </Button>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
         );
     }
 
     if (success) {
         return (
-            <div className="max-w-xl mx-auto">
-                <div className="bg-white dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 p-8 text-center space-y-6">
-                    <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center">
-                        <CheckCircle className="w-10 h-10 text-white" />
-                    </div>
-
-                    <div className="space-y-2">
-                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                            Reservasi Berhasil!
-                        </h1>
-                        <p className="text-slate-600 dark:text-slate-300">{success.message}</p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-slate-100 dark:bg-slate-700/50 rounded-xl p-4">
-                            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">ID Reservasi</p>
-                            <p className="text-lg font-mono font-bold text-teal-600 dark:text-teal-400">
-                                {success.reservation_id}
-                            </p>
+            <div className="max-w-lg mx-auto py-8">
+                <Card className="border-green-200/50 dark:border-green-800/30 bg-gradient-to-br from-green-50/50 to-emerald-50/50 dark:from-green-950/20 dark:to-emerald-950/20">
+                    <CardContent className="pt-8 pb-6 px-6 text-center space-y-6">
+                        <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center shadow-lg">
+                            <CheckCircle2 className="w-8 h-8 text-white" />
                         </div>
-                        <div className="bg-slate-100 dark:bg-slate-700/50 rounded-xl p-4">
-                            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Nomor Antrian</p>
-                            <p className="text-3xl font-bold text-teal-600 dark:text-teal-400">
-                                {success.queue_number}
-                            </p>
-                        </div>
-                    </div>
 
-                    <div className="bg-teal-50 dark:bg-teal-900/20 rounded-xl p-4 text-left">
-                        <h3 className="font-semibold text-teal-800 dark:text-teal-200 mb-2">Detail Reservasi</h3>
-                        <div className="space-y-1 text-sm text-teal-700 dark:text-teal-300">
+                        <div>
+                            <h1 className="text-xl font-bold text-green-700 dark:text-green-400">Reservasi Berhasil!</h1>
+                            <p className="text-sm text-muted-foreground mt-1">{success.message}</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-background/80 rounded-xl p-3 border border-border/50">
+                                <p className="text-[10px] text-muted-foreground">ID Reservasi</p>
+                                <p className="text-sm font-mono font-bold text-secondary">{success.reservation_id}</p>
+                            </div>
+                            <div className="bg-background/80 rounded-xl p-3 border border-border/50">
+                                <p className="text-[10px] text-muted-foreground">Nomor Antrian</p>
+                                <p className="text-2xl font-bold text-secondary">{success.queue_number}</p>
+                            </div>
+                        </div>
+
+                        <div className="bg-secondary/10 rounded-xl p-3 text-left text-xs space-y-1">
                             <p><strong>Layanan:</strong> {service.name}</p>
                             <p><strong>Tanggal:</strong> {formatDate(selectedDate)}</p>
                             <p><strong>Waktu:</strong> {selectedTime}</p>
                         </div>
-                    </div>
 
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                        Simpan ID dan nomor antrian ini. Harap datang 15 menit sebelum waktu reservasi.
-                    </p>
+                        <p className="text-[10px] text-muted-foreground">
+                            Harap datang 15 menit sebelum waktu reservasi. Bawa dokumen persyaratan yang diperlukan.
+                        </p>
 
-                    <div className="flex gap-4">
-                        <Link
-                            href="/form"
-                            className="flex-1 py-3 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors font-medium"
-                        >
-                            Kembali
-                        </Link>
-                        <Link
-                            href="/form/reservasi"
-                            className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-teal-600 to-teal-700 text-white hover:from-teal-700 hover:to-teal-800 transition-colors font-medium"
-                        >
-                            Buat Reservasi Lagi
-                        </Link>
-                    </div>
-                </div>
+                        <div className="flex gap-3">
+                            <Button variant="outline" asChild className="flex-1">
+                                <Link href="/form">Kembali</Link>
+                            </Button>
+                            <Button asChild className="flex-1 bg-secondary hover:bg-secondary/90">
+                                <Link href="/form/reservasi">Buat Reservasi Lagi</Link>
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
         );
     }
@@ -280,78 +264,74 @@ export default function ReservationFormPage({ params }: PageProps) {
     return (
         <div className="max-w-2xl mx-auto">
             {/* Header */}
-            <div className="mb-8">
+            <div className="mb-6">
                 <Link
                     href="/form/reservasi"
-                    className="inline-flex items-center gap-2 text-slate-600 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-400 transition-colors mb-4"
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4"
                 >
-                    <ArrowLeft className="w-4 h-4" />
+                    <ArrowLeft className="w-3.5 h-3.5" />
                     Kembali ke daftar layanan
                 </Link>
 
-                <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
-                    {service.name}
-                </h1>
-                <p className="text-slate-600 dark:text-slate-300 mt-2 line-clamp-2">
-                    {service.description}
-                </p>
+                <h1 className="text-xl font-bold">{service.name}</h1>
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{service.description}</p>
             </div>
 
             {/* Progress Steps */}
-            <div className="flex items-center gap-2 mb-8 overflow-x-auto pb-2">
+            <div className="flex items-center gap-1 mb-8 overflow-x-auto pb-2">
                 {[
-                    { num: 1, label: "Tanggal" },
-                    { num: 2, label: "Waktu" },
-                    { num: 3, label: "Data" },
-                    { num: 4, label: "Kirim" },
-                ].map((s, i) => (
-                    <div key={s.num} className="flex items-center">
-                        <button
-                            onClick={() => s.num < step && setStep(s.num)}
-                            disabled={s.num > step}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${step === s.num
-                                    ? "bg-teal-600 text-white"
-                                    : step > s.num
-                                        ? "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 cursor-pointer hover:bg-teal-200 dark:hover:bg-teal-900/50"
-                                        : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                                }`}
-                        >
-                            {step > s.num ? <CheckCircle className="w-4 h-4" /> : s.num}
-                            <span className="hidden sm:inline">{s.label}</span>
-                        </button>
-                        {i < 3 && (
-                            <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 mx-1" />
-                        )}
-                    </div>
-                ))}
+                    { num: 1, label: "Tanggal", icon: Calendar },
+                    { num: 2, label: "Waktu", icon: Clock },
+                    { num: 3, label: "Data", icon: User },
+                    { num: 4, label: "Kirim", icon: Send },
+                ].map((s, i) => {
+                    const Icon = s.icon;
+                    return (
+                        <div key={s.num} className="flex items-center">
+                            <button
+                                onClick={() => s.num < step && setStep(s.num)}
+                                disabled={s.num > step}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${step === s.num
+                                        ? "bg-secondary text-white"
+                                        : step > s.num
+                                            ? "bg-secondary/20 text-secondary cursor-pointer hover:bg-secondary/30"
+                                            : "bg-muted text-muted-foreground cursor-not-allowed"
+                                    }`}
+                            >
+                                {step > s.num ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
+                                <span className="hidden sm:inline">{s.label}</span>
+                            </button>
+                            {i < 3 && <ChevronRight className="w-3.5 h-3.5 text-muted-foreground mx-1" />}
+                        </div>
+                    );
+                })}
             </div>
 
             {/* Step 1: Date Selection */}
             {step === 1 && (
                 <div className="space-y-4">
-                    <h2 className="text-xl font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                        <Calendar className="w-5 h-5 text-teal-600" />
-                        Pilih Tanggal
+                    <h2 className="text-sm font-semibold flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-secondary" /> Pilih Tanggal
                     </h2>
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                        {availableDates.map((date) => (
-                            <button
-                                key={date}
-                                onClick={() => handleDateChange(date)}
-                                className={`p-4 rounded-xl border-2 text-left transition-all ${selectedDate === date
-                                        ? "border-teal-500 bg-teal-50 dark:bg-teal-900/20"
-                                        : "border-slate-200 dark:border-slate-700 hover:border-teal-300 dark:hover:border-teal-700 bg-white dark:bg-slate-800/50"
-                                    }`}
-                            >
-                                <p className="font-medium text-slate-900 dark:text-white">
-                                    {new Date(date).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric' })}
-                                </p>
-                                <p className="text-sm text-slate-500 dark:text-slate-400">
-                                    {new Date(date).toLocaleDateString('id-ID', { month: 'short' })}
-                                </p>
-                            </button>
-                        ))}
+                    <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2">
+                        {availableDates.map((date) => {
+                            const d = new Date(date);
+                            return (
+                                <button
+                                    key={date}
+                                    onClick={() => handleDateChange(date)}
+                                    className={`p-3 rounded-xl border-2 text-center transition-all ${selectedDate === date
+                                            ? "border-secondary bg-secondary/10"
+                                            : "border-border/50 hover:border-secondary/50 bg-card"
+                                        }`}
+                                >
+                                    <p className="text-xs font-semibold">{d.toLocaleDateString('id-ID', { weekday: 'short' })}</p>
+                                    <p className="text-lg font-bold">{d.getDate()}</p>
+                                    <p className="text-[10px] text-muted-foreground">{d.toLocaleDateString('id-ID', { month: 'short' })}</p>
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
             )}
@@ -359,64 +339,54 @@ export default function ReservationFormPage({ params }: PageProps) {
             {/* Step 2: Time Selection */}
             {step === 2 && (
                 <div className="space-y-4">
-                    <h2 className="text-xl font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                        <Clock className="w-5 h-5 text-teal-600" />
-                        Pilih Waktu - {formatDate(selectedDate)}
-                    </h2>
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-sm font-semibold flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-secondary" /> Pilih Waktu
+                        </h2>
+                        <button onClick={() => setStep(1)} className="text-xs text-secondary hover:underline">
+                            Ganti tanggal
+                        </button>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">{formatDate(selectedDate)}</p>
 
                     {loadingSlots ? (
                         <div className="flex items-center justify-center py-12">
-                            <Loader2 className="w-6 h-6 animate-spin text-teal-600" />
+                            <Loader2 className="w-6 h-6 animate-spin text-secondary" />
                         </div>
                     ) : !availableSlots?.is_open ? (
-                        <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 border border-amber-200 dark:border-amber-800">
-                            <p className="text-amber-700 dark:text-amber-300">
-                                Kantor tutup pada hari ini. Silakan pilih tanggal lain.
-                            </p>
-                            <button
-                                onClick={() => setStep(1)}
-                                className="text-sm text-amber-700 dark:text-amber-300 underline mt-2"
-                            >
-                                Pilih tanggal lain
-                            </button>
-                        </div>
+                        <Card className="border-amber-200/50 dark:border-amber-800/30 bg-amber-50/50 dark:bg-amber-950/20">
+                            <CardContent className="p-4">
+                                <p className="text-xs text-amber-700 dark:text-amber-300">Kantor tutup pada hari ini.</p>
+                                <button onClick={() => setStep(1)} className="text-xs text-secondary hover:underline mt-2">
+                                    Pilih tanggal lain
+                                </button>
+                            </CardContent>
+                        </Card>
                     ) : (
-                        <>
-                            <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
-                                {availableSlots?.slots.map((slot) => (
-                                    <button
-                                        key={slot.time}
-                                        onClick={() => slot.available && handleTimeSelect(slot.time)}
-                                        disabled={!slot.available}
-                                        className={`p-3 rounded-xl border-2 text-center transition-all ${selectedTime === slot.time
-                                                ? "border-teal-500 bg-teal-50 dark:bg-teal-900/20"
-                                                : slot.available
-                                                    ? "border-slate-200 dark:border-slate-700 hover:border-teal-300 dark:hover:border-teal-700 bg-white dark:bg-slate-800/50"
-                                                    : "border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 opacity-50 cursor-not-allowed"
-                                            }`}
-                                    >
-                                        <p className={`font-medium ${slot.available ? "text-slate-900 dark:text-white" : "text-slate-400 dark:text-slate-600"}`}>
-                                            {slot.time}
-                                        </p>
-                                        {slot.available && slot.remaining !== undefined && (
-                                            <p className="text-xs text-slate-500">
-                                                {slot.remaining} slot
-                                            </p>
-                                        )}
-                                        {!slot.available && (
-                                            <p className="text-xs text-red-500">Penuh</p>
-                                        )}
-                                    </button>
-                                ))}
-                            </div>
-
-                            <button
-                                onClick={() => setStep(1)}
-                                className="text-sm text-slate-500 hover:text-teal-600 transition-colors"
-                            >
-                                ← Pilih tanggal lain
-                            </button>
-                        </>
+                        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                            {availableSlots?.slots.map((slot) => (
+                                <button
+                                    key={slot.time}
+                                    onClick={() => slot.available && handleTimeSelect(slot.time)}
+                                    disabled={!slot.available}
+                                    className={`p-2 rounded-xl border-2 text-center transition-all ${selectedTime === slot.time
+                                            ? "border-secondary bg-secondary/10"
+                                            : slot.available
+                                                ? "border-border/50 hover:border-secondary/50 bg-card"
+                                                : "border-border/30 bg-muted/50 opacity-50 cursor-not-allowed"
+                                        }`}
+                                >
+                                    <p className={`text-xs font-semibold ${slot.available ? "" : "text-muted-foreground"}`}>
+                                        {slot.time}
+                                    </p>
+                                    {slot.available && slot.remaining !== undefined && (
+                                        <p className="text-[10px] text-muted-foreground">{slot.remaining} slot</p>
+                                    )}
+                                    {!slot.available && <p className="text-[10px] text-red-500">Penuh</p>}
+                                </button>
+                            ))}
+                        </div>
                     )}
                 </div>
             )}
@@ -424,129 +394,128 @@ export default function ReservationFormPage({ params }: PageProps) {
             {/* Step 3: Form Data */}
             {step === 3 && (
                 <div className="space-y-6">
-                    <h2 className="text-xl font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                        <FileText className="w-5 h-5 text-teal-600" />
-                        Lengkapi Data
-                    </h2>
-
-                    {/* Common Questions */}
-                    <div className="space-y-4">
-                        <h3 className="font-medium text-slate-700 dark:text-slate-200">Data Diri</h3>
-
-                        <div className="space-y-2">
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-                                Nama Lengkap <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="text"
-                                value={formData.nama_lengkap}
-                                onChange={(e) => updateFormData("nama_lengkap", e.target.value)}
-                                placeholder="Nama sesuai KTP"
-                                required
-                                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-                            />
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-                                NIK (16 digit) <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="text"
-                                value={formData.nik}
-                                onChange={(e) => updateFormData("nik", e.target.value.replace(/\D/g, '').slice(0, 16))}
-                                placeholder="3373123456789012"
-                                required
-                                maxLength={16}
-                                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all font-mono"
-                            />
-                            {formData.nik && formData.nik.length !== 16 && (
-                                <p className="text-xs text-amber-600">NIK harus 16 digit ({formData.nik.length}/16)</p>
-                            )}
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-                                Alamat <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="text"
-                                value={formData.alamat}
-                                onChange={(e) => updateFormData("alamat", e.target.value)}
-                                placeholder="Alamat lengkap sesuai KTP"
-                                required
-                                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-                            />
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-                                No. HP <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="tel"
-                                value={formData.no_hp}
-                                onChange={(e) => updateFormData("no_hp", e.target.value)}
-                                placeholder="08123456789"
-                                required
-                                className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-                            />
-                        </div>
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-sm font-semibold flex items-center gap-2">
+                            <User className="w-4 h-4 text-secondary" /> Lengkapi Data
+                        </h2>
+                        <button onClick={() => setStep(2)} className="text-xs text-secondary hover:underline">
+                            Ganti waktu
+                        </button>
                     </div>
+
+                    {/* Common Fields */}
+                    <Card className="border-border/50">
+                        <CardHeader className="pb-2 pt-4 px-4">
+                            <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                                <User className="w-3.5 h-3.5" /> Data Diri
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="px-4 pb-4 space-y-3">
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium">Nama Lengkap <span className="text-red-500">*</span></label>
+                                <input
+                                    type="text"
+                                    value={formData.nama_lengkap}
+                                    onChange={(e) => updateFormData("nama_lengkap", e.target.value)}
+                                    placeholder="Nama sesuai KTP"
+                                    className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+                                />
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium flex items-center gap-1">
+                                    <CreditCard className="w-3 h-3" /> NIK (16 digit) <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={formData.nik}
+                                    onChange={(e) => updateFormData("nik", e.target.value.replace(/\D/g, '').slice(0, 16))}
+                                    placeholder="3373123456789012"
+                                    maxLength={16}
+                                    className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-secondary"
+                                />
+                                {formData.nik && formData.nik.length !== 16 && (
+                                    <p className="text-[10px] text-amber-600">{formData.nik.length}/16 digit</p>
+                                )}
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" /> Alamat <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={formData.alamat}
+                                    onChange={(e) => updateFormData("alamat", e.target.value)}
+                                    placeholder="Alamat lengkap sesuai KTP"
+                                    className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+                                />
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium flex items-center gap-1">
+                                    <Phone className="w-3 h-3" /> No. HP <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="tel"
+                                    value={formData.no_hp}
+                                    onChange={(e) => updateFormData("no_hp", e.target.value)}
+                                    placeholder="08123456789"
+                                    className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+                                />
+                            </div>
+                        </CardContent>
+                    </Card>
 
                     {/* Service-Specific Questions */}
                     {service.citizen_questions && service.citizen_questions.length > 0 && (
-                        <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-                            <h3 className="font-medium text-slate-700 dark:text-slate-200">
-                                Informasi Tambahan untuk {service.name}
-                            </h3>
+                        <Card className="border-border/50">
+                            <CardHeader className="pb-2 pt-4 px-4">
+                                <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                                    <FileText className="w-3.5 h-3.5" /> Informasi Tambahan
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="px-4 pb-4 space-y-3">
+                                {service.citizen_questions.map((q) => (
+                                    <div key={q.field} className="space-y-1.5">
+                                        <label className="text-xs font-medium">
+                                            {q.question} {q.required && <span className="text-red-500">*</span>}
+                                        </label>
 
-                            {service.citizen_questions.map((q) => (
-                                <div key={q.field} className="space-y-2">
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-                                        {q.question} {q.required && <span className="text-red-500">*</span>}
-                                    </label>
-
-                                    {q.type === 'select' && q.options ? (
-                                        <select
-                                            value={formData[q.field] || ""}
-                                            onChange={(e) => updateFormData(q.field, e.target.value)}
-                                            required={q.required}
-                                            className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-                                        >
-                                            <option value="">Pilih...</option>
-                                            {q.options.map((opt) => (
-                                                <option key={opt} value={opt}>{opt}</option>
-                                            ))}
-                                        </select>
-                                    ) : (
-                                        <input
-                                            type={q.type === 'number' ? 'number' : q.type === 'date' ? 'date' : 'text'}
-                                            value={formData[q.field] || ""}
-                                            onChange={(e) => updateFormData(q.field, e.target.value)}
-                                            required={q.required}
-                                            className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
-                                        />
-                                    )}
-                                </div>
-                            ))}
-                        </div>
+                                        {q.type === 'select' && q.options ? (
+                                            <select
+                                                value={formData[q.field] || ""}
+                                                onChange={(e) => updateFormData(q.field, e.target.value)}
+                                                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+                                            >
+                                                <option value="">Pilih...</option>
+                                                {q.options.map((opt) => (
+                                                    <option key={opt} value={opt}>{opt}</option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <input
+                                                type={q.type === 'number' ? 'number' : q.type === 'date' ? 'date' : 'text'}
+                                                value={formData[q.field] || ""}
+                                                onChange={(e) => updateFormData(q.field, e.target.value)}
+                                                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+                                            />
+                                        )}
+                                    </div>
+                                ))}
+                            </CardContent>
+                        </Card>
                     )}
 
-                    <div className="flex gap-4 pt-4">
-                        <button
-                            onClick={() => setStep(2)}
-                            className="px-6 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors font-medium"
-                        >
-                            ← Kembali
-                        </button>
-                        <button
+                    <div className="flex gap-3">
+                        <Button variant="outline" onClick={() => setStep(2)}>Kembali</Button>
+                        <Button
                             onClick={() => setStep(4)}
                             disabled={!isFormComplete()}
-                            className="flex-1 py-3 px-6 rounded-xl bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white font-medium shadow-lg shadow-teal-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="flex-1 bg-secondary hover:bg-secondary/90"
                         >
-                            Lanjut ke Review
-                        </button>
+                            Lanjut Review
+                        </Button>
                     </div>
                 </div>
             )}
@@ -554,121 +523,74 @@ export default function ReservationFormPage({ params }: PageProps) {
             {/* Step 4: Review & Submit */}
             {step === 4 && (
                 <div className="space-y-6">
-                    <h2 className="text-xl font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                        <CheckCircle className="w-5 h-5 text-teal-600" />
-                        Review & Kirim
+                    <h2 className="text-sm font-semibold flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-secondary" /> Review & Kirim
                     </h2>
 
-                    <div className="bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700">
-                        {/* Service */}
-                        <div className="p-4">
-                            <p className="text-sm text-slate-500 dark:text-slate-400">Layanan</p>
-                            <p className="font-medium text-slate-900 dark:text-white">{service.name}</p>
-                        </div>
-
-                        {/* Date & Time */}
-                        <div className="p-4 grid grid-cols-2 gap-4">
-                            <div>
-                                <p className="text-sm text-slate-500 dark:text-slate-400">Tanggal</p>
-                                <p className="font-medium text-slate-900 dark:text-white">{formatDate(selectedDate)}</p>
+                    <Card className="border-border/50">
+                        <CardContent className="p-0 divide-y divide-border/50">
+                            <div className="p-3">
+                                <p className="text-[10px] text-muted-foreground">Layanan</p>
+                                <p className="text-sm font-semibold">{service.name}</p>
                             </div>
-                            <div>
-                                <p className="text-sm text-slate-500 dark:text-slate-400">Waktu</p>
-                                <p className="font-medium text-slate-900 dark:text-white">{selectedTime}</p>
-                            </div>
-                        </div>
-
-                        {/* Personal Data */}
-                        <div className="p-4 space-y-2">
-                            <p className="text-sm text-slate-500 dark:text-slate-400">Data Diri</p>
-                            <div className="grid grid-cols-2 gap-2 text-sm">
+                            <div className="p-3 grid grid-cols-2 gap-3">
                                 <div>
-                                    <span className="text-slate-500">Nama:</span>{" "}
-                                    <span className="text-slate-900 dark:text-white">{formData.nama_lengkap}</span>
+                                    <p className="text-[10px] text-muted-foreground">Tanggal</p>
+                                    <p className="text-xs font-medium">{formatDate(selectedDate)}</p>
                                 </div>
                                 <div>
-                                    <span className="text-slate-500">NIK:</span>{" "}
-                                    <span className="text-slate-900 dark:text-white font-mono">{formData.nik}</span>
-                                </div>
-                                <div>
-                                    <span className="text-slate-500">No. HP:</span>{" "}
-                                    <span className="text-slate-900 dark:text-white">{formData.no_hp}</span>
-                                </div>
-                                <div>
-                                    <span className="text-slate-500">Alamat:</span>{" "}
-                                    <span className="text-slate-900 dark:text-white">{formData.alamat}</span>
+                                    <p className="text-[10px] text-muted-foreground">Waktu</p>
+                                    <p className="text-xs font-medium">{selectedTime}</p>
                                 </div>
                             </div>
-                        </div>
-
-                        {/* Additional Data */}
-                        {service.citizen_questions && service.citizen_questions.length > 0 && (
-                            <div className="p-4 space-y-2">
-                                <p className="text-sm text-slate-500 dark:text-slate-400">Informasi Tambahan</p>
-                                <div className="space-y-1 text-sm">
-                                    {service.citizen_questions.map((q) => (
-                                        formData[q.field] && (
-                                            <div key={q.field}>
-                                                <span className="text-slate-500">{q.field.replace(/_/g, ' ')}:</span>{" "}
-                                                <span className="text-slate-900 dark:text-white">{formData[q.field]}</span>
-                                            </div>
-                                        )
-                                    ))}
-                                </div>
+                            <div className="p-3 grid grid-cols-2 gap-2 text-xs">
+                                <div><span className="text-muted-foreground">Nama:</span> {formData.nama_lengkap}</div>
+                                <div><span className="text-muted-foreground">NIK:</span> <span className="font-mono">{formData.nik}</span></div>
+                                <div><span className="text-muted-foreground">HP:</span> {formData.no_hp}</div>
+                                <div><span className="text-muted-foreground">Alamat:</span> {formData.alamat}</div>
                             </div>
-                        )}
-                    </div>
+                        </CardContent>
+                    </Card>
 
-                    {/* Requirements Info */}
+                    {/* Requirements */}
                     {service.requirements && service.requirements.length > 0 && (
-                        <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 border border-amber-200 dark:border-amber-800">
-                            <div className="flex items-start gap-3">
-                                <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                                <div>
-                                    <p className="font-medium text-amber-800 dark:text-amber-200">Dokumen yang Perlu Dibawa</p>
-                                    <ul className="mt-2 space-y-1 text-sm text-amber-700 dark:text-amber-300">
-                                        {service.requirements.map((req, i) => (
-                                            <li key={i}>• {req}</li>
-                                        ))}
-                                    </ul>
+                        <Card className="border-amber-200/50 dark:border-amber-800/30 bg-amber-50/50 dark:bg-amber-950/20">
+                            <CardContent className="p-4">
+                                <div className="flex items-start gap-2">
+                                    <Info className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">Dokumen yang Perlu Dibawa</p>
+                                        <ul className="mt-1 space-y-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                                            {service.requirements.map((req, i) => (
+                                                <li key={i}>• {req}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
+                            </CardContent>
+                        </Card>
                     )}
 
-                    {/* Error */}
                     {error && (
-                        <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-                            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                            <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+                        <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/30">
+                            <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                            <p className="text-xs text-red-700 dark:text-red-300">{error}</p>
                         </div>
                     )}
 
-                    {/* Actions */}
-                    <div className="flex gap-4">
-                        <button
-                            onClick={() => setStep(3)}
-                            className="px-6 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors font-medium"
-                        >
-                            ← Edit Data
-                        </button>
-                        <button
+                    <div className="flex gap-3">
+                        <Button variant="outline" onClick={() => setStep(3)}>Edit Data</Button>
+                        <Button
                             onClick={handleSubmit}
                             disabled={submitting}
-                            className="flex-1 py-4 px-6 rounded-xl bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white font-semibold shadow-lg shadow-teal-500/30 hover:shadow-teal-500/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            className="flex-1 bg-secondary hover:bg-secondary/90"
                         >
                             {submitting ? (
-                                <>
-                                    <Loader2 className="w-5 h-5 animate-spin" />
-                                    Mengirim...
-                                </>
+                                <><Loader2 className="w-4 h-4 animate-spin mr-2" />Mengirim...</>
                             ) : (
-                                <>
-                                    <Send className="w-5 h-5" />
-                                    Kirim Reservasi
-                                </>
+                                <><Send className="w-4 h-4 mr-2" />Kirim Reservasi</>
                             )}
-                        </button>
+                        </Button>
                     </div>
                 </div>
             )}
