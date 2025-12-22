@@ -1,0 +1,211 @@
+{
+  "name": "Channel Service",
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": { "method": "GET", "url": "{{channel_service_url}}/health" }
+        },
+        {
+          "name": "Database Health",
+          "request": { "method": "GET", "url": "{{channel_service_url}}/health/db" }
+        },
+        {
+          "name": "RabbitMQ Health",
+          "request": { "method": "GET", "url": "{{channel_service_url}}/health/rabbitmq" }
+        }
+      ]
+    },
+    {
+      "name": "Messages",
+      "item": [
+        {
+          "name": "Get Messages",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{channel_service_url}}/internal/messages?wa_user_id={{wa_user_id}}&limit=50",
+              "host": ["{{channel_service_url}}"],
+              "path": ["internal", "messages"],
+              "query": [
+                { "key": "wa_user_id", "value": "{{wa_user_id}}" },
+                { "key": "limit", "value": "50" }
+              ]
+            },
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Store Message",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/messages",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"message\": \"Terima kasih atas laporan Anda\",\n  \"direction\": \"OUT\",\n  \"source\": \"AI\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Send Message",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/send",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"message\": \"Hello from API!\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Set Typing",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/typing",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "WhatsApp Session",
+      "item": [
+        {
+          "name": "Get Status",
+          "request": {
+            "method": "GET",
+            "url": "{{channel_service_url}}/internal/whatsapp/status",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Connect",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/whatsapp/connect",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Disconnect",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/whatsapp/disconnect",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/whatsapp/logout",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Get QR Code",
+          "request": {
+            "method": "GET",
+            "url": "{{channel_service_url}}/internal/whatsapp/qr",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Pair Phone",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/whatsapp/pairphone",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"phone_number\": \"6281234567890\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Live Chat & Takeover",
+      "item": [
+        {
+          "name": "Get Conversations",
+          "request": {
+            "method": "GET",
+            "url": "{{channel_service_url}}/internal/conversations",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Get Conversation",
+          "request": {
+            "method": "GET",
+            "url": "{{channel_service_url}}/internal/conversations/{{wa_user_id}}",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Start Takeover",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/takeover/{{wa_user_id}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"admin_id\": \"admin-uuid\",\n  \"admin_name\": \"Admin Name\"\n}" }
+          }
+        },
+        {
+          "name": "End Takeover",
+          "request": {
+            "method": "DELETE",
+            "url": "{{channel_service_url}}/internal/takeover/{{wa_user_id}}",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Get Active Takeovers",
+          "request": {
+            "method": "GET",
+            "url": "{{channel_service_url}}/internal/takeover",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Check Takeover Status",
+          "request": {
+            "method": "GET",
+            "url": "{{channel_service_url}}/internal/takeover/{{wa_user_id}}/status",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Admin Send Message",
+          "request": {
+            "method": "POST",
+            "url": "{{channel_service_url}}/internal/conversations/{{wa_user_id}}/send",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"message\": \"Hello from admin!\"\n}" }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,210 @@
+{
+  "name": "AI Service",
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/health" }
+        },
+        {
+          "name": "RabbitMQ Health",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/health/rabbitmq" }
+        },
+        {
+          "name": "Services Health",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/health/services" }
+        }
+      ]
+    },
+    {
+      "name": "Web Chat",
+      "item": [
+        {
+          "name": "Send Message",
+          "request": {
+            "method": "POST",
+            "url": "{{ai_service_url}}/api/webchat",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"message\": \"Saya ingin membuat laporan jalan rusak\",\n  \"channel\": \"webchat\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Session History",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/api/webchat/{{session_id}}" }
+        },
+        {
+          "name": "Clear Session",
+          "request": { "method": "DELETE", "url": "{{ai_service_url}}/api/webchat/{{session_id}}" }
+        },
+        {
+          "name": "Get Session Stats",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/api/webchat/stats" }
+        },
+        {
+          "name": "Poll for Messages",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/api/webchat/{{session_id}}/poll" }
+        }
+      ]
+    },
+    {
+      "name": "Knowledge",
+      "item": [
+        {
+          "name": "Add Knowledge",
+          "request": {
+            "method": "POST",
+            "url": "{{ai_service_url}}/api/knowledge",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"kb-001\",\n  \"title\": \"Persyaratan KTP\",\n  \"content\": \"Untuk membuat KTP diperlukan: 1. Surat pengantar RT/RW, 2. Kartu Keluarga, 3. Akta kelahiran\",\n  \"category\": \"kependudukan\",\n  \"keywords\": [\"ktp\", \"identitas\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Knowledge",
+          "request": {
+            "method": "PUT",
+            "url": "{{ai_service_url}}/api/knowledge/kb-001",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Persyaratan KTP (Updated)\",\n  \"content\": \"Untuk membuat KTP diperlukan: 1. Surat pengantar RT/RW, 2. Kartu Keluarga, 3. Akta kelahiran, 4. Pas foto 3x4\",\n  \"category\": \"kependudukan\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Knowledge",
+          "request": {
+            "method": "GET",
+            "url": "{{ai_service_url}}/api/knowledge/kb-001",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Delete Knowledge",
+          "request": {
+            "method": "DELETE",
+            "url": "{{ai_service_url}}/api/knowledge/kb-001",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        },
+        {
+          "name": "Search Knowledge",
+          "request": {
+            "method": "POST",
+            "url": "{{ai_service_url}}/api/knowledge/search",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"cara membuat KTP\",\n  \"topK\": 5,\n  \"minScore\": 0.7\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Vector DB Stats",
+          "request": {
+            "method": "GET",
+            "url": "{{ai_service_url}}/api/knowledge/stats",
+            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Processing Status",
+      "item": [
+        {
+          "name": "Get Summary",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/api/status/summary" }
+        },
+        {
+          "name": "Get Active Statuses",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/api/status/active" }
+        },
+        {
+          "name": "Get User Status",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/api/status/{{wa_user_id}}" }
+        }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "item": [
+        {
+          "name": "Get Model Stats",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/stats/models" }
+        },
+        {
+          "name": "Get AI Analytics",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/stats/analytics" }
+        },
+        {
+          "name": "Get Intent Distribution",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/stats/analytics/intents" }
+        },
+        {
+          "name": "Get Token Usage",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/stats/analytics/tokens" }
+        },
+        {
+          "name": "Get Dashboard Stats",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/stats/dashboard" }
+        },
+        {
+          "name": "Analyze Complexity",
+          "request": {
+            "method": "POST",
+            "url": "{{ai_service_url}}/stats/analyze-complexity",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"message\": \"Saya ingin membuat laporan jalan rusak di RT 01 RW 02\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rate Limiting",
+      "item": [
+        {
+          "name": "Get Rate Limit Stats",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/rate-limit" }
+        },
+        {
+          "name": "Check User Rate Limit",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/rate-limit/check/{{wa_user_id}}" }
+        },
+        {
+          "name": "Get Blacklist",
+          "request": { "method": "GET", "url": "{{ai_service_url}}/rate-limit/blacklist" }
+        },
+        {
+          "name": "Add to Blacklist",
+          "request": {
+            "method": "POST",
+            "url": "{{ai_service_url}}/rate-limit/blacklist",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"reason\": \"Spam\",\n  \"expiresInDays\": 7\n}" }
+          }
+        },
+        {
+          "name": "Remove from Blacklist",
+          "request": { "method": "DELETE", "url": "{{ai_service_url}}/rate-limit/blacklist/{{wa_user_id}}" }
+        }
+      ]
+    }
+  ]
+}

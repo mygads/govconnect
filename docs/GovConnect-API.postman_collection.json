@@ -1,0 +1,1242 @@
+{
+  "info": {
+    "_postman_id": "govconnect-api-collection",
+    "name": "GovConnect API",
+    "description": "Complete API collection for GovConnect microservices.\n\n## Services\n- Case Service (Port 3003)\n- Channel Service (Port 3001)\n- AI Service (Port 3002)\n- Dashboard (Port 3000)\n\n## Authentication\n- Internal API: X-Internal-API-Key header\n- Dashboard: Bearer token",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost",
+      "type": "string"
+    },
+    {
+      "key": "prod_url",
+      "value": "https://api.govconnect.my.id",
+      "type": "string"
+    },
+    {
+      "key": "case_service_url",
+      "value": "{{base_url}}:3003",
+      "type": "string"
+    },
+    {
+      "key": "channel_service_url",
+      "value": "{{base_url}}:3001",
+      "type": "string"
+    },
+    {
+      "key": "ai_service_url",
+      "value": "{{base_url}}:3002",
+      "type": "string"
+    },
+    {
+      "key": "dashboard_url",
+      "value": "{{base_url}}:3000",
+      "type": "string"
+    },
+    {
+      "key": "internal_api_key",
+      "value": "your-internal-api-key",
+      "type": "string"
+    },
+    {
+      "key": "auth_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "wa_user_id",
+      "value": "6281234567890",
+      "type": "string"
+    },
+    {
+      "key": "session_id",
+      "value": "web_form_1234567890",
+      "type": "string"
+    },
+    {
+      "key": "complaint_id",
+      "value": "LP-20251222-001",
+      "type": "string"
+    },
+    {
+      "key": "reservation_id",
+      "value": "RSV-20251222-001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Case Service",
+      "item": [
+        {
+          "name": "Health",
+          "item": [
+            {
+              "name": "Health Check",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/health"
+              }
+            },
+            {
+              "name": "Metrics",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/metrics"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Complaints (Laporan)",
+          "item": [
+            {
+              "name": "Create Complaint",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/laporan/create",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"kategori\": \"jalan_rusak\",\n  \"deskripsi\": \"Jalan berlubang di depan kantor kelurahan\",\n  \"alamat\": \"Jl. Merdeka No. 10\",\n  \"rt_rw\": \"001/002\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Complaints",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{case_service_url}}/laporan?status=baru&limit=20&offset=0",
+                  "host": [
+                    "{{case_service_url}}"
+                  ],
+                  "path": [
+                    "laporan"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "baru"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    },
+                    {
+                      "key": "offset",
+                      "value": "0"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Get Complaint by ID",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/laporan/{{complaint_id}}"
+              }
+            },
+            {
+              "name": "Get Complaint Statistics",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/laporan/statistics"
+              }
+            },
+            {
+              "name": "Check Complaint Status",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/laporan/{{complaint_id}}/check",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Update Complaint Status",
+              "request": {
+                "method": "PATCH",
+                "url": "{{case_service_url}}/laporan/{{complaint_id}}/status",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"proses\",\n  \"admin_notes\": \"Sedang ditindaklanjuti\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Cancel Complaint",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/laporan/{{complaint_id}}/cancel",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"cancel_reason\": \"Sudah selesai sendiri\"\n}"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Reservations (Reservasi)",
+      "item": [
+        {
+          "name": "Services",
+          "item": [
+            {
+              "name": "Get All Services",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/reservasi/services"
+              }
+            },
+            {
+              "name": "Get Active Services",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/reservasi/services/active"
+              }
+            },
+            {
+              "name": "Get Service by Code",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/reservasi/services/SKD"
+              }
+            },
+            {
+              "name": "Toggle Service Active",
+              "request": {
+                "method": "PATCH",
+                "url": "{{case_service_url}}/reservasi/services/SKD/toggle-active",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"is_active\": true\n}"
+                }
+              }
+            },
+            {
+              "name": "Toggle Service Online",
+              "request": {
+                "method": "PATCH",
+                "url": "{{case_service_url}}/reservasi/services/SKD/toggle-online",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"is_online_available\": true\n}"
+                }
+              }
+            },
+            {
+              "name": "Update Service Settings",
+              "request": {
+                "method": "PATCH",
+                "url": "{{case_service_url}}/reservasi/services/SKD/settings",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"daily_quota\": 30\n}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Slots",
+          "item": [
+            {
+              "name": "Get Available Slots",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/reservasi/slots/SKD/2025-12-24"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reservations",
+          "item": [
+            {
+              "name": "Create Reservation",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/reservasi/create",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"service_code\": \"SKD\",\n  \"citizen_data\": {\n    \"nama_lengkap\": \"John Doe\",\n    \"nik\": \"1234567890123456\",\n    \"alamat\": \"Jl. Merdeka No. 10\",\n    \"no_hp\": \"081234567890\"\n  },\n  \"reservation_date\": \"2025-12-24\",\n  \"reservation_time\": \"09:00\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Reservations",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{case_service_url}}/reservasi?status=pending&limit=20",
+                  "host": [
+                    "{{case_service_url}}"
+                  ],
+                  "path": [
+                    "reservasi"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "pending"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Get Reservation by ID",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/reservasi/{{reservation_id}}"
+              }
+            },
+            {
+              "name": "Get Reservation Statistics",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/reservasi/statistics"
+              }
+            },
+            {
+              "name": "Check Reservation Status",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/reservasi/{{reservation_id}}/check",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Update Reservation Status",
+              "request": {
+                "method": "PATCH",
+                "url": "{{case_service_url}}/reservasi/{{reservation_id}}/status",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"confirmed\",\n  \"admin_notes\": \"Dikonfirmasi\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Cancel Reservation",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/reservasi/{{reservation_id}}/cancel",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"cancel_reason\": \"Berhalangan hadir\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Update Reservation Time",
+              "request": {
+                "method": "PATCH",
+                "url": "{{case_service_url}}/reservasi/{{reservation_id}}/time",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"reservation_date\": \"2025-12-25\",\n  \"reservation_time\": \"10:00\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Get User History",
+              "request": {
+                "method": "GET",
+                "url": "{{case_service_url}}/reservasi/history/{{wa_user_id}}"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Channel Service",
+      "item": [
+        {
+          "name": "Health",
+          "item": [
+            {
+              "name": "Health Check",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/health"
+              }
+            },
+            {
+              "name": "Database Health",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/health/db"
+              }
+            },
+            {
+              "name": "RabbitMQ Health",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/health/rabbitmq"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Messages",
+          "item": [
+            {
+              "name": "Get Messages",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{channel_service_url}}/internal/messages?wa_user_id={{wa_user_id}}&limit=50",
+                  "host": [
+                    "{{channel_service_url}}"
+                  ],
+                  "path": [
+                    "internal",
+                    "messages"
+                  ],
+                  "query": [
+                    {
+                      "key": "wa_user_id",
+                      "value": "{{wa_user_id}}"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "50"
+                    }
+                  ]
+                },
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Store Message",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/messages",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"message\": \"Terima kasih atas laporan Anda\",\n  \"direction\": \"OUT\",\n  \"source\": \"AI\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Send Message",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/send",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"message\": \"Hello from API!\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Set Typing",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/typing",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\"\n}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "WhatsApp Session",
+          "item": [
+            {
+              "name": "Get Status",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/internal/whatsapp/status",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Connect",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/whatsapp/connect",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Disconnect",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/whatsapp/disconnect",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Logout",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/whatsapp/logout",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Get QR Code",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/internal/whatsapp/qr",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Pair Phone",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/whatsapp/pairphone",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone_number\": \"6281234567890\"\n}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Live Chat & Takeover",
+          "item": [
+            {
+              "name": "Get Conversations",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/internal/conversations",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Get Conversation",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/internal/conversations/{{wa_user_id}}",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Start Takeover",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/takeover/{{wa_user_id}}",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"admin_id\": \"admin-uuid\",\n  \"admin_name\": \"Admin Name\"\n}"
+                }
+              }
+            },
+            {
+              "name": "End Takeover",
+              "request": {
+                "method": "DELETE",
+                "url": "{{channel_service_url}}/internal/takeover/{{wa_user_id}}",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Get Active Takeovers",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/internal/takeover",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Check Takeover Status",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/internal/takeover/{{wa_user_id}}/status",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Admin Send Message",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/conversations/{{wa_user_id}}/send",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"Hello from admin!\"\n}"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "AI Service",
+      "item": [
+        {
+          "name": "Health",
+          "item": [
+            {
+              "name": "Health Check",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/health"
+              }
+            },
+            {
+              "name": "RabbitMQ Health",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/health/rabbitmq"
+              }
+            },
+            {
+              "name": "Services Health",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/health/services"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Web Chat",
+          "item": [
+            {
+              "name": "Send Message",
+              "request": {
+                "method": "POST",
+                "url": "{{ai_service_url}}/api/webchat",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"message\": \"Saya ingin membuat laporan jalan rusak\",\n  \"channel\": \"webchat\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Session History",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/api/webchat/{{session_id}}"
+              }
+            },
+            {
+              "name": "Clear Session",
+              "request": {
+                "method": "DELETE",
+                "url": "{{ai_service_url}}/api/webchat/{{session_id}}"
+              }
+            },
+            {
+              "name": "Get Session Stats",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/api/webchat/stats"
+              }
+            },
+            {
+              "name": "Poll for Messages",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/api/webchat/{{session_id}}/poll"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Knowledge",
+          "item": [
+            {
+              "name": "Add Knowledge",
+              "request": {
+                "method": "POST",
+                "url": "{{ai_service_url}}/api/knowledge",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"id\": \"kb-001\",\n  \"title\": \"Persyaratan KTP\",\n  \"content\": \"Untuk membuat KTP diperlukan: 1. Surat pengantar RT/RW, 2. Kartu Keluarga, 3. Akta kelahiran\",\n  \"category\": \"kependudukan\",\n  \"keywords\": [\"ktp\", \"identitas\"]\n}"
+                }
+              }
+            },
+            {
+              "name": "Update Knowledge",
+              "request": {
+                "method": "PUT",
+                "url": "{{ai_service_url}}/api/knowledge/kb-001",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Persyaratan KTP (Updated)\",\n  \"content\": \"Untuk membuat KTP diperlukan: 1. Surat pengantar RT/RW, 2. Kartu Keluarga, 3. Akta kelahiran, 4. Pas foto 3x4\",\n  \"category\": \"kependudukan\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Knowledge",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/api/knowledge/kb-001",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Delete Knowledge",
+              "request": {
+                "method": "DELETE",
+                "url": "{{ai_service_url}}/api/knowledge/kb-001",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Search Knowledge",
+              "request": {
+                "method": "POST",
+                "url": "{{ai_service_url}}/api/knowledge/search",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"cara membuat KTP\",\n  \"topK\": 5,\n  \"minScore\": 0.7\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Vector DB Stats",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/api/knowledge/stats",
+                "header": [
+                  {
+                    "key": "X-Internal-API-Key",
+                    "value": "{{internal_api_key}}"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Processing Status",
+          "item": [
+            {
+              "name": "Get Summary",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/api/status/summary"
+              }
+            },
+            {
+              "name": "Get Active Statuses",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/api/status/active"
+              }
+            },
+            {
+              "name": "Get User Status",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/api/status/{{wa_user_id}}"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Analytics",
+          "item": [
+            {
+              "name": "Get Model Stats",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/stats/models"
+              }
+            },
+            {
+              "name": "Get AI Analytics",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/stats/analytics"
+              }
+            },
+            {
+              "name": "Get Intent Distribution",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/stats/analytics/intents"
+              }
+            },
+            {
+              "name": "Get Token Usage",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/stats/analytics/tokens"
+              }
+            },
+            {
+              "name": "Get Dashboard Stats",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/stats/dashboard"
+              }
+            },
+            {
+              "name": "Analyze Complexity",
+              "request": {
+                "method": "POST",
+                "url": "{{ai_service_url}}/stats/analyze-complexity",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message\": \"Saya ingin membuat laporan jalan rusak di RT 01 RW 02\"\n}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rate Limiting",
+          "item": [
+            {
+              "name": "Get Rate Limit Stats",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/rate-limit"
+              }
+            },
+            {
+              "name": "Check User Rate Limit",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/rate-limit/check/{{wa_user_id}}"
+              }
+            },
+            {
+              "name": "Get Blacklist",
+              "request": {
+                "method": "GET",
+                "url": "{{ai_service_url}}/rate-limit/blacklist"
+              }
+            },
+            {
+              "name": "Add to Blacklist",
+              "request": {
+                "method": "POST",
+                "url": "{{ai_service_url}}/rate-limit/blacklist",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"reason\": \"Spam\",\n  \"expiresInDays\": 7\n}"
+                }
+              }
+            },
+            {
+              "name": "Remove from Blacklist",
+              "request": {
+                "method": "DELETE",
+                "url": "{{ai_service_url}}/rate-limit/blacklist/{{wa_user_id}}"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "GraphQL API",
+      "item": [
+        {
+          "name": "Queries",
+          "item": [
+            {
+              "name": "Get All Services",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/graphql",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"query { services { code name description category requirements estimated_duration daily_quota is_active is_online_available citizen_questions { field question type required options } } }\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Service by Code",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/graphql",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"query GetService($code: String!) { service(code: $code) { code name description category requirements sop_steps estimated_duration daily_quota citizen_questions { field question type required options } } }\",\n  \"variables\": { \"code\": \"SKD\" }\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Available Slots",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/graphql",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"query GetAvailableSlots($serviceCode: String!, $date: String!) { availableSlots(serviceCode: $serviceCode, date: $date) { service_code date day_name is_open slots { time available remaining } daily_quota total_booked } }\",\n  \"variables\": { \"serviceCode\": \"SKD\", \"date\": \"2025-12-24\" }\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Complaint Categories",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/graphql",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"query { complaintCategories { code name description icon } }\"\n}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mutations",
+          "item": [
+            {
+              "name": "Create Complaint",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/graphql",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"mutation CreateComplaint($input: CreateComplaintInput!) { createComplaint(input: $input) { success complaint_id message error } }\",\n  \"variables\": {\n    \"input\": {\n      \"kategori\": \"jalan_rusak\",\n      \"deskripsi\": \"Jalan berlubang di depan kantor kelurahan\",\n      \"alamat\": \"Jl. Merdeka No. 10\",\n      \"rt_rw\": \"001/002\",\n      \"nama_pelapor\": \"John Doe\",\n      \"no_hp\": \"081234567890\"\n    }\n  }\n}"
+                }
+              }
+            },
+            {
+              "name": "Create Reservation",
+              "request": {
+                "method": "POST",
+                "url": "{{case_service_url}}/graphql",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"query\": \"mutation CreateReservation($input: CreateReservationInput!) { createReservation(input: $input) { success reservation_id queue_number message error } }\",\n  \"variables\": {\n    \"input\": {\n      \"service_code\": \"SKD\",\n      \"reservation_date\": \"2025-12-24\",\n      \"reservation_time\": \"09:00\",\n      \"nama_lengkap\": \"John Doe\",\n      \"nik\": \"1234567890123456\",\n      \"alamat\": \"Jl. Merdeka No. 10\",\n      \"no_hp\": \"081234567890\"\n    }\n  }\n}"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

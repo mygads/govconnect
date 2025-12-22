@@ -1,0 +1,95 @@
+{
+  "name": "Case Service",
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": { "method": "GET", "url": "{{case_service_url}}/health" }
+        },
+        {
+          "name": "Metrics",
+          "request": { "method": "GET", "url": "{{case_service_url}}/metrics" }
+        }
+      ]
+    },
+    {
+      "name": "Complaints (Laporan)",
+      "item": [
+        {
+          "name": "Create Complaint",
+          "request": {
+            "method": "POST",
+            "url": "{{case_service_url}}/laporan/create",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"kategori\": \"jalan_rusak\",\n  \"deskripsi\": \"Jalan berlubang di depan kantor kelurahan\",\n  \"alamat\": \"Jl. Merdeka No. 10\",\n  \"rt_rw\": \"001/002\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Complaints",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{case_service_url}}/laporan?status=baru&limit=20&offset=0",
+              "host": ["{{case_service_url}}"],
+              "path": ["laporan"],
+              "query": [
+                { "key": "status", "value": "baru" },
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Complaint by ID",
+          "request": { "method": "GET", "url": "{{case_service_url}}/laporan/{{complaint_id}}" }
+        },
+        {
+          "name": "Get Complaint Statistics",
+          "request": { "method": "GET", "url": "{{case_service_url}}/laporan/statistics" }
+        },
+        {
+          "name": "Check Complaint Status",
+          "request": {
+            "method": "POST",
+            "url": "{{case_service_url}}/laporan/{{complaint_id}}/check",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\"\n}" }
+          }
+        },
+        {
+          "name": "Update Complaint Status",
+          "request": {
+            "method": "PATCH",
+            "url": "{{case_service_url}}/laporan/{{complaint_id}}/status",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"proses\",\n  \"admin_notes\": \"Sedang ditindaklanjuti\"\n}" }
+          }
+        },
+        {
+          "name": "Cancel Complaint",
+          "request": {
+            "method": "POST",
+            "url": "{{case_service_url}}/laporan/{{complaint_id}}/cancel",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"cancel_reason\": \"Sudah selesai sendiri\"\n}" }
+          }
+        }
+      ]
+    }
+  ]
+}
