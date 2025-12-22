@@ -53,23 +53,6 @@ app.use('/reservasi', reservationRoutes);
 app.use('/statistics', statisticsRoutes);
 app.use('/user', userRoutes);
 
-// Export async initialization function
-export async function initializeApp() {
-  try {
-    // Initialize government services
-    await initializeServices();
-    logger.info('Government services initialized');
-    
-    // Initialize GraphQL API
-    const graphqlRouter = await createGraphQLRouter();
-    app.use('/graphql', graphqlRouter);
-    logger.info('GraphQL API mounted at /graphql');
-  } catch (err: any) {
-    logger.error('Failed to initialize app', { error: err.message });
-    throw err;
-  }
-}
-
 // Swagger API Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   explorer: true,
@@ -109,8 +92,27 @@ app.get('/', (req, res) => {
   });
 });
 
-// Error handlers
-app.use(notFoundHandler);
-app.use(errorHandler);
+// Export async initialization function
+// IMPORTANT: This must be called BEFORE error handlers are registered
+export async function initializeApp() {
+  try {
+    // Initialize government services
+    await initializeServices();
+    logger.info('Government services initialized');
+    
+    // Initialize GraphQL API
+    const graphqlRouter = await createGraphQLRouter();
+    app.use('/graphql', graphqlRouter);
+    logger.info('GraphQL API mounted at /graphql');
+    
+    // Register error handlers AFTER all routes are set up
+    app.use(notFoundHandler);
+    app.use(errorHandler);
+    logger.info('Error handlers registered');
+  } catch (err: any) {
+    logger.error('Failed to initialize app', { error: err.message });
+    throw err;
+  }
+}
 
 export default app;
