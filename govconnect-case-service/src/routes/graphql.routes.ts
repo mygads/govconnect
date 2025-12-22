@@ -227,8 +227,39 @@ const resolvers = {
 
     availableSlots: async (_: any, { serviceCode, date }: { serviceCode: string; date: string }) => {
       try {
-        const result = await reservationService.getAvailableSlots(serviceCode, new Date(date));
-        return result;
+        const parsedDate = new Date(date);
+        const days = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu'];
+        const dayName = days[parsedDate.getDay()];
+        
+        const result = await reservationService.getAvailableSlots(serviceCode, parsedDate);
+        
+        // If service is closed or unavailable, return proper structure
+        if (!result.available) {
+          return {
+            service_code: serviceCode,
+            date: date,
+            day_name: dayName,
+            is_open: false,
+            slots: [],
+            daily_quota: 0,
+            total_booked: 0,
+          };
+        }
+        
+        // Transform available slots to match GraphQL schema
+        return {
+          service_code: serviceCode,
+          date: result.date,
+          day_name: dayName,
+          is_open: true,
+          slots: result.available_slots?.map((time: string) => ({
+            time,
+            available: true,
+            remaining: result.remaining,
+          })) || [],
+          daily_quota: result.total_quota || 0,
+          total_booked: result.booked || 0,
+        };
       } catch (error) {
         logger.error('Error fetching available slots:', error);
         throw new Error('Failed to fetch available slots');
