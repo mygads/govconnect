@@ -55,15 +55,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    labels:
-      # Traefik
-      - "traefik.enable=true"
-      - "traefik.http.routers.gc-channel.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/channel`)"
-      - "traefik.http.routers.gc-channel.entrypoints=websecure"
-      - "traefik.http.routers.gc-channel.tls.certresolver=letsencrypt"
-      - "traefik.http.services.gc-channel.loadbalancer.server.port=3001"
-      - "traefik.http.middlewares.gc-channel-strip.stripprefix.prefixes=/channel"
-      - "traefik.http.routers.gc-channel.middlewares=gc-channel-strip,secure-headers,cors"
 
   # ===================================================================================
   # Service 2: AI Orchestrator (with Vector Database)
@@ -104,15 +95,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    labels:
-      # Traefik
-      - "traefik.enable=true"
-      - "traefik.http.routers.gc-ai.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/ai`)"
-      - "traefik.http.routers.gc-ai.entrypoints=websecure"
-      - "traefik.http.routers.gc-ai.tls.certresolver=letsencrypt"
-      - "traefik.http.services.gc-ai.loadbalancer.server.port=3002"
-      - "traefik.http.middlewares.gc-ai-strip.stripprefix.prefixes=/ai"
-      - "traefik.http.routers.gc-ai.middlewares=gc-ai-strip,secure-headers,cors"
 
   # ===================================================================================
   # Service 3: Case Service (Laporan & Tiket)
@@ -142,15 +124,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    labels:
-      # Traefik
-      - "traefik.enable=true"
-      - "traefik.http.routers.gc-case.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/case`)"
-      - "traefik.http.routers.gc-case.entrypoints=websecure"
-      - "traefik.http.routers.gc-case.tls.certresolver=letsencrypt"
-      - "traefik.http.services.gc-case.loadbalancer.server.port=3003"
-      - "traefik.http.middlewares.gc-case-strip.stripprefix.prefixes=/case"
-      - "traefik.http.routers.gc-case.middlewares=gc-case-strip,secure-headers,cors"
 
   # ===================================================================================
   # Service 4: Notification Service
@@ -181,15 +154,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    labels:
-      # Traefik
-      - "traefik.enable=true"
-      - "traefik.http.routers.gc-notification.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/notification`)"
-      - "traefik.http.routers.gc-notification.entrypoints=websecure"
-      - "traefik.http.routers.gc-notification.tls.certresolver=letsencrypt"
-      - "traefik.http.services.gc-notification.loadbalancer.server.port=3004"
-      - "traefik.http.middlewares.gc-notification-strip.stripprefix.prefixes=/notification"
-      - "traefik.http.routers.gc-notification.middlewares=gc-notification-strip,secure-headers,cors"
 
   # ===================================================================================
   # Service 5: Dashboard (Next.js)
@@ -205,7 +169,7 @@ services:
       NODE_ENV: ${NODE_ENV}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_dashboard
       JWT_SECRET: ${JWT_SECRET}
-      # Direct service URLs (bypasses Traefik for internal calls)
+      # Direct service URLs (internal communication, bypasses Nginx)
       CHANNEL_SERVICE_URL: http://channel-service:3001
       AI_SERVICE_URL: http://ai-service:3002
       CASE_SERVICE_URL: http://case-service:3003
@@ -231,14 +195,6 @@ services:
       timeout: 15s
       retries: 5
       start_period: 60s
-    labels:
-      # Traefik
-      - "traefik.enable=true"
-      - "traefik.http.routers.gc-dashboard.rule=Host(`govconnect.my.id`) || Host(`dashboard.govconnect.my.id`)"
-      - "traefik.http.routers.gc-dashboard.entrypoints=websecure"
-      - "traefik.http.routers.gc-dashboard.tls.certresolver=letsencrypt"
-      - "traefik.http.services.gc-dashboard.loadbalancer.server.port=3000"
-      - "traefik.http.routers.gc-dashboard.middlewares=secure-headers"
 
 # ===================================================================================
 # NETWORKS

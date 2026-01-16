@@ -79,8 +79,15 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Create entrypoint script
+# Create entrypoint script with auto-migration
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
+    echo 'if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
+    echo '  npx prisma migrate deploy || echo "⚠️  Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'else' >> /app/entrypoint.sh && \
+    echo '  npx prisma db push --accept-data-loss || echo "⚠️  DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'fi' >> /app/entrypoint.sh && \
+    echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
     echo 'echo "🚀 Starting Dashboard..."' >> /app/entrypoint.sh && \
     echo 'exec node server.js' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh

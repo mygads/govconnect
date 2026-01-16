@@ -8,7 +8,7 @@
 #
 # USAGE:
 #   cp .env.example .env   # Edit with your values
-#   docker stack deploy -c docker-compose.yml govconnect
+#   docker stack deploy -c docker-compose.swarm.yml govconnect
 #
 # UPDATE:
 #   docker service update --image ghcr.io/mygads/govconnect-channel-service:latest govconnect_channel-service
@@ -34,6 +34,7 @@ services:
       WA_WEBHOOK_VERIFY_TOKEN: ${WA_WEBHOOK_VERIFY_TOKEN}
       WA_API_URL: ${WA_API_URL}
       WA_ACCESS_TOKEN: ${WA_ACCESS_TOKEN}
+      # Direct service-to-service communication
       CASE_SERVICE_URL: http://case-service:3003
       NOTIFICATION_SERVICE_URL: http://notification-service:3004
       MEDIA_STORAGE_PATH: /app/uploads
@@ -70,20 +71,6 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-      labels:
-        - "traefik.enable=true"
-        # Channel API - strip /channel prefix
-        - "traefik.http.routers.channel.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/channel`)"
-        - "traefik.http.routers.channel.entrypoints=websecure"
-        - "traefik.http.routers.channel.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.channel.middlewares=channel-strip"
-        - "traefik.http.middlewares.channel-strip.stripprefix.prefixes=/channel"
-        - "traefik.http.services.channel.loadbalancer.server.port=3001"
-        # Webhook - no strip (path expected by WhatsApp)
-        - "traefik.http.routers.webhook.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/webhook`)"
-        - "traefik.http.routers.webhook.entrypoints=websecure"
-        - "traefik.http.routers.webhook.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.webhook.service=channel"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
       interval: 30s
@@ -103,6 +90,7 @@ services:
       # AI Service has its own database for vector storage
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_ai
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/govconnect
+      # Direct service-to-service communication
       CHANNEL_SERVICE_URL: http://channel-service:3001
       CASE_SERVICE_URL: http://case-service:3003
       DASHBOARD_SERVICE_URL: http://dashboard:3000
@@ -143,15 +131,6 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-      labels:
-        - "traefik.enable=true"
-        # AI API - strip /ai prefix
-        - "traefik.http.routers.ai.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/ai`)"
-        - "traefik.http.routers.ai.entrypoints=websecure"
-        - "traefik.http.routers.ai.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.ai.middlewares=ai-strip"
-        - "traefik.http.middlewares.ai-strip.stripprefix.prefixes=/ai"
-        - "traefik.http.services.ai.loadbalancer.server.port=3002"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
       interval: 30s
@@ -198,15 +177,6 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-      labels:
-        - "traefik.enable=true"
-        # Case API - strip /case prefix
-        - "traefik.http.routers.case.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/case`)"
-        - "traefik.http.routers.case.entrypoints=websecure"
-        - "traefik.http.routers.case.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.case.middlewares=case-strip"
-        - "traefik.http.middlewares.case-strip.stripprefix.prefixes=/case"
-        - "traefik.http.services.case.loadbalancer.server.port=3003"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3003/health"]
       interval: 30s
@@ -225,6 +195,7 @@ services:
       SERVICE_NAME: notification-service
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_notification
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/govconnect
+      # Direct service-to-service communication
       CHANNEL_SERVICE_URL: http://channel-service:3001
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       LOG_LEVEL: ${LOG_LEVEL}
@@ -254,15 +225,6 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-      labels:
-        - "traefik.enable=true"
-        # Notification API - strip /notification prefix
-        - "traefik.http.routers.notification.rule=Host(`api.govconnect.my.id`) && PathPrefix(`/notification`)"
-        - "traefik.http.routers.notification.entrypoints=websecure"
-        - "traefik.http.routers.notification.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.notification.middlewares=notification-strip"
-        - "traefik.http.middlewares.notification-strip.stripprefix.prefixes=/notification"
-        - "traefik.http.services.notification.loadbalancer.server.port=3004"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3004/health"]
       interval: 30s
@@ -279,8 +241,11 @@ services:
       NODE_ENV: ${NODE_ENV}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_dashboard
       JWT_SECRET: ${JWT_SECRET}
-      # Single API endpoint via Traefik (internal Docker network)
-      API_BASE_URL: http://traefik
+      # Direct service-to-service communication (internal Docker network)
+      CHANNEL_SERVICE_URL: http://channel-service:3001
+      AI_SERVICE_URL: http://ai-service:3002
+      CASE_SERVICE_URL: http://case-service:3003
+      NOTIFICATION_SERVICE_URL: http://notification-service:3004
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       NEXT_PUBLIC_APP_NAME: "GovConnect Dashboard"
       NEXTAUTH_URL: ${NEXTAUTH_URL}
@@ -318,12 +283,6 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.dashboard.rule=Host(`govconnect.my.id`)"
-        - "traefik.http.routers.dashboard.entrypoints=websecure"
-        - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
-        - "traefik.http.services.dashboard.loadbalancer.server.port=3000"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:3000/api/health"]
       interval: 30s
