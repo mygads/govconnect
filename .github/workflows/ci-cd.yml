@@ -322,6 +322,13 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
+      - name: Log secrets usage
+        run: |
+          echo "📋 Secrets used in this workflow:"
+          echo "  - VPS_HOST: ${{ secrets.VPS_HOST && '✅ Set' || '❌ Not set' }}"
+          echo "  - VPS_USER: ${{ secrets.VPS_USER && '✅ Set' || '❌ Not set' }}"
+          echo "  - VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY && '✅ Set' || '❌ Not set' }}"
+
       - name: Deploy with Docker Compose
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
