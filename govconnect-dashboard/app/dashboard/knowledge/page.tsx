@@ -978,7 +978,7 @@ export default function KnowledgePage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="category">Kategori *</Label>
-                <Select value={knowledgeForm.category_id} onValueChange={(value) => setKnowledgeForm({ ...knowledgeForm, category_id: value })}>
+                <Select value={knowledgeForm.category_id} onValueChange={(value: string) => setKnowledgeForm({ ...knowledgeForm, category_id: value })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {categories.map(cat => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}
@@ -1001,7 +1001,7 @@ export default function KnowledgePage() {
                 <div className="space-y-2">
                   <Label>Status</Label>
                   <div className="flex items-center space-x-2 pt-2">
-                    <Switch checked={knowledgeForm.is_active} onCheckedChange={(checked) => setKnowledgeForm({ ...knowledgeForm, is_active: checked })} />
+                    <Switch checked={knowledgeForm.is_active} onCheckedChange={(checked: boolean) => setKnowledgeForm({ ...knowledgeForm, is_active: checked })} />
                     <Label>{knowledgeForm.is_active ? 'Aktif' : 'Nonaktif'}</Label>
                   </div>
                 </div>
@@ -1032,7 +1032,7 @@ export default function KnowledgePage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="edit-category">Kategori *</Label>
-                <Select value={knowledgeForm.category_id} onValueChange={(value) => setKnowledgeForm({ ...knowledgeForm, category_id: value })}>
+                <Select value={knowledgeForm.category_id} onValueChange={(value: string) => setKnowledgeForm({ ...knowledgeForm, category_id: value })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {categories.map(cat => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}
@@ -1055,7 +1055,7 @@ export default function KnowledgePage() {
                 <div className="space-y-2">
                   <Label>Status</Label>
                   <div className="flex items-center space-x-2 pt-2">
-                    <Switch checked={knowledgeForm.is_active} onCheckedChange={(checked) => setKnowledgeForm({ ...knowledgeForm, is_active: checked })} />
+                    <Switch checked={knowledgeForm.is_active} onCheckedChange={(checked: boolean) => setKnowledgeForm({ ...knowledgeForm, is_active: checked })} />
                     <Label>{knowledgeForm.is_active ? 'Aktif' : 'Nonaktif'}</Label>
                   </div>
                 </div>

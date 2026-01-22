@@ -101,7 +101,7 @@ Response:
 ## Public Form (Warga)
 ```
 GET  /form/:villageSlug/:serviceSlug
-GET  /api/public/services/:villageSlug/:serviceSlug
+GET  /api/public/services/by-slug?village_slug=...&service_slug=...
 POST /api/public/service-requests
 ```
 `POST /api/public/service-requests` menerima data warga + file persyaratan.
@@ -131,6 +131,10 @@ GET  /service-requests
 POST /service-requests
 GET  /service-requests/:id
 PATCH /service-requests/:id/status
+POST /service-requests/:id/cancel
+POST /service-requests/:id/edit-token
+GET  /service-requests/by-token?token=...
+PATCH /service-requests/:id/by-token
 GET  /service-requests/history/:wa_user_id
 ```
 
@@ -145,10 +149,13 @@ POST /complaints/types
 PATCH /complaints/types/:id
 DELETE /complaints/types/:id
 
-GET  /complaints
-POST /complaints
-GET  /complaints/:id
-PATCH /complaints/:id/status
+POST /laporan/create
+GET  /laporan
+GET  /laporan/:id
+POST /laporan/:id/check
+PATCH /laporan/:id/status
+POST /laporan/:id/cancel
+PATCH /laporan/:id/update
 POST /complaints/:id/updates
 ```
 

@@ -119,7 +119,7 @@ export default function NotificationSettingsPage() {
               </div>
               <Switch
                 checked={settings.enabled}
-                onCheckedChange={(checked) => setSettings({ ...settings, enabled: checked })}
+                onCheckedChange={(checked: boolean) => setSettings({ ...settings, enabled: checked })}
                 className="scale-125"
               />
             </div>
@@ -152,7 +152,7 @@ export default function NotificationSettingsPage() {
               </div>
               <Switch
                 checked={settings.soundEnabled}
-                onCheckedChange={(checked) => setSettings({ ...settings, soundEnabled: checked })}
+                onCheckedChange={(checked: boolean) => setSettings({ ...settings, soundEnabled: checked })}
                 disabled={!settings.enabled}
               />
             </div>

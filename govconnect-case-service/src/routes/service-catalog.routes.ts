@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Router as ExpressRouter } from 'express';
 import {
   handleGetServiceCategories,
   handleCreateServiceCategory,
@@ -23,7 +24,7 @@ import {
   handleUpdateServiceRequestByToken,
 } from '../controllers/service-catalog.controller';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 // Service categories
 router.get('/service-categories', handleGetServiceCategories);

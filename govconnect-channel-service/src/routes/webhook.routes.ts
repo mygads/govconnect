@@ -1,8 +1,9 @@
 import { Router } from 'express';
+import type { Router as ExpressRouter } from 'express';
 import { handleWebhook, verifyWebhook } from '../controllers/webhook.controller';
 import { validateWebhookPayload } from '../middleware/validation.middleware';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 // Routes with /whatsapp path
 router.get('/whatsapp', verifyWebhook);

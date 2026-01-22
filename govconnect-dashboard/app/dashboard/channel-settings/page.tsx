@@ -150,7 +150,7 @@ export default function ChannelSettingsPage() {
               </div>
               <Switch
                 checked={settings.enabled_wa}
-                onCheckedChange={(value) => setSettings((prev) => ({ ...prev, enabled_wa: value }))}
+                onCheckedChange={(value: boolean) => setSettings((prev) => ({ ...prev, enabled_wa: value }))}
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -160,7 +160,7 @@ export default function ChannelSettingsPage() {
               </div>
               <Switch
                 checked={settings.enabled_webchat}
-                onCheckedChange={(value) => setSettings((prev) => ({ ...prev, enabled_webchat: value }))}
+                onCheckedChange={(value: boolean) => setSettings((prev) => ({ ...prev, enabled_webchat: value }))}
               />
             </div>
           </CardContent>

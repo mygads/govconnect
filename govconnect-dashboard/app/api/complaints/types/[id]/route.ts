@@ -17,12 +17,14 @@ async function getSession(request: NextRequest) {
   return session
 }
 
-export async function PATCH(request: NextRequest, context: { params: { id: string } }) {
+export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const session = await getSession(request)
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const { id } = await context.params
 
     const body = await request.json()
     const {
@@ -38,7 +40,7 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
       return NextResponse.json({ error: 'name is required' }, { status: 400 })
     }
 
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${context.params.id}`), {
+    const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${id}`), {
       method: 'PATCH',
       headers: getHeaders(),
       body: JSON.stringify({
@@ -63,14 +65,16 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
   }
 }
 
-export async function DELETE(request: NextRequest, context: { params: { id: string } }) {
+export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const session = await getSession(request)
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${context.params.id}`), {
+    const { id } = await context.params
+
+    const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${id}`), {
       method: 'DELETE',
       headers: getHeaders(),
     })

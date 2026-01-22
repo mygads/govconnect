@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Router as ExpressRouter } from 'express';
 import { getMessages, sendMessage, setTyping, markMessagesRead, storeMessage } from '../controllers/internal.controller';
 import {
   getStatus,
@@ -32,7 +33,7 @@ import {
   validateSendMessage,
 } from '../middleware/validation.middleware';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 // All internal routes require authentication
 router.use(internalAuth);

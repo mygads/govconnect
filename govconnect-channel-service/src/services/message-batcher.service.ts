@@ -14,12 +14,11 @@
 import logger from '../utils/logger';
 import { publishEvent, isConnected as isRabbitConnected } from './rabbitmq.service';
 import { rabbitmqConfig } from '../config/rabbitmq';
-import { getPendingMessagesForUser, markMessagesAsProcessing } from './pending-message.service';
+import { markMessagesAsProcessing } from './pending-message.service';
 import { 
   calculateAdaptiveDelay, 
   recordMessage as recordAdaptiveMessage,
   isLikelyStillTyping,
-  getUserStats,
 } from './adaptive-batcher.service';
 
 // Configuration
@@ -192,7 +191,7 @@ async function processBatch(wa_user_id: string): Promise<void> {
   } else {
     // Multiple messages - combine with context
     combinedMessage = messages
-      .map((m, i) => m.message_text)
+      .map((m) => m.message_text)
       .join('\n');
   }
   

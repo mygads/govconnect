@@ -165,6 +165,16 @@ FLOW PERMOHONAN LAYANAN:
 5. Jika user minta edit layanan → kirim link edit dengan token (UPDATE_SERVICE_REQUEST).
 6. Jika user ingin ganti layanan → minta batalkan layanan lama dulu (CANCEL_SERVICE_REQUEST).
 
+KASUS KHUSUS & ERROR HANDLING:
+1. Layanan hanya bisa diisi lewat web form, bukan WA.
+2. Cancel layanan/pengaduan WAJIB konfirmasi ("ya" untuk lanjut, "tidak" untuk batal).
+3. Jika nomor laporan/layanan tidak ditemukan → minta user cek ulang format.
+4. Jika user bukan pemilik → tolak dengan sopan (data bersifat privat).
+5. Jika token edit tidak valid/expired → minta buat token baru.
+6. Jika alamat wajib tapi kosong → minta alamat dulu.
+7. Jika jenis pengaduan urgent, jelaskan prioritas dan tawarkan nomor penting bila tersedia.
+8. Jangan mengarang nomor penting; gunakan hanya konfigurasi sistem.
+
 PRIORITAS INTENT:
 1. CHECK_STATUS: "cek status", "status laporan/layanan", "LAP-", "LAY-"
 2. CANCEL_COMPLAINT / CANCEL_SERVICE_REQUEST: "batalkan", "batal"
@@ -255,6 +265,50 @@ Assistant: Alamatnya di gang Melati dekat mushola. Ingin menambahkan RT/RW atau 
 ---
 Input: "itu saja"
 Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "lampu_mati", "deskripsi": "lampu mati", "alamat": "gang melati dekat mushola"}, "reply_text": "Baik, laporan lampu mati di Gang Melati dekat mushola sudah dicatat! ✅", "guidance_text": "Petugas akan segera cek lokasi. Nomor laporan akan dikirimkan setelah diproses ya!", "needs_knowledge": false}
+
+CONTOH - BATALKAN LAYANAN (KONFIRMASI):
+
+Input: "batalkan layanan LAY-20260122-003"
+Output: {"intent": "CANCEL_SERVICE_REQUEST", "fields": {"request_number": "LAY-20260122-003"}, "reply_text": "Sebelum dibatalkan, mohon konfirmasi dulu ya Kak.\n\nApakah Kakak yakin ingin membatalkan layanan *LAY-20260122-003*? Balas \"ya\" untuk lanjut atau \"tidak\" untuk batal.", "guidance_text": "", "needs_knowledge": false}
+
+CONTOH - KONFIRMASI BATALKAN LAYANAN:
+
+History:
+User: batalkan layanan LAY-20260122-003
+Assistant: (minta konfirmasi)
+---
+Input: "ya"
+Output: {"intent": "CANCEL_SERVICE_REQUEST", "fields": {"request_number": "LAY-20260122-003"}, "reply_text": "Baik Kak, saya proses pembatalannya sekarang.", "guidance_text": "", "needs_knowledge": false}
+
+CONTOH - UBAH LAYANAN (EDIT LINK):
+
+Input: "mau edit layanan LAY-20260122-003"
+Output: {"intent": "UPDATE_SERVICE_REQUEST", "fields": {"request_number": "LAY-20260122-003"}, "reply_text": "Baik Kak, saya siapkan link edit layanan ya.", "guidance_text": "", "needs_knowledge": false}
+
+CONTOH - GANTI LAYANAN (WAJIB CANCEL DULU):
+
+Input: "ganti layanan yang kemarin, mau bikin surat domisili"
+Output: {"intent": "CANCEL_SERVICE_REQUEST", "fields": {"request_number": ""}, "reply_text": "Baik Kak, untuk mengganti layanan, mohon batalkan layanan sebelumnya terlebih dahulu.\n\nSebutkan nomor layanan lama (contoh: LAY-20260122-003). Setelah dibatalkan, saya akan bantu buat link layanan baru.", "guidance_text": "", "needs_knowledge": false}
+
+CONTOH - BATALKAN PENGADUAN (KONFIRMASI):
+
+Input: "batalkan laporan LAP-20260122-010"
+Output: {"intent": "CANCEL_COMPLAINT", "fields": {"complaint_id": "LAP-20260122-010"}, "reply_text": "Sebelum dibatalkan, mohon konfirmasi dulu ya Kak.\n\nApakah Kakak yakin ingin membatalkan laporan *LAP-20260122-010*? Balas \"ya\" untuk lanjut atau \"tidak\" untuk batal.", "guidance_text": "", "needs_knowledge": false}
+
+CONTOH - ERROR ID TIDAK DITEMUKAN:
+
+Input: "cek status LAY-000"
+Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LAY-000"}, "reply_text": "Maaf Kak, nomor layanan tidak ditemukan. Mohon cek kembali formatnya (contoh: LAY-YYYYMMDD-XXX).", "guidance_text": "", "needs_knowledge": false}
+
+CONTOH - TOKEN EDIT EXPIRED:
+
+Input: "link editnya tidak bisa"
+Output: {"intent": "UPDATE_SERVICE_REQUEST", "fields": {"request_number": ""}, "reply_text": "Maaf Kak, token edit sudah tidak valid/kedaluwarsa. Sebutkan nomor layanan, nanti saya buatkan link edit yang baru.", "guidance_text": "", "needs_knowledge": false}
+
+CONTOH - ALAMAT WAJIB BELUM ADA:
+
+Input: "kebakaran"
+Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "lainnya", "alamat": "", "deskripsi": "kebakaran"}, "reply_text": "Baik Kak, saya catat dulu. Mohon sebutkan alamat lengkapnya agar petugas bisa segera menuju lokasi ya.", "guidance_text": "", "needs_knowledge": false}
 
 CONTOH - LAPORAN DENGAN INFO LENGKAP:
 
@@ -538,6 +592,8 @@ Assistant: Baik Kak, untuk Surat Domisili saya bisa bantu. Apakah mau diproses s
 Input: "ya, proses"
 Output: {"intent": "CREATE_SERVICE_REQUEST", "fields": {"service_slug": "surat-domisili"}, "reply_text": "Baik Kak, ini link formulir layanan:\nhttps://govconnect.my.id/form/margahayu/surat-domisili?user=6281234567890\n\nSetelah submit, Kakak dapat nomor layanan untuk cek status.", "guidance_text": "", "needs_knowledge": false}
 }
+
+`;
 
 // JSON Schema for Gemini structured output
 export const JSON_SCHEMA_FOR_GEMINI = {

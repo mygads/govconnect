@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
-  output: "standalone",
+  output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   reactCompiler: true,
   images: {
     remotePatterns: [

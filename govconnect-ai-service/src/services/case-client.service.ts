@@ -128,7 +128,7 @@ export interface CancelResponse {
 
 export interface CancelResult {
   success: boolean;
-  error?: 'NOT_FOUND' | 'NOT_OWNER' | 'ALREADY_COMPLETED' | 'INTERNAL_ERROR';
+  error?: 'NOT_FOUND' | 'NOT_OWNER' | 'ALREADY_COMPLETED' | 'LOCKED' | 'INTERNAL_ERROR';
   message: string;
   complaint_id?: string;
 }

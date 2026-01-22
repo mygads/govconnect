@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import prisma from '../config/database';
 import logger from '../utils/logger';
@@ -418,15 +419,19 @@ export async function handleUpdateServiceRequestByToken(req: Request, res: Respo
     const updated = await prisma.serviceRequest.update({
       where: { id: request.id },
       data: {
-        citizen_data_json: citizen_data_json ?? request.citizen_data_json,
-        requirement_data_json: requirement_data_json ?? request.requirement_data_json,
+        citizen_data_json: (citizen_data_json === null || typeof citizen_data_json === 'undefined'
+          ? request.citizen_data_json
+          : citizen_data_json) as Prisma.InputJsonValue,
+        requirement_data_json: (requirement_data_json === null || typeof requirement_data_json === 'undefined'
+          ? request.requirement_data_json
+          : requirement_data_json) as Prisma.InputJsonValue,
         edit_token: null,
         edit_token_expires_at: null,
         edit_token_used_at: new Date(),
       },
     });
 
-    return res.json({ data: updated, message: cancel_reason || 'Dibatalkan oleh pemohon' });
+    return res.json({ data: updated, message: 'Permohonan berhasil diperbarui' });
   } catch (error: any) {
     logger.error('Update service request by token error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });

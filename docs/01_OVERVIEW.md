@@ -14,7 +14,7 @@ GovConnect adalah platform layanan desa/kelurahan berbasis WhatsApp dan web yang
 - **Kategori custom**: admin bebas menambah kategori baru (misalnya “Layanan KTP”).
 - **Input file**: PDF, DOC/DOCX, TXT.
 - **Input text** (Profil Desa): nama desa, alamat, lokasi Google Maps, nama singkat (untuk URL form), jam buka per hari + jam operasional.
-- Semua konten masuk ke **knowledge base terpadu** untuk AI.
+- Profil desa otomatis disinkronkan ke **knowledge base terpadu** untuk AI.
 - **Scope per desa**: konten, kategori, dan dokumen hanya terlihat di desa terkait.
 
 ### 2) Knowledge Base Nomor Penting
@@ -39,6 +39,7 @@ GovConnect adalah platform layanan desa/kelurahan berbasis WhatsApp dan web yang
 - **Mode layanan**: online, ambil di kantor, atau keduanya.
 - Public form: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`.
 - WA user otomatis terisi lewat query `?user=628xxx`.
+- Pengisian layanan **hanya via form web**; edit data via link bertoken.
 
 ### 6) Pengaduan / Pelaporan
 - Admin membuat **kategori** dan **jenis** laporan.

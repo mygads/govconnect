@@ -21,10 +21,13 @@ Dokumen ini menggantikan konsep lama dan fokus pada **layanan administrasi** den
 - URL: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`
 - Query `?user=628xxx` untuk auto-fill nomor WA.
 - Setelah submit, warga mendapat **nomor layanan**.
+- **Catatan**: pengisian data layanan hanya melalui form publik (bukan via WA).
 
 ### 4) Status & Riwayat
 - Cek status via WA: “Cek status LAY-...”
 - Riwayat layanan via WA.
+- Update data layanan dilakukan melalui **link edit bertoken** (validasi nomor WA).
+- Pembatalan layanan via WA wajib **konfirmasi** sebelum dibatalkan.
 
 ---
 

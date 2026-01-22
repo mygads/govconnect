@@ -1,12 +1,14 @@
 import { Router, Request, Response } from 'express';
+import type { Router as ExpressRouter } from 'express';
 import prisma from '../config/database';
 import { isConnected } from '../services/rabbitmq.service';
 import logger from '../utils/logger';
 import { getCaseServiceMetrics } from '../clients/case-service.client';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 router.get('/', (req: Request, res: Response) => {
+  void req;
   res.json({
     status: 'ok',
     service: 'channel-service',
@@ -16,6 +18,7 @@ router.get('/', (req: Request, res: Response) => {
 
 router.get('/db', async (req: Request, res: Response) => {
   try {
+    void req;
     await prisma.$queryRaw`SELECT 1`;
     res.json({
       status: 'ok',
@@ -32,6 +35,7 @@ router.get('/db', async (req: Request, res: Response) => {
 });
 
 router.get('/rabbitmq', (req: Request, res: Response) => {
+  void req;
   const connected = isConnected();
 
   if (connected) {
@@ -52,6 +56,7 @@ router.get('/rabbitmq', (req: Request, res: Response) => {
  */
 router.get('/circuit-breakers', (req: Request, res: Response) => {
   try {
+    void req;
     const caseServiceMetrics = getCaseServiceMetrics();
 
     res.json({

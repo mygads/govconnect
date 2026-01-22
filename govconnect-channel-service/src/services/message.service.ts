@@ -1,6 +1,6 @@
 import prisma from '../config/database';
 import logger from '../utils/logger';
-import { MessageData, IncomingMessageData, OutgoingMessageData } from '../types/message.types';
+import { MessageData } from '../types/message.types';
 
 const MAX_MESSAGES = 30;
 
@@ -89,7 +89,7 @@ async function enforeFIFO(wa_user_id: string): Promise<void> {
     await prisma.message.deleteMany({
       where: {
         id: {
-          in: oldestMessages.map((m) => m.id),
+          in: oldestMessages.map((m: { id: string }) => m.id),
         },
       },
     });

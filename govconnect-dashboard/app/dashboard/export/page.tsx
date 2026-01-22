@@ -415,7 +415,7 @@ export default function ExportLaporanPage() {
               <div className="grid gap-4 md:grid-cols-4">
                 <div className="space-y-2">
                   <Label>Periode</Label>
-                  <Select value={dateRange} onValueChange={(v) => setDateRange(v as DateRange)}>
+                  <Select value={dateRange} onValueChange={(v: string) => setDateRange(v as DateRange)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>

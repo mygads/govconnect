@@ -62,6 +62,16 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  const MAX_UPLOAD_SIZE = 5 * 1024 * 1024;
+  const ALLOWED_FILE_TYPES = [
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ];
+  const ACCEPT_FILE_TYPES = ".pdf,.jpg,.jpeg,.png,.doc,.docx";
+
   const [citizenData, setCitizenData] = useState({
     nama_lengkap: "",
     nik: "",
@@ -71,6 +81,8 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
   });
 
   const [requirementsData, setRequirementsData] = useState<Record<string, string>>({});
+  const [fileUploading, setFileUploading] = useState<Record<string, boolean>>({});
+  const [fileErrors, setFileErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     params.then((p) => setRequestNumber(p.requestNumber));
@@ -121,6 +133,14 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     setRequirementsData((prev) => ({ ...prev, [reqId]: value }));
   }
 
+  function updateFileUploading(reqId: string, value: boolean) {
+    setFileUploading((prev) => ({ ...prev, [reqId]: value }));
+  }
+
+  function updateFileError(reqId: string, value: string) {
+    setFileErrors((prev) => ({ ...prev, [reqId]: value }));
+  }
+
   function normalizeOptions(options: any): string[] {
     if (!options) return [];
     if (Array.isArray(options)) return options.map(String);
@@ -148,11 +168,59 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     if (!isValidWaNumber(citizenData.wa_user_id)) return false;
     if (citizenData.nik.length !== 16) return false;
 
+    if (Object.values(fileUploading).some(Boolean)) return false;
+    if (Object.values(fileErrors).some((value) => value)) return false;
+
     for (const req of normalizedRequirements) {
       if (req.is_required && !requirementsData[req.id]) return false;
     }
 
     return true;
+  }
+
+  async function handleFileChange(reqId: string, file: File | null) {
+    if (!file) {
+      updateRequirementField(reqId, "");
+      updateFileError(reqId, "");
+      return;
+    }
+
+    if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+      updateRequirementField(reqId, "");
+      updateFileError(reqId, "Tipe file tidak didukung. Gunakan PDF/JPG/PNG/DOC/DOCX.");
+      return;
+    }
+
+    if (file.size > MAX_UPLOAD_SIZE) {
+      updateRequirementField(reqId, "");
+      updateFileError(reqId, "Ukuran file maksimal 5MB.");
+      return;
+    }
+
+    updateFileError(reqId, "");
+    updateFileUploading(reqId, true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/public/uploads", {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result?.error || "Gagal mengunggah file");
+      }
+
+      updateRequirementField(reqId, result?.data?.url || "");
+    } catch (err: any) {
+      updateRequirementField(reqId, "");
+      updateFileError(reqId, err.message || "Gagal mengunggah file");
+    } finally {
+      updateFileUploading(reqId, false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -162,6 +230,16 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     if (!serviceRequest) return;
     if (!isFormComplete()) {
       setError("Mohon lengkapi semua data wajib terlebih dahulu.");
+      return;
+    }
+
+    if (Object.values(fileUploading).some(Boolean)) {
+      setError("Mohon tunggu hingga semua file selesai diunggah.");
+      return;
+    }
+
+    if (Object.values(fileErrors).some((value) => value)) {
+      setError("Periksa kembali file yang diunggah.");
       return;
     }
 
@@ -468,13 +546,26 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
                     )}
 
                     {req.field_type === "file" && (
-                      <input
-                        type="url"
-                        value={value}
-                        onChange={(e) => updateRequirementField(req.id, e.target.value)}
-                        placeholder={req.help_text || "Tempel link file (Google Drive, dll)"}
-                        className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
-                      />
+                      <div className="space-y-2">
+                        <input
+                          type="file"
+                          accept={ACCEPT_FILE_TYPES}
+                          onChange={(e) => handleFileChange(req.id, e.target.files?.[0] || null)}
+                          className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                        />
+                        {fileUploading[req.id] && (
+                          <p className="text-[10px] text-muted-foreground">Mengunggah file...</p>
+                        )}
+                        {requirementsData[req.id] && !fileUploading[req.id] && (
+                          <p className="text-[10px] text-emerald-600">
+                            File terunggah. <a href={requirementsData[req.id]} target="_blank" rel="noreferrer" className="underline">Lihat file</a>
+                          </p>
+                        )}
+                        {fileErrors[req.id] && (
+                          <p className="text-[10px] text-red-600">{fileErrors[req.id]}</p>
+                        )}
+                        <p className="text-[10px] text-muted-foreground">Tipe file: PDF/JPG/PNG/DOC/DOCX, maks 5MB.</p>
+                      </div>
                     )}
 
                     {(req.field_type === "text" || !req.field_type) && (

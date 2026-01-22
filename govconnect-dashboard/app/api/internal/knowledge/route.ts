@@ -39,20 +39,20 @@ export async function GET(request: NextRequest) {
 
     // If query provided, do a relevance search
     if (query) {
-      const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+      const queryWords = query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2)
       
       if (queryWords.length > 0) {
         where.OR = [
           // Match in title
-          ...queryWords.map(word => ({
+          ...queryWords.map((word: string) => ({
             title: { contains: word, mode: 'insensitive' as const },
           })),
           // Match in content
-          ...queryWords.map(word => ({
+          ...queryWords.map((word: string) => ({
             content: { contains: word, mode: 'insensitive' as const },
           })),
           // Match in keywords array
-          ...queryWords.map(word => ({
+          ...queryWords.map((word: string) => ({
             keywords: { has: word },
           })),
         ]

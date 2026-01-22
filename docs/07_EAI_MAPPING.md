@@ -21,6 +21,8 @@ Dokumen ini menambahkan mapping terbaru sesuai perubahan fitur desa/kelurahan. B
 5. **Super Admin** untuk monitoring sistem
 6. **Uji Pengetahuan (Testing Knowledge)** untuk validasi RAG sebelum produksi
 7. **RAG Scoped per Desa** (filter `village_id` di retrieval)
+8. **Profil Desa → Knowledge Base** (sinkron otomatis saat update)
+9. **Edit/Batal Layanan via WA** (token & konfirmasi)
 
 ---
 

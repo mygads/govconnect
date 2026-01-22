@@ -249,6 +249,7 @@ export function metricsMiddleware(serviceName: string) {
  */
 export async function metricsHandler(req: Request, res: Response) {
   try {
+    void req;
     res.set('Content-Type', promClient.register.contentType);
     const metrics = await promClient.register.metrics();
     res.send(metrics);

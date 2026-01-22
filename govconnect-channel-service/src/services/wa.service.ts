@@ -1,7 +1,6 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { WhatsAppWebhookPayload, WhatsAppMessage } from '../types/webhook.types';
 import prisma from '../config/database';
 
 // In-memory settings cache (since we're using single session)

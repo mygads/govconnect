@@ -174,6 +174,18 @@ export function GovConnectSidebar() {
       title: "Super Admin",
       items: [
         {
+          title: "Daftar Desa",
+          url: "/dashboard/superadmin/villages",
+          icon: Shield,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Admin Desa",
+          url: "/dashboard/superadmin/admins",
+          icon: Settings2,
+          roles: ["superadmin"],
+        },
+        {
           title: "AI Analytics",
           url: "/dashboard/ai-analytics",
           icon: Activity,
@@ -223,7 +235,7 @@ export function GovConnectSidebar() {
       <SidebarContent className="bg-white dark:bg-gray-950">
         {menuItems.map((group, index) => {
           const allowedItems = group.items.filter((item) =>
-            canAccess(user?.role as AdminRole, item.roles)
+            canAccess(user?.role as AdminRole, item.roles as AdminRole[])
           )
 
           if (allowedItems.length === 0) return null

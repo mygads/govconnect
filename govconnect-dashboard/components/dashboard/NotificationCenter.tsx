@@ -140,7 +140,7 @@ export function NotificationCenter() {
                       {notification.complaint && (
                         <Link 
                           href={`/dashboard/laporan/${notification.complaint.id}`}
-                          onClick={(e) => {
+                          onClick={(e: React.MouseEvent) => {
                             e.stopPropagation()
                             setOpen(false)
                           }}

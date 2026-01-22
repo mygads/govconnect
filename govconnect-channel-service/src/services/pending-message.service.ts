@@ -188,7 +188,10 @@ export async function getPendingMessagesStats(): Promise<{
   
   return {
     total,
-    byUser: byUser.map(r => ({ wa_user_id: r.wa_user_id, count: Number(r.count) })),
+    byUser: byUser.map((r: { wa_user_id: string; count: bigint }) => ({
+      wa_user_id: r.wa_user_id,
+      count: Number(r.count),
+    })),
   };
 }
 

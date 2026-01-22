@@ -58,7 +58,6 @@ export interface CollectedData {
   
   // Status check data
   complaint_id?: string;
-  request_number?: string;
   
   // Metadata
   lastUpdated?: number;

@@ -1,4 +1,5 @@
 import amqplib from 'amqplib';
+import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
@@ -32,6 +33,38 @@ function calculateReconnectDelay(attempt: number): number {
  */
 function sleepMs(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function ensureRabbitMqVhost(rabbitmqUrl: string): Promise<void> {
+  try {
+    const parsed = new URL(rabbitmqUrl);
+    const vhost = decodeURIComponent(parsed.pathname.replace(/^\//, '')) || '/';
+
+    if (!vhost || vhost === '/') return;
+
+    const managementUrl = process.env.RABBITMQ_MANAGEMENT_URL || `http://${parsed.hostname}:15672`;
+    const username = decodeURIComponent(parsed.username || process.env.RABBITMQ_USER || '');
+    const password = decodeURIComponent(parsed.password || process.env.RABBITMQ_PASSWORD || '');
+
+    if (!username || !password) {
+      logger.warn('RabbitMQ management credentials not set, skipping vhost check');
+      return;
+    }
+
+    const auth = { username, password };
+    const vhostUrl = `${managementUrl}/api/vhosts/${encodeURIComponent(vhost)}`;
+
+    await axios.get(vhostUrl, { auth, timeout: 5000 }).catch(async (error: any) => {
+      if (error.response?.status === 404) {
+        await axios.put(vhostUrl, {}, { auth, timeout: 5000 });
+        logger.info('RabbitMQ vhost created', { vhost });
+        return;
+      }
+      throw error;
+    });
+  } catch (error: any) {
+    logger.warn('Failed to ensure RabbitMQ vhost', { error: error.message });
+  }
 }
 
 // Flag to prevent reconnect during graceful shutdown
@@ -728,6 +761,7 @@ function addToRetryQueue(
  */
 export async function connectRabbitMQ(): Promise<void> {
   try {
+    await ensureRabbitMqVhost(config.rabbitmqUrl);
     // Close existing connections if any
     if (channel) {
       try { await channel.close(); } catch (e) { /* ignore */ }

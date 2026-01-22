@@ -196,7 +196,7 @@ export default function ImportantContactsPage() {
               <Label>Kategori</Label>
               <Select
                 value={newContact.category_id}
-                onValueChange={(value) => setNewContact((prev) => ({ ...prev, category_id: value }))}
+                onValueChange={(value: string) => setNewContact((prev) => ({ ...prev, category_id: value }))}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Pilih kategori" />

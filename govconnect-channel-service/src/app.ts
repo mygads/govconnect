@@ -1,7 +1,6 @@
 import express, { Application } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-import path from 'path';
 import swaggerUi from 'swagger-ui-express';
 import webhookRoutes from './routes/webhook.routes';
 import internalRoutes from './routes/internal.routes';
@@ -38,6 +37,7 @@ export function createApp(): Application {
 
   // Request logging
   app.use((req, res, next) => {
+    void res;
     logger.info('Incoming request', {
       method: req.method,
       path: req.path,
@@ -72,12 +72,14 @@ export function createApp(): Application {
 
   // OpenAPI spec as JSON
   app.get('/api-docs.json', (req, res) => {
+    void req;
     res.setHeader('Content-Type', 'application/json');
     res.send(swaggerSpec);
   });
 
   // Root endpoint
   app.get('/', (req, res) => {
+    void req;
     res.json({
       service: 'GovConnect Channel Service',
       version: '1.0.0',

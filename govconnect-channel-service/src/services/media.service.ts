@@ -1,10 +1,9 @@
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { GenfityWebhookPayload, GenfityMediaMessage, S3Data } from '../types/webhook.types';
+import { GenfityWebhookPayload, GenfityMediaMessage } from '../types/webhook.types';
 
 // Storage configuration
 const MEDIA_STORAGE_PATH = process.env.MEDIA_STORAGE_PATH || '/app/uploads';

@@ -45,17 +45,17 @@ export default function SettingsPage() {
 
       if (!response.ok) {
         const error = await response.json()
-        throw new Error(error.error || 'Failed to update profile')
+        throw new Error(error.error || 'Gagal memperbarui profil')
       }
 
       toast({
-        title: "Success",
-        description: "Profile updated successfully",
+        title: "Berhasil",
+        description: "Profil berhasil diperbarui",
       })
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to update profile",
+        title: "Gagal",
+        description: error.message || "Gagal memperbarui profil",
         variant: "destructive",
       })
     } finally {
@@ -68,8 +68,8 @@ export default function SettingsPage() {
 
     if (passwords.newPassword !== passwords.confirmPassword) {
       toast({
-        title: "Error",
-        description: "New password and confirm password do not match",
+        title: "Gagal",
+        description: "Konfirmasi password tidak sesuai",
         variant: "destructive",
       })
       return
@@ -77,8 +77,8 @@ export default function SettingsPage() {
 
     if (passwords.newPassword.length < 8) {
       toast({
-        title: "Error",
-        description: "Password must be at least 8 characters long",
+        title: "Gagal",
+        description: "Password minimal 8 karakter",
         variant: "destructive",
       })
       return
@@ -101,12 +101,12 @@ export default function SettingsPage() {
 
       if (!response.ok) {
         const error = await response.json()
-        throw new Error(error.error || 'Failed to change password')
+        throw new Error(error.error || 'Gagal mengganti password')
       }
 
       toast({
-        title: "Success",
-        description: "Password changed successfully",
+        title: "Berhasil",
+        description: "Password berhasil diperbarui",
       })
 
       setPasswords({
@@ -116,8 +116,8 @@ export default function SettingsPage() {
       })
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to change password",
+        title: "Gagal",
+        description: error.message || "Gagal mengganti password",
         variant: "destructive",
       })
     } finally {
@@ -128,8 +128,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-foreground">Account Settings</h1>
-        <p className="text-muted-foreground mt-2">Manage your profile and security settings</p>
+        <h1 className="text-3xl font-bold text-foreground">Akun Admin</h1>
+        <p className="text-muted-foreground mt-2">Kelola profil dan keamanan akun admin desa.</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -138,9 +138,9 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <User className="h-5 w-5" />
-              Profile Information
+              Informasi Profil
             </CardTitle>
-            <CardDescription>Update your profile information</CardDescription>
+            <CardDescription>Perbarui informasi profil admin.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleProfileUpdate} className="space-y-4">
@@ -153,11 +153,11 @@ export default function SettingsPage() {
                   disabled
                   className="bg-muted"
                 />
-                <p className="text-xs text-muted-foreground">Username cannot be changed</p>
+                <p className="text-xs text-muted-foreground">Username tidak bisa diubah.</p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
+                <Label htmlFor="name">Nama Lengkap</Label>
                 <Input
                   id="name"
                   type="text"
@@ -168,7 +168,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="role">Role</Label>
+                <Label htmlFor="role">Peran</Label>
                 <Input
                   id="role"
                   type="text"
@@ -180,7 +180,7 @@ export default function SettingsPage() {
 
               <Button type="submit" disabled={loading} className="w-full">
                 <Save className="h-4 w-4 mr-2" />
-                {loading ? 'Saving...' : 'Save Changes'}
+                {loading ? 'Menyimpan...' : 'Simpan Perubahan'}
               </Button>
             </form>
           </CardContent>
@@ -191,14 +191,14 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Lock className="h-5 w-5" />
-              Change Password
+              Ubah Password
             </CardTitle>
-            <CardDescription>Update your password to keep your account secure</CardDescription>
+            <CardDescription>Perbarui password untuk menjaga keamanan akun.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handlePasswordChange} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="currentPassword">Current Password</Label>
+                <Label htmlFor="currentPassword">Password Saat Ini</Label>
                 <Input
                   id="currentPassword"
                   type="password"
@@ -211,7 +211,7 @@ export default function SettingsPage() {
               <Separator />
 
               <div className="space-y-2">
-                <Label htmlFor="newPassword">New Password</Label>
+                <Label htmlFor="newPassword">Password Baru</Label>
                 <Input
                   id="newPassword"
                   type="password"
@@ -220,11 +220,11 @@ export default function SettingsPage() {
                   required
                   minLength={8}
                 />
-                <p className="text-xs text-muted-foreground">Minimum 8 characters</p>
+                <p className="text-xs text-muted-foreground">Minimal 8 karakter</p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="confirmPassword">Confirm New Password</Label>
+                <Label htmlFor="confirmPassword">Konfirmasi Password Baru</Label>
                 <Input
                   id="confirmPassword"
                   type="password"
@@ -237,7 +237,7 @@ export default function SettingsPage() {
 
               <Button type="submit" disabled={passwordLoading} className="w-full">
                 <Lock className="h-4 w-4 mr-2" />
-                {passwordLoading ? 'Changing...' : 'Change Password'}
+                {passwordLoading ? 'Mengubah...' : 'Ubah Password'}
               </Button>
             </form>
           </CardContent>

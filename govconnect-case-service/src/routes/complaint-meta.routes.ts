@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Router as ExpressRouter } from 'express';
 import {
   handleGetComplaintCategories,
   handleCreateComplaintCategory,
@@ -11,7 +12,7 @@ import {
   handleCreateComplaintUpdate,
 } from '../controllers/complaint-meta.controller';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 router.get('/complaints/categories', handleGetComplaintCategories);
 router.post('/complaints/categories', handleCreateComplaintCategory);

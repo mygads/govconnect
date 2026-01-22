@@ -724,7 +724,7 @@ export default function LiveChatPage() {
         <div className={`w-full md:w-96 border-r flex flex-col ${selectedConversation ? 'hidden md:flex' : 'flex'}`}>
           {/* Tabs */}
           <div className="p-3 border-b shrink-0">
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+            <Tabs value={activeTab} onValueChange={(v: string) => setActiveTab(v as any)}>
               <TabsList className="w-full">
                 <TabsTrigger value="all" className="flex-1 text-xs">
                   Semua
@@ -1085,7 +1085,7 @@ export default function LiveChatPage() {
               <label className="text-sm font-medium">Template Alasan</label>
               <Select
                 value={takeoverReasonTemplate}
-                onValueChange={(value) => {
+                onValueChange={(value: string) => {
                   setTakeoverReasonTemplate(value)
                   if (value && value !== "Lainnya") {
                     setTakeoverReason(value)

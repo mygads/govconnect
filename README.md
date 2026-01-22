@@ -1,6 +1,6 @@
 # 🟩 GovConnect - AI-Powered Government Services Platform
 
-Sistem layanan pemerintah berbasis WhatsApp dengan AI orchestrator untuk menangani laporan warga dan permohonan layanan.
+Sistem layanan pemerintah berbasis WhatsApp dengan AI orchestrator untuk menangani laporan warga dan permohonan layanan (form publik).
 
 ## 🏗️ Architecture
 
@@ -63,6 +63,7 @@ GovConnect menggunakan **microservices architecture** dengan 5 services utama:
 - [x] **Database-per-Service** - Separate PostgreSQL databases for isolation
 - [x] **RabbitMQ** - Async message broker for events
 - [x] **REST APIs** - Sync communication between services
+- [x] **Knowledge Base** - Profil desa + dokumen untuk jawaban AI
 - [x] **Kubernetes Manifests** - Full K8s deployment ready
 - [x] **OpenAPI Documentation** - Complete API docs
 - [x] **Circuit Breaker** - Resilience with Opossum
@@ -89,7 +90,7 @@ cp .env.example .env
 ### 2. Start Services
 
 ```bash
-# Core services only
+# Core services + PostgreSQL + RabbitMQ
 docker compose up -d
 
 # With monitoring (Prometheus + Grafana)
@@ -127,7 +128,7 @@ curl http://localhost:3000/api/health  # Dashboard
 | Service | URL |
 |---------|-----|
 | Dashboard | http://localhost:3000 |
-| RabbitMQ | http://localhost:15672 (admin/rabbitmq_secret_2025) |
+| RabbitMQ | http://localhost:15672 (admin/${RABBITMQ_PASSWORD}) |
 | Grafana | http://localhost:3100 (admin/govconnect-grafana-2025) |
 | Prometheus | http://localhost:9090 |
 

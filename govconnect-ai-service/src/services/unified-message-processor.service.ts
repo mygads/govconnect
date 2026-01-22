@@ -346,7 +346,15 @@ async function resolveComplaintTypeConfig(kategori?: string, villageId?: string)
 
   const target = normalizeLookupKey(kategori);
 
-  return types.find(type => normalizeLookupKey(type?.name || '') === target) || null;
+  const directMatch = types.find(type => normalizeLookupKey(type?.name || '') === target);
+  if (directMatch) return directMatch;
+
+  const categoryMatches = types.filter(type => normalizeLookupKey(type?.category?.name || '') === target);
+  if (categoryMatches.length === 1) {
+    return categoryMatches[0];
+  }
+
+  return null;
 }
 
 function buildImportantContactsMessage(contacts: Array<{ name: string; phone: string; description?: string | null }>): string {

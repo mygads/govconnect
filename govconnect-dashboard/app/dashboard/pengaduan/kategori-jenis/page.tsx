@@ -367,7 +367,7 @@ export default function ComplaintMetaPage() {
                 <Label>Kategori</Label>
                 <Select
                   value={newType.category_id}
-                  onValueChange={(value) => setNewType((prev) => ({ ...prev, category_id: value }))}
+                  onValueChange={(value: string) => setNewType((prev) => ({ ...prev, category_id: value }))}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Pilih kategori" />
@@ -403,7 +403,7 @@ export default function ComplaintMetaPage() {
                 </div>
                 <Switch
                   checked={newType.is_urgent}
-                  onCheckedChange={(value) => setNewType((prev) => ({ ...prev, is_urgent: value }))}
+                  onCheckedChange={(value: boolean) => setNewType((prev) => ({ ...prev, is_urgent: value }))}
                 />
               </div>
 
@@ -414,7 +414,7 @@ export default function ComplaintMetaPage() {
                 </div>
                 <Switch
                   checked={newType.require_address}
-                  onCheckedChange={(value) => setNewType((prev) => ({ ...prev, require_address: value }))}
+                  onCheckedChange={(value: boolean) => setNewType((prev) => ({ ...prev, require_address: value }))}
                 />
               </div>
 
@@ -425,7 +425,7 @@ export default function ComplaintMetaPage() {
                 </div>
                 <Switch
                   checked={newType.send_important_contacts}
-                  onCheckedChange={(value) => setNewType((prev) => ({ ...prev, send_important_contacts: value }))}
+                  onCheckedChange={(value: boolean) => setNewType((prev) => ({ ...prev, send_important_contacts: value }))}
                 />
               </div>
 
@@ -434,7 +434,7 @@ export default function ComplaintMetaPage() {
                   <Label>Kategori Nomor Penting</Label>
                   <Select
                     value={newType.important_contact_category}
-                    onValueChange={(value) => setNewType((prev) => ({ ...prev, important_contact_category: value }))}
+                    onValueChange={(value: string) => setNewType((prev) => ({ ...prev, important_contact_category: value }))}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Pilih kategori nomor" />

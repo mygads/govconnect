@@ -106,6 +106,7 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 **Responsibilities:**
 - Auth admin & super admin
 - Profil desa (data text) → knowledge base
+- Sinkronisasi profil desa ke knowledge base dilakukan otomatis saat update
 - Upload knowledge file (PDF/DOC/DOCX/TXT)
 - Nomor penting per kategori
 - Channel settings (token, WA number, webhook URL, toggle)
@@ -113,6 +114,7 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 - Layanan: CRUD kategori/layanan/persyaratan
 - Pengaduan: kategori/jenis, urgent alert, detail & update
 - Public form: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`
+- Input layanan hanya via form web; edit memakai token, pembatalan via WA
 
 **Database:** `gc_dashboard`
 - `admin_users`, `admin_sessions`, `activity_logs`

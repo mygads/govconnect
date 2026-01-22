@@ -1,204 +1,134 @@
-# Business Flow & Skenario Demo - GovConnect
+# Business Flow GovConnect (Redesain)
+
+Dokumen ini menjelaskan alur utama sesuai fitur terbaru: knowledge base terpadu, layanan berbasis form publik, pengaduan dengan prioritas, serta channel WhatsApp + webchat.
 
 ## 🔄 Skenario Bisnis Utama
 
-### Skenario A: Warga Membuat Laporan (Event-Driven / Async)
-
-**Mapping ke Requirement EAI**: Asynchronous Communication
-
-**Flow Lengkap**:
-
+### A) Tanya Info Desa (Knowledge Base)
 ```
-1. Warga mengirim pesan WhatsApp
-   "Saya mau lapor jalan rusak di Jl. Melati No. 15, banyak lubang"
-   
-2. WhatsApp API → Webhook → Channel Service
-   POST /webhook/whatsapp
-   
-3. Channel Service:
-   - Validate payload
-   - Save to gc_channel.messages (direction: IN)
-   - Check takeover status (not in takeover)
-   - Publish to RabbitMQ:
-     Exchange: govconnect.events
-     Routing Key: whatsapp.message.received
-     Payload: {
-       wa_user_id: "628123456789",
-       message: "Saya mau lapor jalan rusak...",
-       message_id: "msg_123"
-     }
-   
-4. AI Service (consumes from RabbitMQ):
-   - Receive message from queue
-   - Call Gemini AI for intent detection
-   - Intent detected: CREATE_COMPLAINT
-   - Extract data:
-     * kategori: "jalan_rusak"
-     * alamat: "Jl. Melati No. 15"
-     * deskripsi: "Banyak lubang"
-   
-5. AI Service → Case Service (Sync REST):
-   POST http://case-service:3003/internal/complaints
-   Headers: x-internal-api-key: xxx
-   Body: {
-     "wa_user_id": "628123456789",
-     "kategori": "jalan_rusak",
-     "alamat": "Jl. Melati No. 15",
-     "deskripsi": "Banyak lubang"
-   }
-   
-6. Case Service:
-   - Generate complaint ID: LAP-20251208-001
-   - Save to gc_case.complaints
-   - Return complaint data
-   
-7. AI Service:
-   - Generate reply message
-   - Publish to RabbitMQ:
-     Routing Key: govconnect.ai.reply
-     Payload: {
-       wa_user_id: "628123456789",
-       reply_text: "✅ Laporan Anda telah diterima dengan nomor LAP-20251208-001..."
-     }
-   
-8. Channel Service (consumes from RabbitMQ):
-   - Receive reply from queue
-  # Business Flow GovConnect (Redesain)
+1. Warga WA: "Jam buka kantor desa?"
+2. Channel Service menerima webhook, simpan pesan, publish event.
+3. AI Orchestrator deteksi intent: KNOWLEDGE_QUERY.
+4. AI query Dashboard KB (profil desa + dokumen + FAQ).
+5. AI publish reply.
+6. Notification Service kirim ke WA.
+```
 
-  Dokumen ini menggantikan flow lama dan menyesuaikan fitur baru: knowledge base terpadu, layanan berbasis form publik, pengaduan dengan prioritas, serta channel WhatsApp + webchat.
+### B) Tanya Layanan + Arahkan ke Form
+```
+1. Warga WA: "Syarat bikin KTP?"
+2. AI Orchestrator: intent SERVICE_INFO.
+3. AI query Case Service untuk syarat + deskripsi layanan.
+4. AI jawab syarat + tanya "mau diproses sekarang?".
+5. Jika iya, AI kirim link form:
+  govconnect.my.id/form/{slug-desa}/{slug-layanan}?user=628xxx
+```
 
-  ## 🔄 Skenario Bisnis Utama
+### C) Submit Form Layanan (Web)
+```
+1. Warga buka link form (WA auto prefill nomor).
+2. Warga isi persyaratan (file/field).
+3. Dashboard (public route) kirim ke Case Service.
+4. Case Service buat service_request + nomor layanan.
+5. Dashboard menampilkan nomor + tombol chat status.
+```
 
-  ### A) Tanya Info Desa (Knowledge Base)
-  ```
-  1. Warga WA: "Jam buka kantor desa?"
-  2. Channel Service menerima webhook, simpan message, publish event.
-  3. AI Orchestrator deteksi intent: KNOWLEDGE_QUERY.
-  4. AI query Dashboard KB (profil desa + dokumen + FAQ).
-  5. AI publish reply.
-  6. Notification Service kirim ke WA.
-  ```
+### D) Edit Data Layanan (Token)
+```
+1. Warga WA: "Ubah data layanan LAY-..."
+2. AI minta konfirmasi + validasi kepemilikan.
+3. Case Service buat edit token.
+4. AI kirim link edit: /form/edit/{requestNumber}?token=...
+```
 
-  ### B) Tanya Layanan + Arahkan ke Form
-  ```
-  1. Warga WA: "Syarat bikin KTP?"
-  2. AI Orchestrator: intent SERVICE_INFO.
-  3. AI query Case Service untuk syarat layanan + deskripsi.
-  4. AI jawab syarat + tanya "mau diproses sekarang?".
-  5. Jika iya, AI kirim link form:
-     govconnect.my.id/form/{slug-desa}/{slug-layanan}?user=628xxx
-  ```
+### E) Batalkan Layanan (Konfirmasi)
+```
+1. Warga WA: "Batalkan layanan LAY-..."
+2. AI minta konfirmasi pembatalan.
+3. Jika setuju, Case Service ubah status ke dibatalkan.
+4. AI mengonfirmasi pembatalan.
+```
 
-  ### C) Submit Form Layanan (Web)
-  ```
-  1. Warga buka link form (WA auto prefill nomor).
-  2. Warga isi persyaratan (file/field).
-  3. Dashboard (public route) kirim ke Case Service.
-  4. Case Service buat service_request + nomor layanan.
-  5. Dashboard menampilkan nomor + tombol chat status.
-  ```
+### F) Cek Status Layanan (WA)
+```
+1. Warga WA: "Cek status LAY-20260122-001"
+2. AI Orchestrator: intent CHECK_STATUS.
+3. AI query Case Service status (ownership check).
+4. AI balas status + langkah berikutnya.
+```
 
-  ### D) Cek Status Layanan (WA)
-  ```
-  1. Warga WA: "Cek status LAY-20260122-001"
-  2. AI Orchestrator: intent CHECK_STATUS.
-  3. AI query Case Service status.
-  4. AI balas status + langkah berikutnya.
-  ```
+### G) Riwayat Layanan
+```
+1. Warga WA: "Riwayat layanan saya"
+2. AI Orchestrator: intent HISTORY.
+3. AI query Case Service by wa_user_id.
+4. AI balas list ringkas.
+```
 
-  ### E) Riwayat Layanan
-  ```
-  1. Warga WA: "Riwayat layanan saya"
-  2. AI Orchestrator: intent HISTORY.
-  3. AI query Case Service by wa_user_id.
-  4. AI balas list ringkas + link detail (opsional).
-  ```
+### H) Pengaduan (Non-Urgent)
+```
+1. Warga WA: "Lapor lampu jalan mati"
+2. AI Orchestrator: intent CREATE_COMPLAINT.
+3. AI cek aturan jenis (butuh alamat?).
+4. Jika alamat wajib dan kosong: AI tanya alamat.
+5. Case Service buat laporan + nomor laporan.
+6. AI balas konfirmasi.
+```
 
-  ### F) Pengaduan (Non-Urgent)
-  ```
-  1. Warga WA: "Lapor lampu jalan mati"
-  2. AI Orchestrator: intent CREATE_COMPLAINT.
-  3. AI cek aturan jenis (butuh alamat?).
-  4. Jika alamat kosong dan wajib: AI tanya alamat.
-  5. Case Service buat laporan + nomor laporan.
-  6. AI balas konfirmasi.
-  ```
+### I) Pengaduan (Urgent + Nomor Penting)
+```
+1. Warga WA: "Ada kebakaran di RT 02"
+2. AI Orchestrator membaca konfigurasi urgent pada jenis.
+3. Case Service buat laporan urgent.
+4. AI balas:
+  - konfirmasi laporan
+  - nomor penting terkait (damkar/polisi)
+5. Dashboard memunculkan alert urgent.
+```
 
-  ### G) Pengaduan (Urgent + Nomor Penting)
-  ```
-  1. Warga WA: "Ada kebakaran di RT 02"
-  2. AI Orchestrator tandai urgent.
-  3. Case Service buat laporan urgent.
-  4. AI balas:
-     - konfirmasi laporan
-     - nomor penting terkait (damkar/polisi)
-  5. Dashboard memunculkan alert urgent.
-  ```
+### J) Update & Pembatalan Pengaduan (Warga)
+```
+1. Warga WA: "Ubah laporan LAP-..." atau "Batalkan laporan LAP-..."
+2. AI validasi kepemilikan dan status.
+3. Case Service update data atau ubah status dibatalkan.
+4. AI mengonfirmasi.
+```
 
-  ### H) Channel Connect (WA + Webchat)
-  ```
-  1. Admin isi token WA + nomor WA di dashboard.
-  2. Sistem tampilkan webhook URL (read-only).
-  3. Admin toggle WA dan/atau Webchat.
-  4. Jika OFF, AI tidak memproses channel tersebut.
-  ```
+### K) Channel Connect (WA + Webchat)
+```
+1. Admin isi token WA + nomor WA di dashboard.
+2. Sistem tampilkan webhook URL (read-only).
+3. Admin toggle WA dan/atau Webchat.
+4. Jika OFF, AI tidak memproses channel tersebut.
+```
 
-  ### I) Live Chat & Takeover
-  ```
-  1. Admin melihat percakapan.
-  2. Klik Takeover.
-  3. Channel Service menonaktifkan AI sementara.
-  4. Admin balas manual.
-  5. Takeover selesai → AI aktif kembali.
-  ```
+### L) Live Chat & Takeover
+```
+1. Admin melihat percakapan.
+2. Klik Takeover.
+3. Channel Service menonaktifkan AI sementara.
+4. Admin balas manual.
+5. Takeover selesai → AI aktif kembali.
+```
 
-  ### J) Uji Pengetahuan (Testing Knowledge)
-  ```
-  1. Admin buka halaman Uji Pengetahuan di dashboard.
-  2. Admin isi pertanyaan + opsi kategori + sumber (knowledge/dokumen).
-  3. Dashboard memanggil /api/testing-knowledge.
-  4. API meneruskan ke AI Service /api/search (RAG) dengan filter desa.
-  5. Admin melihat skor relevansi dan cuplikan hasil.
-  ```
+### M) Uji Pengetahuan (Testing Knowledge)
+```
+1. Admin buka halaman Uji Pengetahuan di dashboard.
+2. Admin isi pertanyaan + opsi kategori + sumber (knowledge/dokumen).
+3. Dashboard memanggil /api/testing-knowledge.
+4. API meneruskan ke AI Service /api/search (RAG) dengan filter desa.
+5. Admin melihat skor relevansi dan cuplikan hasil.
+```
 
-  ---
+---
 
-  ## 📌 Catatan Flow Penting
-  - **Profil Desa** adalah input teks dan ikut knowledge base.
-  - **Knowledge base file**: PDF/DOC/DOCX/TXT.
-  - **Form publik** hanya untuk layanan administrasi, bukan pengaduan.
-  - **Detail pengaduan**: admin bisa memberi update penanganan berupa teks dan foto.
-  - **AI model** hanya dikonfigurasi via ENV (tidak ada halaman ubah model).
-  - **Semua halaman admin dalam Bahasa Indonesia**.
-       │
-       │ 3. Publish Event (ASYNC)
-       ▼
-┌─────────────────────┐
-│     RabbitMQ        │
-│  (Message Broker)   │
-└──────┬──────────────┘
-       │
-       │ 4. Consume Event
-       ▼
-┌─────────────────────┐
-│    AI Service       │
-│  - Intent Detection │
-│  - Data Extraction  │
-│  - RAG Search       │
-└──────┬──────────────┘
-       │
-       │ 5. REST API Call (SYNC)
-       ▼
-┌─────────────────────┐
-│   Case Service      │
-│  - Create Complaint │
-│  - Save DB          │
-│  - Return Data      │
-└──────┬──────────────┘
-       │
-       │ 6. Return Response
-       ▼
-┌─────────────────────┐
+## 📌 Catatan Flow Penting
+- **Profil Desa** adalah input teks dan ikut knowledge base.
+- **Knowledge base file**: PDF/DOC/DOCX/TXT.
+- **Form publik** hanya untuk layanan administrasi, bukan pengaduan.
+- **Detail pengaduan**: admin bisa memberi update penanganan berupa teks dan foto.
+- **AI model** hanya dikonfigurasi via ENV (tidak ada halaman ubah model).
+- **Semua halaman admin dalam Bahasa Indonesia**.
 │    AI Service       │
 │  - Generate Reply   │
 └──────┬──────────────┘
