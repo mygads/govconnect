@@ -47,7 +47,7 @@ Channel Service adalah **pintu gerbang WhatsApp** untuk sistem GovConnect.
     tags: [
       { name: 'Webhook', description: 'WhatsApp webhook endpoints' },
       { name: 'Internal', description: 'Internal service-to-service APIs' },
-      { name: 'WhatsApp Session', description: 'WhatsApp session management' },
+      { name: 'WhatsApp Session', description: 'WhatsApp session management (QR & token internal)' },
       { name: 'Live Chat', description: 'Live chat takeover management' },
       { name: 'Health', description: 'Health check endpoints' },
     ],
@@ -243,12 +243,47 @@ Channel Service adalah **pintu gerbang WhatsApp** untuk sistem GovConnect.
       },
 
       // ============ WHATSAPP SESSION ============
+      '/internal/whatsapp/session': {
+        post: {
+          tags: ['WhatsApp Session'],
+          summary: 'Create WhatsApp session',
+          security: [{ InternalApiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['village_id'],
+                  properties: {
+                    village_id: { type: 'string', example: 'village-uuid' },
+                    admin_id: { type: 'string', example: 'admin-uuid' },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'Session created' }, '400': { description: 'Bad request' } },
+        },
+        delete: {
+          tags: ['WhatsApp Session'],
+          summary: 'Delete WhatsApp session',
+          security: [{ InternalApiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'village_id', required: true, schema: { type: 'string' }, example: 'village-uuid' },
+          ],
+          responses: { '200': { description: 'Session deleted' }, '400': { description: 'Bad request' } },
+        },
+      },
       '/internal/whatsapp/status': {
         get: {
           tags: ['WhatsApp Session'],
           summary: 'Get WhatsApp session status',
           security: [{ InternalApiKey: [] }],
-          responses: { '200': { description: 'Session status', content: { 'application/json': { schema: { type: 'object', properties: { connected: { type: 'boolean' }, phone: { type: 'string' }, name: { type: 'string' } } } } } } },
+          parameters: [
+            { in: 'query', name: 'village_id', required: true, schema: { type: 'string' }, example: 'village-uuid' },
+          ],
+          responses: { '200': { description: 'Session status' }, '404': { description: 'Session not found' } },
         },
       },
       '/internal/whatsapp/connect': {
@@ -256,6 +291,9 @@ Channel Service adalah **pintu gerbang WhatsApp** untuk sistem GovConnect.
           tags: ['WhatsApp Session'],
           summary: 'Connect WhatsApp session',
           security: [{ InternalApiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'village_id', required: true, schema: { type: 'string' }, example: 'village-uuid' },
+          ],
           responses: { '200': { description: 'Connection initiated' } },
         },
       },
@@ -263,8 +301,10 @@ Channel Service adalah **pintu gerbang WhatsApp** untuk sistem GovConnect.
         post: {
           tags: ['WhatsApp Session'],
           summary: 'Disconnect WhatsApp session',
-          description: 'Disconnect but keep session data',
           security: [{ InternalApiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'village_id', required: true, schema: { type: 'string' }, example: 'village-uuid' },
+          ],
           responses: { '200': { description: 'Disconnected' } },
         },
       },
@@ -272,41 +312,22 @@ Channel Service adalah **pintu gerbang WhatsApp** untuk sistem GovConnect.
         post: {
           tags: ['WhatsApp Session'],
           summary: 'Logout WhatsApp session',
-          description: 'Full logout - requires QR scan to reconnect',
           security: [{ InternalApiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'village_id', required: true, schema: { type: 'string' }, example: 'village-uuid' },
+          ],
           responses: { '200': { description: 'Logged out' } },
         },
       },
       '/internal/whatsapp/qr': {
         get: {
           tags: ['WhatsApp Session'],
-          summary: 'Get QR code for authentication',
+          summary: 'Get QR code',
           security: [{ InternalApiKey: [] }],
-          responses: { '200': { description: 'QR code data', content: { 'application/json': { schema: { type: 'object', properties: { qr: { type: 'string' } } } } } } },
-        },
-      },
-      '/internal/whatsapp/pairphone': {
-        post: {
-          tags: ['WhatsApp Session'],
-          summary: 'Pair phone for authentication',
-          security: [{ InternalApiKey: [] }],
-          requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { phone: { type: 'string', example: '6281234567890' } } } } } },
-          responses: { '200': { description: 'Pairing code sent' } },
-        },
-      },
-      '/internal/whatsapp/settings': {
-        get: {
-          tags: ['WhatsApp Session'],
-          summary: 'Get session settings',
-          security: [{ InternalApiKey: [] }],
-          responses: { '200': { description: 'Current settings' } },
-        },
-        patch: {
-          tags: ['WhatsApp Session'],
-          summary: 'Update session settings',
-          security: [{ InternalApiKey: [] }],
-          requestBody: { content: { 'application/json': { schema: { type: 'object' } } } },
-          responses: { '200': { description: 'Settings updated' } },
+          parameters: [
+            { in: 'query', name: 'village_id', required: true, schema: { type: 'string' }, example: 'village-uuid' },
+          ],
+          responses: { '200': { description: 'QR code' } },
         },
       },
 

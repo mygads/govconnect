@@ -2,16 +2,6 @@ import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
 import { getMessages, sendMessage, setTyping, markMessagesRead, storeMessage } from '../controllers/internal.controller';
 import {
-  getStatus,
-  connect,
-  disconnect,
-  logout,
-  getQR,
-  pair,
-  getSettings,
-  updateSettings,
-} from '../controllers/whatsapp.controller';
-import {
   handleStartTakeover,
   handleEndTakeover,
   handleGetActiveTakeovers,
@@ -23,6 +13,18 @@ import {
   handleDeleteConversation,
   handleRetryAI,
 } from '../controllers/livechat.controller';
+import {
+  getStatus,
+  connect,
+  disconnect,
+  logout,
+  getQR,
+  pair,
+  getSettings,
+  updateSettings,
+  createSession,
+  deleteSession,
+} from '../controllers/whatsapp.controller';
 import {
   handleGetChannelAccount,
   handleUpsertChannelAccount,
@@ -54,6 +56,8 @@ router.get('/whatsapp/qr', getQR);
 router.post('/whatsapp/pairphone', pair);
 router.get('/whatsapp/settings', getSettings);
 router.patch('/whatsapp/settings', updateSettings);
+router.post('/whatsapp/session', createSession);
+router.delete('/whatsapp/session', deleteSession);
 
 // Live Chat & Takeover Routes
 router.post('/takeover/:wa_user_id', handleStartTakeover);

@@ -1,3 +1,10 @@
+import { redirect } from "next/navigation"
+
+export default function ExportLaporanPage() {
+  redirect("/dashboard/laporan")
+}
+
+/* Legacy page removed
 "use client"
 
 import { useEffect, useState } from "react"
@@ -60,6 +67,7 @@ interface Complaint {
   created_at: string
   updated_at?: string
 }
+*/
 
 interface Stats {
   total: number

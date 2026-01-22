@@ -15,6 +15,7 @@ interface EnvConfig {
   LOG_DIR: string;
   CASE_SERVICE_URL: string;
   NOTIFICATION_SERVICE_URL: string;
+  DEFAULT_VILLAGE_ID: string;
 }
 
 function validateEnv(): EnvConfig {
@@ -47,6 +48,7 @@ function validateEnv(): EnvConfig {
     LOG_DIR: process.env.LOG_DIR || 'logs',
     CASE_SERVICE_URL: process.env.CASE_SERVICE_URL || 'http://localhost:3003',
     NOTIFICATION_SERVICE_URL: process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004',
+    DEFAULT_VILLAGE_ID: process.env.DEFAULT_VILLAGE_ID || '',
   };
 }
 

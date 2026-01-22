@@ -25,15 +25,34 @@ export async function POST(request: NextRequest) {
   const villageId = (session.admin as any).village_id as string | undefined
   if (!villageId) return NextResponse.json({ error: 'Village not found' }, { status: 404 })
 
-  const response = await fetch(
-    `${CHANNEL_SERVICE_URL}/internal/whatsapp/connect?village_id=${encodeURIComponent(villageId)}`,
-    {
-      method: 'POST',
-      headers: {
-        'x-internal-api-key': INTERNAL_API_KEY,
-      },
-    }
-  )
+  const response = await fetch(`${CHANNEL_SERVICE_URL}/internal/whatsapp/session`, {
+    method: 'POST',
+    headers: {
+      'x-internal-api-key': INTERNAL_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      village_id: villageId,
+      admin_id: session.admin.id,
+    })
+  })
+
+  const data = await response.json()
+  return NextResponse.json(data, { status: response.status })
+}
+
+export async function DELETE(request: NextRequest) {
+  const session = await getSession(request)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const villageId = (session.admin as any).village_id as string | undefined
+  if (!villageId) return NextResponse.json({ error: 'Village not found' }, { status: 404 })
+
+  const response = await fetch(`${CHANNEL_SERVICE_URL}/internal/whatsapp/session?village_id=${encodeURIComponent(villageId)}`, {
+    method: 'DELETE',
+    headers: {
+      'x-internal-api-key': INTERNAL_API_KEY,
+    },
+  })
 
   const data = await response.json()
   return NextResponse.json(data, { status: response.status })

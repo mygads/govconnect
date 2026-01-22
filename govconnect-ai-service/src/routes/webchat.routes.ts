@@ -18,7 +18,9 @@
  */
 
 import { Router, Request, Response } from 'express';
+import axios from 'axios';
 import logger from '../utils/logger';
+import { config } from '../config/env';
 import { processUnifiedMessage, ProcessMessageResult } from '../services/unified-message-processor.service';
 import { processTwoLayerWebchat } from '../services/two-layer-webchat.service';
 import {
@@ -39,6 +41,33 @@ logger.info('🏗️ Webchat architecture selected', {
   envVar: 'USE_2_LAYER_ARCHITECTURE',
   note: 'Same architecture as WhatsApp channel',
 });
+
+const DEFAULT_VILLAGE_ID = process.env.DEFAULT_VILLAGE_ID || '';
+
+async function isWebchatEnabled(): Promise<boolean> {
+  if (!DEFAULT_VILLAGE_ID) return true;
+
+  try {
+    const response = await axios.get(
+      `${config.channelServiceUrl}/internal/channel-accounts/${DEFAULT_VILLAGE_ID}`,
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+        },
+        timeout: 3000,
+      }
+    );
+
+    const enabled = response.data?.data?.enabled_webchat;
+    if (typeof enabled === 'boolean') return enabled;
+    return true;
+  } catch (error: any) {
+    logger.warn('Failed to check webchat channel settings, allowing by default', {
+      error: error.message,
+    });
+    return true;
+  }
+}
 
 /**
  * Process webchat message with selected architecture
@@ -120,6 +149,17 @@ router.post('/', async (req: Request, res: Response) => {
       res.status(400).json({
         success: false,
         error: 'Format session_id tidak valid',
+      });
+      return;
+    }
+
+    const webchatEnabled = await isWebchatEnabled();
+    if (!webchatEnabled) {
+      res.json({
+        success: true,
+        response: 'Maaf, webchat saat ini dinonaktifkan oleh admin desa. Silakan hubungi kembali nanti.',
+        intent: 'CHANNEL_DISABLED',
+        processing_time_ms: Date.now() - startTime,
       });
       return;
     }

@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -19,7 +18,6 @@ function slugify(value: string) {
 }
 
 export default function RegisterPage() {
-  const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -173,7 +171,7 @@ export default function RegisterPage() {
         localStorage.setItem("token", data.token)
       }
 
-      router.push("/dashboard")
+      window.location.href = "/dashboard"
     } catch (err: any) {
       setError(err.message || "Registrasi gagal")
     } finally {
@@ -221,6 +219,21 @@ export default function RegisterPage() {
                     required
                   />
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Jenis Akun</Label>
+                <Select defaultValue="desa" disabled>
+                  <SelectTrigger className="bg-muted">
+                    <SelectValue placeholder="Pilih jenis akun" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="desa">Desa/Kelurahan (Saat ini)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Saat ini registrasi hanya untuk tingkat desa/kelurahan. Tingkat kecamatan akan tersedia pada fase berikutnya.
+                </p>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">

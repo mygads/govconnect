@@ -64,6 +64,7 @@ GovConnect menggunakan **microservices architecture** dengan 5 services utama:
 - [x] **RabbitMQ** - Async message broker for events
 - [x] **REST APIs** - Sync communication between services
 - [x] **Knowledge Base** - Profil desa + dokumen untuk jawaban AI
+- [x] **Channel Connect** - Token & nomor WA per desa + toggle WA/Webchat
 - [x] **Kubernetes Manifests** - Full K8s deployment ready
 - [x] **OpenAPI Documentation** - Complete API docs
 - [x] **Circuit Breaker** - Resilience with Opossum

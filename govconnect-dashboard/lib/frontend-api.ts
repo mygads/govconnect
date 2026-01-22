@@ -146,47 +146,6 @@ export const statistics = {
   },
 };
 
-// ==================== WHATSAPP ====================
-export const whatsapp = {
-  async getStatus() {
-    return fetchApi<any>('/api/whatsapp/status');
-  },
-
-  async getQR() {
-    return fetchApi<any>('/api/whatsapp/qr');
-  },
-
-  async connect() {
-    return fetchApi<any>('/api/whatsapp/connect', { method: 'POST' });
-  },
-
-  async disconnect() {
-    return fetchApi<any>('/api/whatsapp/disconnect', { method: 'POST' });
-  },
-
-  async logout() {
-    return fetchApi<any>('/api/whatsapp/logout', { method: 'POST' });
-  },
-
-  async pairPhone(phoneNumber: string) {
-    return fetchApi<any>('/api/whatsapp/pairphone', {
-      method: 'POST',
-      body: JSON.stringify({ phoneNumber }),
-    });
-  },
-
-  async getSettings() {
-    return fetchApi<any>('/api/whatsapp/settings');
-  },
-
-  async updateSettings(settings: any) {
-    return fetchApi<any>('/api/whatsapp/settings', {
-      method: 'PATCH',
-      body: JSON.stringify(settings),
-    });
-  },
-};
-
 // ==================== LIVECHAT ====================
 export const livechat = {
   async getConversations(status: string = 'all') {
@@ -382,9 +341,6 @@ export const apiClient = {
   // Statistics
   getStatistics: statistics.getOverview,
   getTrends: statistics.getTrends,
-  
-  // WhatsApp
-  whatsapp,
   
   // Livechat
   livechat,

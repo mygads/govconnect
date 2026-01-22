@@ -12,7 +12,6 @@ import {
   ChevronRight,
   Smartphone,
   MessageCircle,
-  Download,
   TrendingUp,
   Shield,
   Brain,
@@ -93,11 +92,6 @@ export function GovConnectSidebar() {
           url: "/dashboard/pengaduan/kategori-jenis",
           icon: Shield,
         },
-        {
-          title: "Ekspor Laporan",
-          url: "/dashboard/export",
-          icon: Download,
-        },
       ],
     },
     {
@@ -119,7 +113,7 @@ export function GovConnectSidebar() {
       title: "Channel",
       items: [
         {
-          title: "Channel Connect",
+          title: "Koneksi WhatsApp",
           url: "/dashboard/channel-settings",
           icon: Smartphone,
         },
@@ -163,11 +157,6 @@ export function GovConnectSidebar() {
           url: "/dashboard/settings",
           icon: Settings2,
         },
-        {
-          title: "Pengaturan Notifikasi",
-          url: "/dashboard/settings/notifications",
-          icon: Bell,
-        },
       ],
     },
     {
@@ -189,6 +178,12 @@ export function GovConnectSidebar() {
           title: "AI Analytics",
           url: "/dashboard/ai-analytics",
           icon: Activity,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Pengaturan Notifikasi",
+          url: "/dashboard/settings/notifications",
+          icon: Bell,
           roles: ["superadmin"],
         },
         {

@@ -82,63 +82,6 @@
       ]
     },
     {
-      "name": "WhatsApp Session",
-      "item": [
-        {
-          "name": "Get Status",
-          "request": {
-            "method": "GET",
-            "url": "{{channel_service_url}}/internal/whatsapp/status",
-            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
-          }
-        },
-        {
-          "name": "Connect",
-          "request": {
-            "method": "POST",
-            "url": "{{channel_service_url}}/internal/whatsapp/connect",
-            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
-          }
-        },
-        {
-          "name": "Disconnect",
-          "request": {
-            "method": "POST",
-            "url": "{{channel_service_url}}/internal/whatsapp/disconnect",
-            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
-          }
-        },
-        {
-          "name": "Logout",
-          "request": {
-            "method": "POST",
-            "url": "{{channel_service_url}}/internal/whatsapp/logout",
-            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
-          }
-        },
-        {
-          "name": "Get QR Code",
-          "request": {
-            "method": "GET",
-            "url": "{{channel_service_url}}/internal/whatsapp/qr",
-            "header": [{ "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }]
-          }
-        },
-        {
-          "name": "Pair Phone",
-          "request": {
-            "method": "POST",
-            "url": "{{channel_service_url}}/internal/whatsapp/pairphone",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"phone_number\": \"6281234567890\"\n}" }
-          }
-        }
-      ]
-    },
-    {
       "name": "Live Chat & Takeover",
       "item": [
         {

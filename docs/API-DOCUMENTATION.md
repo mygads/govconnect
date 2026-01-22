@@ -682,54 +682,38 @@ Mark messages as read.
 
 ---
 
-### WhatsApp Session Management
+### WhatsApp Session (QR & Token Internal)
 
-#### GET /internal/whatsapp/status
-Get WhatsApp connection status.
+Semua endpoint session berada di Channel Service dan membutuhkan header `X-Internal-API-Key`.
 
-**Response:**
+#### POST /internal/whatsapp/session
+Buat session WhatsApp baru (auto-save token di DB internal).
+
+Body:
 ```json
 {
-  "status": "connected",
-  "phone_number": "6281234567890",
-  "name": "GovConnect Bot"
+  "village_id": "uuid-village",
+  "admin_id": "uuid-admin"
 }
 ```
 
-#### POST /internal/whatsapp/connect
-Connect WhatsApp session.
+#### DELETE /internal/whatsapp/session?village_id=...
+Hapus session dan token dari DB (logout dilakukan sebelum delete).
 
-#### POST /internal/whatsapp/disconnect
-Disconnect WhatsApp session.
+#### GET /internal/whatsapp/status?village_id=...
+Ambil status session (connected/loggedIn/jid) + nomor WA tersimpan.
 
-#### POST /internal/whatsapp/logout
-Logout WhatsApp session.
+#### POST /internal/whatsapp/connect?village_id=...
+Konek session untuk menghasilkan QR (jika belum login).
 
-#### GET /internal/whatsapp/qr
-Get QR code for pairing.
+#### GET /internal/whatsapp/qr?village_id=...
+Ambil QR code untuk login.
 
-**Response:**
-```json
-{
-  "qr": "data:image/png;base64,..."
-}
-```
+#### POST /internal/whatsapp/disconnect?village_id=...
+Putuskan koneksi session (token tetap tersimpan).
 
-#### POST /internal/whatsapp/pairphone
-Pair phone number.
-
-**Request Body:**
-```json
-{
-  "phone_number": "6281234567890"
-}
-```
-
-#### GET /internal/whatsapp/settings
-Get WhatsApp settings.
-
-#### PATCH /internal/whatsapp/settings
-Update WhatsApp settings.
+#### POST /internal/whatsapp/logout?village_id=...
+Logout session (perlu scan QR lagi untuk login ulang).
 
 ---
 

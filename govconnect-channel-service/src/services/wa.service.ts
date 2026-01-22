@@ -9,6 +9,65 @@ let sessionSettings = {
   typingIndicator: false,
 };
 
+async function getSessionByVillageId(villageId: string) {
+  return prisma.wa_sessions.findUnique({
+    where: { village_id: villageId },
+  });
+}
+
+async function upsertSession(params: {
+  villageId: string;
+  adminId?: string;
+  token: string;
+  status?: string;
+  waNumber?: string | null;
+}) {
+  return prisma.wa_sessions.upsert({
+    where: { village_id: params.villageId },
+    create: {
+      village_id: params.villageId,
+      admin_id: params.adminId,
+      wa_token: params.token,
+      status: params.status || null,
+      wa_number: params.waNumber || null,
+      last_connected_at: params.status === 'connected' ? new Date() : null,
+    },
+    update: {
+      admin_id: params.adminId,
+      wa_token: params.token,
+      status: params.status || null,
+      wa_number: params.waNumber || null,
+      last_connected_at: params.status === 'connected' ? new Date() : undefined,
+    },
+  });
+}
+
+async function getDefaultChannelAccount() {
+  const defaultVillageId = process.env.DEFAULT_VILLAGE_ID;
+  if (!defaultVillageId) return null;
+
+  try {
+    return await prisma.channel_accounts.findUnique({
+      where: { village_id: defaultVillageId },
+    });
+  } catch (error: any) {
+    logger.warn('Failed to load channel account', { error: error.message });
+    return null;
+  }
+}
+
+async function resolveAccessToken(): Promise<string> {
+  const defaultVillageId = process.env.DEFAULT_VILLAGE_ID;
+  if (defaultVillageId) {
+    const session = await getSessionByVillageId(defaultVillageId);
+    if (session?.wa_token) return session.wa_token;
+  }
+
+  const account = await getDefaultChannelAccount();
+  if (account?.wa_token) return account.wa_token;
+  return config.WA_ACCESS_TOKEN;
+}
+
 /**
  * Load settings from database at startup
  */
@@ -51,9 +110,9 @@ interface SessionStatus {
  * API: GET {WA_API_URL}/session/status
  * Response: { code: 200, data: { connected, loggedIn, jid, name, events, webhook, ... }, success: true }
  */
-export async function getSessionStatus(): Promise<SessionStatus> {
+export async function getSessionStatus(token: string): Promise<SessionStatus> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    if (!token) {
       logger.warn('WhatsApp token not configured');
       return { connected: false, loggedIn: false };
     }
@@ -62,7 +121,7 @@ export async function getSessionStatus(): Promise<SessionStatus> {
     
     const response = await axios.get(url, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token,
       },
       timeout: 10000,
     });
@@ -145,14 +204,95 @@ export async function getWebhookConfig(): Promise<{ subscribe: string[]; webhook
   }
 }
 
+function extractSessionToken(data: any): string | null {
+  return (
+    data?.token ||
+    data?.Token ||
+    data?.sessionToken ||
+    data?.session?.token ||
+    data?.data?.token ||
+    data?.data?.Token ||
+    data?.data?.sessionToken ||
+    data?.data?.session?.token ||
+    null
+  );
+}
+
+export async function getStoredSession(villageId: string) {
+  return getSessionByVillageId(villageId);
+}
+
+export async function createSessionForVillage(params: {
+  villageId: string;
+  adminId?: string;
+}) {
+  const existing = await getSessionByVillageId(params.villageId);
+  if (existing) {
+    return { existing: true };
+  }
+
+  const url = `${config.WA_API_URL}/session/create`;
+
+  const response = await axios.post(url, {
+    Name: params.villageId,
+  }, {
+    timeout: 15000,
+  });
+
+  const data = response.data?.data || response.data;
+  const token = extractSessionToken(data);
+  if (!token) {
+    throw new Error('Token sesi tidak ditemukan dari server WA');
+  }
+
+  await upsertSession({
+    villageId: params.villageId,
+    adminId: params.adminId,
+    token,
+  });
+
+  return { existing: false };
+}
+
+export async function updateStoredSessionStatus(params: {
+  villageId: string;
+  status?: string;
+  waNumber?: string | null;
+}) {
+  return prisma.wa_sessions.update({
+    where: { village_id: params.villageId },
+    data: {
+      status: params.status || null,
+      wa_number: params.waNumber || null,
+      last_connected_at: params.status === 'connected' ? new Date() : undefined,
+    },
+  });
+}
+
+export async function deleteSessionForVillage(villageId: string) {
+  const session = await getSessionByVillageId(villageId);
+  if (!session) return { deleted: false };
+
+  try {
+    await logoutSession(session.wa_token);
+  } catch (error: any) {
+    logger.warn('Logout session before delete failed', { error: error.message });
+  }
+
+  await prisma.wa_sessions.delete({
+    where: { village_id: villageId },
+  });
+  return { deleted: true };
+}
+
 /**
  * Connect WhatsApp session
  * API: POST {WA_API_URL}/session/connect
  * Body: { Subscribe: ["Message", "ReadReceipt"], Immediate: true }
  */
-export async function connectSession(): Promise<{ details: string }> {
+export async function connectSession(token: string): Promise<{ details: string }> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    if (!token) {
       throw new Error('WhatsApp token not configured');
     }
 
@@ -163,7 +303,7 @@ export async function connectSession(): Promise<{ details: string }> {
       Immediate: true,
     }, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token,
         'Content-Type': 'application/json',
       },
       timeout: 30000,
@@ -187,9 +327,9 @@ export async function connectSession(): Promise<{ details: string }> {
 /**
  * Disconnect WhatsApp session (keeps session data)
  */
-export async function disconnectSession(): Promise<{ details: string }> {
+export async function disconnectSession(token: string): Promise<{ details: string }> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    if (!token) {
       throw new Error('WhatsApp token not configured');
     }
 
@@ -197,7 +337,7 @@ export async function disconnectSession(): Promise<{ details: string }> {
     
     const response = await axios.post(url, {}, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token,
       },
       timeout: 10000,
     });
@@ -220,9 +360,9 @@ export async function disconnectSession(): Promise<{ details: string }> {
 /**
  * Logout WhatsApp session (clears session data, requires QR rescan)
  */
-export async function logoutSession(): Promise<{ details: string }> {
+export async function logoutSession(token: string): Promise<{ details: string }> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    if (!token) {
       throw new Error('WhatsApp token not configured');
     }
 
@@ -230,7 +370,7 @@ export async function logoutSession(): Promise<{ details: string }> {
     
     const response = await axios.post(url, {}, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token,
       },
       timeout: 10000,
     });
@@ -255,9 +395,9 @@ export async function logoutSession(): Promise<{ details: string }> {
  * API: GET {WA_API_URL}/session/qr
  * Only works when session is connected but not logged in yet
  */
-export async function getQRCode(): Promise<{ QRCode: string; alreadyLoggedIn?: boolean }> {
+export async function getQRCode(token: string): Promise<{ QRCode: string; alreadyLoggedIn?: boolean }> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    if (!token) {
       throw new Error('WhatsApp token not configured');
     }
 
@@ -265,7 +405,7 @@ export async function getQRCode(): Promise<{ QRCode: string; alreadyLoggedIn?: b
     
     const response = await axios.get(url, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token,
       },
       timeout: 10000,
     });
@@ -300,9 +440,9 @@ export async function getQRCode(): Promise<{ QRCode: string; alreadyLoggedIn?: b
 /**
  * Pair phone for authentication
  */
-export async function pairPhone(phone: string): Promise<{ LinkingCode: string }> {
+export async function pairPhone(token: string, phone: string): Promise<{ LinkingCode: string }> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    if (!token) {
       throw new Error('WhatsApp token not configured');
     }
 
@@ -312,7 +452,7 @@ export async function pairPhone(phone: string): Promise<{ LinkingCode: string }>
       Phone: phone,
     }, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token,
         'Content-Type': 'application/json',
       },
       timeout: 30000,
@@ -538,7 +678,17 @@ export async function sendTextMessage(
   message: string
 ): Promise<{ success: boolean; message_id?: string; error?: string }> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    const account = await getDefaultChannelAccount();
+    if (account && account.enabled_wa === false) {
+      logger.info('WhatsApp channel disabled, message not sent', { to });
+      return {
+        success: false,
+        error: 'WhatsApp channel disabled',
+      };
+    }
+
+    const accessToken = await resolveAccessToken();
+    if (!accessToken) {
       logger.warn('WhatsApp token not configured, message not sent');
       return {
         success: false,
@@ -561,7 +711,7 @@ export async function sendTextMessage(
       },
       {
         headers: {
-          token: config.WA_ACCESS_TOKEN,
+          token: accessToken,
           'Content-Type': 'application/json',
         },
         timeout: 30000, // 30 seconds timeout

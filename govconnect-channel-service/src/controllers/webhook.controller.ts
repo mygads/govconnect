@@ -10,9 +10,29 @@ import { updateConversation, isUserInTakeover, setAIProcessing } from '../servic
 import { addPendingMessage } from '../services/pending-message.service';
 import { addMessageToBatch, cancelBatch } from '../services/message-batcher.service';
 import logger from '../utils/logger';
+import prisma from '../config/database';
 import { 
   GenfityWebhookPayload,
 } from '../types/webhook.types';
+
+async function isWaChannelEnabled(): Promise<boolean> {
+  const defaultVillageId = process.env.DEFAULT_VILLAGE_ID;
+  if (!defaultVillageId) return true;
+
+  try {
+    const account = await prisma.channel_accounts.findUnique({
+      where: { village_id: defaultVillageId },
+    });
+
+    if (!account) return true;
+    return account.enabled_wa !== false;
+  } catch (error: any) {
+    logger.warn('Failed to check WA channel settings, allowing by default', {
+      error: error.message,
+    });
+    return true;
+  }
+}
 
 /**
  * Handle WhatsApp webhook from genfity-wa
@@ -206,6 +226,16 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
     // Wait for media processing to complete
     await mediaPromise;
+
+    const waChannelEnabled = await isWaChannelEnabled();
+    if (!waChannelEnabled) {
+      logger.info('WA channel disabled, skipping AI processing', {
+        wa_user_id: waUserId,
+        message_id: messageId,
+      });
+      res.json({ status: 'ok', message_id: messageId, mode: 'disabled' });
+      return;
+    }
 
     // ============================================
     // STEP 3: CHECK TAKEOVER STATUS

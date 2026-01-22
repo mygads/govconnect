@@ -50,6 +50,22 @@ model wa_settings {
   @@map("wa_settings")
 }
 
+model wa_sessions {
+  id               String   @id @default(cuid())
+  village_id       String   @unique
+  admin_id         String?
+  wa_token         String
+  wa_number        String?
+  status           String?
+  last_connected_at DateTime?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@index([admin_id])
+  @@index([village_id])
+  @@map("wa_sessions")
+}
+
 // Channel accounts per village
 model channel_accounts {
   id             String   @id @default(cuid())

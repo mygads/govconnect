@@ -59,7 +59,7 @@ export function DashboardNavbar() {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="h-8 gap-2 px-2 rounded-md hover:bg-accent transition-colors">
               <Avatar className="h-6 w-6 ring-2 ring-primary/30">
-                <AvatarFallback className="bg-gradient-to-r from-primary to-primary/80 text-white text-xs font-semibold">
+                <AvatarFallback className="bg-linear-to-r from-primary to-primary/80 text-white text-xs font-semibold">
                   {user ? getInitials(user.name) : 'AD'}
                 </AvatarFallback>
               </Avatar>
@@ -80,13 +80,15 @@ export function DashboardNavbar() {
               <Settings className="mr-2 h-4 w-4" />
               <span>Settings</span>
             </DropdownMenuItem>
-            <DropdownMenuItem 
-              onClick={() => router.push('/dashboard/settings/notifications')} 
-              className="cursor-pointer"
-            >
-              <Bell className="mr-2 h-4 w-4" />
-              <span>Pengaturan Notifikasi</span>
-            </DropdownMenuItem>
+            {user?.role === 'superadmin' && (
+              <DropdownMenuItem 
+                onClick={() => router.push('/dashboard/settings/notifications')} 
+                className="cursor-pointer"
+              >
+                <Bell className="mr-2 h-4 w-4" />
+                <span>Pengaturan Notifikasi</span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="cursor-pointer text-destructive">
               <LogOut className="mr-2 h-4 w-4" />

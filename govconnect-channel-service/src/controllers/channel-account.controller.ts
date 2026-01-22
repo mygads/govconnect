@@ -31,30 +31,28 @@ export async function handleUpsertChannelAccount(req: Request, res: Response) {
     const { village_id } = req.params;
     const {
       wa_number,
-      wa_token,
       enabled_wa,
       enabled_webchat,
     } = req.body;
 
-    if (!wa_number || !wa_token) {
-      return res.status(400).json({ error: 'wa_number and wa_token are required' });
-    }
-
     const webhookUrl = buildWebhookUrl();
+
+    const existing = await prisma.channel_accounts.findUnique({
+      where: { village_id },
+    });
 
     const account = await prisma.channel_accounts.upsert({
       where: { village_id },
       create: {
         village_id,
-        wa_number,
-        wa_token,
+        wa_number: typeof wa_number === 'string' ? wa_number : '',
+        wa_token: existing?.wa_token || '',
         webhook_url: webhookUrl,
         enabled_wa: enabled_wa ?? true,
         enabled_webchat: enabled_webchat ?? true,
       },
       update: {
-        wa_number,
-        wa_token,
+        wa_number: typeof wa_number === 'string' ? wa_number : (existing?.wa_number || ''),
         webhook_url: webhookUrl,
         enabled_wa: enabled_wa ?? true,
         enabled_webchat: enabled_webchat ?? true,

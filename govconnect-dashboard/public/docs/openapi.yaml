@@ -45,10 +45,10 @@ tags:
     description: Statistics and analytics
   - name: User
     description: User history and data
-  - name: WhatsApp
-    description: WhatsApp session management
   - name: Messages
     description: Message handling
+  - name: WhatsApp Session
+    description: WhatsApp session management (QR & token internal)
   - name: Live Chat
     description: Admin takeover and live chat
   - name: WebChat
@@ -342,18 +342,6 @@ components:
           items:
             type: string
 
-
-    # Channel Service Schemas
-    WhatsAppStatus:
-      type: object
-      properties:
-        status:
-          type: string
-          enum: [connected, disconnected, connecting]
-        phone_number:
-          type: string
-        name:
-          type: string
 
     Message:
       type: object
@@ -1070,29 +1058,42 @@ paths:
   # ============================================
   # CHANNEL SERVICE - WhatsApp Session
   # ============================================
-  /internal/whatsapp/status:
-    get:
+  /internal/whatsapp/session:
+    post:
       tags:
-        - WhatsApp
-      summary: Get WhatsApp status
-      description: Get WhatsApp connection status
-      operationId: getWhatsAppStatus
+        - WhatsApp Session
+      summary: Create WhatsApp session
       security:
         - InternalApiKey: []
       responses:
         '200':
-          description: WhatsApp status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WhatsAppStatus'
+          description: Session created
+    delete:
+      tags:
+        - WhatsApp Session
+      summary: Delete WhatsApp session
+      security:
+        - InternalApiKey: []
+      responses:
+        '200':
+          description: Session deleted
+
+  /internal/whatsapp/status:
+    get:
+      tags:
+        - WhatsApp Session
+      summary: Get WhatsApp session status
+      security:
+        - InternalApiKey: []
+      responses:
+        '200':
+          description: Session status
 
   /internal/whatsapp/connect:
     post:
       tags:
-        - WhatsApp
-      summary: Connect WhatsApp
-      operationId: connectWhatsApp
+        - WhatsApp Session
+      summary: Connect WhatsApp session
       security:
         - InternalApiKey: []
       responses:
@@ -1102,9 +1103,8 @@ paths:
   /internal/whatsapp/disconnect:
     post:
       tags:
-        - WhatsApp
-      summary: Disconnect WhatsApp
-      operationId: disconnectWhatsApp
+        - WhatsApp Session
+      summary: Disconnect WhatsApp session
       security:
         - InternalApiKey: []
       responses:
@@ -1114,9 +1114,8 @@ paths:
   /internal/whatsapp/logout:
     post:
       tags:
-        - WhatsApp
-      summary: Logout WhatsApp
-      operationId: logoutWhatsApp
+        - WhatsApp Session
+      summary: Logout WhatsApp session
       security:
         - InternalApiKey: []
       responses:
@@ -1126,74 +1125,13 @@ paths:
   /internal/whatsapp/qr:
     get:
       tags:
-        - WhatsApp
+        - WhatsApp Session
       summary: Get QR code
-      description: Get QR code for WhatsApp pairing
-      operationId: getWhatsAppQR
       security:
         - InternalApiKey: []
       responses:
         '200':
           description: QR code
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  qr:
-                    type: string
-                    description: Base64 encoded QR image
-
-  /internal/whatsapp/pairphone:
-    post:
-      tags:
-        - WhatsApp
-      summary: Pair phone number
-      operationId: pairPhoneNumber
-      security:
-        - InternalApiKey: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - phone_number
-              properties:
-                phone_number:
-                  type: string
-      responses:
-        '200':
-          description: Pairing code sent
-
-  /internal/whatsapp/settings:
-    get:
-      tags:
-        - WhatsApp
-      summary: Get WhatsApp settings
-      operationId: getWhatsAppSettings
-      security:
-        - InternalApiKey: []
-      responses:
-        '200':
-          description: WhatsApp settings
-    patch:
-      tags:
-        - WhatsApp
-      summary: Update WhatsApp settings
-      operationId: updateWhatsAppSettings
-      security:
-        - InternalApiKey: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '200':
-          description: Settings updated
 
   # ============================================
   # CHANNEL SERVICE - Live Chat & Takeover
