@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,6 +31,7 @@ export default function ChannelSettingsPage() {
   const [sessionLoading, setSessionLoading] = useState(false)
   const [qrCode, setQrCode] = useState<string | null>(null)
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null)
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [settings, setSettings] = useState<ChannelSettings>({
     wa_number: "",
     webhook_url: "",
@@ -90,6 +91,22 @@ export default function ChannelSettingsPage() {
       setSessionLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+    }
+
+    pollingRef.current = setInterval(() => {
+      fetchSessionStatus()
+    }, 8000)
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+      }
+    }
+  }, [])
 
   const handleCreateSession = async () => {
     try {
@@ -199,7 +216,6 @@ export default function ChannelSettingsPage() {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
         body: JSON.stringify({
-          wa_number: settings.wa_number,
           enabled_wa: settings.enabled_wa,
           enabled_webchat: settings.enabled_webchat,
         }),

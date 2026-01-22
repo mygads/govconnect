@@ -282,6 +282,14 @@ export async function deleteSessionForVillage(villageId: string) {
   await prisma.wa_sessions.delete({
     where: { village_id: villageId },
   });
+
+  await prisma.channel_accounts.updateMany({
+    where: { village_id: villageId },
+    data: {
+      wa_number: '',
+      enabled_wa: false,
+    },
+  });
   return { deleted: true };
 }
 

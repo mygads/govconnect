@@ -17,7 +17,7 @@ Dokumen ini mengarahkan GitHub Copilot agar konsisten dengan kebutuhan GovConnec
 
 ## ✅ Arsitektur Sistem (Wajib Dipatuhi)
 **Service & Tanggung Jawab:**
-1. **Channel Service**: WA webhook, chat history, outbound message, channel settings (1 nomor WA per desa).
+1. **Channel Service**: WA webhook, chat history, outbound message, channel settings & session WA (1 nomor WA per desa).
 2. **AI Orchestrator**: intent + flow logic, stateless, panggil data via REST.
 3. **Case Service**: layanan & pengaduan (CRUD + status + history + media penanganan).
 4. **Notification Service**: kirim pesan keluar, log status.
@@ -91,8 +91,10 @@ AI wajib mengembalikan JSON valid sesuai schema:
 
 ## ✅ Channel Settings
 - 1 desa ↔ 1 nomor WA.
-- Field: `wa_number`, `wa_token`, `webhook_url` (read-only), `enabled_wa`, `enabled_webchat`.
-- Toggle WA/Webchat mematikan/menyalakan AI di channel terkait.
+- Session WA dikelola otomatis (admin klik **Buat Session** → token tersimpan di DB internal → tampil QR).
+- Nomor WA & status koneksi ditampilkan di dashboard (tanpa input token manual).
+- Field (read-only): `wa_number`, `webhook_url`.
+- Toggle `enabled_wa` / `enabled_webchat` mematikan/menyalakan AI di channel terkait.
 
 ## ✅ Layanan (Service Catalog)
 - Kategori layanan → banyak layanan.

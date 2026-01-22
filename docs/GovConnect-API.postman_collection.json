@@ -320,6 +320,86 @@
           ]
         },
         {
+          "name": "WhatsApp Session",
+          "item": [
+            {
+              "name": "Create Session",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/whatsapp/session",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"village_id\": \"{{village_id}}\",\n  \"admin_id\": \"{{admin_id}}\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Get Status",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/internal/whatsapp/status?village_id={{village_id}}",
+                "header": [
+                  { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+                ]
+              }
+            },
+            {
+              "name": "Connect Session",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/whatsapp/connect?village_id={{village_id}}",
+                "header": [
+                  { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+                ]
+              }
+            },
+            {
+              "name": "Get QR Code",
+              "request": {
+                "method": "GET",
+                "url": "{{channel_service_url}}/internal/whatsapp/qr?village_id={{village_id}}",
+                "header": [
+                  { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+                ]
+              }
+            },
+            {
+              "name": "Disconnect Session",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/whatsapp/disconnect?village_id={{village_id}}",
+                "header": [
+                  { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+                ]
+              }
+            },
+            {
+              "name": "Logout Session",
+              "request": {
+                "method": "POST",
+                "url": "{{channel_service_url}}/internal/whatsapp/logout?village_id={{village_id}}",
+                "header": [
+                  { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+                ]
+              }
+            },
+            {
+              "name": "Delete Session",
+              "request": {
+                "method": "DELETE",
+                "url": "{{channel_service_url}}/internal/whatsapp/session?village_id={{village_id}}",
+                "header": [
+                  { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Live Chat & Takeover",
           "item": [
             {

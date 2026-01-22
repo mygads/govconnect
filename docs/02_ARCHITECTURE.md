@@ -51,9 +51,10 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 - Publish event ke RabbitMQ
 - Kirim outbound message ke WA API
 - Simpan konfigurasi channel per desa (1 nomor WA)
+- Kelola session WhatsApp (token internal + QR login)
 
 **Database:** `gc_channel`
-- `messages`, `send_logs`, `channel_accounts`
+- `messages`, `send_logs`, `channel_accounts`, `wa_sessions`
 
 ---
 
@@ -109,7 +110,7 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 - Sinkronisasi profil desa ke knowledge base dilakukan otomatis saat update
 - Upload knowledge file (PDF/DOC/DOCX/TXT)
 - Nomor penting per kategori
-- Channel settings (token, WA number, webhook URL, toggle)
+- Channel settings (QR session, status koneksi, WA number, webhook URL, toggle)
 - Testing knowledge (demo) untuk uji RAG per desa
 - Layanan: CRUD kategori/layanan/persyaratan
 - Pengaduan: kategori/jenis, urgent alert, detail & update
@@ -165,7 +166,8 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 - `complaint_categories`, `complaint_types`, `complaints`, `complaint_updates`
 
 ### gc_channel
-- `channel_accounts` (village_id, wa_number, token, webhook_url, enabled_wa, enabled_webchat)
+- `channel_accounts` (village_id, wa_number, webhook_url, enabled_wa, enabled_webchat)
+- `wa_sessions` (village_id, wa_token internal, status, wa_number)
 - `messages`, `send_logs`
 
 ---
@@ -175,7 +177,7 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 - **Profil Desa**
 - **Knowledge Base** (kategori + upload file)
 - **Nomor Penting**
-- **Channel Connect** (WA token, WA number, webhook URL, toggle)
+- **Koneksi WhatsApp** (buat session, QR login, status, WA number, toggle)
 - **Testing Knowledge**
 - **Layanan** (kategori, layanan, persyaratan)
 - **Daftar Pelayanan** (list request, detail, status)

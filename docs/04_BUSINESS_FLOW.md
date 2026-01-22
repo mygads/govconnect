@@ -96,10 +96,12 @@ Dokumen ini menjelaskan alur utama sesuai fitur terbaru: knowledge base terpadu,
 
 ### K) Channel Connect (WA + Webchat)
 ```
-1. Admin isi token WA + nomor WA di dashboard.
-2. Sistem tampilkan webhook URL (read-only).
-3. Admin toggle WA dan/atau Webchat.
-4. Jika OFF, AI tidak memproses channel tersebut.
+1. Admin klik "Buat Session" di dashboard.
+2. Sistem membuat session dan menyimpan token di DB internal.
+3. Admin klik "Konek & Ambil QR" lalu scan QR untuk login WhatsApp.
+4. Sistem menampilkan nomor WA & status koneksi.
+5. Admin toggle WA dan/atau Webchat.
+6. Jika OFF, AI tidak memproses channel tersebut.
 ```
 
 ### L) Live Chat & Takeover

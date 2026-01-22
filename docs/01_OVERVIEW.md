@@ -23,7 +23,9 @@ GovConnect adalah platform layanan desa/kelurahan berbasis WhatsApp dan web yang
 
 ### 3) Channel Connect (WhatsApp + Webchat)
 - Setiap akun desa **terhubung ke 1 nomor WhatsApp**.
-- Halaman konfigurasi berisi **token WA**, **nomor WA**, dan **Webhook URL** (ditampilkan agar user mudah ganti provider).
+- **Session WhatsApp dikelola otomatis**: admin klik **Buat Session**, sistem menyimpan token di DB internal, lalu menampilkan **QR** untuk login.
+- Jika session sudah ada, admin cukup **konek QR** tanpa membuat session baru.
+- Nomor WA & status koneksi ditampilkan otomatis di dashboard.
 - **Webchat Widget** dapat di-embed ke website desa (toggle on/off).
 - **Channel toggle**: admin dapat menyalakan/mematikan AI di WA dan Webchat.
 
