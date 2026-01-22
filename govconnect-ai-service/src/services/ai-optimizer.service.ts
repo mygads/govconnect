@@ -53,6 +53,10 @@ const QUICK_RESPONSES: Record<string, { response: string; guidance?: string }> =
   'REJECTION': {
     response: 'Baik Kak, tidak masalah. Ada yang lain yang bisa saya bantu?',
   },
+  'EMERGENCY_FIRE': {
+    response: '🚨 *DARURAT KEBAKARAN!*\n\nSegera hubungi:\n🔥 *Damkar Sektor Bola: 113* atau *(022) 123456*\n📞 Call Center: 112\n\n⚠️ *Langkah darurat:*\n1. Evakuasi semua orang\n2. Jauhi sumber api\n3. Jangan gunakan lift\n4. Tutup hidung dengan kain basah\n\n🙏 Tetap tenang, bantuan segera datang!',
+    guidance: 'Setelah situasi aman, Kakak bisa kembali untuk membuat laporan resmi di Kelurahan.',
+  },
 };
 
 // ==================== OPTIMIZATION FUNCTIONS ====================

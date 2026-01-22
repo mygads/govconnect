@@ -18,6 +18,7 @@ import { analyzeSentiment } from './sentiment-analysis.service';
 import { isSpamMessage } from './rag.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { getCachedResponse, setCachedResponse } from './response-cache.service';
+import { EMERGENCY_FIRE_PATTERNS, EMERGENCY_POLICE_PATTERNS, EMERGENCY_SECURITY_PATTERNS, EMERGENCY_HEALTH_PATTERNS } from '../constants/intent-patterns';
 
 // Import action handlers
 import {
@@ -35,6 +36,170 @@ interface TwoLayerWebchatParams {
   userId: string;
   message: string;
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+}
+
+/**
+ * Check if message is fire emergency
+ */
+function isFireEmergency(message: string): boolean {
+  const lowerMessage = message.toLowerCase();
+  return EMERGENCY_FIRE_PATTERNS.some(pattern => pattern.test(lowerMessage));
+}
+
+/**
+ * Check if message is police emergency (criminal/accident)
+ */
+function isPoliceEmergency(message: string): boolean {
+  const lowerMessage = message.toLowerCase();
+  return EMERGENCY_POLICE_PATTERNS.some(pattern => pattern.test(lowerMessage));
+}
+
+/**
+ * Check if message is security/danpos emergency
+ */
+function isSecurityEmergency(message: string): boolean {
+  const lowerMessage = message.toLowerCase();
+  return EMERGENCY_SECURITY_PATTERNS.some(pattern => pattern.test(lowerMessage));
+}
+
+/**
+ * Check if message is health/puskesmas emergency
+ */
+function isHealthEmergency(message: string): boolean {
+  const lowerMessage = message.toLowerCase();
+  return EMERGENCY_HEALTH_PATTERNS.some(pattern => pattern.test(lowerMessage));
+}
+
+/**
+ * Get emergency police response
+ */
+function getPoliceEmergencyResponse(): ProcessMessageResult {
+  return {
+    success: true,
+    response: `🚨 **DARURAT KEAMANAN / KRIMINAL** 🚨
+
+Segera hubungi:
+📞 **Polsek Bola: +62 821-8811-8778**
+� WhatsApp: https://wa.me/6282188118778
+�📞 **Call Center Polisi: 110**
+
+⚠️ **Langkah yang harus dilakukan:**
+1. Pastikan keselamatan diri Anda terlebih dahulu
+2. Jangan panik, tetap tenang
+3. Catat ciri-ciri pelaku jika memungkinkan
+4. Amankan barang bukti (jangan disentuh)
+5. Segera hubungi nomor di atas
+
+📝 **Informasi yang perlu disiapkan:**
+- Lokasi kejadian
+- Waktu kejadian
+- Kronologi singkat
+- Ciri-ciri pelaku (jika ada)
+
+Tetap tenang dan segera hubungi Polsek Bola!`,
+    intent: 'EMERGENCY_POLICE',
+    metadata: {
+      processingTimeMs: 0,
+      hasKnowledge: false,
+      isEmergency: true,
+    },
+  };
+}
+
+/**
+ * Get emergency fire response
+ */
+function getFireEmergencyResponse(): ProcessMessageResult {
+  return {
+    success: true,
+    response: `🚨 **DARURAT KEBAKARAN** 🚨
+
+Segera hubungi:
+📞 **Damkar Sektor Bola: 0821-9280-0935**
+💬 WhatsApp: https://wa.me/6282192800935
+📞 **Call Center Damkar: 113**
+
+⚠️ **Langkah Darurat:**
+1. Segera evakuasi semua orang dari area berbahaya
+2. Jangan gunakan lift, gunakan tangga darurat
+3. Tutup hidung dengan kain basah jika ada asap
+4. Jangan kembali ke dalam bangunan
+
+Tetap tenang dan segera hubungi nomor di atas!`,
+    intent: 'EMERGENCY_FIRE',
+    metadata: {
+      processingTimeMs: 0,
+      hasKnowledge: false,
+      isEmergency: true,
+    },
+  };
+}
+
+/**
+ * Get emergency security/danpos response
+ */
+function getSecurityEmergencyResponse(): ProcessMessageResult {
+  return {
+    success: true,
+    response: `🛡️ **KONTAK KEAMANAN LINGKUNGAN** 🛡️
+
+Hubungi Danpos PA Asmar untuk keamanan lingkungan:
+📞 **Danpos PA Asmar: +62 853-9963-9869**
+💬 WhatsApp: https://wa.me/6285399639869
+
+📋 **Layanan Danpos:**
+- Patroli keamanan lingkungan
+- Laporan orang mencurigakan
+- Koordinasi ronda malam
+- Keamanan RT/RW
+
+⏰ **Jam Operasional:**
+- Senin - Minggu: 24 Jam
+
+Silakan hubungi untuk keamanan lingkungan sekitar!`,
+    intent: 'EMERGENCY_SECURITY',
+    metadata: {
+      processingTimeMs: 0,
+      hasKnowledge: false,
+      isEmergency: true,
+    },
+  };
+}
+
+/**
+ * Get emergency health/puskesmas response
+ */
+function getHealthEmergencyResponse(): ProcessMessageResult {
+  return {
+    success: true,
+    response: `🏥 **KONTAK KESEHATAN / PUSKESMAS** 🏥
+
+Hubungi Puskesmas Solo untuk layanan kesehatan:
+📞 **Puskesmas Solo (A. Aswin PKM): +62 853-6373-2235**
+💬 WhatsApp: https://wa.me/6285363732235
+
+📋 **Layanan Puskesmas:**
+- Pemeriksaan kesehatan umum
+- Imunisasi & vaksinasi
+- Posyandu
+- Cek kesehatan & konsultasi
+- Rujukan ke rumah sakit
+
+⏰ **Jam Operasional:**
+- Senin - Jumat: 08:00 - 16:00
+- Sabtu: 08:00 - 12:00
+
+⚠️ **Untuk Gawat Darurat:**
+📞 **Ambulans/IGD: 118 / 119**
+
+Silakan hubungi untuk informasi kesehatan!`,
+    intent: 'EMERGENCY_HEALTH',
+    metadata: {
+      processingTimeMs: 0,
+      hasKnowledge: false,
+      isEmergency: true,
+    },
+  };
 }
 
 /**
@@ -64,6 +229,38 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
     // Step 2: Sanitize and preprocess
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = applyTypoCorrections(sanitizedMessage);
+
+    // Step 2.5: 🚨 EMERGENCY CHECK - Fire Emergency (highest priority)
+    if (isFireEmergency(sanitizedMessage) || isFireEmergency(message)) {
+      logger.warn('🔥🚨 FIRE EMERGENCY DETECTED!', { userId, message });
+      const emergencyResponse = getFireEmergencyResponse();
+      emergencyResponse.metadata.processingTimeMs = Date.now() - startTime;
+      return emergencyResponse;
+    }
+
+    // Step 2.6: 🚔 EMERGENCY CHECK - Police/Criminal Emergency
+    if (isPoliceEmergency(sanitizedMessage) || isPoliceEmergency(message)) {
+      logger.warn('🚔🚨 POLICE EMERGENCY DETECTED!', { userId, message });
+      const emergencyResponse = getPoliceEmergencyResponse();
+      emergencyResponse.metadata.processingTimeMs = Date.now() - startTime;
+      return emergencyResponse;
+    }
+
+    // Step 2.7: 🛡️ EMERGENCY CHECK - Security/Danpos
+    if (isSecurityEmergency(sanitizedMessage) || isSecurityEmergency(message)) {
+      logger.warn('🛡️🚨 SECURITY EMERGENCY DETECTED!', { userId, message });
+      const emergencyResponse = getSecurityEmergencyResponse();
+      emergencyResponse.metadata.processingTimeMs = Date.now() - startTime;
+      return emergencyResponse;
+    }
+
+    // Step 2.8: 🏥 EMERGENCY CHECK - Health/Puskesmas
+    if (isHealthEmergency(sanitizedMessage) || isHealthEmergency(message)) {
+      logger.warn('🏥🚨 HEALTH EMERGENCY DETECTED!', { userId, message });
+      const emergencyResponse = getHealthEmergencyResponse();
+      emergencyResponse.metadata.processingTimeMs = Date.now() - startTime;
+      return emergencyResponse;
+    }
 
     // Step 3: Check cache first
     const cached = getCachedResponse(sanitizedMessage);

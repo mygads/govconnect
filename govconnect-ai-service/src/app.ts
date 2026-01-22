@@ -171,7 +171,7 @@ app.get('/admin/failed-messages', (req: Request, res: Response) => {
  */
 app.post('/admin/failed-messages/:messageId/retry', async (req: Request, res: Response) => {
   try {
-    const { messageId } = req.params;
+    const messageId = req.params.messageId as string;
 
     logger.info('Admin retry requested', { messageId });
 
@@ -308,7 +308,7 @@ app.get('/stats/models', (req: Request, res: Response) => {
 
 app.get('/stats/models/:modelName', (req: Request, res: Response) => {
   try {
-    const { modelName } = req.params;
+    const modelName = req.params.modelName as string;
     const stats = modelStatsService.getModelStats(modelName);
 
     if (!stats) {

@@ -140,6 +140,151 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
+// ==================== EMERGENCY CONTACTS ====================
+// Static hard-coded emergency contact list for fast rule-based response
+
+interface EmergencyContact {
+  name: string;
+  phone: string;
+  keywords: RegExp[];
+}
+
+const EMERGENCY_CONTACTS: EmergencyContact[] = [
+  {
+    name: 'DAMKAR SEKTOR BOLA 001',
+    phone: '+62 821-9280-0935',
+    keywords: [
+      /kebakaran/i, /api/i, /terbakar/i, /damkar/i, /pemadam/i, /hangus/i, /kobaran/i,
+      /asap/i, /jilatan\s*api/i, /korsleting/i, /konsleting/i, /short\s*circuit/i,
+      /tabung\s*gas/i, /meledak/i, /ledakan/i, /kompor/i, /lilin/i, /bara/i,
+    ],
+  },
+  {
+    name: 'Polsek Bola',
+    phone: '+62 821-8811-8778',
+    keywords: [
+      /polisi/i, /polsek/i, /kriminal/i, /kehilangan/i, /pencurian/i, /maling/i, 
+      /copet/i, /rampok/i, /kecelakaan/i, /tindak\s*pidana/i, /lapor\s*polisi/i,
+      /curanmor/i, /curian/i, /dicuri/i, /hilang/i, /jambret/i, /begal/i,
+      /perampokan/i, /penipuan/i, /kdrt/i, /kekerasan/i, /ancaman/i, /teror/i,
+      /tawuran/i, /perkelahian/i, /penganiayaan/i,
+    ],
+  },
+  {
+    name: 'Danpos PA Asmar',
+    phone: '+62 853-9963-9869',
+    keywords: [
+      /pos\s*keamanan/i, /danpos/i, /satpam/i, /jaga\s*(malam)?/i, /keamanan/i, 
+      /ronda/i, /hansip/i, /security/i, /pos\s*jaga/i, /siskamling/i,
+    ],
+  },
+  {
+    name: 'Puskesmas Solo (A. Aswin PKM)',
+    phone: '+62 853-6373-2235',
+    keywords: [
+      /puskesmas/i, /kesehatan/i, /sakit/i, /dokter/i, /medis/i, /ambulans/i, 
+      /ambulance/i, /gawat\s*darurat/i, /igd/i, /demam/i, /luka/i, /klinik/i,
+      /berobat/i, /obat/i, /periksa/i, /cek\s*kesehatan/i, /imunisasi/i,
+    ],
+  },
+];
+
+/**
+ * Keywords that indicate user is asking for contact/number
+ */
+const CONTACT_REQUEST_PATTERNS = [
+  /(?:nomor|no|kontak|telepon|telp|hp|hubungi|contact)\s*(?:darurat|emergency)?/i,
+  /(?:berapa|minta|kasih|beri|tolong)\s*(?:nomor|no|kontak|telepon)/i,
+  /(?:mau|ingin|butuh)\s*(?:hubungi|kontak|telepon)/i,
+  /(?:bantuan|pertolongan)\s*(?:darurat|segera|cepat)/i,
+  /(?:darurat|emergency|urgent)/i,
+];
+
+/**
+ * Detect if user is asking for emergency contact
+ * Returns the most relevant contact or null if not an emergency contact request
+ */
+function detectEmergencyContactRequest(message: string): EmergencyContact | 'ALL' | null {
+  const lowerMessage = message.toLowerCase();
+  
+  // Check if user explicitly asks for all contacts
+  const askAllPatterns = [
+    /semua\s*(?:nomor|kontak|telepon)/i,
+    /daftar\s*(?:nomor|kontak|telepon)/i,
+    /(?:nomor|kontak)\s*(?:apa\s*saja|apa\s*aja)/i,
+    /list\s*(?:nomor|kontak)/i,
+  ];
+  
+  if (askAllPatterns.some(p => p.test(lowerMessage))) {
+    return 'ALL';
+  }
+  
+  // Check if message contains contact request indicators
+  const isAskingForContact = CONTACT_REQUEST_PATTERNS.some(p => p.test(lowerMessage));
+  
+  // Find matching emergency contact based on keywords
+  for (const contact of EMERGENCY_CONTACTS) {
+    const matchesKeyword = contact.keywords.some(kw => kw.test(lowerMessage));
+    
+    if (matchesKeyword) {
+      // If matches keyword, return contact (even without explicit contact request)
+      // This handles cases like "ada kebakaran!" or "rumah terbakar"
+      return contact;
+    }
+  }
+  
+  // If user is asking for contact but no specific keyword matched, return null
+  // Let LLM handle generic contact requests
+  if (isAskingForContact) {
+    // Check for generic emergency keywords
+    if (/darurat|emergency|urgent|tolong|bantuan/i.test(lowerMessage)) {
+      // Return first contact (DAMKAR) as default emergency or null to let LLM decide
+      return null;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Convert phone number to WhatsApp clickable format
+ * Input: '+62 853-9963-9869' -> Output: 'https://wa.me/6285399639869'
+ */
+function formatPhoneForWhatsApp(phone: string): string {
+  // Remove all non-digit characters except +
+  const cleaned = phone.replace(/[^\d+]/g, '');
+  // Remove leading + and ensure starts with country code
+  const normalized = cleaned.startsWith('+') ? cleaned.substring(1) : cleaned;
+  return `https://wa.me/${normalized}`;
+}
+
+/**
+ * Build response for emergency contact request
+ * Returns clickable WhatsApp link format
+ */
+function buildEmergencyContactResponse(contact: EmergencyContact | 'ALL'): string {
+  if (contact === 'ALL') {
+    // User asked for all contacts
+    let response = '📞 *Daftar Kontak Darurat Kelurahan Bola:*\n\n';
+    for (const c of EMERGENCY_CONTACTS) {
+      const waLink = formatPhoneForWhatsApp(c.phone);
+      response += `🔹 *${c.name}*\n   📱 ${c.phone}\n   🔗 ${waLink}\n\n`;
+    }
+    response += '_Klik link untuk langsung menghubungi via WhatsApp._';
+    return response;
+  }
+  
+  // Single contact response - informative with clickable link
+  const waLink = formatPhoneForWhatsApp(contact.phone);
+  return `📞 *${contact.name}*
+
+Silakan hubungi langsung:
+📱 *Telepon:* ${contact.phone}
+🔗 *WhatsApp:* ${waLink}
+
+_Klik link di atas untuk langsung chat via WhatsApp._`;
+}
+
 // ==================== TYPO CORRECTIONS ====================
 // Now centralized in text-normalizer.service.ts
 import { normalizeText } from './text-normalizer.service';
@@ -1318,6 +1463,24 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         intent: 'SPAM',
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         error: 'Spam message detected',
+      };
+    }
+    
+    // Step 1.5: Emergency Contact Detection (Rule-based, skip LLM)
+    const emergencyContact = detectEmergencyContactRequest(message);
+    if (emergencyContact) {
+      const emergencyResponse = buildEmergencyContactResponse(emergencyContact);
+      logger.info('🚨 [UnifiedProcessor] Emergency contact request handled', {
+        userId,
+        channel,
+        contact: emergencyContact === 'ALL' ? 'ALL' : emergencyContact.name,
+        processingTimeMs: Date.now() - startTime,
+      });
+      return {
+        success: true,
+        response: emergencyResponse,
+        intent: 'EMERGENCY_CONTACT',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
       };
     }
     

@@ -1,0 +1,66 @@
+// GovConnect Notification Service - Entity Relationship Diagram
+// Gunakan dbdiagram.io untuk membuat gambar ERD dari kode ini
+// Copy-paste kode ini ke https://dbdiagram.io/d
+
+Project GovConnect_Notification_Service {
+  database_type: 'PostgreSQL'
+  Note: 'GovConnect Notification Service Database - WhatsApp Notification Logging'
+}
+
+// ==================== NOTIFICATION LOGS ====================
+Table notification_logs {
+  id varchar [pk, note: 'CUID - Primary Key']
+  wa_user_id varchar [not null, note: 'Nomor HP WhatsApp penerima (628xxx)']
+  message_text text [not null, note: 'Isi pesan notifikasi yang dikirim']
+  notification_type varchar [not null, note: 'ai_reply, complaint_created, ticket_created, status_updated']
+  status varchar [not null, note: 'sent = berhasil, failed = gagal']
+  error_msg text [note: 'Pesan error jika pengiriman gagal']
+  sent_at timestamp [not null, default: `now()`, note: 'Waktu pengiriman notifikasi']
+
+  indexes {
+    wa_user_id [name: 'idx_notification_logs_user']
+    status [name: 'idx_notification_logs_status']
+    notification_type [name: 'idx_notification_logs_type']
+    sent_at [name: 'idx_notification_logs_sent_at']
+  }
+
+  Note: 'Log semua notifikasi yang dikirim ke pengguna via WhatsApp'
+}
+
+// ==================== ENUM REFERENCES ====================
+
+// Notification Type:
+// - ai_reply: Balasan dari AI chatbot
+// - complaint_created: Notifikasi pengaduan berhasil dibuat
+// - ticket_created: Notifikasi tiket/reservasi berhasil dibuat
+// - status_updated: Notifikasi perubahan status (pengaduan/tiket/reservasi)
+
+// Status:
+// - sent: Notifikasi berhasil dikirim
+// - failed: Notifikasi gagal dikirim
+
+// ==================== CROSS-SERVICE RELATIONSHIPS ====================
+// Tabel ini tidak memiliki relasi FK internal, tetapi memiliki
+// hubungan logis dengan service lain via wa_user_id:
+
+// External References (tidak bisa didefinisikan di DBML single-database):
+// - wa_user_id -> govconnect-channel-service.conversations.wa_user_id
+// - complaint_created -> govconnect-case-service.complaints
+// - ticket_created -> govconnect-case-service.tickets
+// - status_updated -> govconnect-case-service.reservations
+
+// ==================== FLOW NOTIFIKASI ====================
+// 1. Event terjadi di service lain (case-service, channel-service)
+// 2. Event dipublish ke message broker (RabbitMQ)
+// 3. Notification service consume event
+// 4. Kirim notifikasi ke WhatsApp via channel-service
+// 5. Catat hasil di notification_logs (sent/failed)
+// 6. Jika failed, bisa di-retry berdasarkan error_msg
+
+// ==================== CONTOH DATA ====================
+// | notification_type    | Trigger                              |
+// |---------------------|--------------------------------------|
+// | ai_reply            | AI selesai generate response         |
+// | complaint_created   | Warga submit pengaduan baru          |
+// | ticket_created      | Warga buat reservasi/tiket baru      |
+// | status_updated      | Admin update status pengaduan/tiket  |

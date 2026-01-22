@@ -26,6 +26,8 @@ export type IntentType =
   | 'HISTORY'
   | 'KNOWLEDGE_QUERY'
   | 'QUESTION'
+  | 'EMERGENCY_FIRE'
+  | 'EMERGENCY_POLICE'
   | 'UNKNOWN';
 
 // ==================== GREETING PATTERNS ====================
@@ -77,6 +79,80 @@ export const CREATE_COMPLAINT_PATTERNS = [
   /\b(ada\s+)?banjir\s+(di|besar|parah)/i,
   /\b(mau\s+lapor\s+)?banjir\b/i,
   /\b(fasilitas|taman|pagar)\s+(rusak|jelek)\b/i,
+];
+
+// ==================== EMERGENCY FIRE PATTERNS ====================
+
+export const EMERGENCY_FIRE_PATTERNS = [
+  // Kata kunci kebakaran
+  /\b(kebakaran|terbakar|ada\s+api|api\s+besar)\b/i,
+  /\b(rumah|gedung|toko|pasar|hutan)\s+(terbakar|kebakaran)\b/i,
+  /\b(api|asap)\s+(besar|membesar|menyebar)\b/i,
+  /\b(lapor|tolong|darurat)\s+(kebakaran|terbakar)\b/i,
+  /\b(damkar|pemadam\s+kebakaran)\b/i,
+  /\b(hubungi|panggil|telpon)\s+(damkar|pemadam)\b/i,
+  /\b(nomor|kontak)\s+(damkar|pemadam)\b/i,
+  // Tambahan keywords
+  /\b(korsleting|konsleting|short\s*circuit)\b/i,
+  /\b(tabung\s+gas|meledak|ledakan)\b/i,
+  /\b(kompor|lilin|bara)\s+(menyala|hangus)?\b/i,
+  /\b(hangus|kobaran|jilatan\s*api)\b/i,
+];
+
+// ==================== EMERGENCY POLICE PATTERNS ====================
+
+export const EMERGENCY_POLICE_PATTERNS = [
+  // Tindak kriminal - pencurian
+  /\b(pencurian|dicuri|kecurian|maling|mencuri)\b/i,
+  /\b(motor|mobil|hp|handphone|dompet|tas|sepeda)\s+.*(hilang|dicuri|ilang|raib)\b/i,
+  /\b(motor|mobil|hp|handphone|dompet|tas|sepeda).*(hilang|dicuri|ilang|raib)\b/i,
+  /\b(kehilangan|hilang|ilang)\s+.*(motor|mobil|hp|handphone|dompet|tas|sepeda|barang)\b/i,
+  /\b(hilang|ilang)\b.*\b(motor|mobil|hp|handphone|dompet|tas|sepeda)\b/i,
+  
+  // Perampokan dan kekerasan
+  /\b(perampok|perampokan|dirampok|rampok|merampok)\b/i,
+  /\b(copet|dicopet|pencopet|jambret|dijambret|penjambret)\b/i,
+  /\b(begal|dibegal|pembegalan)\b/i,
+  /\b(dipukul|dianiaya|penganiayaan|kekerasan|dikeroyok)\b/i,
+  /\b(penculikan|diculik|menculik)\b/i,
+  
+  // Kecelakaan
+  /\b(kecelakaan|tabrakan|nabrak|ditabrak|laka|lakalantas)\b/i,
+  /\b(kecelakaan\s+lalu\s+lintas)\b/i,
+  
+  // Umum polisi
+  /\b(polisi|polsek|polres|lapor\s+polisi)\b/i,
+  /\b(tindak\s+kriminal|kriminal|kejahatan)\b/i,
+  /\b(tolong|darurat|emergency).*(polisi|kriminal|pencuri|rampok)\b/i,
+];
+
+// ==================== EMERGENCY SECURITY/DANPOS PATTERNS ====================
+
+export const EMERGENCY_SECURITY_PATTERNS = [
+  // Keamanan lingkungan
+  /\b(pos\s+keamanan|danpos)\b/i,
+  /\b(satpam|jaga\s+malam|keamanan\s+lingkungan)\b/i,
+  /\b(ronda|hansip|siskamling|linmas)\b/i,
+  /\b(security|pos\s+jaga)\b/i,
+  /\b(nomor|kontak|hubungi)\s+(danpos|satpam|keamanan|ronda)\b/i,
+  /\b(danpos|satpam|security)\s+(pa\s+asmar|asmar)?\b/i,
+  /\b(orang\s+mencurigakan|mencurigakan|tamu\s+tak\s+dikenal)\b/i,
+  /\b(ada\s+orang\s+asing|tidak\s+dikenal|ngapain)\b/i,
+];
+
+// ==================== EMERGENCY HEALTH/PUSKESMAS PATTERNS ====================
+
+export const EMERGENCY_HEALTH_PATTERNS = [
+  // Kesehatan umum
+  /\b(puskesmas|dokter|medis|periksa|berobat)\b/i,
+  /\b(sakit|demam|pusing|mual|muntah|diare|batuk)\b/i,
+  /\b(ambulans|ambulance|gawat\s+darurat|igd)\b/i,
+  /\b(klinik|kesehatan|obat)\b/i,
+  /\b(nomor|kontak|hubungi)\s+(puskesmas|dokter|klinik|bidan)\b/i,
+  /\b(luka|berdarah|cedera|patah)\b/i,
+  /\b(imunisasi|vaksin|posyandu)\b/i,
+  /\b(bidan|mantri|perawat)\b/i,
+  /\b(cek\s+kesehatan|medical\s+check)\b/i,
 ];
 
 // ==================== RESERVATION PATTERNS ====================
@@ -292,6 +368,9 @@ export function detectIntentFromPatterns(message: string): IntentType | null {
     return 'CHECK_STATUS';
   }
   
+  // EMERGENCY FIRE - PRIORITAS TINGGI
+  if (matchesAnyPattern(lowerMessage, EMERGENCY_FIRE_PATTERNS)) return 'EMERGENCY_FIRE';
+  
   // Other intents
   if (matchesAnyPattern(lowerMessage, CHECK_STATUS_PATTERNS)) return 'CHECK_STATUS';
   if (matchesAnyPattern(lowerMessage, UPDATE_RESERVATION_PATTERNS)) return 'UPDATE_RESERVATION';
@@ -316,6 +395,8 @@ export default {
   CANCEL_PATTERNS,
   HISTORY_PATTERNS,
   KNOWLEDGE_QUERY_PATTERNS,
+  EMERGENCY_FIRE_PATTERNS,
+  EMERGENCY_POLICE_PATTERNS,
   COMPLAINT_CATEGORY_PATTERNS,
   SERVICE_CODE_PATTERNS,
   matchesAnyPattern,

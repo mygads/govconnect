@@ -4,7 +4,7 @@ import { ai } from '@/lib/api-client'
 
 /**
  * GET /api/documents/[id]
- * Get a specific document
+ * Get a specific document (knowledge file)
  */
 export async function GET(
   request: NextRequest,
@@ -13,18 +13,22 @@ export async function GET(
   try {
     const { id } = await params
 
-    const document = await prisma.knowledge_documents.findUnique({
+    const document = await prisma.knowledge_files.findUnique({
       where: { id },
+      include: {
+        category: true
+      }
     })
 
     if (!document) {
       return NextResponse.json(
-        { error: 'Document not found' },
+        { error: 'Dokumen tidak ditemukan' },
         { status: 404 }
       )
     }
 
     return NextResponse.json({
+      success: true,
       data: {
         ...document,
         chunks_count: document.total_chunks || 0,
@@ -33,7 +37,7 @@ export async function GET(
   } catch (error) {
     console.error('Error fetching document:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch document' },
+      { error: 'Gagal mengambil dokumen' },
       { status: 500 }
     )
   }
@@ -50,15 +54,14 @@ export async function PUT(
   try {
     const { id } = await params
     const body = await request.json()
-    const { title, description, category } = body
+    const { title, description, category_id } = body
 
-    const document = await prisma.knowledge_documents.update({
+    const document = await prisma.knowledge_files.update({
       where: { id },
       data: {
-        title,
-        description,
-        category,
-        updated_at: new Date(),
+        ...(title && { title }),
+        ...(description !== undefined && { description }),
+        ...(category_id && { category_id }),
       },
     })
 
@@ -69,7 +72,7 @@ export async function PUT(
   } catch (error) {
     console.error('Error updating document:', error)
     return NextResponse.json(
-      { error: 'Failed to update document' },
+      { error: 'Gagal memperbarui dokumen' },
       { status: 500 }
     )
   }
@@ -87,13 +90,13 @@ export async function DELETE(
     const { id } = await params
 
     // Get document
-    const document = await prisma.knowledge_documents.findUnique({
+    const document = await prisma.knowledge_files.findUnique({
       where: { id },
     })
 
     if (!document) {
       return NextResponse.json(
-        { error: 'Document not found' },
+        { error: 'Dokumen tidak ditemukan' },
         { status: 404 }
       )
     }
@@ -107,18 +110,18 @@ export async function DELETE(
     }
 
     // Delete document record from database
-    await prisma.knowledge_documents.delete({
+    await prisma.knowledge_files.delete({
       where: { id },
     })
 
     return NextResponse.json({
       success: true,
-      message: 'Document deleted successfully',
+      message: 'Dokumen berhasil dihapus',
     })
   } catch (error: any) {
     console.error('Error deleting document:', error)
     return NextResponse.json(
-      { error: 'Failed to delete document', details: error.message },
+      { error: 'Gagal menghapus dokumen', details: error.message },
       { status: 500 }
     )
   }

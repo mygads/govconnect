@@ -8,34 +8,34 @@ const prisma = new PrismaClient({
 async function main() {
   console.log('🌱 Seeding database for GovConnect Dashboard...\n')
 
-  // Create default admin user for login
-  console.log('Creating admin user...')
+  // Create default super admin user
+  console.log('Creating super admin user...')
 
-  const existingAdmin = await prisma.admin_users.findUnique({
-    where: { username: 'admin' }
+  const existingAdmin = await prisma.users.findUnique({
+    where: { email: 'admin@govconnect.id' }
   })
 
   if (existingAdmin) {
-    console.log('✅ Admin user already exists')
-    console.log('   Username: admin')
+    console.log('✅ Super admin user already exists')
+    console.log('   Email: admin@govconnect.id')
     console.log('   (Password unchanged)\n')
   } else {
     const hashedPassword = await bcrypt.hash('admin123', 10)
     
-    const admin = await prisma.admin_users.create({
+    await prisma.users.create({
       data: {
-        username: 'admin',
+        email: 'admin@govconnect.id',
         password_hash: hashedPassword,
-        name: 'Administrator',
-        role: 'superadmin',
+        name: 'Super Administrator',
+        role: 'SUPER_ADMIN',
         is_active: true
       }
     })
 
-    console.log('✅ Admin user created successfully!')
-    console.log('   Username: admin')
+    console.log('✅ Super admin user created successfully!')
+    console.log('   Email: admin@govconnect.id')
     console.log('   Password: admin123')
-    console.log('   Role: superadmin\n')
+    console.log('   Role: SUPER_ADMIN\n')
   }
 
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
@@ -43,7 +43,7 @@ async function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
   console.log('\n📝 Login Credentials:')
   console.log('   URL: http://localhost:3000')
-  console.log('   Username: admin')
+  console.log('   Email: admin@govconnect.id')
   console.log('   Password: admin123')
   console.log('\n⚠️  IMPORTANT: Change password after first login!\n')
 }

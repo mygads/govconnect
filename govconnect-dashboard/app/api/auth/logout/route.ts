@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
 
     if (token) {
       // Delete session from database
-      await prisma.admin_sessions.deleteMany({
+      await prisma.user_sessions.deleteMany({
         where: { token }
       })
     }

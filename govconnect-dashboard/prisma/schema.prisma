@@ -1,8 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// GovConnect - Sistem Pelayanan Desa/Kelurahan
+// Prisma Schema v2.0
 
 generator client {
   provider = "prisma-client-js"
@@ -13,45 +10,645 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model admin_users {
-  id            String   @id @default(cuid())
-  username      String   @unique
-  password_hash String
-  name          String
-  role          String   @default("admin")
-  is_active     Boolean  @default(true)
-  created_at    DateTime @default(now())
-  
-  sessions      admin_sessions[]
-  activity_logs activity_logs[]
+// ==================== ENUMS ====================
+
+enum UserRole {
+  SUPER_ADMIN
+  VILLAGE_ADMIN
 }
 
-model admin_sessions {
+enum KnowledgeCategoryType {
+  PROFIL_DESA
+  FAQ
+  PANDUAN
+  STRUKTUR_DESA
+  DATA_RT_RW
+  LAYANAN
+  CUSTOM
+}
+
+enum RequirementType {
+  FILE
+  TEXT
+  TEXTAREA
+  SELECT
+  DATE
+  NUMBER
+  PHONE
+  EMAIL
+}
+
+enum ServiceRequestStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+enum DeliveryMethod {
+  ONLINE
+  PICKUP
+  BOTH
+}
+
+enum ReportStatus {
+  RECEIVED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum ChannelType {
+  WHATSAPP
+  WEBCHAT
+}
+
+enum ConversationStatus {
+  AI_ACTIVE
+  TAKEOVER
+  CLOSED
+}
+
+enum MessageRole {
+  USER
+  AI
+  ADMIN
+}
+
+// ==================== USERS & AUTH ====================
+
+model users {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password_hash String
+  name          String
+  role          UserRole  @default(VILLAGE_ADMIN)
+  is_active     Boolean   @default(true)
+  phone         String?
+  avatar_url    String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  sessions      user_sessions[]
+  activity_logs activity_logs[]
+  village       villages?
+  
+  @@index([email])
+  @@index([role])
+}
+
+model user_sessions {
   id         String   @id @default(cuid())
-  admin_id   String
+  user_id    String
   token      String   @unique
   expires_at DateTime
+  ip_address String?
+  user_agent String?
   created_at DateTime @default(now())
-  
-  admin      admin_users @relation(fields: [admin_id], references: [id], onDelete: Cascade)
-  
-  @@index([admin_id])
+
+  user       users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([token])
   @@index([expires_at])
 }
 
 model activity_logs {
   id         String   @id @default(cuid())
-  admin_id   String
+  user_id    String
   action     String
   resource   String
   details    Json?
   ip_address String?
   timestamp  DateTime @default(now())
-  
-  admin      admin_users @relation(fields: [admin_id], references: [id], onDelete: Cascade)
-  
-  @@index([admin_id])
+
+  user       users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
   @@index([timestamp])
+  @@index([action])
+}
+
+// ==================== VILLAGE (DESA/KELURAHAN) ====================
+
+model villages {
+  id              String   @id @default(cuid())
+  user_id         String   @unique
+  
+  // Informasi Dasar
+  name            String                    // Nama resmi desa
+  short_name      String   @unique          // Untuk URL slug (margahayu, etc)
+  address         String?  @db.Text
+  phone           String?
+  email           String?
+  gmaps_url       String?
+  website         String?
+  
+  // Informasi Tambahan
+  kode_pos        String?
+  kecamatan       String?
+  kabupaten       String?
+  provinsi        String?
+  kepala_desa     String?                   // Nama kepala desa
+  nip_kepala_desa String?
+  
+  // Logo & Branding
+  logo_url        String?
+  
+  // Channel Settings
+  whatsapp_enabled Boolean  @default(false)
+  whatsapp_token   String?
+  whatsapp_number  String?
+  whatsapp_webhook_url String?
+  webchat_enabled  Boolean  @default(false)
+  
+  // AI Settings
+  ai_enabled       Boolean  @default(true)
+  ai_greeting      String?  @db.Text        // Custom greeting message
+  
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  // Relations
+  user                    users                     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  operating_hours         village_operating_hours[]
+  knowledge_categories    knowledge_categories[]
+  knowledge_files         knowledge_files[]
+  knowledge_texts         knowledge_texts[]
+  important_number_categories important_number_categories[]
+  service_categories      service_categories[]
+  services                services[]
+  service_requests        service_requests[]
+  report_categories       report_categories[]
+  reports                 reports[]
+  conversations           conversations[]
+
+  @@index([short_name])
+}
+
+model village_operating_hours {
+  id          String   @id @default(cuid())
+  village_id  String
+  day_of_week Int                           // 0=Minggu, 1=Senin, dst
+  is_open     Boolean  @default(true)
+  open_time   String?                       // "08:00"
+  close_time  String?                       // "16:00"
+
+  village     villages @relation(fields: [village_id], references: [id], onDelete: Cascade)
+
+  @@unique([village_id, day_of_week])
+  @@index([village_id])
+}
+
+// ==================== KNOWLEDGE BASE ====================
+
+model knowledge_categories {
+  id          String                @id @default(cuid())
+  village_id  String
+  name        String
+  type        KnowledgeCategoryType @default(CUSTOM)
+  description String?               @db.Text
+  icon        String?                       // Icon name for UI
+  order       Int                   @default(0)
+  is_active   Boolean               @default(true)
+  created_at  DateTime              @default(now())
+  updated_at  DateTime              @updatedAt
+
+  village     villages              @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  files       knowledge_files[]
+  texts       knowledge_texts[]
+
+  @@index([village_id])
+  @@index([type])
+}
+
+model knowledge_files {
+  id                String   @id @default(cuid())
+  village_id        String
+  category_id       String
+  
+  filename          String                    // Stored filename
+  original_name     String                    // Original upload name
+  mime_type         String                    // pdf, docx, txt
+  file_size         Int                       // Bytes
+  file_path         String
+  
+  // Processing
+  is_processed      Boolean  @default(false)
+  processed_content String?  @db.Text
+  total_chunks      Int?
+  error_message     String?  @db.Text
+  
+  // Metadata
+  title             String?
+  description       String?  @db.Text
+  
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  village           villages              @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  category          knowledge_categories  @relation(fields: [category_id], references: [id], onDelete: Cascade)
+
+  @@index([village_id])
+  @@index([category_id])
+}
+
+model knowledge_texts {
+  id          String   @id @default(cuid())
+  village_id  String
+  category_id String
+  
+  title       String
+  content     String   @db.Text
+  keywords    String[]
+  order       Int      @default(0)
+  is_active   Boolean  @default(true)
+  
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  village     villages              @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  category    knowledge_categories  @relation(fields: [category_id], references: [id], onDelete: Cascade)
+
+  @@index([village_id])
+  @@index([category_id])
+}
+
+// ==================== NOMOR PENTING ====================
+
+model important_number_categories {
+  id          String   @id @default(cuid())
+  village_id  String
+  name        String                        // "Polisi", "Damkar", "Rumah Sakit"
+  icon        String?
+  order       Int      @default(0)
+  
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  village     villages           @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  numbers     important_numbers[]
+
+  @@index([village_id])
+}
+
+model important_numbers {
+  id           String   @id @default(cuid())
+  category_id  String
+  
+  name         String                       // "Polsek Bola"
+  phone        String                       // "+62821..."
+  description  String?  @db.Text
+  address      String?
+  is_active    Boolean  @default(true)
+  order        Int      @default(0)
+  
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  category     important_number_categories @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  report_types report_type_numbers[]
+
+  @@index([category_id])
+}
+
+// ==================== LAYANAN (SERVICES) ====================
+
+model service_categories {
+  id          String   @id @default(cuid())
+  village_id  String
+  name        String                        // "Layanan Administrasi Desa"
+  description String?  @db.Text
+  icon        String?
+  order       Int      @default(0)
+  is_active   Boolean  @default(true)
+  
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  village     villages   @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  services    services[]
+
+  @@index([village_id])
+}
+
+model services {
+  id                String   @id @default(cuid())
+  village_id        String
+  category_id       String
+  
+  name              String                  // "Keterangan Usaha"
+  slug              String                  // "keterangan-usaha"
+  description       String?  @db.Text
+  
+  // Instruksi & Catatan
+  processing_time   String?                 // "10 menit"
+  notes             String?  @db.Text       // Catatan tambahan
+  
+  // Pengaturan pengambilan
+  delivery_method   DeliveryMethod @default(BOTH)
+  
+  // Status
+  is_active         Boolean  @default(true)
+  order             Int      @default(0)
+  
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  village           villages                @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  category          service_categories      @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  requirements      service_requirements[]
+  requests          service_requests[]
+
+  @@unique([village_id, slug])
+  @@index([village_id])
+  @@index([category_id])
+  @@index([slug])
+}
+
+model service_requirements {
+  id                  String          @id @default(cuid())
+  service_id          String
+  
+  name                String                  // "KTP", "Kartu Keluarga"
+  type                RequirementType @default(FILE)
+  description         String?         @db.Text
+  is_required         Boolean         @default(true)
+  order               Int             @default(0)
+  
+  // Untuk tipe FILE
+  accepted_file_types String?                 // "pdf,jpg,png"
+  max_file_size       Int?                    // KB
+  
+  // Untuk tipe SELECT
+  options             String[]                // Opsi pilihan
+  
+  // Untuk tipe TEXT/TEXTAREA
+  placeholder         String?
+  min_length          Int?
+  max_length          Int?
+  
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+
+  service             services                    @relation(fields: [service_id], references: [id], onDelete: Cascade)
+  filled_requirements service_request_requirements[]
+
+  @@index([service_id])
+}
+
+// ==================== PERMOHONAN LAYANAN ====================
+
+model service_requests {
+  id              String   @id @default(cuid())
+  ticket_number   String   @unique          // LYN-20260122-001
+  
+  village_id      String
+  service_id      String
+  
+  // Data Pemohon
+  applicant_name  String
+  applicant_phone String
+  applicant_email String?
+  applicant_nik   String?
+  applicant_address String? @db.Text
+  
+  // Status & Metode
+  status          ServiceRequestStatus @default(PENDING)
+  delivery_method DeliveryMethod       @default(ONLINE)
+  
+  // Catatan Admin
+  admin_notes     String?  @db.Text
+  reject_reason   String?  @db.Text
+  
+  // Hasil/Output
+  result_file_url String?              // File hasil layanan
+  result_notes    String?  @db.Text
+  
+  // Timestamps
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  processed_at    DateTime?
+  completed_at    DateTime?
+
+  village         villages                       @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  service         services                       @relation(fields: [service_id], references: [id], onDelete: Cascade)
+  requirements    service_request_requirements[]
+  status_history  service_request_status_history[]
+
+  @@index([village_id])
+  @@index([service_id])
+  @@index([ticket_number])
+  @@index([applicant_phone])
+  @@index([status])
+  @@index([created_at])
+}
+
+model service_request_requirements {
+  id              String   @id @default(cuid())
+  request_id      String
+  requirement_id  String
+  
+  // Value based on type
+  text_value      String?  @db.Text
+  file_path       String?
+  file_name       String?
+  
+  created_at      DateTime @default(now())
+
+  request         service_requests      @relation(fields: [request_id], references: [id], onDelete: Cascade)
+  requirement     service_requirements  @relation(fields: [requirement_id], references: [id], onDelete: Cascade)
+
+  @@index([request_id])
+  @@index([requirement_id])
+}
+
+model service_request_status_history {
+  id          String               @id @default(cuid())
+  request_id  String
+  
+  status      ServiceRequestStatus
+  notes       String?              @db.Text
+  created_by  String?                      // Admin name
+  
+  created_at  DateTime             @default(now())
+
+  request     service_requests     @relation(fields: [request_id], references: [id], onDelete: Cascade)
+
+  @@index([request_id])
+  @@index([created_at])
+}
+
+// ==================== PENGADUAN / LAPORAN ====================
+
+model report_categories {
+  id          String   @id @default(cuid())
+  village_id  String
+  
+  name        String                       // "Bencana", "Keamanan", "Infrastruktur"
+  description String?  @db.Text
+  icon        String?
+  order       Int      @default(0)
+  is_active   Boolean  @default(true)
+  
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  village     villages       @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  types       report_types[]
+
+  @@index([village_id])
+}
+
+model report_types {
+  id                   String   @id @default(cuid())
+  category_id          String
+  
+  name                 String                  // "Kebakaran", "Banjir"
+  description          String?  @db.Text
+  
+  // Settings
+  is_urgent            Boolean  @default(false)   // Alert di dashboard
+  requires_address     Boolean  @default(true)    // AI harus minta alamat
+  requires_photo       Boolean  @default(false)   // Perlu foto
+  send_number_to_user  Boolean  @default(false)   // Kirim nomor penting ke user
+  auto_response        String?  @db.Text          // Custom auto response
+  
+  is_active            Boolean  @default(true)
+  order                Int      @default(0)
+  
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  category             report_categories     @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  important_numbers    report_type_numbers[]
+  reports              reports[]
+
+  @@index([category_id])
+}
+
+// Junction table for report types and important numbers
+model report_type_numbers {
+  id                  String   @id @default(cuid())
+  report_type_id      String
+  important_number_id String
+
+  report_type         report_types      @relation(fields: [report_type_id], references: [id], onDelete: Cascade)
+  important_number    important_numbers @relation(fields: [important_number_id], references: [id], onDelete: Cascade)
+
+  @@unique([report_type_id, important_number_id])
+}
+
+model reports {
+  id              String   @id @default(cuid())
+  ticket_number   String   @unique          // LPR-20260122-001
+  
+  village_id      String
+  type_id         String
+  
+  // Pelapor
+  reporter_phone  String
+  reporter_name   String?
+  
+  // Detail Laporan
+  description     String   @db.Text
+  address         String?  @db.Text
+  location_lat    Float?
+  location_lng    Float?
+  photo_urls      String[]                  // Multiple photos
+  
+  // Status
+  status          ReportStatus @default(RECEIVED)
+  is_urgent       Boolean      @default(false)
+  
+  // Timestamps
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  resolved_at     DateTime?
+
+  village         villages          @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  type            report_types      @relation(fields: [type_id], references: [id], onDelete: Cascade)
+  responses       report_responses[]
+
+  @@index([village_id])
+  @@index([type_id])
+  @@index([ticket_number])
+  @@index([reporter_phone])
+  @@index([status])
+  @@index([is_urgent])
+  @@index([created_at])
+}
+
+model report_responses {
+  id          String   @id @default(cuid())
+  report_id   String
+  
+  message     String   @db.Text
+  image_urls  String[]                     // Foto penanganan
+  
+  created_by  String                       // Admin name
+  created_at  DateTime @default(now())
+
+  report      reports  @relation(fields: [report_id], references: [id], onDelete: Cascade)
+
+  @@index([report_id])
+  @@index([created_at])
+}
+
+// ==================== CONVERSATIONS & LIVE CHAT ====================
+
+model conversations {
+  id              String   @id @default(cuid())
+  village_id      String
+  
+  channel         ChannelType
+  external_id     String                   // WA phone or web session ID
+  
+  // Customer info
+  customer_name   String?
+  customer_phone  String?
+  
+  // Status
+  status          ConversationStatus @default(AI_ACTIVE)
+  is_takeover     Boolean            @default(false)
+  takeover_by     String?                  // Admin name
+  takeover_at     DateTime?
+  
+  // Metadata
+  last_message_at DateTime?
+  message_count   Int      @default(0)
+  
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  village         villages   @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  messages        messages[]
+
+  @@unique([village_id, channel, external_id])
+  @@index([village_id])
+  @@index([channel])
+  @@index([status])
+  @@index([last_message_at])
+}
+
+model messages {
+  id              String      @id @default(cuid())
+  conversation_id String
+  
+  role            MessageRole
+  content         String      @db.Text
+  
+  // Metadata
+  intent          String?                  // Detected intent
+  is_read         Boolean     @default(false)
+  
+  created_at      DateTime    @default(now())
+
+  conversation    conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([conversation_id])
+  @@index([created_at])
 }
 
 // ==================== SYSTEM SETTINGS ====================
@@ -63,83 +660,4 @@ model system_settings {
   description String?
   updated_at  DateTime @updatedAt
   created_at  DateTime @default(now())
-}
-
-// ==================== KNOWLEDGE BASE ====================
-// Note: Embeddings are now stored in AI Service vector database
-// Dashboard only stores metadata for admin management
-
-model knowledge_base {
-  id          String   @id @default(cuid())
-  title       String
-  content     String   @db.Text
-  category    String   // "informasi_umum" | "layanan" | "prosedur" | "jadwal" | "kontak" | "faq"
-  keywords    String[] // Array of keywords for better search
-  is_active   Boolean  @default(true)
-  priority    Int      @default(0) // Higher priority = shown first
-  admin_id    String?  // Who created/updated this
-  updated_at  DateTime @updatedAt
-  created_at  DateTime @default(now())
-  
-  @@index([category])
-  @@index([is_active])
-  @@index([keywords])
-}
-
-// ==================== KNOWLEDGE DOCUMENTS ====================
-
-model knowledge_documents {
-  id              String   @id @default(cuid())
-  filename        String   // Stored filename (sanitized)
-  original_name   String   // Original upload filename
-  mime_type       String   // application/pdf, text/plain, etc.
-  file_size       Int      // File size in bytes
-  file_url        String   // Storage URL (local or S3)
-  
-  // Processing status
-  status          String   @default("pending") // pending, processing, completed, failed
-  error_message   String?  @db.Text
-  
-  // Metadata
-  title           String?  // Document title (extracted or provided)
-  description     String?  @db.Text
-  category        String?  // Document category for filtering
-  
-  // Processing info
-  total_chunks    Int?     // Number of chunks after processing
-  total_tokens    Int?     // Estimated token count
-  
-  // Relations
-  admin_id        String?  // Who uploaded this
-  chunks          document_chunks[]
-  
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
-  
-  @@index([status])
-  @@index([category])
-  @@index([created_at])
-}
-
-// ==================== DOCUMENT CHUNKS ====================
-// Note: Embeddings are now stored in AI Service vector database
-// Dashboard only stores chunk metadata for reference
-
-model document_chunks {
-  id              String   @id @default(cuid())
-  document_id     String
-  chunk_index     Int      // Order in document (0-based)
-  content         String   @db.Text
-  
-  // Metadata for context
-  page_number     Int?     // Page number if from PDF
-  section_title   String?  // Section/chapter title if available
-  
-  // Relations
-  document        knowledge_documents @relation(fields: [document_id], references: [id], onDelete: Cascade)
-  
-  created_at      DateTime @default(now())
-  
-  @@index([document_id])
-  @@index([chunk_index])
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { verifyUserToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 
 export async function GET(request: NextRequest) {
@@ -14,39 +14,53 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const payload = await verifyToken(token)
+    const payload = await verifyUserToken(token)
     if (!payload) {
       return NextResponse.json(
-        { error: 'Invalid token' },
+        { error: 'Token tidak valid' },
         { status: 401 }
       )
     }
 
     // Verify session exists and not expired
-    const session = await prisma.admin_sessions.findUnique({
+    const session = await prisma.user_sessions.findUnique({
       where: { token },
-      include: { admin: true }
+      include: { 
+        user: {
+          include: {
+            village: true
+          }
+        }
+      }
     })
 
     if (!session || session.expires_at < new Date()) {
       return NextResponse.json(
-        { error: 'Session expired' },
+        { error: 'Sesi telah berakhir' },
         { status: 401 }
       )
     }
 
     return NextResponse.json({
+      success: true,
       user: {
-        id: session.admin.id,
-        username: session.admin.username,
-        name: session.admin.name,
-        role: session.admin.role
+        id: session.user.id,
+        email: session.user.email,
+        name: session.user.name,
+        role: session.user.role,
+        phone: session.user.phone,
+        avatar_url: session.user.avatar_url,
+        village: session.user.village ? {
+          id: session.user.village.id,
+          name: session.user.village.name,
+          short_name: session.user.village.short_name
+        } : null
       }
     })
   } catch (error) {
     console.error('Auth check error:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Terjadi kesalahan server' },
       { status: 500 }
     )
   }

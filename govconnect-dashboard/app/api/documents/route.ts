@@ -9,36 +9,41 @@ export const runtime = 'nodejs'
 // Disable body parsing - we handle formData manually
 export const dynamic = 'force-dynamic'
 
-// Document upload and management API
-// Requires admin authentication
-
 /**
  * GET /api/documents
- * List all knowledge documents
+ * List all knowledge files
  */
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
-    const status = searchParams.get('status')
-    const category = searchParams.get('category')
+    const village_id = searchParams.get('village_id')
+    const category_id = searchParams.get('category_id')
+    const is_processed = searchParams.get('is_processed')
     const limit = parseInt(searchParams.get('limit') || '50')
     const offset = parseInt(searchParams.get('offset') || '0')
 
     const where: any = {}
-    if (status) where.status = status
-    if (category) where.category = category
+    if (village_id) where.village_id = village_id
+    if (category_id) where.category_id = category_id
+    if (is_processed !== null && is_processed !== undefined) {
+      where.is_processed = is_processed === 'true'
+    }
 
     const [documents, total] = await Promise.all([
-      prisma.knowledge_documents.findMany({
+      prisma.knowledge_files.findMany({
         where,
+        include: {
+          category: true
+        },
         orderBy: { created_at: 'desc' },
         take: limit,
         skip: offset,
       }),
-      prisma.knowledge_documents.count({ where }),
+      prisma.knowledge_files.count({ where }),
     ])
 
     return NextResponse.json({
+      success: true,
       data: documents,
       total,
       limit,
@@ -47,7 +52,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error fetching documents:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch documents' },
+      { error: 'Gagal mengambil dokumen' },
       { status: 500 }
     )
   }
@@ -61,13 +66,21 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
     const file = formData.get('file') as File | null
+    const village_id = formData.get('village_id') as string | null
+    const category_id = formData.get('category_id') as string | null
     const title = formData.get('title') as string | null
     const description = formData.get('description') as string | null
-    const category = formData.get('category') as string | null
 
     if (!file) {
       return NextResponse.json(
-        { error: 'No file provided' },
+        { error: 'File tidak ditemukan' },
+        { status: 400 }
+      )
+    }
+
+    if (!village_id || !category_id) {
+      return NextResponse.json(
+        { error: 'village_id dan category_id harus diisi' },
         { status: 400 }
       )
     }
@@ -84,7 +97,7 @@ export async function POST(request: NextRequest) {
 
     if (!allowedTypes.includes(file.type)) {
       return NextResponse.json(
-        { error: `File type not supported. Allowed: PDF, DOCX, DOC, TXT, MD, CSV` },
+        { error: `Tipe file tidak didukung. Diizinkan: PDF, DOCX, DOC, TXT, MD, CSV` },
         { status: 400 }
       )
     }
@@ -93,27 +106,30 @@ export async function POST(request: NextRequest) {
     const maxSize = 10 * 1024 * 1024
     if (file.size > maxSize) {
       return NextResponse.json(
-        { error: 'File too large. Maximum size is 10MB' },
+        { error: 'File terlalu besar. Maksimal 10MB' },
         { status: 400 }
       )
     }
 
     // Generate document ID
     const documentId = randomUUID()
+    const extension = getExtension(file.name)
+    const filename = `${documentId}.${extension}`
     
     // Create database record first (pending status)
-    const document = await prisma.knowledge_documents.create({
+    const document = await prisma.knowledge_files.create({
       data: {
         id: documentId,
-        filename: `${documentId}.${getExtension(file.name)}`,
+        village_id,
+        category_id,
+        filename,
         original_name: file.name,
         mime_type: file.type,
         file_size: file.size,
-        file_url: '', // Will be updated by AI service
+        file_path: `/uploads/documents/${filename}`,
         title: title || file.name.replace(/\.[^/.]+$/, ''),
         description,
-        category,
-        status: 'processing',
+        is_processed: false,
       },
     })
 
@@ -121,8 +137,8 @@ export async function POST(request: NextRequest) {
     const aiFormData = new FormData()
     aiFormData.append('file', file)
     aiFormData.append('documentId', documentId)
+    aiFormData.append('villageId', village_id)
     if (title) aiFormData.append('title', title)
-    if (category) aiFormData.append('category', category)
 
     try {
       const aiResponse = await ai.uploadDocument(aiFormData)
@@ -131,10 +147,10 @@ export async function POST(request: NextRequest) {
         const errorData = await aiResponse.json()
         
         // Update status to failed
-        await prisma.knowledge_documents.update({
+        await prisma.knowledge_files.update({
           where: { id: documentId },
           data: {
-            status: 'failed',
+            is_processed: false,
             error_message: errorData.error || errorData.details || 'AI processing failed',
           },
         })
@@ -142,26 +158,19 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           data: document,
-          error: errorData.error || 'AI processing failed',
+          error: errorData.error || 'Gagal memproses di AI service',
         }, { status: 500 })
       }
 
       const result = await aiResponse.json()
       
-      // Build the full URL for viewing the document
-      // AI service serves files at /uploads/documents/<filename>
-      const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:3002'
-      const fileUrl = result.fileUrl 
-        ? `${aiServiceUrl}${result.fileUrl}` 
-        : (result.filename ? `${aiServiceUrl}/uploads/documents/${result.filename}` : '')
-      
       // Update document with success status
-      const updatedDoc = await prisma.knowledge_documents.update({
+      const updatedDoc = await prisma.knowledge_files.update({
         where: { id: documentId },
         data: {
-          status: 'completed',
+          is_processed: true,
           total_chunks: result.chunksCount || 0,
-          file_url: fileUrl,
+          processed_content: result.textContent || null,
         },
       })
 
@@ -169,30 +178,30 @@ export async function POST(request: NextRequest) {
         success: true,
         data: updatedDoc,
         chunksCount: result.chunksCount,
-        message: 'Document uploaded and processed successfully.',
+        message: 'Dokumen berhasil diupload dan diproses.',
       })
     } catch (aiError: any) {
       console.error('AI service error:', aiError)
       
       // Update status to failed
-      await prisma.knowledge_documents.update({
+      await prisma.knowledge_files.update({
         where: { id: documentId },
         data: {
-          status: 'failed',
-          error_message: aiError.message || 'Failed to connect to AI service',
+          is_processed: false,
+          error_message: aiError.message || 'Gagal koneksi ke AI service',
         },
       })
       
       return NextResponse.json({
         success: false,
         data: document,
-        error: 'Failed to process document: ' + (aiError.message || 'AI service unavailable'),
+        error: 'Gagal memproses dokumen: ' + (aiError.message || 'AI service tidak tersedia'),
       }, { status: 500 })
     }
   } catch (error: any) {
     console.error('Error uploading document:', error)
     return NextResponse.json(
-      { error: 'Failed to upload document', details: error.message },
+      { error: 'Gagal upload dokumen', details: error.message },
       { status: 500 }
     )
   }

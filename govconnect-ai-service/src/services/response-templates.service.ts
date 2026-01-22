@@ -21,6 +21,7 @@ import {
   KNOWLEDGE_LAYANAN_PATTERNS,
   KNOWLEDGE_SYARAT_PATTERNS,
   KNOWLEDGE_BIAYA_PATTERNS,
+  EMERGENCY_FIRE_PATTERNS,
   matchesAnyPattern,
 } from '../constants/intent-patterns';
 
@@ -33,6 +34,7 @@ import {
   LAYANAN_RESPONSE,
   SYARAT_UMUM_RESPONSE,
   BIAYA_RESPONSE,
+  FALLBACK_TEMPLATES,
   getRandomItem,
 } from '../constants/response-templates';
 
@@ -132,6 +134,16 @@ export function matchTemplate(message: string): TemplateMatch {
       response: BIAYA_RESPONSE,
       intent: 'KNOWLEDGE_QUERY',
       confidence: 0.9,
+    };
+  }
+
+  // Check EMERGENCY FIRE (PRIORITAS TINGGI)
+  if (matchesAnyPattern(cleanMessage, EMERGENCY_FIRE_PATTERNS)) {
+    return {
+      matched: true,
+      response: getRandomItem(FALLBACK_TEMPLATES['EMERGENCY_FIRE']),
+      intent: 'EMERGENCY_FIRE',
+      confidence: 0.99,
     };
   }
 

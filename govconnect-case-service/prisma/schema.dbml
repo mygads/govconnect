@@ -1,0 +1,126 @@
+// GovConnect Case Service - Entity Relationship Diagram
+// Gunakan dbdiagram.io untuk membuat gambar ERD dari kode ini
+
+Project GovConnect_Case_Service {
+  database_type: 'PostgreSQL'
+  Note: 'GovConnect Case Service Database - Pengaduan, Layanan & Reservasi'
+}
+
+// ==================== PENGADUAN MASYARAKAT ====================
+Table complaints {
+  id varchar [pk, note: 'CUID']
+  complaint_id varchar [unique, not null, note: 'ID unik pengaduan']
+  wa_user_id varchar [not null, note: 'ID pengguna WhatsApp']
+  kategori varchar [not null, note: 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak']
+  deskripsi text [not null, note: 'Deskripsi pengaduan']
+  alamat varchar [note: 'Alamat lokasi']
+  rt_rw varchar [note: 'RT/RW lokasi']
+  foto_url varchar [note: 'URL foto pengaduan']
+  status varchar [not null, default: 'baru', note: 'baru, proses, selesai, ditolak']
+  admin_notes text [note: 'Catatan dari admin']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null]
+
+  indexes {
+    wa_user_id
+    status
+    kategori
+    created_at
+    rt_rw
+  }
+
+  Note: 'Tabel untuk menyimpan pengaduan masyarakat'
+}
+
+// ==================== LAYANAN PEMERINTAHAN ====================
+Table services {
+  id varchar [pk, note: 'CUID']
+  code varchar [unique, not null, note: 'Kode unik layanan']
+  name varchar [not null, note: 'Nama layanan']
+  description text [not null, note: 'Deskripsi layanan']
+  category varchar [not null, note: 'administrasi, perizinan, kependudukan, sosial']
+  is_active boolean [not null, default: true, note: 'Layanan aktif atau tidak']
+  is_online_available boolean [not null, default: true, note: 'Bisa reservasi online atau tidak']
+  requirements text[] [note: 'Daftar persyaratan dokumen']
+  sop_steps text[] [note: 'Langkah-langkah SOP']
+  estimated_duration int [not null, default: 30, note: 'Estimasi durasi (menit)']
+  operating_hours json [note: 'Jam operasional per hari']
+  daily_quota int [not null, default: 20, note: 'Kuota reservasi per hari']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null]
+
+  indexes {
+    code
+    category
+    is_active
+  }
+
+  Note: 'Tabel master layanan pemerintahan yang tersedia'
+}
+
+// ==================== RESERVASI ====================
+Table reservations {
+  id varchar [pk, note: 'CUID']
+  reservation_id varchar [unique, not null, note: 'RSV-YYYYMMDD-XXX']
+  wa_user_id varchar [not null, note: 'ID pengguna WhatsApp']
+  service_id varchar [not null, ref: > services.id, note: 'FK ke services']
+  citizen_data json [not null, note: '{nama, nik, alamat, no_hp, keperluan_detail}']
+  reservation_date timestamp [not null, note: 'Tanggal reservasi']
+  reservation_time varchar [not null, note: 'Slot waktu: 08:00, 09:00, dst']
+  queue_number int [not null, note: 'Nomor antrian hari itu']
+  status varchar [not null, default: 'pending', note: 'pending, confirmed, arrived, completed, cancelled, no_show']
+  admin_notes text [note: 'Catatan admin']
+  cancel_reason text [note: 'Alasan pembatalan']
+  confirmed_at timestamp [note: 'Waktu konfirmasi']
+  arrived_at timestamp [note: 'Waktu kedatangan']
+  completed_at timestamp [note: 'Waktu selesai']
+  cancelled_at timestamp [note: 'Waktu pembatalan']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null]
+
+  indexes {
+    wa_user_id
+    service_id
+    status
+    reservation_date
+    created_at
+  }
+
+  Note: 'Tabel reservasi kedatangan warga untuk layanan'
+}
+
+// ==================== LEGACY: TICKET ====================
+Table tickets {
+  id varchar [pk, note: 'CUID']
+  ticket_id varchar [unique, not null, note: 'ID unik tiket']
+  wa_user_id varchar [not null, note: 'ID pengguna WhatsApp']
+  jenis varchar [not null, note: 'surat_keterangan, surat_pengantar, izin_keramaian']
+  data_json json [not null, note: 'Data fleksibel sesuai jenis tiket']
+  status varchar [not null, default: 'pending', note: 'pending, proses, selesai, ditolak']
+  admin_notes text [note: 'Catatan admin']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null]
+
+  indexes {
+    wa_user_id
+    status
+    jenis
+    created_at
+  }
+
+  Note: 'Tabel legacy untuk tiket layanan (akan di-deprecate)'
+}
+
+// ==================== RELATIONSHIPS ====================
+// Service 1 --- * Reservation (One-to-Many)
+// Satu layanan dapat memiliki banyak reservasi
+
+Ref: reservations.service_id > services.id
+
+// ==================== ENUM REFERENCES ====================
+// Status Complaint: baru | proses | selesai | ditolak
+// Kategori Complaint: jalan_rusak | lampu_mati | sampah | drainase | pohon_tumbang | fasilitas_rusak
+// Category Service: administrasi | perizinan | kependudukan | sosial
+// Status Reservation: pending | confirmed | arrived | completed | cancelled | no_show
+// Status Ticket: pending | proses | selesai | ditolak
+// Jenis Ticket: surat_keterangan | surat_pengantar | izin_keramaian

@@ -25,6 +25,7 @@ import {
   CANCEL_PATTERNS,
   HISTORY_PATTERNS,
   KNOWLEDGE_QUERY_PATTERNS,
+  EMERGENCY_FIRE_PATTERNS,
   COMPLAINT_CATEGORY_PATTERNS,
   SERVICE_CODE_PATTERNS,
   matchesAnyPattern,
@@ -160,6 +161,23 @@ export function fastClassifyIntent(message: string): FastClassifyResult | null {
   
   // 3. Check CHECK_STATUS (with ID extraction)
   const ids = extractIds(cleanMessage);
+  
+  // 2.5 Check EMERGENCY_FIRE (PRIORITAS TINGGI - sebelum complaint)
+  for (const pattern of EMERGENCY_FIRE_PATTERNS) {
+    if (pattern.test(lowerMessage)) {
+      return {
+        intent: 'EMERGENCY_FIRE',
+        confidence: 0.98,
+        extractedFields: {
+          isEmergency: true,
+          type: 'fire',
+        },
+        skipLLM: true, // Langsung kasih response darurat
+        reason: 'Emergency fire pattern matched - PRIORITAS TINGGI',
+      };
+    }
+  }
+  
   if (ids.complaintId || ids.reservationId) {
     return {
       intent: 'CHECK_STATUS',

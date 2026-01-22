@@ -1,66 +1,75 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { comparePassword, generateToken } from '@/lib/auth'
+import { comparePassword, generateUserToken } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
   try {
-    const { username, password } = await request.json()
+    const { email, password } = await request.json()
 
-    if (!username || !password) {
+    if (!email || !password) {
       return NextResponse.json(
-        { error: 'Username and password are required' },
+        { error: 'Email dan password harus diisi' },
         { status: 400 }
       )
     }
 
-    // Find admin user
-    const admin = await prisma.admin_users.findUnique({
-      where: { username }
+    // Find user
+    const user = await prisma.users.findUnique({
+      where: { email },
+      include: {
+        village: true
+      }
     })
 
-    if (!admin || !admin.is_active) {
+    if (!user || !user.is_active) {
       return NextResponse.json(
-        { error: 'Invalid credentials' },
+        { error: 'Email atau password salah' },
         { status: 401 }
       )
     }
 
     // Verify password
-    const isValid = await comparePassword(password, admin.password_hash)
+    const isValid = await comparePassword(password, user.password_hash)
     if (!isValid) {
       return NextResponse.json(
-        { error: 'Invalid credentials' },
+        { error: 'Email atau password salah' },
         { status: 401 }
       )
     }
 
     // Generate JWT token
-    const token = await generateToken({
-      adminId: admin.id,
-      username: admin.username,
-      name: admin.name,
-      role: admin.role
+    const token = await generateUserToken({
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      villageId: user.village?.id,
+      villageShortName: user.village?.short_name
     })
 
     // Create session
     const expiresAt = new Date()
     expiresAt.setHours(expiresAt.getHours() + 24)
 
-    await prisma.admin_sessions.create({
+    await prisma.user_sessions.create({
       data: {
-        admin_id: admin.id,
+        user_id: user.id,
         token,
-        expires_at: expiresAt
+        expires_at: expiresAt,
+        ip_address: request.headers.get('x-forwarded-for') || 
+                   request.headers.get('x-real-ip') || 
+                   'unknown',
+        user_agent: request.headers.get('user-agent') || 'unknown'
       }
     })
 
     // Log activity
     await prisma.activity_logs.create({
       data: {
-        admin_id: admin.id,
-        action: 'login',
+        user_id: user.id,
+        action: 'LOGIN',
         resource: 'auth',
-        details: { username: admin.username },
+        details: { email: user.email },
         ip_address: request.headers.get('x-forwarded-for') || 
                    request.headers.get('x-real-ip') || 
                    'unknown'
@@ -71,10 +80,15 @@ export async function POST(request: NextRequest) {
       success: true,
       token,
       user: {
-        id: admin.id,
-        username: admin.username,
-        name: admin.name,
-        role: admin.role
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        village: user.village ? {
+          id: user.village.id,
+          name: user.village.name,
+          short_name: user.village.short_name
+        } : null
       }
     })
 
@@ -90,7 +104,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Login error:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Terjadi kesalahan server' },
       { status: 500 }
     )
   }

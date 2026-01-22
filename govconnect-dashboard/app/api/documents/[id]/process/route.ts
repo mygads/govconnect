@@ -15,7 +15,7 @@ export async function POST(
     const { id } = await params
 
     // Get document
-    const document = await prisma.knowledge_documents.findUnique({
+    const document = await prisma.knowledge_files.findUnique({
       where: { id },
     })
 

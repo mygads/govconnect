@@ -20,6 +20,12 @@ import {
   Activity,
   Calendar,
   Settings2,
+  ClipboardList,
+  Phone,
+  Building,
+  AlertTriangle,
+  BookOpen,
+  Link2,
 } from "lucide-react"
 
 import {
@@ -49,10 +55,6 @@ export function GovConnectSidebar() {
     if (path === "/dashboard") {
       return pathname === path
     }
-    // Exact match for statistik (not its children)
-    if (path === "/dashboard/statistik") {
-      return pathname === path
-    }
     // For other paths, use startsWith but ensure it's a complete segment
     if (pathname === path) {
       return true
@@ -70,85 +72,70 @@ export function GovConnectSidebar() {
           url: "/dashboard",
           icon: LayoutDashboard,
         },
-        {
-          title: "Statistik",
-          url: "/dashboard/statistik",
-          icon: BarChart3,
-        },
-        {
-          title: "Trend Analysis",
-          url: "/dashboard/statistik/analytics",
-          icon: TrendingUp,
-        },
       ],
     },
     {
-      title: "Laporan Management",
+      title: "Layanan Masyarakat",
       items: [
         {
-          title: "List Laporan",
-          url: "/dashboard/laporan",
-          icon: FileText,
-        },
-        {
-          title: "Export & Laporan",
-          url: "/dashboard/export",
-          icon: Download,
-        },
-      ],
-    },
-    {
-      title: "Reservasi & Layanan",
-      items: [
-        {
-          title: "Daftar Reservasi",
-          url: "/dashboard/reservasi",
-          icon: Calendar,
+          title: "Permohonan Layanan",
+          url: "/dashboard/requests",
+          icon: ClipboardList,
         },
         {
           title: "Kelola Layanan",
-          url: "/dashboard/layanan",
+          url: "/dashboard/services",
           icon: Settings2,
         },
+        {
+          title: "Pengaduan",
+          url: "/dashboard/reports",
+          icon: AlertTriangle,
+        },
       ],
     },
     {
-      title: "WhatsApp",
+      title: "Informasi Publik",
       items: [
         {
-          title: "Device",
-          url: "/dashboard/whatsapp",
-          icon: Smartphone,
+          title: "Knowledge Base",
+          url: "/dashboard/knowledge",
+          icon: BookOpen,
         },
         {
-          title: "Live Chat",
-          url: "/dashboard/livechat",
+          title: "Nomor Penting",
+          url: "/dashboard/numbers",
+          icon: Phone,
+        },
+      ],
+    },
+    {
+      title: "Komunikasi",
+      items: [
+        {
+          title: "Riwayat Chat",
+          url: "/dashboard/conversations",
           icon: MessageCircle,
         },
+        {
+          title: "Channel Integration",
+          url: "/dashboard/channels",
+          icon: Link2,
+        },
       ],
     },
     {
-      title: "AI Chatbot",
+      title: "Pengaturan",
       items: [
+        {
+          title: "Profil Desa",
+          url: "/dashboard/profile",
+          icon: Building,
+        },
         {
           title: "AI Settings",
           url: "/dashboard/ai-settings",
           icon: Bot,
-        },
-        {
-          title: "AI Analytics",
-          url: "/dashboard/ai-analytics",
-          icon: Activity,
-        },
-        {
-          title: "Knowledge & RAG",
-          url: "/dashboard/knowledge",
-          icon: Brain,
-        },
-        {
-          title: "Rate Limit",
-          url: "/dashboard/settings/rate-limit",
-          icon: Shield,
         },
       ],
     },

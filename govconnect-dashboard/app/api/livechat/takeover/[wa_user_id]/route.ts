@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken, JWTPayload } from '@/lib/auth'
+import { verifyUserToken, UserJWTPayload } from '@/lib/auth'
 import { livechat } from '@/lib/api-client'
 
-async function getAuthUser(request: NextRequest): Promise<JWTPayload | null> {
+async function getAuthUser(request: NextRequest): Promise<UserJWTPayload | null> {
   const authHeader = request.headers.get('Authorization')
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null
   }
   const token = authHeader.split(' ')[1]
-  return await verifyToken(token)
+  return await verifyUserToken(token)
 }
 
 /**
@@ -55,7 +55,7 @@ export async function POST(
     const { wa_user_id } = await params
 
     const response = await livechat.startTakeover(wa_user_id, {
-      admin_id: user.adminId,
+      admin_id: user.userId,
       admin_name: user.name,
     })
     const data = await response.json()

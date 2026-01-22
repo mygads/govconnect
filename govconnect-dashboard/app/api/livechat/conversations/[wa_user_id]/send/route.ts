@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { verifyUserToken } from '@/lib/auth'
 import { livechat } from '@/lib/api-client'
 
 async function getAuthUser(request: NextRequest) {
@@ -8,7 +8,7 @@ async function getAuthUser(request: NextRequest) {
     return null
   }
   const token = authHeader.split(' ')[1]
-  return await verifyToken(token)
+  return await verifyUserToken(token)
 }
 
 /**

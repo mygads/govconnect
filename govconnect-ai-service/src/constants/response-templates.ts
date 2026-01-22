@@ -107,6 +107,11 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
     'Hai Kak! Mau lapor masalah, reservasi surat, atau tanya info?',
   ],
   
+  'EMERGENCY_FIRE': [
+    '🚨 *DARURAT KEBAKARAN!*\n\nSegera hubungi:\n🔥 *Damkar Sektor Bola: 113* atau *(022) 123456*\n📞 Call Center: 112\n\n⚠️ *Langkah darurat:*\n1. Evakuasi semua orang\n2. Jauhi sumber api\n3. Jangan gunakan lift\n4. Tutup hidung dengan kain basah\n\n🙏 Tetap tenang, bantuan segera datang!',
+    '🔥 *KEBAKARAN - HUBUNGI SEGERA:*\n\n📞 *Damkar Sektor Bola: 113*\n📞 *Hotline: (022) 123456*\n📞 *Call Center 112*\n\nSelamatkan diri dan keluarga terlebih dahulu! Jangan kembali ke dalam bangunan yang terbakar.',
+  ],
+  
   'UNKNOWN': [
     'Maaf Kak, bisa dijelaskan lebih detail? Saya siap bantu untuk:\n\n📋 Lapor masalah (jalan rusak, lampu mati, dll)\n🎫 Reservasi surat (SKD, SKTM, dll)\n📍 Info kelurahan',
     'Hmm, saya kurang paham Kak. Kakak mau:\n\n1️⃣ Lapor masalah?\n2️⃣ Urus surat?\n3️⃣ Cek status?\n\nSilakan pilih atau jelaskan lebih detail ya.',

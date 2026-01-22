@@ -1,0 +1,162 @@
+// GovConnect Channel Service - Entity Relationship Diagram
+// Gunakan dbdiagram.io untuk membuat gambar ERD dari kode ini
+// Copy-paste kode ini ke https://dbdiagram.io/d
+
+Project GovConnect_Channel_Service {
+  database_type: 'PostgreSQL'
+  Note: 'GovConnect Channel Service Database - WhatsApp Messaging & Conversation Management'
+}
+
+// ==================== MESSAGES ====================
+Table messages {
+  id varchar [pk, note: 'CUID - Primary Key']
+  wa_user_id varchar [not null, note: 'Nomor HP WhatsApp pengguna (628xxx)']
+  message_id varchar [unique, not null, note: 'ID unik pesan dari WhatsApp provider']
+  message_text text [not null, note: 'Isi pesan']
+  direction varchar [not null, note: 'IN = masuk, OUT = keluar']
+  source varchar [not null, note: 'WA_WEBHOOK, AI, SYSTEM']
+  timestamp timestamp [not null, default: `now()`, note: 'Waktu pesan']
+  createdAt timestamp [not null, default: `now()`, note: 'Waktu record dibuat']
+
+  indexes {
+    (wa_user_id, timestamp) [name: 'idx_messages_user_time']
+    direction [name: 'idx_messages_direction']
+    message_id [name: 'idx_messages_message_id']
+  }
+
+  Note: 'Tabel penyimpanan semua pesan masuk dan keluar WhatsApp'
+}
+
+// ==================== SEND LOGS ====================
+Table send_logs {
+  id varchar [pk, note: 'CUID - Primary Key']
+  wa_user_id varchar [not null, note: 'Nomor HP WhatsApp penerima']
+  message_text text [not null, note: 'Isi pesan yang dikirim']
+  status varchar [not null, note: 'sent = berhasil, failed = gagal']
+  error_msg text [note: 'Pesan error jika gagal']
+  timestamp timestamp [not null, default: `now()`, note: 'Waktu pengiriman']
+
+  indexes {
+    wa_user_id [name: 'idx_send_logs_user']
+    status [name: 'idx_send_logs_status']
+    timestamp [name: 'idx_send_logs_timestamp']
+  }
+
+  Note: 'Log pengiriman pesan WhatsApp untuk tracking dan retry'
+}
+
+// ==================== WA SETTINGS ====================
+Table wa_settings {
+  id varchar [pk, default: 'default', note: 'ID setting (default: "default")']
+  auto_read_messages boolean [not null, default: false, note: 'Otomatis tandai pesan sudah dibaca']
+  typing_indicator boolean [not null, default: false, note: 'Tampilkan indikator sedang mengetik']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  Note: 'Pengaturan global WhatsApp service'
+}
+
+// ==================== TAKEOVER SESSIONS ====================
+Table takeover_sessions {
+  id varchar [pk, note: 'CUID - Primary Key']
+  wa_user_id varchar [not null, note: 'Nomor HP user yang di-takeover']
+  admin_id varchar [not null, note: 'ID admin yang mengambil alih']
+  admin_name varchar [note: 'Nama display admin']
+  started_at timestamp [not null, default: `now()`, note: 'Waktu mulai takeover']
+  ended_at timestamp [note: 'Waktu selesai takeover (null = masih aktif)']
+  reason varchar [note: 'Alasan takeover']
+
+  indexes {
+    wa_user_id [name: 'idx_takeover_user']
+    admin_id [name: 'idx_takeover_admin']
+    started_at [name: 'idx_takeover_started']
+    (wa_user_id, ended_at) [name: 'idx_takeover_active']
+  }
+
+  Note: 'Sesi takeover ketika admin mengambil alih percakapan dari AI'
+}
+
+// ==================== CONVERSATIONS ====================
+Table conversations {
+  id varchar [pk, note: 'CUID - Primary Key']
+  wa_user_id varchar [unique, not null, note: 'Nomor HP WhatsApp (unik per user)']
+  user_name varchar [note: 'Nama push WhatsApp pengguna']
+  last_message text [note: 'Pesan terakhir dalam percakapan']
+  last_message_at timestamp [not null, default: `now()`, note: 'Waktu pesan terakhir']
+  unread_count int [not null, default: 0, note: 'Jumlah pesan belum dibaca']
+  is_takeover boolean [not null, default: false, note: 'Apakah sedang di-takeover admin']
+  ai_status varchar [note: 'null, processing, error, queued']
+  ai_error_message text [note: 'Pesan error jika AI gagal']
+  pending_message_id varchar [note: 'ID pesan yang perlu retry AI']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    is_takeover [name: 'idx_conversations_takeover']
+    last_message_at [name: 'idx_conversations_last_message']
+    ai_status [name: 'idx_conversations_ai_status']
+  }
+
+  Note: 'Ringkasan percakapan untuk tampilan live chat list'
+}
+
+// ==================== PENDING MESSAGES ====================
+Table pending_messages {
+  id varchar [pk, note: 'CUID - Primary Key']
+  wa_user_id varchar [not null, note: 'Nomor HP pengguna']
+  message_id varchar [unique, not null, note: 'ID pesan WhatsApp']
+  message_text text [not null, note: 'Isi pesan']
+  status varchar [not null, default: 'pending', note: 'pending, processing, completed, failed']
+  retry_count int [not null, default: 0, note: 'Jumlah retry yang sudah dilakukan']
+  error_msg text [note: 'Pesan error jika gagal']
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp [not null, default: `now()`]
+
+  indexes {
+    (wa_user_id, status) [name: 'idx_pending_user_status']
+    (status, created_at) [name: 'idx_pending_status_time']
+  }
+
+  Note: 'Antrian pesan pending untuk batching dan retry ke AI'
+}
+
+// ==================== RELATIONSHIPS ====================
+// Logical relationships (tidak ada FK di schema, tapi ada hubungan logis)
+
+// Messages dan Conversations terhubung via wa_user_id
+// Satu Conversation memiliki banyak Messages
+Ref: messages.wa_user_id > conversations.wa_user_id
+
+// Takeover Sessions terhubung ke Conversations via wa_user_id
+// Satu Conversation dapat memiliki banyak Takeover Sessions (history)
+Ref: takeover_sessions.wa_user_id > conversations.wa_user_id
+
+// Pending Messages terhubung ke Conversations via wa_user_id
+Ref: pending_messages.wa_user_id > conversations.wa_user_id
+
+// Send Logs terhubung ke Conversations via wa_user_id
+Ref: send_logs.wa_user_id > conversations.wa_user_id
+
+// ==================== ENUM REFERENCES ====================
+// Direction (messages): IN | OUT
+// Source (messages): WA_WEBHOOK | AI | SYSTEM
+// Status (send_logs): sent | failed
+// AI Status (conversations): null | processing | error | queued
+// Status (pending_messages): pending | processing | completed | failed
+
+// ==================== NOTES ====================
+// Flow Pesan Masuk:
+// 1. Pesan masuk via webhook -> disimpan ke messages (direction=IN)
+// 2. Update conversations (last_message, unread_count++)
+// 3. Jika tidak takeover, kirim ke pending_messages untuk diproses AI
+// 4. AI memproses -> update conversations.ai_status
+// 5. AI reply -> simpan ke messages (direction=OUT, source=AI)
+// 6. Kirim via WhatsApp -> catat di send_logs
+
+// Flow Takeover:
+// 1. Admin klik takeover -> buat record di takeover_sessions
+// 2. Update conversations.is_takeover = true
+// 3. AI tidak memproses pesan selama takeover
+// 4. Admin reply -> simpan ke messages (direction=OUT, source=SYSTEM)
+// 5. Admin end takeover -> update takeover_sessions.ended_at
+// 6. Update conversations.is_takeover = false
