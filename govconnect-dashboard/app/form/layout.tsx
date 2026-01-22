@@ -20,9 +20,7 @@ export default function FormLayout({
     };
 
     const navItems = [
-        { href: "/form", label: "Beranda" },
-        { href: "/form/laporan", label: "Buat Laporan" },
-        { href: "/form/reservasi", label: "Reservasi" },
+        { href: "/form", label: "Panduan Form" },
     ];
 
     return (

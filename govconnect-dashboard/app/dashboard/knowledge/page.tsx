@@ -67,6 +67,7 @@ interface Knowledge {
   title: string
   content: string
   category: string
+  category_id?: string | null
   keywords: string[]
   is_active: boolean
   priority: number
@@ -74,6 +75,12 @@ interface Knowledge {
   last_embedded_at?: string | null
   created_at: string
   updated_at: string
+}
+
+interface KnowledgeCategory {
+  id: string
+  name: string
+  is_default?: boolean
 }
 
 interface KnowledgeDocument {
@@ -88,6 +95,7 @@ interface KnowledgeDocument {
   title: string | null
   description: string | null
   category: string | null
+  category_id?: string | null
   total_chunks: number | null
   created_at: string
   updated_at: string
@@ -95,22 +103,11 @@ interface KnowledgeDocument {
 
 // ==================== CONSTANTS ====================
 
-const CATEGORIES = [
-  { value: 'informasi_umum', label: 'Informasi Umum' },
-  { value: 'layanan', label: 'Layanan' },
-  { value: 'prosedur', label: 'Prosedur' },
-  { value: 'jadwal', label: 'Jadwal' },
-  { value: 'kontak', label: 'Kontak' },
-  { value: 'faq', label: 'FAQ' },
-  { value: 'regulasi', label: 'Regulasi' },
-  { value: 'panduan', label: 'Panduan' },
-]
-
 const STATUS_CONFIG = {
-  pending: { label: 'Pending', icon: Clock, color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' },
-  processing: { label: 'Processing', icon: Loader2, color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
-  completed: { label: 'Completed', icon: CheckCircle, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' },
-  failed: { label: 'Failed', icon: XCircle, color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
+  pending: { label: 'Menunggu', icon: Clock, color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' },
+  processing: { label: 'Diproses', icon: Loader2, color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
+  completed: { label: 'Selesai', icon: CheckCircle, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' },
+  failed: { label: 'Gagal', icon: XCircle, color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
 }
 
 // ==================== MAIN COMPONENT ====================
@@ -118,6 +115,9 @@ const STATUS_CONFIG = {
 export default function KnowledgePage() {
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState('knowledge-base')
+
+  const [categories, setCategories] = useState<KnowledgeCategory[]>([])
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
   
   // ==================== KNOWLEDGE BASE STATE ====================
   const [knowledge, setKnowledge] = useState<Knowledge[]>([])
@@ -135,7 +135,7 @@ export default function KnowledgePage() {
   const [knowledgeForm, setKnowledgeForm] = useState({
     title: '',
     content: '',
-    category: 'informasi_umum',
+    category_id: '',
     keywords: '',
     is_active: true,
     priority: 0,
@@ -174,13 +174,35 @@ export default function KnowledgePage() {
   const [embeddingLoading, setEmbeddingLoading] = useState(false)
 
   // ==================== FETCH FUNCTIONS ====================
+  const fetchCategories = async () => {
+    setCategoriesLoading(true)
+    try {
+      const response = await fetch('/api/knowledge/categories', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        const list = Array.isArray(data.data) ? data.data : []
+        setCategories(list)
+
+        if (!knowledgeForm.category_id && list.length > 0) {
+          setKnowledgeForm(prev => ({ ...prev, category_id: list[0].id }))
+        }
+      }
+    } catch (error) {
+      toast({ title: "Error", description: "Gagal mengambil kategori", variant: "destructive" })
+    } finally {
+      setCategoriesLoading(false)
+    }
+  }
   
   const fetchKnowledge = async () => {
     setKnowledgeLoading(true)
     try {
       const params = new URLSearchParams()
       if (knowledgeSearch) params.set('search', knowledgeSearch)
-      if (knowledgeCategory && knowledgeCategory !== 'all') params.set('category', knowledgeCategory)
+      if (knowledgeCategory && knowledgeCategory !== 'all') params.set('category_id', knowledgeCategory)
       params.set('limit', '100')
 
       const response = await fetch(`/api/knowledge?${params}`, {
@@ -192,7 +214,7 @@ export default function KnowledgePage() {
         setKnowledge(data.data)
       }
     } catch (error) {
-      toast({ title: "Error", description: "Failed to fetch knowledge base", variant: "destructive" })
+      toast({ title: "Error", description: "Gagal mengambil basis pengetahuan", variant: "destructive" })
     } finally {
       setKnowledgeLoading(false)
     }
@@ -203,7 +225,7 @@ export default function KnowledgePage() {
     try {
       const params = new URLSearchParams()
       if (documentsStatus && documentsStatus !== 'all') params.set('status', documentsStatus)
-      if (documentsCategory && documentsCategory !== 'all') params.set('category', documentsCategory)
+      if (documentsCategory && documentsCategory !== 'all') params.set('category_id', documentsCategory)
       params.set('limit', '100')
 
       const response = await fetch(`/api/documents?${params}`, {
@@ -215,13 +237,14 @@ export default function KnowledgePage() {
         setDocuments(data.data)
       }
     } catch (error) {
-      toast({ title: "Error", description: "Failed to fetch documents", variant: "destructive" })
+      toast({ title: "Error", description: "Gagal mengambil dokumen", variant: "destructive" })
     } finally {
       setDocumentsLoading(false)
     }
   }
 
   useEffect(() => {
+    fetchCategories()
     fetchKnowledge()
     fetchDocuments()
   }, [])
@@ -257,17 +280,17 @@ export default function KnowledgePage() {
       const kbResult = kbResponse.ok ? await kbResponse.json() : null
 
       toast({
-        title: "Embeddings Generated",
+        title: "Embedding Berhasil Dibuat",
         description: kbResult 
-          ? `Knowledge Base: ${kbResult.processed}/${kbResult.total} processed` 
-          : "Check console for details",
+          ? `Basis Pengetahuan: ${kbResult.processed}/${kbResult.total} diproses` 
+          : "Periksa console untuk detail",
       })
       
       // Refresh data
       fetchKnowledge()
       fetchDocuments()
     } catch (error: any) {
-      toast({ title: "Error", description: error.message || "Failed to generate embeddings", variant: "destructive" })
+      toast({ title: "Error", description: error.message || "Gagal membuat embedding", variant: "destructive" })
     } finally {
       setEmbeddingLoading(false)
     }
@@ -285,6 +308,11 @@ export default function KnowledgePage() {
     setKnowledgeFormLoading(true)
 
     try {
+      if (!knowledgeForm.category_id) {
+        toast({ title: "Error", description: "Category wajib dipilih", variant: "destructive" })
+        return
+      }
+
       const keywords = knowledgeForm.keywords.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0)
 
       const response = await fetch('/api/knowledge', {
@@ -296,9 +324,9 @@ export default function KnowledgePage() {
         body: JSON.stringify({ ...knowledgeForm, keywords }),
       })
 
-      if (!response.ok) throw new Error((await response.json()).error || 'Failed to create')
+      if (!response.ok) throw new Error((await response.json()).error || 'Gagal membuat data')
 
-      toast({ title: "Success", description: "Knowledge entry created" })
+      toast({ title: "Berhasil", description: "Entri pengetahuan berhasil dibuat" })
       setIsAddKnowledgeOpen(false)
       resetKnowledgeForm()
       fetchKnowledge()
@@ -315,6 +343,11 @@ export default function KnowledgePage() {
     setKnowledgeFormLoading(true)
 
     try {
+      if (!knowledgeForm.category_id) {
+        toast({ title: "Error", description: "Category wajib dipilih", variant: "destructive" })
+        return
+      }
+
       const keywords = knowledgeForm.keywords.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0)
 
       const response = await fetch(`/api/knowledge/${selectedKnowledge.id}`, {
@@ -326,9 +359,9 @@ export default function KnowledgePage() {
         body: JSON.stringify({ ...knowledgeForm, keywords }),
       })
 
-      if (!response.ok) throw new Error((await response.json()).error || 'Failed to update')
+      if (!response.ok) throw new Error((await response.json()).error || 'Gagal memperbarui data')
 
-      toast({ title: "Success", description: "Knowledge entry updated" })
+      toast({ title: "Berhasil", description: "Entri pengetahuan berhasil diperbarui" })
       setIsEditKnowledgeOpen(false)
       resetKnowledgeForm()
       fetchKnowledge()
@@ -349,9 +382,9 @@ export default function KnowledgePage() {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
       })
 
-      if (!response.ok) throw new Error((await response.json()).error || 'Failed to delete')
+      if (!response.ok) throw new Error((await response.json()).error || 'Gagal menghapus data')
 
-      toast({ title: "Success", description: "Knowledge entry deleted" })
+      toast({ title: "Berhasil", description: "Entri pengetahuan berhasil dihapus" })
       setIsDeleteKnowledgeOpen(false)
       setSelectedKnowledge(null)
       fetchKnowledge()
@@ -363,11 +396,15 @@ export default function KnowledgePage() {
   }
 
   const openEditKnowledge = (item: Knowledge) => {
+    const resolvedCategoryId = item.category_id
+      || categories.find(c => c.name === item.category)?.id
+      || ''
+
     setSelectedKnowledge(item)
     setKnowledgeForm({
       title: item.title,
       content: item.content,
-      category: item.category,
+      category_id: resolvedCategoryId,
       keywords: item.keywords.join(', '),
       is_active: item.is_active,
       priority: item.priority,
@@ -376,7 +413,7 @@ export default function KnowledgePage() {
   }
 
   const resetKnowledgeForm = () => {
-    setKnowledgeForm({ title: '', content: '', category: 'informasi_umum', keywords: '', is_active: true, priority: 0 })
+    setKnowledgeForm({ title: '', content: '', category_id: '', keywords: '', is_active: true, priority: 0 })
     setSelectedKnowledge(null)
   }
 
@@ -392,7 +429,7 @@ export default function KnowledgePage() {
 
   const handleUpload = async () => {
     if (!uploadFile) {
-      toast({ title: "Error", description: "Please select a file", variant: "destructive" })
+      toast({ title: "Error", description: "Silakan pilih file", variant: "destructive" })
       return
     }
 
@@ -404,7 +441,7 @@ export default function KnowledgePage() {
       formData.append('file', uploadFile)
       if (uploadTitle) formData.append('title', uploadTitle)
       if (uploadDescription) formData.append('description', uploadDescription)
-      if (uploadCategory) formData.append('category', uploadCategory)
+      if (uploadCategory) formData.append('category_id', uploadCategory)
 
       setUploadProgress(30)
 
@@ -416,12 +453,12 @@ export default function KnowledgePage() {
 
       setUploadProgress(70)
 
-      if (!response.ok) throw new Error((await response.json()).error || 'Upload failed')
+      if (!response.ok) throw new Error((await response.json()).error || 'Gagal mengunggah')
 
       const result = await response.json()
       setUploadProgress(100)
 
-      toast({ title: "Success", description: "Document uploaded and processing started" })
+      toast({ title: "Berhasil", description: "Dokumen berhasil diunggah dan mulai diproses" })
       setIsUploadOpen(false)
       resetUploadForm()
       fetchDocuments()
@@ -435,7 +472,7 @@ export default function KnowledgePage() {
 
   const triggerProcessing = async (documentId: string) => {
     try {
-      toast({ title: "Processing", description: "Starting document processing..." })
+      toast({ title: "Diproses", description: "Memulai pemrosesan dokumen..." })
       
       const response = await fetch(`/api/documents/${documentId}/process`, {
         method: 'POST',
@@ -446,14 +483,14 @@ export default function KnowledgePage() {
       
       if (!response.ok) {
         toast({ 
-          title: "Processing Failed", 
-          description: result.error || result.details || 'Unknown error',
+          title: "Pemrosesan Gagal", 
+          description: result.error || result.details || 'Kesalahan tidak diketahui',
           variant: "destructive" 
         })
       } else {
         toast({ 
-          title: "Success", 
-          description: `Document processed: ${result.chunksCount || 0} chunks created` 
+          title: "Berhasil", 
+          description: `Dokumen diproses: ${result.chunksCount || 0} chunk dibuat` 
         })
       }
       
@@ -462,7 +499,7 @@ export default function KnowledgePage() {
       console.error('Processing failed:', error)
       toast({ 
         title: "Error", 
-        description: error.message || 'Processing failed',
+        description: error.message || 'Pemrosesan gagal',
         variant: "destructive" 
       })
     }
@@ -482,13 +519,13 @@ export default function KnowledgePage() {
         body: JSON.stringify({
           title: editDocTitle,
           description: editDocDescription,
-          category: editDocCategory || null,
+          category_id: editDocCategory || null,
         }),
       })
 
-      if (!response.ok) throw new Error((await response.json()).error || 'Update failed')
+      if (!response.ok) throw new Error((await response.json()).error || 'Gagal memperbarui data')
 
-      toast({ title: "Success", description: "Document updated" })
+      toast({ title: "Berhasil", description: "Dokumen berhasil diperbarui" })
       setIsEditDocOpen(false)
       fetchDocuments()
     } catch (error: any) {
@@ -507,9 +544,9 @@ export default function KnowledgePage() {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
       })
 
-      if (!response.ok) throw new Error((await response.json()).error || 'Delete failed')
+      if (!response.ok) throw new Error((await response.json()).error || 'Gagal menghapus data')
 
-      toast({ title: "Success", description: "Document deleted" })
+      toast({ title: "Berhasil", description: "Dokumen berhasil dihapus" })
       setIsDeleteDocOpen(false)
       setSelectedDocument(null)
       fetchDocuments()
@@ -522,7 +559,9 @@ export default function KnowledgePage() {
     setSelectedDocument(doc)
     setEditDocTitle(doc.title || '')
     setEditDocDescription(doc.description || '')
-    setEditDocCategory(doc.category || '')
+    setEditDocCategory(
+      doc.category_id || categories.find(c => c.name === doc.category)?.id || ''
+    )
     setIsEditDocOpen(true)
   }
 
@@ -536,9 +575,13 @@ export default function KnowledgePage() {
 
   // ==================== HELPERS ====================
   
-  const getCategoryLabel = (value: string | null) => {
-    if (!value) return '-'
-    return CATEGORIES.find(c => c.value === value)?.label || value
+  const getCategoryLabel = (categoryId?: string | null, fallback?: string | null) => {
+    if (categoryId) {
+      const found = categories.find(c => c.id === categoryId)
+      if (found) return found.name
+    }
+    if (fallback) return fallback
+    return '-'
   }
 
   const formatFileSize = (bytes: number): string => {
@@ -576,26 +619,26 @@ export default function KnowledgePage() {
         <div>
           <h1 className="text-3xl font-bold text-foreground flex items-center gap-2">
             <Brain className="h-8 w-8" />
-            Knowledge & RAG
+            Basis Pengetahuan & RAG
           </h1>
           <p className="text-muted-foreground mt-2">
-            Manage knowledge base entries and documents for AI-powered responses
+            Kelola entri basis pengetahuan dan dokumen untuk respons AI
           </p>
         </div>
         <Button 
           onClick={handleGenerateAllEmbeddings}
           disabled={embeddingLoading}
-          className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+          className="bg-linear-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
         >
           {embeddingLoading ? (
             <>
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Generating...
+              Memproses...
             </>
           ) : (
             <>
               <Sparkles className="h-4 w-4 mr-2" />
-              Generate All Embeddings
+              Generate Semua Embedding
             </>
           )}
         </Button>
@@ -607,9 +650,9 @@ export default function KnowledgePage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Knowledge Entries</p>
+                <p className="text-sm text-muted-foreground">Entri Pengetahuan</p>
                 <p className="text-2xl font-bold">{knowledge.length}</p>
-                <p className="text-xs text-muted-foreground">{knowledgeWithEmbedding} embedded</p>
+                <p className="text-xs text-muted-foreground">{knowledgeWithEmbedding} sudah di-embed</p>
               </div>
               <BookOpen className="h-8 w-8 text-blue-500" />
             </div>
@@ -619,9 +662,9 @@ export default function KnowledgePage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Documents</p>
+                <p className="text-sm text-muted-foreground">Dokumen</p>
                 <p className="text-2xl font-bold">{documents.length}</p>
-                <p className="text-xs text-muted-foreground">{documents.filter(d => d.status === 'completed').length} processed</p>
+                <p className="text-xs text-muted-foreground">{documents.filter(d => d.status === 'completed').length} selesai diproses</p>
               </div>
               <FileText className="h-8 w-8 text-purple-500" />
             </div>
@@ -631,9 +674,9 @@ export default function KnowledgePage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Total Chunks</p>
+                <p className="text-sm text-muted-foreground">Total Chunk</p>
                 <p className="text-2xl font-bold">{totalChunks}</p>
-                <p className="text-xs text-muted-foreground">From documents</p>
+                <p className="text-xs text-muted-foreground">Dari dokumen</p>
               </div>
               <Database className="h-8 w-8 text-green-500" />
             </div>
@@ -643,11 +686,11 @@ export default function KnowledgePage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Processing</p>
+                <p className="text-sm text-muted-foreground">Diproses</p>
                 <p className="text-2xl font-bold text-yellow-600">
                   {documents.filter(d => d.status === 'processing').length}
                 </p>
-                <p className="text-xs text-muted-foreground">In progress</p>
+                <p className="text-xs text-muted-foreground">Sedang berjalan</p>
               </div>
               <Loader2 className={`h-8 w-8 text-yellow-500 ${documents.some(d => d.status === 'processing') ? 'animate-spin' : ''}`} />
             </div>
@@ -660,11 +703,11 @@ export default function KnowledgePage() {
         <TabsList className="grid w-full grid-cols-2 max-w-md">
           <TabsTrigger value="knowledge-base" className="flex items-center gap-2">
             <BookOpen className="h-4 w-4" />
-            Knowledge Base
+            Basis Pengetahuan
           </TabsTrigger>
           <TabsTrigger value="documents" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
-            Documents
+            Dokumen
           </TabsTrigger>
         </TabsList>
 
@@ -676,29 +719,29 @@ export default function KnowledgePage() {
               <form onSubmit={handleKnowledgeSearch} className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
                   <Input
-                    placeholder="Search by title, content, or keywords..."
+                    placeholder="Cari berdasarkan judul, konten, atau kata kunci..."
                     value={knowledgeSearch}
                     onChange={(e) => setKnowledgeSearch(e.target.value)}
                   />
                 </div>
-                <Select value={knowledgeCategory} onValueChange={setKnowledgeCategory}>
+                <Select value={knowledgeCategory} onValueChange={setKnowledgeCategory} disabled={categoriesLoading}>
                   <SelectTrigger className="w-full sm:w-[180px]">
-                    <SelectValue placeholder="All Categories" />
+                    <SelectValue placeholder="Semua Kategori" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {CATEGORIES.map(cat => (
-                      <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                    <SelectItem value="all">Semua Kategori</SelectItem>
+                    {categories.map(cat => (
+                      <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 <Button type="submit" variant="secondary">
                   <Search className="h-4 w-4 mr-2" />
-                  Search
+                  Cari
                 </Button>
                 <Button type="button" onClick={() => { resetKnowledgeForm(); setIsAddKnowledgeOpen(true) }}>
                   <Plus className="h-4 w-4 mr-2" />
-                  Add
+                  Tambah
                 </Button>
               </form>
             </CardContent>
@@ -709,7 +752,7 @@ export default function KnowledgePage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5" />
-                Knowledge Entries ({knowledge.length})
+                Entri Pengetahuan ({knowledge.length})
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -719,18 +762,18 @@ export default function KnowledgePage() {
                 </div>
               ) : knowledge.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No knowledge entries found. Click "Add" to create one.
+                  Belum ada entri pengetahuan. Klik "Tambah" untuk membuat.
                 </div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Keywords</TableHead>
+                      <TableHead>Judul</TableHead>
+                      <TableHead>Kategori</TableHead>
+                      <TableHead>Kata Kunci</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Embedded</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>Embedding</TableHead>
+                      <TableHead className="text-right">Aksi</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -738,7 +781,7 @@ export default function KnowledgePage() {
                       <TableRow key={item.id}>
                         <TableCell className="font-medium">{item.title}</TableCell>
                         <TableCell>
-                          <Badge variant="outline">{getCategoryLabel(item.category)}</Badge>
+                          <Badge variant="outline">{getCategoryLabel(item.category_id, item.category)}</Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
@@ -752,17 +795,17 @@ export default function KnowledgePage() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={item.is_active ? "default" : "secondary"}>
-                            {item.is_active ? 'Active' : 'Inactive'}
+                            {item.is_active ? 'Aktif' : 'Nonaktif'}
                           </Badge>
                         </TableCell>
                         <TableCell>
                           {item.last_embedded_at ? (
                             <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                               <CheckCircle className="h-3 w-3 mr-1" />
-                              Yes
+                              Ya
                             </Badge>
                           ) : (
-                            <Badge variant="outline">No</Badge>
+                            <Badge variant="outline">Tidak</Badge>
                           )}
                         </TableCell>
                         <TableCell className="text-right">
@@ -790,31 +833,31 @@ export default function KnowledgePage() {
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
                   <Input
-                    placeholder="Search by title, filename, or description..."
+                    placeholder="Cari berdasarkan judul, nama file, atau deskripsi..."
                     value={documentsSearch}
                     onChange={(e) => setDocumentsSearch(e.target.value)}
                   />
                 </div>
                 <Select value={documentsStatus} onValueChange={setDocumentsStatus}>
                   <SelectTrigger className="w-full sm:w-[150px]">
-                    <SelectValue placeholder="All Status" />
+                    <SelectValue placeholder="Semua Status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="processing">Processing</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="failed">Failed</SelectItem>
+                    <SelectItem value="all">Semua Status</SelectItem>
+                    <SelectItem value="pending">Menunggu</SelectItem>
+                    <SelectItem value="processing">Diproses</SelectItem>
+                    <SelectItem value="completed">Selesai</SelectItem>
+                    <SelectItem value="failed">Gagal</SelectItem>
                   </SelectContent>
                 </Select>
-                <Select value={documentsCategory} onValueChange={setDocumentsCategory}>
+                <Select value={documentsCategory} onValueChange={setDocumentsCategory} disabled={categoriesLoading}>
                   <SelectTrigger className="w-full sm:w-[180px]">
-                    <SelectValue placeholder="All Categories" />
+                    <SelectValue placeholder="Semua Kategori" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {CATEGORIES.map(cat => (
-                      <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                    <SelectItem value="all">Semua Kategori</SelectItem>
+                    {categories.map(cat => (
+                      <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -823,7 +866,7 @@ export default function KnowledgePage() {
                 </Button>
                 <Button onClick={() => { resetUploadForm(); setIsUploadOpen(true) }}>
                   <Upload className="h-4 w-4 mr-2" />
-                  Upload
+                  Unggah
                 </Button>
               </div>
             </CardContent>
@@ -832,7 +875,7 @@ export default function KnowledgePage() {
           {/* Documents Table */}
           <Card>
             <CardHeader>
-              <CardTitle>Documents ({filteredDocuments.length})</CardTitle>
+              <CardTitle>Dokumen ({filteredDocuments.length})</CardTitle>
             </CardHeader>
             <CardContent>
               {documentsLoading ? (
@@ -841,18 +884,18 @@ export default function KnowledgePage() {
                 </div>
               ) : filteredDocuments.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No documents found. Upload a document to get started.
+                  Belum ada dokumen. Unggah dokumen untuk memulai.
                 </div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Document</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Size</TableHead>
+                      <TableHead>Dokumen</TableHead>
+                      <TableHead>Kategori</TableHead>
+                      <TableHead>Ukuran</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Chunks</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>Chunk</TableHead>
+                      <TableHead className="text-right">Aksi</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -872,7 +915,9 @@ export default function KnowledgePage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {doc.category && <Badge variant="outline">{getCategoryLabel(doc.category)}</Badge>}
+                            {(doc.category_id || doc.category) && (
+                              <Badge variant="outline">{getCategoryLabel(doc.category_id, doc.category)}</Badge>
+                            )}
                           </TableCell>
                           <TableCell className="text-muted-foreground">{formatFileSize(doc.file_size)}</TableCell>
                           <TableCell>
@@ -897,10 +942,10 @@ export default function KnowledgePage() {
                                   <Sparkles className="h-4 w-4 text-purple-500" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="sm" onClick={() => openEditDoc(doc)} title="Edit">
+                              <Button variant="ghost" size="sm" onClick={() => openEditDoc(doc)} title="Ubah">
                                 <Edit className="h-4 w-4" />
                               </Button>
-                              <Button variant="ghost" size="sm" onClick={() => { setSelectedDocument(doc); setIsDeleteDocOpen(true) }} title="Delete">
+                              <Button variant="ghost" size="sm" onClick={() => { setSelectedDocument(doc); setIsDeleteDocOpen(true) }} title="Hapus">
                                 <Trash2 className="h-4 w-4 text-destructive" />
                               </Button>
                             </div>
@@ -922,50 +967,50 @@ export default function KnowledgePage() {
       <Dialog open={isAddKnowledgeOpen} onOpenChange={setIsAddKnowledgeOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Add Knowledge Entry</DialogTitle>
-            <DialogDescription>Add new information to the knowledge base for AI to use.</DialogDescription>
+            <DialogTitle>Tambah Entri Pengetahuan</DialogTitle>
+            <DialogDescription>Tambahkan informasi baru ke basis pengetahuan untuk digunakan AI.</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAddKnowledge}>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="title">Title *</Label>
-                <Input id="title" value={knowledgeForm.title} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, title: e.target.value })} placeholder="e.g., Jam Operasional Kantor" required />
+                <Label htmlFor="title">Judul *</Label>
+                <Input id="title" value={knowledgeForm.title} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, title: e.target.value })} placeholder="contoh: Jam Operasional Kantor" required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="category">Category *</Label>
-                <Select value={knowledgeForm.category} onValueChange={(value) => setKnowledgeForm({ ...knowledgeForm, category: value })}>
+                <Label htmlFor="category">Kategori *</Label>
+                <Select value={knowledgeForm.category_id} onValueChange={(value) => setKnowledgeForm({ ...knowledgeForm, category_id: value })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {CATEGORIES.map(cat => <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>)}
+                    {categories.map(cat => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="content">Content *</Label>
-                <Textarea id="content" value={knowledgeForm.content} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, content: e.target.value })} placeholder="Enter detailed information..." rows={6} required />
+                <Label htmlFor="content">Konten *</Label>
+                <Textarea id="content" value={knowledgeForm.content} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, content: e.target.value })} placeholder="Masukkan informasi detail..." rows={6} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="keywords">Keywords (comma-separated)</Label>
-                <Input id="keywords" value={knowledgeForm.keywords} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, keywords: e.target.value })} placeholder="e.g., jam, buka, operasional" />
+                <Label htmlFor="keywords">Kata kunci (pisahkan dengan koma)</Label>
+                <Input id="keywords" value={knowledgeForm.keywords} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, keywords: e.target.value })} placeholder="contoh: jam, buka, operasional" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="priority">Priority</Label>
+                  <Label htmlFor="priority">Prioritas</Label>
                   <Input id="priority" type="number" value={knowledgeForm.priority} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, priority: parseInt(e.target.value) || 0 })} min={0} max={100} />
                 </div>
                 <div className="space-y-2">
                   <Label>Status</Label>
                   <div className="flex items-center space-x-2 pt-2">
                     <Switch checked={knowledgeForm.is_active} onCheckedChange={(checked) => setKnowledgeForm({ ...knowledgeForm, is_active: checked })} />
-                    <Label>{knowledgeForm.is_active ? 'Active' : 'Inactive'}</Label>
+                    <Label>{knowledgeForm.is_active ? 'Aktif' : 'Nonaktif'}</Label>
                   </div>
                 </div>
               </div>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsAddKnowledgeOpen(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setIsAddKnowledgeOpen(false)}>Batal</Button>
               <Button type="submit" disabled={knowledgeFormLoading}>
-                <Save className="h-4 w-4 mr-2" />{knowledgeFormLoading ? 'Saving...' : 'Save'}
+                <Save className="h-4 w-4 mr-2" />{knowledgeFormLoading ? 'Menyimpan...' : 'Simpan'}
               </Button>
             </DialogFooter>
           </form>
@@ -976,50 +1021,50 @@ export default function KnowledgePage() {
       <Dialog open={isEditKnowledgeOpen} onOpenChange={setIsEditKnowledgeOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Knowledge Entry</DialogTitle>
-            <DialogDescription>Update the knowledge entry information.</DialogDescription>
+            <DialogTitle>Ubah Entri Pengetahuan</DialogTitle>
+            <DialogDescription>Perbarui informasi entri pengetahuan.</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleEditKnowledge}>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-title">Title *</Label>
+                <Label htmlFor="edit-title">Judul *</Label>
                 <Input id="edit-title" value={knowledgeForm.title} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, title: e.target.value })} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-category">Category *</Label>
-                <Select value={knowledgeForm.category} onValueChange={(value) => setKnowledgeForm({ ...knowledgeForm, category: value })}>
+                <Label htmlFor="edit-category">Kategori *</Label>
+                <Select value={knowledgeForm.category_id} onValueChange={(value) => setKnowledgeForm({ ...knowledgeForm, category_id: value })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {CATEGORIES.map(cat => <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>)}
+                    {categories.map(cat => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-content">Content *</Label>
+                <Label htmlFor="edit-content">Konten *</Label>
                 <Textarea id="edit-content" value={knowledgeForm.content} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, content: e.target.value })} rows={6} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-keywords">Keywords</Label>
+                <Label htmlFor="edit-keywords">Kata kunci</Label>
                 <Input id="edit-keywords" value={knowledgeForm.keywords} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, keywords: e.target.value })} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-priority">Priority</Label>
+                  <Label htmlFor="edit-priority">Prioritas</Label>
                   <Input id="edit-priority" type="number" value={knowledgeForm.priority} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, priority: parseInt(e.target.value) || 0 })} />
                 </div>
                 <div className="space-y-2">
                   <Label>Status</Label>
                   <div className="flex items-center space-x-2 pt-2">
                     <Switch checked={knowledgeForm.is_active} onCheckedChange={(checked) => setKnowledgeForm({ ...knowledgeForm, is_active: checked })} />
-                    <Label>{knowledgeForm.is_active ? 'Active' : 'Inactive'}</Label>
+                    <Label>{knowledgeForm.is_active ? 'Aktif' : 'Nonaktif'}</Label>
                   </div>
                 </div>
               </div>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsEditKnowledgeOpen(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setIsEditKnowledgeOpen(false)}>Batal</Button>
               <Button type="submit" disabled={knowledgeFormLoading}>
-                <Save className="h-4 w-4 mr-2" />{knowledgeFormLoading ? 'Saving...' : 'Update'}
+                <Save className="h-4 w-4 mr-2" />{knowledgeFormLoading ? 'Menyimpan...' : 'Perbarui'}
               </Button>
             </DialogFooter>
           </form>
@@ -1030,13 +1075,13 @@ export default function KnowledgePage() {
       <Dialog open={isDeleteKnowledgeOpen} onOpenChange={setIsDeleteKnowledgeOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Knowledge Entry</DialogTitle>
-            <DialogDescription>Are you sure you want to delete "{selectedKnowledge?.title}"? This action cannot be undone.</DialogDescription>
+            <DialogTitle>Hapus Entri Pengetahuan</DialogTitle>
+            <DialogDescription>Apakah Anda yakin ingin menghapus "{selectedKnowledge?.title}"? Tindakan ini tidak dapat dibatalkan.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setIsDeleteKnowledgeOpen(false)}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => setIsDeleteKnowledgeOpen(false)}>Batal</Button>
             <Button type="button" variant="destructive" onClick={handleDeleteKnowledge} disabled={knowledgeFormLoading}>
-              <Trash2 className="h-4 w-4 mr-2" />{knowledgeFormLoading ? 'Deleting...' : 'Delete'}
+              <Trash2 className="h-4 w-4 mr-2" />{knowledgeFormLoading ? 'Menghapus...' : 'Hapus'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1046,45 +1091,45 @@ export default function KnowledgePage() {
       <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Upload Document</DialogTitle>
-            <DialogDescription>Upload a document to add to the AI knowledge base. Supported: PDF, DOCX, TXT, MD, CSV</DialogDescription>
+            <DialogTitle>Unggah Dokumen</DialogTitle>
+            <DialogDescription>Unggah dokumen untuk menambah basis pengetahuan AI. Didukung: PDF, DOCX, TXT, MD, CSV</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="file">File *</Label>
               <Input id="file" type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.docx,.doc,.txt,.md,.csv" />
-              {uploadFile && <p className="text-sm text-muted-foreground">Selected: {uploadFile.name} ({formatFileSize(uploadFile.size)})</p>}
+              {uploadFile && <p className="text-sm text-muted-foreground">Dipilih: {uploadFile.name} ({formatFileSize(uploadFile.size)})</p>}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="upload-title">Title</Label>
-              <Input id="upload-title" value={uploadTitle} onChange={(e) => setUploadTitle(e.target.value)} placeholder="Document title" />
+              <Label htmlFor="upload-title">Judul</Label>
+              <Input id="upload-title" value={uploadTitle} onChange={(e) => setUploadTitle(e.target.value)} placeholder="Judul dokumen" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="upload-category">Category</Label>
-              <Select value={uploadCategory} onValueChange={setUploadCategory}>
-                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+              <Label htmlFor="upload-category">Kategori</Label>
+              <Select value={uploadCategory} onValueChange={setUploadCategory} disabled={categoriesLoading}>
+                <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
                 <SelectContent>
-                  {CATEGORIES.map(cat => <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>)}
+                  {categories.map(cat => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="upload-description">Description</Label>
-              <Textarea id="upload-description" value={uploadDescription} onChange={(e) => setUploadDescription(e.target.value)} placeholder="Brief description" rows={3} />
+              <Label htmlFor="upload-description">Deskripsi</Label>
+              <Textarea id="upload-description" value={uploadDescription} onChange={(e) => setUploadDescription(e.target.value)} placeholder="Deskripsi singkat" rows={3} />
             </div>
             {uploading && (
               <div className="space-y-2">
                 <Progress value={uploadProgress} />
                 <p className="text-sm text-center text-muted-foreground">
-                  {uploadProgress < 30 ? 'Preparing...' : uploadProgress < 70 ? 'Uploading...' : uploadProgress < 100 ? 'Processing...' : 'Complete!'}
+                  {uploadProgress < 30 ? 'Menyiapkan...' : uploadProgress < 70 ? 'Mengunggah...' : uploadProgress < 100 ? 'Memproses...' : 'Selesai!'}
                 </p>
               </div>
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsUploadOpen(false)} disabled={uploading}>Cancel</Button>
+            <Button variant="outline" onClick={() => setIsUploadOpen(false)} disabled={uploading}>Batal</Button>
             <Button onClick={handleUpload} disabled={uploading || !uploadFile}>
-              {uploading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Uploading...</> : <><Upload className="h-4 w-4 mr-2" />Upload</>}
+              {uploading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Mengunggah...</> : <><Upload className="h-4 w-4 mr-2" />Unggah</>}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1094,31 +1139,31 @@ export default function KnowledgePage() {
       <Dialog open={isEditDocOpen} onOpenChange={setIsEditDocOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Document</DialogTitle>
-            <DialogDescription>Update document metadata</DialogDescription>
+            <DialogTitle>Ubah Dokumen</DialogTitle>
+            <DialogDescription>Perbarui metadata dokumen</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-doc-title">Title</Label>
+              <Label htmlFor="edit-doc-title">Judul</Label>
               <Input id="edit-doc-title" value={editDocTitle} onChange={(e) => setEditDocTitle(e.target.value)} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-doc-category">Category</Label>
-              <Select value={editDocCategory} onValueChange={setEditDocCategory}>
-                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+              <Label htmlFor="edit-doc-category">Kategori</Label>
+              <Select value={editDocCategory} onValueChange={setEditDocCategory} disabled={categoriesLoading}>
+                <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
                 <SelectContent>
-                  {CATEGORIES.map(cat => <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>)}
+                  {categories.map(cat => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-doc-description">Description</Label>
+              <Label htmlFor="edit-doc-description">Deskripsi</Label>
               <Textarea id="edit-doc-description" value={editDocDescription} onChange={(e) => setEditDocDescription(e.target.value)} rows={3} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDocOpen(false)}>Cancel</Button>
-            <Button onClick={handleEditDoc} disabled={editDocLoading}>{editDocLoading ? 'Saving...' : 'Save Changes'}</Button>
+            <Button variant="outline" onClick={() => setIsEditDocOpen(false)}>Batal</Button>
+            <Button onClick={handleEditDoc} disabled={editDocLoading}>{editDocLoading ? 'Menyimpan...' : 'Simpan Perubahan'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1127,15 +1172,15 @@ export default function KnowledgePage() {
       <AlertDialog open={isDeleteDocOpen} onOpenChange={setIsDeleteDocOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Document</AlertDialogTitle>
+            <AlertDialogTitle>Hapus Dokumen</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{selectedDocument?.title || selectedDocument?.original_name}"? 
-              This will also delete all chunks and embeddings. This action cannot be undone.
+              Apakah Anda yakin ingin menghapus "{selectedDocument?.title || selectedDocument?.original_name}"?
+              Ini juga akan menghapus semua chunk dan embedding. Tindakan ini tidak dapat dibatalkan.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteDoc} className="bg-destructive text-destructive-foreground">Delete</AlertDialogAction>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteDoc} className="bg-destructive text-destructive-foreground">Hapus</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

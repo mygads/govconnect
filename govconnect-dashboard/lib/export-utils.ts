@@ -170,20 +170,20 @@ export function exportToPDF(complaints: Complaint[], options: ExportOptions = {}
 }
 
 // =====================================================
-// PRINT TICKET
+// PRINT BUKTI LAPORAN
 // =====================================================
 
-export function generateTicketHTML(complaint: Complaint): string {
+export function generateReceiptHTML(complaint: Complaint): string {
   return `
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="UTF-8">
-      <title>Tiket Laporan - ${complaint.complaint_id}</title>
+      <title>Bukti Laporan - ${complaint.complaint_id}</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; }
-        .ticket { 
+        .receipt { 
           max-width: 800px; 
           margin: 0 auto; 
           border: 2px solid #333; 
@@ -198,7 +198,7 @@ export function generateTicketHTML(complaint: Complaint): string {
         }
         .header h1 { font-size: 24px; margin-bottom: 5px; }
         .header .subtitle { color: #666; font-size: 14px; }
-        .ticket-number {
+        .receipt-number {
           background: #3b82f6;
           color: white;
           padding: 10px 20px;
@@ -263,19 +263,19 @@ export function generateTicketHTML(complaint: Complaint): string {
         .print-info { font-size: 11px; color: #666; }
         @media print {
           body { padding: 0; }
-          .ticket { border: 1px solid #000; }
+          .receipt { border: 1px solid #000; }
           .no-print { display: none; }
         }
       </style>
     </head>
-    <body>
-      <div class="ticket">
+      <body>
+        <div class="receipt">
         <div class="header">
           <h1>TANDA TERIMA LAPORAN</h1>
           <p class="subtitle">Sistem Pengaduan Masyarakat - GovConnect</p>
         </div>
         
-        <div class="ticket-number">
+          <div class="receipt-number">
           ${complaint.complaint_id}
         </div>
         
@@ -315,7 +315,7 @@ export function generateTicketHTML(complaint: Complaint): string {
         <div class="footer">
           <div class="print-info">
             <p>Dicetak: ${formatDateIndo(new Date().toISOString())}</p>
-            <p>Simpan nomor tiket ini untuk mengecek status laporan Anda.</p>
+            <p>Simpan nomor laporan ini untuk mengecek status laporan Anda.</p>
           </div>
           <div class="qr-placeholder">
             QR Code
@@ -325,7 +325,7 @@ export function generateTicketHTML(complaint: Complaint): string {
       
       <div class="no-print" style="text-align: center; margin-top: 20px;">
         <button onclick="window.print()" style="padding: 10px 30px; font-size: 16px; cursor: pointer;">
-          🖨️ Cetak Tiket
+          🖨️ Cetak Bukti
         </button>
       </div>
     </body>
@@ -333,8 +333,8 @@ export function generateTicketHTML(complaint: Complaint): string {
   `;
 }
 
-export function printTicket(complaint: Complaint) {
-  const html = generateTicketHTML(complaint);
+export function printReceipt(complaint: Complaint) {
+  const html = generateReceiptHTML(complaint);
   const printWindow = window.open('', '_blank');
   if (printWindow) {
     printWindow.document.write(html);

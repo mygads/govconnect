@@ -47,20 +47,19 @@ export async function createComplaint(data: {
 }
 
 /**
- * Create reservation
+ * Create service request
  */
-export async function createReservation(data: {
+export async function createServiceRequest(data: {
+  service_id: string;
   wa_user_id: string;
-  service_code: string;
-  citizen_data: any;
-  reservation_date: string;
-  reservation_time: string;
+  citizen_data_json?: Record<string, any>;
+  requirement_data_json?: Record<string, any>;
 }) {
   try {
-    const response = await caseServiceClient.post('/reservasi/create', data);
+    const response = await caseServiceClient.post('/service-requests', data);
     return response.data;
   } catch (error: any) {
-    console.error('[CaseServiceClient] Failed to create reservation:', error.message);
+    console.error('[CaseServiceClient] Failed to create service request:', error.message);
     throw error;
   }
 }
@@ -114,7 +113,7 @@ export function resetCaseServiceCircuitBreaker() {
 
 export default {
   createComplaint,
-  createReservation,
+  createServiceRequest,
   getCaseById,
   updateCaseStatus,
   getCaseServiceMetrics,

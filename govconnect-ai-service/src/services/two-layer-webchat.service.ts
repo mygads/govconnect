@@ -22,11 +22,11 @@ import { getCachedResponse, setCachedResponse } from './response-cache.service';
 // Import action handlers
 import {
   handleComplaintCreation,
-  handleReservationCreation,
+  handleServiceInfo,
+  handleServiceRequestCreation,
   handleStatusCheck,
   handleCancellation,
-  handleReservationCancellation,
-  handleReservationUpdate,
+  handleComplaintUpdate,
   handleHistory,
   handleKnowledgeQuery,
 } from './ai-orchestrator.service';
@@ -252,20 +252,20 @@ async function handleWebchatAction(
       case 'CREATE_COMPLAINT':
         return await handleComplaintCreation(userId, mockLlmResponse, message);
 
-      case 'CREATE_RESERVATION':
-        return await handleReservationCreation(userId, mockLlmResponse);
+      case 'SERVICE_INFO':
+        return await handleServiceInfo(userId, mockLlmResponse);
+
+      case 'CREATE_SERVICE_REQUEST':
+        return await handleServiceRequestCreation(userId, mockLlmResponse);
+
+      case 'UPDATE_COMPLAINT':
+        return await handleComplaintUpdate(userId, mockLlmResponse);
 
       case 'CHECK_STATUS':
         return await handleStatusCheck(userId, mockLlmResponse);
 
       case 'CANCEL_COMPLAINT':
         return await handleCancellation(userId, mockLlmResponse);
-
-      case 'CANCEL_RESERVATION':
-        return await handleReservationCancellation(userId, mockLlmResponse);
-
-      case 'UPDATE_RESERVATION':
-        return await handleReservationUpdate(userId, mockLlmResponse);
 
       case 'HISTORY':
         return await handleHistory(userId);

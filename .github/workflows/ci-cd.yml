@@ -88,6 +88,50 @@ jobs:
               - 'shared/**'
 
   # ===================================================================================
+  # LEGACY TERMS CHECK (Docs & Metadata)
+  # ===================================================================================
+  legacy-terms-check:
+    name: Check Legacy Terms
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan docs and metadata for legacy terms
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATTERN='reservasi|reservation|tiket|ticket|telegram|graphql'
+          TARGETS=(
+            "README.md"
+            "docs"
+            "govconnect-dashboard/app"
+            "govconnect-dashboard/lib"
+            "govconnect-dashboard/public"
+            "govconnect-ai-service/docs"
+            "govconnect-case-service/README.md"
+            "govconnect-notification-service/README.md"
+          )
+
+          found=0
+          for target in "${TARGETS[@]}"; do
+            if [ -e "$target" ]; then
+              if grep -RInE "$PATTERN" "$target" \
+                --exclude-dir node_modules \
+                --exclude-dir .next \
+                --exclude-dir dist \
+                --exclude-dir .github \
+                --exclude "*.lock"; then
+                found=1
+              fi
+            fi
+          done
+
+          if [ "$found" -eq 1 ]; then
+            echo "Legacy terms ditemukan. Harap bersihkan sebelum merge."
+            exit 1
+          fi
+
+  # ===================================================================================
   # BUILD DASHBOARD
   # ===================================================================================
   build-dashboard:
@@ -435,4 +479,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Services Deployed:**" >> $GITHUB_STEP_SUMMARY
           echo "- Dashboard: https://govconnect.my.id" >> $GITHUB_STEP_SUMMARY
-          echo "- API Gateway: https://api.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
+          echo "- Case Service: https://case.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
+          echo "- Channel Service: https://channel.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
+          echo "- AI Service: https://ai.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
+          echo "- Notification Service: https://notification.govconnect.my.id" >> $GITHUB_STEP_SUMMARY

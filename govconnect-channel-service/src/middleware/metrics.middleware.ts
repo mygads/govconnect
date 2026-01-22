@@ -120,10 +120,10 @@ export const caseMetrics = {
     help: 'Total complaints created',
     labelNames: ['category'],
   }),
-  ticketsCreated: new promClient.Counter({
-    name: 'govconnect_tickets_created_total',
-    help: 'Total tickets created',
-    labelNames: ['type'],
+  serviceRequestsCreated: new promClient.Counter({
+    name: 'govconnect_service_requests_created_total',
+    help: 'Total service requests created',
+    labelNames: ['service_id'],
   }),
   statusUpdates: new promClient.Counter({
     name: 'govconnect_status_updates_total',
@@ -275,7 +275,7 @@ function getRoutePath(req: Request): string {
     .replace(/\/[0-9a-fA-F-]{36}/g, '/:uuid') // UUID
     .replace(/\/\d+/g, '/:id') // Numeric ID
     .replace(/\/LAP-\d{8}-\d{3}/g, '/:complaint_id') // Complaint ID
-    .replace(/\/TIK-\d{8}-\d{3}/g, '/:ticket_id') // Ticket ID
+    .replace(/\/LAY-\d{8}-\d{3}/g, '/:request_number') // Service Request ID
     .replace(/\/628\d{8,12}/g, '/:wa_user_id'); // WhatsApp ID
 
   return path || '/';

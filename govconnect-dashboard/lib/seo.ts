@@ -10,7 +10,7 @@ export const siteConfig = {
   // Basic Info
   name: 'GovConnect',
   title: 'GovConnect - Platform Layanan Pemerintahan Digital Berbasis AI Indonesia | Smart Government Solution',
-  description: 'GovConnect adalah platform AI terdepan untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan surat keterangan, reservasi layanan publik, dan dapatkan informasi pemerintah langsung melalui WhatsApp, Telegram, dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah. Dikembangkan oleh Genfity Digital Solution.',
+  description: 'GovConnect adalah platform AI terdepan untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan surat keterangan, ajukan layanan publik, dan dapatkan informasi pemerintah langsung melalui WhatsApp dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah. Dikembangkan oleh Genfity Digital Solution.',
   shortDescription: 'Platform AI untuk layanan pemerintahan digital Indonesia - Smart Government Solution 24/7',
   url: process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.id',
   ogImage: '/dashboard.png',
@@ -115,13 +115,13 @@ export const siteConfig = {
     'surat pindah online',
     'cetak surat online',
     
-    // Feature Keywords - Reservasi
-    'reservasi layanan pemerintah',
+    // Feature Keywords - Permohonan Layanan
+    'permohonan layanan pemerintah',
     'booking antrian online',
     'antrian online pemerintah',
     'jadwal pelayanan online',
     'appointment pemerintah',
-    'reservasi kelurahan',
+    'permohonan layanan kelurahan',
     
     // Feature Keywords - AI & Chatbot
     'chatbot pemerintah',
@@ -135,7 +135,7 @@ export const siteConfig = {
     // Channel Keywords
     'whatsapp kelurahan',
     'whatsapp pemerintah',
-    'telegram pemerintah',
+    'webchat pemerintah',
     'webchat pemerintah',
     'layanan multi channel',
     'omnichannel pemerintah',
@@ -561,7 +561,7 @@ export function generateSoftwareApplicationSchema() {
     url: siteConfig.url,
     applicationCategory: 'GovernmentApplication',
     applicationSubCategory: 'E-Government Platform',
-    operatingSystem: 'Web Browser, WhatsApp, Telegram',
+    operatingSystem: 'Web Browser, WhatsApp, Webchat',
     availableOnDevice: ['Desktop', 'Mobile', 'Tablet'],
     browserRequirements: 'Requires JavaScript. Requires HTML5.',
     softwareVersion: '2.0',
@@ -608,10 +608,10 @@ export function generateSoftwareApplicationSchema() {
     },
     featureList: [
       'AI-Powered Chatbot 24/7 dengan Natural Language Processing',
-      'Multi-Channel Support (WhatsApp, Telegram, Web Chat)',
+      'Multi-Channel Support (WhatsApp, Webchat)',
       'Real-time Tracking Pengaduan dan Permohonan',
       'Online Document Request - Surat Keterangan Digital',
-      'Service Reservation - Booking Antrian Online',
+      'Permohonan Layanan - Pengajuan Layanan Online',
       'Complaint Reporting with GPS Location',
       'Dashboard Analytics untuk Pemerintah',
       'Knowledge Base Management',
@@ -868,8 +868,8 @@ export function generateServiceSchema() {
           '@type': 'Offer',
           itemOffered: {
             '@type': 'Service',
-            name: 'Reservasi Layanan',
-            description: 'Booking antrian online untuk layanan pemerintah',
+            name: 'Permohonan Layanan',
+            description: 'Form publik untuk pengajuan layanan pemerintah',
           },
         },
         {
@@ -912,13 +912,13 @@ export function generateHowToSchema() {
       {
         '@type': 'HowToStep',
         name: 'Akses Platform',
-        text: 'Buka website GovConnect atau hubungi melalui WhatsApp/Telegram',
+        text: 'Buka website GovConnect atau hubungi melalui WhatsApp/Webchat',
         position: 1,
       },
       {
         '@type': 'HowToStep',
         name: 'Pilih Layanan',
-        text: 'Pilih layanan yang dibutuhkan: Pengaduan, Surat, atau Reservasi',
+        text: 'Pilih layanan yang dibutuhkan: Pengaduan atau Permohonan Layanan',
         position: 2,
       },
       {
@@ -1007,11 +1007,11 @@ export function generateArticleSchema(article: {
 export const defaultFAQs = [
   {
     question: 'Apa itu GovConnect?',
-    answer: 'GovConnect adalah platform layanan pemerintahan digital berbasis AI yang memungkinkan masyarakat mengakses layanan kelurahan, kecamatan, dan instansi pemerintah melalui WhatsApp, Telegram, dan webchat secara 24/7.',
+    answer: 'GovConnect adalah platform layanan pemerintahan digital berbasis AI yang memungkinkan masyarakat mengakses layanan kelurahan, kecamatan, dan instansi pemerintah melalui WhatsApp dan webchat secara 24/7.',
   },
   {
     question: 'Bagaimana cara menggunakan GovConnect?',
-    answer: 'Anda dapat mengakses GovConnect melalui website resmi, WhatsApp, atau Telegram. Cukup sampaikan kebutuhan Anda dan chatbot AI akan membantu memproses permintaan Anda.',
+    answer: 'Anda dapat mengakses GovConnect melalui website resmi, WhatsApp, atau webchat. Cukup sampaikan kebutuhan Anda dan chatbot AI akan membantu memproses permintaan Anda.',
   },
   {
     question: 'Apakah GovConnect gratis?',
@@ -1019,7 +1019,7 @@ export const defaultFAQs = [
   },
   {
     question: 'Layanan apa saja yang tersedia di GovConnect?',
-    answer: 'GovConnect menyediakan layanan pengaduan masyarakat, pengajuan surat keterangan online, reservasi antrian layanan, informasi pemerintah, dan live chat dengan petugas.',
+    answer: 'GovConnect menyediakan layanan pengaduan masyarakat, pengajuan surat keterangan online, permohonan layanan melalui form publik, informasi pemerintah, dan live chat dengan petugas.',
   },
   {
     question: 'Apakah data saya aman di GovConnect?',
@@ -1027,7 +1027,7 @@ export const defaultFAQs = [
   },
   {
     question: 'Bagaimana cara melacak status pengaduan?',
-    answer: 'Anda dapat melacak status pengaduan melalui nomor tiket yang diberikan saat pengajuan. Cek status melalui website atau tanyakan langsung ke chatbot.',
+    answer: 'Anda dapat melacak status pengaduan melalui nomor laporan yang diberikan saat pengajuan. Cek status melalui website atau tanyakan langsung ke chatbot.',
   },
   {
     question: 'Siapa yang mengembangkan GovConnect?',

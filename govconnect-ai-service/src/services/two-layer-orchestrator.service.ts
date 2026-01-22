@@ -8,7 +8,7 @@
  * 1. Layer 1: Understand intent, extract data, normalize language
  * 2. Validation: Check data completeness and confidence
  * 3. Layer 2: Generate natural, helpful responses
- * 4. Post-processing: Handle actions (create complaint/reservation, etc.)
+ * 4. Post-processing: Handle actions (create complaint/service request, etc.)
  */
 
 import logger from '../utils/logger';
@@ -27,11 +27,11 @@ import { analyzeSentiment, needsHumanEscalation } from './sentiment-analysis.ser
 // Import action handlers from original orchestrator
 import { 
   handleComplaintCreation,
-  handleReservationCreation,
+  handleServiceInfo,
+  handleServiceRequestCreation,
   handleStatusCheck,
   handleCancellation,
-  handleReservationCancellation,
-  handleReservationUpdate,
+  handleComplaintUpdate,
   handleHistory,
   handleKnowledgeQuery,
 } from './ai-orchestrator.service';
@@ -418,20 +418,20 @@ async function handleAction(
       case 'CREATE_COMPLAINT':
         return await handleComplaintCreation(wa_user_id, mockLlmResponse, message, mediaUrl);
       
-      case 'CREATE_RESERVATION':
-        return await handleReservationCreation(wa_user_id, mockLlmResponse);
+      case 'SERVICE_INFO':
+        return await handleServiceInfo(wa_user_id, mockLlmResponse);
+      
+      case 'CREATE_SERVICE_REQUEST':
+        return await handleServiceRequestCreation(wa_user_id, mockLlmResponse);
+
+      case 'UPDATE_COMPLAINT':
+        return await handleComplaintUpdate(wa_user_id, mockLlmResponse);
       
       case 'CHECK_STATUS':
         return await handleStatusCheck(wa_user_id, mockLlmResponse);
       
       case 'CANCEL_COMPLAINT':
         return await handleCancellation(wa_user_id, mockLlmResponse);
-      
-      case 'CANCEL_RESERVATION':
-        return await handleReservationCancellation(wa_user_id, mockLlmResponse);
-      
-      case 'UPDATE_RESERVATION':
-        return await handleReservationUpdate(wa_user_id, mockLlmResponse);
       
       case 'HISTORY':
         return await handleHistory(wa_user_id);

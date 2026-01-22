@@ -229,6 +229,7 @@ export async function retrieveContext(
     minScore = DEFAULT_MIN_SCORE,
     categories,
     sourceTypes = ['knowledge', 'document'],
+    villageId,
     useQueryExpansion = true,  // Enable query expansion by default
     useHybridSearch = true,    // Enable hybrid search by default
   } = options as VectorSearchOptions & { useQueryExpansion?: boolean; useHybridSearch?: boolean };
@@ -276,6 +277,7 @@ export async function retrieveContext(
         minScore: adjustedMinScore,
         categories,
         sourceTypes,
+        villageId,
         useQueryExpansion: false, // Already expanded
       });
       
@@ -299,6 +301,7 @@ export async function retrieveContext(
         minScore: adjustedMinScore * 0.8,
         categories,
         sourceTypes,
+        villageId,
       });
 
       if (searchResults.length === 0) {

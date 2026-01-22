@@ -3,15 +3,15 @@
 
 ---
 
-## SECTION 1: INTENT RESERVASI LAYANAN
+## SECTION 1: INTENT PERMOHONAN LAYANAN
 
-### Intent: CREATE_RESERVATION
-Ketika pengguna ingin membuat reservasi/booking untuk layanan di kelurahan.
+### Intent: CREATE_SERVICE_REQUEST
+Ketika pengguna ingin mengajukan layanan administrasi di kelurahan.
 
 **Keyword Trigger:**
 - "mau buat", "mau bikin", "mau urus", "mau mengurus"
 - "butuh surat", "perlu surat", "minta surat"
-- "daftar", "booking", "reservasi", "pesan jadwal"
+- "daftar", "ajukan", "permohonan", "form layanan"
 - "cara buat", "cara bikin", "cara urus"
 - "gimana caranya", "bagaimana cara"
 
@@ -20,7 +20,7 @@ Ketika pengguna ingin membuat reservasi/booking untuk layanan di kelurahan.
 - "Mau urus SKTM untuk anak sekolah"
 - "Butuh surat keterangan usaha"
 - "Gimana cara bikin surat pengantar KTP?"
-- "Mau booking jadwal untuk urus SKD"
+- "Mau ajukan layanan SKD"
 
 **Response AI:**
 Tanyakan data warga secara berurutan:
@@ -29,46 +29,46 @@ Tanyakan data warga secara berurutan:
 3. Alamat lengkap
 4. Nomor HP
 5. Pertanyaan tambahan sesuai layanan
-6. Tanggal dan jam kedatangan
+6. Kirim link form publik jika dibutuhkan
 
 ---
 
-## SECTION 2: INTENT CEK STATUS RESERVASI
+## SECTION 2: INTENT CEK STATUS LAYANAN
 
-### Intent: CHECK_RESERVATION
-Ketika pengguna ingin mengecek status reservasi yang sudah dibuat.
+### Intent: CHECK_STATUS
+Ketika pengguna ingin mengecek status permohonan layanan.
 
 **Keyword Trigger:**
-- "cek status", "cek reservasi", "cek booking"
-- "status reservasi", "status booking"
-- "gimana reservasi saya", "bagaimana reservasi"
+- "cek status", "cek layanan", "cek permohonan"
+- "status layanan", "status permohonan"
+- "gimana layanan saya", "bagaimana layanan"
 - "sudah sampai mana", "sudah diproses belum"
-- "nomor reservasi", "RSV-"
+- "nomor layanan", "LAY-"
 
 **Contoh Kalimat:**
-- "Cek status reservasi RSV-20251213-001"
-- "Reservasi saya sudah sampai mana?"
-- "Gimana status booking saya?"
-- "Apakah reservasi saya sudah dikonfirmasi?"
+- "Cek status layanan LAY-20251213-001"
+- "Permohonan layanan saya sudah sampai mana?"
+- "Gimana status layanan saya?"
+- "Apakah layanan saya sudah dikonfirmasi?"
 
 **Response AI:**
-Minta nomor reservasi jika belum disebutkan, lalu tampilkan status.
+Minta nomor layanan jika belum disebutkan, lalu tampilkan status.
 
 ---
 
-## SECTION 3: INTENT BATALKAN RESERVASI
+## SECTION 3: INTENT BATALKAN PERMOHONAN LAYANAN
 
-### Intent: CANCEL_RESERVATION
-Ketika pengguna ingin membatalkan reservasi.
+### Intent: CANCEL_SERVICE_REQUEST
+Ketika pengguna ingin membatalkan permohonan layanan.
 
 **Keyword Trigger:**
 - "batalkan", "cancel", "batal"
 - "tidak jadi", "gak jadi"
-- "hapus reservasi", "hapus booking"
+- "hapus permohonan", "batalkan layanan"
 
 **Contoh Kalimat:**
-- "Saya mau batalkan reservasi"
-- "Cancel booking RSV-20251213-001"
+- "Saya mau batalkan layanan"
+- "Cancel layanan LAY-20251213-001"
 - "Tidak jadi datang, tolong batalkan"
 
 **Response AI:**
@@ -203,7 +203,7 @@ Ketika pengguna menyapa atau memulai percakapan.
 **Response AI:**
 Sapa balik dan tawarkan bantuan:
 "Halo! Selamat datang di layanan GovConnect Kelurahan. Ada yang bisa saya bantu? Anda bisa:
-- Membuat reservasi layanan surat
+- Mengajukan layanan surat
 - Melaporkan masalah infrastruktur
 - Bertanya tentang persyaratan layanan"
 
@@ -230,7 +230,7 @@ Ketika AI tidak bisa mengenali maksud pengguna.
 
 **Response AI:**
 "Maaf, saya kurang memahami maksud Anda. Saya bisa membantu untuk:
-1. Membuat reservasi layanan surat (SKD, SKTM, SKU, dll)
+1. Mengajukan layanan surat (SKD, SKTM, SKU, dll)
 2. Melaporkan masalah infrastruktur
 3. Memberikan informasi tentang persyaratan layanan
 4. Informasi jam operasional kelurahan
@@ -239,10 +239,10 @@ Silakan pilih atau jelaskan kebutuhan Anda."
 
 ---
 
-## SECTION 11: KODE LAYANAN RESERVASI
+## SECTION 11: KODE LAYANAN
 
 ### Daftar Kode Layanan
-Berikut kode layanan yang tersedia untuk reservasi:
+Berikut kode layanan yang tersedia untuk permohonan layanan:
 
 | Kode | Nama Layanan | Kategori |
 |------|--------------|----------|

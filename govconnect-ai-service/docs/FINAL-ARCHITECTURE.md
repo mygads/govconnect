@@ -75,7 +75,7 @@ GovConnect AI Service menggunakan **Optimized Two-Layer Architecture** dengan pr
 │                                                                  │
 │  Output:                                                         │
 │  {                                                               │
-│    intent: "CREATE_RESERVATION",                                │
+│    intent: "CREATE_SERVICE_REQUEST",                           │
 │    normalized_message: "...",                                   │
 │    extracted_data: {                                            │
 │      nama_lengkap: "Budi",                                      │
@@ -120,7 +120,7 @@ GovConnect AI Service menggunakan **Optimized Two-Layer Architecture** dengan pr
 │  {                                                               │
 │    reply_text: "Baik Kak Budi, saya bantu...",                 │
 │    guidance_text: "Jangan lupa bawa KTP...",                   │
-│    next_action: "CREATE_RESERVATION",                           │
+│    next_action: "CREATE_SERVICE_REQUEST",                       │
 │    missing_data: [],                                            │
 │    confidence: 0.95                                             │
 │  }                                                               │
@@ -134,10 +134,10 @@ GovConnect AI Service menggunakan **Optimized Two-Layer Architecture** dengan pr
 │                   ACTION HANDLERS                                │
 ├─────────────────────────────────────────────────────────────────┤
 │  • CREATE_COMPLAINT      → Create complaint in system           │
-│  • CREATE_RESERVATION    → Create reservation in system         │
-│  • UPDATE_RESERVATION    → Update reservation schedule          │
-│  • CHECK_STATUS          → Check complaint/reservation status   │
-│  • CANCEL_*              → Cancel complaint/reservation         │
+│  • CREATE_SERVICE_REQUEST → Create service request in system    │
+│  • UPDATE_SERVICE_REQUEST → Update service request status       │
+│  • CHECK_STATUS           → Check complaint/service request     │
+│  • CANCEL_*               → Cancel complaint/service request    │
 │  • HISTORY               → Get user's history                   │
 │  • KNOWLEDGE_QUERY       → Query RAG system                     │
 └────────────────────────┬────────────────────────────────────────┘
@@ -194,10 +194,10 @@ GovConnect AI Service menggunakan **Optimized Two-Layer Architecture** dengan pr
 - GREETING
 - CONFIRMATION / REJECTION / THANKS
 - CREATE_COMPLAINT
-- CREATE_RESERVATION
-- UPDATE_RESERVATION (NEW!)
+- CREATE_SERVICE_REQUEST
+- UPDATE_SERVICE_REQUEST (NEW!)
 - CHECK_STATUS
-- CANCEL_COMPLAINT / CANCEL_RESERVATION
+- CANCEL_COMPLAINT / CANCEL_SERVICE_REQUEST
 - HISTORY
 - KNOWLEDGE_QUERY
 
@@ -223,7 +223,7 @@ const result = fastClassifyIntent("terima kasih");
 - RT/RW
 - Date (Indonesian format)
 - Time
-- Complaint/Reservation IDs
+- Complaint/Service Request IDs
 - Email
 
 **Performance:**
@@ -280,7 +280,7 @@ const entities = extractAllEntities(
 **Output:**
 ```typescript
 {
-  intent: "CREATE_RESERVATION",
+  intent: "CREATE_SERVICE_REQUEST",
   normalized_message: "mau buat surat domisili",
   extracted_data: {
     service_code: "SKD",
@@ -327,9 +327,9 @@ const entities = extractAllEntities(
 **Output:**
 ```typescript
 {
-  reply_text: "Baik Kak Budi, saya bantu reservasi SKD ya...",
+  reply_text: "Baik Kak Budi, saya bantu ajukan layanan SKD ya...",
   guidance_text: "Jangan lupa bawa KTP asli dan fotokopi",
-  next_action: "CREATE_RESERVATION",
+  next_action: "CREATE_SERVICE_REQUEST",
   missing_data: [],
   follow_up_questions: [],
   needs_knowledge: false,
@@ -348,11 +348,11 @@ const entities = extractAllEntities(
 
 **Handlers:**
 - `handleComplaintCreation` - Create complaint in case service
-- `handleReservationCreation` - Create reservation in case service
-- `handleReservationUpdate` - Update reservation schedule
+- `handleServiceRequestCreation` - Create service request in case service
+- `handleServiceRequestUpdate` - Update service request status
 - `handleStatusCheck` - Check status from case service
 - `handleCancellation` - Cancel complaint
-- `handleReservationCancellation` - Cancel reservation
+- `handleServiceRequestCancellation` - Cancel service request
 - `handleHistory` - Get user's history
 - `handleKnowledgeQuery` - Query RAG system
 
@@ -429,36 +429,36 @@ const entities = extractAllEntities(
 **Required:** kategori, alamat, deskripsi  
 **Optional:** rt_rw, media_url
 
-### 2. CREATE_RESERVATION
-**Patterns:** "mau buat surat", "perlu SKD", "reservasi SKTM"  
-**Service Codes:** SKD, SKU, SKTM, SKBM, IKR, SPKTP, SPKK, SPSKCK, SPAKTA, SKK, SPP  
-**Handler:** `handleReservationCreation`  
-**Required:** service_code, citizen_data (nama, NIK, alamat, no_hp), reservation_date, reservation_time  
-**Optional:** keperluan, additional fields per service
+### 2. CREATE_SERVICE_REQUEST
+**Patterns:** "mau buat surat", "perlu SKD", "ajukan SKTM"  
+**Service Reference:** service_id (dari Service Catalog)  
+**Handler:** `handleServiceRequestCreation`  
+**Required:** service_id, citizen_data_json (nama, NIK, alamat, no_hp), requirement_data_json  
+**Optional:** keperluan, field tambahan sesuai layanan
 
-### 3. UPDATE_RESERVATION (NEW!)
-**Patterns:** "ubah jadwal", "ganti jam", "reschedule", "pindah tanggal"  
-**Handler:** `handleReservationUpdate`  
-**Required:** reservation_id  
-**Optional:** new_reservation_date, new_reservation_time  
+### 3. UPDATE_SERVICE_REQUEST (NEW!)
+**Patterns:** "ubah status", "perbarui status", "update status"  
+**Handler:** `handleServiceRequestUpdate`  
+**Required:** request_number  
+**Optional:** status, admin_notes  
 **Note:** Checked BEFORE cancel patterns to avoid confusion
 
 ### 4. CHECK_STATUS
-**Patterns:** "cek status", "gimana perkembangan", "LAP-xxx", "RSV-xxx"  
+**Patterns:** "cek status", "gimana perkembangan", "LAP-xxx", "LAY-xxx"  
 **Handler:** `handleStatusCheck`  
-**Required:** complaint_id OR reservation_id  
+**Required:** complaint_id OR request_number  
 **Auto-extract:** IDs from message
 
-### 5. CANCEL_COMPLAINT / CANCEL_RESERVATION
+### 5. CANCEL_COMPLAINT / CANCEL_SERVICE_REQUEST
 **Patterns:** "batalkan", "cancel", "hapus"  
-**Handler:** `handleCancellation` / `handleReservationCancellation`  
-**Required:** complaint_id OR reservation_id  
+**Handler:** `handleCancellation` / `handleServiceRequestCancellation`  
+**Required:** complaint_id OR request_number  
 **Optional:** cancel_reason
 
 ### 6. HISTORY
 **Patterns:** "riwayat", "daftar laporan", "lihat semua"  
 **Handler:** `handleHistory`  
-**Returns:** List of user's complaints and reservations
+**Returns:** List of user's complaints and service requests
 
 ### 7. KNOWLEDGE_QUERY
 **Patterns:** "jam buka", "syarat", "alamat", "biaya"  
@@ -480,7 +480,7 @@ const entities = extractAllEntities(
 
 ## 🔄 DATA FLOW EXAMPLE
 
-### Example: User wants to create reservation
+### Example: User wants to create service request
 
 **Step 1: User Message**
 ```
@@ -500,9 +500,9 @@ const entities = extractAllEntities(
 ```typescript
 // Fast intent classification
 fastClassifyIntent() → {
-  intent: "CREATE_RESERVATION",
+  intent: "CREATE_SERVICE_REQUEST",
   confidence: 0.85,
-  extractedFields: { service_code: "SKD" },
+  extractedFields: { service_id: "service-uuid" },
   skipLLM: false
 }
 
@@ -532,16 +532,16 @@ extractAllEntities() → {
 
 // Layer 1 Output
 {
-  intent: "CREATE_RESERVATION",
+  intent: "CREATE_SERVICE_REQUEST",
   normalized_message: "...",
   extracted_data: {
-    service_code: "SKD",
+    service_id: "service-uuid",
     nama_lengkap: "Budi",
     nik: "3201234567890123",
     no_hp: "081234567890"
   },
   confidence: 0.95,
-  needs_clarification: ["alamat", "reservation_date", "reservation_time"]
+  needs_clarification: ["alamat", "requirement_data"]
 }
 ```
 
@@ -564,8 +564,8 @@ extractAllEntities() → {
 {
   reply_text: "Terima kasih Kak Budi! Saya sudah catat data Kakak:\n• Nama: Budi\n• NIK: 3201234567890123\n• No. HP: 081234567890\n\nSekarang, alamat tempat tinggal Kakak di mana?",
   guidance_text: "",
-  next_action: "CREATE_RESERVATION",
-  missing_data: ["alamat", "reservation_date", "reservation_time"],
+  next_action: "CREATE_SERVICE_REQUEST",
+  missing_data: ["alamat", "requirement_data"],
   confidence: 0.95
 }
 ```
@@ -588,20 +588,16 @@ Sekarang, alamat tempat tinggal Kakak di mana?"
 - **Runtime:** Node.js 18+
 - **Language:** TypeScript 5+
 - **Framework:** NestJS (implied from structure)
-- **Database:** PostgreSQL (for vector storage)
-- **Vector DB:** pgvector extension
+- **State:** Stateless (no database)
 - **Message Queue:** RabbitMQ
 
 ### AI/ML:
 - **LLM Provider:** Google Gemini API
 - **Layer 1 Model:** gemini-2.0-flash-lite
 - **Layer 2 Model:** gemini-2.5-flash
-- **Embeddings:** text-embedding-004 (768 dimensions)
-- **Vector Search:** Cosine similarity
-- **Keyword Search:** PostgreSQL full-text search
 
 ### External Services:
-- **Case Service:** Complaint & reservation management
+- **Case Service:** Complaint & service request management
 - **Channel Service:** WhatsApp & WebChat integration
 - **Dashboard Service:** Knowledge base management
 

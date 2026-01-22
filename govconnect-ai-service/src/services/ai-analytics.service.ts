@@ -269,7 +269,7 @@ class AIAnalyticsService {
     
     // Auto-mark non-action intents as "successful" since they don't have explicit success/fail
     // Only action intents (CREATE_*, CHECK_*, CANCEL_*, HISTORY) need explicit success tracking
-    const actionIntents = ['CREATE_COMPLAINT', 'CREATE_RESERVATION', 'CHECK_STATUS', 'CANCEL_COMPLAINT', 'CANCEL_RESERVATION', 'UPDATE_RESERVATION', 'HISTORY'];
+    const actionIntents = ['CREATE_COMPLAINT', 'SERVICE_INFO', 'CREATE_SERVICE_REQUEST', 'CHECK_STATUS', 'HISTORY'];
     if (!actionIntents.includes(intent)) {
       // Non-action intents (QUESTION, GREETING, KNOWLEDGE_QUERY, UNKNOWN) are auto-successful
       this.data.accuracy.byIntent[intent].correct++;
@@ -291,7 +291,7 @@ class AIAnalyticsService {
   }
 
   /**
-   * Record successful action (complaint/ticket created successfully)
+   * Record successful action (complaint/service request created successfully)
    */
   recordSuccess(intent: string): void {
     if (this.data.intents[intent]) {
@@ -639,7 +639,7 @@ class AIAnalyticsService {
     }
     
     // Fix accuracy calculations - recalculate correct counts for non-action intents
-    const actionIntents = ['CREATE_COMPLAINT', 'CREATE_RESERVATION', 'CHECK_STATUS', 'CANCEL_COMPLAINT', 'CANCEL_RESERVATION', 'UPDATE_RESERVATION', 'HISTORY'];
+    const actionIntents = ['CREATE_COMPLAINT', 'SERVICE_INFO', 'CREATE_SERVICE_REQUEST', 'CHECK_STATUS', 'HISTORY'];
     let totalCorrect = 0;
     
     for (const [intent, stats] of Object.entries(this.data.accuracy.byIntent)) {

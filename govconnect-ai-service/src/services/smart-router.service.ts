@@ -73,10 +73,9 @@ const SIMPLE_PATTERNS = [
 // Transactional intents that benefit from 2-layer
 const TRANSACTIONAL_INTENTS = [
   'CREATE_COMPLAINT',
-  'CREATE_RESERVATION',
-  'UPDATE_RESERVATION',
+  'UPDATE_COMPLAINT',
+  'CREATE_SERVICE_REQUEST',
   'CANCEL_COMPLAINT',
-  'CANCEL_RESERVATION',
 ];
 
 // ==================== MAIN FUNCTIONS ====================
@@ -245,7 +244,7 @@ function isTransactionalMessage(message: string): boolean {
 
   // Check for transactional keywords
   const transactionalPatterns = [
-    /\b(buat|bikin|daftar|reservasi|booking)\b/i,
+    /\b(buat|bikin|daftar|ajukan|layanan|permohonan)\b/i,
     /\b(lapor|aduan|keluhan|komplain)\b/i,
     /\b(batalkan|cancel|ubah|ganti)\b/i,
   ];

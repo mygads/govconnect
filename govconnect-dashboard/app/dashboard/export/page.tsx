@@ -37,7 +37,7 @@ import {
   XCircle,
   FileWarning,
 } from "lucide-react"
-import { laporan, tiket, statistics } from "@/lib/frontend-api"
+import { laporan, statistics } from "@/lib/frontend-api"
 import { format, subDays, startOfMonth, endOfMonth, startOfWeek, endOfWeek } from "date-fns"
 import { id as idLocale } from "date-fns/locale"
 import {

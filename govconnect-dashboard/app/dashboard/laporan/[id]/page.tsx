@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -19,7 +20,14 @@ import { Textarea } from "@/components/ui/textarea"
 import { AlertCircle, ArrowLeft, CheckCircle, Loader2, MapPin, MessageSquare, Phone, Calendar, Image, Printer } from "lucide-react"
 import { laporan } from "@/lib/frontend-api"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
-import { printTicket } from "@/lib/export-utils"
+import { printReceipt } from "@/lib/export-utils"
+
+interface ComplaintUpdate {
+  id: string
+  note_text: string
+  image_url?: string | null
+  created_at: string
+}
 
 interface Complaint {
   id: string
@@ -33,6 +41,7 @@ interface Complaint {
   status: string
   created_at: string
   updated_at: string
+  updates?: ComplaintUpdate[]
 }
 
 export default function LaporanDetailPage() {
@@ -44,6 +53,9 @@ export default function LaporanDetailPage() {
   const [updating, setUpdating] = useState(false)
   const [newStatus, setNewStatus] = useState("")
   const [adminNotes, setAdminNotes] = useState("")
+  const [updateNote, setUpdateNote] = useState("")
+  const [updateImageUrl, setUpdateImageUrl] = useState("")
+  const [savingUpdate, setSavingUpdate] = useState(false)
 
   useEffect(() => {
     if (params.id) {
@@ -83,6 +95,39 @@ export default function LaporanDetailPage() {
       setError(err.message || "Failed to update status")
     } finally {
       setUpdating(false)
+    }
+  }
+
+  const handleCreateUpdate = async () => {
+    if (!complaint || !updateNote.trim()) return
+
+    try {
+      setSavingUpdate(true)
+      const response = await fetch(`/api/laporan/${complaint.id}/updates`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({
+          note_text: updateNote.trim(),
+          image_url: updateImageUrl.trim() || null,
+        }),
+      })
+
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || "Gagal menambahkan update")
+      }
+
+      await fetchComplaintDetail(complaint.id)
+      setUpdateNote("")
+      setUpdateImageUrl("")
+      setError(null)
+    } catch (err: any) {
+      setError(err.message || "Gagal menambahkan update")
+    } finally {
+      setSavingUpdate(false)
     }
   }
 
@@ -141,9 +186,9 @@ export default function LaporanDetailPage() {
             <p className="text-sm text-muted-foreground">Detail Laporan Warga</p>
           </div>
         </div>
-        <Button variant="outline" onClick={() => printTicket(complaint)}>
+        <Button variant="outline" onClick={() => printReceipt(complaint)}>
           <Printer className="mr-2 h-4 w-4" />
-          Cetak Tiket
+          Cetak Bukti
         </Button>
       </div>
 
@@ -308,8 +353,70 @@ export default function LaporanDetailPage() {
               </Button>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Update Penanganan</CardTitle>
+              <CardDescription>Catatan perkembangan dan dokumentasi penanganan.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="updateNote">Catatan Penanganan</Label>
+                <Textarea
+                  id="updateNote"
+                  placeholder="Tulis progres penanganan atau hasil tindak lanjut..."
+                  value={updateNote}
+                  onChange={(e) => setUpdateNote(e.target.value)}
+                  rows={4}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="updateImage">URL Foto (Opsional)</Label>
+                <Input
+                  id="updateImage"
+                  placeholder="https://contoh.com/foto.jpg"
+                  value={updateImageUrl}
+                  onChange={(e) => setUpdateImageUrl(e.target.value)}
+                />
+              </div>
+              <Button onClick={handleCreateUpdate} disabled={savingUpdate || !updateNote.trim()}>
+                {savingUpdate ? "Menyimpan..." : "Simpan Update"}
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Riwayat Update Penanganan</CardTitle>
+          <CardDescription>Daftar update yang sudah dikirim ke warga.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {complaint.updates && complaint.updates.length > 0 ? (
+            complaint.updates.map((update) => (
+              <div key={update.id} className="border rounded-lg p-4 space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  {formatDate(update.created_at)}
+                </p>
+                <p className="text-sm text-foreground whitespace-pre-line">{update.note_text}</p>
+                {update.image_url && (
+                  <a
+                    href={update.image_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-secondary hover:underline"
+                  >
+                    Lihat Foto Penanganan
+                  </a>
+                )}
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground">Belum ada update penanganan.</p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

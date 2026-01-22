@@ -1,7 +1,7 @@
 {
   "name": "govconnect-case-service",
   "version": "1.0.0",
-  "description": "Case Service for GovConnect - Manage complaints and tickets",
+  "description": "Case Service for GovConnect - Manage complaints and service requests",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -17,12 +17,11 @@
     "govconnect",
     "case",
     "complaints",
-    "tickets"
+    "service-requests"
   ],
-  "author": "GovConnect Team",
+  "author": "Genfity Digital Solutions",
   "license": "ISC",
   "dependencies": {
-    "@apollo/server": "^5.2.0",
     "@prisma/client": "6.19.0",
     "amqplib": "^0.10.9",
     "axios": "^1.13.2",
@@ -31,8 +30,6 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-validator": "^7.3.1",
-    "graphql": "^16.12.0",
-    "graphql-tag": "^2.12.6",
     "prom-client": "^15.1.3",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",

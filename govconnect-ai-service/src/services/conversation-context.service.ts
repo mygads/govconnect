@@ -247,7 +247,7 @@ export function recordDataCollected(userId: string, field: string, value: any): 
 }
 
 /**
- * Record completed action (complaint/reservation created)
+ * Record completed action (complaint/layanan dibuat)
  */
 export function recordCompletedAction(userId: string, actionType: string, resultId: string): void {
   const ctx = getEnhancedContext(userId);
@@ -426,7 +426,7 @@ export function getSmartFollowUp(userId: string): string | null {
     ],
     'nama_lengkap': [
       'Siapa nama lengkap Kakak sesuai KTP?',
-      'Boleh sebutkan nama lengkap untuk data reservasi?',
+      'Boleh sebutkan nama lengkap untuk data layanan?',
       'Nama lengkapnya siapa ya Kak?',
     ],
     'nik': [

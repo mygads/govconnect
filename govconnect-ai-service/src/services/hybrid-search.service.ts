@@ -50,6 +50,7 @@ export async function searchKeywords(
     topK = 10,
     categories,
     sourceTypes = ['knowledge', 'document'],
+    villageId,
   } = options;
 
   const results: VectorSearchResult[] = [];
@@ -99,6 +100,10 @@ export async function searchKeywords(
         if (categories && categories.length > 0 && !categories.includes(row.category)) {
           continue;
         }
+        if (villageId && row?.village_id && row.village_id !== villageId) {
+          continue;
+        }
+
         results.push({
           id: row.id,
           content: row.content,
@@ -151,6 +156,10 @@ export async function searchKeywords(
         if (categories && categories.length > 0 && !categories.includes(row.category)) {
           continue;
         }
+        if (villageId && row?.village_id && row.village_id !== villageId) {
+          continue;
+        }
+
         results.push({
           id: row.id,
           content: row.content,
@@ -305,6 +314,7 @@ export async function hybridSearch(
     minScore = 0.65,
     categories,
     sourceTypes = ['knowledge', 'document'],
+    villageId,
     vectorWeight = 0.6,
     keywordWeight = 0.4,
     useQueryExpansion = true,
@@ -327,11 +337,13 @@ export async function hybridSearch(
         minScore: minScore * 0.8, // Lower threshold, will filter after
         categories,
         sourceTypes,
+        villageId,
       }),
       searchKeywords(query, {
         topK: topK * 2,
         categories,
         sourceTypes,
+        villageId,
       }),
     ]);
 

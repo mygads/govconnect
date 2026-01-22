@@ -37,7 +37,7 @@ function validateEnv(): EnvConfig {
     DATABASE_URL: process.env.DATABASE_URL!,
     RABBITMQ_URL: process.env.RABBITMQ_URL!,
     INTERNAL_API_KEY: process.env.INTERNAL_API_KEY!,
-    // WA_API_URL: clivy-wa-support gateway URL (includes /wa prefix)
+    // WA_API_URL: WhatsApp provider base URL (includes /wa prefix)
     WA_API_URL: process.env.WA_API_URL || 'https://api-wa.genfity.com/wa',
     // WA_ACCESS_TOKEN: Session token from genfity-wa
     WA_ACCESS_TOKEN: process.env.WA_ACCESS_TOKEN || '',

@@ -18,6 +18,7 @@ interface Complaint {
   kategori: string
   deskripsi: string
   status: string
+  is_urgent?: boolean
   created_at: string
 }
 
@@ -40,12 +41,12 @@ interface RealtimeStats {
     ditolak: number
     urgent: number
   }
-  reservations?: {
+  services?: {
     total: number
-    pending: number
-    confirmed: number
-    completed: number
-    cancelled: number
+    baru: number
+    proses: number
+    selesai: number
+    ditolak: number
   }
   todayCount: number
   lastHourCount: number
@@ -105,9 +106,10 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       const allComplaints: Complaint[] = complaintsData.data || []
       
       // Filter urgent complaints
-      const urgent = allComplaints.filter(c => 
-        isUrgentCategory(c.kategori) && c.status === 'baru'
-      )
+      const urgent = allComplaints.filter(c => {
+        const urgentFlag = typeof c.is_urgent === 'boolean' ? c.is_urgent : isUrgentCategory(c.kategori)
+        return urgentFlag && c.status === 'baru'
+      })
       
       // Get recent (last 10)
       const recent = allComplaints
@@ -134,7 +136,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
         allComplaints.forEach(complaint => {
           if (!previousComplaintsRef.current.has(complaint.id)) {
             // New complaint detected
-            const isUrgent = isUrgentCategory(complaint.kategori)
+            const isUrgent = typeof complaint.is_urgent === 'boolean'
+              ? complaint.is_urgent
+              : isUrgentCategory(complaint.kategori)
             
             // Create notification
             const notification: Notification = {
@@ -177,7 +181,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
           .slice(0, 10)
         
         const initialNotifications: Notification[] = recentActivity.map(complaint => {
-          const isUrgent = isUrgentCategory(complaint.kategori)
+          const isUrgent = typeof complaint.is_urgent === 'boolean'
+            ? complaint.is_urgent
+            : isUrgentCategory(complaint.kategori)
           return {
             id: `notif-${complaint.id}`,
             type: isUrgent ? 'urgent' : 'new_complaint',
@@ -200,7 +206,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
           ...statsData.complaints,
           urgent: urgent.length,
         },
-        reservations: statsData.reservations,
+        services: statsData.services,
         todayCount,
         lastHourCount,
       })

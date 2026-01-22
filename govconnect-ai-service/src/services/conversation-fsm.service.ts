@@ -8,8 +8,8 @@
  * - IDLE: Tidak ada percakapan aktif
  * - COLLECTING_COMPLAINT_DATA: Mengumpulkan data laporan
  * - CONFIRMING_COMPLAINT: Menunggu konfirmasi laporan
- * - COLLECTING_RESERVATION_DATA: Mengumpulkan data reservasi
- * - CONFIRMING_RESERVATION: Menunggu konfirmasi reservasi
+ * - COLLECTING_SERVICE_REQUEST_DATA: Mengumpulkan data permohonan layanan
+ * - CONFIRMING_SERVICE_REQUEST: Menunggu konfirmasi permohonan layanan
  * - AWAITING_ADDRESS_DETAIL: Menunggu detail alamat
  * - AWAITING_CONFIRMATION: Menunggu konfirmasi umum
  */
@@ -22,8 +22,8 @@ export type ConversationState =
   | 'IDLE'
   | 'COLLECTING_COMPLAINT_DATA'
   | 'CONFIRMING_COMPLAINT'
-  | 'COLLECTING_RESERVATION_DATA'
-  | 'CONFIRMING_RESERVATION'
+  | 'COLLECTING_SERVICE_REQUEST_DATA'
+  | 'CONFIRMING_SERVICE_REQUEST'
   | 'AWAITING_ADDRESS_DETAIL'
   | 'AWAITING_CONFIRMATION'
   | 'CHECK_STATUS_FLOW'
@@ -31,7 +31,7 @@ export type ConversationState =
 
 export type ConversationTrigger =
   | 'CREATE_COMPLAINT'
-  | 'CREATE_RESERVATION'
+  | 'CREATE_SERVICE_REQUEST'
   | 'CHECK_STATUS'
   | 'CANCEL'
   | 'DATA_COMPLETE'
@@ -51,18 +51,14 @@ export interface CollectedData {
   rt_rw?: string;
   foto_url?: string;
   
-  // Reservation data
-  service_code?: string;
-  nama_lengkap?: string;
-  nik?: string;
-  no_hp?: string;
-  keperluan?: string;
-  reservation_date?: string;
-  reservation_time?: string;
+  // Service request data
+  service_id?: string;
+  service_slug?: string;
+  request_number?: string;
   
   // Status check data
   complaint_id?: string;
-  reservation_id?: string;
+  request_number?: string;
   
   // Metadata
   lastUpdated?: number;
@@ -132,28 +128,28 @@ const TRANSITIONS: StateTransition[] = [
     trigger: 'REJECTED',
   },
   
-  // === RESERVATION FLOW ===
+  // === SERVICE REQUEST FLOW ===
   {
     from: 'IDLE',
-    to: 'COLLECTING_RESERVATION_DATA',
-    trigger: 'CREATE_RESERVATION',
+    to: 'COLLECTING_SERVICE_REQUEST_DATA',
+    trigger: 'CREATE_SERVICE_REQUEST',
   },
   {
-    from: 'COLLECTING_RESERVATION_DATA',
-    to: 'CONFIRMING_RESERVATION',
+    from: 'COLLECTING_SERVICE_REQUEST_DATA',
+    to: 'CONFIRMING_SERVICE_REQUEST',
     trigger: 'DATA_COMPLETE',
   },
   {
-    from: 'CONFIRMING_RESERVATION',
+    from: 'CONFIRMING_SERVICE_REQUEST',
     to: 'IDLE',
     trigger: 'CONFIRMED',
     action: (ctx) => {
-      logger.info('[FSM] Reservation confirmed, resetting state', { userId: ctx.userId });
+      logger.info('[FSM] Service request confirmed, resetting state', { userId: ctx.userId });
     },
   },
   {
-    from: 'CONFIRMING_RESERVATION',
-    to: 'COLLECTING_RESERVATION_DATA',
+    from: 'CONFIRMING_SERVICE_REQUEST',
+    to: 'COLLECTING_SERVICE_REQUEST_DATA',
     trigger: 'REJECTED',
   },
   
@@ -193,12 +189,12 @@ const TRANSITIONS: StateTransition[] = [
   
   // === GLOBAL TRANSITIONS ===
   {
-    from: ['COLLECTING_COMPLAINT_DATA', 'COLLECTING_RESERVATION_DATA', 'CONFIRMING_COMPLAINT', 'CONFIRMING_RESERVATION', 'AWAITING_ADDRESS_DETAIL', 'AWAITING_CONFIRMATION', 'CHECK_STATUS_FLOW', 'CANCELLATION_FLOW'],
+    from: ['COLLECTING_COMPLAINT_DATA', 'COLLECTING_SERVICE_REQUEST_DATA', 'CONFIRMING_COMPLAINT', 'CONFIRMING_SERVICE_REQUEST', 'AWAITING_ADDRESS_DETAIL', 'AWAITING_CONFIRMATION', 'CHECK_STATUS_FLOW', 'CANCELLATION_FLOW'],
     to: 'IDLE',
     trigger: 'TIMEOUT',
   },
   {
-    from: ['COLLECTING_COMPLAINT_DATA', 'COLLECTING_RESERVATION_DATA', 'CONFIRMING_COMPLAINT', 'CONFIRMING_RESERVATION', 'AWAITING_ADDRESS_DETAIL', 'AWAITING_CONFIRMATION', 'CHECK_STATUS_FLOW', 'CANCELLATION_FLOW'],
+    from: ['COLLECTING_COMPLAINT_DATA', 'COLLECTING_SERVICE_REQUEST_DATA', 'CONFIRMING_COMPLAINT', 'CONFIRMING_SERVICE_REQUEST', 'AWAITING_ADDRESS_DETAIL', 'AWAITING_CONFIRMATION', 'CHECK_STATUS_FLOW', 'CANCELLATION_FLOW'],
     to: 'IDLE',
     trigger: 'RESET',
   },
@@ -209,8 +205,8 @@ const TRANSITIONS: StateTransition[] = [
 const COMPLAINT_REQUIRED_FIELDS = ['kategori', 'alamat'];
 const COMPLAINT_OPTIONAL_FIELDS = ['deskripsi', 'rt_rw', 'foto_url'];
 
-const RESERVATION_REQUIRED_FIELDS = ['service_code', 'nama_lengkap', 'nik', 'reservation_date', 'reservation_time'];
-const RESERVATION_OPTIONAL_FIELDS = ['no_hp', 'alamat', 'keperluan'];
+const SERVICE_REQUEST_REQUIRED_FIELDS = ['service_slug'];
+const SERVICE_REQUEST_OPTIONAL_FIELDS = ['service_id'];
 
 // ==================== STORAGE ====================
 
@@ -357,8 +353,8 @@ function calculateMissingFields(ctx: ConversationContext): string[] {
     }
   }
   
-  if (ctx.state === 'COLLECTING_RESERVATION_DATA' || ctx.state === 'CONFIRMING_RESERVATION') {
-    for (const field of RESERVATION_REQUIRED_FIELDS) {
+  if (ctx.state === 'COLLECTING_SERVICE_REQUEST_DATA' || ctx.state === 'CONFIRMING_SERVICE_REQUEST') {
+    for (const field of SERVICE_REQUEST_REQUIRED_FIELDS) {
       if (!ctx.collectedData[field as keyof CollectedData]) {
         missing.push(field);
       }
@@ -394,14 +390,9 @@ export function getNextQuestion(userId: string): string | null {
     'alamat': 'Di mana lokasi masalahnya? Sebutkan alamat atau patokan terdekat.',
     'deskripsi': 'Bisa jelaskan lebih detail masalahnya?',
     
-    // Reservation fields
-    'service_code': 'Surat apa yang ingin Kakak urus?',
-    'nama_lengkap': 'Siapa nama lengkap Kakak sesuai KTP?',
-    'nik': 'Berapa NIK (16 digit) Kakak?',
-    'no_hp': 'Nomor HP yang bisa dihubungi?',
-    'reservation_date': 'Kakak mau datang tanggal berapa?',
-    'reservation_time': 'Jam berapa Kakak mau datang?',
-    'keperluan': 'Untuk keperluan apa surat ini?',
+    // Service request fields
+    'service_slug': 'Layanan apa yang ingin Kakak ajukan?',
+    'service_id': 'Boleh sebutkan nama layanan yang dimaksud?',
   };
   
   return questionMap[nextField] || null;
@@ -446,8 +437,8 @@ export function getFSMStats(): {
     'IDLE': 0,
     'COLLECTING_COMPLAINT_DATA': 0,
     'CONFIRMING_COMPLAINT': 0,
-    'COLLECTING_RESERVATION_DATA': 0,
-    'CONFIRMING_RESERVATION': 0,
+    'COLLECTING_SERVICE_REQUEST_DATA': 0,
+    'CONFIRMING_SERVICE_REQUEST': 0,
     'AWAITING_ADDRESS_DETAIL': 0,
     'AWAITING_CONFIRMATION': 0,
     'CHECK_STATUS_FLOW': 0,
@@ -476,10 +467,9 @@ export function getFSMStats(): {
 export function intentToTrigger(intent: string): ConversationTrigger | null {
   const mapping: Record<string, ConversationTrigger> = {
     'CREATE_COMPLAINT': 'CREATE_COMPLAINT',
-    'CREATE_RESERVATION': 'CREATE_RESERVATION',
+    'CREATE_SERVICE_REQUEST': 'CREATE_SERVICE_REQUEST',
     'CHECK_STATUS': 'CHECK_STATUS',
     'CANCEL_COMPLAINT': 'CANCEL',
-    'CANCEL_RESERVATION': 'CANCEL',
     'CONFIRMATION': 'CONFIRMED',
     'REJECTION': 'REJECTED',
   };
@@ -498,11 +488,11 @@ export function isInActiveFlow(userId: string): boolean {
 /**
  * Get current flow type
  */
-export function getCurrentFlowType(userId: string): 'complaint' | 'reservation' | 'status' | 'cancel' | 'none' {
+export function getCurrentFlowType(userId: string): 'complaint' | 'service' | 'status' | 'cancel' | 'none' {
   const ctx = getContext(userId);
   
   if (ctx.state.includes('COMPLAINT')) return 'complaint';
-  if (ctx.state.includes('RESERVATION')) return 'reservation';
+  if (ctx.state.includes('SERVICE_REQUEST')) return 'service';
   if (ctx.state === 'CHECK_STATUS_FLOW') return 'status';
   if (ctx.state === 'CANCELLATION_FLOW') return 'cancel';
   

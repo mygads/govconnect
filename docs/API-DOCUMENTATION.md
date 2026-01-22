@@ -1,3 +1,237 @@
+# Dokumentasi API GovConnect (Redesain)
+
+Dokumen ini menambahkan **API v2** sesuai perubahan fitur. Bagian lama tetap ada di bawah sebagai **legacy** dan **tidak dipakai**.
+
+---
+
+## API v2 (Redesain)
+
+### Prinsip
+- Semua request internal memakai header `X-Internal-API-Key`.
+- AI model **tidak** diubah dari dashboard (hanya via ENV).
+- Bahasa UI dan respons admin: **Bahasa Indonesia**.
+
+---
+
+## Auth & User
+
+### POST /api/auth/register
+Register desa/kelurahan (pilihan **terkunci** 1 level).
+
+### POST /api/auth/login
+Login admin desa.
+
+### POST /api/auth/logout
+Logout admin.
+
+---
+
+## Dashboard (Admin)
+
+### Desa & Profil
+```
+GET  /api/villages/me
+PUT  /api/villages/me
+
+GET  /api/village-profile
+PUT  /api/village-profile
+```
+
+### Knowledge Base
+```
+GET  /api/knowledge/categories
+POST /api/knowledge/categories
+
+GET  /api/knowledge/documents
+POST /api/knowledge/documents (upload PDF/DOC/DOCX/TXT)
+DELETE /api/knowledge/documents/:id
+```
+
+### Nomor Penting
+```
+GET  /api/important-contacts/categories
+POST /api/important-contacts/categories
+GET  /api/important-contacts
+POST /api/important-contacts
+```
+
+### Channel Connect
+```
+GET  /api/channel-settings
+PUT  /api/channel-settings
+```
+Payload mencakup: `wa_number`, `wa_token`, `webhook_url` (read-only), `enabled_wa`, `enabled_webchat`.
+
+### Testing Knowledge
+```
+POST /api/testing-knowledge
+```
+Request body (JSON):
+```
+{
+  "query": "jam buka kantor kelurahan?",
+  "category_id": "cat_xxx" ,
+  "category_ids": ["cat_xxx"],
+  "include_knowledge": true,
+  "include_documents": true,
+  "top_k": 5,
+  "min_score": 0.6
+}
+```
+Response:
+```
+{
+  "data": [
+    {
+      "id": "...",
+      "content": "...",
+      "score": 0.78,
+      "source": "Judul",
+      "sourceType": "knowledge",
+      "metadata": { "category": "jadwal" }
+    }
+  ],
+  "total": 1,
+  "searchTimeMs": 124
+}
+```
+
+---
+
+## Public Form (Warga)
+```
+GET  /form/:villageSlug/:serviceSlug
+GET  /api/public/services/:villageSlug/:serviceSlug
+POST /api/public/service-requests
+```
+`POST /api/public/service-requests` menerima data warga + file persyaratan.
+
+---
+
+## Case Service (Layanan & Pengaduan)
+
+### Layanan
+```
+GET  /services/categories
+POST /services/categories
+GET  /services
+POST /services
+GET  /services/:id
+PUT  /services/:id
+
+GET  /services/:id/requirements
+POST /services/:id/requirements
+PUT  /services/requirements/:id
+DELETE /services/requirements/:id
+```
+
+### Permohonan Layanan
+```
+GET  /service-requests
+POST /service-requests
+GET  /service-requests/:id
+PATCH /service-requests/:id/status
+GET  /service-requests/history/:wa_user_id
+```
+
+### Pengaduan
+```
+GET  /complaints/categories
+POST /complaints/categories
+PATCH /complaints/categories/:id
+DELETE /complaints/categories/:id
+GET  /complaints/types?village_id=...&category_id=...
+POST /complaints/types
+PATCH /complaints/types/:id
+DELETE /complaints/types/:id
+
+GET  /complaints
+POST /complaints
+GET  /complaints/:id
+PATCH /complaints/:id/status
+POST /complaints/:id/updates
+```
+
+---
+
+## Channel Service (WhatsApp)
+```
+POST /webhook/whatsapp
+GET  /webhook/whatsapp
+POST /internal/messages/send
+GET  /internal/messages/history?wa_user_id=628xxx
+GET  /internal/channel-accounts/:village_id
+PUT  /internal/channel-accounts/:village_id
+```
+
+---
+
+## AI Orchestrator
+```
+POST /internal/process-message
+POST /api/webchat
+POST /internal/knowledge/search
+```
+
+### Internal Knowledge (Dashboard)
+```
+GET  /api/internal/knowledge?query=...&category_id=...&village_id=...&limit=5
+POST /api/internal/knowledge
+```
+Body POST (JSON):
+```
+{
+  "query": "alamat kantor",
+  "categories": ["kontak"],
+  "category_ids": ["cat_xxx"],
+  "village_id": "village_xxx",
+  "limit": 5
+}
+```
+
+### Internal Nomor Penting (Dashboard)
+```
+GET /api/internal/important-contacts?village_id=...&category_name=...&category_id=...
+```
+Response (JSON):
+```
+{
+  "data": [
+    {
+      "id": "ic_123",
+      "name": "Damkar",
+      "phone": "113",
+      "description": "Pemadam kebakaran",
+      "category": {
+        "id": "cat_123",
+        "name": "Darurat"
+      }
+    }
+  ]
+}
+```
+
+---
+
+## Notification Service
+```
+POST /internal/notifications
+GET  /internal/notifications
+```
+
+---
+
+## Super Admin
+```
+GET /api/superadmin/villages
+GET /api/superadmin/analytics
+GET /api/superadmin/system-settings
+```
+
+---
+
+## ⚠️ Legacy (Tidak Dipakai)
+
 # GovConnect API Documentation
 
 Complete API reference for all GovConnect microservices.
@@ -10,7 +244,6 @@ Complete API reference for all GovConnect microservices.
 - [Channel Service API](#channel-service-api)
 - [AI Service API](#ai-service-api)
 - [Dashboard API](#dashboard-api)
-- [GraphQL API](#graphql-api)
 - [Error Handling](#error-handling)
 
 ---
@@ -22,9 +255,9 @@ GovConnect is a microservices-based government service platform with the followi
 | Service | Port | Description |
 |---------|------|-------------|
 | Dashboard | 3000 | Admin dashboard (Next.js) |
-| Channel Service | 3001 | WhatsApp gateway & messaging |
+| Channel Service | 3001 | WhatsApp channel & messaging |
 | AI Service | 3002 | AI orchestrator & NLU |
-| Case Service | 3003 | Complaints & reservations |
+| Case Service | 3003 | Complaints & service requests |
 | Notification Service | 3004 | Notifications (event-driven) |
 
 ---
@@ -44,29 +277,37 @@ Header: Authorization: Bearer <token>
 Used for dashboard admin authentication.
 
 ### Public APIs
-GraphQL endpoints and some public endpoints don't require authentication.
+Endpoint publik untuk form tersedia tanpa autentikasi.
 
 ---
 
 ## Base URLs
 
-**Production (via Traefik):**
+**Internal (Docker network):**
+| Service | URL |
+|---------|-----|
+| Dashboard | `http://dashboard:3000` |
+| Case Service | `http://case-service:3003` |
+| Channel Service | `http://channel-service:3001` |
+| AI Service | `http://ai-service:3002` |
+| Notification Service | `http://notification-service:3004` |
+
+**External (production):**
 | Service | URL |
 |---------|-----|
 | Dashboard | `https://govconnect.my.id` |
-| Case Service | `https://api.govconnect.my.id/case` |
-| Channel Service | `https://api.govconnect.my.id/channel` |
-| AI Service | `https://api.govconnect.my.id/ai` |
-| Notification Service | `https://api.govconnect.my.id/notification` |
+| Case Service | `https://case.govconnect.my.id` |
+| Channel Service | `https://channel.govconnect.my.id` |
+| AI Service | `https://ai.govconnect.my.id` |
+| Notification Service | `https://notification.govconnect.my.id` |
 
-> Note: Traefik strips the service prefix before forwarding to the backend.
-> Example: `https://api.govconnect.my.id/case/health` → `http://case-service:3003/health`
+> Catatan: antar service saling berkomunikasi langsung (tanpa gateway agregasi).
 
 ---
 
 ## Case Service API
 
-Base URL: `https://api.govconnect.my.id/case`
+Base URL: `https://case.govconnect.my.id`
 
 ### Health Endpoints
 
@@ -223,133 +464,43 @@ X-Internal-API-Key: <api-key>
 
 ---
 
-### Reservations (Reservasi)
+### Service Catalog & Permohonan Layanan
 
-#### GET /reservasi/services
-Get all government services.
+#### GET /service-categories
+Get all service categories (optional filter by `village_id`).
 
-**Response:**
-```json
-{
-  "status": "success",
-  "data": [
-    {
-      "code": "SKD",
-      "name": "Surat Keterangan Domisili",
-      "description": "...",
-      "category": "Kependudukan",
-      "requirements": ["KTP", "KK"],
-      "estimated_duration": 15,
-      "daily_quota": 20,
-      "is_active": true,
-      "is_online_available": true
-    }
-  ]
-}
-```
+#### POST /service-categories
+Create service category.
 
-#### GET /reservasi/services/active
-Get active services only.
+#### GET /services
+Get all services (optional filter by `village_id`, `category_id`).
 
-#### GET /reservasi/services/:code
-Get service by code.
+#### GET /services/:id
+Get service by ID.
 
-#### PATCH /reservasi/services/:code/toggle-active
-Toggle service active status.
+#### GET /services/by-slug?village_id=...&slug=...
+Get service by village slug for public form.
 
-**Request Body:**
-```json
-{
-  "is_active": false
-}
-```
+#### POST /services
+Create service item.
 
-#### PATCH /reservasi/services/:code/toggle-online
-Toggle online availability.
+#### PATCH /services/:id
+Update service item.
 
-**Request Body:**
-```json
-{
-  "is_online_available": false
-}
-```
+#### GET /services/:id/requirements
+Get requirements by service.
 
-#### PATCH /reservasi/services/:code/settings
-Update service settings.
+#### POST /services/:id/requirements
+Create requirement.
 
-**Request Body:**
-```json
-{
-  "daily_quota": 30,
-  "operating_hours": {
-    "senin": { "open": "08:00", "close": "15:00" },
-    "selasa": { "open": "08:00", "close": "15:00" }
-  }
-}
-```
+#### PATCH /requirements/:id
+Update requirement.
 
-#### GET /reservasi/slots/:code/:date
-Get available time slots.
+#### DELETE /requirements/:id
+Delete requirement.
 
-**Parameters:**
-- `code`: Service code (e.g., "SKD")
-- `date`: ISO date (e.g., "2025-12-24")
-
-**Response:**
-```json
-{
-  "available": true,
-  "service_code": "SKD",
-  "date": "2025-12-24",
-  "day_name": "rabu",
-  "total_quota": 20,
-  "booked": 5,
-  "remaining": 15,
-  "available_slots": ["08:00", "08:30", "09:00", "09:30"]
-}
-```
-
-#### POST /reservasi/create
-Create a reservation.
-
-**Headers:**
-```
-X-Internal-API-Key: <api-key>
-```
-
-**Request Body:**
-```json
-{
-  "wa_user_id": "6281234567890",
-  "service_code": "SKD",
-  "citizen_data": {
-    "nama_lengkap": "John Doe",
-    "nik": "1234567890123456",
-    "alamat": "Jl. Merdeka No. 10",
-    "no_hp": "081234567890"
-  },
-  "reservation_date": "2025-12-24",
-  "reservation_time": "09:00"
-}
-```
-
-**Response (201):**
-```json
-{
-  "status": "success",
-  "data": {
-    "reservation_id": "RSV-20251222-001",
-    "queue_number": 6,
-    "service_name": "Surat Keterangan Domisili",
-    "reservation_date": "2025-12-24",
-    "reservation_time": "09:00",
-    "status": "pending"
-  }
-}
-```
-
-#### GET /reservasi
-Get reservations list.
+#### GET /service-requests
+Get service requests list.
 
 **Query Parameters:**
 | Parameter | Type | Description |
@@ -357,48 +508,51 @@ Get reservations list.
 | status | string | Filter by status |
 | service_id | string | Filter by service |
 | wa_user_id | string | Filter by user |
-| date_from | string | Start date (ISO) |
-| date_to | string | End date (ISO) |
-| limit | number | Limit results |
-| offset | number | Offset |
+| request_number | string | Filter by request number |
+| village_id | string | Filter by village |
 
-#### GET /reservasi/:id
-Get reservation by ID.
-
-#### POST /reservasi/:id/check
-Check reservation status with ownership.
-
-#### PATCH /reservasi/:id/status
-Update reservation status.
-
-**Valid Status:**
-- `pending` - Menunggu konfirmasi
-- `confirmed` - Dikonfirmasi
-- `arrived` - Sudah hadir
-- `completed` - Selesai
-- `cancelled` - Dibatalkan
-- `no_show` - Tidak hadir
-
-#### POST /reservasi/:id/cancel
-Cancel reservation.
-
-#### PATCH /reservasi/:id/time
-Update reservation time.
+#### POST /service-requests
+Create service request (public form & AI).
 
 **Request Body:**
 ```json
 {
+  "service_id": "svc-123",
   "wa_user_id": "6281234567890",
-  "reservation_date": "2025-12-25",
-  "reservation_time": "10:00"
+  "citizen_data_json": {
+    "nama_lengkap": "John Doe",
+    "nik": "1234567890123456",
+    "alamat": "Jl. Merdeka No. 10",
+    "no_hp": "081234567890"
+  },
+  "requirement_data_json": {
+    "keperluan": "Surat Domisili"
+  }
 }
 ```
 
-#### GET /reservasi/statistics
-Get reservation statistics.
+#### GET /service-requests/:id
+Get service request by ID.
 
-#### GET /reservasi/history/:wa_user_id
-Get user reservation history.
+#### PATCH /service-requests/:id/status
+Update service request status.
+
+**Request Body:**
+```json
+{
+  "status": "proses",
+  "admin_notes": "Sedang diverifikasi"
+}
+```
+
+#### POST /service-requests/:id/cancel
+Cancel service request (ownership required).
+
+#### DELETE /service-requests/:id
+Delete service request.
+
+#### GET /service-requests/history/:wa_user_id
+Get user service request history.
 
 ---
 
@@ -412,7 +566,7 @@ Get overview statistics.
 ### User History
 
 #### GET /user/:wa_user_id/history
-Get user history (complaints + reservations).
+Get user history (complaints + service requests).
 
 **Headers:**
 ```
@@ -425,7 +579,7 @@ X-Internal-API-Key: <api-key>
 
 ## Channel Service API
 
-Base URL: `https://api.govconnect.my.id/channel`
+Base URL: `https://channel.govconnect.my.id`
 
 ### Health Endpoints
 
@@ -644,7 +798,7 @@ Delete conversation.
 
 ## AI Service API
 
-Base URL: `https://api.govconnect.my.id/ai`
+Base URL: `https://ai.govconnect.my.id`
 
 ### Health Endpoints
 
@@ -871,177 +1025,7 @@ Clear failed messages.
 
 
 
----
 
-## GraphQL API
-
-Endpoint: `POST /graphql` (Case Service)
-
-### Queries
-
-#### services
-Get all government services.
-
-```graphql
-query {
-  services {
-    code
-    name
-    description
-    category
-    requirements
-    sop_steps
-    estimated_duration
-    daily_quota
-    is_active
-    is_online_available
-    citizen_questions {
-      field
-      question
-      type
-      required
-      options
-    }
-  }
-}
-```
-
-#### service
-Get service by code.
-
-```graphql
-query GetService($code: String!) {
-  service(code: $code) {
-    code
-    name
-    description
-    category
-    requirements
-    sop_steps
-    estimated_duration
-    daily_quota
-    citizen_questions {
-      field
-      question
-      type
-      required
-      options
-    }
-  }
-}
-```
-
-**Variables:**
-```json
-{
-  "code": "SKD"
-}
-```
-
-#### availableSlots
-Get available time slots.
-
-```graphql
-query GetAvailableSlots($serviceCode: String!, $date: String!) {
-  availableSlots(serviceCode: $serviceCode, date: $date) {
-    service_code
-    date
-    day_name
-    is_open
-    slots {
-      time
-      available
-      remaining
-    }
-    daily_quota
-    total_booked
-  }
-}
-```
-
-**Variables:**
-```json
-{
-  "serviceCode": "SKD",
-  "date": "2025-12-24"
-}
-```
-
-#### complaintCategories
-Get complaint categories.
-
-```graphql
-query {
-  complaintCategories {
-    code
-    name
-    description
-    icon
-  }
-}
-```
-
-### Mutations
-
-#### createComplaint
-Create a complaint.
-
-```graphql
-mutation CreateComplaint($input: CreateComplaintInput!) {
-  createComplaint(input: $input) {
-    success
-    complaint_id
-    message
-    error
-  }
-}
-```
-
-**Variables:**
-```json
-{
-  "input": {
-    "kategori": "jalan_rusak",
-    "deskripsi": "Jalan berlubang di depan kantor kelurahan",
-    "alamat": "Jl. Merdeka No. 10",
-    "rt_rw": "001/002",
-    "nama_pelapor": "John Doe",
-    "no_hp": "081234567890"
-  }
-}
-```
-
-#### createReservation
-Create a reservation.
-
-```graphql
-mutation CreateReservation($input: CreateReservationInput!) {
-  createReservation(input: $input) {
-    success
-    reservation_id
-    queue_number
-    message
-    error
-  }
-}
-```
-
-**Variables:**
-```json
-{
-  "input": {
-    "service_code": "SKD",
-    "reservation_date": "2025-12-24",
-    "reservation_time": "09:00",
-    "nama_lengkap": "John Doe",
-    "nik": "1234567890123456",
-    "alamat": "Jl. Merdeka No. 10",
-    "no_hp": "081234567890"
-  }
-}
-```
-
----
 
 ## Error Handling
 

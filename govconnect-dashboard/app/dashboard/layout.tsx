@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import DashboardLayoutClient from "@/components/dashboard/DashboardLayoutClient"
 
-export const dynamic = 'force-dynamic'
+export const dynamic = 'force-static'
 
 export const metadata: Metadata = {
   title: "Dashboard | GovConnect",

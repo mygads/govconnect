@@ -66,7 +66,7 @@ Semua service berikut digunakan oleh kedua arsitektur:
 ### 1. Intent Patterns (`constants/intent-patterns.ts`)
 Single source of truth untuk semua regex patterns:
 - Greeting, Confirmation, Rejection, Thanks
-- Complaint, Reservation, Status Check
+- Complaint, Service Request, Status Check
 - Cancel, History, Knowledge Query
 
 ### 2. Response Templates (`constants/response-templates.ts`)
@@ -129,7 +129,7 @@ processTwoLayerMessage()
 ┌──────────────────┐
 │ Action Handler   │
 │ - Create complaint│
-│ - Create reservation│
+│ - Create service request│
 └────────┬─────────┘
          ↓
     RabbitMQ Reply
@@ -163,7 +163,7 @@ processWebchatMessage()
 ┌──────────────────┐
 │ Action Handler   │
 │ - Create complaint│
-│ - Create reservation│
+│ - Create service request│
 └────────┬─────────┘
          ↓
     HTTP Response

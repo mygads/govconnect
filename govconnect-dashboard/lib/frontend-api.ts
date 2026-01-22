@@ -2,9 +2,9 @@
  * Frontend API Client
  * 
  * Client-side API calls yang memanggil API routes dashboard (/api/*)
- * API routes dashboard kemudian forward ke backend services via Traefik
+ * API routes dashboard kemudian forward ke backend services sesuai ENV
  * 
- * Browser → Dashboard API Routes → Traefik → Backend Services
+ * Browser → Dashboard API Routes → Backend Services
  */
 
 // Get auth token from localStorage
@@ -104,28 +104,14 @@ export const laporan = {
   },
 };
 
-// ==================== TIKET ====================
-export const tiket = {
-  async getAll(params?: { jenis?: string; status?: string; limit?: string; offset?: string }) {
-    const searchParams = new URLSearchParams();
-    if (params?.jenis) searchParams.set('jenis', params.jenis);
-    if (params?.status) searchParams.set('status', params.status);
-    if (params?.limit) searchParams.set('limit', params.limit);
-    if (params?.offset) searchParams.set('offset', params.offset);
-    
-    const query = searchParams.toString();
-    return fetchApi<{ data: any[]; pagination: any }>(`/api/tiket${query ? `?${query}` : ''}`);
+// ==================== LAYANAN ====================
+export const layanan = {
+  async getAll() {
+    return fetchApi<any>('/api/layanan');
   },
 
-  async getById(id: string) {
-    return fetchApi<any>(`/api/tiket/${id}`);
-  },
-
-  async updateStatus(id: string, data: { status: string; admin_notes?: string }) {
-    return fetchApi<any>(`/api/tiket/${id}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
+  async getActive() {
+    return fetchApi<any>('/api/layanan/active');
   },
 };
 
@@ -382,39 +368,6 @@ export const settings = {
   },
 };
 
-// ==================== RESERVASI ====================
-export const reservasi = {
-  async getAll(params?: { status?: string; date_from?: string; date_to?: string }) {
-    const searchParams = new URLSearchParams();
-    if (params?.status) searchParams.set('status', params.status);
-    if (params?.date_from) searchParams.set('date_from', params.date_from);
-    if (params?.date_to) searchParams.set('date_to', params.date_to);
-    
-    const query = searchParams.toString();
-    // Note: Reservasi API route belum ada, perlu dibuat
-    return fetchApi<any>(`/api/reservasi${query ? `?${query}` : ''}`);
-  },
-
-  async getById(id: string) {
-    return fetchApi<any>(`/api/reservasi/${id}`);
-  },
-
-  async updateStatus(id: string, data: { status: string; admin_notes?: string }) {
-    return fetchApi<any>(`/api/reservasi/${id}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
-  },
-
-  async getServices() {
-    return fetchApi<any>('/api/layanan');
-  },
-
-  async getActiveServices() {
-    return fetchApi<any>('/api/layanan/active');
-  },
-};
-
 // ==================== BACKWARD COMPATIBLE EXPORTS ====================
 // Untuk kompatibilitas dengan kode yang sudah ada
 export const apiClient = {
@@ -425,11 +378,6 @@ export const apiClient = {
   getComplaints: laporan.getAll,
   getComplaintById: laporan.getById,
   updateComplaintStatus: laporan.updateStatus,
-  
-  // Tiket
-  getTickets: tiket.getAll,
-  getTicketById: tiket.getById,
-  updateTicketStatus: tiket.updateStatus,
   
   // Statistics
   getStatistics: statistics.getOverview,
@@ -453,12 +401,9 @@ export const apiClient = {
   // Settings
   settings,
   
-  // Reservasi
-  getReservations: reservasi.getAll,
-  getReservationById: reservasi.getById,
-  updateReservationStatus: reservasi.updateStatus,
-  getServices: reservasi.getServices,
-  getActiveServices: reservasi.getActiveServices,
+  // Layanan
+  getServices: layanan.getAll,
+  getActiveServices: layanan.getActive,
 };
 
 export default apiClient;

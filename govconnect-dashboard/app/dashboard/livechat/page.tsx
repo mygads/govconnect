@@ -106,7 +106,7 @@ export default function LiveChatPage() {
     { value: "Transaksi bermasalah memerlukan penanganan khusus", label: "Masalah transaksi" },
     { value: "Pengguna meminta berbicara dengan manusia", label: "Request bicara manusia" },
     { value: "AI tidak dapat menjawab pertanyaan dengan tepat", label: "AI tidak dapat menjawab" },
-    { value: "Follow-up dari tiket sebelumnya", label: "Follow-up tiket" },
+    { value: "Follow-up dari layanan sebelumnya", label: "Follow-up layanan" },
     { value: "Lainnya", label: "Lainnya (tulis manual)" },
   ]
 

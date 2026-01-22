@@ -10,7 +10,7 @@
  * │  ─────────────────────────────────────────────────────────────────────────────  │
  * │  CHANNEL_SERVICE_URL  → Channel Service (WhatsApp, Messages)                   │
  * │  AI_SERVICE_URL       → AI Service (Knowledge, Documents, Embeddings)          │
- * │  CASE_SERVICE_URL     → Case Service (Laporan, Tiket, Statistics)              │
+ * │  CASE_SERVICE_URL     → Case Service (Laporan, Layanan, Statistics)            │
  * │  NOTIFICATION_SERVICE_URL → Notification Service                               │
  * └─────────────────────────────────────────────────────────────────────────────────┘
  * 
@@ -26,7 +26,7 @@ export const CASE_SERVICE_URL = process.env.CASE_SERVICE_URL || '';
 export const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || '';
 
 // Fallback to single endpoint (backward compatibility)
-export const API_BASE_URL = process.env.API_BASE_URL || 'http://traefik';
+export const API_BASE_URL = process.env.API_BASE_URL || '';
 export const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'govconnect-internal-2025-secret';
 
 // Auth token storage
@@ -221,34 +221,34 @@ export const caseService = {
   },
 
   /**
-   * Get tiket list
+   * Get service request list
    */
-  async getTiket(params?: { jenis?: string; status?: string; limit?: string; offset?: string }) {
-    const url = new URL(buildUrl(ServicePath.CASE, '/tiket'));
-    if (params?.jenis) url.searchParams.set('jenis', params.jenis);
+  async getServiceRequests(params?: { status?: string; limit?: string; offset?: string; village_id?: string }) {
+    const url = new URL(buildUrl(ServicePath.CASE, '/service-requests'));
     if (params?.status) url.searchParams.set('status', params.status);
     if (params?.limit) url.searchParams.set('limit', params.limit);
     if (params?.offset) url.searchParams.set('offset', params.offset);
-    
+    if (params?.village_id) url.searchParams.set('village_id', params.village_id);
+
     return apiFetch(url.toString(), {
       headers: getHeaders(),
     });
   },
 
   /**
-   * Get tiket by ID
+   * Get service request by ID
    */
-  async getTiketById(id: string) {
-    return apiFetch(buildUrl(ServicePath.CASE, `/tiket/${id}`), {
+  async getServiceRequestById(id: string) {
+    return apiFetch(buildUrl(ServicePath.CASE, `/service-requests/${id}`), {
       headers: getHeaders(),
     });
   },
 
   /**
-   * Update tiket status
+   * Update service request status
    */
-  async updateTiketStatus(id: string, data: { status: string; notes?: string }) {
-    return apiFetch(buildUrl(ServicePath.CASE, `/tiket/${id}/status`), {
+  async updateServiceRequestStatus(id: string, data: { status: string; admin_notes?: string }) {
+    return apiFetch(buildUrl(ServicePath.CASE, `/service-requests/${id}/status`), {
       method: 'PATCH',
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -617,21 +617,6 @@ export const apiClient = {
     return response.json();
   },
   
-  async getTickets() {
-    const response = await caseService.getTiket();
-    return response.json();
-  },
-  
-  async getTicketById(id: string) {
-    const response = await caseService.getTiketById(id);
-    return response.json();
-  },
-  
-  async updateTicketStatus(id: string, data: { status: string; admin_notes?: string }) {
-    const response = await caseService.updateTiketStatus(id, { status: data.status, notes: data.admin_notes });
-    return response.json();
-  },
-  
   async getStatistics() {
     const response = await caseService.getOverview();
     return response.json();
@@ -639,88 +624,6 @@ export const apiClient = {
   
   async getTrends(period: string = 'week') {
     const response = await caseService.getTrends(period);
-    return response.json();
-  },
-  
-  // ==================== RESERVATION METHODS ====================
-  async getServices() {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, '/reservasi/services'), {
-      headers: getHeaders(),
-    });
-    return response.json();
-  },
-  
-  async getActiveServices() {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, '/reservasi/services/active'), {
-      headers: getHeaders(),
-    });
-    return response.json();
-  },
-  
-  async getServiceByCode(code: string) {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/reservasi/services/${code}`), {
-      headers: getHeaders(),
-    });
-    return response.json();
-  },
-  
-  async toggleServiceActive(code: string, is_active: boolean) {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/reservasi/services/${code}/toggle-active`), {
-      method: 'PATCH',
-      headers: getHeaders(),
-      body: JSON.stringify({ is_active }),
-    });
-    return response.json();
-  },
-  
-  async toggleServiceOnline(code: string, is_online_available: boolean) {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/reservasi/services/${code}/toggle-online`), {
-      method: 'PATCH',
-      headers: getHeaders(),
-      body: JSON.stringify({ is_online_available }),
-    });
-    return response.json();
-  },
-  
-  async getAvailableSlots(code: string, date: string) {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/reservasi/slots/${code}/${date}`), {
-      headers: getHeaders(),
-    });
-    return response.json();
-  },
-  
-  async getReservations(params?: { status?: string; date_from?: string; date_to?: string }) {
-    const url = new URL(buildUrl(ServicePath.CASE, '/reservasi'));
-    if (params?.status) url.searchParams.set('status', params.status);
-    if (params?.date_from) url.searchParams.set('date_from', params.date_from);
-    if (params?.date_to) url.searchParams.set('date_to', params.date_to);
-    
-    const response = await apiFetch(url.toString(), {
-      headers: getHeaders(),
-    });
-    return response.json();
-  },
-  
-  async getReservationById(id: string) {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/reservasi/${id}`), {
-      headers: getHeaders(),
-    });
-    return response.json();
-  },
-  
-  async updateReservationStatus(id: string, data: { status: string; admin_notes?: string }) {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/reservasi/${id}/status`), {
-      method: 'PATCH',
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return response.json();
-  },
-  
-  async getReservationStatistics() {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, '/reservasi/statistics'), {
-      headers: getHeaders(),
-    });
     return response.json();
   },
   

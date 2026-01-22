@@ -45,6 +45,7 @@ router.post('/', async (req: Request, res: Response) => {
       minScore = 0.7, 
       categories,
       sourceTypes = ['knowledge', 'document'],
+      villageId,
       trackUsage = true,
     } = req.body;
 
@@ -73,6 +74,7 @@ router.post('/', async (req: Request, res: Response) => {
       minScore,
       categories,
       sourceTypes,
+      villageId,
     });
 
     // Track usage for knowledge items (for quality scoring)

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { ai } from '@/lib/api-client'
 import { randomUUID } from 'crypto'
+import { verifyToken } from '@/lib/auth'
 
 // Force Node.js runtime for file uploads
 export const runtime = 'nodejs'
@@ -12,21 +13,48 @@ export const dynamic = 'force-dynamic'
 // Document upload and management API
 // Requires admin authentication
 
+async function getSession(request: NextRequest) {
+  const token = request.cookies.get('token')?.value ||
+    request.headers.get('authorization')?.replace('Bearer ', '')
+  if (!token) return null
+  const payload = await verifyToken(token)
+  if (!payload) return null
+  const session = await prisma.admin_sessions.findUnique({
+    where: { token },
+    include: { admin: true }
+  })
+  if (!session || session.expires_at < new Date()) return null
+  return session
+}
+
 /**
  * GET /api/documents
  * List all knowledge documents
  */
 export async function GET(request: NextRequest) {
   try {
+    const session = await getSession(request)
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const searchParams = request.nextUrl.searchParams
     const status = searchParams.get('status')
     const category = searchParams.get('category')
+    const categoryId = searchParams.get('category_id')
     const limit = parseInt(searchParams.get('limit') || '50')
     const offset = parseInt(searchParams.get('offset') || '0')
 
     const where: any = {}
+    if (session.admin.village_id) {
+      where.village_id = session.admin.village_id
+    }
     if (status) where.status = status
-    if (category) where.category = category
+    if (categoryId) {
+      where.category_id = categoryId
+    } else if (category) {
+      where.category = category
+    }
 
     const [documents, total] = await Promise.all([
       prisma.knowledge_documents.findMany({
@@ -59,11 +87,17 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const session = await getSession(request)
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const formData = await request.formData()
     const file = formData.get('file') as File | null
     const title = formData.get('title') as string | null
     const description = formData.get('description') as string | null
     const category = formData.get('category') as string | null
+    const categoryId = formData.get('category_id') as string | null
 
     if (!file) {
       return NextResponse.json(
@@ -102,6 +136,24 @@ export async function POST(request: NextRequest) {
     const documentId = randomUUID()
     
     // Create database record first (pending status)
+    let resolvedCategoryId = categoryId || undefined
+    let resolvedCategoryName = category || undefined
+
+    if (!resolvedCategoryId && category && session.admin.village_id) {
+      const existingCategory = await prisma.knowledge_categories.findFirst({
+        where: { name: category, village_id: session.admin.village_id }
+      })
+      if (existingCategory) {
+        resolvedCategoryId = existingCategory.id
+        resolvedCategoryName = existingCategory.name
+      }
+    } else if (resolvedCategoryId) {
+      const categoryRef = await prisma.knowledge_categories.findUnique({
+        where: { id: resolvedCategoryId }
+      })
+      resolvedCategoryName = categoryRef?.name || resolvedCategoryName
+    }
+
     const document = await prisma.knowledge_documents.create({
       data: {
         id: documentId,
@@ -112,7 +164,9 @@ export async function POST(request: NextRequest) {
         file_url: '', // Will be updated by AI service
         title: title || file.name.replace(/\.[^/.]+$/, ''),
         description,
-        category,
+        category: resolvedCategoryName || category,
+        category_id: resolvedCategoryId,
+        village_id: session.admin.village_id || undefined,
         status: 'processing',
       },
     })

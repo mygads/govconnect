@@ -417,8 +417,8 @@ async function callGeminiWithModel(
       if (parsedResponse.fields.knowledge_category) {
         parsedResponse.fields.knowledge_category = sanitizeNullString(parsedResponse.fields.knowledge_category);
       }
-      if (parsedResponse.fields.reservation_id) {
-        parsedResponse.fields.reservation_id = sanitizeNullString(parsedResponse.fields.reservation_id);
+      if (parsedResponse.fields.request_number) {
+        parsedResponse.fields.request_number = sanitizeNullString(parsedResponse.fields.request_number);
       }
       // Clean up missing_info array - remove "null" strings
       if (parsedResponse.fields.missing_info && Array.isArray(parsedResponse.fields.missing_info)) {

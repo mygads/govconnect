@@ -103,9 +103,6 @@ Allow: /
 User-agent: WhatsApp
 Allow: /
 
-User-agent: TelegramBot
-Allow: /
-
 User-agent: Pinterest
 Allow: /
 

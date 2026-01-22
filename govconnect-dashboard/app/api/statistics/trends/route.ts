@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       labels: [],
       trends: {
         complaints: [],
-        tickets: [],
+        services: [],
         total: [],
       },
       predictions: {
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
       categoryTrends: [],
       summary: {
         totalComplaints: 0,
-        totalTickets: 0,
+        totalServices: 0,
         avgPerPeriod: 0,
         growthRate: 0,
       },

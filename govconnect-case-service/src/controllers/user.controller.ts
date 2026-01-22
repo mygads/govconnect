@@ -4,7 +4,7 @@ import logger from '../utils/logger';
 
 /**
  * GET /user/:wa_user_id/history
- * Get user's complaint and ticket history
+ * Get user's complaint and service request history
  */
 export async function handleGetUserHistory(req: Request, res: Response) {
   try {

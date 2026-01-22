@@ -328,7 +328,7 @@ export function buildAdaptationContext(
   
   // Returning user context
   if (profile.total_messages > 10) {
-    parts.push(`[USER LAMA] Sudah ${profile.total_messages} interaksi, ${profile.total_complaints} laporan, ${profile.total_reservations} reservasi.`);
+    parts.push(`[USER LAMA] Sudah ${profile.total_messages} interaksi, ${profile.total_complaints} laporan, ${profile.total_service_requests} layanan.`);
   }
   
   if (parts.length === 0) {

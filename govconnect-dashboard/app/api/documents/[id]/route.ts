@@ -1,6 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { ai } from '@/lib/api-client'
+import { verifyToken } from '@/lib/auth'
+
+async function getSession(request: NextRequest) {
+  const token = request.cookies.get('token')?.value ||
+    request.headers.get('authorization')?.replace('Bearer ', '')
+  if (!token) return null
+  const payload = await verifyToken(token)
+  if (!payload) return null
+  const session = await prisma.admin_sessions.findUnique({
+    where: { token },
+    include: { admin: true }
+  })
+  if (!session || session.expires_at < new Date()) return null
+  return session
+}
 
 /**
  * GET /api/documents/[id]
@@ -11,6 +26,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getSession(request)
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { id } = await params
 
     const document = await prisma.knowledge_documents.findUnique({
@@ -22,6 +42,10 @@ export async function GET(
         { error: 'Document not found' },
         { status: 404 }
       )
+    }
+
+    if (session.admin.village_id && document.village_id !== session.admin.village_id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     return NextResponse.json({
@@ -48,16 +72,55 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getSession(request)
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { id } = await params
     const body = await request.json()
-    const { title, description, category } = body
+    const { title, description, category, category_id } = body
+
+    const existing = await prisma.knowledge_documents.findUnique({
+      where: { id },
+    })
+
+    if (!existing) {
+      return NextResponse.json(
+        { error: 'Document not found' },
+        { status: 404 }
+      )
+    }
+
+    if (session.admin.village_id && existing.village_id !== session.admin.village_id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    let resolvedCategoryId = category_id as string | undefined
+    let resolvedCategoryName = category as string | undefined
+
+    if (!resolvedCategoryId && category && session.admin.village_id) {
+      const existingCategory = await prisma.knowledge_categories.findFirst({
+        where: { name: category, village_id: session.admin.village_id }
+      })
+      if (existingCategory) {
+        resolvedCategoryId = existingCategory.id
+        resolvedCategoryName = existingCategory.name
+      }
+    } else if (resolvedCategoryId) {
+      const categoryRef = await prisma.knowledge_categories.findUnique({
+        where: { id: resolvedCategoryId }
+      })
+      resolvedCategoryName = categoryRef?.name || resolvedCategoryName
+    }
 
     const document = await prisma.knowledge_documents.update({
       where: { id },
       data: {
         title,
         description,
-        category,
+        category: resolvedCategoryName || category,
+        category_id: resolvedCategoryId,
         updated_at: new Date(),
       },
     })
@@ -84,6 +147,11 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await getSession(request)
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { id } = await params
 
     // Get document
@@ -96,6 +164,10 @@ export async function DELETE(
         { error: 'Document not found' },
         { status: 404 }
       )
+    }
+
+    if (session.admin.village_id && document.village_id !== session.admin.village_id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Delete vectors from AI Service first

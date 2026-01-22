@@ -12,31 +12,35 @@ router.get('/overview', async (req: Request, res: Response) => {
       laporanBaru,
       laporanProses,
       laporanSelesai,
+      laporanDitolak,
     ] = await Promise.all([
       prisma.complaint.count(),
       prisma.complaint.count({ where: { status: 'baru' } }),
       prisma.complaint.count({ where: { status: 'proses' } }),
       prisma.complaint.count({ where: { status: 'selesai' } }),
+      prisma.complaint.count({ where: { status: 'ditolak' } }),
     ])
 
-    // Get ticket statistics
+    // Get service request statistics
     const [
-      totalTiket,
-      tiketPending,
-      tiketProses,
-      tiketSelesai,
+      totalLayanan,
+      layananBaru,
+      layananProses,
+      layananSelesai,
+      layananDitolak,
     ] = await Promise.all([
-      prisma.ticket.count(),
-      prisma.ticket.count({ where: { status: 'pending' } }),
-      prisma.ticket.count({ where: { status: 'proses' } }),
-      prisma.ticket.count({ where: { status: 'selesai' } }),
+      prisma.serviceRequest.count(),
+      prisma.serviceRequest.count({ where: { status: 'baru' } }),
+      prisma.serviceRequest.count({ where: { status: 'proses' } }),
+      prisma.serviceRequest.count({ where: { status: 'selesai' } }),
+      prisma.serviceRequest.count({ where: { status: 'ditolak' } }),
     ])
 
     // Get recent activity counts
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     
-    const [laporanHariIni, tiketHariIni] = await Promise.all([
+    const [laporanHariIni, layananHariIni] = await Promise.all([
       prisma.complaint.count({
         where: {
           created_at: {
@@ -44,7 +48,7 @@ router.get('/overview', async (req: Request, res: Response) => {
           },
         },
       }),
-      prisma.ticket.count({
+      prisma.serviceRequest.count({
         where: {
           created_at: {
             gte: today,
@@ -55,18 +59,20 @@ router.get('/overview', async (req: Request, res: Response) => {
 
     const statistics = {
       totalLaporan,
-      totalTiket,
+      totalLayanan,
       laporan: {
         baru: laporanBaru,
         proses: laporanProses,
         selesai: laporanSelesai,
+        ditolak: laporanDitolak,
         hariIni: laporanHariIni,
       },
-      tiket: {
-        pending: tiketPending,
-        proses: tiketProses,
-        selesai: tiketSelesai,
-        hariIni: tiketHariIni,
+      layanan: {
+        baru: layananBaru,
+        proses: layananProses,
+        selesai: layananSelesai,
+        ditolak: layananDitolak,
+        hariIni: layananHariIni,
       },
     }
 
@@ -122,14 +128,14 @@ router.get('/by-category', async (req: Request, res: Response) => {
 
 router.get('/by-status', async (req: Request, res: Response) => {
   try {
-    const [complaintsByStatus, ticketsByStatus] = await Promise.all([
+    const [complaintsByStatus, servicesByStatus] = await Promise.all([
       prisma.complaint.groupBy({
         by: ['status'],
         _count: {
           status: true,
         },
       }),
-      prisma.ticket.groupBy({
+      prisma.serviceRequest.groupBy({
         by: ['status'],
         _count: {
           status: true,
@@ -142,7 +148,7 @@ router.get('/by-status', async (req: Request, res: Response) => {
         status: item.status,
         count: item._count.status,
       })),
-      tickets: ticketsByStatus.map((item) => ({
+      services: servicesByStatus.map((item) => ({
         status: item.status,
         count: item._count.status,
       })),
@@ -187,8 +193,8 @@ router.get('/trends', async (req: Request, res: Response) => {
       },
     })
 
-    // Get all tickets in the period
-    const tickets = await prisma.ticket.findMany({
+    // Get all service requests in the period
+    const services = await prisma.serviceRequest.findMany({
       where: {
         created_at: {
           gte: startDate,
@@ -196,7 +202,6 @@ router.get('/trends', async (req: Request, res: Response) => {
       },
       select: {
         created_at: true,
-        jenis: true,
         status: true,
       },
       orderBy: {
@@ -205,7 +210,7 @@ router.get('/trends', async (req: Request, res: Response) => {
     })
 
     // Group by period (week or month)
-    const trendData: { [key: string]: { complaints: number; tickets: number } } = {}
+    const trendData: { [key: string]: { complaints: number; services: number } } = {}
     const hourlyData: { [hour: number]: number } = {}
     const dailyData: { [day: number]: number } = {} // 0 = Sunday, 6 = Saturday
     const categoryTrends: { [key: string]: { [period: string]: number } } = {}
@@ -222,7 +227,7 @@ router.get('/trends', async (req: Request, res: Response) => {
         : getWeekKey(date)
       
       if (!trendData[periodKey]) {
-        trendData[periodKey] = { complaints: 0, tickets: 0 }
+        trendData[periodKey] = { complaints: 0, services: 0 }
       }
       trendData[periodKey].complaints++
       
@@ -240,19 +245,19 @@ router.get('/trends', async (req: Request, res: Response) => {
       categoryTrends[c.kategori][periodKey]++
     })
 
-    // Process tickets
-    tickets.forEach((t) => {
-      const date = new Date(t.created_at)
+    // Process services
+    services.forEach((s) => {
+      const date = new Date(s.created_at)
       const periodKey = period === 'monthly'
         ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
         : getWeekKey(date)
       
       if (!trendData[periodKey]) {
-        trendData[periodKey] = { complaints: 0, tickets: 0 }
+        trendData[periodKey] = { complaints: 0, services: 0 }
       }
-      trendData[periodKey].tickets++
+      trendData[periodKey].services++
       
-      // Also count tickets for hourly/daily analysis
+      // Also count services for hourly/daily analysis
       hourlyData[date.getHours()]++
       dailyData[date.getDay()]++
     })
@@ -261,8 +266,8 @@ router.get('/trends', async (req: Request, res: Response) => {
     const sortedPeriods = Object.keys(trendData).sort()
     const trendLabels = sortedPeriods.map((p) => formatPeriodLabel(p, period))
     const complaintTrend = sortedPeriods.map((p) => trendData[p].complaints)
-    const ticketTrend = sortedPeriods.map((p) => trendData[p].tickets)
-    const totalTrend = sortedPeriods.map((p) => trendData[p].complaints + trendData[p].tickets)
+    const serviceTrend = sortedPeriods.map((p) => trendData[p].services)
+    const totalTrend = sortedPeriods.map((p) => trendData[p].complaints + trendData[p].services)
 
     // Calculate predictions using simple moving average
     const predictions = calculatePredictions(totalTrend, 4)
@@ -290,7 +295,7 @@ router.get('/trends', async (req: Request, res: Response) => {
       labels: trendLabels,
       trends: {
         complaints: complaintTrend,
-        tickets: ticketTrend,
+        services: serviceTrend,
         total: totalTrend,
       },
       predictions: {
@@ -314,9 +319,9 @@ router.get('/trends', async (req: Request, res: Response) => {
       categoryTrends: formattedCategoryTrends,
       summary: {
         totalComplaints: complaints.length,
-        totalTickets: tickets.length,
+        totalServices: services.length,
         avgPerPeriod: sortedPeriods.length > 0 
-          ? Math.round((complaints.length + tickets.length) / sortedPeriods.length) 
+          ? Math.round((complaints.length + services.length) / sortedPeriods.length) 
           : 0,
         growthRate: parseFloat(growthRate as string) || 0,
       },

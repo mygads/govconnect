@@ -17,8 +17,8 @@ import { IntentType } from './intent-patterns';
 // ==================== GREETING RESPONSES ====================
 
 export const GREETING_RESPONSES = [
-  'Halo Kak! 👋 Saya Gana dari Kelurahan. Ada yang bisa dibantu hari ini?\n\n📋 Lapor masalah\n🎫 Reservasi surat\n📍 Info kelurahan',
-  'Hai Kak! 👋 Selamat datang di layanan Kelurahan. Mau lapor masalah, reservasi surat, atau tanya info?',
+  'Halo Kak! 👋 Saya Gana dari Kelurahan. Ada yang bisa dibantu hari ini?\n\n📋 Lapor masalah\n📝 Ajukan layanan\n📍 Info kelurahan',
+  'Hai Kak! 👋 Selamat datang di layanan Kelurahan. Mau lapor masalah, ajukan layanan, atau tanya info?',
   'Halo! 👋 Saya siap bantu Kakak. Silakan sampaikan keperluannya ya!',
 ];
 
@@ -56,16 +56,16 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
     'Oke Kak, saya bantu proses laporan. Bisa sebutkan alamat lengkapnya?',
   ],
   
-  'CREATE_RESERVATION': [
-    'Baik Kak, untuk reservasi saya perlu beberapa data. Siapa nama lengkap Kakak sesuai KTP?',
-    'Oke Kak, saya bantu buatkan reservasi. Boleh sebutkan nama lengkap Kakak?',
-    'Baik, untuk pengajuan surat saya perlu data Kakak. Nama lengkap sesuai KTP siapa ya?',
+  'CREATE_SERVICE_REQUEST': [
+    'Baik Kak, layanan apa yang ingin diajukan?',
+    'Oke Kak, mau ajukan layanan apa?',
+    'Baik, untuk pengajuan layanan, mohon sebutkan nama layanan yang dibutuhkan ya Kak.',
   ],
   
   'CHECK_STATUS': [
-    'Untuk cek status, boleh sebutkan nomor laporan atau reservasinya Kak? (contoh: LAP-20251201-001)',
-    'Baik Kak, mau cek status yang mana? Sebutkan nomornya ya (LAP-xxx atau RSV-xxx)',
-    'Oke, saya bantu cek. Nomor laporan atau reservasinya berapa Kak?',
+    'Untuk cek status, boleh sebutkan nomor laporan atau layanan ya Kak? (contoh: LAP-20251201-001 atau LAY-20251201-001)',
+    'Baik Kak, mau cek status yang mana? Sebutkan nomornya ya (LAP-xxx atau LAY-xxx)',
+    'Oke, saya bantu cek. Nomor laporan atau layanan berapa Kak?',
   ],
   
   'CANCEL_COMPLAINT': [
@@ -73,18 +73,8 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
     'Baik Kak, mau batalkan laporan yang mana? Sebutkan nomornya ya.',
   ],
   
-  'CANCEL_RESERVATION': [
-    'Untuk membatalkan reservasi, boleh sebutkan nomornya Kak? (contoh: RSV-20251201-001)',
-    'Baik Kak, mau batalkan reservasi yang mana? Sebutkan nomornya ya.',
-  ],
-  
-  'UPDATE_RESERVATION': [
-    'Baik Kak, mau ubah jadwal reservasi ya. Boleh sebutkan nomor reservasinya dan mau diubah ke tanggal/jam berapa?',
-    'Oke Kak, untuk reschedule sebutkan nomor reservasi dan jadwal barunya ya.',
-  ],
-  
   'HISTORY': [
-    'Mohon tunggu sebentar ya Kak, saya cek riwayat laporan dan reservasi Kakak...',
+    'Mohon tunggu sebentar ya Kak, saya cek riwayat laporan dan layanan Kakak...',
     'Baik Kak, saya lihat dulu riwayatnya ya...',
   ],
   
@@ -104,13 +94,13 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   
   'QUESTION': [
     'Halo! Saya Gana dari Kelurahan. Ada yang bisa saya bantu hari ini?',
-    'Hai Kak! Mau lapor masalah, reservasi surat, atau tanya info?',
+    'Hai Kak! Mau lapor masalah, ajukan layanan, atau tanya info?',
   ],
   
   'UNKNOWN': [
-    'Maaf Kak, bisa dijelaskan lebih detail? Saya siap bantu untuk:\n\n📋 Lapor masalah (jalan rusak, lampu mati, dll)\n🎫 Reservasi surat (SKD, SKTM, dll)\n📍 Info kelurahan',
+    'Maaf Kak, bisa dijelaskan lebih detail? Saya siap bantu untuk:\n\n📋 Lapor masalah (jalan rusak, lampu mati, dll)\n📝 Ajukan layanan (surat keterangan, pengantar, dll)\n📍 Info kelurahan',
     'Hmm, saya kurang paham Kak. Kakak mau:\n\n1️⃣ Lapor masalah?\n2️⃣ Urus surat?\n3️⃣ Cek status?\n\nSilakan pilih atau jelaskan lebih detail ya.',
-    'Maaf Kak, coba jelaskan lagi ya. Saya bisa bantu:\n\n• Laporan keluhan/aduan\n• Reservasi layanan surat\n• Informasi kelurahan',
+    'Maaf Kak, coba jelaskan lagi ya. Saya bisa bantu:\n\n• Laporan keluhan/aduan\n• Ajukan layanan\n• Informasi kelurahan',
   ],
   
   'ERROR': [
@@ -196,30 +186,14 @@ export const MISSING_FIELD_PROMPTS: Record<string, string[]> = {
     'Kondisinya seperti apa Kak? Ceritakan lebih detail.',
   ],
   
-  // Reservation fields
-  'service_code': [
-    'Surat apa yang ingin Kakak urus? (SKD, SKTM, SKU, dll)',
-    'Mau buat surat apa Kak? Domisili, tidak mampu, atau yang lain?',
+  // Service request fields
+  'service_slug': [
+    'Layanan apa yang ingin Kakak ajukan?',
+    'Mau urus layanan apa Kak? (contoh: surat domisili, surat pengantar, dll)',
   ],
-  'nama_lengkap': [
-    'Siapa nama lengkap Kakak sesuai KTP?',
-    'Boleh sebutkan nama lengkap Kakak?',
-  ],
-  'nik': [
-    'Berapa NIK (16 digit) Kakak?',
-    'Boleh sebutkan NIK Kakak? (16 digit angka)',
-  ],
-  'no_hp': [
-    'Nomor HP yang bisa dihubungi berapa Kak?',
-    'Boleh sebutkan nomor HP Kakak?',
-  ],
-  'reservation_date': [
-    'Kakak mau datang tanggal berapa?',
-    'Mau reservasi untuk tanggal berapa Kak?',
-  ],
-  'reservation_time': [
-    'Jam berapa Kakak mau datang? (08:00-15:00)',
-    'Mau datang jam berapa Kak?',
+  'service_id': [
+    'Layanan yang dimaksud apa ya Kak? Mohon sebutkan nama layanannya.',
+    'Boleh sebutkan nama layanan yang ingin diajukan?',
   ],
 };
 

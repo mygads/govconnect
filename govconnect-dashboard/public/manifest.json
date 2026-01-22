@@ -1,7 +1,7 @@
 {
   "name": "GovConnect - Platform Layanan Pemerintahan Digital Berbasis AI Indonesia",
   "short_name": "GovConnect",
-  "description": "Platform AI terdepan untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan surat keterangan, reservasi layanan publik, dan dapatkan informasi pemerintah langsung melalui WhatsApp, Telegram, dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah. Dikembangkan oleh Genfity Digital Solution.",
+  "description": "Platform AI terdepan untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan layanan administrasi, dan dapatkan informasi pemerintah langsung melalui WhatsApp dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah. Dikembangkan oleh Genfity Digital Solution.",
   "start_url": "/",
   "id": "/",
   "display": "standalone",
@@ -93,9 +93,9 @@
       ]
     },
     {
-      "name": "Reservasi Layanan",
-      "short_name": "Reservasi",
-      "description": "Booking antrian layanan pemerintah",
+      "name": "Permohonan Layanan",
+      "short_name": "Layanan",
+      "description": "Ajukan layanan administrasi secara terarah",
       "url": "/#layanan",
       "icons": [
         {

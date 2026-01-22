@@ -18,11 +18,13 @@ export type IntentType =
   | 'CONFIRMATION'
   | 'REJECTION'
   | 'CREATE_COMPLAINT'
-  | 'CREATE_RESERVATION'
-  | 'UPDATE_RESERVATION'
+  | 'UPDATE_COMPLAINT'
+  | 'SERVICE_INFO'
+  | 'CREATE_SERVICE_REQUEST'
+  | 'UPDATE_SERVICE_REQUEST'
   | 'CHECK_STATUS'
   | 'CANCEL_COMPLAINT'
-  | 'CANCEL_RESERVATION'
+  | 'CANCEL_SERVICE_REQUEST'
   | 'HISTORY'
   | 'KNOWLEDGE_QUERY'
   | 'QUESTION'
@@ -79,57 +81,61 @@ export const CREATE_COMPLAINT_PATTERNS = [
   /\b(fasilitas|taman|pagar)\s+(rusak|jelek)\b/i,
 ];
 
-// ==================== RESERVATION PATTERNS ====================
+// ==================== SERVICE REQUEST PATTERNS ====================
 
-export const CREATE_RESERVATION_PATTERNS = [
-  // Direct reservation keywords
-  /\b(mau\s+)?(reservasi|booking|daftar|antri)\b/i,
-  /\b(mau\s+)?(buat|bikin|urus|minta)\s+(surat|dokumen)\b/i,
-  /\b(perlu|butuh)\s+(surat|dokumen)\b/i,
-  
-  // Specific document types
-  /\b(surat\s+)?(keterangan\s+)?(domisili|skd)\b/i,
-  /\b(surat\s+)?(keterangan\s+)?(tidak\s+mampu|sktm)\b/i,
-  /\b(surat\s+)?(keterangan\s+)?(usaha|sku)\b/i,
-  /\b(surat\s+)?(pengantar\s+)?(ktp|spktp)\b/i,
-  /\b(surat\s+)?(pengantar\s+)?(kk|kartu\s+keluarga|spkk)\b/i,
-  /\b(surat\s+)?(pengantar\s+)?(skck|spskck)\b/i,
-  /\b(surat\s+)?(pengantar\s+)?(akta|spakta)\b/i,
+export const SERVICE_INFO_PATTERNS = [
+  /\b(syarat|persyaratan|prosedur|biaya|tarif)\b/i,
+  /\b(apa\s+saja)\s+(syarat|dokumen|berkas)\b/i,
+  /\b(cara|proses)\s+(buat|bikin|urus|daftar)\b/i,
 ];
 
-// ==================== UPDATE RESERVATION PATTERNS ====================
+export const CREATE_SERVICE_REQUEST_PATTERNS = [
+  /\b(mau|ingin)\s+(buat|bikin|urus|ajukan)\s+(layanan|surat|dokumen)\b/i,
+  /\b(daftar|ajukan)\s+(layanan|surat|dokumen)\b/i,
+  /\b(perlu|butuh)\s+(surat|dokumen)\b/i,
+];
 
-export const UPDATE_RESERVATION_PATTERNS = [
-  /\b(ubah|ganti|pindah)\s+(jadwal|tanggal|jam|waktu)\s+(reservasi)\b/i,
-  /\b(reschedule|re-schedule)\s+(reservasi)?\b/i,
-  /\b(mau|ingin)\s+(ubah|ganti|pindah)\s+(jadwal|tanggal|jam)\b/i,
-  /\b(reservasi)\s+.*(ubah|ganti|pindah)\s+(jadwal|tanggal|jam)\b/i,
+export const UPDATE_SERVICE_REQUEST_PATTERNS = [
+  /\b(ubah|edit|perbarui|update)\s+(layanan|permohonan|pengajuan|surat)\b/i,
+  /\b(ubah|edit)\s+(data|berkas|form)\s+(layanan|permohonan)\b/i,
+];
+
+// ==================== UPDATE COMPLAINT PATTERNS ====================
+
+export const UPDATE_COMPLAINT_PATTERNS = [
+  /\b(ubah|ganti|perbarui|update)\s+(laporan|pengaduan|keluhan)\b/i,
+  /\b(ubah|ganti)\s+(alamat|deskripsi|keterangan)\s+laporan\b/i,
 ];
 
 // ==================== STATUS CHECK PATTERNS ====================
 
 export const CHECK_STATUS_PATTERNS = [
   /\b(cek|check|lihat|gimana|bagaimana)\s+(status|perkembangan|progress)\b/i,
-  /\b(status)\s+(laporan|reservasi|tiket|pengaduan)\b/i,
+  /\b(status)\s+(laporan|layanan|permohonan|pengaduan)\b/i,
   /\bLAP-\d{8}-\d{3}\b/i,
-  /\bRSV-\d{8}-\d{3}\b/i,
+  /\bLAY-\d{8}-\d{3}\b/i,
   /\b(sudah|udah)\s+(sampai\s+mana|diproses|ditangani)\b/i,
 ];
 
 // ==================== CANCEL PATTERNS ====================
 
 export const CANCEL_PATTERNS = [
-  /\b(batalkan|cancel|batal)\s+(laporan|reservasi|tiket)\b/i,
+  /\b(batalkan|cancel|batal)\s+(laporan|pengaduan)\b/i,
   /\b(mau|ingin)\s+(batalkan|cancel|batal)\b/i,
-  /\b(hapus)\s+(laporan|reservasi)\b/i,
+  /\b(hapus)\s+(laporan|pengaduan)\b/i,
+];
+
+export const CANCEL_SERVICE_PATTERNS = [
+  /\b(batalkan|cancel|batal)\s+(layanan|permohonan|surat|pengajuan)\b/i,
+  /\b(hapus)\s+(layanan|permohonan|surat)\b/i,
 ];
 
 // ==================== HISTORY PATTERNS ====================
 
 export const HISTORY_PATTERNS = [
-  /\b(riwayat|history|daftar)\s+(laporan|reservasi|tiket|saya)\b/i,
-  /\b(laporan|reservasi)\s+(saya|ku|gue|gw)\b/i,
-  /\b(lihat|cek)\s+(semua\s+)?(laporan|reservasi)\b/i,
+  /\b(riwayat|history|daftar)\s+(laporan|layanan|permohonan|saya)\b/i,
+  /\b(laporan|layanan)\s+(saya|ku|gue|gw)\b/i,
+  /\b(lihat|cek)\s+(semua\s+)?(laporan|layanan)\b/i,
 ];
 
 // ==================== KNOWLEDGE QUERY PATTERNS ====================
@@ -288,17 +294,19 @@ export function detectIntentFromPatterns(message: string): IntentType | null {
   }
   
   // Check for IDs first (high confidence)
-  if (/\bLAP-\d{8}-\d{3}\b/i.test(message) || /\bRSV-\d{8}-\d{3}\b/i.test(message)) {
+  if (/\bLAP-\d{8}-\d{3}\b/i.test(message) || /\bLAY-\d{8}-\d{3}\b/i.test(message)) {
     return 'CHECK_STATUS';
   }
   
   // Other intents
   if (matchesAnyPattern(lowerMessage, CHECK_STATUS_PATTERNS)) return 'CHECK_STATUS';
-  if (matchesAnyPattern(lowerMessage, UPDATE_RESERVATION_PATTERNS)) return 'UPDATE_RESERVATION';
+  if (matchesAnyPattern(lowerMessage, UPDATE_COMPLAINT_PATTERNS)) return 'UPDATE_COMPLAINT';
+  if (matchesAnyPattern(lowerMessage, CANCEL_SERVICE_PATTERNS)) return 'CANCEL_SERVICE_REQUEST';
   if (matchesAnyPattern(lowerMessage, CANCEL_PATTERNS)) return 'CANCEL_COMPLAINT';
   if (matchesAnyPattern(lowerMessage, HISTORY_PATTERNS)) return 'HISTORY';
   if (matchesAnyPattern(lowerMessage, CREATE_COMPLAINT_PATTERNS)) return 'CREATE_COMPLAINT';
-  if (matchesAnyPattern(lowerMessage, CREATE_RESERVATION_PATTERNS)) return 'CREATE_RESERVATION';
+  if (matchesAnyPattern(lowerMessage, SERVICE_INFO_PATTERNS)) return 'SERVICE_INFO';
+  if (matchesAnyPattern(lowerMessage, CREATE_SERVICE_REQUEST_PATTERNS)) return 'CREATE_SERVICE_REQUEST';
   if (matchesAnyPattern(lowerMessage, KNOWLEDGE_QUERY_PATTERNS)) return 'KNOWLEDGE_QUERY';
   
   return null;
@@ -310,10 +318,12 @@ export default {
   REJECTION_PATTERNS,
   THANKS_PATTERNS,
   CREATE_COMPLAINT_PATTERNS,
-  CREATE_RESERVATION_PATTERNS,
-  UPDATE_RESERVATION_PATTERNS,
+  SERVICE_INFO_PATTERNS,
+  CREATE_SERVICE_REQUEST_PATTERNS,
+  UPDATE_COMPLAINT_PATTERNS,
   CHECK_STATUS_PATTERNS,
   CANCEL_PATTERNS,
+  CANCEL_SERVICE_PATTERNS,
   HISTORY_PATTERNS,
   KNOWLEDGE_QUERY_PATTERNS,
   COMPLAINT_CATEGORY_PATTERNS,

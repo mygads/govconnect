@@ -9,7 +9,7 @@
 ## 🎯 OBJECTIVES
 
 Consolidate pattern matching and entity extraction to create single source of truth:
-1. Add missing UPDATE_RESERVATION patterns to fast-intent-classifier
+1. Add missing UPDATE_SERVICE_REQUEST patterns to fast-intent-classifier
 2. Ensure all intent patterns are in fast-intent-classifier
 3. Verify entity-extractor has all extraction logic
 4. Remove redundant pattern matching from other services
@@ -22,17 +22,16 @@ Consolidate pattern matching and entity extraction to create single source of tr
 **File:** `src/services/fast-intent-classifier.service.ts`
 
 **Changes:**
-- ✅ **Added UPDATE_RESERVATION patterns** (was missing)
-- ✅ **Positioned UPDATE_RESERVATION before CANCEL** to avoid confusion
+- ✅ **Added UPDATE_SERVICE_REQUEST patterns** (was missing)
+- ✅ **Positioned UPDATE_SERVICE_REQUEST before CANCEL** to avoid confusion
 - ✅ **Added comprehensive patterns** for schedule changes
 
 **New Patterns Added:**
 ```typescript
-const UPDATE_RESERVATION_PATTERNS = [
-  /\b(ubah|ganti|pindah)\s+(jadwal|tanggal|jam|waktu)\s+(reservasi)\b/i,
-  /\b(reschedule|re-schedule)\s+(reservasi)?\b/i,
-  /\b(mau|ingin)\s+(ubah|ganti|pindah)\s+(jadwal|tanggal|jam)\b/i,
-  /\b(reservasi)\s+.*(ubah|ganti|pindah)\s+(jadwal|tanggal|jam)\b/i,
+const UPDATE_SERVICE_REQUEST_PATTERNS = [
+   /\b(ubah|ganti|pindah)\s+(data|persyaratan|detail)\s+(layanan)\b/i,
+   /\b(update)\s+(layanan)\b/i,
+   /\b(mau|ingin)\s+(ubah|ganti)\s+(data|persyaratan)\b/i,
 ];
 ```
 
@@ -41,18 +40,18 @@ const UPDATE_RESERVATION_PATTERNS = [
 1. GREETING (short messages < 30 chars)
 2. CONFIRMATION/REJECTION/THANKS (very short < 20 chars)
 3. CHECK_STATUS (with ID extraction)
-4. UPDATE_RESERVATION (NEW! before CANCEL to avoid confusion)
-5. CANCEL (complaint or reservation)
+4. UPDATE_SERVICE_REQUEST (NEW! before CANCEL to avoid confusion)
+5. CANCEL (complaint or service request)
 6. HISTORY
 7. CREATE_COMPLAINT (with category extraction)
-8. CREATE_RESERVATION (with service code extraction)
+8. CREATE_SERVICE_REQUEST (with service slug extraction)
 9. KNOWLEDGE_QUERY
 10. Fallback to LLM
 ```
 
-**Why UPDATE_RESERVATION Before CANCEL:**
-- User might say "ubah jadwal reservasi" which could match CANCEL patterns
-- UPDATE_RESERVATION is more specific, should be checked first
+**Why UPDATE_SERVICE_REQUEST Before CANCEL:**
+- User might say "ubah data layanan" which could match CANCEL patterns
+- UPDATE_SERVICE_REQUEST is more specific, should be checked first
 - Prevents false positives for cancellation
 
 ---
@@ -62,10 +61,10 @@ const UPDATE_RESERVATION_PATTERNS = [
 
 **All Intent Types Covered:**
 - ✅ CREATE_COMPLAINT - Comprehensive patterns (8+ types)
-- ✅ CREATE_RESERVATION - Document type patterns (7+ types)
-- ✅ UPDATE_RESERVATION - Schedule change patterns (4+ patterns) **NEW!**
+- ✅ CREATE_SERVICE_REQUEST - Document type patterns (7+ types)
+- ✅ UPDATE_SERVICE_REQUEST - Update data patterns (3+ patterns) **NEW!**
 - ✅ CHECK_STATUS - Status check + ID extraction
-- ✅ CANCEL_COMPLAINT / CANCEL_RESERVATION - Cancel patterns
+- ✅ CANCEL_COMPLAINT / CANCEL_SERVICE_REQUEST - Cancel patterns
 - ✅ HISTORY - History/list patterns
 - ✅ KNOWLEDGE_QUERY - Info request patterns
 - ✅ QUESTION - Greeting, thanks, confirmation
@@ -87,7 +86,7 @@ const UPDATE_RESERVATION_PATTERNS = [
 - ✅ `extractDate()` - Indonesian date formats
 - ✅ `extractTime()` - Time extraction
 - ✅ `extractComplaintId()` - LAP-XXXXXXXX-XXX
-- ✅ `extractReservationId()` - RSV-XXXXXXXX-XXX
+- ✅ `extractRequestNumber()` - LAY-XXXXXXXX-XXX
 - ✅ `extractEmail()` - Email extraction
 - ✅ `extractAllEntities()` - Main function that calls all extractors
 
@@ -100,7 +99,7 @@ const UPDATE_RESERVATION_PATTERNS = [
 ### Pattern Matching Consolidation
 | Aspect | Before | After | Improvement |
 |--------|--------|-------|-------------|
-| **UPDATE_RESERVATION Support** | ❌ Missing | ✅ Complete | NEW! |
+| **UPDATE_SERVICE_REQUEST Support** | ❌ Missing | ✅ Complete | NEW! |
 | **Pattern Order** | Suboptimal | Optimized | Better accuracy |
 | **Single Source of Truth** | Partial | Complete | 100% |
 | **Pattern Coverage** | 8/9 intents | 9/9 intents | 100% |
@@ -118,26 +117,26 @@ const UPDATE_RESERVATION_PATTERNS = [
 
 ### Pattern Matching Tests
 
-**UPDATE_RESERVATION Patterns:**
+**UPDATE_SERVICE_REQUEST Patterns:**
 ```typescript
-// Should match UPDATE_RESERVATION
-"ubah jadwal reservasi RSV-20251208-001" → UPDATE_RESERVATION ✅
-"ganti jam reservasi ke besok" → UPDATE_RESERVATION ✅
-"reschedule reservasi saya" → UPDATE_RESERVATION ✅
-"mau pindah tanggal reservasi" → UPDATE_RESERVATION ✅
+// Should match UPDATE_SERVICE_REQUEST
+"ubah data layanan LAY-20251208-001" → UPDATE_SERVICE_REQUEST ✅
+"ganti persyaratan layanan" → UPDATE_SERVICE_REQUEST ✅
+"update layanan saya" → UPDATE_SERVICE_REQUEST ✅
+"mau ubah data layanan" → UPDATE_SERVICE_REQUEST ✅
 
-// Should NOT match UPDATE_RESERVATION (should be CANCEL)
-"batalkan reservasi RSV-20251208-001" → CANCEL_RESERVATION ✅
-"cancel reservasi saya" → CANCEL_RESERVATION ✅
+// Should NOT match UPDATE_SERVICE_REQUEST (should be CANCEL)
+"batalkan layanan LAY-20251208-001" → CANCEL_SERVICE_REQUEST ✅
+"cancel layanan saya" → CANCEL_SERVICE_REQUEST ✅
 ```
 
 **Pattern Order Verification:**
 ```typescript
-// UPDATE_RESERVATION checked before CANCEL
-"ubah jadwal reservasi" → UPDATE_RESERVATION (not CANCEL) ✅
+// UPDATE_SERVICE_REQUEST checked before CANCEL
+"ubah data layanan" → UPDATE_SERVICE_REQUEST (not CANCEL) ✅
 
 // CANCEL still works correctly
-"batalkan reservasi" → CANCEL_RESERVATION ✅
+"batalkan layanan" → CANCEL_SERVICE_REQUEST ✅
 ```
 
 ---
@@ -193,7 +192,7 @@ const UPDATE_RESERVATION_PATTERNS = [
 
 ## ⚠️ RISKS & MITIGATION
 
-### Risk 1: UPDATE_RESERVATION Pattern Conflicts
+### Risk 1: UPDATE_SERVICE_REQUEST Pattern Conflicts
 **Likelihood:** Low  
 **Impact:** Low  
 **Mitigation:**
@@ -232,7 +231,7 @@ const UPDATE_RESERVATION_PATTERNS = [
 ## 📝 NEXT STEPS
 
 ### Immediate (Testing):
-1. ✅ **Unit Tests:** Test UPDATE_RESERVATION patterns
+1. ✅ **Unit Tests:** Test UPDATE_SERVICE_REQUEST patterns
 2. ✅ **Integration Tests:** Test full flow with Phase 1 changes
 3. ✅ **Production Log Tests:** Test with 100 real messages
 4. ✅ **A/B Testing:** Compare with baseline
@@ -261,7 +260,7 @@ const UPDATE_RESERVATION_PATTERNS = [
 ## 📊 TESTING CHECKLIST
 
 ### Pattern Matching Tests:
-- [ ] Test UPDATE_RESERVATION patterns (4+ test cases)
+- [ ] Test UPDATE_SERVICE_REQUEST patterns (4+ test cases)
 - [ ] Test pattern order (UPDATE before CANCEL)
 - [ ] Test all 9 intent types
 - [ ] Test edge cases (ambiguous messages)

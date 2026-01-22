@@ -40,7 +40,7 @@ Channel Service adalah **pintu gerbang WhatsApp** untuk sistem GovConnect.
         description: 'Development server',
       },
       {
-        url: 'https://api.govconnect.my.id/api/channel',
+        url: 'https://channel.govconnect.my.id',
         description: 'Production server',
       },
     ],

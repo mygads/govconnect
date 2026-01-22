@@ -248,7 +248,7 @@ export default function LandingPage() {
               { icon: Brain, title: "Akses Informasi Cepat", desc: "Akses informasi layanan pemerintahan dengan cepat melalui AI.", gradient: "from-blue-500 to-cyan-500", bg: "from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30" },
               { icon: AlertTriangle, title: "Pelaporan Masalah", desc: "Laporkan bencana, jalan rusak, lampu mati dengan mapping lokasi.", gradient: "from-red-500 to-orange-500", bg: "from-red-50 to-orange-50 dark:from-red-950/30 dark:to-orange-950/30" },
               { icon: Map, title: "Mapping & Tracking", desc: "Visualisasi lokasi laporan pada peta untuk koordinasi.", gradient: "from-green-500 to-emerald-500", bg: "from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30" },
-              { icon: CalendarCheck, title: "Reservasi Layanan", desc: "Booking waktu layanan tanpa perlu antre lama.", gradient: "from-purple-500 to-violet-500", bg: "from-purple-50 to-violet-50 dark:from-purple-950/30 dark:to-violet-950/30" },
+              { icon: CalendarCheck, title: "Permohonan Layanan", desc: "Ajukan layanan administrasi secara terarah tanpa antre lama.", gradient: "from-purple-500 to-violet-500", bg: "from-purple-50 to-violet-50 dark:from-purple-950/30 dark:to-violet-950/30" },
               { icon: FileCheck, title: "Pengajuan Surat", desc: "Ajukan surat dan layanan dengan proses lebih cepat.", gradient: "from-pink-500 to-rose-500", bg: "from-pink-50 to-rose-50 dark:from-pink-950/30 dark:to-rose-950/30" },
               { icon: Workflow, title: "Distribusi Tugas", desc: "Sistem distribusi tugas otomatis untuk petugas.", gradient: "from-amber-500 to-yellow-500", bg: "from-amber-50 to-yellow-50 dark:from-amber-950/30 dark:to-yellow-950/30" },
             ].map((f, i) => (
@@ -332,7 +332,7 @@ export default function LandingPage() {
                   <ul className="space-y-2">
                     {[
                       "AI menjawab pertanyaan masyarakat 24/7 otomatis",
-                      "Akses layanan dari HP via WhatsApp, Telegram, dll",
+                      "Akses layanan dari HP via WhatsApp dan Webchat",
                       "Tersedia setiap saat tanpa batasan waktu",
                       "Petugas fokus pada tugas yang lebih penting",
                       "Tracking status real-time untuk setiap pengajuan",
@@ -365,7 +365,7 @@ export default function LandingPage() {
 
           <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { step: "1", icon: MessageCircle, title: "Masyarakat Menghubungi", desc: "Via WhatsApp, Telegram, Instagram, atau webchat di website pemerintah" },
+              { step: "1", icon: MessageCircle, title: "Masyarakat Menghubungi", desc: "Via WhatsApp atau webchat di website pemerintah" },
               { step: "2", icon: Brain, title: "AI Memproses", desc: "AI memahami pertanyaan/permintaan dan mencari jawaban dari knowledge base" },
               { step: "3", icon: Database, title: "Akses Data", desc: "Jika perlu, AI mengambil data real-time dari database pemerintahan" },
               { step: "4", icon: Zap, title: "Response Instan", desc: "Masyarakat mendapat jawaban dalam hitungan detik, 24/7" },
@@ -406,7 +406,7 @@ export default function LandingPage() {
             {[
               { icon: Brain, title: "Tanya Informasi", examples: ["Apa syarat buat KTP?", "Jam buka kantor kelurahan?", "Cara daftar BPJS?", "Jadwal vaksinasi?"], color: "blue" },
               { icon: AlertTriangle, title: "Lapor Masalah", examples: ["Jalan rusak di RT 03", "Lampu jalan mati", "Sampah menumpuk", "Banjir di wilayah X"], color: "red" },
-              { icon: CalendarCheck, title: "Reservasi", examples: ["Booking antrian KTP", "Daftar nikah", "Jadwal imunisasi anak", "Konsultasi hukum"], color: "purple" },
+              { icon: CalendarCheck, title: "Permohonan Layanan", examples: ["Ajukan surat domisili", "Ajukan surat pengantar", "Ajukan izin keramaian", "Ajukan layanan administrasi"], color: "purple" },
               { icon: FileCheck, title: "Ajukan Surat", examples: ["Surat keterangan domisili", "Surat pengantar", "SKCK", "Surat keterangan usaha"], color: "green" },
               { icon: Activity, title: "Cek Status", examples: ["Status pengajuan KTP", "Progress laporan saya", "Jadwal pengambilan", "Hasil verifikasi"], color: "orange" },
               { icon: Headphones, title: "Pengaduan", examples: ["Pelayanan lambat", "Petugas tidak ramah", "Fasilitas rusak", "Saran perbaikan"], color: "pink" },
@@ -529,7 +529,7 @@ export default function LandingPage() {
                     <h3 className="text-lg font-bold mb-2">Contoh: Layanan Kelurahan</h3>
                     <p className="text-xs text-muted-foreground mb-4">Demo implementasi GovConnect dengan fitur:</p>
                     <ul className="space-y-2 mb-5">
-                      {["Akses informasi layanan masyarakat", "Pelaporan masalah (jalan rusak, lampu mati)", "Reservasi layanan kelurahan", "Pengajuan surat dan dokumen", "Tracking status pengajuan"].map((item, i) => (
+                      {["Akses informasi layanan masyarakat", "Pelaporan masalah (jalan rusak, lampu mati)", "Permohonan layanan kelurahan", "Pengajuan surat dan dokumen", "Tracking status pengajuan"].map((item, i) => (
                         <li key={i} className="flex items-center gap-2 text-xs">
                           <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
                           <span>{item}</span>
@@ -599,7 +599,7 @@ export default function LandingPage() {
           <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="grid md:grid-cols-2 gap-4">
             {[
               { title: "Untuk Pemerintah", icon: Landmark, color: "blue", items: ["Efisiensi dengan automation AI", "Dashboard terpusat semua channel", "Distribusi tugas otomatis", "Analitik untuk keputusan", "Alert laporan darurat", "Hemat biaya operasional"] },
-              { title: "Untuk Masyarakat", icon: Users, color: "green", items: ["Akses informasi 24/7", "Response cepat dari AI", "Pelaporan mudah via HP", "Tracking status real-time", "Reservasi tanpa antre", "Multi-platform akses"] },
+              { title: "Untuk Masyarakat", icon: Users, color: "green", items: ["Akses informasi 24/7", "Response cepat dari AI", "Pelaporan mudah via HP", "Tracking status real-time", "Permohonan layanan tanpa antre", "Multi-platform akses"] },
             ].map((section, i) => (
               <motion.div key={i} variants={staggerItem}>
                 <Card className={`h-full bg-gradient-to-br from-${section.color}-50 to-${section.color === "blue" ? "cyan" : "emerald"}-50 dark:from-${section.color}-950/30 dark:to-${section.color === "blue" ? "cyan" : "emerald"}-950/30 border-${section.color}-200/50 dark:border-${section.color}-800/30`}>
@@ -644,7 +644,7 @@ export default function LandingPage() {
             {[
               { icon: Brain, title: "AI & NLP", desc: "Natural Language Processing untuk memahami bahasa manusia dengan akurat", features: ["Bahasa Indonesia", "Multi-intent", "Context-aware"] },
               { icon: Database, title: "Knowledge Base", desc: "Database pengetahuan yang dapat diupdate dan diintegrasikan", features: ["Real-time sync", "Version control", "Easy update"] },
-              { icon: Network, title: "Multi-Channel", desc: "Integrasi dengan berbagai platform komunikasi", features: ["WhatsApp API", "Telegram Bot", "Web Widget"] },
+              { icon: Network, title: "Multi-Channel", desc: "Integrasi dengan berbagai platform komunikasi", features: ["WhatsApp API", "Webchat Widget"] },
               { icon: Shield, title: "Keamanan", desc: "Standar keamanan tinggi untuk data pemerintahan", features: ["Encryption", "Access control", "Audit log"] },
               { icon: LineChart, title: "Analytics", desc: "Dashboard analitik untuk monitoring dan reporting", features: ["Real-time stats", "Export report", "Insights"] },
               { icon: RefreshCw, title: "Scalable", desc: "Arsitektur yang dapat berkembang sesuai kebutuhan", features: ["Cloud-ready", "High availability", "Auto-scaling"] },
@@ -801,7 +801,7 @@ export default function LandingPage() {
               {[
                 { icon: WhatsAppIcon, title: "WhatsApp", gradient: "from-green-500 to-green-600" },
                 { icon: Instagram, title: "Instagram", gradient: "from-pink-500 to-purple-500" },
-                { icon: Send, title: "Telegram", gradient: "from-blue-400 to-blue-600" },
+                { icon: Send, title: "Webchat", gradient: "from-blue-400 to-blue-600" },
                 { icon: Globe, title: "Website", gradient: "from-slate-500 to-slate-700" },
               ].map((item, i) => (
                 <Card key={i} className="text-center border-border/50 hover:border-primary/30 transition-all">
@@ -977,12 +977,12 @@ export default function LandingPage() {
           <motion.div variants={fadeInUp} initial="hidden" whileInView="visible" viewport={{ once: true }}>
             <Accordion type="single" collapsible className="space-y-2">
               {[
-                { q: "Apa itu GovConnect?", a: "GovConnect adalah platform AI yang menghubungkan masyarakat dengan pemerintah. Masyarakat bisa bertanya informasi, melapor masalah, reservasi layanan, dan mengajukan surat via WhatsApp, Telegram, Instagram, atau webchat - semuanya dijawab AI 24/7." },
+                { q: "Apa itu GovConnect?", a: "GovConnect adalah platform AI yang menghubungkan masyarakat dengan pemerintah. Masyarakat bisa bertanya informasi, melapor masalah, mengajukan layanan, dan mengajukan surat via WhatsApp atau webchat - semuanya dijawab AI 24/7." },
                 { q: "Untuk tingkat pemerintahan apa saja?", a: "Semua tingkat: kelurahan/desa, kecamatan, kabupaten/kota, provinsi, hingga pusat. Juga cocok untuk instansi khusus seperti kepolisian, puskesmas, dinas pendidikan, BPJS, samsat, dan lainnya." },
-                { q: "Apa saja yang bisa dilakukan masyarakat?", a: "Banyak! Tanya informasi (syarat KTP, jam buka, dll), lapor masalah (jalan rusak, lampu mati, banjir), reservasi antrian, ajukan surat (domisili, pengantar, SKCK), cek status pengajuan, dan pengaduan pelayanan." },
+                { q: "Apa saja yang bisa dilakukan masyarakat?", a: "Banyak! Tanya informasi (syarat KTP, jam buka, dll), lapor masalah (jalan rusak, lampu mati, banjir), ajukan layanan administrasi (domisili, pengantar, SKCK), cek status pengajuan, dan pengaduan pelayanan." },
                 { q: "Bagaimana AI bisa menjawab dengan benar?", a: "AI dilatih dengan knowledge base yang berisi informasi layanan pemerintahan. Knowledge base ini bisa diupdate kapan saja dan bisa terhubung dengan database pemerintahan untuk data real-time yang selalu akurat." },
                 { q: "Bisa terhubung dengan sistem yang sudah ada?", a: "Ya! GovConnect dapat diintegrasikan dengan database dan sistem pemerintahan yang sudah ada. Jadi AI bisa mengambil data real-time seperti status pengajuan, jadwal, kuota, dll." },
-                { q: "Channel apa saja yang didukung?", a: "WhatsApp (via Business API), Telegram Bot, Instagram DM, dan Webchat yang bisa dipasang di website pemerintah. Semua channel dikontrol dari satu dashboard terpusat." },
+                { q: "Channel apa saja yang didukung?", a: "WhatsApp (via Business API) dan Webchat yang bisa dipasang di website pemerintah. Semua channel dikontrol dari satu dashboard terpusat." },
                 { q: "Bagaimana dengan laporan darurat/bencana?", a: "Ada fitur alert prioritas! AI mendeteksi kata kunci darurat dan langsung mengirim notifikasi khusus ke petugas/pusat. Laporan bencana tidak akan terlewat." },
                 { q: "Bagaimana keamanan datanya?", a: "Data dienkripsi end-to-end dengan standar keamanan tinggi. Akses dashboard dikontrol dengan role-based access sesuai struktur organisasi. Ada audit log untuk tracking semua aktivitas." },
                 { q: "Berapa lama proses implementasi?", a: "Tergantung kompleksitas, biasanya 2-4 minggu. Meliputi: konsultasi kebutuhan, setup knowledge base, integrasi channel, training admin, dan go-live dengan monitoring." },
@@ -1046,7 +1046,7 @@ export default function LandingPage() {
             <div>
               <h4 className="text-xs font-semibold mb-3">Fitur</h4>
               <ul className="space-y-1.5 text-xs text-muted-foreground">
-                {["Knowledge Base AI", "Pelaporan & Tracking", "Reservasi Layanan", "Multi-Channel"].map((item, i) => (
+                {["Knowledge Base AI", "Pelaporan & Tracking", "Permohonan Layanan", "Multi-Channel"].map((item, i) => (
                   <li key={i}><Link href="#fitur" className="hover:text-secondary transition-colors">{item}</Link></li>
                 ))}
               </ul>

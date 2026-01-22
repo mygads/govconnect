@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
         const data = await response.json()
         console.log('Case service statistics response:', data)
         // Transform data to match dashboard expectations
-        // Case service returns: { totalLaporan, totalTiket, laporan: {baru, proses, selesai, hariIni}, tiket: {pending, proses, selesai, hariIni} }
+        // Case service returns: { totalLaporan, totalLayanan, laporan: {baru, proses, selesai, ditolak, hariIni}, layanan: {baru, proses, selesai, ditolak, hariIni} }
         return NextResponse.json({
           complaints: {
             total: data.totalLaporan || 0,
@@ -33,12 +33,12 @@ export async function GET(request: NextRequest) {
             selesai: data.laporan?.selesai || 0,
             ditolak: data.laporan?.ditolak || 0,
           },
-          tickets: {
-            total: data.totalTiket || 0,
-            pending: data.tiket?.pending || 0,
-            proses: data.tiket?.proses || 0,
-            selesai: data.tiket?.selesai || 0,
-            ditolak: data.tiket?.ditolak || 0,
+          services: {
+            total: data.totalLayanan || 0,
+            baru: data.layanan?.baru || 0,
+            proses: data.layanan?.proses || 0,
+            selesai: data.layanan?.selesai || 0,
+            ditolak: data.layanan?.ditolak || 0,
           },
         })
       }
@@ -55,9 +55,9 @@ export async function GET(request: NextRequest) {
         selesai: 0,
         ditolak: 0,
       },
-      tickets: {
+      services: {
         total: 0,
-        pending: 0,
+        baru: 0,
         proses: 0,
         selesai: 0,
         ditolak: 0,

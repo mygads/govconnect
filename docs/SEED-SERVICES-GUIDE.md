@@ -1,8 +1,8 @@
-# Panduan Seed Data Layanan Reservasi
+# Panduan Seed Data Layanan
 
 ## Overview
 
-File ini berisi panduan untuk mengisi data layanan reservasi ke database di server production.
+File ini berisi panduan untuk mengisi data layanan ke database di server production.
 
 ## Daftar Layanan yang Akan Di-seed
 
@@ -127,24 +127,24 @@ docker exec -it govconnect_case-service npx prisma db seed
 
 ```bash
 # Dari server
-curl http://localhost:3002/reservasi/services
+curl http://localhost:3002/services
 
 # Atau dari luar (jika ada reverse proxy)
-curl https://api.govconnect.example.com/reservasi/services
+curl https://case.govconnect.my.id/services
 ```
 
 ### 2. Cek via Dashboard
 
 Buka dashboard admin dan navigasi ke menu Layanan untuk melihat daftar layanan yang sudah di-seed.
 
-### 3. Test Reservasi via WhatsApp
+### 3. Test Permohonan Layanan via WhatsApp
 
 Kirim pesan ke bot WhatsApp:
 - "Mau buat surat domisili"
 - "Mau urus SKTM"
 - "Butuh izin keramaian"
 
-Bot seharusnya bisa mengenali intent dan memulai proses reservasi.
+Bot seharusnya bisa mengenali intent dan memulai proses permohonan layanan.
 
 ## Catatan Penting
 

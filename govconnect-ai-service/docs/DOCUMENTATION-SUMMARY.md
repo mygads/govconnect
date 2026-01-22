@@ -49,7 +49,7 @@
 2. **Optimization Layer** - Fast intent classification, entity pre-extraction, caching
 3. **Layer 1 (Intent & Understanding)** - Intent classification with pre-extracted data
 4. **Layer 2 (Response Generation)** - Natural response generation with personality
-5. **Action Handlers** - Execute actions (create complaint, reservation, etc.)
+5. **Action Handlers** - Execute actions (create complaint, service request, etc.)
 6. **RAG System** - Knowledge base search and retrieval
 
 ### Performance Metrics:
@@ -82,7 +82,7 @@
 **Completed:** December 17, 2025
 
 **Changes:**
-- Added UPDATE_RESERVATION patterns to fast-intent-classifier
+- Added UPDATE_SERVICE_REQUEST patterns to fast-intent-classifier
 - Optimized pattern matching order (UPDATE before CANCEL)
 - Achieved 100% pattern coverage (9/9 intents)
 - Eliminated all pattern duplication
@@ -150,7 +150,7 @@
 ### Unit Tests:
 - [ ] Test Layer 1 with pre-extracted data
 - [ ] Test Layer 2 with optimized prompt
-- [ ] Test UPDATE_RESERVATION patterns
+- [ ] Test UPDATE_SERVICE_REQUEST patterns
 - [ ] Test entity extraction
 - [ ] Test fast intent classification
 

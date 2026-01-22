@@ -1,148 +1,71 @@
 {
-  "name": "Reservations (Reservasi)",
+  "name": "Service Requests",
   "item": [
     {
-      "name": "Services",
+      "name": "Service Requests",
       "item": [
         {
-          "name": "Get All Services",
-          "request": { "method": "GET", "url": "{{case_service_url}}/reservasi/services" }
-        },
-        {
-          "name": "Get Active Services",
-          "request": { "method": "GET", "url": "{{case_service_url}}/reservasi/services/active" }
-        },
-        {
-          "name": "Get Service by Code",
-          "request": { "method": "GET", "url": "{{case_service_url}}/reservasi/services/SKD" }
-        },
-        {
-          "name": "Toggle Service Active",
-          "request": {
-            "method": "PATCH",
-            "url": "{{case_service_url}}/reservasi/services/SKD/toggle-active",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"is_active\": true\n}" }
-          }
-        },
-        {
-          "name": "Toggle Service Online",
-          "request": {
-            "method": "PATCH",
-            "url": "{{case_service_url}}/reservasi/services/SKD/toggle-online",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"is_online_available\": true\n}" }
-          }
-        },
-        {
-          "name": "Update Service Settings",
-          "request": {
-            "method": "PATCH",
-            "url": "{{case_service_url}}/reservasi/services/SKD/settings",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"daily_quota\": 30\n}" }
-          }
-        }
-      ]
-    },
-    {
-      "name": "Slots",
-      "item": [
-        {
-          "name": "Get Available Slots",
-          "request": { "method": "GET", "url": "{{case_service_url}}/reservasi/slots/SKD/2025-12-24" }
-        }
-      ]
-    },
-    {
-      "name": "Reservations",
-      "item": [
-        {
-          "name": "Create Reservation",
-          "request": {
-            "method": "POST",
-            "url": "{{case_service_url}}/reservasi/create",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"service_code\": \"SKD\",\n  \"citizen_data\": {\n    \"nama_lengkap\": \"John Doe\",\n    \"nik\": \"1234567890123456\",\n    \"alamat\": \"Jl. Merdeka No. 10\",\n    \"no_hp\": \"081234567890\"\n  },\n  \"reservation_date\": \"2025-12-24\",\n  \"reservation_time\": \"09:00\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Get Reservations",
+          "name": "Get Service Requests",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{case_service_url}}/reservasi?status=pending&limit=20",
+              "raw": "{{case_service_url}}/service-requests?status=baru&limit=20",
               "host": ["{{case_service_url}}"],
-              "path": ["reservasi"],
+              "path": ["service-requests"],
               "query": [
-                { "key": "status", "value": "pending" },
+                { "key": "status", "value": "baru" },
                 { "key": "limit", "value": "20" }
               ]
             }
           }
         },
         {
-          "name": "Get Reservation by ID",
-          "request": { "method": "GET", "url": "{{case_service_url}}/reservasi/{{reservation_id}}" }
-        },
-        {
-          "name": "Get Reservation Statistics",
-          "request": { "method": "GET", "url": "{{case_service_url}}/reservasi/statistics" }
-        },
-        {
-          "name": "Check Reservation Status",
+          "name": "Create Service Request",
           "request": {
             "method": "POST",
-            "url": "{{case_service_url}}/reservasi/{{reservation_id}}/check",
+            "url": "{{case_service_url}}/service-requests",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_id\": \"{{service_id}}\",\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"citizen_data_json\": {\n    \"nama_lengkap\": \"John Doe\",\n    \"nik\": \"1234567890123456\",\n    \"alamat\": \"Jl. Merdeka No. 10\",\n    \"no_hp\": \"081234567890\"\n  },\n  \"requirement_data_json\": {\n    \"ktp\": \"file://ktp.jpg\"\n  }\n}"
+            }
           }
         },
         {
-          "name": "Update Reservation Status",
+          "name": "Get Service Request by ID",
+          "request": { "method": "GET", "url": "{{case_service_url}}/service-requests/{{service_request_id}}" }
+        },
+        {
+          "name": "Update Service Request Status",
           "request": {
             "method": "PATCH",
-            "url": "{{case_service_url}}/reservasi/{{reservation_id}}/status",
+            "url": "{{case_service_url}}/service-requests/{{service_request_id}}/status",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"confirmed\",\n  \"admin_notes\": \"Dikonfirmasi\"\n}" }
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"proses\",\n  \"admin_notes\": \"Sedang diproses\"\n}" }
           }
         },
         {
-          "name": "Cancel Reservation",
+          "name": "Cancel Service Request",
           "request": {
             "method": "POST",
-            "url": "{{case_service_url}}/reservasi/{{reservation_id}}/cancel",
+            "url": "{{case_service_url}}/service-requests/{{service_request_id}}/cancel",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
               { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"cancel_reason\": \"Berhalangan hadir\"\n}" }
+            "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"cancel_reason\": \"Berhalangan\"\n}" }
           }
         },
         {
-          "name": "Update Reservation Time",
-          "request": {
-            "method": "PATCH",
-            "url": "{{case_service_url}}/reservasi/{{reservation_id}}/time",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-Internal-API-Key", "value": "{{internal_api_key}}" }
-            ],
-            "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"reservation_date\": \"2025-12-25\",\n  \"reservation_time\": \"10:00\"\n}" }
-          }
+          "name": "Delete Service Request",
+          "request": { "method": "DELETE", "url": "{{case_service_url}}/service-requests/{{service_request_id}}" }
         },
         {
           "name": "Get User History",
-          "request": { "method": "GET", "url": "{{case_service_url}}/reservasi/history/{{wa_user_id}}" }
+          "request": { "method": "GET", "url": "{{case_service_url}}/service-requests/history/{{wa_user_id}}" }
         }
       ]
     }

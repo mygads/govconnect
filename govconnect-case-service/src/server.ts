@@ -19,7 +19,7 @@ async function startServer() {
     // Connect to RabbitMQ
     await connectRabbitMQ();
     
-    // Initialize app (GraphQL, services, etc.)
+    // Initialize app (routes, services, etc.)
     await initializeApp();
     
     // Start Express server

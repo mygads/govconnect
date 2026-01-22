@@ -6,7 +6,7 @@ AI Orchestrator Service adalah **stateless service** yang bertanggung jawab untu
 - Consume event `whatsapp.message.received` dari RabbitMQ
 - Fetch conversation history dari Channel Service
 - Process messages dengan Google Gemini LLM
-- Orchestrate ke Case Service untuk membuat laporan/tiket
+- Orchestrate ke Case Service untuk membuat laporan/permohonan layanan
 - Publish event `govconnect.ai.reply` untuk Notification Service
 
 ## 🏗️ Architecture
@@ -17,7 +17,7 @@ RabbitMQ (whatsapp.message.received)
 AI Orchestrator
    ├─→ Channel Service (GET /internal/messages) - Fetch history
    ├─→ Google Gemini API - Process with LLM
-   ├─→ Case Service (POST /laporan/create | /tiket/create) - SYNC calls
+  ├─→ Case Service (POST /laporan/create | /service-requests) - SYNC calls
    └─→ RabbitMQ (govconnect.ai.reply) - Publish reply
 ```
 
@@ -110,7 +110,7 @@ Check dependent services
 
 ### Intent Detection
 - `CREATE_COMPLAINT`: User melaporkan masalah infrastruktur
-- `CREATE_TICKET`: User mengajukan tiket layanan
+- `CREATE_SERVICE_REQUEST`: User mengajukan permohonan layanan
 - `QUESTION`: User bertanya tentang layanan
 - `UNKNOWN`: Intent tidak jelas
 
@@ -122,10 +122,8 @@ Check dependent services
 - `pohon_tumbang`: Pohon tumbang
 - `fasilitas_rusak`: Fasilitas umum rusak
 
-### Jenis Tiket
-- `surat_keterangan`: Surat keterangan domisili, usaha, dll
-- `surat_pengantar`: Surat pengantar berbagai keperluan
-- `izin_keramaian`: Izin acara/keramaian
+### Katalog Layanan
+- Permohonan layanan mengacu ke **Service Catalog** di Case Service (service_id + requirements)
 
 ## 📊 Message Flow
 
@@ -134,8 +132,8 @@ Check dependent services
 3. **Call LLM**: Send to Gemini dengan structured JSON schema
 4. **Parse Response**: Validate LLM output dengan Zod schema
 5. **Handle Intent**:
-   - If `CREATE_COMPLAINT` → SYNC call ke Case Service `/laporan/create`
-   - If `CREATE_TICKET` → SYNC call ke Case Service `/tiket/create`
+  - If `CREATE_COMPLAINT` → SYNC call ke Case Service `/laporan/create`
+  - If `CREATE_SERVICE_REQUEST` → SYNC call ke Case Service `/service-requests`
    - If `QUESTION` → Just reply with LLM response
 6. **Publish Reply**: Send `govconnect.ai.reply` event ke RabbitMQ
 
@@ -166,7 +164,7 @@ pnpm dev
 docker logs govconnect-ai-service -f
 ```
 
-3. **Verify Case Service call** (if complaint/ticket created)
+3. **Verify Case Service call** (if complaint/service request created)
 
 ## 🐳 Docker
 

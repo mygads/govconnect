@@ -137,10 +137,12 @@ Kartu Identitas Anak (KIA) adalah identitas resmi anak sebagai bukti diri untuk 
 - Sudah memiliki Akta Kelahiran
 
 ### Syarat Pembuatan KIA
-1. Akta Kelahiran anak (asli dan fotokopi)
-2. Kartu Keluarga (fotokopi)
-3. KTP-el orang tua/wali (fotokopi)
-4. Pas foto anak 4x6 latar merah (2 lembar)
+1. Kartu Keluarga (KK)
+2. Akta kelahiran
+3. Anak usia 0–5 tahun: tidak menggunakan foto
+4. Anak usia di atas 5 tahun: menggunakan foto
+   o Tahun ganjil: latar merah
+   o Tahun genap: latar biru
 
 ### Prosedur Pembuatan KIA
 1. Siapkan semua dokumen persyaratan

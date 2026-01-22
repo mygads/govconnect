@@ -11,7 +11,7 @@ model NotificationLog {
   id                String   @id @default(cuid())
   wa_user_id        String
   message_text      String   @db.Text
-  notification_type String   // "ai_reply" | "complaint_created" | "ticket_created" | "status_updated"
+  notification_type String   // "ai_reply" | "complaint_created" | "service_requested" | "status_updated"
   status            String   // "sent" | "failed"
   error_msg         String?  @db.Text
   sent_at           DateTime @default(now())

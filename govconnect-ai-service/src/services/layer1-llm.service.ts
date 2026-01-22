@@ -31,7 +31,7 @@ export interface Layer1Input {
 }
 
 export interface Layer1Output {
-  intent: 'CREATE_COMPLAINT' | 'CREATE_RESERVATION' | 'UPDATE_RESERVATION' | 'CHECK_STATUS' | 'CANCEL_COMPLAINT' | 'CANCEL_RESERVATION' | 'HISTORY' | 'KNOWLEDGE_QUERY' | 'QUESTION' | 'UNKNOWN';
+  intent: 'CREATE_COMPLAINT' | 'UPDATE_COMPLAINT' | 'SERVICE_INFO' | 'CREATE_SERVICE_REQUEST' | 'UPDATE_SERVICE_REQUEST' | 'CHECK_STATUS' | 'CANCEL_COMPLAINT' | 'CANCEL_SERVICE_REQUEST' | 'HISTORY' | 'KNOWLEDGE_QUERY' | 'QUESTION' | 'UNKNOWN';
   normalized_message: string;
   extracted_data: {
     nama_lengkap?: string;
@@ -39,13 +39,13 @@ export interface Layer1Output {
     alamat?: string;
     no_hp?: string;
     keperluan?: string;
-    service_code?: string;
+    service_id?: string;
+    service_slug?: string;
     kategori?: string;
     deskripsi?: string;
+    rt_rw?: string;
     complaint_id?: string;
-    reservation_id?: string;
-    reservation_date?: string;
-    reservation_time?: string;
+    request_number?: string;
     knowledge_category?: string;
   };
   confidence: number;
@@ -72,10 +72,13 @@ PRIMARY TASKS:
 
 INTENT TYPES:
 - CREATE_COMPLAINT: report issues (broken road, dead lights, trash, etc)
-- CREATE_RESERVATION: create documents (SKD, SKTM, SPKTP, etc)
-- UPDATE_RESERVATION: change schedule/date
-- CHECK_STATUS: check complaint/reservation status
-- CANCEL_COMPLAINT / CANCEL_RESERVATION: cancel
+- UPDATE_COMPLAINT: update complaint details (alamat/deskripsi/rt_rw)
+- SERVICE_INFO: ask about service requirements/procedures
+- CREATE_SERVICE_REQUEST: request a service/form link
+- UPDATE_SERVICE_REQUEST: request edit link for a service request
+- CHECK_STATUS: check complaint/service request status
+- CANCEL_COMPLAINT: cancel complaint
+- CANCEL_SERVICE_REQUEST: cancel service request
 - HISTORY: view history
 - KNOWLEDGE_QUERY: ask info (hours, requirements, address)
 - QUESTION: greeting, thanks, general questions
@@ -95,14 +98,14 @@ Pre-extracted Data: {pre_extracted_data}
 
 OUTPUT (JSON):
 {
-  "intent": "CREATE_RESERVATION",
+  "intent": "CREATE_SERVICE_REQUEST",
   "normalized_message": "normalized user message",
   "extracted_data": {
     "nama_lengkap": "from pre-extraction or history",
     "nik": "from pre-extraction or history",
     "alamat": "COMPLETE address from pre-extraction or history",
     "no_hp": "from pre-extraction or history",
-    "service_code": "SKD/SKTM/etc",
+    "service_slug": "surat-domisili",
     "kategori": "jalan_rusak/lampu_mati/etc"
   },
   "confidence": 0.95,
@@ -329,10 +332,13 @@ function normalizeExtractedData(data: any): Layer1Output['extracted_data'] {
     'no_telepon': 'no_hp',
     'telepon': 'no_hp',
     
-    // Service code variants
-    'service_code': 'service_code',
-    'kode_layanan': 'service_code',
-    'jenis_surat': 'service_code',
+    // Service variants
+    'service_id': 'service_id',
+    'service_slug': 'service_slug',
+    'service_code': 'service_slug',
+    'kode_layanan': 'service_slug',
+    'jenis_surat': 'service_slug',
+    'nama_layanan': 'service_slug',
     
     // Keperluan variants
     'keperluan': 'keperluan',
@@ -342,17 +348,9 @@ function normalizeExtractedData(data: any): Layer1Output['extracted_data'] {
     'complaint_id': 'complaint_id',
     'id_laporan': 'complaint_id',
     'nomor_laporan': 'complaint_id',
-    'reservation_id': 'reservation_id',
-    'id_reservasi': 'reservation_id',
-    'nomor_reservasi': 'reservation_id',
-    
-    // Date/time variants
-    'reservation_date': 'reservation_date',
-    'tanggal_reservasi': 'reservation_date',
-    'tanggal': 'reservation_date',
-    'reservation_time': 'reservation_time',
-    'jam_reservasi': 'reservation_time',
-    'jam': 'reservation_time',
+    'request_number': 'request_number',
+    'id_layanan': 'request_number',
+    'nomor_layanan': 'request_number',
     
     // Knowledge category
     'knowledge_category': 'knowledge_category',

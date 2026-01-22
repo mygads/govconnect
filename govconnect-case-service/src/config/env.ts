@@ -11,7 +11,7 @@ interface EnvironmentConfig {
   logLevel: string;
   logDir: string;
   idPrefixComplaint: string;
-  idPrefixTicket: string;
+  idPrefixServiceRequest: string;
 }
 
 function validateEnv(): EnvironmentConfig {
@@ -37,7 +37,7 @@ function validateEnv(): EnvironmentConfig {
     logLevel: process.env.LOG_LEVEL || 'info',
     logDir: process.env.LOG_DIR || 'logs',
     idPrefixComplaint: process.env.ID_PREFIX_COMPLAINT || 'LAP',
-    idPrefixTicket: process.env.ID_PREFIX_TICKET || 'TIK',
+    idPrefixServiceRequest: process.env.ID_PREFIX_SERVICE_REQUEST || 'LAY',
   };
 }
 

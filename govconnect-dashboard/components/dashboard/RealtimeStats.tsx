@@ -163,27 +163,27 @@ export function RealtimeStatsGrid() {
         </Card>
       )}
 
-      {/* Reservations Stats */}
+      {/* Service Requests Stats */}
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard
-          title="Total Reservasi"
-          value={stats?.reservations?.total || 0}
+          title="Total Permohonan Layanan"
+          value={stats?.services?.total || 0}
           icon={<FileText className="h-4 w-4" />}
           iconClassName="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
           loading={loading}
         />
         
         <StatCard
-          title="Reservasi Pending"
-          value={stats?.reservations?.pending || 0}
+          title="Layanan Baru"
+          value={stats?.services?.baru || 0}
           icon={<Clock className="h-4 w-4" />}
           iconClassName="bg-orange-100 text-orange-600 dark:bg-orange-900 dark:text-orange-300"
           loading={loading}
         />
         
         <StatCard
-          title="Reservasi Selesai"
-          value={stats?.reservations?.completed || 0}
+          title="Layanan Selesai"
+          value={stats?.services?.selesai || 0}
           icon={<CheckCircle2 className="h-4 w-4" />}
           iconClassName="bg-emerald-100 text-emerald-600 dark:bg-emerald-900 dark:text-emerald-300"
           loading={loading}

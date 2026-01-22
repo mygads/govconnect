@@ -24,9 +24,9 @@ import { isSpamMessage } from './rag.service';
 // Re-export all handlers from unified processor for backward compatibility
 export {
   handleComplaintCreation,
-  handleReservationCreation,
-  handleReservationCancellation,
-  handleReservationUpdate,
+  handleComplaintUpdate,
+  handleServiceInfo,
+  handleServiceRequestCreation,
   handleStatusCheck,
   handleCancellation,
   handleHistory,

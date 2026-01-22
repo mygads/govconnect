@@ -50,6 +50,22 @@ model wa_settings {
   @@map("wa_settings")
 }
 
+// Channel accounts per village
+model channel_accounts {
+  id             String   @id @default(cuid())
+  village_id     String   @unique
+  wa_number      String
+  wa_token       String
+  webhook_url    String
+  enabled_wa     Boolean  @default(true)
+  enabled_webchat Boolean @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@index([wa_number])
+  @@map("channel_accounts")
+}
+
 // Takeover sessions - when admin takes over conversation from AI
 model TakeoverSession {
   id           String    @id @default(cuid())

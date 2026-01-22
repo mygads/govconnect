@@ -20,13 +20,12 @@ interface Statistics {
     ditolak: number
     by_kategori?: Record<string, number>
   }
-  tickets: {
+  services: {
     total: number
-    pending: number
+    baru: number
     proses: number
     selesai: number
     ditolak: number
-    by_jenis?: Record<string, number>
   }
 }
 
@@ -105,13 +104,13 @@ export default function StatistikPage() {
     ],
   }
 
-  // Ticket Status Distribution
-  const ticketStatusData = {
-    labels: ["Pending", "Proses", "Selesai", "Ditolak"],
+  // Service Request Status Distribution
+  const serviceStatusData = {
+    labels: ["Baru", "Proses", "Selesai", "Ditolak"],
     datasets: [
       {
-        label: "Jumlah Tiket",
-        data: [stats.tickets.pending, stats.tickets.proses, stats.tickets.selesai, stats.tickets.ditolak],
+        label: "Jumlah Permohonan",
+        data: [stats.services.baru, stats.services.proses, stats.services.selesai, stats.services.ditolak],
         backgroundColor: ["rgba(234, 179, 8, 0.6)", "rgba(249, 115, 22, 0.6)", "rgba(34, 197, 94, 0.6)", "rgba(239, 68, 68, 0.6)"],
         borderColor: ["rgb(234, 179, 8)", "rgb(249, 115, 22)", "rgb(34, 197, 94)", "rgb(239, 68, 68)"],
         borderWidth: 2,
@@ -147,29 +146,6 @@ export default function StatistikPage() {
     ],
   }
 
-  // Ticket by Jenis
-  const ticketByJenisData = {
-    labels: stats.tickets.by_jenis ? Object.keys(stats.tickets.by_jenis).map(k => k.replace(/_/g, " ")) : [],
-    datasets: [
-      {
-        label: "Tiket by Jenis",
-        data: stats.tickets.by_jenis ? Object.values(stats.tickets.by_jenis) : [],
-        backgroundColor: [
-          "rgba(139, 92, 246, 0.6)",
-          "rgba(236, 72, 153, 0.6)",
-          "rgba(251, 146, 60, 0.6)",
-          "rgba(34, 197, 94, 0.6)",
-        ],
-        borderColor: [
-          "rgb(139, 92, 246)",
-          "rgb(236, 72, 153)",
-          "rgb(251, 146, 60)",
-          "rgb(34, 197, 94)",
-        ],
-        borderWidth: 2,
-      },
-    ],
-  }
 
   const chartOptions = {
     responsive: true,
@@ -196,7 +172,7 @@ export default function StatistikPage() {
       <div>
         <h1 className="text-3xl font-bold text-foreground">Statistik & Laporan</h1>
         <p className="text-muted-foreground mt-2">
-          Visualisasi data laporan dan tiket layanan
+          Visualisasi data laporan dan permohonan layanan
         </p>
       </div>
 
@@ -215,13 +191,13 @@ export default function StatistikPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Distribusi Status Tiket</CardTitle>
+            <CardTitle>Distribusi Status Permohonan</CardTitle>
             <CardDescription>
-              Total {stats.tickets.total} tiket berdasarkan status
+              Total {stats.services.total} permohonan berdasarkan status
             </CardDescription>
           </CardHeader>
           <CardContent className="h-80">
-            <Bar data={ticketStatusData} options={chartOptions} />
+            <Bar data={serviceStatusData} options={chartOptions} />
           </CardContent>
         </Card>
 
@@ -239,19 +215,6 @@ export default function StatistikPage() {
           </Card>
         )}
 
-        {stats.tickets.by_jenis && Object.keys(stats.tickets.by_jenis).length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Tiket Berdasarkan Jenis</CardTitle>
-              <CardDescription>
-                Distribusi jenis dari semua tiket layanan
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="h-80 flex items-center justify-center">
-              <Pie data={ticketByJenisData} options={pieOptions} />
-            </CardContent>
-          </Card>
-        )}
       </div>
     </div>
   )

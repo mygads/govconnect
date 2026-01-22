@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 
-// Default settings
+// Default settings (tanpa konfigurasi model AI di UI)
 const DEFAULT_SETTINGS = {
   ai_chatbot_enabled: 'true',
-  ai_model_primary: 'gemini-2.5-flash',
-  ai_model_fallback: 'gemini-2.0-flash',
   welcome_message: 'Selamat datang di GovConnect! Saya siap membantu Anda dengan laporan dan layanan pemerintah.',
 }
+
+const DISALLOWED_KEYS = ['ai_model_primary', 'ai_model_fallback', 'ai_model'];
 
 export async function GET(request: NextRequest) {
   try {
@@ -77,6 +77,13 @@ export async function PUT(request: NextRequest) {
       )
     }
 
+    if (DISALLOWED_KEYS.includes(key)) {
+      return NextResponse.json(
+        { error: 'Perubahan model AI hanya melalui ENV' },
+        { status: 400 }
+      )
+    }
+
     // Upsert setting
     const setting = await prisma.system_settings.upsert({
       where: { key },
@@ -129,6 +136,14 @@ export async function POST(request: NextRequest) {
     if (!settings || typeof settings !== 'object') {
       return NextResponse.json(
         { error: 'Settings object is required' },
+        { status: 400 }
+      )
+    }
+
+    const invalidKeys = Object.keys(settings).filter((key) => DISALLOWED_KEYS.includes(key))
+    if (invalidKeys.length > 0) {
+      return NextResponse.json(
+        { error: 'Perubahan model AI hanya melalui ENV', invalid_keys: invalidKeys },
         { status: 400 }
       )
     }

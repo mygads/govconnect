@@ -90,7 +90,7 @@ TONE GUIDELINES:
 - After answering - offer additional help
 
 PROACTIVE GUIDANCE:
-- After reservation: List documents to BRING to office
+- After service request: Remind to check status & bring documents to office
 - After complaint: Explain handling timeline
 - Outside hours: Mention office hours
 - Payment: Always mention "FREE" for services
@@ -100,7 +100,7 @@ OUTPUT (JSON):
 {
   "reply_text": "Main response for user",
   "guidance_text": "Additional info (optional, empty string if not needed)",
-  "next_action": "CREATE_RESERVATION/CREATE_COMPLAINT/etc",
+  "next_action": "CREATE_SERVICE_REQUEST/CREATE_COMPLAINT/UPDATE_COMPLAINT/etc",
   "missing_data": ["fields still needed"],
   "follow_up_questions": ["follow-up questions if needed"],
   "needs_knowledge": false,
@@ -301,9 +301,9 @@ export function generateFallbackResponse(layer1Output: Layer1Output): Layer2Outp
   
   // Generate basic response based on intent
   switch (intent) {
-    case 'CREATE_RESERVATION':
-      reply_text = 'Baik, saya bantu untuk reservasi layanan ya. Bisa sebutkan layanan apa yang dibutuhkan?';
-      guidance_text = 'Layanan tersedia: SKD, SKTM, SPKTP, dll.';
+    case 'CREATE_SERVICE_REQUEST':
+      reply_text = 'Baik, saya bantu untuk permohonan layanan ya. Bisa sebutkan layanan apa yang dibutuhkan?';
+      guidance_text = 'Saya bisa kirimkan link formulir layanan setelah Kakak sebutkan layanannya.';
       break;
       
     case 'CREATE_COMPLAINT':
@@ -317,7 +317,7 @@ export function generateFallbackResponse(layer1Output: Layer1Output): Layer2Outp
       
     case 'QUESTION':
       reply_text = 'Halo! Saya Gana dari Kelurahan. Ada yang bisa saya bantu hari ini?';
-      guidance_text = 'Saya bisa bantu untuk laporan masalah, reservasi layanan, atau info kelurahan.';
+      guidance_text = 'Saya bisa bantu untuk laporan masalah, ajukan layanan, atau info kelurahan.';
       break;
       
     default:

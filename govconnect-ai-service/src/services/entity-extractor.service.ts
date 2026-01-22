@@ -11,7 +11,7 @@
  * - Address
  * - Date (Indonesian format)
  * - Time
- * - Complaint/Reservation IDs
+ * - Complaint/Service Request IDs
  */
 
 import logger from '../utils/logger';
@@ -26,7 +26,7 @@ export interface ExtractedEntities {
   date?: string;        // ISO format YYYY-MM-DD
   time?: string;        // HH:MM format
   complaintId?: string;
-  reservationId?: string;
+  requestNumber?: string;
   email?: string;
   rtRw?: string;
 }
@@ -162,7 +162,7 @@ function isValidName(name: string): boolean {
   // Must not be common words
   const invalidNames = [
     'saya', 'aku', 'gue', 'gw', 'mau', 'ingin', 'perlu', 'butuh',
-    'buat', 'bikin', 'urus', 'daftar', 'reservasi', 'lapor',
+    'buat', 'bikin', 'urus', 'daftar', 'layanan', 'lapor',
     'ya', 'tidak', 'oke', 'baik', 'terima', 'kasih',
   ];
   if (invalidNames.includes(name.toLowerCase())) return false;
@@ -378,10 +378,10 @@ export function extractComplaintId(text: string): string | null {
 }
 
 /**
- * Extract reservation ID
+ * Extract service request number
  */
-export function extractReservationId(text: string): string | null {
-  const match = text.match(/\b(RSV-\d{8}-\d{3})\b/i);
+export function extractRequestNumber(text: string): string | null {
+  const match = text.match(/\b(LAY-\d{8}-\d{3})\b/i);
   return match ? match[1].toUpperCase() : null;
 }
 
@@ -452,8 +452,8 @@ export function extractAllEntities(text: string, history?: string): ExtractionRe
   const complaintId = extractComplaintId(combined);
   if (complaintId) { entities.complaintId = complaintId; extractedCount++; }
   
-  const reservationId = extractReservationId(combined);
-  if (reservationId) { entities.reservationId = reservationId; extractedCount++; }
+  const requestNumber = extractRequestNumber(combined);
+  if (requestNumber) { entities.requestNumber = requestNumber; extractedCount++; }
   
   const email = extractEmail(combined);
   if (email) { entities.email = email; extractedCount++; }
@@ -489,10 +489,8 @@ export function mergeEntities(
   if (!merged.nama_lengkap && extracted.name) merged.nama_lengkap = extracted.name;
   if (!merged.alamat && extracted.address) merged.alamat = extracted.address;
   if (!merged.rt_rw && extracted.rtRw) merged.rt_rw = extracted.rtRw;
-  if (!merged.reservation_date && extracted.date) merged.reservation_date = extracted.date;
-  if (!merged.reservation_time && extracted.time) merged.reservation_time = extracted.time;
   if (!merged.complaint_id && extracted.complaintId) merged.complaint_id = extracted.complaintId;
-  if (!merged.reservation_id && extracted.reservationId) merged.reservation_id = extracted.reservationId;
+  if (!merged.request_number && extracted.requestNumber) merged.request_number = extracted.requestNumber;
   
   return merged;
 }
@@ -694,7 +692,7 @@ export default {
   extractDate,
   extractTime,
   extractComplaintId,
-  extractReservationId,
+  extractRequestNumber,
   extractEmail,
   extractCitizenDataFromHistory,
 };

@@ -18,12 +18,14 @@ model admin_users {
   username      String   @unique
   password_hash String
   name          String
-  role          String   @default("admin")
+  role          String   @default("village_admin")
   is_active     Boolean  @default(true)
+  village_id    String?
   created_at    DateTime @default(now())
   
   sessions      admin_sessions[]
   activity_logs activity_logs[]
+  village       villages? @relation(fields: [village_id], references: [id])
 }
 
 model admin_sessions {
@@ -74,14 +76,21 @@ model knowledge_base {
   title       String
   content     String   @db.Text
   category    String   // "informasi_umum" | "layanan" | "prosedur" | "jadwal" | "kontak" | "faq"
+  category_id String?
+  village_id  String?
   keywords    String[] // Array of keywords for better search
   is_active   Boolean  @default(true)
   priority    Int      @default(0) // Higher priority = shown first
   admin_id    String?  // Who created/updated this
   updated_at  DateTime @updatedAt
   created_at  DateTime @default(now())
+
+  category_ref knowledge_categories? @relation(fields: [category_id], references: [id])
+  village      villages? @relation(fields: [village_id], references: [id])
   
   @@index([category])
+  @@index([category_id])
+  @@index([village_id])
   @@index([is_active])
   @@index([keywords])
 }
@@ -95,6 +104,8 @@ model knowledge_documents {
   mime_type       String   // application/pdf, text/plain, etc.
   file_size       Int      // File size in bytes
   file_url        String   // Storage URL (local or S3)
+  village_id      String?
+  category_id     String?
   
   // Processing status
   status          String   @default("pending") // pending, processing, completed, failed
@@ -112,12 +123,16 @@ model knowledge_documents {
   // Relations
   admin_id        String?  // Who uploaded this
   chunks          document_chunks[]
+  category_ref    knowledge_categories? @relation(fields: [category_id], references: [id])
+  village         villages? @relation(fields: [village_id], references: [id])
   
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
   
   @@index([status])
   @@index([category])
+  @@index([category_id])
+  @@index([village_id])
   @@index([created_at])
 }
 
@@ -142,4 +157,87 @@ model document_chunks {
   
   @@index([document_id])
   @@index([chunk_index])
+}
+
+// ==================== VILLAGES ====================
+
+model villages {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String   @unique
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  profiles                 village_profiles[]
+  admins                   admin_users[]
+  knowledge_categories     knowledge_categories[]
+  important_contact_categories important_contact_categories[]
+  knowledge_base_items     knowledge_base[]
+  knowledge_documents      knowledge_documents[]
+}
+
+model village_profiles {
+  id              String   @id @default(cuid())
+  village_id      String
+  name            String
+  address         String
+  gmaps_url       String?
+  short_name      String
+  operating_hours Json
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  village         villages @relation(fields: [village_id], references: [id], onDelete: Cascade)
+
+  @@index([village_id])
+}
+
+// ==================== KNOWLEDGE CATEGORIES ====================
+
+model knowledge_categories {
+  id         String   @id @default(cuid())
+  village_id String
+  name       String
+  is_default Boolean  @default(false)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  village    villages @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  documents  knowledge_documents[]
+  knowledge_items knowledge_base[]
+
+  @@index([village_id])
+  @@index([name])
+}
+
+// ==================== IMPORTANT CONTACTS ====================
+
+model important_contact_categories {
+  id         String   @id @default(cuid())
+  village_id String
+  name       String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  village    villages @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  contacts   important_contacts[]
+
+  @@index([village_id])
+  @@index([name])
+}
+
+model important_contacts {
+  id          String   @id @default(cuid())
+  category_id String
+  name        String
+  phone       String
+  description String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  category    important_contact_categories @relation(fields: [category_id], references: [id], onDelete: Cascade)
+
+  @@index([category_id])
+  @@index([phone])
 }

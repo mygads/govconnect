@@ -46,14 +46,14 @@ const STATE_FALLBACKS: Record<ConversationState, string[]> = {
     'Mau saya proses laporannya Kak? Ketik "ya" atau "lanjut" untuk konfirmasi.',
   ],
   
-  'COLLECTING_RESERVATION_DATA': [
-    'Untuk reservasi, saya masih perlu beberapa data Kak. Boleh dilengkapi?',
-    'Data reservasi belum lengkap Kak. Ada yang perlu ditambahkan?',
+  'COLLECTING_SERVICE_REQUEST_DATA': [
+    'Untuk permohonan layanan, saya masih perlu beberapa data Kak. Boleh dilengkapi?',
+    'Data layanan belum lengkap Kak. Ada yang perlu ditambahkan?',
   ],
   
-  'CONFIRMING_RESERVATION': [
-    'Apakah data reservasi sudah benar Kak? Ketik "ya" untuk konfirmasi.',
-    'Mau saya buatkan reservasinya Kak? Ketik "ya" untuk lanjut.',
+  'CONFIRMING_SERVICE_REQUEST': [
+    'Apakah data layanan sudah benar Kak? Ketik "ya" untuk konfirmasi.',
+    'Mau saya proses permohonan layanannya Kak? Ketik "ya" untuk lanjut.',
   ],
   
   'AWAITING_ADDRESS_DETAIL': [
@@ -67,13 +67,13 @@ const STATE_FALLBACKS: Record<ConversationState, string[]> = {
   ],
   
   'CHECK_STATUS_FLOW': [
-    'Untuk cek status, sebutkan nomor laporan atau reservasinya ya Kak.',
-    'Nomor laporan/reservasinya berapa Kak? (contoh: LAP-20251201-001)',
+    'Untuk cek status, sebutkan nomor laporan atau layanan ya Kak.',
+    'Nomor laporan/layanannya berapa Kak? (contoh: LAP-20251201-001 atau LAY-20251201-001)',
   ],
   
   'CANCELLATION_FLOW': [
-    'Untuk pembatalan, sebutkan nomor yang mau dibatalkan ya Kak.',
-    'Nomor laporan/reservasi yang mau dibatalkan berapa Kak?',
+    'Untuk pembatalan, sebutkan nomor laporan yang mau dibatalkan ya Kak.',
+    'Nomor laporan yang mau dibatalkan berapa Kak?',
   ],
 };
 

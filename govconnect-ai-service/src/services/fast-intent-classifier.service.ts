@@ -19,10 +19,12 @@ import {
   REJECTION_PATTERNS,
   THANKS_PATTERNS,
   CREATE_COMPLAINT_PATTERNS,
-  CREATE_RESERVATION_PATTERNS,
-  UPDATE_RESERVATION_PATTERNS,
+  SERVICE_INFO_PATTERNS,
+  CREATE_SERVICE_REQUEST_PATTERNS,
+  UPDATE_SERVICE_REQUEST_PATTERNS,
   CHECK_STATUS_PATTERNS,
   CANCEL_PATTERNS,
+  CANCEL_SERVICE_PATTERNS,
   HISTORY_PATTERNS,
   KNOWLEDGE_QUERY_PATTERNS,
   COMPLAINT_CATEGORY_PATTERNS,
@@ -58,16 +60,16 @@ function extractServiceCode(message: string): string | null {
 }
 
 /**
- * Extract complaint/reservation ID from message
+ * Extract complaint/service request ID from message
  */
-function extractIds(message: string): { complaintId?: string; reservationId?: string } {
-  const result: { complaintId?: string; reservationId?: string } = {};
+function extractIds(message: string): { complaintId?: string; requestNumber?: string } {
+  const result: { complaintId?: string; requestNumber?: string } = {};
   
   const lapMatch = message.match(/\b(LAP-\d{8}-\d{3})\b/i);
   if (lapMatch) result.complaintId = lapMatch[1].toUpperCase();
   
-  const rsvMatch = message.match(/\b(RSV-\d{8}-\d{3})\b/i);
-  if (rsvMatch) result.reservationId = rsvMatch[1].toUpperCase();
+  const layMatch = message.match(/\b(LAY-\d{8}-\d{3})\b/i);
+  if (layMatch) result.requestNumber = layMatch[1].toUpperCase();
   
   return result;
 }
@@ -160,13 +162,13 @@ export function fastClassifyIntent(message: string): FastClassifyResult | null {
   
   // 3. Check CHECK_STATUS (with ID extraction)
   const ids = extractIds(cleanMessage);
-  if (ids.complaintId || ids.reservationId) {
+  if (ids.complaintId || ids.requestNumber) {
     return {
       intent: 'CHECK_STATUS',
       confidence: 0.95,
       extractedFields: {
         complaint_id: ids.complaintId,
-        reservation_id: ids.reservationId,
+        request_number: ids.requestNumber,
       },
       skipLLM: true, // Can directly check status
       reason: 'Status check with ID detected',
@@ -185,33 +187,63 @@ export function fastClassifyIntent(message: string): FastClassifyResult | null {
     }
   }
   
-  // 4. Check UPDATE_RESERVATION (before CANCEL to avoid confusion)
-  for (const pattern of UPDATE_RESERVATION_PATTERNS) {
+  // 4. Check CANCEL (only if ID is present, otherwise let LLM decide)
+  const cancelPatterns = [...CANCEL_PATTERNS, ...CANCEL_SERVICE_PATTERNS];
+  for (const pattern of cancelPatterns) {
     if (pattern.test(lowerMessage)) {
+      if (ids.requestNumber) {
+        return {
+          intent: 'CANCEL_SERVICE_REQUEST',
+          confidence: 0.88,
+          extractedFields: {
+            request_number: ids.requestNumber,
+          },
+          skipLLM: true,
+          reason: 'Cancel service request with ID detected',
+        };
+      }
+
+      if (ids.complaintId) {
+        return {
+          intent: 'CANCEL_COMPLAINT',
+          confidence: 0.88,
+          extractedFields: {
+            complaint_id: ids.complaintId,
+          },
+          skipLLM: true,
+          reason: 'Cancel complaint with ID detected',
+        };
+      }
+
       return {
-        intent: 'UPDATE_RESERVATION',
-        confidence: ids.reservationId ? 0.9 : 0.75,
-        extractedFields: {
-          reservation_id: ids.reservationId,
-        },
-        skipLLM: false, // Need LLM to ask for new date/time
-        reason: 'Update reservation pattern matched',
+        intent: 'CANCEL_COMPLAINT',
+        confidence: 0.6,
+        extractedFields: {},
+        skipLLM: false,
+        reason: 'Cancel intent without ID, requires LLM clarification',
       };
     }
   }
-  
-  // 5. Check CANCEL
-  for (const pattern of CANCEL_PATTERNS) {
+
+  // 5. Check UPDATE_SERVICE_REQUEST
+  for (const pattern of UPDATE_SERVICE_REQUEST_PATTERNS) {
     if (pattern.test(lowerMessage)) {
+      if (ids.requestNumber) {
+        return {
+          intent: 'UPDATE_SERVICE_REQUEST',
+          confidence: 0.85,
+          extractedFields: { request_number: ids.requestNumber },
+          skipLLM: true,
+          reason: 'Update service request with ID detected',
+        };
+      }
+
       return {
-        intent: ids.complaintId ? 'CANCEL_COMPLAINT' : ids.reservationId ? 'CANCEL_RESERVATION' : 'CANCEL',
-        confidence: 0.85,
-        extractedFields: {
-          complaint_id: ids.complaintId,
-          reservation_id: ids.reservationId,
-        },
-        skipLLM: !!(ids.complaintId || ids.reservationId),
-        reason: 'Cancel pattern matched',
+        intent: 'UPDATE_SERVICE_REQUEST',
+        confidence: 0.6,
+        extractedFields: {},
+        skipLLM: false,
+        reason: 'Update service request without ID, requires clarification',
       };
     }
   }
@@ -245,23 +277,32 @@ export function fastClassifyIntent(message: string): FastClassifyResult | null {
     }
   }
   
-  // 7. Check CREATE_RESERVATION (with service code extraction)
-  for (const pattern of CREATE_RESERVATION_PATTERNS) {
+  // 7. Check SERVICE_INFO
+  for (const pattern of SERVICE_INFO_PATTERNS) {
     if (pattern.test(lowerMessage)) {
-      const serviceCode = extractServiceCode(lowerMessage);
-      const nik = extractNIK(cleanMessage);
-      const phone = extractPhone(cleanMessage);
-      
       return {
-        intent: 'CREATE_RESERVATION',
-        confidence: serviceCode ? 0.9 : 0.8,
+        intent: 'SERVICE_INFO',
+        confidence: 0.85,
         extractedFields: {
-          service_code: serviceCode,
-          nik,
-          phone,
+          service_code: extractServiceCode(lowerMessage),
         },
-        skipLLM: false, // Need LLM for data collection flow
-        reason: 'Reservation pattern matched' + (serviceCode ? ` (${serviceCode})` : ''),
+        skipLLM: false,
+        reason: 'Service info pattern matched',
+      };
+    }
+  }
+  
+  // 8. Check CREATE_SERVICE_REQUEST
+  for (const pattern of CREATE_SERVICE_REQUEST_PATTERNS) {
+    if (pattern.test(lowerMessage)) {
+      return {
+        intent: 'CREATE_SERVICE_REQUEST',
+        confidence: 0.85,
+        extractedFields: {
+          service_code: extractServiceCode(lowerMessage),
+        },
+        skipLLM: false,
+        reason: 'Service request pattern matched',
       };
     }
   }

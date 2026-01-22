@@ -3,15 +3,19 @@ import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { updateKnowledgeVector, deleteKnowledgeVector } from '@/lib/ai-service'
 
-// Knowledge categories
-const VALID_CATEGORIES = [
-  'informasi_umum',
-  'layanan', 
-  'prosedur',
-  'jadwal',
-  'kontak',
-  'faq',
-]
+async function getSession(request: NextRequest) {
+  const token = request.cookies.get('token')?.value ||
+    request.headers.get('authorization')?.replace('Bearer ', '')
+  if (!token) return null
+  const payload = await verifyToken(token)
+  if (!payload) return null
+  const session = await prisma.admin_sessions.findUnique({
+    where: { token },
+    include: { admin: true }
+  })
+  if (!session || session.expires_at < new Date()) return null
+  return session
+}
 
 interface Params {
   params: Promise<{ id: string }>
@@ -21,16 +25,9 @@ export async function GET(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params
     
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
     }
 
     const knowledge = await prisma.knowledge_base.findUnique({
@@ -39,6 +36,10 @@ export async function GET(request: NextRequest, { params }: Params) {
 
     if (!knowledge) {
       return NextResponse.json({ error: 'Knowledge not found' }, { status: 404 })
+    }
+
+    if (session.admin.village_id && knowledge.village_id !== session.admin.village_id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     return NextResponse.json({
@@ -57,20 +58,13 @@ export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params
     
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
-
     const body = await request.json()
-    const { title, content, category, keywords, is_active, priority } = body
+    const { title, content, category, category_id, keywords, is_active, priority } = body
 
     // Check if knowledge exists
     const existing = await prisma.knowledge_base.findUnique({
@@ -81,12 +75,40 @@ export async function PUT(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Knowledge not found' }, { status: 404 })
     }
 
-    // Validate category if provided
-    if (category && !VALID_CATEGORIES.includes(category)) {
-      return NextResponse.json(
-        { error: `Invalid category. Valid categories: ${VALID_CATEGORIES.join(', ')}` },
-        { status: 400 }
-      )
+    if (session.admin.village_id && existing.village_id !== session.admin.village_id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    let resolvedCategoryId = category_id as string | undefined
+    let resolvedCategoryName = category as string | undefined
+
+    if (!resolvedCategoryId && category) {
+      const existingCategory = await prisma.knowledge_categories.findFirst({
+        where: {
+          name: category,
+          village_id: session.admin.village_id || undefined,
+        }
+      })
+
+      if (existingCategory) {
+        resolvedCategoryId = existingCategory.id
+        resolvedCategoryName = existingCategory.name
+      } else if (session.admin.village_id) {
+        const created = await prisma.knowledge_categories.create({
+          data: {
+            village_id: session.admin.village_id,
+            name: category,
+            is_default: false,
+          }
+        })
+        resolvedCategoryId = created.id
+        resolvedCategoryName = created.name
+      }
+    } else if (resolvedCategoryId) {
+      const categoryRef = await prisma.knowledge_categories.findUnique({
+        where: { id: resolvedCategoryId }
+      })
+      resolvedCategoryName = categoryRef?.name || resolvedCategoryName
     }
 
     // Process keywords if provided
@@ -100,11 +122,12 @@ export async function PUT(request: NextRequest, { params }: Params) {
       data: {
         ...(title && { title }),
         ...(content && { content }),
-        ...(category && { category }),
+        ...(resolvedCategoryName && { category: resolvedCategoryName }),
+        ...(resolvedCategoryId && { category_id: resolvedCategoryId }),
         ...(processedKeywords && { keywords: processedKeywords }),
         ...(is_active !== undefined && { is_active }),
         ...(priority !== undefined && { priority }),
-        admin_id: payload.adminId,
+        admin_id: session.admin_id,
       },
     })
 
@@ -141,10 +164,9 @@ export async function DELETE(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
+    const session = await getSession(request)
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     // Check if knowledge exists
@@ -154,6 +176,10 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     if (!existing) {
       return NextResponse.json({ error: 'Knowledge not found' }, { status: 404 })
+    }
+
+    if (session.admin.village_id && existing.village_id !== session.admin.village_id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Delete knowledge entry

@@ -18,6 +18,8 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const query = searchParams.get('query') // Search query from user message
     const category = searchParams.get('category')
+    const categoryId = searchParams.get('category_id')
+    const villageId = searchParams.get('village_id')
     const limit = parseInt(searchParams.get('limit') || '5')
 
     // Build where clause - only get active knowledge
@@ -25,7 +27,13 @@ export async function GET(request: NextRequest) {
       is_active: true,
     }
 
-    if (category) {
+    if (villageId) {
+      where.village_id = villageId
+    }
+
+    if (categoryId) {
+      where.category_id = categoryId
+    } else if (category) {
       where.category = category
     }
 
@@ -99,7 +107,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { query, categories, limit = 5 } = body
+    const { query, categories, category_ids, limit = 5, village_id } = body
 
     if (!query) {
       return NextResponse.json(
@@ -116,7 +124,13 @@ export async function POST(request: NextRequest) {
       is_active: true,
     }
 
-    if (categories && Array.isArray(categories) && categories.length > 0) {
+    if (village_id) {
+      where.village_id = village_id
+    }
+
+    if (Array.isArray(category_ids) && category_ids.length > 0) {
+      where.category_id = { in: category_ids }
+    } else if (categories && Array.isArray(categories) && categories.length > 0) {
       where.category = { in: categories }
     }
 

@@ -1,41 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import { caseService } from '@/lib/api-client'
+import { NextResponse } from 'next/server'
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
-
-    const body = await request.json()
-    const { id } = await params
-
-    const response = await caseService.updateTiketStatus(id, body)
-
-    if (!response.ok) {
-      const error = await response.json()
-      return NextResponse.json(error, { status: response.status })
-    }
-
-    const data = await response.json()
-    return NextResponse.json(data)
-  } catch (error) {
-    console.error('Error updating ticket status:', error)
-    return NextResponse.json(
-      { error: 'Failed to update ticket status' },
-      { status: 500 }
-    )
-  }
+export async function PATCH() {
+  return NextResponse.json(
+    { error: 'FITUR_DINONAKTIFKAN', message: 'Fitur ini telah dinonaktifkan.' },
+    { status: 410 }
+  )
 }

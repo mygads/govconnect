@@ -1,22 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
+import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+
+async function getSession(request: NextRequest) {
+  const token = request.cookies.get('token')?.value ||
+    request.headers.get('authorization')?.replace('Bearer ', '')
+  if (!token) return null
+  const payload = await verifyToken(token)
+  if (!payload) return null
+  const session = await prisma.admin_sessions.findUnique({
+    where: { token },
+    include: { admin: true }
+  })
+  if (!session || session.expires_at < new Date()) return null
+  return session
+}
 
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
-
     try {
-      const response = await apiFetch(buildUrl(ServicePath.CASE, '/reservasi/services'), {
+      const url = new URL(buildUrl(ServicePath.CASE, '/services'))
+      if (session.admin.village_id) {
+        url.searchParams.set('village_id', session.admin.village_id)
+      }
+
+      const response = await apiFetch(url.toString(), {
         headers: getHeaders(),
       })
 

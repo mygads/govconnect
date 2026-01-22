@@ -297,11 +297,9 @@ export default function AIAnalyticsPage() {
     const map: Record<string, string> = {
       // Action Intents
       'CREATE_COMPLAINT': 'Buat Laporan',
-      'CREATE_RESERVATION': 'Buat Reservasi',
-      'UPDATE_RESERVATION': 'Ubah Reservasi',
+      'SERVICE_INFO': 'Info Layanan',
+      'CREATE_SERVICE_REQUEST': 'Buat Permohonan Layanan',
       'CHECK_STATUS': 'Cek Status',
-      'CANCEL_COMPLAINT': 'Batalkan Laporan',
-      'CANCEL_RESERVATION': 'Batalkan Reservasi',
       'HISTORY': 'Riwayat',
       // Conversational Intents
       'GREETING': 'Sapaan',

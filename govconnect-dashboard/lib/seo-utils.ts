@@ -172,7 +172,7 @@ export const pageMetadataPresets = {
   
   features: createPageMetadata({
     title: 'Fitur GovConnect',
-    description: 'Fitur lengkap GovConnect: AI Chatbot 24/7, Pengaduan Online, Pengajuan Surat Digital, Reservasi Layanan, dan Dashboard Analytics.',
+    description: 'Fitur lengkap GovConnect: AI Chatbot 24/7, Pengaduan Online, Pengajuan Surat Digital, Permohonan Layanan, dan Dashboard Analytics.',
     path: '/#fitur',
     keywords: ['fitur govconnect', 'chatbot pemerintah', 'layanan digital'],
   }),

@@ -229,6 +229,7 @@ export async function searchVectors(
     minScore = 0.7,
     categories,
     sourceTypes = ['knowledge', 'document'],
+    villageId,
   } = options;
 
   const startTime = Date.now();
@@ -252,6 +253,23 @@ export async function searchVectors(
         WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
       `;
 
+      if (villageId) {
+        knowledgeQuery = Prisma.sql`
+          SELECT 
+            id,
+            content,
+            title,
+            category,
+            keywords,
+            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
+            'knowledge' as source_type,
+            quality_score
+          FROM knowledge_vectors
+          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+            AND village_id = ${villageId}
+        `;
+      }
+
       if (categories && categories.length > 0) {
         knowledgeQuery = Prisma.sql`
           SELECT 
@@ -266,6 +284,24 @@ export async function searchVectors(
           FROM knowledge_vectors
           WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
             AND category = ANY(${categories})
+        `;
+      }
+
+      if (villageId && categories && categories.length > 0) {
+        knowledgeQuery = Prisma.sql`
+          SELECT 
+            id,
+            content,
+            title,
+            category,
+            keywords,
+            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
+            'knowledge' as source_type,
+            quality_score
+          FROM knowledge_vectors
+          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+            AND category = ANY(${categories})
+            AND village_id = ${villageId}
         `;
       }
 
@@ -309,6 +345,25 @@ export async function searchVectors(
         WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
       `;
 
+      if (villageId) {
+        documentQuery = Prisma.sql`
+          SELECT 
+            id,
+            content,
+            document_title as title,
+            category,
+            document_id,
+            chunk_index,
+            page_number,
+            section_title,
+            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
+            'document' as source_type
+          FROM document_vectors
+          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+            AND village_id = ${villageId}
+        `;
+      }
+
       if (categories && categories.length > 0) {
         documentQuery = Prisma.sql`
           SELECT 
@@ -325,6 +380,26 @@ export async function searchVectors(
           FROM document_vectors
           WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
             AND category = ANY(${categories})
+        `;
+      }
+
+      if (villageId && categories && categories.length > 0) {
+        documentQuery = Prisma.sql`
+          SELECT 
+            id,
+            content,
+            document_title as title,
+            category,
+            document_id,
+            chunk_index,
+            page_number,
+            section_title,
+            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
+            'document' as source_type
+          FROM document_vectors
+          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+            AND category = ANY(${categories})
+            AND village_id = ${villageId}
         `;
       }
 

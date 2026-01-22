@@ -22,6 +22,10 @@ import {
   handleDeleteConversation,
   handleRetryAI,
 } from '../controllers/livechat.controller';
+import {
+  handleGetChannelAccount,
+  handleUpsertChannelAccount,
+} from '../controllers/channel-account.controller';
 import { internalAuth } from '../middleware/auth.middleware';
 import {
   validateGetMessages,
@@ -61,5 +65,9 @@ router.post('/conversations/:wa_user_id/send', handleAdminSendMessage);
 router.post('/conversations/:wa_user_id/read', handleMarkAsRead);
 router.post('/conversations/:wa_user_id/retry', handleRetryAI);
 router.delete('/conversations/:wa_user_id', handleDeleteConversation);
+
+// Channel account settings per village
+router.get('/channel-accounts/:village_id', handleGetChannelAccount);
+router.put('/channel-accounts/:village_id', handleUpsertChannelAccount);
 
 export default router;

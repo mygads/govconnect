@@ -251,27 +251,24 @@ Jawaban: Jika laporan tidak ditanggapi dalam waktu yang wajar:
 
 ---
 
-## FAQ KATEGORI: RESERVASI ONLINE
+## FAQ KATEGORI: PERMOHONAN LAYANAN
 
-### Pertanyaan: Apakah bisa reservasi online untuk mengurus surat?
-Jawaban: Ya, beberapa kelurahan menyediakan layanan reservasi online via WhatsApp. Anda bisa booking jadwal kedatangan agar tidak perlu antri lama.
+### Pertanyaan: Apakah bisa mengajukan layanan secara online?
+Jawaban: Ya. Warga dapat mengajukan layanan melalui form publik. Link form akan dikirimkan oleh AI setelah warga meminta layanan atau dapat diakses dari website.
 
-### Pertanyaan: Bagaimana cara reservasi online?
-Jawaban: Cara reservasi online:
-1. Chat ke nomor WhatsApp kelurahan
-2. Sebutkan jenis layanan yang dibutuhkan
-3. Berikan data diri (nama, NIK, alamat, no HP)
-4. Pilih tanggal dan jam kedatangan
-5. Tunggu konfirmasi nomor reservasi
+### Pertanyaan: Bagaimana cara mengajukan layanan?
+Jawaban: Cara mengajukan layanan:
+1. Chat ke WhatsApp kelurahan atau buka form publik
+2. Pilih layanan yang dibutuhkan
+3. Isi data diri dan persyaratan
+4. Kirim form
+5. Terima nomor layanan (LAY-...)
 
-### Pertanyaan: Apakah tetap harus datang ke kelurahan setelah reservasi?
-Jawaban: Ya, reservasi online hanya untuk booking jadwal. Anda tetap harus datang ke kelurahan dengan membawa dokumen persyaratan. Berkas tidak bisa dikirim via WhatsApp.
+### Pertanyaan: Apakah tetap harus datang ke kelurahan setelah mengajukan layanan?
+Jawaban: Ya, untuk layanan yang memerlukan pengambilan dokumen atau verifikasi offline. Silakan ikuti instruksi dari petugas.
 
-### Pertanyaan: Bagaimana jika saya tidak bisa datang sesuai jadwal reservasi?
-Jawaban: Jika tidak bisa datang sesuai jadwal:
-1. Batalkan reservasi via WhatsApp
-2. Atau ubah jadwal ke tanggal lain
-3. Informasikan minimal 1 hari sebelumnya
+### Pertanyaan: Bagaimana jika saya ingin membatalkan permohonan layanan?
+Jawaban: Kirim pesan via WhatsApp dengan menyebutkan nomor layanan (LAY-...). Admin akan memverifikasi dan membatalkan jika memungkinkan.
 
 ---
 
@@ -314,22 +311,22 @@ Jawaban: Layanan yang tersedia di kelurahan:
 10. Surat Pengantar Akta (SPAKTA)
 11. Surat Pengantar Pindah (SPP)
 
-### Pertanyaan: Layanan apa saja yang bisa direservasi online?
-Jawaban: Semua layanan surat di kelurahan bisa direservasi online via WhatsApp, termasuk SKD, SKTM, SKU, SKBM, IKR, SPKTP, SPKK, SPSKCK, SPAKTA, SKK, dan SPP.
+### Pertanyaan: Layanan apa saja yang bisa diajukan online?
+Jawaban: Semua layanan surat di kelurahan bisa diajukan melalui form publik, termasuk SKD, SKTM, SKU, SKBM, IKR, SPKTP, SPKK, SPSKCK, SPAKTA, SKK, dan SPP.
 
-### Pertanyaan: Bagaimana cara reservasi layanan?
-Jawaban: Cara reservasi layanan:
-1. Chat ke nomor WhatsApp kelurahan
-2. Sebutkan jenis layanan yang dibutuhkan
-3. Berikan data diri (nama, NIK, alamat, no HP)
-4. Pilih tanggal dan jam kedatangan
-5. Tunggu konfirmasi nomor reservasi
+### Pertanyaan: Bagaimana cara mengajukan layanan?
+Jawaban: Cara mengajukan layanan:
+1. Chat ke WhatsApp kelurahan atau buka form publik
+2. Pilih layanan yang dibutuhkan
+3. Isi data diri (nama, NIK, alamat, no HP)
+4. Lengkapi persyaratan
+5. Terima nomor layanan
 
-### Pertanyaan: Apakah reservasi online gratis?
-Jawaban: Ya, reservasi online GRATIS. Tidak ada biaya untuk booking jadwal.
+### Pertanyaan: Apakah pengajuan layanan online gratis?
+Jawaban: Ya, pengajuan layanan online GRATIS. Tidak ada biaya untuk pengiriman form.
 
-### Pertanyaan: Setelah reservasi, apakah tetap harus datang ke kelurahan?
-Jawaban: Ya, reservasi hanya untuk booking jadwal. Anda tetap harus datang ke kelurahan dengan membawa dokumen persyaratan lengkap.
+### Pertanyaan: Setelah mengajukan layanan, apakah tetap harus datang ke kelurahan?
+Jawaban: Ya, jika layanan memerlukan verifikasi atau pengambilan dokumen secara langsung.
 
 ---
 

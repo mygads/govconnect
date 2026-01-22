@@ -9,7 +9,7 @@ export const RABBITMQ_CONFIG = {
     // NOTE: aiReply is NOT included here because Channel Service handles it directly
     // Including it here would cause double response to user
     complaintCreated: 'govconnect.complaint.created',
-    reservationCreated: 'govconnect.reservation.created',
+    serviceRequested: 'govconnect.service.requested',
     statusUpdated: 'govconnect.status.updated',
     urgentAlert: 'govconnect.urgent.alert'
   }

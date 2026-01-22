@@ -1,15 +1,15 @@
 # GovConnect Case Service
 
-Service 3: REST API untuk manajemen laporan (complaints) dan tiket layanan (tickets).
+Service 3: REST API untuk manajemen laporan (complaints) dan permohonan layanan (service requests).
 
 ## 📋 Overview
 
 Case Service adalah layanan CRUD yang mengelola:
 - **Laporan** (Complaints): Laporan masalah dari warga (jalan rusak, lampu mati, dll)
-- **Tiket** (Tickets): Tiket layanan administrasi (surat keterangan, surat pengantar, dll)
+- **Permohonan Layanan** (Service Requests): Permohonan layanan administrasi (surat keterangan, surat pengantar, dll)
 
 Service ini dipanggil oleh:
-- **AI Orchestrator** (Phase 2) - untuk create laporan/tiket
+- **AI Orchestrator** (Phase 2) - untuk create laporan/permohonan layanan
 - **Dashboard** (Phase 4) - untuk view dan update status
 
 ## 🏗️ Architecture
@@ -33,12 +33,13 @@ Service ini dipanggil oleh:
 - `status`: baru, proses, selesai, ditolak
 - `admin_notes`: Catatan dari admin (optional)
 
-### Ticket
-- `ticket_id`: TIK-YYYYMMDD-XXX (unique)
+### Service Request
+- `request_number`: LAY-YYYYMMDD-XXX (unique)
+- `service_id`: ID layanan
 - `wa_user_id`: 628xxx
-- `jenis`: surat_keterangan, surat_pengantar, izin_keramaian
-- `data_json`: JSON field untuk data flexible
-- `status`: pending, proses, selesai, ditolak
+- `citizen_data_json`: Data pemohon (JSON)
+- `requirement_data_json`: Data persyaratan (JSON)
+- `status`: baru, proses, selesai, ditolak, dibatalkan
 - `admin_notes`: Catatan dari admin (optional)
 
 ## 🔄 RabbitMQ Events
@@ -55,13 +56,12 @@ Service ini dipanggil oleh:
 }
 ```
 
-2. **ticket.created**
+2. **service.requested**
 ```json
 {
-  "ticket_id": "TIK-20250124-001",
+  "request_number": "LAY-20250124-001",
   "wa_user_id": "628123456789",
-  "jenis": "surat_keterangan",
-  "created_at": "2025-01-24T10:00:00Z"
+  "service_id": "service-uuid"
 }
 ```
 
@@ -220,10 +220,10 @@ Get complaint statistics
 }
 ```
 
-### Ticket Endpoints
+### Service Request Endpoints
 
-#### POST /tiket/create
-Create new ticket (internal only)
+#### POST /service-requests
+Create new service request (internal only)
 
 **Headers**:
 ```
@@ -233,12 +233,16 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 **Request**:
 ```json
 {
+  "service_id": "service-uuid",
   "wa_user_id": "628123456789",
-  "jenis": "surat_keterangan",
-  "data_json": {
-    "nama": "John Doe",
+  "citizen_data_json": {
+    "nama_lengkap": "John Doe",
     "nik": "3201010101010001",
-    "keperluan": "Membuat rekening bank"
+    "alamat": "Jl. Merdeka No. 10",
+    "no_hp": "081234567890"
+  },
+  "requirement_data_json": {
+    "ktp": "file://ktp.jpg"
   }
 }
 ```
@@ -248,30 +252,33 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 {
   "status": "success",
   "data": {
-    "ticket_id": "TIK-20250124-001",
-    "status": "pending"
+    "request_number": "LAY-20250124-001",
+    "status": "baru"
   }
 }
 ```
 
-#### GET /tiket
-Get tickets list
+#### GET /service-requests
+Get service requests list
 
 **Query Params**:
-- `status`: pending | proses | selesai | ditolak
-- `jenis`: surat_keterangan | surat_pengantar | izin_keramaian
+- `status`: baru | proses | selesai | ditolak | dibatalkan
+- `service_id`: service UUID
 - `wa_user_id`: 628xxx
-- `limit`: default 20
-- `offset`: default 0
+- `request_number`: LAY-YYYYMMDD-XXX
+- `village_id`: village UUID
 
-#### GET /tiket/:id
-Get ticket by ID
+#### GET /service-requests/:id
+Get service request by ID
 
-#### PATCH /tiket/:id/status
-Update ticket status
+#### PATCH /service-requests/:id/status
+Update service request status
 
-#### GET /tiket/statistics
-Get ticket statistics
+#### POST /service-requests/:id/cancel
+Cancel service request
+
+#### GET /service-requests/history/:wa_user_id
+Get service request history
 
 ## 🛠️ Development
 
@@ -309,7 +316,7 @@ PORT="3003"
 LOG_LEVEL="info"
 LOG_DIR="logs"
 ID_PREFIX_COMPLAINT="LAP"
-ID_PREFIX_TICKET="TIK"
+ID_PREFIX_SERVICE_REQUEST="LAY"
 ```
 
 ### Scripts
@@ -378,7 +385,7 @@ curl -X PATCH http://localhost:3003/laporan/LAP-20250124-001/status \
 
 ## 📝 Notes
 
-- **ID Generator**: LAP-/TIK- IDs reset daily and auto-increment
+- **ID Generator**: LAP-/LAY- IDs reset daily and auto-increment
 - **Authentication**: Internal endpoints require `X-Internal-API-Key` header
 - **Event Publishing**: All create/update operations publish events to RabbitMQ
 - **Pagination**: Default limit 20, max 100 per request
@@ -406,10 +413,11 @@ govconnect-case-service/
 │   │   └── rabbitmq.ts
 │   ├── controllers/
 │   │   ├── complaint.controller.ts
-│   │   └── ticket.controller.ts
+│   │   ├── complaint-meta.controller.ts
+│   │   └── service-catalog.controller.ts
 │   ├── services/
 │   │   ├── complaint.service.ts
-│   │   ├── ticket.service.ts
+│   │   ├── user-history.service.ts
 │   │   └── rabbitmq.service.ts
 │   ├── middleware/
 │   │   ├── auth.middleware.ts
@@ -417,7 +425,9 @@ govconnect-case-service/
 │   │   └── error-handler.middleware.ts
 │   ├── routes/
 │   │   ├── complaint.routes.ts
-│   │   ├── ticket.routes.ts
+│   │   ├── complaint-meta.routes.ts
+│   │   ├── service-catalog.routes.ts
+│   │   ├── statistics.routes.ts
 │   │   └── health.routes.ts
 │   ├── utils/
 │   │   ├── logger.ts

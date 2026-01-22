@@ -11,120 +11,170 @@ model Complaint {
   id           String   @id @default(cuid())
   complaint_id String   @unique
   wa_user_id   String
-  kategori     String   // jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak
+  kategori     String   // nama kategori/jenis laporan
+  category_id  String?
+  type_id      String?
   deskripsi    String   @db.Text
   alamat       String?
   rt_rw        String?
   foto_url     String?
+  is_urgent    Boolean  @default(false)
+  require_address Boolean @default(false)
+  village_id   String?
   status       String   @default("baru") // baru, proses, selesai, ditolak
   admin_notes  String?  @db.Text
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
+
+  category     ComplaintCategory? @relation(fields: [category_id], references: [id])
+  type         ComplaintType? @relation(fields: [type_id], references: [id])
+  updates      ComplaintUpdate[]
   
   @@index([wa_user_id])
   @@index([status])
   @@index([kategori])
+  @@index([category_id])
+  @@index([type_id])
+  @@index([village_id])
   @@index([created_at])
   @@index([rt_rw])
   @@map("complaints")
 }
 
-// ==================== LAYANAN PEMERINTAHAN ====================
-// Daftar layanan tetap yang bisa diaktifkan/nonaktifkan oleh admin
+// ==================== PENGADUAN KATEGORI & JENIS ====================
 
-model Service {
-  id                  String   @id @default(cuid())
-  code                String   @unique // kode unik layanan
-  name                String   // nama layanan
-  description         String   @db.Text // deskripsi layanan
-  category            String   // kategori: administrasi, perizinan, kependudukan, sosial
-  
-  // Pengaturan layanan
-  is_active           Boolean  @default(true) // layanan aktif atau tidak
-  is_online_available Boolean  @default(true) // bisa reservasi online atau tidak
-  
-  // Persyaratan dan SOP
-  requirements        String[] // daftar persyaratan dokumen
-  sop_steps           String[] // langkah-langkah SOP
-  estimated_duration  Int      @default(30) // estimasi durasi layanan dalam menit
-  
-  // Jam operasional (JSON format)
-  operating_hours     Json?    // {"senin": {"open": "08:00", "close": "15:00"}, ...}
-  
-  // Kuota harian
-  daily_quota         Int      @default(20) // kuota reservasi per hari
-  
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
-  
-  reservations        Reservation[]
-  
-  @@index([code])
-  @@index([category])
-  @@index([is_active])
-  @@map("services")
+model ComplaintCategory {
+  id          String   @id @default(cuid())
+  village_id  String
+  name        String
+  description String?  @db.Text
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  types       ComplaintType[]
+  complaints  Complaint[]
+
+  @@index([village_id])
+  @@index([name])
+  @@map("complaint_categories")
 }
 
-// ==================== RESERVASI ====================
-// Pengganti model Ticket - untuk reservasi kedatangan warga
+model ComplaintType {
+  id            String   @id @default(cuid())
+  category_id   String
+  name          String
+  description   String?  @db.Text
+  is_urgent     Boolean  @default(false)
+  require_address Boolean @default(false)
+  send_important_contacts Boolean @default(false)
+  important_contact_category String?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
 
-model Reservation {
-  id               String   @id @default(cuid())
-  reservation_id   String   @unique // RSV-YYYYMMDD-XXX
-  wa_user_id       String
-  
-  // Relasi ke layanan
-  service_id       String
-  service          Service  @relation(fields: [service_id], references: [id])
-  
-  // Data umum warga (pertanyaan standar)
-  citizen_data     Json     // {nama, nik, alamat, no_hp, keperluan_detail}
-  
-  // Jadwal reservasi
-  reservation_date DateTime // tanggal reservasi
-  reservation_time String   // slot waktu: "08:00", "09:00", dst
-  queue_number     Int      // nomor antrian hari itu
-  
-  // Status reservasi
-  status           String   @default("pending") // pending, confirmed, arrived, completed, cancelled, no_show
-  
-  // Catatan
-  admin_notes      String?  @db.Text
-  cancel_reason    String?  @db.Text
-  
-  // Timestamps
-  confirmed_at     DateTime?
-  arrived_at       DateTime?
-  completed_at     DateTime?
-  cancelled_at     DateTime?
-  created_at       DateTime @default(now())
-  updated_at       DateTime @updatedAt
-  
+  category      ComplaintCategory @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  complaints    Complaint[]
+
+  @@index([category_id])
+  @@index([name])
+  @@map("complaint_types")
+}
+
+model ComplaintUpdate {
+  id           String   @id @default(cuid())
+  complaint_id String
+  admin_id     String?
+  note_text    String   @db.Text
+  image_url    String?
+  created_at   DateTime @default(now())
+
+  complaint    Complaint @relation(fields: [complaint_id], references: [id], onDelete: Cascade)
+
+  @@index([complaint_id])
+  @@map("complaint_updates")
+}
+
+// ==================== LAYANAN DINAMIS ====================
+
+model ServiceCategory {
+  id          String   @id @default(cuid())
+  village_id  String
+  name        String
+  description String?  @db.Text
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  services    ServiceItem[]
+
+  @@index([village_id])
+  @@index([name])
+  @@map("service_categories")
+}
+
+model ServiceItem {
+  id          String   @id @default(cuid())
+  village_id  String
+  category_id String
+  name        String
+  description String   @db.Text
+  slug        String   @unique
+  mode        String   @default("both") // online|offline|both
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  category    ServiceCategory @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  requirements ServiceRequirement[]
+  requests    ServiceRequest[]
+
+  @@index([village_id])
+  @@index([category_id])
+  @@index([mode])
+  @@map("services_dynamic")
+}
+
+model ServiceRequirement {
+  id          String   @id @default(cuid())
+  service_id  String
+  label       String
+  field_type  String   // file|text|textarea|select|radio|date|number
+  is_required Boolean  @default(true)
+  options_json Json?
+  help_text   String?
+  order_index Int      @default(0)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  service     ServiceItem @relation(fields: [service_id], references: [id], onDelete: Cascade)
+
+  @@index([service_id])
+  @@index([field_type])
+  @@map("service_requirements")
+}
+
+model ServiceRequest {
+  id                    String   @id @default(cuid())
+  request_number        String   @unique
+  service_id            String
+  wa_user_id            String
+  citizen_data_json     Json
+  requirement_data_json Json
+  status                String   @default("baru") // baru|proses|selesai|ditolak|dibatalkan
+  admin_notes           String?  @db.Text
+  edit_token            String?  @unique
+  edit_token_expires_at DateTime?
+  edit_token_used_at    DateTime?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  service               ServiceItem @relation(fields: [service_id], references: [id])
+
   @@index([wa_user_id])
   @@index([service_id])
   @@index([status])
-  @@index([reservation_date])
   @@index([created_at])
-  @@map("reservations")
+  @@map("service_requests")
 }
 
-// ==================== LEGACY: TICKET (untuk backward compatibility) ====================
-// Akan di-deprecate, data lama tetap tersimpan
 
-model Ticket {
-  id          String   @id @default(cuid())
-  ticket_id   String   @unique
-  wa_user_id  String
-  jenis       String   // surat_keterangan, surat_pengantar, izin_keramaian
-  data_json   Json     // Flexible storage for different ticket types
-  status      String   @default("pending") // pending, proses, selesai, ditolak
-  admin_notes String?  @db.Text
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
-  
-  @@index([wa_user_id])
-  @@index([status])
-  @@index([jenis])
-  @@index([created_at])
-  @@map("tickets")
-}

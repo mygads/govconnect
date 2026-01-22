@@ -8,6 +8,7 @@ import {
   handleUpdateComplaintStatus,
   handleGetComplaintStatistics,
   handleCancelComplaint,
+  handleUpdateComplaintByUser,
 } from '../controllers/complaint.controller';
 import { internalAuth } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
@@ -89,6 +90,19 @@ router.post(
   ],
   validate,
   handleCancelComplaint
+);
+
+router.patch(
+  '/:id/update',
+  internalAuth,
+  [
+    body('wa_user_id').matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+    body('alamat').optional().isString(),
+    body('deskripsi').optional().isString(),
+    body('rt_rw').optional().isString(),
+  ],
+  validate,
+  handleUpdateComplaintByUser
 );
 
 export default router;

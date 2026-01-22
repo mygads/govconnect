@@ -16,7 +16,7 @@
 
 services:
   # ===================================================================================
-  # Service 1: Channel Service (WhatsApp Gateway)
+  # Service 1: Channel Service (WhatsApp Channel)
   # ===================================================================================
   channel-service:
     build:

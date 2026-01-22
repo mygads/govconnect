@@ -1,511 +1,185 @@
 # Arsitektur GovConnect - Detail
 
 ## 🏗️ High-Level Architecture
+# Arsitektur GovConnect (Redesain)
+
+Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa/kelurahan berbasis WhatsApp + web.
+
+## 🧭 Prinsip Dasar
+- **Satu akun = satu desa/kelurahan** (saat ini). Pilihan pada register dikunci.
+- **Future**: akun tingkat kecamatan dapat menautkan banyak desa.
+- **AI Service stateless** (tanpa database).
+- **Satu service = satu database** (PostgreSQL terpisah).
+- **Chat history hanya di Channel Service** (maks. 30 pesan per user).
+
+---
+
+## 🏗️ High-Level Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                         EXTERNAL LAYER                           │
-│  ┌────────────┐              ┌──────────────┐                   │
-│  │  WhatsApp  │              │   Admin      │                   │
-│  │   Users    │              │   Browser    │                   │
-│  └─────┬──────┘              └──────┬───────┘                   │
-└────────┼─────────────────────────────┼──────────────────────────┘
-         │                             │
-         │ Webhook                     │ HTTPS
-         ▼                             ▼
+│                        CLIENT LAYER                              │
+│  - WhatsApp Users  - Webchat Widget  - Admin Dashboard           │
+└───────────────────────┬───────────────────────┬──────────────────┘
+                        │                       │
+                        ▼                       ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                      API GATEWAY LAYER                           │
-│  ┌────────────────────────────────────────────────────────┐     │
-│  │              Traefik (Reverse Proxy)                   │     │
-│  │  - Load Balancing                                      │     │
-│  │  - SSL Termination                                     │     │
-│  │  - Service Discovery                                   │     │
-│  │  - Health Checks                                       │     │
-│  └────────────────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────────────┘
-         │
-         │ Internal Routing
-         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                    APPLICATION LAYER                             │
+│                      APPLICATION SERVICES                        │
 │                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │   Channel    │    │      AI      │    │     Case     │       │
-│  │   Service    │◄──►│   Service    │───►│   Service    │       │
-│  │  Port 3001   │    │  Port 3002   │    │  Port 3003   │       │
-│  │              │    │              │    │              │       │
-│  │  - Webhook   │    │  - Intent    │    │  - Complaint │       │
-│  │  - Message   │    │  - RAG       │    │  - Ticket    │       │
-│  │  - Takeover  │    │  - LLM       │    │  - Status    │       │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘       │
-│         │                   │                   │                │
-│  ┌──────▼───────┐    ┌──────▼───────┐                           │
-│  │Notification  │    │   Dashboard  │                           │
-│  │   Service    │    │   (Next.js)  │                           │
-│  │  Port 3004   │    │  Port 3000   │                           │
-│  └──────────────┘    └──────────────┘                           │
+│  Channel Service (WA)  ↔  AI Orchestrator  ↔  Case Service        │
+│  Notification Service  ←  (Events)                                │
+│  Dashboard (Next.js: Admin + Public Form)                          │
 └──────────────────────────────────────────────────────────────────┘
-         │
-         │ Database & Message Broker
-         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                      DATA LAYER                                  │
-│  ┌────────────────────────────────────────────────────────┐     │
-│  │         PostgreSQL 17 + pgvector (Database)            │     │
-│  │                                                        │     │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │     │
-│  │  │gc_channel│ │  gc_ai   │ │ gc_case  │ │gc_notif  │  │     │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘  │     │
-│  │  ┌──────────┐                                          │     │
-│  │  │gc_dashbrd│                                          │     │
-│  │  └──────────┘                                          │     │
-│  └────────────────────────────────────────────────────────┘     │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────┐     │
-│  │              RabbitMQ (Message Broker)                 │     │
-│  │  Exchange: govconnect.events (topic)                   │     │
-│  │  VHost: /govconnect                                    │     │
-│  └────────────────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────────────┘
-         │
-         │ Monitoring & Logging
-         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                   OBSERVABILITY LAYER                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
-│  │  Prometheus  │  │   Grafana    │  │ Loki+Promtail│           │
-│  │  (Metrics)   │  │  (Visualize) │  │   (Logs)     │           │
-│  └──────────────┘  └──────────────┘  └──────────────┘           │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-## 🔄 Communication Patterns
-
-### 1. Synchronous Communication (REST API)
-
-**Request-Response Pattern**
-
-```
-Client Request
-    ↓
-API Gateway (Traefik)
-    ↓
-Target Service
-    ↓
-Process Request
-    ↓
-Query Database
-    ↓
-Return Response
-```
-
-**Contoh**: AI Service → Case Service
-```typescript
-// AI Service memanggil Case Service untuk create complaint
-const response = await axios.post(
-  'http://case-service:3003/internal/complaints',
-  {
-    wa_user_id: '628123456789',
-    kategori: 'jalan_rusak',
-    alamat: 'Jl. Melati No. 15',
-    deskripsi: 'Banyak lubang'
-  },
-  {
-    headers: {
-      'x-internal-api-key': process.env.INTERNAL_API_KEY
-    }
-  }
-);
-```
-
-### 2. Asynchronous Communication (Message Broker)
-
-**Publish-Subscribe Pattern**
-
-```
-Producer Service
-    ↓
-Publish Message to RabbitMQ
-    ↓
-Exchange: govconnect.events
-    ↓
-Queue: service-specific queues
-    ↓
-Consumer Service(s)
-    ↓
-Process Message
-    ↓
-Acknowledge
-```
-
-**Contoh**: Channel Service → AI Service
-```typescript
-// Channel Service publish message baru
-await rabbitMQ.publish(
-  'govconnect.events',           // Exchange
-  'whatsapp.message.received',   // Routing key
-  {
-    wa_user_id: '628123456789',
-    message: 'Saya mau lapor jalan rusak',
-    message_id: 'msg_123'
-  }
-);
-
-// AI Service consume message
-await rabbitMQ.subscribe(
-  'ai-service.whatsapp.message.#',
-  async (msg) => {
-    await processMessage(msg);
-  }
-);
-```
-
-## 🎯 Service Responsibilities
-
-### Channel Service (Port 3001)
-
-**Domain**: Message Gateway & Communication
-
-**Responsibilities**:
-- Menerima webhook dari WhatsApp API
-- Validasi dan parsing message
-- Menyimpan incoming/outgoing messages (WhatsApp & Webchat)
-- Mengirim message ke WhatsApp API
-- Message batching untuk efisiensi
-- Takeover mode (admin live chat) untuk WhatsApp & Webchat
-- Media handling (images, documents)
-- Webchat message sync (dari AI Service)
-
-**Database**: `gc_channel`
-- messages, conversations, user_profiles, takeover_sessions
-
-**Endpoints**:
-```
-POST   /webhook/whatsapp          # Receive WhatsApp webhook
-GET    /webhook/whatsapp          # Webhook verification
-POST   /internal/messages/send    # Send message (WhatsApp)
-GET    /internal/messages         # Get messages
-POST   /internal/takeover/:id/start  # Start takeover (WhatsApp/Webchat)
-POST   /internal/takeover/:id/end    # End takeover
-GET    /internal/takeover/:id/status # Check takeover status
-POST   /internal/webchat/messages    # Sync webchat messages
-GET    /internal/webchat/:id/messages # Get webchat messages
-GET    /health
-```
-
-### AI Service (Port 3002)
-
-**Domain**: AI Orchestration & Intelligence
-
-**Responsibilities**:
-- 2-Layer LLM Architecture (Layer 1: Intent + Entity, Layer 2: Response)
-- Intent detection (14 intent types)
-- Data extraction dari natural language
-- RAG (Retrieval Augmented Generation)
-- Vector search untuk knowledge base
-- LLM integration (Gemini AI)
-- Response caching untuk query umum
-- Webchat API endpoint (synchronous processing)
-- AI Analytics & Statistics
-
-**Database**: `gc_ai`
-- knowledge_vectors (pgvector extension)
-
-**Endpoints**:
-```
-POST   /internal/process-message  # Process message (WhatsApp)
-POST   /api/webchat               # Process webchat message (sync)
-GET    /api/webchat/:session_id   # Get webchat session history
-GET    /api/webchat/:session_id/poll # Poll for admin messages
-GET    /internal/analytics        # Get analytics
-GET    /stats/optimization        # AI optimization stats
-POST   /internal/knowledge/search # Search knowledge
-POST   /internal/documents/process # Process documents
-GET    /health
-```
-
-**Architecture Modes** (controlled by `USE_2_LAYER_ARCHITECTURE` env var):
-- **Single-Layer**: Direct LLM call for intent + response
-- **2-Layer**: Layer 1 (Fast Intent + Entity) → Layer 2 (Response Generation)
-
-### Case Service (Port 3003)
-
-**Domain**: Complaint & Ticket Management
-
-**Responsibilities**:
-- Create complaint/laporan
-- Update complaint status
-- Get complaint details
-- Search & filter complaints
-- Generate complaint ID (LAP-YYYYMMDD-XXX)
-- Complaint statistics
-
-**Database**: `gc_case`
-- complaints, complaint_updates, complaint_media
-
-**Endpoints**:
-```
-POST   /internal/complaints       # Create complaint
-GET    /internal/complaints/:id   # Get complaint
-PUT    /internal/complaints/:id   # Update complaint
-GET    /internal/complaints       # List complaints
-GET    /internal/complaints/stats # Statistics
-GET    /health
-```
-
-### Notification Service (Port 3004)
-
-**Domain**: Notification Delivery
-
-**Responsibilities**:
-- Send notifications
-- Notification templates
-- Notification history
-- Delivery status tracking
-
-**Database**: `gc_notification`
-- notifications, notification_templates
-
-**Endpoints**:
-```
-POST   /internal/notifications    # Create notification
-GET    /internal/notifications    # List notifications
-GET    /internal/notifications/:id
-PUT    /internal/notifications/:id/status
-GET    /health
-```
-
-### Dashboard (Port 3000)
-
-**Domain**: Admin Panel & Monitoring
-
-**Responsibilities**:
-- Admin authentication (JWT)
-- Complaint & Reservation management UI
-- Knowledge base management
-- Document upload & processing
-- Live chat (takeover) untuk WhatsApp & Webchat
-- AI Analytics (biaya dalam Rupiah, usage stats)
-- Statistics & analytics
-- Activity logs
-
-**Database**: `gc_dashboard`
-- admin_users, admin_sessions, activity_logs, knowledge_base, knowledge_documents, document_chunks
-
-**Pages**:
-```
-/login              # Admin login
-/dashboard          # Main dashboard
-/complaints         # Complaint list
-/complaints/:id     # Complaint detail
-/reservations       # Reservation list
-/knowledge          # Knowledge base
-/documents          # Document management
-/live-chat          # Live chat with users (WhatsApp & Webchat)
-/ai-analytics       # AI Analytics (biaya, usage, optimization)
-/analytics          # General analytics
-```
-
-## 🐳 Docker Architecture
-
-### Container Structure
-
-```yaml
-# Network Layer
-networks:
-  infra-network:      # Infrastructure services
-  govconnect-network: # Application services
-
-# Infrastructure (database/docker-compose.yml)
-services:
-  postgres:           # PostgreSQL 17 + pgvector
-    image: pgvector/pgvector:pg17
-    networks: [infra-network]
-
-# Supporting (supporting/docker-compose.yml)
-services:
-  rabbitmq:           # Message Broker
-  prometheus:         # Metrics
-  grafana:            # Visualization
-  loki:               # Logging
-  promtail:           # Log collector
-
-# Application (govconnect/docker-compose.yml)
-services:
-  channel-service:
-    networks: [govconnect-network, infra-network]
-  ai-service:
-    networks: [govconnect-network, infra-network]
-  case-service:
-    networks: [govconnect-network, infra-network]
-  notification-service:
-    networks: [govconnect-network, infra-network]
-  dashboard:
-    networks: [govconnect-network, infra-network]
-```
-
-### Network Topology
-
-```
-┌─────────────────────────────────────────────────────┐
-│  infra-network                                      │
-│  - PostgreSQL (postgres:5432)                       │
-│  - RabbitMQ (rabbitmq:5672)                         │
-│  - Prometheus, Grafana, Loki                        │
-└─────────────────────────────────────────────────────┘
                         │
-                        │ (Services connect to both)
-                        │
-┌─────────────────────────────────────────────────────┐
-│  govconnect-network                                 │
-│  - Channel Service (channel-service:3001)          │
-│  - AI Service (ai-service:3002)                    │
-│  - Case Service (case-service:3003)                │
-│  - Notification Service (notification-service:3004)│
-│  - Dashboard (dashboard:3000)                      │
-│  - Traefik (traefik:80)                            │
-└─────────────────────────────────────────────────────┘
+                        ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                        DATA LAYER                                │
+│  gc_channel | gc_case | gc_notification | gc_dashboard            │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Health Check Strategy
+---
 
-Setiap service memiliki health check:
+## 🧩 Service Responsibilities (Redesain)
 
-```yaml
-healthcheck:
-  test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
-  interval: 30s
-  timeout: 10s
-  retries: 3
-  start_period: 30s
-```
+### 1) Channel Service (WA Channel)
+**Domain:** WhatsApp + chat history + webhook
 
-## 🤖 2-Layer LLM Architecture
+**Responsibilities:**
+- Terima webhook WhatsApp
+- Simpan chat history max 30 pesan per user
+- Publish event ke RabbitMQ
+- Kirim outbound message ke WA API
+- Simpan konfigurasi channel per desa (1 nomor WA)
 
-### Overview
+**Database:** `gc_channel`
+- `messages`, `send_logs`, `channel_accounts`
 
-GovConnect menggunakan arsitektur 2-Layer LLM untuk pemrosesan AI yang lebih akurat dan efisien:
+---
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     USER MESSAGE                                │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    PREPROCESSING                                │
-│  - Spam Detection                                               │
-│  - Input Sanitization                                           │
-│  - Typo Correction                                              │
-│  - Response Cache Check                                         │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┴───────────────┐
-              │ Cache HIT?                    │
-              │ Yes → Return cached response  │
-              │ No  → Continue to Layer 1     │
-              └───────────────┬───────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    LAYER 1: UNDERSTANDING                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  Fast Intent Classification                              │   │
-│  │  - Pattern matching untuk intent umum                    │   │
-│  │  - Confidence scoring                                    │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  Entity Extraction                                       │   │
-│  │  - Nama, NIK, Alamat, Telepon                           │   │
-│  │  - Kategori, Tanggal, Waktu                             │   │
-│  │  - Complaint ID, Reservation ID                          │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  LLM Call (Gemini) - Intent Confirmation                 │   │
-│  │  - Validate intent dengan context                        │   │
-│  │  - Extract missing entities                              │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Output: { intent, confidence, extracted_data, missing_fields } │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    LAYER 2: RESPONSE GENERATION                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  Context Building                                        │   │
-│  │  - Conversation history                                  │   │
-│  │  - User profile data                                     │   │
-│  │  - Knowledge base (RAG)                                  │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  LLM Call (Gemini) - Response Generation                 │   │
-│  │  - Generate natural response                             │   │
-│  │  - Include guidance text if needed                       │   │
-│  │  - Determine next action                                 │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  Action Handler                                          │   │
-│  │  - CREATE_COMPLAINT → Case Service                       │   │
-│  │  - CREATE_RESERVATION → Case Service                     │   │
-│  │  - CHECK_STATUS → Case Service                           │   │
-│  │  - KNOWLEDGE_QUERY → RAG Search                          │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  Output: { reply_text, guidance_text, next_action }            │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    POST-PROCESSING                              │
-│  - Cache response (if cacheable)                               │
-│  - Record analytics                                             │
-│  - Send response to user                                        │
-└─────────────────────────────────────────────────────────────────┘
-```
+### 2) AI Orchestrator (Stateless)
+**Domain:** Intent + flow logic
 
-### Benefits
+**Responsibilities:**
+- Deteksi intent + entity
+- Menentukan flow: knowledge query, layanan, pengaduan, status, history
+- Query data via REST ke Case Service & Dashboard Service
+- Publish event reply ke Notification Service
+- **RAG scoped per desa** melalui `village_id` untuk konteks knowledge & dokumen
 
-| Aspect | Single-Layer | 2-Layer |
-|--------|--------------|---------|
-| Intent Accuracy | ~85% | ~95% |
-| Entity Extraction | Basic | Comprehensive |
-| Response Quality | Good | Excellent |
-| LLM Calls | 1 | 2 (but cached) |
-| Processing Time | ~1.5s | ~2.5s |
+**Database:** ❌ Tidak ada
 
-### Configuration
+---
 
-```env
-# Enable 2-Layer Architecture (applies to BOTH WhatsApp and Webchat)
-USE_2_LAYER_ARCHITECTURE=true
-```
+### 3) Case Service (Layanan + Pengaduan)
+**Domain:** Semua transaksi layanan masyarakat & pengaduan
 
-## 📦 Response Caching
+**Responsibilities:**
+- CRUD kategori layanan, layanan, persyaratan
+- Public service request (dari form publik)
+- Status & history layanan
+- CRUD kategori pengaduan & jenis pengaduan
+- Kelola laporan masuk, status, update, media penanganan
 
-### Overview
+**Database:** `gc_case`
+- `service_categories`, `services`, `service_requirements`, `service_requests`
+- `complaint_categories`, `complaint_types`, `complaints`, `complaint_updates`
 
-Response caching mengurangi LLM calls untuk query yang sering ditanyakan:
+---
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    CACHE FLOW                                   │
-│                                                                 │
-│  User Message → Normalize → Hash → Check Cache                  │
-│                                      │                          │
-│                          ┌───────────┴───────────┐              │
-│                          │                       │              │
-│                       HIT ↓                   MISS ↓            │
-│                   Return cached            Process with LLM     │
-│                   response                       │              │
-│                                                  ▼              │
-│                                           Store in cache        │
-│                                           (TTL: 1 hour)         │
-└─────────────────────────────────────────────────────────────────┘
-```
+### 4) Notification Service
+**Domain:** Outbound message
 
-### Cacheable Queries
+**Responsibilities:**
+- Konsumsi event `govconnect.ai.reply`
+- Kirim pesan ke Channel Service
+- Log status pengiriman
 
+**Database:** `gc_notification`
+- `notification_logs`, `notification_templates`
+
+---
+
+### 5) Dashboard (Next.js)
+**Domain:** Admin UI + public form
+
+**Responsibilities:**
+- Auth admin & super admin
+- Profil desa (data text) → knowledge base
+- Upload knowledge file (PDF/DOC/DOCX/TXT)
+- Nomor penting per kategori
+- Channel settings (token, WA number, webhook URL, toggle)
+- Testing knowledge (demo) untuk uji RAG per desa
+- Layanan: CRUD kategori/layanan/persyaratan
+- Pengaduan: kategori/jenis, urgent alert, detail & update
+- Public form: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`
+
+**Database:** `gc_dashboard`
+- `admin_users`, `admin_sessions`, `activity_logs`
+- `villages`, `village_profiles`, `knowledge_categories`, `knowledge_documents`
+- `knowledge_chunks`, `important_contact_categories`, `important_contacts`
+- **Scope data**: `knowledge_base`, `knowledge_documents`, dan `knowledge_categories` tersaring per `village_id`
+
+---
+
+## 🔐 Role Model
+- **Desa Admin**: mengelola semua fitur desa.
+- **Super Admin**: melihat semua desa, analitik global, dan setting sistem.
+- **AI model config**: hanya via ENV (bukan di dashboard).
+
+---
+
+## 🔄 Event & Flow
+
+### Event utama
+- `whatsapp.message.received` → AI Orchestrator
+- `govconnect.ai.reply` → Notification Service
+- `govconnect.service.requested` → Notification Service (opsional)
+- `govconnect.complaint.created` → Notification Service
+
+### Flow singkat
+1. Warga kirim WA → Channel Service
+2. Channel Service publish event
+3. AI Orchestrator proses intent
+4. Jika perlu data → REST ke Case Service / Dashboard
+5. AI publish reply event
+6. Notification Service kirim message via Channel Service
+
+---
+
+## 🗄️ Skema Data Inti (Ringkas)
+
+### gc_dashboard
+- `villages` (id, name, slug, is_active)
+- `village_profiles` (nama, alamat, gmaps_url, short_name, jam_buka_json)
+- `knowledge_categories` (default + custom)
+- `knowledge_documents` (file metadata)
+- `knowledge_chunks` (embedding)
+- `important_contact_categories` + `important_contacts`
+- `admin_users` (role: super_admin | village_admin)
+
+### gc_case
+- `service_categories`, `services`, `service_requirements`, `service_requests`
+- `complaint_categories`, `complaint_types`, `complaints`, `complaint_updates`
+
+### gc_channel
+- `channel_accounts` (village_id, wa_number, token, webhook_url, enabled_wa, enabled_webchat)
+- `messages`, `send_logs`
+
+---
+
+## 🌐 Halaman UI (Bahasa Indonesia)
+- **Auth**: Login, Register (desa/kelurahan saja)
+- **Profil Desa**
+- **Knowledge Base** (kategori + upload file)
+- **Nomor Penting**
+- **Channel Connect** (WA token, WA number, webhook URL, toggle)
+- **Testing Knowledge**
+- **Layanan** (kategori, layanan, persyaratan)
+- **Daftar Pelayanan** (list request, detail, status)
+- **Pengaduan** (list, detail, update + upload foto penanganan)
+- **Live Chat & Takeover**
+- **Super Admin**: daftar desa, analytics sistem, pengaturan global
 - Jam operasional kantor
 - Persyaratan dokumen
 - Alamat kantor
@@ -562,12 +236,12 @@ Services yang bisa di-scale horizontal:
 
 ### Load Balancing
 
-Traefik otomatis load balance ke multiple instances:
+Gunakan orchestrator (Docker Swarm/Kubernetes) untuk load balancing antar instance service.
 
 ```yaml
 channel-service:
-  deploy:
-    replicas: 3  # 3 instances
+    deploy:
+        replicas: 3  # 3 instances
 ```
 
 ## 📊 Monitoring Architecture

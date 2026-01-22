@@ -16,11 +16,7 @@ Surat Keterangan Domisili (SKD) adalah surat resmi dari kelurahan yang menyataka
 - Keperluan administrasi lainnya
 
 ### Syarat dan Persyaratan SKD
-1. KTP asli dan fotokopi (2 lembar)
-2. Kartu Keluarga (KK) asli dan fotokopi
-3. Surat Pengantar dari RT/RW
-4. Pas foto 3x4 (2 lembar)
-5. Bukti tempat tinggal (sertifikat/surat sewa/surat keterangan menumpang)
+1. KTP
 
 ### Prosedur Pembuatan SKD
 1. Minta surat pengantar dari RT/RW setempat
@@ -55,11 +51,9 @@ Surat Keterangan Tidak Mampu (SKTM) adalah surat resmi dari kelurahan yang menya
 - Program Kartu Indonesia Sehat (KIS)
 
 ### Syarat dan Persyaratan SKTM
-1. KTP asli dan fotokopi pemohon
-2. Kartu Keluarga (KK) asli dan fotokopi
-3. Surat Pengantar dari RT/RW yang menyatakan kondisi ekonomi
-4. Pas foto 3x4 (2 lembar)
-5. Surat pernyataan tidak mampu (bermaterai)
+1. KTP
+2. Kartu Keluarga (KK)
+3. Terdaftar di DTKS (Data Terpadu Kesejahteraan Sosial) (opsional)
 
 ### Prosedur Pembuatan SKTM
 1. Minta surat pengantar dari RT/RW dengan keterangan kondisi ekonomi
@@ -97,12 +91,8 @@ Surat Keterangan Usaha (SKU) adalah surat resmi dari kelurahan yang menyatakan b
 - Keperluan administrasi usaha lainnya
 
 ### Syarat dan Persyaratan SKU
-1. KTP asli dan fotokopi pemilik usaha
-2. Kartu Keluarga (KK) fotokopi
-3. Surat Pengantar dari RT/RW
-4. Pas foto 3x4 (2 lembar)
-5. Foto tempat usaha (tampak depan)
-6. Surat pernyataan memiliki usaha
+1. KTP
+2. Foto usaha
 
 ### Prosedur Pembuatan SKU
 1. Minta surat pengantar dari RT/RW
@@ -141,11 +131,10 @@ Surat Keterangan Belum Menikah (SKBM) adalah surat resmi dari kelurahan yang men
 - Keperluan administrasi pernikahan
 
 ### Syarat dan Persyaratan SKBM
-1. KTP asli dan fotokopi
-2. Kartu Keluarga (KK) asli dan fotokopi
-3. Surat Pengantar dari RT/RW
-4. Pas foto 3x4 (2 lembar)
-5. Akta Kelahiran (fotokopi)
+1. KTP yang bersangkutan
+2. KTP saksi
+3. Kartu Keluarga (KK)
+4. Saksi: Imam dan Tokoh Masyarakat
 
 ### Prosedur Pembuatan SKBM
 1. Minta surat pengantar dari RT/RW
@@ -368,11 +357,9 @@ Surat Keterangan Kematian (SKK) adalah surat keterangan dari kelurahan yang meny
 - Pengurusan pensiun
 
 ### Syarat dan Persyaratan SKK
-1. Surat keterangan kematian dari RS/Dokter/Bidan
-2. KTP almarhum asli
-3. KK asli
-4. KTP pelapor (keluarga)
-5. Surat Pengantar dari RT/RW
+1. KTP yang meninggal
+2. KTP saksi keluarga
+3. Data waktu dan lokasi meninggal
 
 ### Prosedur Pembuatan SKK
 1. Dapatkan surat keterangan kematian dari RS/Dokter

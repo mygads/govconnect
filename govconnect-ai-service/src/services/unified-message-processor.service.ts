@@ -4,7 +4,7 @@
  * SINGLE SOURCE OF TRUTH untuk memproses pesan dari berbagai channel:
  * - WhatsApp (via RabbitMQ)
  * - Webchat (via HTTP)
- * - Future channels (Telegram, etc.)
+ * - Channel lain (opsional)
  * 
  * Semua logic NLU, intent detection, RAG, prompt building, dan action handling
  * dipusatkan di sini agar response konsisten di semua channel.
@@ -21,7 +21,18 @@
 import logger from '../utils/logger';
 import { buildContext, buildKnowledgeQueryContext, sanitizeUserInput } from './context-builder.service';
 import { callGemini } from './llm.service';
-import { createComplaint, getComplaintStatus, cancelComplaint, getUserHistory, HistoryItem } from './case-client.service';
+import {
+  createComplaint,
+  cancelComplaint,
+  cancelServiceRequest,
+  getComplaintTypes,
+  getUserHistory,
+  updateComplaintByUser,
+  getServiceRequestStatusWithOwnership,
+  requestServiceRequestEditToken,
+  HistoryItem,
+} from './case-client.service';
+import { getImportantContacts } from './important-contacts.service';
 import { searchKnowledge, getRAGContext, getKelurahanInfoContext } from './knowledge.service';
 import { shouldRetrieveContext, isSpamMessage } from './rag.service';
 import { detectLanguage, getLanguageContext } from './language-detection.service';
@@ -29,54 +40,16 @@ import { analyzeSentiment, getSentimentContext, needsHumanEscalation } from './s
 import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { RAGContext } from '../types/embedding.types';
-import { caseServiceClient } from '../clients/case-service.client';
-
-// AI Optimization imports
-import { 
-  preProcessMessage, 
-  postProcessResponse, 
-  shouldUseFastPath, 
-  buildFastPathResponse,
-  enhanceLLMFields,
-  OptimizationResult,
-} from './ai-optimizer.service';
-import { fastClassifyIntent } from './fast-intent-classifier.service';
-import { extractAllEntities, extractCitizenDataFromHistory } from './entity-extractor.service';
-
-// User Profile & Context imports
-import { 
-  getProfile, 
-  recordInteraction, 
-  learnFromMessage, 
-  saveDefaultAddress,
-  getProfileContext,
-  recordServiceUsage,
-} from './user-profile.service';
-import { 
-  getEnhancedContext, 
-  updateContext, 
-  recordClarification,
-  recordDataCollected,
-  recordCompletedAction,
-  getContextForLLM,
-} from './conversation-context.service';
-import { 
-  adaptResponse, 
-  buildAdaptationContext,
-} from './response-adapter.service';
-
-// Cross-channel context imports
-import {
-  linkUserToPhone,
-  recordChannelActivity,
-  updateSharedData,
-  getCrossChannelContextForLLM,
-  extractPhoneNumber,
-} from './cross-channel-context.service';
+import { preProcessMessage, postProcessResponse, shouldUseFastPath, buildFastPathResponse } from './ai-optimizer.service';
+import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage } from './user-profile.service';
+import { getEnhancedContext, updateContext, recordDataCollected, recordCompletedAction, getContextForLLM } from './conversation-context.service';
+import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
+import { linkUserToPhone, recordChannelActivity, updateSharedData, getCrossChannelContextForLLM } from './cross-channel-context.service';
+import { normalizeText } from './text-normalizer.service';
 
 // ==================== TYPES ====================
 
-export type ChannelType = 'whatsapp' | 'webchat' | 'telegram' | 'other';
+export type ChannelType = 'whatsapp' | 'webchat' | 'other';
 
 export interface ProcessMessageInput {
   /** Unique user identifier (wa_user_id for WhatsApp, session_id for webchat) */
@@ -128,6 +101,18 @@ const pendingAddressConfirmation: Map<string, {
   foto_url?: string;
 }> = new Map();
 
+// Cancellation confirmation state cache
+// Key: userId, Value: { type, id, reason, timestamp }
+const pendingCancelConfirmation: Map<string, {
+  type: 'laporan' | 'layanan';
+  id: string;
+  reason?: string;
+  timestamp: number;
+}> = new Map();
+
+// Complaint types cache (per village)
+const complaintTypeCache: Map<string, { data: any[]; timestamp: number }> = new Map();
+
 // Cleanup expired confirmations (older than 10 minutes)
 setInterval(() => {
   const now = Date.now();
@@ -138,11 +123,13 @@ setInterval(() => {
       logger.debug('Cleaned up expired address confirmation', { userId: key });
     }
   }
+  for (const [key, value] of pendingCancelConfirmation.entries()) {
+    if (now - value.timestamp > expireMs) {
+      pendingCancelConfirmation.delete(key);
+      logger.debug('Cleaned up expired cancel confirmation', { userId: key });
+    }
+  }
 }, 60 * 1000);
-
-// ==================== TYPO CORRECTIONS ====================
-// Now centralized in text-normalizer.service.ts
-import { normalizeText } from './text-normalizer.service';
 
 // ==================== RESPONSE VALIDATION ====================
 
@@ -175,7 +162,7 @@ export function validateResponse(response: string): string {
   }
   
   // Remove raw JSON/code artifacts
-  if (cleaned.includes('```') || cleaned.includes('{\"')) {
+  if (cleaned.includes('```') || cleaned.includes('{"')) {
     cleaned = cleaned.replace(/```[\s\S]*?```/g, '');
     cleaned = cleaned.replace(/\{\"[\s\S]*?\}/g, '');
     cleaned = cleaned.trim();
@@ -287,6 +274,16 @@ export function isConfirmationResponse(message: string): boolean {
   return confirmPatterns.some(pattern => pattern.test(cleanMessage));
 }
 
+function isNegativeConfirmation(message: string): boolean {
+  const cleanMessage = message.trim().toLowerCase();
+  const rejectPatterns = [
+    /^tidak$/i, /^ga$/i, /^gak$/i, /^nggak$/i, /^engga(k)?$/i,
+    /^batal$/i, /^jangan$/i, /^gak jadi$/i, /^ga jadi$/i, /^nggak jadi$/i,
+    /^tidak jadi$/i, /^belum$/i,
+  ];
+  return rejectPatterns.some(pattern => pattern.test(cleanMessage));
+}
+
 /**
  * Detect emergency complaint
  */
@@ -317,6 +314,51 @@ export function detectEmergencyComplaint(deskripsi: string, currentMessage: stri
   return hasEmergencyKeyword || (isHighPriorityCategory && hasBlockingKeyword);
 }
 
+function normalizeLookupKey(value: string): string {
+  return normalizeText(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+async function getCachedComplaintTypes(villageId?: string): Promise<any[]> {
+  if (!villageId) return [];
+
+  const cacheKey = villageId;
+  const now = Date.now();
+  const cached = complaintTypeCache.get(cacheKey);
+  const ttlMs = 5 * 60 * 1000; // 5 minutes
+
+  if (cached && now - cached.timestamp < ttlMs) {
+    return cached.data;
+  }
+
+  const data = await getComplaintTypes(villageId);
+  complaintTypeCache.set(cacheKey, { data, timestamp: now });
+  return data;
+}
+
+async function resolveComplaintTypeConfig(kategori?: string, villageId?: string) {
+  if (!kategori || !villageId) return null;
+
+  const types = await getCachedComplaintTypes(villageId);
+  if (!types.length) return null;
+
+  const target = normalizeLookupKey(kategori);
+
+  return types.find(type => normalizeLookupKey(type?.name || '') === target) || null;
+}
+
+function buildImportantContactsMessage(contacts: Array<{ name: string; phone: string; description?: string | null }>): string {
+  if (!contacts.length) return '';
+
+  const lines = contacts.map(contact => {
+    const desc = contact.description ? ` (${contact.description})` : '';
+    return `• ${contact.name}: ${contact.phone}${desc}`;
+  });
+
+  return `\n\n📞 *Nomor Penting Terkait*\n${lines.join('\n')}`;
+}
 
 // ==================== ACTION HANDLERS ====================
 
@@ -329,8 +371,11 @@ export async function handleComplaintCreation(
   currentMessage: string, 
   mediaUrl?: string
 ): Promise<string> {
-  const { kategori, rt_rw } = llmResponse.fields;
-  let { alamat, deskripsi } = llmResponse.fields;
+  const { kategori, rt_rw } = llmResponse.fields || {};
+  let { alamat, deskripsi } = llmResponse.fields || {};
+  const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID;
+  const complaintTypeConfig = await resolveComplaintTypeConfig(kategori, villageId);
+  const requireAddress = complaintTypeConfig?.require_address ?? false;
   
   logger.info('LLM complaint fields', {
     userId,
@@ -364,16 +409,17 @@ export async function handleComplaintCreation(
       'banjir': 'Laporan banjir',
       'lainnya': 'Laporan lainnya',
     };
-    deskripsi = kategoriMap[kategori] || `Laporan ${kategori.replace(/_/g, ' ')}`;
+    deskripsi = kategoriMap[kategori] || `Laporan ${String(kategori).replace(/_/g, ' ')}`;
   }
   
   // Check if we have enough information
-  if (!kategori || !alamat) {
+  if (!kategori || (requireAddress && !alamat)) {
     logger.info('Incomplete complaint data, asking for more info', {
       userId,
       hasKategori: !!kategori,
       hasAlamat: !!alamat,
       hasDeskripsi: !!deskripsi,
+      requireAddress,
     });
     
     if (!kategori) {
@@ -388,7 +434,7 @@ export async function handleComplaintCreation(
   }
   
   // Check if alamat is too vague - ask for confirmation
-  if (isVagueAddress(alamat)) {
+  if (alamat && isVagueAddress(alamat)) {
     logger.info('Address is vague, asking for confirmation', { userId, alamat, kategori });
     
     pendingAddressConfirmation.set(userId, {
@@ -405,16 +451,25 @@ export async function handleComplaintCreation(
   }
   
   // Check if this is an emergency complaint
-  const isEmergency = detectEmergencyComplaint(deskripsi, currentMessage, kategori);
+  // PRIORITY RULE:
+  // - Jika ada konfigurasi jenis pengaduan, gunakan itu sebagai sumber utama.
+  // - Heuristic hanya dipakai sebagai fallback saat tidak ada konfigurasi.
+  const isEmergency = typeof complaintTypeConfig?.is_urgent === 'boolean'
+    ? complaintTypeConfig.is_urgent
+    : detectEmergencyComplaint(deskripsi || '', currentMessage, kategori);
   
   // Create complaint in Case Service
   const complaintId = await createComplaint({
     wa_user_id: userId,
     kategori,
     deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
-    alamat: alamat,
+    alamat: alamat || undefined,
     rt_rw: rt_rw || '',
     foto_url: mediaUrl,
+    category_id: complaintTypeConfig?.category_id,
+    type_id: complaintTypeConfig?.id,
+    is_urgent: isEmergency,
+    require_address: requireAddress,
   });
   
   if (complaintId) {
@@ -432,20 +487,98 @@ export async function handleComplaintCreation(
     
     // Record collected data
     recordDataCollected(userId, 'kategori', kategori);
-    recordDataCollected(userId, 'alamat', alamat);
+    if (alamat) {
+      recordDataCollected(userId, 'alamat', alamat);
+    }
     
     const withPhoto = mediaUrl ? ' 📷' : '';
     
+    let importantContactsMessage = '';
+    if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
+      const contacts = await getImportantContacts(
+        villageId,
+        complaintTypeConfig.important_contact_category,
+        undefined
+      );
+      importantContactsMessage = buildImportantContactsMessage(contacts);
+    }
+
     if (isEmergency) {
       logger.info('🚨 Emergency complaint detected', { userId, complaintId, kategori, deskripsi });
-      return `🚨 PRIORITAS TINGGI\n\nTerima kasih laporannya Kak! Ini situasi darurat yang perlu penanganan segera.\n\nSaya sudah catat sebagai LAPORAN PRIORITAS dengan nomor ${complaintId}.${withPhoto}\n\nTim kami akan segera ke lokasi ${alamat}.\n\n⚠️ Untuk keamanan, mohon hindari area tersebut dulu ya Kak.`;
-    } else {
-      return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan survey lokasi dalam 1-3 hari kerja di ${alamat}.`;
+      return `🚨 PRIORITAS TINGGI\n\nTerima kasih laporannya Kak! Ini situasi darurat yang perlu penanganan segera.\n\nSaya sudah catat sebagai LAPORAN PRIORITAS dengan nomor ${complaintId}.${withPhoto}\n\nTim kami akan segera ke lokasi ${alamat || 'yang Anda laporkan'}.\n\n⚠️ Untuk keamanan, mohon hindari area tersebut dulu ya Kak.${importantContactsMessage}`;
     }
-  } else {
-    aiAnalyticsService.recordFailure('CREATE_COMPLAINT');
-    throw new Error('Failed to create complaint in Case Service');
+    
+    return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan survey lokasi dalam 1-3 hari kerja${alamat ? ` di ${alamat}` : ''}.${importantContactsMessage}`;
   }
+  
+  aiAnalyticsService.recordFailure('CREATE_COMPLAINT');
+  throw new Error('Failed to create complaint in Case Service');
+}
+
+/**
+ * Handle service information request
+ */
+export async function handleServiceInfo(userId: string, llmResponse: any): Promise<string> {
+  const { service_slug, service_id } = llmResponse.fields || {};
+  
+  if (!service_slug && !service_id) {
+    return llmResponse.reply_text || 'Baik Kak, layanan apa yang ingin ditanyakan?';
+  }
+  
+  return llmResponse.reply_text || 'Baik Kak, saya cek dulu info layanan tersebut ya.';
+}
+
+/**
+ * Handle service request creation (send public form link)
+ */
+export async function handleServiceRequestCreation(userId: string, llmResponse: any): Promise<string> {
+  const { service_slug } = llmResponse.fields || {};
+  
+  if (!service_slug) {
+    return llmResponse.reply_text || 'Mohon sebutkan nama layanan yang ingin diajukan ya Kak.';
+  }
+  
+  const replyText = llmResponse.reply_text || '';
+  if (replyText.includes('http://') || replyText.includes('https://')) {
+    return replyText;
+  }
+  
+  const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
+  const villageSlug = process.env.DEFAULT_VILLAGE_SLUG || 'desa';
+  const formUrl = `${baseUrl}/form/${villageSlug}/${service_slug}?user=${encodeURIComponent(userId)}`;
+  
+  return `Baik Kak, ini link formulir layanan:\n${formUrl}\n\nSilakan isi data di formulir tersebut. Setelah submit, Kakak akan menerima nomor layanan untuk cek status.`;
+}
+
+/**
+ * Handle service request edit (send edit link with token)
+ */
+export async function handleServiceRequestEditLink(userId: string, llmResponse: any): Promise<string> {
+  const { request_number } = llmResponse.fields || {};
+
+  if (!request_number) {
+    return llmResponse.reply_text || 'Mohon sebutkan nomor layanan yang ingin diubah ya Kak (contoh: LAY-20251201-001).';
+  }
+
+  const tokenResult = await requestServiceRequestEditToken(request_number, userId);
+
+  if (!tokenResult.success) {
+    if (tokenResult.error === 'NOT_FOUND') {
+      return `Permohonan layanan *${request_number}* tidak ditemukan. Mohon cek nomor layanan ya Kak.`;
+    }
+    if (tokenResult.error === 'NOT_OWNER') {
+      return `Maaf Kak, permohonan *${request_number}* bukan milik Kakak, jadi tidak bisa diubah 🙏`;
+    }
+    if (tokenResult.error === 'LOCKED') {
+      return `Permohonan *${request_number}* sudah selesai/ditolak/dibatalkan sehingga tidak bisa diubah.`;
+    }
+    return tokenResult.message || 'Maaf Kak, ada kendala saat menyiapkan link edit.';
+  }
+
+  const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
+  const editUrl = `${baseUrl}/form/edit/${encodeURIComponent(request_number)}?token=${encodeURIComponent(tokenResult.edit_token || '')}`;
+
+  return `Baik Kak, ini link untuk mengubah data permohonan layanan:\n${editUrl}\n\nLink ini berlaku 24 jam dan hanya bisa dipakai sekali.`;
 }
 
 /**
@@ -514,8 +647,6 @@ function extractAddressFromMessage(currentMessage: string, userId: string): stri
  * IMPROVED: Better detection for landmarks like schools, mosques, etc.
  */
 function extractAddressFromComplaintMessage(message: string, userId: string): string {
-  const lowerMessage = message.toLowerCase();
-  
   // Pattern 1: "di depan/dekat/belakang/samping [landmark]"
   // This catches: "di depan sman 1 margahayu", "di dekat masjid al-ikhlas"
   const landmarkPatterns = [
@@ -534,7 +665,7 @@ function extractAddressFromComplaintMessage(message: string, userId: string): st
     const match = message.match(pattern);
     if (match && match[1]) {
       // Include the preposition (depan/dekat/etc) for context
-      const fullMatch = message.match(new RegExp(`((?:depan|dekat|belakang|samping|sekitar)\\s+${match[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i'));
+      const fullMatch = message.match(new RegExp(`((?:depan|dekat|belakang|samping|sekitar)\\s+${match[1].replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')})`, 'i'));
       const alamat = fullMatch ? fullMatch[1].trim() : match[1].trim();
       
       if (alamat.length >= 5) {
@@ -546,7 +677,7 @@ function extractAddressFromComplaintMessage(message: string, userId: string): st
   
   // Pattern 2: "di [jalan/jln/jl] [nama jalan]"
   const streetPatterns = [
-    /(?:di|lokasi|alamat|tempat)\s+((?:jalan|jln|jl\.?)\s+[^,]+(?:no\.?\s*\d+)?(?:\s+\w+)?)/i,
+    /(?:di|lokasi|alamat|tempat)\s+((?:jalan|jln|jl\.?)[^,]+(?:no\.?\s*\d+)?(?:\s+\w+)?)/i,
   ];
   
   for (const pattern of streetPatterns) {
@@ -584,357 +715,15 @@ function extractAddressFromComplaintMessage(message: string, userId: string): st
 }
 
 /**
- * Handle reservation creation
- */
-export async function handleReservationCreation(userId: string, llmResponse: any, conversationHistory?: Array<{role: string; content: string}>): Promise<string> {
-  logger.info('[Reservation] Handler called', { userId, fields: llmResponse.fields, reply_text: llmResponse.reply_text?.substring(0, 100), hasConversationHistory: !!conversationHistory });
-  
-  const fields = llmResponse.fields || {};
-  let { service_code, citizen_data, reservation_date, reservation_time, missing_info } = fields;
-  service_code = service_code || fields.service_code;
-  
-  const VALID_SERVICE_CODES = ['SKD', 'SKU', 'SKTM', 'SKBM', 'IKR', 'SPKTP', 'SPKK', 'SPSKCK', 'SPAKTA', 'SKK', 'SPP'];
-  
-  let cleanServiceCode = '';
-  let isValidServiceCode = false;
-  
-  if (Array.isArray(service_code)) {
-    const validService = service_code.find(code => 
-      typeof code === 'string' && VALID_SERVICE_CODES.includes(code.trim().toUpperCase())
-    );
-    if (validService) {
-      cleanServiceCode = validService.trim().toUpperCase();
-      isValidServiceCode = true;
-    }
-  } else if (typeof service_code === 'string') {
-    cleanServiceCode = service_code.trim().toUpperCase();
-    isValidServiceCode = VALID_SERVICE_CODES.includes(cleanServiceCode);
-  }
-  
-  // Smart extraction from reply_text
-  const replyText = llmResponse.reply_text || '';
-  
-  if (!reservation_date && replyText) {
-    reservation_date = extractDateFromText(replyText);
-  }
-  
-  if (!reservation_time && replyText) {
-    reservation_time = extractTimeFromText(replyText);
-  }
-  
-  const hasCitizenData = citizen_data && Object.keys(citizen_data).length > 0;
-  let hasRequiredCitizenData = hasCitizenData && citizen_data.nama_lengkap && citizen_data.nik;
-  
-  // Always try to extract from history to fill missing data
-  citizen_data = citizen_data || {};
-  
-  const namaMatch = replyText.match(/Nama:\s*([^\n•]+)/i);
-  if (namaMatch && !citizen_data.nama_lengkap) {
-    citizen_data.nama_lengkap = namaMatch[1].trim();
-  }
-  
-  // First try to extract from conversationHistory (for webchat)
-  if (conversationHistory && conversationHistory.length > 0) {
-    const userMessages = conversationHistory
-      .filter(m => m.role === 'user')
-      .map(m => m.content)
-      .join(' ');
-    
-    logger.info('[Reservation] Extracting from conversationHistory', { userId, userMessagesLength: userMessages.length });
-    
-    // Extract NIK
-    if (!citizen_data.nik) {
-      const nikMatch = userMessages.match(/\b(\d{16})\b/);
-      if (nikMatch) citizen_data.nik = nikMatch[1];
-    }
-    
-    // Extract phone
-    if (!citizen_data.no_hp) {
-      const phoneMatch = userMessages.match(/\b(08\d{8,12})\b/);
-      if (phoneMatch) citizen_data.no_hp = phoneMatch[1];
-    }
-    
-    // Extract name - look for standalone name messages
-    if (!citizen_data.nama_lengkap) {
-      const namePatterns = [
-        /nama\s+(?:saya|aku)\s+(?:adalah\s+)?([A-Za-z]+(?:\s+[A-Za-z]+){0,3})/i,
-        /(?:saya|aku)\s+([A-Za-z]+(?:\s+[A-Za-z]+){0,3})(?:\s+(?:mau|ingin|nik|alamat)|\s*$)/i,
-      ];
-      for (const pattern of namePatterns) {
-        const match = userMessages.match(pattern);
-        if (match && match[1] && match[1].length >= 2) {
-          citizen_data.nama_lengkap = match[1].trim();
-          break;
-        }
-      }
-      
-      // Also check individual messages for standalone names
-      if (!citizen_data.nama_lengkap) {
-        const excludeWords = ['ya', 'iya', 'ok', 'oke', 'tidak', 'bukan', 'mau', 'ingin', 'sudah', 'belum', 'sip', 'siap', 'baik', 'terima', 'kasih', 'halo', 'hai', 'hi'];
-        for (const msg of conversationHistory.filter(m => m.role === 'user')) {
-          const content = msg.content.trim();
-          if (/^[A-Za-z]+(?:\s+[A-Za-z]+){0,3}$/.test(content) && content.length >= 2 && content.length <= 50) {
-            if (!excludeWords.includes(content.toLowerCase())) {
-              citizen_data.nama_lengkap = content;
-              break;
-            }
-          }
-        }
-      }
-    }
-    
-    // Extract address
-    if (!citizen_data.alamat) {
-      const addressMatch = userMessages.match(/(?:alamat|tinggal|domisili)\s+(?:di\s+)?(.+?)(?:\s*,?\s*(?:untuk|mau|nik|hp)|\s*$)/i);
-      if (addressMatch && addressMatch[1] && addressMatch[1].length >= 5) {
-        citizen_data.alamat = addressMatch[1].trim();
-      }
-    }
-    
-    logger.info('[Reservation] Extracted from conversationHistory', { userId, citizen_data });
-  }
-  
-  // Then try to extract from channel-service history (for WhatsApp)
-  try {
-    const historyData = await extractCitizenDataFromHistory(userId);
-    logger.info('[Reservation] Extracted citizen data from channel-service', { userId, historyData });
-    
-    if (historyData) {
-      if (!citizen_data.nama_lengkap && historyData.nama_lengkap) citizen_data.nama_lengkap = historyData.nama_lengkap;
-      if (!citizen_data.nik && historyData.nik) citizen_data.nik = historyData.nik;
-      if (!citizen_data.alamat && historyData.alamat) citizen_data.alamat = historyData.alamat;
-      if (!citizen_data.no_hp && historyData.no_hp) citizen_data.no_hp = historyData.no_hp;
-      if (!citizen_data.keperluan && historyData.keperluan) citizen_data.keperluan = historyData.keperluan;
-    }
-  } catch (err: any) {
-    logger.warn('Failed to extract citizen data from channel-service', { userId, error: err.message });
-  }
-  
-  hasRequiredCitizenData = citizen_data.nama_lengkap && citizen_data.nik;
-  
-  logger.info('[Reservation] Data check', { 
-    userId, 
-    isValidServiceCode, 
-    hasRequiredCitizenData,
-    citizen_data,
-    reservation_date,
-    reservation_time,
-    missing_info
-  });
-  
-  // Check if we have enough info
-  if (!isValidServiceCode || !hasRequiredCitizenData || !reservation_date || !reservation_time || (missing_info && missing_info.length > 0)) {
-    logger.info('[Reservation] Missing required data, returning LLM reply', { 
-      userId,
-      missingServiceCode: !isValidServiceCode,
-      missingCitizenData: !hasRequiredCitizenData,
-      missingDate: !reservation_date,
-      missingTime: !reservation_time,
-      hasMissingInfo: missing_info && missing_info.length > 0
-    });
-    return llmResponse.reply_text;
-  }
-  
-  try {
-    const cleanedCitizenData = {
-      nama_lengkap: citizen_data.nama_lengkap?.trim() || '',
-      nik: citizen_data.nik?.trim() || '',
-      alamat: citizen_data.alamat?.trim() || '',
-      no_hp: citizen_data.no_hp?.trim() || '',
-      keperluan: citizen_data.keperluan?.trim() || '',
-    };
-    
-    const response = await caseServiceClient.post('/reservasi/create', {
-      wa_user_id: userId,
-      service_code: cleanServiceCode,
-      citizen_data: cleanedCitizenData,
-      reservation_date,
-      reservation_time,
-    });
-    
-    const reservation = response.data?.data;
-    
-    if (reservation?.reservation_id) {
-      aiAnalyticsService.recordSuccess('CREATE_RESERVATION');
-      
-      const dateStr = new Date(reservation_date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-      const serviceName = reservation.service?.name || cleanServiceCode;
-      
-      let successMessage = `✅ Reservasi berhasil dibuat!\n\n📋 *Detail Reservasi:*\n• Nomor: ${reservation.reservation_id}\n• Layanan: ${serviceName}\n• Tanggal: ${dateStr}\n• Jam: ${reservation_time} WIB\n• Antrian: #${reservation.queue_number}\n\n`;
-      
-      if (['SKD', 'SKTM', 'SKU'].includes(cleanServiceCode)) {
-        successMessage += `📄 *Jangan lupa bawa:*\n• KTP asli + fotokopi\n• Kartu Keluarga (KK)\n• Surat Pengantar RT/RW\n\n`;
-      }
-      
-      successMessage += `Sampai jumpa di kelurahan! 👋\n\n💡 Simpan nomor reservasi ini ya Kak`;
-      
-      return successMessage;
-    } else {
-      throw new Error('No reservation ID returned');
-    }
-  } catch (error: any) {
-    aiAnalyticsService.recordFailure('CREATE_RESERVATION');
-    logger.error('Failed to create reservation', { userId, error: error.message });
-    
-    if (error.response?.status === 400) {
-      return `Mohon maaf Kak, ada kesalahan dalam data yang diberikan 🙏\n\nSilakan periksa kembali:\n• NIK (16 digit)\n• Tanggal (hari kerja)\n• Jam (08:00-15:00)\n\nMau coba lagi?`;
-    }
-    
-    return 'Mohon maaf Kak, terjadi kendala teknis saat membuat reservasi 🙏\n\nSilakan coba lagi dalam beberapa saat.';
-  }
-}
-
-/**
- * Handle reservation cancellation
- */
-export async function handleReservationCancellation(userId: string, llmResponse: any): Promise<string> {
-  const { reservation_id, cancel_reason } = llmResponse.fields;
-  
-  if (!reservation_id) {
-    return llmResponse.reply_text || 'Mohon berikan nomor reservasi yang ingin dibatalkan (contoh: RSV-20251208-001)';
-  }
-  
-  try {
-    const response = await caseServiceClient.post(`/reservasi/${reservation_id}/cancel`, {
-      wa_user_id: userId,
-      cancel_reason: cancel_reason || 'Dibatalkan oleh pemohon',
-    });
-    
-    if (response.data?.status === 'success') {
-      return `✅ Reservasi ${reservation_id} berhasil dibatalkan.\n\nJika Kakak ingin membuat reservasi baru, silakan beritahu saya layanan apa yang dibutuhkan ya! 😊`;
-    } else {
-      return response.data?.message || 'Gagal membatalkan reservasi.';
-    }
-  } catch (error: any) {
-    logger.error('Failed to cancel reservation', { error: error.message, response: error.response?.data });
-    
-    // Handle specific error responses from case service
-    const errorData = error.response?.data;
-    if (errorData) {
-      const errorCode = errorData.error;
-      const currentStatus = errorData.current_status;
-      
-      // Pesan error yang informatif berdasarkan status
-      if (errorCode === 'NOT_FOUND') {
-        return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor reservasi biasanya seperti ini: RSV-20251211-001`;
-      }
-      
-      if (errorCode === 'NOT_OWNER') {
-        return `Maaf Kak, reservasi *${reservation_id}* ini bukan milik Kakak, jadi tidak bisa dibatalkan ya 🙏`;
-      }
-      
-      if (errorCode === 'CANNOT_CANCEL' || errorCode === 'ALREADY_COMPLETED') {
-        // Pesan berdasarkan status saat ini
-        const statusMessages: Record<string, string> = {
-          'completed': `Maaf Kak, reservasi *${reservation_id}* sudah selesai dilayani dan tidak bisa dibatalkan lagi.\n\n💡 Jika Kakak butuh layanan yang sama, silakan buat reservasi baru ya!`,
-          'cancelled': `Reservasi *${reservation_id}* sudah dibatalkan sebelumnya Kak.\n\n💡 Jika Kakak ingin membuat reservasi baru, silakan beritahu saya layanan apa yang dibutuhkan!`,
-          'no_show': `Reservasi *${reservation_id}* ditandai tidak hadir dan tidak bisa dibatalkan.\n\n💡 Silakan buat reservasi baru jika Kakak masih membutuhkan layanan ini.`,
-          'arrived': `Maaf Kak, reservasi *${reservation_id}* tidak bisa dibatalkan karena Kakak sudah hadir di lokasi.\n\n📍 Silakan hubungi petugas langsung di kelurahan ya!`,
-        };
-        
-        return statusMessages[currentStatus] || errorData.message || 'Reservasi tidak dapat dibatalkan.';
-      }
-    }
-    
-    return 'Mohon maaf, terjadi kesalahan saat membatalkan reservasi. Pastikan nomor reservasi benar.';
-  }
-}
-
-/**
- * Handle reservation time/date update
- * 
- * Status yang TIDAK BISA diubah:
- * - completed (sudah selesai)
- * - cancelled (sudah dibatalkan)
- * - no_show (tidak hadir)
- * - arrived (sudah hadir di lokasi)
- */
-export async function handleReservationUpdate(userId: string, llmResponse: any): Promise<string> {
-  const { reservation_id, new_reservation_date, new_reservation_time } = llmResponse.fields;
-  
-  if (!reservation_id) {
-    return llmResponse.reply_text || 'Mohon berikan nomor reservasi yang ingin diubah jadwalnya (contoh: RSV-20251208-001)';
-  }
-  
-  if (!new_reservation_date && !new_reservation_time) {
-    return llmResponse.reply_text || 'Mau diubah ke tanggal dan jam berapa Kak? (contoh: besok jam 10 pagi)';
-  }
-  
-  try {
-    // First get current reservation to get current date/time if only one is being changed
-    const currentRes = await caseServiceClient.get(`/reservasi/${reservation_id}`);
-    const current = currentRes.data?.data;
-    
-    if (!current) {
-      return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor reservasi biasanya seperti ini: RSV-20251211-001`;
-    }
-    
-    // Use current values if new ones not provided
-    const finalDate = new_reservation_date || current.reservation_date.split('T')[0];
-    const finalTime = new_reservation_time || current.reservation_time;
-    
-    const response = await caseServiceClient.patch(`/reservasi/${reservation_id}/time`, {
-      wa_user_id: userId,
-      reservation_date: finalDate,
-      reservation_time: finalTime,
-    });
-    
-    if (response.data?.status === 'success') {
-      const dateObj = new Date(finalDate);
-      const dateStr = dateObj.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-      
-      return `✅ Jadwal reservasi *${reservation_id}* berhasil diubah!\n\n📅 Tanggal baru: ${dateStr}\n🕐 Jam baru: ${finalTime} WIB\n\nSampai jumpa di kelurahan ya Kak! 👋`;
-    } else {
-      return response.data?.message || 'Gagal mengubah jadwal reservasi.';
-    }
-  } catch (error: any) {
-    logger.error('Failed to update reservation time', { error: error.message, response: error.response?.data });
-    
-    // Handle specific error responses from case service
-    const errorData = error.response?.data;
-    if (errorData) {
-      const errorCode = errorData.error;
-      const currentStatus = errorData.current_status;
-      
-      if (errorCode === 'NOT_FOUND') {
-        return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor reservasi biasanya seperti ini: RSV-20251211-001`;
-      }
-      
-      if (errorCode === 'NOT_OWNER') {
-        return `Maaf Kak, reservasi *${reservation_id}* ini bukan milik Kakak, jadi tidak bisa diubah ya 🙏`;
-      }
-      
-      if (errorCode === 'CANNOT_MODIFY') {
-        // Pesan berdasarkan status saat ini
-        const statusMessages: Record<string, string> = {
-          'completed': `Maaf Kak, reservasi *${reservation_id}* sudah selesai dilayani dan tidak bisa diubah lagi.\n\n💡 Jika Kakak butuh layanan yang sama, silakan buat reservasi baru dengan jadwal yang diinginkan!`,
-          'cancelled': `Reservasi *${reservation_id}* sudah dibatalkan sebelumnya Kak.\n\n💡 Silakan buat reservasi baru dengan jadwal yang diinginkan!`,
-          'no_show': `Reservasi *${reservation_id}* ditandai tidak hadir dan tidak bisa diubah.\n\n💡 Silakan buat reservasi baru dengan jadwal yang diinginkan.`,
-          'arrived': `Maaf Kak, reservasi *${reservation_id}* tidak bisa diubah karena Kakak sudah hadir di lokasi.\n\n📍 Silakan hubungi petugas langsung di kelurahan ya!`,
-        };
-        
-        return statusMessages[currentStatus] || errorData.message || 'Reservasi tidak dapat diubah.';
-      }
-      
-      if (errorCode === 'SLOT_UNAVAILABLE' || errorCode === 'TIME_UNAVAILABLE') {
-        return `Maaf Kak, slot waktu yang dipilih tidak tersedia 😔\n\nCoba pilih waktu lain ya! Jam operasional kelurahan: 08:00 - 15:00 WIB (Senin-Jumat).`;
-      }
-    }
-    
-    return 'Mohon maaf, terjadi kesalahan saat mengubah jadwal reservasi. Pastikan nomor reservasi benar.';
-  }
-}
-
-/**
- * Handle status check for complaints and reservations
- * Now includes ownership validation - user can only check their own tickets
+ * Handle status check for complaints dan permohonan layanan
+ * Now includes ownership validation - user can only check their own records
  */
 export async function handleStatusCheck(userId: string, llmResponse: any): Promise<string> {
-  const { complaint_id, reservation_id } = llmResponse.fields;
+  const { complaint_id, request_number } = llmResponse.fields;
   
-  if (!complaint_id && !reservation_id) {
+  if (!complaint_id && !request_number) {
     if (llmResponse.reply_text) return llmResponse.reply_text;
-    return 'Halo Kak! Untuk cek status, boleh sebutkan nomornya ya (contoh: LAP-20251201-001 atau RSV-20251201-001) 📋';
+    return 'Halo Kak! Untuk cek status, boleh sebutkan nomornya ya (contoh: LAP-20251201-001 atau LAY-20251201-001) 📋';
   }
   
   if (complaint_id) {
@@ -955,22 +744,20 @@ export async function handleStatusCheck(userId: string, llmResponse: any): Promi
     return buildNaturalStatusResponse(result.data);
   }
   
-  if (reservation_id) {
-    // Use ownership validation - user can only check their own reservations
-    const { getReservationStatusWithOwnership } = await import('./case-client.service');
-    const result = await getReservationStatusWithOwnership(reservation_id, userId);
+  if (request_number) {
+    const result = await getServiceRequestStatusWithOwnership(request_number, userId);
     
     if (!result.success) {
       if (result.error === 'NOT_FOUND') {
-        return `Hmm, kami tidak menemukan reservasi dengan nomor *${reservation_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor reservasi biasanya seperti ini: RSV-20251201-001`;
+        return `Hmm, kami tidak menemukan permohonan layanan dengan nomor *${request_number}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor layanan biasanya seperti ini: LAY-20251201-001`;
       }
       if (result.error === 'NOT_OWNER') {
-        return `Maaf Kak, reservasi *${reservation_id}* bukan milik Kakak ya 🙏\n\nSilakan cek kembali nomor reservasi Anda. Jika lupa, ketik "riwayat" untuk melihat daftar reservasi Anda.`;
+        return `Maaf Kak, permohonan layanan *${request_number}* bukan milik Kakak ya 🙏\n\nSilakan cek kembali nomor layanan Anda. Jika lupa, ketik "riwayat" untuk melihat daftar layanan Anda.`;
       }
-      return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';
+      return 'Maaf Kak, ada kendala saat mengecek status layanan. Coba lagi ya! 🙏';
     }
     
-    return buildNaturalReservationStatusResponse(result.data);
+    return buildNaturalServiceStatusResponse(result.data);
   }
   
   return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';
@@ -996,6 +783,83 @@ export async function handleCancellation(userId: string, llmResponse: any): Prom
   return buildCancelSuccessResponse('laporan', complaint_id, result.message);
 }
 
+export async function handleCancellationRequest(
+  userId: string,
+  type: 'laporan' | 'layanan',
+  llmResponse: any
+): Promise<string> {
+  const { complaint_id, request_number, cancel_reason } = llmResponse.fields || {};
+  const targetId = type === 'laporan' ? complaint_id : request_number;
+
+  if (!targetId) {
+    if (llmResponse.reply_text) return llmResponse.reply_text;
+    return type === 'laporan'
+      ? 'Halo Kak! Untuk membatalkan laporan, mohon sertakan nomornya ya (contoh: LAP-20251201-001) 📋'
+      : 'Halo Kak! Untuk membatalkan layanan, mohon sertakan nomornya ya (contoh: LAY-20251201-001) 📋';
+  }
+
+  setPendingCancelConfirmation(userId, {
+    type,
+    id: targetId,
+    reason: cancel_reason,
+    timestamp: Date.now(),
+  });
+
+  const label = type === 'laporan' ? 'laporan' : 'layanan';
+  return `Sebelum saya batalkan, mohon konfirmasi dulu ya Kak.\n\nApakah Kakak yakin ingin membatalkan ${label} *${targetId}*?\nBalas "ya" untuk lanjut atau "tidak" untuk batal.`;
+}
+
+/**
+ * Handle cancellation of service requests
+ */
+export async function handleServiceRequestCancellation(userId: string, llmResponse: any): Promise<string> {
+  const { request_number, cancel_reason } = llmResponse.fields || {};
+
+  if (!request_number) {
+    return llmResponse.reply_text || 'Halo Kak! Untuk membatalkan layanan, mohon sertakan nomornya ya (contoh: LAY-20251201-001) 📋';
+  }
+
+  const result = await cancelServiceRequest(request_number, userId, cancel_reason);
+
+  if (!result.success) {
+    return buildCancelErrorResponse('layanan', request_number, result.error, result.message);
+  }
+
+  return buildCancelSuccessResponse('layanan', request_number, result.message);
+}
+
+/**
+ * Handle complaint update by user
+ */
+export async function handleComplaintUpdate(userId: string, llmResponse: any): Promise<string> {
+  const { complaint_id, alamat, deskripsi, rt_rw } = llmResponse.fields || {};
+
+  if (!complaint_id) {
+    return llmResponse.reply_text || 'Mohon sebutkan nomor laporan yang ingin diperbarui (contoh: LAP-20251201-001).';
+  }
+
+  if (!alamat && !deskripsi && !rt_rw) {
+    return llmResponse.reply_text || 'Data apa yang ingin diperbarui? (alamat/deskripsi/RT RW)';
+  }
+
+  const result = await updateComplaintByUser(complaint_id, userId, { alamat, deskripsi, rt_rw });
+
+  if (!result.success) {
+    if (result.error === 'NOT_FOUND') {
+      return `Hmm, laporan *${complaint_id}* tidak ditemukan. Coba cek kembali nomor laporan ya.`;
+    }
+    if (result.error === 'NOT_OWNER') {
+      return `Maaf Kak, laporan *${complaint_id}* bukan milik Kakak, jadi tidak bisa diubah 🙏`;
+    }
+    if (result.error === 'LOCKED') {
+      return `Laporan *${complaint_id}* sudah selesai/ditolak sehingga tidak bisa diubah.`;
+    }
+    return result.message || 'Maaf, terjadi kendala saat memperbarui laporan.';
+  }
+
+  return `✅ Laporan *${complaint_id}* berhasil diperbarui. Terima kasih sudah melengkapi informasi.`;
+}
+
 /**
  * Handle user history request
  */
@@ -1005,7 +869,7 @@ export async function handleHistory(userId: string): Promise<string> {
   const history = await getUserHistory(userId);
   
   if (!history || history.total === 0) {
-    return `📋 *Riwayat Anda*\n\nBelum ada laporan atau tiket.\nKetik pesan untuk memulai.`;
+    return `📋 *Riwayat Anda*\n\nBelum ada laporan atau layanan.\nKetik pesan untuk memulai.`;
   }
   
   return buildHistoryResponse(history.combined, history.total);
@@ -1019,7 +883,8 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
   
   try {
     const categories = llmResponse.fields?.knowledge_category ? [llmResponse.fields.knowledge_category] : undefined;
-    const knowledgeResult = await searchKnowledge(message, categories);
+    const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID;
+    const knowledgeResult = await searchKnowledge(message, categories, villageId);
     
     if (knowledgeResult.total === 0) {
       return 'Maaf, saya belum memiliki informasi tentang hal tersebut. Untuk informasi lebih lanjut, silakan hubungi kantor kelurahan langsung atau datang pada jam kerja.';
@@ -1130,30 +995,28 @@ function buildNaturalStatusResponse(complaint: any): string {
 }
 
 /**
- * Build natural response for reservation status
+ * Build natural response for service request status
  */
-function buildNaturalReservationStatusResponse(reservation: any): string {
-  const reservationDate = new Date(reservation.reservation_date);
-  const dateStr = reservationDate.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  
+function buildNaturalServiceStatusResponse(serviceRequest: any): string {
   const statusMap: Record<string, { emoji: string; text: string }> = {
-    'pending': { emoji: '⏳', text: 'Menunggu Konfirmasi' },
-    'confirmed': { emoji: '✅', text: 'Dikonfirmasi' },
-    'arrived': { emoji: '🏢', text: 'Sudah Hadir' },
-    'completed': { emoji: '✅', text: 'Selesai' },
-    'cancelled': { emoji: '❌', text: 'Dibatalkan' },
+    'baru': { emoji: '📥', text: 'Diterima' },
+    'proses': { emoji: '🔄', text: 'Diproses' },
+    'selesai': { emoji: '✅', text: 'Selesai' },
+    'ditolak': { emoji: '❌', text: 'Ditolak' },
+    'dibatalkan': { emoji: '🔴', text: 'Dibatalkan' },
   };
-  
-  const statusInfo = statusMap[reservation.status] || { emoji: '📋', text: reservation.status };
-  
+
+  const statusInfo = statusMap[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
+
   let message = `Halo Kak! 👋\n\n`;
-  message += `Berikut info reservasi *${reservation.reservation_id}*:\n\n`;
-  message += `📌 *Layanan:* ${reservation.service?.name || 'Layanan'}\n`;
-  message += `📅 *Tanggal:* ${dateStr}\n`;
-  message += `🕐 *Jam:* ${reservation.reservation_time} WIB\n`;
-  message += `🎫 *Nomor Antrian:* #${reservation.queue_number}\n`;
+  message += `Berikut info layanan *${serviceRequest.request_number}*:\n\n`;
+  message += `📌 *Layanan:* ${serviceRequest.service?.name || 'Layanan Administrasi'}\n`;
   message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
-  
+
+  if (serviceRequest.admin_notes) {
+    message += `\n💬 _Catatan petugas: "${serviceRequest.admin_notes}"_`;
+  }
+
   return message;
 }
 
@@ -1196,20 +1059,23 @@ function getStatusInfo(status: string): { emoji: string; text: string; descripti
   return statusMap[status] || { emoji: '📋', text: status, description: 'Silakan tunggu update selanjutnya ya!' };
 }
 
-function buildCancelSuccessResponse(type: 'laporan' | 'reservasi', id: string, reason: string): string {
-  return `Halo Kak! 👋\n\n✅ ${type === 'laporan' ? 'Laporan' : 'Reservasi'} *${id}* sudah berhasil dibatalkan ya.\n\n📝 *Alasan:* ${reason}\n\nKalau ada yang mau dilaporkan atau direservasi lagi, langsung chat aja ya Kak! 😊`;
+function buildCancelSuccessResponse(type: 'laporan' | 'layanan', id: string, reason: string): string {
+  const label = type === 'laporan' ? 'Laporan' : 'Layanan';
+  return `Halo Kak! 👋\n\n✅ ${label} *${id}* sudah berhasil dibatalkan ya.\n\n📝 *Alasan:* ${reason}\n\nKalau ada yang mau dibuat lagi, langsung chat aja ya Kak! 😊`;
 }
 
-function buildCancelErrorResponse(type: 'laporan' | 'reservasi', id: string, error?: string, message?: string): string {
+function buildCancelErrorResponse(type: 'laporan' | 'layanan', id: string, error?: string, message?: string): string {
+  const label = type === 'laporan' ? 'laporan' : 'layanan';
   switch (error) {
     case 'NOT_FOUND':
-      return `Hmm, kami tidak menemukan ${type} dengan nomor *${id}* nih Kak 🤔`;
+      return `Hmm, kami tidak menemukan ${label} dengan nomor *${id}* nih Kak 🤔`;
     case 'NOT_OWNER':
-      return `Maaf Kak, ${type} *${id}* ini bukan milik Kakak, jadi tidak bisa dibatalkan ya 🙏`;
+      return `Maaf Kak, ${label} *${id}* ini bukan milik Kakak, jadi tidak bisa dibatalkan ya 🙏`;
     case 'ALREADY_COMPLETED':
-      return `Maaf Kak, ${type} *${id}* sudah tidak bisa dibatalkan karena statusnya sudah final 📋`;
+    case 'LOCKED':
+      return `Maaf Kak, ${label} *${id}* sudah tidak bisa dibatalkan karena statusnya sudah final 📋`;
     default:
-      return `Maaf Kak, ada kendala saat membatalkan ${type}. ${message || 'Coba lagi ya!'} 🙏`;
+      return `Maaf Kak, ada kendala saat membatalkan ${label}. ${message || 'Coba lagi ya!'} 🙏`;
   }
 }
 
@@ -1217,7 +1083,7 @@ function buildHistoryResponse(items: HistoryItem[], total: number): string {
   let message = `📋 *Riwayat Anda* (${total})\n`;
   
   const complaints = items.filter(i => i.type === 'complaint');
-  const reservations = items.filter(i => i.type === 'reservation');
+  const services = items.filter(i => i.type === 'service');
   
   if (complaints.length > 0) {
     message += `\n*LAPORAN*\n`;
@@ -1227,9 +1093,9 @@ function buildHistoryResponse(items: HistoryItem[], total: number): string {
     }
   }
   
-  if (reservations.length > 0) {
-    message += `\n*RESERVASI*\n`;
-    for (const item of reservations.slice(0, 5)) {
+  if (services.length > 0) {
+    message += `\n*LAYANAN*\n`;
+    for (const item of services.slice(0, 5)) {
       const statusEmoji = getStatusEmoji(item.status);
       message += `• *${item.display_id}* ${statusEmoji}\n  ${item.description.substring(0, 20)}...\n`;
     }
@@ -1274,6 +1140,19 @@ export function setPendingAddressConfirmation(userId: string, data: {
   foto_url?: string;
 }) {
   pendingAddressConfirmation.set(userId, data);
+}
+
+export function clearPendingCancelConfirmation(userId: string) {
+  pendingCancelConfirmation.delete(userId);
+}
+
+export function setPendingCancelConfirmation(userId: string, data: {
+  type: 'laporan' | 'layanan';
+  id: string;
+  reason?: string;
+  timestamp: number;
+}) {
+  pendingCancelConfirmation.set(userId, data);
 }
 
 /**
@@ -1333,6 +1212,52 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
       }
+    }
+
+    // Step 2.1: Check pending cancel confirmation
+    const pendingCancel = pendingCancelConfirmation.get(userId);
+    if (pendingCancel) {
+      if (isConfirmationResponse(message)) {
+        clearPendingCancelConfirmation(userId);
+        if (pendingCancel.type === 'laporan') {
+          const result = await cancelComplaint(pendingCancel.id, userId, pendingCancel.reason);
+          return {
+            success: true,
+            response: result.success
+              ? buildCancelSuccessResponse('laporan', pendingCancel.id, result.message)
+              : buildCancelErrorResponse('laporan', pendingCancel.id, result.error, result.message),
+            intent: 'CANCEL_COMPLAINT',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          };
+        }
+
+        const serviceResult = await cancelServiceRequest(pendingCancel.id, userId, pendingCancel.reason);
+        return {
+          success: true,
+          response: serviceResult.success
+            ? buildCancelSuccessResponse('layanan', pendingCancel.id, serviceResult.message)
+            : buildCancelErrorResponse('layanan', pendingCancel.id, serviceResult.error, serviceResult.message),
+          intent: 'CANCEL_SERVICE_REQUEST',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      if (isNegativeConfirmation(message)) {
+        clearPendingCancelConfirmation(userId);
+        return {
+          success: true,
+          response: 'Baik Kak, pembatalan saya batalkan. Ada yang bisa saya bantu lagi? 😊',
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      return {
+        success: true,
+        response: 'Mohon konfirmasi ya Kak. Balas "ya" untuk melanjutkan pembatalan, atau "tidak" untuk membatalkan.',
+        intent: pendingCancel.type === 'laporan' ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
     }
     
     // Step 2.5: AI Optimization - Pre-process message
@@ -1410,17 +1335,18 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     let graphContext = '';
     const isGreeting = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i.test(sanitizedMessage.trim());
     const looksLikeQuestion = shouldRetrieveContext(sanitizedMessage);
+    const villageId = process.env.DEFAULT_VILLAGE_ID;
     
     if (isGreeting) {
       try {
-        const kelurahanInfo = await getKelurahanInfoContext();
+        const kelurahanInfo = await getKelurahanInfoContext(villageId);
         if (kelurahanInfo) preloadedRAGContext = kelurahanInfo;
       } catch (error: any) {
         logger.warn('[UnifiedProcessor] Failed to fetch kelurahan info', { error: error.message });
       }
     } else if (looksLikeQuestion) {
       try {
-        const ragContext = await getRAGContext(sanitizedMessage);
+        const ragContext = await getRAGContext(sanitizedMessage, undefined, villageId);
         if (ragContext.totalResults > 0) preloadedRAGContext = ragContext;
       } catch (error: any) {
         logger.warn('[UnifiedProcessor] RAG fetch failed', { error: error.message });
@@ -1531,16 +1457,20 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         }
         break;
       
-      case 'CREATE_RESERVATION':
-        finalReplyText = await handleReservationCreation(userId, llmResponse, conversationHistory);
+      case 'SERVICE_INFO':
+        finalReplyText = await handleServiceInfo(userId, llmResponse);
         break;
       
-      case 'CANCEL_RESERVATION':
-        finalReplyText = await handleReservationCancellation(userId, llmResponse);
+      case 'CREATE_SERVICE_REQUEST':
+        finalReplyText = await handleServiceRequestCreation(userId, llmResponse);
         break;
-      
-      case 'UPDATE_RESERVATION':
-        finalReplyText = await handleReservationUpdate(userId, llmResponse);
+
+      case 'UPDATE_COMPLAINT':
+        finalReplyText = await handleComplaintUpdate(userId, llmResponse);
+        break;
+
+      case 'UPDATE_SERVICE_REQUEST':
+        finalReplyText = await handleServiceRequestEditLink(userId, llmResponse);
         break;
       
       case 'CHECK_STATUS':
@@ -1548,7 +1478,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         break;
       
       case 'CANCEL_COMPLAINT':
-        finalReplyText = await handleCancellation(userId, llmResponse);
+        finalReplyText = await handleCancellationRequest(userId, 'laporan', llmResponse);
+        break;
+
+      case 'CANCEL_SERVICE_REQUEST':
+        finalReplyText = await handleCancellationRequest(userId, 'layanan', llmResponse);
         break;
       
       case 'HISTORY':
@@ -1737,8 +1671,11 @@ async function buildContextWithHistory(
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
   ragContext?: RAGContext | string
 ): Promise<{ systemPrompt: string; messageCount: number }> {
-  const { getFullSystemPrompt } = await import('../prompts/system-prompt');
-  
+  const promptModule = await import('../prompts/system-prompt') as any;
+  const getPrompt = typeof promptModule.getFullSystemPrompt === 'function'
+    ? promptModule.getFullSystemPrompt
+    : () => promptModule.SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
+
   const conversationHistory = history
     .slice(-10)
     .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
@@ -1768,7 +1705,7 @@ async function buildContextWithHistory(
   const currentDate = today.toISOString().split('T')[0];
   const tomorrowDate = tomorrow.toISOString().split('T')[0];
   
-  const systemPrompt = getFullSystemPrompt()
+  const systemPrompt = getPrompt()
     .replace('{knowledge_context}', knowledgeSection)
     .replace('{history}', conversationHistory || '(Ini adalah percakapan pertama dengan user)')
     .replace('{user_message}', currentMessage)
@@ -1794,15 +1731,15 @@ function getFallbackResponse(message: string): string {
     return getFallbackByIntent('GREETING');
   }
   
-  if (lowerMessage.includes('surat') || lowerMessage.includes('dokumen') || lowerMessage.includes('keterangan') || lowerMessage.includes('reservasi')) {
-    return getFallbackByIntent('CREATE_RESERVATION');
+  if (lowerMessage.includes('surat') || lowerMessage.includes('dokumen') || lowerMessage.includes('keterangan') || lowerMessage.includes('layanan') || lowerMessage.includes('permohonan')) {
+    return getFallbackByIntent('CREATE_SERVICE_REQUEST');
   }
   
   if (lowerMessage.includes('lapor') || lowerMessage.includes('keluhan') || lowerMessage.includes('aduan') || lowerMessage.includes('rusak') || lowerMessage.includes('mati')) {
     return getFallbackByIntent('CREATE_COMPLAINT');
   }
   
-  if (lowerMessage.includes('status') || lowerMessage.includes('cek') || /LAP-|RSV-/i.test(lowerMessage)) {
+  if (lowerMessage.includes('status') || lowerMessage.includes('cek') || /LAP-|LAY-/i.test(lowerMessage)) {
     return getFallbackByIntent('CHECK_STATUS');
   }
   
@@ -1820,9 +1757,9 @@ function getFallbackResponse(message: string): string {
 export default {
   processUnifiedMessage,
   handleComplaintCreation,
-  handleReservationCreation,
-  handleReservationCancellation,
-  handleReservationUpdate,
+  handleComplaintUpdate,
+  handleServiceInfo,
+  handleServiceRequestCreation,
   handleStatusCheck,
   handleCancellation,
   handleHistory,

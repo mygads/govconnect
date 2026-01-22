@@ -3,15 +3,14 @@ import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import promClient from 'prom-client';
 import complaintRoutes from './routes/complaint.routes';
-import reservationRoutes from './routes/reservation.routes';
 import statisticsRoutes from './routes/statistics.routes';
 import healthRoutes from './routes/health.routes';
 import userRoutes from './routes/user.routes';
-import { createGraphQLRouter } from './routes/graphql.routes';
+import serviceCatalogRoutes from './routes/service-catalog.routes';
+import complaintMetaRoutes from './routes/complaint-meta.routes';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.middleware';
 import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
-import { initializeServices } from './services/reservation.service';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -49,7 +48,8 @@ app.use((req, res, next) => {
 // Register routes
 app.use('/health', healthRoutes);
 app.use('/laporan', complaintRoutes);
-app.use('/reservasi', reservationRoutes);
+app.use('/', serviceCatalogRoutes);
+app.use('/', complaintMetaRoutes);
 app.use('/statistics', statisticsRoutes);
 app.use('/user', userRoutes);
 
@@ -79,15 +79,11 @@ app.get('/', (req, res) => {
     version: '2.0.0',
     status: 'running',
     docs: '/api-docs',
-    graphql: '/graphql',
     endpoints: {
       health: '/health',
       complaints: '/laporan',
-      reservations: '/reservasi',
-      services: '/reservasi/services',
       statistics: '/statistics',
-      user: '/user/:wa_user_id/history',
-      graphql: '/graphql'
+      user: '/user/:wa_user_id/history'
     }
   });
 });
@@ -96,15 +92,6 @@ app.get('/', (req, res) => {
 // IMPORTANT: This must be called BEFORE error handlers are registered
 export async function initializeApp() {
   try {
-    // Initialize government services
-    await initializeServices();
-    logger.info('Government services initialized');
-    
-    // Initialize GraphQL API
-    const graphqlRouter = await createGraphQLRouter();
-    app.use('/graphql', graphqlRouter);
-    logger.info('GraphQL API mounted at /graphql');
-    
     // Register error handlers AFTER all routes are set up
     app.use(notFoundHandler);
     app.use(errorHandler);

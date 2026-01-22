@@ -4,7 +4,7 @@
  * Handles communication with AI Service for knowledge vector operations
  * Called when admin creates/updates/deletes knowledge
  * 
- * Uses single endpoint via Traefik: API_BASE_URL/ai/*
+ * Menggunakan endpoint AI Service langsung (tanpa gateway agregasi)
  */
 
 import { ai } from './api-client';

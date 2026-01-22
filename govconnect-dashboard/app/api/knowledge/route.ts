@@ -3,33 +3,31 @@ import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { addKnowledgeVector } from '@/lib/ai-service'
 
-// Knowledge categories
-const VALID_CATEGORIES = [
-  'informasi_umum',
-  'layanan', 
-  'prosedur',
-  'jadwal',
-  'kontak',
-  'faq',
-]
+async function getSession(request: NextRequest) {
+  const token = request.cookies.get('token')?.value ||
+    request.headers.get('authorization')?.replace('Bearer ', '')
+  if (!token) return null
+  const payload = await verifyToken(token)
+  if (!payload) return null
+  const session = await prisma.admin_sessions.findUnique({
+    where: { token },
+    include: { admin: true }
+  })
+  if (!session || session.expires_at < new Date()) return null
+  return session
+}
 
 export async function GET(request: NextRequest) {
   try {
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
     }
 
     // Get query parameters
     const searchParams = request.nextUrl.searchParams
     const category = searchParams.get('category')
+    const categoryId = searchParams.get('category_id')
     const isActive = searchParams.get('is_active')
     const search = searchParams.get('search')
     const limit = parseInt(searchParams.get('limit') || '50')
@@ -37,8 +35,13 @@ export async function GET(request: NextRequest) {
 
     // Build where clause
     const where: any = {}
+    if (session.admin.village_id) {
+      where.village_id = session.admin.village_id
+    }
     
-    if (category) {
+    if (categoryId) {
+      where.category_id = categoryId
+    } else if (category) {
       where.category = category
     }
     
@@ -87,35 +90,52 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
-
     const body = await request.json()
-    const { title, content, category, keywords, is_active, priority } = body
+    const { title, content, category, category_id, keywords, is_active, priority } = body
 
     // Validate required fields
-    if (!title || !content || !category) {
+    if (!title || !content || (!category && !category_id)) {
       return NextResponse.json(
-        { error: 'Title, content, and category are required' },
+        { error: 'Title, content, dan category wajib diisi' },
         { status: 400 }
       )
     }
 
-    // Validate category
-    if (!VALID_CATEGORIES.includes(category)) {
-      return NextResponse.json(
-        { error: `Invalid category. Valid categories: ${VALID_CATEGORIES.join(', ')}` },
-        { status: 400 }
-      )
+    let resolvedCategoryId = category_id as string | undefined
+    let resolvedCategoryName = category as string | undefined
+
+    if (!resolvedCategoryId) {
+      const existingCategory = await prisma.knowledge_categories.findFirst({
+        where: {
+          name: category,
+          village_id: session.admin.village_id || undefined,
+        }
+      })
+
+      if (existingCategory) {
+        resolvedCategoryId = existingCategory.id
+        resolvedCategoryName = existingCategory.name
+      } else if (session.admin.village_id) {
+        const created = await prisma.knowledge_categories.create({
+          data: {
+            village_id: session.admin.village_id,
+            name: category,
+            is_default: false,
+          }
+        })
+        resolvedCategoryId = created.id
+        resolvedCategoryName = created.name
+      }
+    } else {
+      const existingCategory = await prisma.knowledge_categories.findUnique({
+        where: { id: resolvedCategoryId }
+      })
+      resolvedCategoryName = existingCategory?.name || resolvedCategoryName
     }
 
     // Process keywords - ensure lowercase
@@ -128,11 +148,13 @@ export async function POST(request: NextRequest) {
       data: {
         title,
         content,
-        category,
+        category: resolvedCategoryName || category,
+        category_id: resolvedCategoryId,
+        village_id: session.admin.village_id || undefined,
         keywords: processedKeywords,
         is_active: is_active ?? true,
         priority: priority ?? 0,
-        admin_id: payload.adminId,
+        admin_id: session.admin_id,
       },
     })
 

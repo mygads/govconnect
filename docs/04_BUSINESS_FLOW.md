@@ -63,404 +63,113 @@
    
 8. Channel Service (consumes from RabbitMQ):
    - Receive reply from queue
-   - Call WhatsApp API: POST /send-message
-   - Save to gc_channel.messages (direction: OUT)
-   
-9. WhatsApp API → Warga
-   Warga menerima konfirmasi laporan
-```
+  # Business Flow GovConnect (Redesain)
 
-**Sequence Diagram**:
+  Dokumen ini menggantikan flow lama dan menyesuaikan fitur baru: knowledge base terpadu, layanan berbasis form publik, pengaduan dengan prioritas, serta channel WhatsApp + webchat.
 
-```
-Warga    WhatsApp   Channel    RabbitMQ    AI       Case      WhatsApp
-  │         │         │           │         │         │          │
-  ├─Kirim──►│         │           │         │         │          │
-  │         ├─Webhook►│           │         │         │          │
-  │         │         ├─Save DB   │         │         │          │
-  │         │         ├─Publish──►│ (ASYNC) │         │          │
-  │         │         │           ├─Consume►│         │          │
-  │         │         │           │         ├─Detect  │          │
-  │         │         │           │         ├─REST───►│ (SYNC)   │
-  │         │         │           │         │         ├─Save DB  │
-  │         │         │           │         │◄─Return─┤          │
-  │         │         │           │◄Publish─┤ (ASYNC) │          │
-  │         │         │◄─Consume──┤         │         │          │
-  │         │         ├─Send─────────────────────────►│ (SYNC)   │
-  │         │◄────────┤           │         │         │          │
-  │◄─Terima─┤         │           │         │         │          │
-```
+  ## 🔄 Skenario Bisnis Utama
 
-**Demo Command**:
-```bash
-# 1. Kirim webhook test
-curl -X POST http://localhost:3001/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "entry": [{
-      "changes": [{
-        "value": {
-          "messages": [{
-            "from": "628123456789",
-            "text": {
-              "body": "Saya mau lapor jalan rusak di Jl. Melati No. 15"
-            },
-            "id": "msg_123",
-            "timestamp": "1733654400"
-          }]
-        }
-      }]
-    }]
-  }'
+  ### A) Tanya Info Desa (Knowledge Base)
+  ```
+  1. Warga WA: "Jam buka kantor desa?"
+  2. Channel Service menerima webhook, simpan message, publish event.
+  3. AI Orchestrator deteksi intent: KNOWLEDGE_QUERY.
+  4. AI query Dashboard KB (profil desa + dokumen + FAQ).
+  5. AI publish reply.
+  6. Notification Service kirim ke WA.
+  ```
 
-# 2. Monitor RabbitMQ
-# Open http://localhost:15672
-# Login: admin / genfityrabbitmq
-# Check Queues
+  ### B) Tanya Layanan + Arahkan ke Form
+  ```
+  1. Warga WA: "Syarat bikin KTP?"
+  2. AI Orchestrator: intent SERVICE_INFO.
+  3. AI query Case Service untuk syarat layanan + deskripsi.
+  4. AI jawab syarat + tanya "mau diproses sekarang?".
+  5. Jika iya, AI kirim link form:
+     govconnect.my.id/form/{slug-desa}/{slug-layanan}?user=628xxx
+  ```
 
-# 3. Check AI Service logs
-docker compose -f govconnect/docker-compose.yml logs ai-service --tail=50
+  ### C) Submit Form Layanan (Web)
+  ```
+  1. Warga buka link form (WA auto prefill nomor).
+  2. Warga isi persyaratan (file/field).
+  3. Dashboard (public route) kirim ke Case Service.
+  4. Case Service buat service_request + nomor layanan.
+  5. Dashboard menampilkan nomor + tombol chat status.
+  ```
 
-# 4. Check database
-docker exec infra-postgres psql -U postgres -d gc_case \
-  -c "SELECT id, kategori, alamat, status FROM complaints ORDER BY created_at DESC LIMIT 1;"
-```
+  ### D) Cek Status Layanan (WA)
+  ```
+  1. Warga WA: "Cek status LAY-20260122-001"
+  2. AI Orchestrator: intent CHECK_STATUS.
+  3. AI query Case Service status.
+  4. AI balas status + langkah berikutnya.
+  ```
 
----
+  ### E) Riwayat Layanan
+  ```
+  1. Warga WA: "Riwayat layanan saya"
+  2. AI Orchestrator: intent HISTORY.
+  3. AI query Case Service by wa_user_id.
+  4. AI balas list ringkas + link detail (opsional).
+  ```
 
-### Skenario B: Warga Cek Status Laporan (Request-Response / Sync)
+  ### F) Pengaduan (Non-Urgent)
+  ```
+  1. Warga WA: "Lapor lampu jalan mati"
+  2. AI Orchestrator: intent CREATE_COMPLAINT.
+  3. AI cek aturan jenis (butuh alamat?).
+  4. Jika alamat kosong dan wajib: AI tanya alamat.
+  5. Case Service buat laporan + nomor laporan.
+  6. AI balas konfirmasi.
+  ```
 
-**Mapping ke Requirement EAI**: Synchronous Communication
+  ### G) Pengaduan (Urgent + Nomor Penting)
+  ```
+  1. Warga WA: "Ada kebakaran di RT 02"
+  2. AI Orchestrator tandai urgent.
+  3. Case Service buat laporan urgent.
+  4. AI balas:
+     - konfirmasi laporan
+     - nomor penting terkait (damkar/polisi)
+  5. Dashboard memunculkan alert urgent.
+  ```
 
-**Flow Lengkap**:
+  ### H) Channel Connect (WA + Webchat)
+  ```
+  1. Admin isi token WA + nomor WA di dashboard.
+  2. Sistem tampilkan webhook URL (read-only).
+  3. Admin toggle WA dan/atau Webchat.
+  4. Jika OFF, AI tidak memproses channel tersebut.
+  ```
 
-```
-1. Warga mengirim pesan WhatsApp
-   "Cek status LAP-20251208-001"
-   
-2. WhatsApp API → Channel Service (Webhook)
-   
-3. Channel Service → RabbitMQ (Publish)
-   Routing Key: whatsapp.message.received
-   
-4. AI Service (Consume):
-   - Detect intent: CHECK_STATUS
-   - Extract complaint_id: "LAP-20251208-001"
-   
-5. AI Service → Case Service (Sync REST):
-   GET http://case-service:3003/internal/complaints/LAP-20251208-001
-   Headers: x-internal-api-key: xxx
-   
-6. Case Service:
-   - Query gc_case.complaints
-   - Return complaint data:
-     {
-       "id": "LAP-20251208-001",
-       "kategori": "jalan_rusak",
-       "alamat": "Jl. Melati No. 15",
-       "status": "diproses",
-       "created_at": "2025-12-08T10:00:00Z"
-     }
-   
-7. AI Service:
-   - Format response message
-   - Publish reply to RabbitMQ
-   
-8. Channel Service → WhatsApp API
-   
-9. Warga menerima info status laporan
-```
+  ### I) Live Chat & Takeover
+  ```
+  1. Admin melihat percakapan.
+  2. Klik Takeover.
+  3. Channel Service menonaktifkan AI sementara.
+  4. Admin balas manual.
+  5. Takeover selesai → AI aktif kembali.
+  ```
 
-**Demo Command**:
-```bash
-curl -X POST http://localhost:3001/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "entry": [{
-      "changes": [{
-        "value": {
-          "messages": [{
-            "from": "628123456789",
-            "text": {
-              "body": "Cek status LAP-20251208-001"
-            },
-            "id": "msg_124",
-            "timestamp": "1733658000"
-          }]
-        }
-      }]
-    }]
-  }'
-```
+  ### J) Uji Pengetahuan (Testing Knowledge)
+  ```
+  1. Admin buka halaman Uji Pengetahuan di dashboard.
+  2. Admin isi pertanyaan + opsi kategori + sumber (knowledge/dokumen).
+  3. Dashboard memanggil /api/testing-knowledge.
+  4. API meneruskan ke AI Service /api/search (RAG) dengan filter desa.
+  5. Admin melihat skor relevansi dan cuplikan hasil.
+  ```
 
----
+  ---
 
-### Skenario C: Warga Bertanya Informasi (Knowledge Query / RAG)
-
-**Flow Lengkap**:
-
-```
-1. Warga: "Jam berapa kantor kelurahan buka?"
-   
-2. Channel Service → RabbitMQ
-   
-3. AI Service:
-   - Detect intent: KNOWLEDGE_QUERY
-   - Extract category: "jadwal"
-   
-4. AI Service (RAG Process):
-   - Generate embedding dari query
-   - Vector search di gc_ai.knowledge_vectors
-   - Retrieve relevant documents
-   - Combine dengan LLM untuk generate answer
-   
-5. AI Service → RabbitMQ (Publish reply)
-   
-6. Channel Service → WhatsApp API
-   
-7. Warga menerima jawaban:
-   "🏢 Kantor Kelurahan
-   Jam Operasional:
-   Senin-Jumat: 08:00-15:00 WIB
-   Sabtu: 08:00-12:00 WIB"
-```
-
----
-
-### Skenario D: Admin Takeover (Live Chat)
-
-**Flow Lengkap**:
-
-```
-1. Admin di Dashboard melihat conversation
-   
-2. Admin klik "Ambil Alih Percakapan"
-   
-3. Dashboard → Channel Service:
-   POST /internal/takeover/628123456789/start
-   
-4. Channel Service:
-   - Set takeover status = true
-   - Save to gc_channel.takeover_sessions
-   
-5. Warga mengirim pesan baru
-   
-6. Channel Service:
-   - Check takeover status (true)
-   - SKIP RabbitMQ publish (tidak ke AI)
-   - Save message
-   - Notify dashboard
-   
-7. Admin mengetik reply di Dashboard
-   
-8. Dashboard → Channel Service:
-   POST /internal/messages/send
-   
-9. Channel Service → WhatsApp API
-   
-10. Warga menerima reply dari admin
-   
-11. Admin selesai, klik "Akhiri Percakapan"
-   
-12. Dashboard → Channel Service:
-    POST /internal/takeover/628123456789/end
-    
-13. Pesan selanjutnya kembali ke AI
-```
-
-**Demo Command**:
-```bash
-# 1. Start takeover
-curl -X POST http://localhost:3001/internal/takeover/628123456789/start \
-  -H "x-internal-api-key: your_internal_api_key" \
-  -H "Content-Type: application/json" \
-  -d '{"admin_id": "admin_001", "admin_name": "Admin Kelurahan"}'
-
-# 2. Check takeover status
-curl http://localhost:3001/internal/takeover/628123456789/status \
-  -H "x-internal-api-key: your_internal_api_key"
-
-# 3. Send message as admin
-curl -X POST http://localhost:3001/internal/messages/send \
-  -H "x-internal-api-key: your_internal_api_key" \
-  -H "Content-Type: application/json" \
-  -d '{"wa_user_id": "628123456789", "message": "Halo, saya admin. Ada yang bisa saya bantu?"}'
-
-# 4. End takeover
-curl -X POST http://localhost:3001/internal/takeover/628123456789/end \
-  -H "x-internal-api-key: your_internal_api_key"
-```
-
----
-
-### Skenario E: Warga Menggunakan Webchat (Synchronous)
-
-**Mapping ke Requirement EAI**: Synchronous Communication + 2-Layer Architecture
-
-**Flow Lengkap**:
-
-```
-1. Warga membuka landing page dan klik widget chat
-   
-2. Webchat widget generate session_id: "web_abc123..."
-   
-3. Warga mengetik pesan:
-   "Saya mau tanya jam buka kantor kelurahan"
-   
-4. Webchat Widget → AI Service (HTTP POST):
-   POST /api/webchat
-   Body: {
-     "session_id": "web_abc123...",
-     "message": "Saya mau tanya jam buka kantor kelurahan"
-   }
-   
-5. AI Service (Synchronous Processing):
-   a. Check takeover status (not in takeover)
-   b. Add message to batch (wait 3s for more messages)
-   c. Process with 2-Layer Architecture:
-      - Layer 1: Intent = KNOWLEDGE_QUERY, confidence = 0.95
-      - Layer 2: Generate response from knowledge base
-   d. Check cache (HIT/MISS)
-   e. Save message to Channel Service (async, for Live Chat)
-   
-6. AI Service → Webchat Widget (HTTP Response):
-   {
-     "success": true,
-     "response": "🏢 Kantor Kelurahan\nJam Operasional:\nSenin-Jumat: 08:00-15:00 WIB\nSabtu: 08:00-12:00 WIB",
-     "intent": "KNOWLEDGE_QUERY",
-     "metadata": {
-       "processingTimeMs": 1200,
-       "cached": false,
-       "isBatched": false
-     }
-   }
-   
-7. Webchat Widget menampilkan response ke warga
-```
-
-**Sequence Diagram**:
-
-```
-Warga    Webchat    AI Service    Channel    Cache    LLM
-  │       Widget        │          Service     │        │
-  │         │           │             │        │        │
-  ├─Ketik──►│           │             │        │        │
-  │         ├─POST─────►│             │        │        │
-  │         │           ├─Check takeover       │        │
-  │         │           ├─Batch wait (3s)      │        │
-  │         │           ├─Check cache─────────►│        │
-  │         │           │             │        │ MISS   │
-  │         │           ├─Layer 1 LLM─────────────────►│
-  │         │           │◄────────────────────────────┤
-  │         │           ├─Layer 2 LLM─────────────────►│
-  │         │           │◄────────────────────────────┤
-  │         │           ├─Save to cache───────►│        │
-  │         │           ├─Sync message────────►│        │
-  │         │◄─Response─┤             │        │        │
-  │◄─Display┤           │             │        │        │
-```
-
-**Perbedaan dengan WhatsApp Flow**:
-
-| Aspect | WhatsApp | Webchat |
-|--------|----------|---------|
-| Processing | Async (RabbitMQ) | Sync (HTTP) |
-| Session ID | Phone number (628xxx) | web_xxx |
-| Message Delivery | WhatsApp API | HTTP Response |
-| Batch Delay | 2 seconds | 3 seconds |
-| Media Support | Yes | No (text only) |
-| Takeover | Via Channel Service | Via AI Service |
-
-**Demo - Webchat API**:
-```bash
-# 1. Send webchat message
-curl -X POST http://localhost:3002/api/webchat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "web_demo_001",
-    "message": "Jam buka kantor kelurahan?"
-  }'
-
-# 2. Get session history
-curl http://localhost:3002/api/webchat/web_demo_001
-
-# 3. Poll for admin messages (when takeover active)
-curl "http://localhost:3002/api/webchat/web_demo_001/poll?since=2025-01-01T00:00:00Z"
-```
-
----
-
-### Skenario F: Admin Takeover Webchat
-
-**Flow Lengkap**:
-
-```
-1. Admin di Dashboard melihat webchat conversation
-   
-2. Admin klik "Ambil Alih Percakapan"
-   
-3. Dashboard → Channel Service:
-   POST /internal/takeover/web_abc123/start
-   
-4. Channel Service:
-   - Set takeover status = true
-   - Save to gc_channel.takeover_sessions
-   
-5. Warga mengirim pesan baru via Webchat
-   
-6. AI Service:
-   - Check takeover status (true)
-   - Return empty response dengan is_takeover flag
-   - Save message to Channel Service
-   
-7. Webchat Widget:
-   - Start polling for admin messages
-   - GET /api/webchat/web_abc123/poll
-   
-8. Admin mengetik reply di Dashboard
-   
-9. Dashboard → Channel Service:
-   POST /internal/messages/send
-   Body: { "wa_user_id": "web_abc123", "message": "..." }
-   
-10. Channel Service saves message
-   
-11. Webchat Widget (polling):
-    - Receive admin message
-    - Display to warga
-    
-12. Admin selesai, klik "Akhiri Percakapan"
-    
-13. Pesan selanjutnya kembali ke AI
-```
-
----
-
-## 📊 Data Flow Diagram
-
-### Complete System Flow
-
-```
-┌─────────────┐
-│   Warga     │
-│  (WhatsApp) │
-└──────┬──────┘
-       │
-       │ 1. Send Message
-       ▼
-┌─────────────────────┐
-│   WhatsApp API      │
-│  (External Service) │
-└──────┬──────────────┘
-       │
-       │ 2. Webhook
-       ▼
-┌─────────────────────┐
-│  Channel Service    │
-│  - Receive          │
-│  - Validate         │
-│  - Save DB          │
-└──────┬──────────────┘
+  ## 📌 Catatan Flow Penting
+  - **Profil Desa** adalah input teks dan ikut knowledge base.
+  - **Knowledge base file**: PDF/DOC/DOCX/TXT.
+  - **Form publik** hanya untuk layanan administrasi, bukan pengaduan.
+  - **Detail pengaduan**: admin bisa memberi update penanganan berupa teks dan foto.
+  - **AI model** hanya dikonfigurasi via ENV (tidak ada halaman ubah model).
+  - **Semua halaman admin dalam Bahasa Indonesia**.
        │
        │ 3. Publish Event (ASYNC)
        ▼

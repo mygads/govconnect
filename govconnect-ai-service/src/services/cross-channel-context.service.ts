@@ -31,7 +31,7 @@ export interface CrossChannelContext {
     nik?: string;
     address?: string;
     pendingComplaint?: any;
-    pendingReservation?: any;
+    pendingServiceRequest?: any;
   };
 }
 
@@ -277,8 +277,8 @@ export function getCrossChannelContextForLLM(userId: string): string {
   if (context.sharedData.pendingComplaint) {
     parts.push('[PENDING: User memiliki laporan yang belum selesai]');
   }
-  if (context.sharedData.pendingReservation) {
-    parts.push('[PENDING: User memiliki reservasi yang belum selesai]');
+  if (context.sharedData.pendingServiceRequest) {
+    parts.push('[PENDING: User memiliki permohonan layanan yang belum selesai]');
   }
   
   if (parts.length === 0) return '';

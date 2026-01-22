@@ -94,10 +94,6 @@ export default function robots(): MetadataRoute.Robots {
         userAgent: 'WhatsApp',
         allow: '/',
       },
-      {
-        userAgent: 'TelegramBot',
-        allow: '/',
-      },
       // Pinterest
       {
         userAgent: 'Pinterest',

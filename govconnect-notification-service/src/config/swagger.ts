@@ -24,7 +24,7 @@ Notification Service mengelola **pengiriman notifikasi** ke warga melalui WhatsA
     },
     servers: [
       { url: 'http://localhost:3004', description: 'Development' },
-      { url: 'https://api.govconnect.my.id/api/notifications', description: 'Production' },
+      { url: 'https://notification.govconnect.my.id', description: 'Production' },
     ],
     tags: [
       { name: 'Health', description: 'Health check endpoints' },

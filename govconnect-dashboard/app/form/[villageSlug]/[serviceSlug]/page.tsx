@@ -1,0 +1,534 @@
+"use client";
+
+import { useEffect, useMemo, useState, use } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import {
+    ArrowLeft,
+    Send,
+    Loader2,
+    AlertCircle,
+    CheckCircle2,
+    FileText,
+    MapPin,
+    Phone,
+    User,
+    CreditCard,
+    Info,
+    MessageCircle,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+interface ServiceRequirement {
+    id: string;
+    label: string;
+    field_type: "file" | "text" | "textarea" | "select" | "radio" | "date" | "number";
+    is_required: boolean;
+    options_json?: any;
+    help_text?: string | null;
+}
+
+interface ServiceItem {
+    id: string;
+    name: string;
+    description: string;
+    slug: string;
+    mode: string;
+    requirements: ServiceRequirement[];
+    category?: { name: string } | null;
+}
+
+interface PageProps {
+    params: Promise<{ villageSlug: string; serviceSlug: string }>;
+}
+
+interface ServiceResponse {
+    data: ServiceItem;
+    village: {
+        id: string;
+        name: string;
+        slug: string;
+    };
+}
+
+export default function ServiceRequestFormPage({ params }: PageProps) {
+    const { villageSlug, serviceSlug } = use(params);
+    const searchParams = useSearchParams();
+
+    const [service, setService] = useState<ServiceItem | null>(null);
+    const [villageName, setVillageName] = useState<string>("");
+    const [loading, setLoading] = useState(true);
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [success, setSuccess] = useState<{ request_number: string } | null>(null);
+
+    const [citizenData, setCitizenData] = useState({
+        nama_lengkap: "",
+        nik: "",
+        alamat: "",
+        no_hp: "",
+        wa_user_id: "",
+    });
+
+    const [requirementsData, setRequirementsData] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        const waUser = searchParams.get("user") || "";
+        if (waUser) {
+            setCitizenData((prev) => ({
+                ...prev,
+                wa_user_id: waUser,
+                no_hp: waUser.startsWith("628") ? `0${waUser.slice(2)}` : prev.no_hp,
+            }));
+        }
+    }, [searchParams]);
+
+    useEffect(() => {
+        const loadService = async () => {
+            try {
+                const response = await fetch(`/api/public/services/by-slug?village_slug=${villageSlug}&service_slug=${serviceSlug}`);
+                const result: ServiceResponse = await response.json();
+                if (!response.ok) {
+                    throw new Error((result as any)?.error || "Gagal memuat layanan");
+                }
+                setService(result.data);
+                setVillageName(result.village?.name || "");
+            } catch (err: any) {
+                setError(err.message || "Gagal memuat layanan");
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadService();
+    }, [villageSlug, serviceSlug]);
+
+    const normalizedRequirements = useMemo(() => {
+        if (!service?.requirements) return [] as ServiceRequirement[];
+        return service.requirements;
+    }, [service]);
+
+    function updateCitizenField(field: keyof typeof citizenData, value: string) {
+        setCitizenData((prev) => ({ ...prev, [field]: value }));
+    }
+
+    function updateRequirementField(reqId: string, value: string) {
+        setRequirementsData((prev) => ({ ...prev, [reqId]: value }));
+    }
+
+    function normalizeOptions(options: any): string[] {
+        if (!options) return [];
+        if (Array.isArray(options)) return options.map(String);
+        if (typeof options === "string") {
+            try {
+                const parsed = JSON.parse(options);
+                if (Array.isArray(parsed)) return parsed.map(String);
+            } catch {
+                return options.split(",").map((item) => item.trim()).filter(Boolean);
+            }
+        }
+        if (typeof options === "object") {
+            return Object.values(options).map((value) => String(value));
+        }
+        return [];
+    }
+
+    function isValidWaNumber(value: string) {
+        return /^628\d{8,12}$/.test(value);
+    }
+
+    function isFormComplete() {
+        if (!service) return false;
+        if (!citizenData.nama_lengkap || !citizenData.nik || !citizenData.alamat || !citizenData.no_hp || !citizenData.wa_user_id) return false;
+        if (!isValidWaNumber(citizenData.wa_user_id)) return false;
+        if (citizenData.nik.length !== 16) return false;
+
+        for (const req of normalizedRequirements) {
+            if (req.is_required && !requirementsData[req.id]) return false;
+        }
+
+        return true;
+    }
+
+    async function handleSubmit(e: React.FormEvent) {
+        e.preventDefault();
+        setError(null);
+
+        if (!service) return;
+        if (!isFormComplete()) {
+            setError("Mohon lengkapi semua data wajib terlebih dahulu.");
+            return;
+        }
+
+        setSubmitting(true);
+
+        try {
+            const response = await fetch("/api/public/service-requests", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    service_id: service.id,
+                    wa_user_id: citizenData.wa_user_id,
+                    citizen_data: {
+                        nama_lengkap: citizenData.nama_lengkap,
+                        nik: citizenData.nik,
+                        alamat: citizenData.alamat,
+                        no_hp: citizenData.no_hp,
+                    },
+                    requirement_data: requirementsData,
+                }),
+            });
+
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result?.error || "Gagal mengirim permohonan layanan");
+            }
+
+            setSuccess({ request_number: result?.data?.request_number || "" });
+        } catch (err: any) {
+            setError(err.message || "Terjadi kesalahan saat mengirim permohonan");
+        } finally {
+            setSubmitting(false);
+        }
+    }
+
+    if (loading) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-secondary" />
+                <p className="text-xs text-muted-foreground">Memuat layanan...</p>
+            </div>
+        );
+    }
+
+    if (error && !service) {
+        return (
+            <div className="max-w-md mx-auto py-12">
+                <Card className="border-red-200/50 dark:border-red-800/30">
+                    <CardContent className="p-5">
+                        <div className="flex items-start gap-3">
+                            <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+                            <div>
+                                <p className="font-semibold text-sm">Layanan Tidak Ditemukan</p>
+                                <p className="text-xs text-muted-foreground mt-1">{error}</p>
+                                <Button variant="outline" size="sm" asChild className="mt-3 text-xs">
+                                    <Link href="/form">Kembali ke Panduan</Link>
+                                </Button>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
+
+    if (success) {
+        return (
+            <div className="max-w-lg mx-auto py-8">
+                <Card className="border-green-200/50 dark:border-green-800/30 bg-linear-to-br from-green-50/50 to-emerald-50/50 dark:from-green-950/20 dark:to-emerald-950/20">
+                    <CardContent className="pt-8 pb-6 px-6 text-center space-y-6">
+                        <div className="w-16 h-16 mx-auto rounded-2xl bg-linear-to-br from-green-500 to-emerald-500 flex items-center justify-center shadow-lg">
+                            <CheckCircle2 className="w-8 h-8 text-white" />
+                        </div>
+
+                        <div className="space-y-2">
+                            <h1 className="text-xl font-bold text-green-700 dark:text-green-400">
+                                Permohonan Berhasil Dikirim!
+                            </h1>
+                            <p className="text-sm text-muted-foreground">
+                                Kami akan memproses permohonan layanan Anda. Simpan nomor layanan berikut untuk cek status.
+                            </p>
+                        </div>
+
+                        <div className="bg-background/80 rounded-xl p-4 border border-border/50">
+                            <p className="text-xs text-muted-foreground mb-1">Nomor Layanan</p>
+                            <p className="text-xl font-mono font-bold text-secondary">
+                                {success.request_number || "-"}
+                            </p>
+                        </div>
+
+                        <p className="text-xs text-muted-foreground">
+                            Status dapat dicek melalui WhatsApp dengan menyebutkan nomor layanan di atas.
+                        </p>
+
+                        <div className="flex gap-3">
+                            <Button variant="outline" asChild className="flex-1">
+                                <Link href="/form">Kembali</Link>
+                            </Button>
+                            <Button asChild className="flex-1 bg-secondary hover:bg-secondary/90">
+                                <Link href="/">Ke Beranda</Link>
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
+
+    if (!service) {
+        return null;
+    }
+
+    return (
+        <div className="max-w-3xl mx-auto space-y-6">
+            <div>
+                <Link
+                    href="/form"
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4"
+                >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    Kembali
+                </Link>
+
+                <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-linear-to-br from-secondary to-primary flex items-center justify-center shadow-md">
+                        <FileText className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                        <h1 className="text-xl font-bold">{service.name}</h1>
+                        <p className="text-xs text-muted-foreground mt-1">{service.description}</p>
+                        {villageName && (
+                            <p className="text-[10px] text-muted-foreground mt-1">{villageName}</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            <Card className="border-border/50">
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                        <Info className="w-4 h-4 text-secondary" />
+                        Informasi Layanan
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="text-xs text-muted-foreground space-y-1">
+                    <p>Mode layanan: {service.mode === "online" ? "Online" : service.mode === "offline" ? "Offline" : "Online & Offline"}</p>
+                    <p>Kategori: {service.category?.name || "Layanan Administrasi"}</p>
+                </CardContent>
+            </Card>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+                <Card className="border-border/50">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-semibold">Data Pemohon</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="grid sm:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-xs font-semibold flex items-center gap-1">
+                                    <User className="w-3.5 h-3.5" /> Nama Lengkap <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={citizenData.nama_lengkap}
+                                    onChange={(e) => updateCitizenField("nama_lengkap", e.target.value)}
+                                    placeholder="Nama sesuai KTP"
+                                    className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-semibold flex items-center gap-1">
+                                    <CreditCard className="w-3.5 h-3.5" /> NIK <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={citizenData.nik}
+                                    onChange={(e) => updateCitizenField("nik", e.target.value.replace(/\D/g, ""))}
+                                    placeholder="16 digit"
+                                    maxLength={16}
+                                    className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid sm:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-xs font-semibold flex items-center gap-1">
+                                    <MapPin className="w-3.5 h-3.5" /> Alamat <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={citizenData.alamat}
+                                    onChange={(e) => updateCitizenField("alamat", e.target.value)}
+                                    placeholder="Alamat lengkap"
+                                    className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                    required
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-semibold flex items-center gap-1">
+                                    <Phone className="w-3.5 h-3.5" /> Nomor HP <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={citizenData.no_hp}
+                                    onChange={(e) => updateCitizenField("no_hp", e.target.value)}
+                                    placeholder="08xxxxxxxxxx"
+                                    className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-semibold flex items-center gap-1">
+                                <MessageCircle className="w-3.5 h-3.5" /> Nomor WhatsApp (628xxx) <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={citizenData.wa_user_id}
+                                onChange={(e) => updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""))}
+                                placeholder="628xxxxxxxxxx"
+                                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                required
+                            />
+                            <p className="text-[10px] text-muted-foreground">Pastikan format diawali 628.</p>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {normalizedRequirements.length > 0 && (
+                    <Card className="border-border/50">
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-sm font-semibold">Persyaratan</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {normalizedRequirements.map((req) => {
+                                const options = normalizeOptions(req.options_json);
+                                const value = requirementsData[req.id] || "";
+                                const labelText = `${req.label}${req.is_required ? " *" : ""}`;
+
+                                return (
+                                    <div key={req.id} className="space-y-2">
+                                        <label className="text-xs font-semibold">
+                                            {labelText}
+                                        </label>
+
+                                        {req.field_type === "textarea" && (
+                                            <textarea
+                                                value={value}
+                                                onChange={(e) => updateRequirementField(req.id, e.target.value)}
+                                                rows={3}
+                                                placeholder={req.help_text || "Isi sesuai kebutuhan"}
+                                                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                            />
+                                        )}
+
+                                        {req.field_type === "select" && (
+                                            <select
+                                                value={value}
+                                                onChange={(e) => updateRequirementField(req.id, e.target.value)}
+                                                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                            >
+                                                <option value="">Pilih opsi</option>
+                                                {options.map((opt) => (
+                                                    <option key={opt} value={opt}>{opt}</option>
+                                                ))}
+                                            </select>
+                                        )}
+
+                                        {req.field_type === "radio" && (
+                                            <div className="flex flex-wrap gap-2">
+                                                {options.map((opt) => (
+                                                    <label key={opt} className="flex items-center gap-1 text-xs">
+                                                        <input
+                                                            type="radio"
+                                                            name={req.id}
+                                                            value={opt}
+                                                            checked={value === opt}
+                                                            onChange={(e) => updateRequirementField(req.id, e.target.value)}
+                                                        />
+                                                        {opt}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {req.field_type === "date" && (
+                                            <input
+                                                type="date"
+                                                value={value}
+                                                onChange={(e) => updateRequirementField(req.id, e.target.value)}
+                                                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                            />
+                                        )}
+
+                                        {req.field_type === "number" && (
+                                            <input
+                                                type="number"
+                                                value={value}
+                                                onChange={(e) => updateRequirementField(req.id, e.target.value)}
+                                                placeholder={req.help_text || "Masukkan angka"}
+                                                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                            />
+                                        )}
+
+                                        {req.field_type === "file" && (
+                                            <input
+                                                type="url"
+                                                value={value}
+                                                onChange={(e) => updateRequirementField(req.id, e.target.value)}
+                                                placeholder={req.help_text || "Tempel link file (Google Drive, dll)"}
+                                                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                            />
+                                        )}
+
+                                        {(req.field_type === "text" || !req.field_type) && (
+                                            <input
+                                                type="text"
+                                                value={value}
+                                                onChange={(e) => updateRequirementField(req.id, e.target.value)}
+                                                placeholder={req.help_text || "Isi sesuai kebutuhan"}
+                                                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+                                            />
+                                        )}
+
+                                        {req.help_text && (
+                                            <p className="text-[10px] text-muted-foreground">{req.help_text}</p>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </CardContent>
+                    </Card>
+                )}
+
+                {error && (
+                    <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/30">
+                        <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                        <p className="text-xs text-red-700 dark:text-red-300">{error}</p>
+                    </div>
+                )}
+
+                <Button
+                    type="submit"
+                    disabled={submitting || !isFormComplete()}
+                    className="w-full h-11 bg-linear-to-r from-secondary to-primary hover:from-secondary/90 hover:to-primary/90 text-white shadow-lg"
+                >
+                    {submitting ? (
+                        <>
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            Mengirim...
+                        </>
+                    ) : (
+                        <>
+                            <Send className="w-4 h-4 mr-2" />
+                            Kirim Permohonan
+                        </>
+                    )}
+                </Button>
+            </form>
+
+            <Card className="border-secondary/30 bg-secondary/5">
+                <CardContent className="p-4 text-[10px] text-muted-foreground space-y-1">
+                    <p className="font-semibold text-xs text-foreground">Catatan</p>
+                    <p>Dokumen asli wajib dibawa ke kantor kelurahan. Dokumen tidak bisa dikirim via chat.</p>
+                    <p>Pastikan nomor WhatsApp aktif untuk menerima update status.</p>
+                </CardContent>
+            </Card>
+        </div>
+    );
+}

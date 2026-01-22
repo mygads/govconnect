@@ -105,15 +105,12 @@ Pungutan liar adalah PELANGGARAN HUKUM.
 ## INFORMASI PERSYARATAN UMUM
 
 ### Dokumen Wajib untuk Semua Layanan
-Untuk mengurus surat apapun di kelurahan, siapkan:
-1. KTP asli dan fotokopi (2-3 lembar)
-2. Kartu Keluarga (KK) fotokopi (2 lembar)
-3. Surat Pengantar dari RT/RW
+Persyaratan berbeda-beda sesuai layanan. Rujuk daftar **SYARAT PELAYANAN** pada dokumen KB-6-10 untuk detail terbaru.
 
 ### Cara Mendapat Surat Pengantar RT/RW
-1. Hubungi Ketua RT atau RW di lingkungan Anda
+1. Hubungi Ketua RT atau RW di lingkungan Anda (jika dipersyaratkan layanan)
 2. Sampaikan keperluan surat
-3. Bawa fotokopi KTP dan KK
+3. Siapkan dokumen sesuai syarat layanan
 4. Biasanya gratis atau iuran sukarela
 
 ### Tips Mempersiapkan Dokumen
@@ -176,27 +173,24 @@ Jika ada masalah dengan pelayanan:
 
 ---
 
-## INFORMASI RESERVASI ONLINE
+## INFORMASI PERMOHONAN LAYANAN
 
-### Layanan Reservasi via WhatsApp
-Beberapa kelurahan menyediakan layanan reservasi online:
-1. Chat ke nomor WhatsApp kelurahan
+### Pengajuan Layanan via WhatsApp & Form Publik
+Warga dapat mengajukan layanan melalui WhatsApp atau form publik:
+1. Chat ke nomor WhatsApp kelurahan atau buka form publik
 2. Sebutkan jenis layanan yang dibutuhkan
-3. Berikan data diri (nama, NIK, alamat, no HP)
-4. Pilih tanggal dan jam kedatangan
-5. Tunggu konfirmasi nomor reservasi
+3. Isi data diri (nama, NIK, alamat, no HP)
+4. Lengkapi persyaratan sesuai layanan
+5. Terima nomor layanan (LAY-...)
 
-### Keuntungan Reservasi Online
-- Tidak perlu antri lama
-- Jadwal kedatangan pasti
-- Dokumen bisa disiapkan lebih awal
-- Prioritas dibanding yang tidak reservasi
+### Keuntungan Pengajuan Online
+- Mengurangi antrean di kantor
+- Dokumen bisa dipersiapkan lebih awal
+- Status dapat dipantau via WhatsApp
 
-### Catatan Penting Reservasi
-- Reservasi hanya untuk booking jadwal
-- Tetap harus datang ke kelurahan
-- Berkas TIDAK BISA dikirim via WhatsApp
-- Bawa dokumen lengkap saat datang
+### Catatan Penting
+- Beberapa layanan tetap memerlukan kedatangan ke kelurahan
+- Berkas yang dibutuhkan harus dibawa saat verifikasi/pengambilan
 
 ---
 

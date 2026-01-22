@@ -22,14 +22,14 @@ Language: TypeScript
 Styling: Tailwind CSS
 Database: PostgreSQL
 AI: Natural Language Processing
-Deployment: Docker, Traefik
+Deployment: Docker
 
 /* FEATURES */
 - AI-Powered Chatbot 24/7
-- Multi-Channel Support (WhatsApp, Telegram, Web)
+- Multi-Channel Support (WhatsApp, Webchat)
 - Online Complaint Reporting
 - Digital Document Request
-- Service Reservation System
+- Permohonan Layanan Administrasi
 - Real-time Tracking
 - Analytics Dashboard
 

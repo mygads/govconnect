@@ -333,12 +333,12 @@ function extractKeyInfo(messages: Message[]): string {
   // Look for complaint types
   const complaintKeywords = ['rusak', 'mati', 'sampah', 'banjir', 'tumbang', 'tersumbat'];
   
-  // Look for ticket types
-  const ticketKeywords = ['surat', 'domisili', 'pengantar', 'izin', 'skck'];
+  // Look for service types
+  const serviceKeywords = ['surat', 'domisili', 'pengantar', 'izin', 'skck'];
   
   const mentionedAddresses: string[] = [];
   const mentionedProblems: string[] = [];
-  const mentionedTickets: string[] = [];
+  const mentionedServices: string[] = [];
   
   for (const msg of messages) {
     if (msg.direction !== 'IN') continue;
@@ -351,10 +351,10 @@ function extractKeyInfo(messages: Message[]): string {
       }
     }
     
-    // Check for tickets
-    for (const keyword of ticketKeywords) {
-      if (text.includes(keyword) && !mentionedTickets.includes(keyword)) {
-        mentionedTickets.push(keyword);
+    // Check for services
+    for (const keyword of serviceKeywords) {
+      if (text.includes(keyword) && !mentionedServices.includes(keyword)) {
+        mentionedServices.push(keyword);
       }
     }
     
@@ -372,8 +372,8 @@ function extractKeyInfo(messages: Message[]): string {
   if (mentionedProblems.length > 0) {
     info.push(`- Masalah disebutkan: ${mentionedProblems.join(', ')}`);
   }
-  if (mentionedTickets.length > 0) {
-    info.push(`- Layanan diminta: ${mentionedTickets.join(', ')}`);
+  if (mentionedServices.length > 0) {
+    info.push(`- Layanan diminta: ${mentionedServices.join(', ')}`);
   }
   if (mentionedAddresses.length > 0) {
     info.push(`- Alamat disebutkan: ${mentionedAddresses.slice(0, 2).join(', ')}`);

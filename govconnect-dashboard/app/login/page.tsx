@@ -89,7 +89,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex">
       {/* Left Side - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary via-primary/90 to-secondary relative overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 bg-linear-to-br from-primary via-primary/90 to-secondary relative overflow-hidden">
         {/* Background Pattern */}
         <div className="absolute inset-0 opacity-10">
           <div className="absolute top-20 left-20 w-64 h-64 border border-white/30 rounded-full" />
@@ -152,7 +152,7 @@ export default function LoginPage() {
         </div>
 
         {/* Bottom decoration */}
-        <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black/20 to-transparent" />
+        <div className="absolute bottom-0 left-0 right-0 h-32 bg-linear-to-t from-black/20 to-transparent" />
       </div>
 
       {/* Right Side - Login Form */}
@@ -268,6 +268,13 @@ export default function LoginPage() {
                     </>
                   )}
                 </Button>
+
+                <p className="text-center text-sm text-muted-foreground">
+                  Belum punya akun?{" "}
+                  <Link href="/register" className="text-secondary hover:underline">
+                    Daftar di sini
+                  </Link>
+                </p>
               </form>
 
               {/* Demo Credentials */}

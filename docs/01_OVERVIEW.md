@@ -1,270 +1,76 @@
-# GovConnect - Smart Government Service Platform
+# GovConnect - Platform Layanan Pemerintah Desa/Kelurahan
 
-## 📋 Deskripsi Proyek
+## 📋 Deskripsi Singkat
+GovConnect adalah platform layanan desa/kelurahan berbasis WhatsApp dan web yang memudahkan warga mendapatkan informasi, mengajukan layanan administrasi, serta membuat pengaduan/keluhan. Sistem ini memakai arsitektur microservices dengan AI orchestration agar jawaban cepat, konsisten, dan dapat menuntun warga sampai proses layanan selesai.
 
-**GovConnect** adalah platform digital berbasis **Microservices Architecture** yang mengintegrasikan layanan pemerintahan kelurahan dengan masyarakat melalui **WhatsApp** dan **Webchat**. Sistem ini menerapkan **Enterprise Application Integration (EAI)** dengan komunikasi synchronous (REST API) dan asynchronous (Message Broker), serta dilengkapi dengan **2-Layer LLM Architecture** untuk pemrosesan AI yang lebih akurat.
+## 🎯 Scope Saat Ini
+- **Create user hanya tingkat desa/kelurahan** (paling bawah). Pada form registrasi hanya ada **1 pilihan default** yang dikunci.
+- **Roadmap berikutnya**: user tingkat kecamatan dapat menautkan banyak desa dalam satu akun.
 
-## 🎯 Tujuan Sistem
+## ✅ Fitur Utama (Redesain)
 
-1. **Digitalisasi Layanan Kelurahan**: Warga dapat mengakses layanan tanpa datang ke kantor
-2. **Otomasi Proses**: AI mengidentifikasi intent dan membuat laporan otomatis
-3. **Multi-Channel Communication**: Integrasi dengan WhatsApp dan Webchat untuk komunikasi instant
-4. **Monitoring & Analytics**: Dashboard admin untuk monitoring, statistik, dan AI analytics
-5. **Scalability**: Arsitektur microservices yang mudah di-scale
-6. **AI Optimization**: 2-Layer LLM Architecture dengan response caching untuk efisiensi
+### 1) Knowledge Base Desa
+- **Kategori dasar otomatis**: Profil Desa, FAQ, Struktur Desa, Data RT/RW, Layanan Administrasi, Panduan/SOP.
+- **Kategori custom**: admin bebas menambah kategori baru (misalnya “Layanan KTP”).
+- **Input file**: PDF, DOC/DOCX, TXT.
+- **Input text** (Profil Desa): nama desa, alamat, lokasi Google Maps, nama singkat (untuk URL form), jam buka per hari + jam operasional.
+- Semua konten masuk ke **knowledge base terpadu** untuk AI.
+- **Scope per desa**: konten, kategori, dan dokumen hanya terlihat di desa terkait.
 
-## 🏗️ Arsitektur Sistem
+### 2) Knowledge Base Nomor Penting
+- **Kategori → banyak nomor** (contoh: Polisi → Pak Joko, Pak Jaya).
+- AI dapat menampilkan nomor penting saat kasus urgent.
 
-### High-Level Architecture
+### 3) Channel Connect (WhatsApp + Webchat)
+- Setiap akun desa **terhubung ke 1 nomor WhatsApp**.
+- Halaman konfigurasi berisi **token WA**, **nomor WA**, dan **Webhook URL** (ditampilkan agar user mudah ganti provider).
+- **Webchat Widget** dapat di-embed ke website desa (toggle on/off).
+- **Channel toggle**: admin dapat menyalakan/mematikan AI di WA dan Webchat.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        EXTERNAL LAYER                           │
-│  ┌────────────┐    ┌────────────┐    ┌──────────────┐          │
-│  │  WhatsApp  │    │  Webchat   │    │    Admin     │          │
-│  │   Users    │    │   Widget   │    │   Browser    │          │
-│  └─────┬──────┘    └─────┬──────┘    └──────┬───────┘          │
-└────────┼─────────────────┼──────────────────┼──────────────────┘
-         │                 │                  │
-         │ Webhook         │ HTTP             │ HTTPS
-         ▼                 ▼                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        API GATEWAY (Traefik)                    │
-│                         Port: 80, 443, 8080                     │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-        ▼                     ▼                     ▼
-┌──────────────┐      ┌──────────────┐     ┌──────────────┐
-│   Channel    │      │      AI      │     │     Case     │
-│   Service    │◄────►│   Service    │────►│   Service    │
-│  Port: 3001  │      │  Port: 3002  │     │  Port: 3003  │
-│ DB: gc_      │      │ DB: gc_ai    │     │ DB: gc_case  │
-│   channel    │      │              │     │              │
-└──────────────┘      └──────────────┘     └──────────────┘
-        │                     │                     │
-        ▼                     ▼                     ▼
-┌──────────────┐      ┌──────────────┐     ┌──────────────┐
-│ Notification │      │   Dashboard  │     │   RabbitMQ   │
-│   Service    │      │   (Next.js)  │     │   (Message   │
-│  Port: 3004  │      │  Port: 3000  │     │    Broker)   │
-│ DB: gc_notif │      │ DB: gc_      │     │  Port: 5672  │
-│              │      │   dashboard  │     │              │
-└──────────────┘      └──────────────┘     └──────────────┘
-```
+### 4) Testing Knowledge (Demo)
+- Halaman uji coba respons AI sebelum launch dengan filter kategori dan sumber data.
 
-## 📊 Komponen Utama
+### 5) Layanan Administrasi (Service Catalog)
+- Admin membuat **kategori layanan** → **banyak layanan**.
+- Setiap layanan punya deskripsi, kategori, dan **persyaratan dinamis**:
+    - Input file (upload)
+    - Input text/textarea
+    - Select/radio/date/number
+- **Mode layanan**: online, ambil di kantor, atau keduanya.
+- Public form: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`.
+- WA user otomatis terisi lewat query `?user=628xxx`.
 
-### 1. Microservices (5 Services)
+### 6) Pengaduan / Pelaporan
+- Admin membuat **kategori** dan **jenis** laporan.
+- Setiap jenis punya opsi:
+    - **Urgent** (trigger alert dashboard)
+    - **Butuh alamat** (AI wajib minta alamat)
+    - **Nomor penting terkait** (opsional untuk dikirim ke warga)
 
-| Service | Port | Database | Fungsi Utama |
-|---------|------|----------|--------------|
-| **Channel Service** | 3001 | gc_channel | Gateway WhatsApp & Webchat, Message handling, Takeover |
-| **AI Service** | 3002 | gc_ai | AI Orchestration, 2-Layer LLM, Intent detection, RAG, Webchat API |
-| **Case Service** | 3003 | gc_case | Complaint & Reservation management, Ticketing |
-| **Notification Service** | 3004 | gc_notification | Notification delivery |
-| **Dashboard** | 3000 | gc_dashboard | Admin panel, Live Chat, AI Analytics, Knowledge base |
+### 7) Status & Riwayat
+- Warga dapat cek **status layanan** dan **riwayat** via WhatsApp.
+- Untuk layanan berbasis form, warga mendapat **nomor layanan** setelah submit.
 
-### 2. Infrastructure Components
+### 8) Super Admin
+- Memantau semua desa, melihat analytics global, dan setting sistem.
+- Pengaturan model AI **hanya lewat ENV**, tidak ada menu ubah model di dashboard.
 
-| Component | Fungsi | Port |
-|-----------|--------|------|
-| **PostgreSQL 17** | Database dengan pgvector | 5432 |
-| **RabbitMQ** | Message Broker (Async communication) | 5672, 15672 |
-| **Traefik** | API Gateway & Reverse Proxy | 80, 443, 8080 |
-| **Prometheus** | Metrics collection | 9090 |
-| **Grafana** | Monitoring dashboard | 3300 |
-| **Loki** | Centralized logging | 3101 |
-| **Promtail** | Log collector | - |
+---
 
-### 3. External Services
+## 🧱 Arsitektur Tingkat Tinggi
+Tetap memakai **5 services**:
+1. **Channel Service** – Webhook WA, webchat message, history 30 pesan
+2. **AI Orchestrator** – stateless, intent + flow logic
+3. **Case Service** – layanan, pengaduan, status, riwayat
+4. **Notification Service** – pengiriman pesan keluar
+5. **Dashboard (Next.js)** – admin UI + public form
 
-| Service | Fungsi |
-|---------|--------|
-| **WhatsApp API** | WhatsApp Business API (api-wa.genfity.com) |
-| **Google Gemini AI** | LLM untuk 2-Layer Architecture, intent detection & RAG |
+---
 
-### 4. Communication Channels
-
-| Channel | Endpoint | Processing | Fitur |
-|---------|----------|------------|-------|
-| **WhatsApp** | Webhook `/webhook/whatsapp` | Async (RabbitMQ) | Message batching, Media support |
-| **Webchat** | HTTP `/api/webchat` | Sync (Direct) | Real-time response, Session-based |
-
-Kedua channel menggunakan arsitektur yang sama (dikontrol via `USE_2_LAYER_ARCHITECTURE` env var).
-
-## 🔄 Pola Komunikasi
-
-### Synchronous Communication (REST API)
-- Dashboard → Services (HTTP/REST)
-- AI Service → Case Service (HTTP/REST)
-- AI Service → Channel Service (HTTP/REST)
-- Channel Service → WhatsApp API (HTTP/REST)
-
-### Asynchronous Communication (Message Broker)
-- Channel Service → AI Service (via RabbitMQ)
-- AI Service → Channel Service (via RabbitMQ)
-- AI Service → Notification Service (via RabbitMQ)
-
-## 🗄️ Database Architecture
-
-### Database per Service Pattern
-
-Setiap service memiliki database sendiri (✅ **Requirement EAI terpenuhi**):
-
-```
-PostgreSQL Server (postgres:5432)
-├── gc_channel (Channel Service)
-│   ├── messages
-│   ├── conversations
-│   ├── user_profiles
-│   └── takeover_sessions
-│
-├── gc_ai (AI Service)
-│   └── knowledge_vectors (pgvector)
-│
-├── gc_case (Case Service)
-│   ├── complaints
-│   ├── complaint_updates
-│   └── complaint_media
-│
-├── gc_notification (Notification Service)
-│   ├── notifications
-│   └── notification_templates
-│
-└── gc_dashboard (Dashboard)
-    ├── admin_users
-    ├── admin_sessions
-    ├── activity_logs
-    ├── knowledge_base
-    ├── knowledge_documents
-    └── document_chunks
-```
-
-**✅ Tidak ada shared database antar service!**
-
-## 🚀 Teknologi Stack
-
-### Backend
-- **Node.js** (v23) - Runtime
-- **TypeScript** - Programming language
-- **Express.js** - Web framework
-- **Prisma** - ORM
-- **PostgreSQL 17** - Database
-- **pgvector** - Vector extension
-- **RabbitMQ** - Message broker
-
-### Frontend (Dashboard)
-- **Next.js 16** - React framework
-- **React 19** - UI library
-- **TypeScript** - Programming language
-- **Tailwind CSS** - Styling
-- **Radix UI** - Component library
-
-### AI/ML
-- **Google Gemini 2.5 Flash** - LLM untuk 2-Layer Architecture
-- **pgvector** - Vector database untuk RAG
-- **2-Layer LLM Architecture** - Layer 1 (Intent + Entity), Layer 2 (Response Generation)
-- **Response Caching** - Cache untuk query umum, mengurangi LLM calls
-
-### Infrastructure
-- **Docker** - Containerization
-- **Docker Compose** - Local orchestration
-- **Traefik** - API Gateway
-- **Prometheus** - Metrics
-- **Grafana** - Monitoring
-- **Loki + Promtail** - Logging
-
-## 📦 Struktur Folder
-
-```
-containers/
-├── database/              # PostgreSQL container
-│   ├── docker-compose.yml
-│   └── init/              # SQL init scripts
-│
-├── supporting/            # Supporting services
-│   ├── docker-compose.yml
-│   ├── rabbitmq/
-│   ├── prometheus/
-│   ├── grafana/
-│   ├── loki/
-│   └── promtail/
-│
-├── traefik/              # API Gateway
-│   ├── docker-compose.yml
-│   ├── docker-compose.local.yml
-│   └── dynamic/
-│
-├── networks/             # Docker networks
-│   └── docker-compose.yml
-│
-├── govconnect/           # Main application
-│   ├── docker-compose.yml
-│   ├── govconnect-channel-service/
-│   ├── govconnect-ai-service/
-│   ├── govconnect-case-service/
-│   ├── govconnect-notification-service/
-│   ├── govconnect-dashboard/
-│   └── shared/
-│
-└── docs/                 # Dokumentasi
-    ├── 01_OVERVIEW.md
-    ├── 02_ARCHITECTURE.md
-    ├── 04_BUSINESS_FLOW.md
-    └── 07_EAI_MAPPING.md
-```
-
-## 🎓 Pemenuhan Requirement Tugas EAI
-
-| Requirement | Status | Implementasi |
-|-------------|--------|--------------|
-| **4+ Microservices** | ✅ | 5 services (Channel, AI, Case, Notification, Dashboard) |
-| **Database per Service** | ✅ | 5 database terpisah |
-| **Synchronous Comm** | ✅ | REST API antar services |
-| **Asynchronous Comm** | ✅ | RabbitMQ untuk event-driven |
-| **Docker** | ✅ | Setiap service punya Dockerfile |
-| **API Gateway** | ✅ | Traefik sebagai reverse proxy |
-| **Circuit Breaker** | ✅ | Bonus - implemented |
-| **Centralized Logging** | ✅ | Bonus - Loki + Grafana |
-| **Monitoring** | ✅ | Bonus - Prometheus + Grafana |
-
-## 📈 Fitur Unggulan
-
-1. **2-Layer LLM Architecture** - Layer 1 untuk intent & entity extraction, Layer 2 untuk response generation
-2. **Multi-Channel Support** - WhatsApp (async) dan Webchat (sync) dengan arsitektur unified
-3. **Response Caching** - Cache untuk query umum, mengurangi biaya LLM hingga 30%
-4. **AI-Powered Intent Detection** - 14 intent types dengan confidence scoring
-5. **Event-Driven Architecture** - Message batching, async processing via RabbitMQ
-6. **Live Chat Dashboard** - Admin takeover untuk WhatsApp dan Webchat
-7. **AI Analytics** - Monitoring biaya, usage, dan performance AI (dalam Rupiah)
-8. **Monitoring & Observability** - Centralized logging, metrics, Grafana dashboards
-9. **Security** - JWT authentication, API key validation
-
-## 🤖 Intent Types
-
-Sistem mendukung 14 jenis intent:
-
-| Intent | Deskripsi |
-|--------|-----------|
-| `GREETING` | Sapaan awal |
-| `THANKS` | Ucapan terima kasih |
-| `CONFIRMATION` | Konfirmasi (ya/setuju) |
-| `REJECTION` | Penolakan (tidak/batal) |
-| `CREATE_COMPLAINT` | Membuat laporan/pengaduan |
-| `CREATE_RESERVATION` | Membuat reservasi layanan |
-| `UPDATE_RESERVATION` | Mengubah reservasi |
-| `CHECK_STATUS` | Cek status laporan/reservasi |
-| `CANCEL_COMPLAINT` | Membatalkan laporan |
-| `CANCEL_RESERVATION` | Membatalkan reservasi |
-| `HISTORY` | Melihat riwayat |
-| `KNOWLEDGE_QUERY` | Pertanyaan informasi umum |
-| `QUESTION` | Pertanyaan lainnya |
-| `UNKNOWN` | Tidak terdeteksi |
-
-## 🔗 Dokumentasi Lengkap
-
-- [02_ARCHITECTURE.md](./02_ARCHITECTURE.md) - Arsitektur detail
-- [04_BUSINESS_FLOW.md](./04_BUSINESS_FLOW.md) - Business flow & demo
-- [07_EAI_MAPPING.md](./07_EAI_MAPPING.md) - Mapping ke requirement tugas
+## 🧭 Dokumen Terkait
+- [02_ARCHITECTURE.md](./02_ARCHITECTURE.md) – Arsitektur detail
+- [03_DEV_PLAN.md](./03_DEV_PLAN.md) – Rencana pengembangan
+- [04_BUSINESS_FLOW.md](./04_BUSINESS_FLOW.md) – Business flow
+- [05_SERVICE_REQUEST_SYSTEM.md](./05_SERVICE_REQUEST_SYSTEM.md) – Layanan & Form
+- [07_EAI_MAPPING.md](./07_EAI_MAPPING.md) – Mapping EAI
+- [API-DOCUMENTATION.md](./API-DOCUMENTATION.md) – API reference

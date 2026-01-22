@@ -40,7 +40,7 @@ export interface UserProfile {
   // Usage patterns
   frequent_services: string[]; // ['SKD', 'SKTM', 'jalan_rusak']
   total_complaints: number;
-  total_reservations: number;
+  total_service_requests: number;
   
   // Interaction history
   first_interaction: Date;
@@ -100,6 +100,10 @@ function loadProfiles(): void {
         profile.last_interaction = new Date(profile.last_interaction);
         profile.created_at = new Date(profile.created_at);
         profile.updated_at = new Date(profile.updated_at);
+
+        if ((profile as any).total_service_requests === undefined) {
+          (profile as any).total_service_requests = 0;
+        }
         
         profileCache.set(profile.wa_user_id, profile);
       }
@@ -184,7 +188,7 @@ function createDefaultProfile(wa_user_id: string): UserProfile {
     response_detail: 'auto',
     frequent_services: [],
     total_complaints: 0,
-    total_reservations: 0,
+    total_service_requests: 0,
     first_interaction: now,
     last_interaction: now,
     total_messages: 0,
@@ -247,8 +251,8 @@ export function recordInteraction(
   if (intent) {
     if (intent === 'CREATE_COMPLAINT') {
       profile.total_complaints++;
-    } else if (intent === 'CREATE_RESERVATION') {
-      profile.total_reservations++;
+    } else if (intent === 'CREATE_SERVICE_REQUEST') {
+      profile.total_service_requests++;
     }
   }
   
@@ -370,8 +374,8 @@ export function getProfileContext(wa_user_id: string): string {
     if (profile.total_complaints > 0) {
       parts.push(`Sudah membuat ${profile.total_complaints} laporan sebelumnya.`);
     }
-    if (profile.total_reservations > 0) {
-      parts.push(`Sudah membuat ${profile.total_reservations} reservasi sebelumnya.`);
+    if (profile.total_service_requests > 0) {
+      parts.push(`Sudah membuat ${profile.total_service_requests} layanan sebelumnya.`);
     }
   }
   

@@ -112,6 +112,7 @@ export interface VectorSearchOptions {
   minScore?: number;          // Minimum similarity threshold (default: 0.7)
   categories?: string[];      // Filter by categories
   sourceTypes?: ('knowledge' | 'document')[];  // Filter by source type
+  villageId?: string;         // Scope results by village
 }
 
 /**

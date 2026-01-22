@@ -126,9 +126,9 @@ const CACHEABLE_PATTERNS = [
  */
 const NON_CACHEABLE_PATTERNS = [
   // Status checks (user-specific)
-  /\b(cek|status)\s+(laporan|reservasi|tiket)\b/i,
+  /\b(cek|status)\s+(laporan|layanan|permohonan)\b/i,
   /\bLAP-\d+/i,
-  /\bRSV-\d+/i,
+  /\bLAY-\d+/i,
   
   // User data (contains personal info)
   /\b\d{16}\b/,  // NIK
@@ -366,7 +366,7 @@ export function preWarmCache(): void {
       query: 'jam buka kantor kelurahan',
       response: 'Kantor kelurahan buka:\n🕐 Senin - Jumat: 08:00 - 15:00\n🕐 Sabtu: 08:00 - 12:00\n🕐 Minggu & Libur: Tutup',
       intent: 'KNOWLEDGE_QUERY',
-      guidance: 'Mau saya buatkan reservasi biar tidak perlu antri lama? 😊',
+      guidance: 'Mau saya kirimkan link formulir layanan agar lebih cepat? 😊',
     },
     {
       query: 'biaya surat gratis',
@@ -377,13 +377,13 @@ export function preWarmCache(): void {
       query: 'syarat buat skd',
       response: '✅ Syarat Surat Keterangan Domisili (SKD):\n\n□ KTP asli + fotokopi 2 lembar\n□ Kartu Keluarga (KK) asli + fotokopi\n□ Surat Pengantar RT/RW (asli)\n□ Pas foto 3x4 (2 lembar)\n\n💰 Biaya: GRATIS\n⏱️ Proses: 1-2 hari kerja',
       intent: 'KNOWLEDGE_QUERY',
-      guidance: 'Mau saya bantu buatkan reservasi sekarang?',
+      guidance: 'Mau saya kirimkan link formulir layanan sekarang?',
     },
     {
       query: 'syarat buat sktm',
       response: '✅ Syarat Surat Keterangan Tidak Mampu (SKTM):\n\n□ KTP asli + fotokopi\n□ Kartu Keluarga (KK) asli + fotokopi\n□ Surat Pengantar RT/RW\n□ Surat Keterangan Tidak Mampu dari RT/RW\n\n💰 Biaya: GRATIS\n⏱️ Proses: 1-2 hari kerja',
       intent: 'KNOWLEDGE_QUERY',
-      guidance: 'Mau saya bantu buatkan reservasi sekarang?',
+      guidance: 'Mau saya kirimkan link formulir layanan sekarang?',
     },
   ];
   

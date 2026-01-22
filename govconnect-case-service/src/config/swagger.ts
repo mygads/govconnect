@@ -9,7 +9,7 @@ const options: swaggerJsdoc.Options = {
       description: `
 # Case Service API
 
-Case Service mengelola **Laporan Warga** dan **Tiket Layanan** dalam sistem GovConnect.
+Case Service mengelola **Laporan Warga** dan **Permohonan Layanan** dalam sistem GovConnect.
 
 ## Entities
 
@@ -18,10 +18,9 @@ Case Service mengelola **Laporan Warga** dan **Tiket Layanan** dalam sistem GovC
 - Kategori: jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak
 - Status: baru → proses → selesai/ditolak
 
-### Reservasi (Reservation)
-- Reservasi kedatangan untuk layanan pemerintahan
-- 11 jenis layanan: SKD, SKU, SKTM, SKBM, IKR, SPKTP, SPKK, SPSKCK, SPAKTA, SKK, SPP
-- Status: pending → confirmed → arrived → completed/cancelled
+### Permohonan Layanan (Service Requests)
+- Permohonan layanan administrasi dari warga
+- Status: baru → proses → selesai/ditolak/dibatalkan
 
 ## Authentication
 - Internal APIs: Header \`X-Internal-API-Key\`
@@ -33,11 +32,11 @@ Case Service mengelola **Laporan Warga** dan **Tiket Layanan** dalam sistem GovC
     },
     servers: [
       { url: 'http://localhost:3003', description: 'Development' },
-      { url: 'https://api.govconnect.my.id/api/cases', description: 'Production' },
+      { url: 'https://case.govconnect.my.id', description: 'Production' },
     ],
     tags: [
       { name: 'Laporan', description: 'Complaint/report management' },
-      { name: 'Reservasi', description: 'Reservation management' },
+      { name: 'Permohonan Layanan', description: 'Service request management' },
       { name: 'Layanan', description: 'Government services management' },
       { name: 'Statistics', description: 'Dashboard statistics' },
       { name: 'User', description: 'User history' },
@@ -116,85 +115,34 @@ Case Service mengelola **Laporan Warga** dan **Tiket Layanan** dalam sistem GovC
         },
       },
 
-      // ============ RESERVASI ============
-      '/reservasi/create': {
-        post: {
-          tags: ['Reservasi'],
-          summary: 'Create new reservation',
-          description: 'Create a new reservation (from AI Service)',
-          security: [{ InternalApiKey: [] }],
-          requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateReservationRequest' } } } },
-          responses: {
-            '201': { description: 'Reservation created', content: { 'application/json': { schema: { $ref: '#/components/schemas/Reservation' } } } },
-            '400': { description: 'Validation error' },
-          },
-        },
-      },
-      '/reservasi/list': {
-        get: {
-          tags: ['Reservasi'],
-          summary: 'Get reservations list',
-          parameters: [
-            { in: 'query', name: 'status', schema: { type: 'string', enum: ['pending', 'confirmed', 'arrived', 'completed', 'cancelled', 'no_show'] } },
-            { in: 'query', name: 'service_code', schema: { type: 'string' } },
-            { in: 'query', name: 'date', schema: { type: 'string', format: 'date' } },
-            { in: 'query', name: 'limit', schema: { type: 'integer', default: 20 } },
-            { in: 'query', name: 'offset', schema: { type: 'integer', default: 0 } },
-          ],
-          responses: { '200': { description: 'List of reservations' } },
-        },
-      },
-      '/reservasi/{id}': {
-        get: {
-          tags: ['Reservasi'],
-          summary: 'Get reservation by ID',
-          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
-          responses: { '200': { description: 'Reservation detail' }, '404': { description: 'Not found' } },
-        },
-      },
-      '/reservasi/{id}/status': {
-        patch: {
-          tags: ['Reservasi'],
-          summary: 'Update reservation status',
-          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
-          requestBody: {
-            required: true,
-            content: { 'application/json': { schema: { type: 'object', required: ['status'], properties: { status: { type: 'string', enum: ['pending', 'confirmed', 'arrived', 'completed', 'cancelled', 'no_show'] }, admin_notes: { type: 'string' } } } } },
-          },
-          responses: { '200': { description: 'Status updated' }, '404': { description: 'Not found' } },
-        },
-      },
-      '/reservasi/slots/{serviceCode}/{date}': {
-        get: {
-          tags: ['Reservasi'],
-          summary: 'Get available slots',
-          parameters: [
-            { in: 'path', name: 'serviceCode', required: true, schema: { type: 'string' } },
-            { in: 'path', name: 'date', required: true, schema: { type: 'string', format: 'date' } },
-          ],
-          responses: { '200': { description: 'Available slots' } },
-        },
-      },
-      '/reservasi/services': {
+      '/services': {
         get: {
           tags: ['Layanan'],
           summary: 'Get all services',
           responses: { '200': { description: 'List of all services' } },
         },
       },
-      '/reservasi/services/active': {
+      '/services/{id}': {
         get: {
           tags: ['Layanan'],
-          summary: 'Get active services',
-          responses: { '200': { description: 'List of active services' } },
+          summary: 'Get service by ID',
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Service detail' }, '404': { description: 'Not found' } },
         },
       },
-      '/reservasi/services/{code}/toggle': {
-        patch: {
-          tags: ['Layanan'],
-          summary: 'Toggle service active status',
-          parameters: [{ in: 'path', name: 'code', required: true, schema: { type: 'string' } }],
-          responses: { '200': { description: 'Service toggled' } },
+      '/service-requests': {
+        get: {
+          tags: ['Permohonan Layanan'],
+          summary: 'Get service requests list',
+          responses: { '200': { description: 'List of service requests' } },
+        },
+      },
+      '/service-requests/{id}': {
+        get: {
+          tags: ['Permohonan Layanan'],
+          summary: 'Get service request by ID',
+          parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Service request detail' }, '404': { description: 'Not found' } },
         },
       },
 
@@ -234,10 +182,10 @@ Case Service mengelola **Laporan Warga** dan **Tiket Layanan** dalam sistem GovC
         get: {
           tags: ['User'],
           summary: 'Get user history',
-          description: 'Get complaint and ticket history for a user',
+          description: 'Get complaint and service request history for a user',
           security: [{ InternalApiKey: [] }],
           parameters: [{ in: 'path', name: 'wa_user_id', required: true, schema: { type: 'string' } }],
-          responses: { '200': { description: 'User complaint and ticket history' } },
+          responses: { '200': { description: 'User complaint and service request history' } },
         },
       },
 
@@ -364,24 +312,13 @@ Case Service mengelola **Laporan Warga** dan **Tiket Layanan** dalam sistem GovC
             foto_url: { type: 'string' },
           },
         },
-        CreateReservationRequest: {
-          type: 'object',
-          required: ['wa_user_id', 'service_code', 'citizen_data', 'reservation_date', 'reservation_time'],
-          properties: {
-            wa_user_id: { type: 'string' },
-            service_code: { type: 'string', enum: ['SKD', 'SKU', 'SKTM', 'SKBM', 'IKR', 'SPKTP', 'SPKK', 'SPSKCK', 'SPAKTA', 'SKK', 'SPP'] },
-            citizen_data: { type: 'object' },
-            reservation_date: { type: 'string', format: 'date' },
-            reservation_time: { type: 'string', example: '09:00' },
-          },
-        },
         Statistics: {
           type: 'object',
           properties: {
             totalLaporan: { type: 'integer' },
-            totalReservasi: { type: 'integer' },
+            totalServiceRequests: { type: 'integer' },
             laporan: { type: 'object' },
-            reservasi: { type: 'object' },
+            serviceRequests: { type: 'object' },
           },
         },
         Complaint: {
@@ -395,22 +332,6 @@ Case Service mengelola **Laporan Warga** dan **Tiket Layanan** dalam sistem GovC
             rt_rw: { type: 'string' },
             foto_url: { type: 'string', nullable: true },
             status: { type: 'string', enum: ['baru', 'proses', 'selesai', 'ditolak'] },
-            admin_notes: { type: 'string', nullable: true },
-            created_at: { type: 'string', format: 'date-time' },
-            updated_at: { type: 'string', format: 'date-time' },
-          },
-        },
-        Reservation: {
-          type: 'object',
-          properties: {
-            id: { type: 'string', example: 'RSV-20251208-001' },
-            wa_user_id: { type: 'string', example: '6281234567890' },
-            service_code: { type: 'string' },
-            citizen_data: { type: 'object' },
-            reservation_date: { type: 'string', format: 'date' },
-            reservation_time: { type: 'string' },
-            queue_number: { type: 'integer' },
-            status: { type: 'string', enum: ['pending', 'confirmed', 'arrived', 'completed', 'cancelled', 'no_show'] },
             admin_notes: { type: 'string', nullable: true },
             created_at: { type: 'string', format: 'date-time' },
             updated_at: { type: 'string', format: 'date-time' },

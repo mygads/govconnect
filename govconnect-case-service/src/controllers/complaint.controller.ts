@@ -6,6 +6,7 @@ import {
   updateComplaintStatus,
   getComplaintStatistics,
   cancelComplaint,
+  updateComplaintByUser,
 } from '../services/complaint.service';
 import { checkDuplicateComplaint, checkGlobalDuplicate } from '../services/complaint-deduplication.service';
 import logger from '../utils/logger';
@@ -87,8 +88,11 @@ export async function handleGetComplaints(req: Request, res: Response) {
     const filters = {
       status: req.query.status as string,
       kategori: req.query.kategori as string,
+      category_id: req.query.category_id as string,
+      type_id: req.query.type_id as string,
       rt_rw: req.query.rt_rw as string,
       wa_user_id: req.query.wa_user_id as string,
+      village_id: req.query.village_id as string,
       limit: parseInt(req.query.limit as string) || 20,
       offset: parseInt(req.query.offset as string) || 0,
     };
@@ -233,6 +237,31 @@ export async function handleCancelComplaint(req: Request, res: Response) {
     });
   } catch (error: any) {
     logger.error('Cancel complaint error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * PATCH /laporan/:id/update
+ * Update complaint fields by user (owner validation)
+ */
+export async function handleUpdateComplaintByUser(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { wa_user_id, alamat, deskripsi, rt_rw } = req.body;
+
+    const result = await updateComplaintByUser(id, { wa_user_id, alamat, deskripsi, rt_rw });
+
+    if (!result.success) {
+      if (result.error === 'NOT_FOUND') return res.status(404).json({ error: result.message });
+      if (result.error === 'NOT_OWNER') return res.status(403).json({ error: result.message });
+      if (result.error === 'LOCKED') return res.status(400).json({ error: result.message });
+      return res.status(400).json({ error: result.message || 'Gagal memperbarui laporan' });
+    }
+
+    return res.json({ data: result.data });
+  } catch (error: any) {
+    logger.error('Update complaint by user error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

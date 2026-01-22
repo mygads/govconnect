@@ -17,7 +17,7 @@ interface TrendData {
   labels: string[]
   trends: {
     complaints: number[]
-    tickets: number[]
+    services: number[]
     total: number[]
   }
   predictions: {
@@ -36,7 +36,7 @@ interface TrendData {
   }>
   summary: {
     totalComplaints: number
-    totalTickets: number
+    totalServices: number
     avgPerPeriod: number
     growthRate: number
   }
@@ -122,8 +122,8 @@ export default function AnalyticsPage() {
         fill: true,
       },
       {
-        label: 'Tiket',
-        data: [...trendData.trends.tickets, ...Array(trendData.predictions.labels.length).fill(null)],
+        label: 'Permohonan Layanan',
+        data: [...trendData.trends.services, ...Array(trendData.predictions.labels.length).fill(null)],
         borderColor: 'rgb(168, 85, 247)',
         backgroundColor: 'rgba(168, 85, 247, 0.1)',
         tension: 0.3,
@@ -148,7 +148,7 @@ export default function AnalyticsPage() {
     labels: Array.from({ length: 24 }, (_, i) => `${i}:00`),
     datasets: [
       {
-        label: 'Jumlah Laporan',
+        label: 'Jumlah Permohonan',
         data: trendData.peakAnalysis.hourlyDistribution,
         backgroundColor: trendData.peakAnalysis.hourlyDistribution.map((v, i) => 
           i === trendData.peakAnalysis.peakHour.hour 
@@ -171,7 +171,7 @@ export default function AnalyticsPage() {
     labels: dayNames,
     datasets: [
       {
-        label: 'Jumlah Laporan',
+        label: 'Jumlah Permohonan',
         data: trendData.peakAnalysis.dailyDistribution,
         backgroundColor: trendData.peakAnalysis.dailyDistribution.map((v, i) => 
           i === trendData.peakAnalysis.peakDay.day 
@@ -214,10 +214,10 @@ export default function AnalyticsPage() {
 
   // Summary donut
   const summaryDonutData = {
-    labels: ['Laporan', 'Tiket'],
+    labels: ['Laporan', 'Permohonan Layanan'],
     datasets: [
       {
-        data: [trendData.summary.totalComplaints, trendData.summary.totalTickets],
+        data: [trendData.summary.totalComplaints, trendData.summary.totalServices],
         backgroundColor: ['rgba(59, 130, 246, 0.8)', 'rgba(168, 85, 247, 0.8)'],
         borderColor: ['rgb(59, 130, 246)', 'rgb(168, 85, 247)'],
         borderWidth: 2,
@@ -376,7 +376,7 @@ export default function AnalyticsPage() {
             Tren Laporan & Prediksi
           </CardTitle>
           <CardDescription>
-            Grafik tren laporan dan tiket {period === 'weekly' ? 'per minggu' : 'per bulan'} dengan prediksi
+            Grafik tren laporan dan permohonan layanan {period === 'weekly' ? 'per minggu' : 'per bulan'} dengan prediksi
           </CardDescription>
         </CardHeader>
         <CardContent className="h-80">
@@ -447,7 +447,7 @@ export default function AnalyticsPage() {
           <CardHeader>
             <CardTitle>Distribusi Total</CardTitle>
             <CardDescription>
-              Perbandingan laporan vs tiket
+              Perbandingan laporan vs permohonan layanan
             </CardDescription>
           </CardHeader>
           <CardContent className="h-72 flex items-center justify-center">

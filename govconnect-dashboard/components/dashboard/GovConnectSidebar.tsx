@@ -10,7 +10,6 @@ import {
   FileText,
   BarChart3,
   ChevronRight,
-  Bot,
   Smartphone,
   MessageCircle,
   Download,
@@ -18,8 +17,8 @@ import {
   Shield,
   Brain,
   Activity,
-  Calendar,
   Settings2,
+  Bell,
 } from "lucide-react"
 
 import {
@@ -31,12 +30,10 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/components/auth/AuthContext"
+import { canAccess, type AdminRole } from "@/lib/rbac"
 
 export function GovConnectSidebar() {
   const pathname = usePathname()
@@ -63,7 +60,7 @@ export function GovConnectSidebar() {
 
   const menuItems = [
     {
-      title: "Overview",
+      title: "Ringkasan",
       items: [
         {
           title: "Dashboard",
@@ -76,79 +73,117 @@ export function GovConnectSidebar() {
           icon: BarChart3,
         },
         {
-          title: "Trend Analysis",
+          title: "Trend Analitik",
           url: "/dashboard/statistik/analytics",
           icon: TrendingUp,
+          roles: ["superadmin"],
         },
       ],
     },
     {
-      title: "Laporan Management",
+      title: "Pengaduan",
       items: [
         {
-          title: "List Laporan",
+          title: "Daftar Pengaduan",
           url: "/dashboard/laporan",
           icon: FileText,
         },
         {
-          title: "Export & Laporan",
+          title: "Kategori & Jenis",
+          url: "/dashboard/pengaduan/kategori-jenis",
+          icon: Shield,
+        },
+        {
+          title: "Ekspor Laporan",
           url: "/dashboard/export",
           icon: Download,
         },
       ],
     },
     {
-      title: "Reservasi & Layanan",
+      title: "Layanan",
       items: [
         {
-          title: "Daftar Reservasi",
-          url: "/dashboard/reservasi",
-          icon: Calendar,
-        },
-        {
-          title: "Kelola Layanan",
+          title: "Katalog Layanan",
           url: "/dashboard/layanan",
           icon: Settings2,
+        },
+        {
+          title: "Permohonan Layanan",
+          url: "/dashboard/pelayanan",
+          icon: FileText,
         },
       ],
     },
     {
-      title: "WhatsApp",
+      title: "Channel",
       items: [
         {
-          title: "Device",
-          url: "/dashboard/whatsapp",
+          title: "Channel Connect",
+          url: "/dashboard/channel-settings",
           icon: Smartphone,
         },
         {
-          title: "Live Chat",
+          title: "Live Chat & Takeover",
           url: "/dashboard/livechat",
           icon: MessageCircle,
         },
       ],
     },
     {
-      title: "AI Chatbot",
+      title: "Basis Pengetahuan",
       items: [
         {
-          title: "AI Settings",
-          url: "/dashboard/ai-settings",
-          icon: Bot,
-        },
-        {
-          title: "AI Analytics",
-          url: "/dashboard/ai-analytics",
-          icon: Activity,
-        },
-        {
-          title: "Knowledge & RAG",
+          title: "Knowledge Base & Dokumen",
           url: "/dashboard/knowledge",
           icon: Brain,
         },
         {
-          title: "Rate Limit",
+          title: "Uji Pengetahuan",
+          url: "/dashboard/testing-knowledge",
+          icon: Activity,
+        },
+      ],
+    },
+    {
+      title: "Pengaturan",
+      items: [
+        {
+          title: "Profil Desa",
+          url: "/dashboard/village-profile",
+          icon: Settings2,
+        },
+        {
+          title: "Nomor Penting",
+          url: "/dashboard/important-contacts",
+          icon: Bell,
+        },
+        {
+          title: "Akun Admin",
+          url: "/dashboard/settings",
+          icon: Settings2,
+        },
+        {
+          title: "Pengaturan Notifikasi",
+          url: "/dashboard/settings/notifications",
+          icon: Bell,
+        },
+      ],
+    },
+    {
+      title: "Super Admin",
+      items: [
+        {
+          title: "AI Analytics",
+          url: "/dashboard/ai-analytics",
+          icon: Activity,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Rate Limit & Blacklist",
           url: "/dashboard/settings/rate-limit",
           icon: Shield,
+          roles: ["superadmin"],
         },
       ],
     },
@@ -186,41 +221,49 @@ export function GovConnectSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="bg-white dark:bg-gray-950">
-        {menuItems.map((group, index) => (
-          <SidebarGroup key={index}>
-            <SidebarGroupLabel className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              {group.title}
-            </SidebarGroupLabel>
-            <SidebarMenu>
-              {group.items.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActivePath(item.url)}
-                    tooltip={item.title}
-                    className={`
-                      group relative transition-all duration-200 hover:bg-accent/80
-                      ${isActivePath(item.url) 
-                        ? 'bg-primary/10 dark:bg-primary/20 text-primary font-semibold border-l-4 border-primary' 
-                        : 'text-muted-foreground hover:text-foreground'
-                      }
-                    `}
-                  >
-                    <Link href={item.url} className="flex items-center gap-3 w-full">
-                      <item.icon className={`h-4 w-4 shrink-0 transition-colors ${
-                        isActivePath(item.url) ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
-                      }`} />
-                      <span className="flex-1">{item.title}</span>
-                      {isActivePath(item.url) && state === "expanded" && (
-                        <ChevronRight className="h-4 w-4 text-primary" />
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroup>
-        ))}
+        {menuItems.map((group, index) => {
+          const allowedItems = group.items.filter((item) =>
+            canAccess(user?.role as AdminRole, item.roles)
+          )
+
+          if (allowedItems.length === 0) return null
+
+          return (
+            <SidebarGroup key={index}>
+              <SidebarGroupLabel className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                {group.title}
+              </SidebarGroupLabel>
+              <SidebarMenu>
+                {allowedItems.map((item) => (
+                  <SidebarMenuItem key={item.url}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActivePath(item.url)}
+                      tooltip={item.title}
+                      className={`
+                        group relative transition-all duration-200 hover:bg-accent/80
+                        ${isActivePath(item.url) 
+                          ? 'bg-primary/10 dark:bg-primary/20 text-primary font-semibold border-l-4 border-primary' 
+                          : 'text-muted-foreground hover:text-foreground'
+                        }
+                      `}
+                    >
+                      <Link href={item.url} className="flex items-center gap-3 w-full">
+                        <item.icon className={`h-4 w-4 shrink-0 transition-colors ${
+                          isActivePath(item.url) ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                        }`} />
+                        <span className="flex-1">{item.title}</span>
+                        {isActivePath(item.url) && state === "expanded" && (
+                          <ChevronRight className="h-4 w-4 text-primary" />
+                        )}
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroup>
+          )
+        })}
       </SidebarContent>
     </Sidebar>
   )

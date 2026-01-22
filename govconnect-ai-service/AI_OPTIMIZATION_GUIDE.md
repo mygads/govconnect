@@ -54,7 +54,7 @@ Dokumen ini menjelaskan optimasi yang telah diimplementasikan untuk meningkatkan
 - `REJECTION` - Penolakan (tidak, batal, dll)
 - `THANKS` - Terima kasih
 - `CREATE_COMPLAINT` - Laporan masalah
-- `CREATE_RESERVATION` - Reservasi layanan
+- `CREATE_SERVICE_REQUEST` - Permohonan layanan
 - `CHECK_STATUS` - Cek status dengan ID
 - `CANCEL` - Pembatalan
 - `HISTORY` - Riwayat
@@ -123,7 +123,7 @@ setCachedResponse(query, response, intent, guidanceText);
 - `date` - Tanggal (besok, lusa, hari, tanggal Indonesia)
 - `time` - Jam (jam 9 pagi, pukul 10, dll)
 - `complaintId` - LAP-XXXXXXXX-XXX
-- `reservationId` - RSV-XXXXXXXX-XXX
+- `requestNumber` - LAY-YYYYMMDD-XXX
 - `email` - Email address
 
 **Penggunaan:**
@@ -299,8 +299,8 @@ curl http://localhost:3002/stats/optimization
 | `IDLE` | Tidak ada percakapan aktif |
 | `COLLECTING_COMPLAINT_DATA` | Mengumpulkan data laporan |
 | `CONFIRMING_COMPLAINT` | Menunggu konfirmasi laporan |
-| `COLLECTING_RESERVATION_DATA` | Mengumpulkan data reservasi |
-| `CONFIRMING_RESERVATION` | Menunggu konfirmasi reservasi |
+| `COLLECTING_SERVICE_REQUEST_DATA` | Mengumpulkan data permohonan layanan |
+| `CONFIRMING_SERVICE_REQUEST` | Menunggu konfirmasi permohonan layanan |
 | `AWAITING_ADDRESS_DETAIL` | Menunggu detail alamat |
 | `AWAITING_CONFIRMATION` | Menunggu konfirmasi umum |
 | `CHECK_STATUS_FLOW` | Flow cek status |

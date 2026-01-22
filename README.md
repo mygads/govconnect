@@ -1,6 +1,6 @@
 # 🟩 GovConnect - AI-Powered Government Services Platform
 
-Sistem layanan pemerintah berbasis WhatsApp dengan AI orchestrator untuk menangani laporan warga dan tiket pelayanan.
+Sistem layanan pemerintah berbasis WhatsApp dengan AI orchestrator untuk menangani laporan warga dan permohonan layanan.
 
 ## 🏗️ Architecture
 
@@ -12,12 +12,10 @@ GovConnect menggunakan **microservices architecture** dengan 5 services utama:
 └──────┬──────┘
        │
        ▼
-┌─────────────────────────────────────────────────────────┐
-│          TRAEFIK API GATEWAY                            │
-│  - SSL/TLS termination                                  │
-│  - Rate limiting & Circuit breaker                      │
-│  - govconnect.my.id / api.govconnect.my.id             │
-└──────┬──────────────────────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│   DIRECT SERVICE COMMUNICATION             │
+│   (NO AGGREGATED API GATEWAY)              │
+└──────┬─────────────────────────────────────┘
        │
        ├────────────────────────────────────────────┐
        ▼                                            ▼
@@ -25,7 +23,8 @@ GovConnect menggunakan **microservices architecture** dengan 5 services utama:
 │  Service 1: Channel Service │   │  Service 4: Dashboard       │
 │  Port: 3001                 │   │  Port: 3000                 │
 │  - Webhook handler          │   │  - Admin panel (Next.js)    │
-│  - FIFO 30 messages         │   │  - Manage laporan & tiket   │
+│  - FIFO 30 messages         │   │  - Kelola laporan &         │
+│                             │   │    permohonan layanan       │
 │  - WhatsApp sender          │   │  - Statistics & charts      │
 └──────┬──────────────────────┘   └─────────────────────────────┘
        │ (RabbitMQ Events)
@@ -44,7 +43,7 @@ GovConnect menggunakan **microservices architecture** dengan 5 services utama:
 │  Service 3: Case Service    │
 │  Port: 3003                 │
 │  - Laporan management       │
-│  - Tiket management         │
+│  - Permohonan layanan        │
 │  - REST API for Dashboard   │
 └──────┬──────────────────────┘
        │ (RabbitMQ Events)
@@ -64,7 +63,6 @@ GovConnect menggunakan **microservices architecture** dengan 5 services utama:
 - [x] **Database-per-Service** - Separate PostgreSQL databases for isolation
 - [x] **RabbitMQ** - Async message broker for events
 - [x] **REST APIs** - Sync communication between services
-- [x] **Traefik API Gateway** - SSL, routing, rate limiting
 - [x] **Kubernetes Manifests** - Full K8s deployment ready
 - [x] **OpenAPI Documentation** - Complete API docs
 - [x] **Circuit Breaker** - Resilience with Opossum
@@ -100,7 +98,7 @@ docker compose --profile monitoring up -d
 # With logging (Loki + Promtail)
 docker compose --profile logging up -d
 
-# Full production stack (+ Traefik)
+# Full production stack
 docker compose --profile production up -d
 
 # All profiles
@@ -132,19 +130,18 @@ curl http://localhost:3000/api/health  # Dashboard
 | RabbitMQ | http://localhost:15672 (admin/rabbitmq_secret_2025) |
 | Grafana | http://localhost:3100 (admin/govconnect-grafana-2025) |
 | Prometheus | http://localhost:9090 |
-| Traefik | http://localhost:8080 |
 
 ## 📊 Database
 
-**Separate PostgreSQL databases** for each service (no schema needed, uses `public` by default):
+**Separate PostgreSQL databases** untuk setiap service yang menyimpan data (no schema needed, uses `public` by default):
 
 | Service | Database | Description |
 |---------|----------|-------------|
 | Channel | `gc_channel` | Messages, send logs, conversations |
-| Case | `gc_case` | Complaints, tickets, reservations |
+| Case | `gc_case` | Complaints, service requests |
 | Notification | `gc_notification` | Notification logs, templates |
 | Dashboard | `gc_dashboard` | Admin users, settings, knowledge base |
-| AI Service | `gc_ai` | Vector embeddings (pgvector), RAG data |
+| AI Orchestrator | - | Stateless (no database) |
 
 Connection string format:
 ```bash
@@ -153,14 +150,13 @@ DATABASE_URL=postgresql://postgres:password@postgres:5432/gc_{service}
 
 # Examples:
 DATABASE_URL=postgresql://postgres:postgres_secret_2025@postgres:5432/gc_channel
-DATABASE_URL=postgresql://postgres:postgres_secret_2025@postgres:5432/gc_ai
 ```
 
 **Important Notes:**
 - ✅ All services use `DATABASE_URL` environment variable
 - ✅ No schema parameter in connection string (uses `public` by default)
-- ✅ Each service has its own database for isolation and scalability
-- ✅ AI Service uses pgvector extension for vector embeddings
+- ✅ Each stateful service has its own database for isolation and scalability
+- ✅ AI Orchestrator bersifat stateless (tanpa database)
 
 ### 🔄 Database Migrations (CI/CD Auto-Migrate)
 
@@ -196,13 +192,9 @@ git push origin main
 - Container akan otomatis menjalankan `prisma db push` jika tidak ada folder `migrations/`
 - Ini cocok untuk development tapi tidak recommended untuk production
 
-### pgvector Support
+### AI Orchestrator (Stateless)
 
-AI Service menggunakan **pgvector** untuk RAG/embeddings:
-- Extension otomatis di-enable di database `gc_ai`
-- Schema Prisma menggunakan `extensions = [pgvector(map: "vector")]`
-- Stores vector embeddings for knowledge base and documents
-- Enables semantic search and RAG capabilities
+AI Orchestrator **tidak menggunakan database** dan tidak menyimpan data.
 
 ## 🐰 RabbitMQ Events
 
@@ -211,7 +203,7 @@ AI Service menggunakan **pgvector** untuk RAG/embeddings:
 | `whatsapp.message.received` | Channel | AI |
 | `govconnect.ai.reply` | AI | Notification |
 | `govconnect.complaint.created` | Case | Notification |
-| `govconnect.ticket.created` | Case | Notification |
+| `govconnect.service.requested` | Case | Notification |
 
 ## 📁 Project Structure
 
@@ -219,7 +211,6 @@ AI Service menggunakan **pgvector** untuk RAG/embeddings:
 govconnect/
 ├── docker-compose.yml           # Unified Docker Compose
 ├── .env                         # Environment variables
-├── traefik/                     # API Gateway config
 ├── docker/                      # Docker init scripts
 ├── k8s/                         # Kubernetes manifests
 ├── docs/                        # Documentation
@@ -245,7 +236,7 @@ cd govconnect
 cp .env.example .env
 nano .env  # Configure for production
 
-# Deploy with Traefik
+# Deploy services
 docker compose --profile production up -d
 ```
 
@@ -284,28 +275,9 @@ pnpm dev
 
 ### Understanding Service Communication
 
-GovConnect menggunakan **dual-layer networking**:
+GovConnect menggunakan **komunikasi langsung antar service** (tanpa gateway agregasi):
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        EXTERNAL ACCESS LAYER                                │
-│                                                                             │
-│  Browser/Mobile App                                                         │
-│       │                                                                     │
-│       ▼                                                                     │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │            TRAEFIK API GATEWAY (api.govconnect.my.id)               │   │
-│  │  - SSL/TLS termination                                              │   │
-│  │  - Rate limiting, CORS                                              │   │
-│  │  - Path-based routing                                               │   │
-│  │  ─────────────────────────────────────────────────────────────────  │   │
-│  │  /api/channel/*  → Channel Service                                  │   │
-│  │  /api/cases/*    → Case Service                                     │   │
-│  │  /api/ai/*       → AI Service                                       │   │
-│  │  /webhook/*      → Channel Service                                  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       INTERNAL NETWORK LAYER                                │
 │                                                                             │
@@ -324,7 +296,7 @@ GovConnect menggunakan **dual-layer networking**:
 │   │    :3001     │        │    :3004     │        └──────────────┘         │
 │   └──────────────┘        └──────────────┘                                 │
 │                                                                             │
-│   URL Pattern: http://service-name:port (NO Traefik, NO SSL overhead)      │
+│   URL Pattern: http://service-name:port                                     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -335,27 +307,22 @@ GovConnect menggunakan **dual-layer networking**:
 | **Local Dev (npm)** | `http://localhost:PORT` | `http://localhost:3003` |
 | **Docker Compose** | `http://service-name:PORT` | `http://case-service:3003` |
 | **Docker Swarm** | `http://service-name:PORT` | `http://case-service:3003` |
-| **External Client** | `https://api.govconnect.my.id/api/*` | Via Traefik |
+| **External Client** | `https://<service-domain>` | `https://case.govconnect.my.id` |
 
 ### Best Practice Rules
 
-1. **Internal Service-to-Service**: Selalu gunakan Docker internal network (`http://service-name:port`)
-   - Lebih cepat (tidak melewati Traefik)
-   - Tidak ada SSL overhead
-   - Docker load balancing otomatis
+1. **Internal Service-to-Service**: Selalu gunakan Docker internal network (`http://service-name:port`).
+       - Lebih cepat dan langsung
+       - Tidak bergantung gateway agregasi
 
-2. **External Client Access**: Selalu gunakan Traefik gateway (`api.govconnect.my.id`)
-   - SSL/TLS termination
-   - Rate limiting protection
-   - CORS handling
-   - Single entry point
+2. **External Client Access**: Akses masing-masing service langsung melalui domain publiknya.
 
 3. **Dashboard (Next.js)**:
    - Browser → `/api/*` routes (Next.js API Routes)
    - Server-side → `http://service-name:port` (Direct internal)
 
 4. **Webhook (WhatsApp)**: 
-   - Masuk via `api.govconnect.my.id/webhook` → Traefik → Channel Service
+       - Masuk langsung ke Channel Service (domain publik channel)
 
 ## 📚 Documentation
 
@@ -376,7 +343,7 @@ GovConnect menggunakan **dual-layer networking**:
   openssl rand -base64 32  # JWT Secret
   openssl rand -base64 64  # API Key
   ```
-- Use HTTPS in production (Traefik handles SSL via Let's Encrypt)
+- Use HTTPS in production (SSL bisa dikelola oleh ingress/domain masing-masing service)
 
 ## 📝 License
 

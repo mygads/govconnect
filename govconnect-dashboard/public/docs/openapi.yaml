@@ -5,18 +5,18 @@ info:
     Complete API documentation for GovConnect microservices platform.
     
     ## Services
-    - **Case Service** - Complaints & Reservations management
-    - **Channel Service** - WhatsApp Gateway & Live Chat
+    - **Case Service** - Complaints & Service Requests management
+    - **Channel Service** - WhatsApp Channel & Live Chat
     - **AI Service** - AI Orchestrator & Knowledge Base
     - **Notification Service** - Event-driven notifications
     
     ## Authentication
     - **Internal API Key**: `X-Internal-API-Key` header for service-to-service communication
     - **JWT Token**: `Authorization: Bearer <token>` for dashboard authentication
-    - **Public APIs**: GraphQL endpoints don't require authentication
+    - **Public APIs**: Endpoint publik tersedia untuk form publik (tanpa auth)
     
     ## Base URLs
-    All services are accessible via Traefik reverse proxy at `api.govconnect.my.id`
+    Layanan diakses langsung per service (tanpa gateway agregasi).
   version: 1.0.0
   contact:
     name: GovConnect Team
@@ -25,11 +25,11 @@ info:
     name: MIT
 
 servers:
-  - url: https://api.govconnect.my.id/case
+  - url: https://case.govconnect.my.id
     description: Case Service (Production)
-  - url: https://api.govconnect.my.id/channel
+  - url: https://channel.govconnect.my.id
     description: Channel Service (Production)
-  - url: https://api.govconnect.my.id/ai
+  - url: https://ai.govconnect.my.id
     description: AI Service (Production)
 
 tags:
@@ -37,8 +37,8 @@ tags:
     description: Health check endpoints
   - name: Complaints
     description: Complaint/Laporan management
-  - name: Reservations
-    description: Reservation management
+  - name: Service Requests
+    description: Service request management
   - name: Services
     description: Government services configuration
   - name: Statistics
@@ -57,8 +57,6 @@ tags:
     description: Knowledge base and vector search
   - name: AI Analytics
     description: AI processing analytics
-  - name: GraphQL
-    description: GraphQL API for public forms
 
 components:
   securitySchemes:
@@ -206,88 +204,33 @@ components:
             hariIni:
               type: integer
 
-    # Reservation Schemas
-    ReservationStatus:
-      type: string
-      enum:
-        - pending
-        - confirmed
-        - arrived
-        - completed
-        - cancelled
-        - no_show
-
-    CitizenData:
-      type: object
-      required:
-        - nama_lengkap
-        - nik
-        - alamat
-        - no_hp
-      properties:
-        nama_lengkap:
-          type: string
-          example: "John Doe"
-        nik:
-          type: string
-          example: "1234567890123456"
-        alamat:
-          type: string
-          example: "Jl. Merdeka No. 10"
-        no_hp:
-          type: string
-          example: "081234567890"
-
-    CreateReservationRequest:
-      type: object
-      required:
-        - wa_user_id
-        - service_code
-        - citizen_data
-        - reservation_date
-        - reservation_time
-      properties:
-        wa_user_id:
-          type: string
-          example: "6281234567890"
-        service_code:
-          type: string
-          example: "SKD"
-        citizen_data:
-          $ref: '#/components/schemas/CitizenData'
-        reservation_date:
-          type: string
-          format: date
-          example: "2025-12-24"
-        reservation_time:
-          type: string
-          example: "09:00"
-
-    Reservation:
+    # Service request schemas (permohonan layanan)
+    ServiceRequest:
       type: object
       properties:
         id:
           type: string
           format: uuid
-        reservation_id:
+        request_number:
           type: string
-          example: "RSV-20251222-001"
+          example: "LAY-20250124-001"
+        service_id:
+          type: string
         wa_user_id:
           type: string
-        service_code:
-          type: string
-        queue_number:
-          type: integer
-        reservation_date:
-          type: string
-          format: date
-        reservation_time:
-          type: string
         status:
-          $ref: '#/components/schemas/ReservationStatus'
-        citizen_data:
-          $ref: '#/components/schemas/CitizenData'
+          type: string
+          example: "baru"
+        citizen_data_json:
+          type: object
+        requirement_data_json:
+          type: object
+        admin_notes:
+          type: string
         created_at:
+          type: string
+          format: date-time
+        updated_at:
           type: string
           format: date-time
 
@@ -897,475 +840,6 @@ paths:
 
 
   # ============================================
-  # CASE SERVICE - Reservations
-  # ============================================
-  /reservasi/services:
-    get:
-      tags:
-        - Services
-      summary: Get all services
-      description: Get all government services
-      operationId: getAllServices
-      responses:
-        '200':
-          description: List of services
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/GovService'
-
-  /reservasi/services/active:
-    get:
-      tags:
-        - Services
-      summary: Get active services
-      description: Get only active services
-      operationId: getActiveServices
-      responses:
-        '200':
-          description: List of active services
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/GovService'
-
-  /reservasi/services/{code}:
-    get:
-      tags:
-        - Services
-      summary: Get service by code
-      operationId: getServiceByCode
-      parameters:
-        - name: code
-          in: path
-          required: true
-          schema:
-            type: string
-          example: SKD
-      responses:
-        '200':
-          description: Service details
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  data:
-                    $ref: '#/components/schemas/GovService'
-        '404':
-          description: Service not found
-
-  /reservasi/services/{code}/toggle-active:
-    patch:
-      tags:
-        - Services
-      summary: Toggle service active status
-      operationId: toggleServiceActive
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: code
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                is_active:
-                  type: boolean
-      responses:
-        '200':
-          description: Status toggled
-
-  /reservasi/services/{code}/toggle-online:
-    patch:
-      tags:
-        - Services
-      summary: Toggle online availability
-      operationId: toggleServiceOnline
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: code
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                is_online_available:
-                  type: boolean
-      responses:
-        '200':
-          description: Online status toggled
-
-  /reservasi/services/{code}/settings:
-    patch:
-      tags:
-        - Services
-      summary: Update service settings
-      operationId: updateServiceSettings
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: code
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                daily_quota:
-                  type: integer
-                operating_hours:
-                  $ref: '#/components/schemas/OperatingHours'
-      responses:
-        '200':
-          description: Settings updated
-
-  /reservasi/slots/{code}/{date}:
-    get:
-      tags:
-        - Reservations
-      summary: Get available slots
-      description: Get available time slots for a service on a specific date
-      operationId: getAvailableSlots
-      parameters:
-        - name: code
-          in: path
-          required: true
-          schema:
-            type: string
-          example: SKD
-        - name: date
-          in: path
-          required: true
-          schema:
-            type: string
-            format: date
-          example: "2025-12-24"
-      responses:
-        '200':
-          description: Available slots
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AvailableSlots'
-        '404':
-          description: Service not found
-
-  /reservasi/create:
-    post:
-      tags:
-        - Reservations
-      summary: Create reservation
-      description: Create a new reservation
-      operationId: createReservation
-      security:
-        - InternalApiKey: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateReservationRequest'
-      responses:
-        '201':
-          description: Reservation created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  data:
-                    type: object
-                    properties:
-                      reservation_id:
-                        type: string
-                      queue_number:
-                        type: integer
-                      service_name:
-                        type: string
-                      reservation_date:
-                        type: string
-                      reservation_time:
-                        type: string
-                      status:
-                        type: string
-        '400':
-          description: Validation error or no slots available
-        '409':
-          description: Duplicate reservation
-
-  /reservasi:
-    get:
-      tags:
-        - Reservations
-      summary: Get reservations list
-      operationId: getReservations
-      parameters:
-        - name: status
-          in: query
-          schema:
-            $ref: '#/components/schemas/ReservationStatus'
-        - name: service_id
-          in: query
-          schema:
-            type: string
-        - name: wa_user_id
-          in: query
-          schema:
-            type: string
-        - name: date_from
-          in: query
-          schema:
-            type: string
-            format: date
-        - name: date_to
-          in: query
-          schema:
-            type: string
-            format: date
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 20
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
-      responses:
-        '200':
-          description: List of reservations
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Reservation'
-                  total:
-                    type: integer
-
-  /reservasi/{id}:
-    get:
-      tags:
-        - Reservations
-      summary: Get reservation by ID
-      operationId: getReservationById
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Reservation details
-        '404':
-          description: Not found
-
-  /reservasi/{id}/check:
-    post:
-      tags:
-        - Reservations
-      summary: Check reservation status
-      operationId: checkReservation
-      security:
-        - InternalApiKey: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - wa_user_id
-              properties:
-                wa_user_id:
-                  type: string
-      responses:
-        '200':
-          description: Reservation status
-        '403':
-          description: Not owner
-        '404':
-          description: Not found
-
-  /reservasi/{id}/status:
-    patch:
-      tags:
-        - Reservations
-      summary: Update reservation status
-      operationId: updateReservationStatus
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - status
-              properties:
-                status:
-                  $ref: '#/components/schemas/ReservationStatus'
-                admin_notes:
-                  type: string
-      responses:
-        '200':
-          description: Status updated
-
-  /reservasi/{id}/cancel:
-    post:
-      tags:
-        - Reservations
-      summary: Cancel reservation
-      operationId: cancelReservation
-      security:
-        - InternalApiKey: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - wa_user_id
-              properties:
-                wa_user_id:
-                  type: string
-                cancel_reason:
-                  type: string
-      responses:
-        '200':
-          description: Reservation cancelled
-
-  /reservasi/{id}/time:
-    patch:
-      tags:
-        - Reservations
-      summary: Update reservation time
-      operationId: updateReservationTime
-      security:
-        - InternalApiKey: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - wa_user_id
-                - reservation_date
-                - reservation_time
-              properties:
-                wa_user_id:
-                  type: string
-                reservation_date:
-                  type: string
-                  format: date
-                reservation_time:
-                  type: string
-      responses:
-        '200':
-          description: Time updated
-
-  /reservasi/statistics:
-    get:
-      tags:
-        - Reservations
-        - Statistics
-      summary: Get reservation statistics
-      operationId: getReservationStatistics
-      responses:
-        '200':
-          description: Reservation statistics
-
-  /reservasi/history/{wa_user_id}:
-    get:
-      tags:
-        - Reservations
-        - User
-      summary: Get user reservation history
-      operationId: getUserReservationHistory
-      security:
-        - InternalApiKey: []
-      parameters:
-        - name: wa_user_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: User reservation history
-
-  # ============================================
   # CASE SERVICE - Statistics & User
   # ============================================
   /statistics/overview:
@@ -1383,7 +857,7 @@ paths:
       tags:
         - User
       summary: Get user history
-      description: Get user history including complaints and reservations
+      description: Get user history including complaints and service requests
       operationId: getUserHistory
       security:
         - InternalApiKey: []
@@ -2538,140 +2012,3 @@ paths:
       responses:
         '200':
           description: Retry all initiated
-
-  # ============================================
-  # GRAPHQL API
-  # ============================================
-  /graphql:
-    post:
-      tags:
-        - GraphQL
-      summary: GraphQL endpoint
-      description: |
-        GraphQL API for public forms (complaints and reservations).
-        
-        ## Available Queries
-        - `services` - Get all government services
-        - `service(code: String!)` - Get service by code
-        - `availableSlots(serviceCode: String!, date: String!)` - Get available time slots
-        - `complaintCategories` - Get complaint categories
-        
-        ## Available Mutations
-        - `createComplaint(input: CreateComplaintInput!)` - Create a complaint
-        - `createReservation(input: CreateReservationInput!)` - Create a reservation
-      operationId: graphqlEndpoint
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - query
-              properties:
-                query:
-                  type: string
-                  description: GraphQL query or mutation
-                variables:
-                  type: object
-                  description: Query variables
-                operationName:
-                  type: string
-            examples:
-              getServices:
-                summary: Get all services
-                value:
-                  query: |
-                    query {
-                      services {
-                        code
-                        name
-                        description
-                        category
-                        requirements
-                        is_active
-                      }
-                    }
-              getAvailableSlots:
-                summary: Get available slots
-                value:
-                  query: |
-                    query GetSlots($code: String!, $date: String!) {
-                      availableSlots(serviceCode: $code, date: $date) {
-                        service_code
-                        date
-                        is_open
-                        slots {
-                          time
-                          available
-                          remaining
-                        }
-                      }
-                    }
-                  variables:
-                    code: "SKD"
-                    date: "2025-12-24"
-              createComplaint:
-                summary: Create complaint
-                value:
-                  query: |
-                    mutation CreateComplaint($input: CreateComplaintInput!) {
-                      createComplaint(input: $input) {
-                        success
-                        complaint_id
-                        message
-                      }
-                    }
-                  variables:
-                    input:
-                      kategori: "jalan_rusak"
-                      deskripsi: "Jalan berlubang"
-                      alamat: "Jl. Merdeka No. 10"
-                      nama_pelapor: "John Doe"
-                      no_hp: "081234567890"
-              createReservation:
-                summary: Create reservation
-                value:
-                  query: |
-                    mutation CreateReservation($input: CreateReservationInput!) {
-                      createReservation(input: $input) {
-                        success
-                        reservation_id
-                        queue_number
-                        message
-                      }
-                    }
-                  variables:
-                    input:
-                      service_code: "SKD"
-                      reservation_date: "2025-12-24"
-                      reservation_time: "09:00"
-                      nama_lengkap: "John Doe"
-                      nik: "1234567890123456"
-                      alamat: "Jl. Merdeka No. 10"
-                      no_hp: "081234567890"
-      responses:
-        '200':
-          description: GraphQL response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                  errors:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        message:
-                          type: string
-                        locations:
-                          type: array
-                          items:
-                            type: object
-                        path:
-                          type: array
-                          items:
-                            type: string

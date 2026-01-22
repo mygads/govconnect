@@ -152,7 +152,7 @@ deploy() {
         # Pull/build images
         docker compose build --no-cache
         
-        # Start with production profile (includes Traefik)
+        # Start with production profile
         docker compose --profile production up -d
         
         # Clean up old images
@@ -176,15 +176,20 @@ deploy() {
     echo "Next steps:"
     echo "1. Configure DNS records:"
     echo "   - govconnect.my.id      A    34.101.223.241"
-    echo "   - api.govconnect.my.id  A    34.101.223.241"
+    echo "   - case.govconnect.my.id A    34.101.223.241"
+    echo "   - channel.govconnect.my.id A 34.101.223.241"
+    echo "   - ai.govconnect.my.id   A    34.101.223.241"
+    echo "   - notification.govconnect.my.id A 34.101.223.241"
     echo ""
     echo "2. Wait for SSL certificates (Let's Encrypt)"
     echo ""
     echo "3. Access your services:"
     echo "   - Dashboard:  https://govconnect.my.id"
-    echo "   - API:        https://api.govconnect.my.id"
+    echo "   - Case API:   https://case.govconnect.my.id"
+    echo "   - Channel:    https://channel.govconnect.my.id"
+    echo "   - AI:         https://ai.govconnect.my.id"
+    echo "   - Notification: https://notification.govconnect.my.id"
     echo "   - RabbitMQ:   http://34.101.223.241:15672"
-    echo "   - Traefik:    http://34.101.223.241:8080"
     echo ""
 }
 

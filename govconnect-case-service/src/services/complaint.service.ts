@@ -12,6 +12,11 @@ export interface CreateComplaintData {
   alamat?: string;
   rt_rw?: string;
   foto_url?: string;
+  category_id?: string;
+  type_id?: string;
+  is_urgent?: boolean;
+  require_address?: boolean;
+  village_id?: string;
 }
 
 export interface UpdateComplaintStatusData {
@@ -22,6 +27,13 @@ export interface UpdateComplaintStatusData {
 export interface CancelComplaintData {
   wa_user_id: string;
   cancel_reason?: string;
+}
+
+export interface UpdateComplaintByUserData {
+  wa_user_id: string;
+  alamat?: string;
+  deskripsi?: string;
+  rt_rw?: string;
 }
 
 export interface CancelComplaintResult {
@@ -36,6 +48,9 @@ export interface ComplaintFilters {
   kategori?: string;
   rt_rw?: string;
   wa_user_id?: string;
+  village_id?: string;
+  category_id?: string;
+  type_id?: string;
   limit?: number;
   offset?: number;
 }
@@ -45,16 +60,23 @@ export interface ComplaintFilters {
  */
 export async function createComplaint(data: CreateComplaintData) {
   const complaint_id = await generateComplaintId();
+
+  const isUrgent = data.is_urgent ?? isUrgentCategory(data.kategori);
   
   const complaint = await prisma.complaint.create({
     data: {
       complaint_id,
       wa_user_id: data.wa_user_id,
       kategori: data.kategori,
+      category_id: data.category_id,
+      type_id: data.type_id,
       deskripsi: data.deskripsi,
       alamat: data.alamat,
       rt_rw: data.rt_rw,
       foto_url: data.foto_url,
+      is_urgent: isUrgent,
+      require_address: data.require_address ?? false,
+      village_id: data.village_id,
       status: 'baru',
     },
   });
@@ -64,7 +86,7 @@ export async function createComplaint(data: CreateComplaintData) {
   // would cause double response to the user.
   
   // Check if this is an urgent category and publish urgent alert
-  if (isUrgentCategory(data.kategori)) {
+  if (isUrgent) {
     await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.URGENT_ALERT, {
       type: 'urgent_complaint',
       complaint_id: complaint.complaint_id,
@@ -97,12 +119,22 @@ export async function getComplaintById(id: string) {
   // Try to find by complaint_id first (e.g., LAP-20251201-001)
   let complaint = await prisma.complaint.findUnique({
     where: { complaint_id: id },
+    include: {
+      updates: true,
+      category: true,
+      type: true,
+    },
   });
   
   // If not found, try by database id (CUID)
   if (!complaint) {
     complaint = await prisma.complaint.findUnique({
       where: { id },
+      include: {
+        updates: true,
+        category: true,
+        type: true,
+      },
     });
   }
   
@@ -153,13 +185,16 @@ export async function getComplaintByIdWithOwnership(id: string, wa_user_id: stri
  * Get complaints list with filters and pagination
  */
 export async function getComplaintsList(filters: ComplaintFilters) {
-  const { status, kategori, rt_rw, wa_user_id, limit = 20, offset = 0 } = filters;
+  const { status, kategori, rt_rw, wa_user_id, village_id, category_id, type_id, limit = 20, offset = 0 } = filters;
   
   const where: any = {};
   if (status) where.status = status;
   if (kategori) where.kategori = kategori;
   if (rt_rw) where.rt_rw = rt_rw;
   if (wa_user_id) where.wa_user_id = wa_user_id;
+  if (village_id) where.village_id = village_id;
+  if (category_id) where.category_id = category_id;
+  if (type_id) where.type_id = type_id;
   
   const [data, total] = await Promise.all([
     prisma.complaint.findMany({
@@ -354,5 +389,48 @@ export async function cancelComplaint(
       error: 'INTERNAL_ERROR',
       message: 'Terjadi kesalahan saat membatalkan laporan',
     };
+  }
+}
+
+/**
+ * Update complaint by user (owner validation)
+ * User can only update address/description/rt_rw while status is not selesai/ditolak
+ */
+export async function updateComplaintByUser(
+  id: string,
+  data: UpdateComplaintByUserData
+): Promise<{ success: boolean; error?: 'NOT_FOUND' | 'NOT_OWNER' | 'LOCKED'; message?: string; data?: any }> {
+  try {
+    const complaint = await prisma.complaint.findFirst({
+      where: {
+        OR: [{ id }, { complaint_id: id }],
+      },
+    });
+
+    if (!complaint) {
+      return { success: false, error: 'NOT_FOUND', message: 'Laporan tidak ditemukan' };
+    }
+
+    if (complaint.wa_user_id !== data.wa_user_id) {
+      return { success: false, error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk mengubah laporan ini' };
+    }
+
+    if (['selesai', 'ditolak'].includes(complaint.status)) {
+      return { success: false, error: 'LOCKED', message: 'Laporan sudah selesai/ditolak dan tidak bisa diubah' };
+    }
+
+    const updated = await prisma.complaint.update({
+      where: { id: complaint.id },
+      data: {
+        alamat: data.alamat ?? undefined,
+        deskripsi: data.deskripsi ?? undefined,
+        rt_rw: data.rt_rw ?? undefined,
+      },
+    });
+
+    return { success: true, data: updated };
+  } catch (error: any) {
+    logger.error('Update complaint by user failed', { error: error.message, id, wa_user_id: data.wa_user_id });
+    return { success: false, error: 'NOT_FOUND', message: 'Terjadi kesalahan saat memperbarui laporan' };
   }
 }

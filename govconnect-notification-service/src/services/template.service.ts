@@ -16,37 +16,25 @@ Kategori: ${kategoriText}
 Kami akan segera menindaklanjuti. Anda akan dinotifikasi saat selesai.`;
 }
 
-export function buildReservationCreatedMessage(data: {
-  reservation_id: string;
-  service_name: string;
-  reservation_date: string;
-  reservation_time: string;
+export function buildServiceRequestedMessage(data: {
+  request_number: string;
+  service_name?: string;
 }): string {
-  const dateFormatted = new Date(data.reservation_date).toLocaleDateString('id-ID', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric'
-  });
-  
-  return `✅ *Reservasi Berhasil*
+  return `🎫 *Permohonan Layanan Diterima*
 
-No: *${data.reservation_id}*
-Layanan: ${data.service_name}
-📅 ${dateFormatted}
-🕐 ${data.reservation_time} WIB
+No: *${data.request_number}*
+Layanan: ${data.service_name || 'Layanan Administrasi'}
 
-Silakan datang ke kantor kelurahan sesuai jadwal.
-📍 Senin-Jumat, 08:00-16:00`;
+Permohonan Anda sudah kami terima. Anda akan mendapat update status melalui WhatsApp ini.`;
 }
 
 export function buildStatusUpdatedMessage(data: {
   complaint_id?: string;
-  reservation_id?: string;
+  request_number?: string;
   status: string;
   admin_notes?: string;
 }): string {
-  const id = data.complaint_id || data.reservation_id;
+  const id = data.complaint_id || data.request_number;
   const isComplaint = !!data.complaint_id;
   
   return buildNaturalStatusMessage(id!, data.status, data.admin_notes, isComplaint);
@@ -58,7 +46,7 @@ function buildNaturalStatusMessage(
   adminNotes?: string,
   isComplaint: boolean = true
 ): string {
-  const type = isComplaint ? 'Laporan' : 'Reservasi';
+  const type = isComplaint ? 'Laporan' : 'Layanan';
   
   // Only 'selesai' will be sent as notification (other statuses are skipped)
   // But keep other cases for internal use / future changes

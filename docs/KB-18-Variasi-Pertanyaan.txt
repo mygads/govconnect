@@ -322,36 +322,36 @@ Waktu penanganan:
 
 ---
 
-## SECTION 9: VARIASI PERTANYAAN RESERVASI
+## SECTION 9: VARIASI PERTANYAAN PERMOHONAN LAYANAN
 
-### Cara Warga Bertanya tentang Reservasi
-Berikut berbagai cara warga bertanya tentang reservasi online:
+### Cara Warga Bertanya tentang Permohonan Layanan
+Berikut berbagai cara warga bertanya tentang pengajuan layanan:
 
-**Pertanyaan Cara Reservasi:**
-- "Gimana cara booking jadwal?"
-- "Bisa reservasi online gak?"
-- "Cara daftar antrian gimana?"
-- "Mau pesan jadwal kedatangan"
+**Pertanyaan Cara Mengajukan:**
+- "Gimana cara ajukan layanan?"
+- "Bisa ajukan layanan online gak?"
+- "Cara isi form layanan gimana?"
+- "Mau ajukan surat domisili"
 
 **Pertanyaan Status:**
-- "Cek status reservasi saya"
-- "Reservasi saya sudah dikonfirmasi belum?"
-- "Gimana status booking saya?"
+- "Cek status layanan saya"
+- "Permohonan saya sudah diproses belum?"
+- "Gimana status layanan saya?"
 
 **Pertanyaan Pembatalan:**
-- "Mau batalkan reservasi"
-- "Cancel booking saya"
-- "Tidak jadi datang"
+- "Mau batalkan layanan"
+- "Cancel permohonan layanan saya"
+- "Tidak jadi mengajukan layanan"
 
 **Jawaban:**
-Cara reservasi online:
-1. Chat ke WhatsApp kelurahan
-2. Sebutkan jenis layanan
-3. Berikan data diri (nama, NIK, alamat, no HP)
-4. Pilih tanggal dan jam kedatangan
-5. Tunggu konfirmasi nomor reservasi
+Cara mengajukan layanan:
+1. Chat ke WhatsApp kelurahan atau buka form publik
+2. Pilih jenis layanan
+3. Isi data diri (nama, NIK, alamat, no HP)
+4. Lengkapi persyaratan
+5. Terima nomor layanan
 
-Catatan: Reservasi hanya untuk booking jadwal. Tetap harus datang ke kelurahan dengan dokumen lengkap.
+Catatan: Beberapa layanan tetap memerlukan kedatangan ke kelurahan dengan dokumen lengkap.
 
 ---
 

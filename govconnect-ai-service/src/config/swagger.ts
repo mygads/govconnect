@@ -25,7 +25,7 @@ AI Service adalah **otak AI** untuk sistem GovConnect.
     },
     servers: [
       { url: 'http://localhost:3002', description: 'Development' },
-      { url: 'https://api.govconnect.my.id/api/ai', description: 'Production' },
+      { url: 'https://ai.govconnect.my.id', description: 'Production' },
     ],
     tags: [
       { name: 'Health', description: 'Health check endpoints' },

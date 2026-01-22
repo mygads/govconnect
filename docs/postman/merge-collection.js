@@ -10,11 +10,11 @@ const baseCollection = {
   info: {
     _postman_id: "govconnect-api-collection",
     name: "GovConnect API",
-    description: "Complete API collection for GovConnect microservices.\n\n## Services\n- Case Service (Port 3003) - Complaints & Reservations\n- Channel Service (Port 3001) - WhatsApp Gateway & Live Chat\n- AI Service (Port 3002) - AI Orchestrator & Knowledge Base\n- Dashboard (Port 3000) - Admin Dashboard\n\n## Authentication\n- Internal API: X-Internal-API-Key header\n- Dashboard: Bearer token\n\n## GraphQL\n- Endpoint: POST /graphql (Case Service)\n- Public API for forms",
+    description: "Complete API collection for GovConnect microservices.\n\n## Services\n- Case Service (Port 3003) - Complaints & Service Requests\n- Channel Service (Port 3001) - WhatsApp Channel & Live Chat\n- AI Service (Port 3002) - AI Orchestrator & Knowledge Base\n- Dashboard (Port 3000) - Admin Dashboard\n\n## Authentication\n- Internal API: X-Internal-API-Key header\n- Dashboard: Bearer token",
     schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   variable: [
-    { key: "base_url", value: "https://api.govconnect.my.id", type: "string" },
+    { key: "base_url", value: "https://govconnect.my.id", type: "string" },
     { key: "case_service_url", value: "{{base_url}}/case", type: "string" },
     { key: "channel_service_url", value: "{{base_url}}/channel", type: "string" },
     { key: "ai_service_url", value: "{{base_url}}/ai", type: "string" },
@@ -24,7 +24,7 @@ const baseCollection = {
     { key: "wa_user_id", value: "6281234567890", type: "string" },
     { key: "session_id", value: "web_form_1703260800000", type: "string" },
     { key: "complaint_id", value: "LP-20251222-001", type: "string" },
-    { key: "reservation_id", value: "RSV-20251222-001", type: "string" },
+    { key: "request_number", value: "LAY-20251222-001", type: "string" },
     { key: "service_code", value: "SKD", type: "string" },
     { key: "knowledge_id", value: "kb-001", type: "string" }
   ],
@@ -34,12 +34,10 @@ const baseCollection = {
 // Files to merge (in order)
 const files = [
   'case-service.json',
-  'reservations.json',
   'statistics.json',
   'user.json',
   'channel-service.json',
-  'ai-service.json',
-  'graphql.json'
+  'ai-service.json'
 ];
 
 // Merge all files

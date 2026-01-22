@@ -28,18 +28,19 @@ const USE_RAG_SEARCH = process.env.USE_RAG_SEARCH !== 'false'; // Default: true
  * Search knowledge base for relevant information
  * Uses RAG (semantic search) when enabled, falls back to keyword search
  */
-export async function searchKnowledge(query: string, categories?: string[]): Promise<KnowledgeSearchResult> {
+export async function searchKnowledge(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
   try {
     logger.info('Searching knowledge base', {
       query: query.substring(0, 100),
       categories,
+      villageId,
       useRAG: USE_RAG_SEARCH,
     });
 
     // Try RAG-based semantic search first
     if (USE_RAG_SEARCH) {
       try {
-        const ragResult = await searchKnowledgeWithRAG(query, categories);
+        const ragResult = await searchKnowledgeWithRAG(query, categories, villageId);
         if (ragResult.total > 0) {
           return ragResult;
         }
@@ -53,7 +54,7 @@ export async function searchKnowledge(query: string, categories?: string[]): Pro
     }
 
     // Keyword-based search (fallback or when RAG is disabled)
-    return await searchKnowledgeWithKeywords(query, categories);
+    return await searchKnowledgeWithKeywords(query, categories, villageId);
   } catch (error: any) {
     logger.error('Failed to search knowledge base', {
       error: error.message,
@@ -74,7 +75,7 @@ export async function searchKnowledge(query: string, categories?: string[]): Pro
  * NOTE: minScore tuned to 0.55 for better recall with Indonesian language
  * Higher scores (0.65+) were too strict and missed relevant results
  */
-async function searchKnowledgeWithRAG(query: string, categories?: string[]): Promise<KnowledgeSearchResult> {
+async function searchKnowledgeWithRAG(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
   const inferredCategories = categories || inferCategories(query);
   
   const ragContext = await retrieveContext(query, {
@@ -82,6 +83,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[]): Pro
     minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
     categories: inferredCategories.length > 0 ? inferredCategories : undefined,
     sourceTypes: ['knowledge', 'document'], // Search both knowledge and documents
+    villageId,
   });
 
   if (ragContext.totalResults === 0) {
@@ -117,12 +119,13 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[]): Pro
 /**
  * Search knowledge base using keyword-based API (fallback)
  */
-async function searchKnowledgeWithKeywords(query: string, categories?: string[]): Promise<KnowledgeSearchResult> {
+async function searchKnowledgeWithKeywords(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
   const response = await axios.post<KnowledgeSearchResult>(
     `${config.dashboardServiceUrl}/api/internal/knowledge`,
     {
       query,
       categories,
+      village_id: villageId,
       limit: 5,
     },
     {
@@ -143,12 +146,12 @@ async function searchKnowledgeWithKeywords(query: string, categories?: string[])
 /**
  * Get all active knowledge for building context
  */
-export async function getAllKnowledge(): Promise<KnowledgeItem[]> {
+export async function getAllKnowledge(villageId?: string): Promise<KnowledgeItem[]> {
   try {
     const response = await axios.get<{ data: KnowledgeItem[] }>(
       `${config.dashboardServiceUrl}/api/internal/knowledge`,
       {
-        params: { limit: 50 },
+        params: { limit: 50, village_id: villageId },
         headers: {
           'x-internal-api-key': config.internalApiKey,
         },
@@ -172,7 +175,7 @@ export async function getAllKnowledge(): Promise<KnowledgeItem[]> {
  * 
  * NOTE: minScore tuned to 0.55 for better recall with Indonesian language
  */
-export async function getRAGContext(query: string, categories?: string[]): Promise<RAGContext> {
+export async function getRAGContext(query: string, categories?: string[], villageId?: string): Promise<RAGContext> {
   const inferredCategories = categories || inferCategories(query);
   
   return retrieveContext(query, {
@@ -180,6 +183,7 @@ export async function getRAGContext(query: string, categories?: string[]): Promi
     minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
     categories: inferredCategories.length > 0 ? inferredCategories : undefined,
     sourceTypes: ['knowledge', 'document'],
+    villageId,
   });
 }
 
@@ -187,7 +191,7 @@ export async function getRAGContext(query: string, categories?: string[]): Promi
  * Get kelurahan information context for greetings
  * This fetches basic kelurahan info (nama, alamat) to personalize welcome message
  */
-export async function getKelurahanInfoContext(): Promise<string> {
+export async function getKelurahanInfoContext(villageId?: string): Promise<string> {
   try {
     logger.debug('Fetching kelurahan info for greeting');
     
@@ -197,6 +201,7 @@ export async function getKelurahanInfoContext(): Promise<string> {
       minScore: 0.5, // Lower threshold to get basic info
       categories: ['informasi_umum', 'kontak'],
       sourceTypes: ['knowledge'],
+      villageId,
     });
 
     if (ragContext.totalResults > 0 && ragContext.contextString) {
@@ -213,6 +218,7 @@ export async function getKelurahanInfoContext(): Promise<string> {
         params: { 
           category: 'informasi_umum',
           limit: 5,
+          village_id: villageId,
         },
         headers: {
           'x-internal-api-key': config.internalApiKey,

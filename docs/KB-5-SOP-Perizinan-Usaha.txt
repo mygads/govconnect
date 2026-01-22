@@ -174,11 +174,8 @@ SKU adalah surat keterangan dari kelurahan yang menyatakan seseorang memiliki us
 - Keperluan administrasi usaha
 
 ### Syarat SKU
-1. KTP pemilik usaha (asli dan fotokopi)
-2. Kartu Keluarga (fotokopi)
-3. Surat Pengantar dari RT/RW
-4. Foto tempat usaha
-5. Surat pernyataan memiliki usaha
+1. KTP
+2. Foto usaha
 
 ### Prosedur Pembuatan SKU
 1. Minta surat pengantar dari RT/RW

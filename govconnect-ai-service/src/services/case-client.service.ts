@@ -10,6 +10,10 @@ interface ComplaintData {
   alamat?: string;
   rt_rw?: string;
   foto_url?: string;
+  category_id?: string;
+  type_id?: string;
+  is_urgent?: boolean;
+  require_address?: boolean;
 }
 
 interface ComplaintResponse {
@@ -129,6 +133,59 @@ export interface CancelResult {
   complaint_id?: string;
 }
 
+export interface UpdateComplaintResult {
+  success: boolean;
+  error?: 'NOT_FOUND' | 'NOT_OWNER' | 'LOCKED' | 'INTERNAL_ERROR';
+  message: string;
+  data?: any;
+}
+
+export interface EditTokenResult {
+  success: boolean;
+  error?: 'NOT_FOUND' | 'NOT_OWNER' | 'LOCKED' | 'INTERNAL_ERROR';
+  message?: string;
+  request_number?: string;
+  edit_token?: string;
+  edit_token_expires_at?: string;
+}
+
+export interface ComplaintTypeInfo {
+  id: string;
+  name: string;
+  category_id: string;
+  is_urgent: boolean;
+  require_address: boolean;
+  send_important_contacts: boolean;
+  important_contact_category: string | null;
+  category?: {
+    id: string;
+    name: string;
+    village_id: string;
+  };
+}
+
+export async function getComplaintTypes(villageId?: string): Promise<ComplaintTypeInfo[]> {
+  try {
+    const url = `${config.caseServiceUrl}/complaints/types`;
+    const response = await axios.get<{ data: ComplaintTypeInfo[] }>(url, {
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+        'Content-Type': 'application/json',
+      },
+      params: villageId ? { village_id: villageId } : undefined,
+      timeout: 10000,
+    });
+
+    return response.data.data || [];
+  } catch (error: any) {
+    logger.warn('Failed to fetch complaint types', {
+      error: error.message,
+      status: error.response?.status,
+    });
+    return [];
+  }
+}
+
 /**
  * Get complaint status by complaint_id (e.g., LAP-20251201-001)
  * NOTE: This is for admin/internal use without ownership check
@@ -232,24 +289,23 @@ export async function getComplaintStatusWithOwnership(
 }
 
 /**
- * Get reservation status with ownership validation
- * Only returns reservation if the user is the owner
+ * Get service request status with ownership validation
  */
-export async function getReservationStatusWithOwnership(
-  reservationId: string,
+export async function getServiceRequestStatusWithOwnership(
+  requestNumber: string,
   wa_user_id: string
 ): Promise<{ success: boolean; error?: string; message?: string; data?: any }> {
-  logger.info('Fetching reservation status with ownership check', {
-    reservation_id: reservationId,
+  logger.info('Fetching service request status with ownership check', {
+    request_number: requestNumber,
     wa_user_id,
   });
-  
+
   try {
-    const url = `${config.caseServiceUrl}/reservasi/${reservationId}/check`;
-    const response = await axios.post(
+    const url = `${config.caseServiceUrl}/service-requests`;
+    const response = await axios.get(
       url,
-      { wa_user_id },
       {
+        params: { request_number: requestNumber, wa_user_id },
         headers: {
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
@@ -257,35 +313,22 @@ export async function getReservationStatusWithOwnership(
         timeout: 10000,
       }
     );
-    
-    logger.info('✅ Reservation status fetched successfully with ownership', {
-      reservation_id: reservationId,
-      status: response.data.data?.status,
-    });
-    
-    return { success: true, data: response.data.data };
+
+    const data = response.data?.data?.[0];
+
+    if (!data) {
+      return { success: false, error: 'NOT_FOUND', message: 'Permohonan layanan tidak ditemukan' };
+    }
+
+    return { success: true, data };
   } catch (error: any) {
-    const errorData = error.response?.data;
-    
-    if (error.response?.status === 404) {
-      return { success: false, error: 'NOT_FOUND', message: 'Reservasi tidak ditemukan' };
-    }
-    
-    if (error.response?.status === 403) {
-      return { 
-        success: false, 
-        error: 'NOT_OWNER', 
-        message: errorData?.message || 'Anda tidak memiliki akses untuk melihat reservasi ini' 
-      };
-    }
-    
-    logger.error('❌ Failed to fetch reservation status with ownership', {
-      reservation_id: reservationId,
+    logger.error('❌ Failed to fetch service request status', {
+      request_number: requestNumber,
       error: error.message,
       status: error.response?.status,
     });
-    
-    return { success: false, error: 'INTERNAL_ERROR', message: 'Terjadi kesalahan saat mengecek status' };
+
+    return { success: false, error: 'INTERNAL_ERROR', message: 'Terjadi kesalahan saat mengecek status layanan' };
   }
 }
 
@@ -348,8 +391,175 @@ export async function cancelComplaint(
   }
 }
 
+/**
+ * Cancel service request by user (with owner validation)
+ */
+export async function cancelServiceRequest(
+  requestNumber: string,
+  wa_user_id: string,
+  cancel_reason?: string
+): Promise<CancelResult> {
+  logger.info('Cancelling service request in Case Service', {
+    request_number: requestNumber,
+    wa_user_id,
+  });
+
+  try {
+    const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/cancel`;
+    const response = await axios.post<CancelResponse>(
+      url,
+      { wa_user_id, cancel_reason },
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+
+    return {
+      success: true,
+      complaint_id: response.data.data?.complaint_id,
+      message: response.data.message || response.data.data?.message || 'Dibatalkan oleh pemohon',
+    };
+  } catch (error: any) {
+    const status = error.response?.status;
+    const errorData = error.response?.data;
+
+    if (status === 404) {
+      return { success: false, error: 'NOT_FOUND', message: 'Permohonan layanan tidak ditemukan' };
+    }
+
+    if (status === 403) {
+      return { success: false, error: 'NOT_OWNER', message: errorData?.message || 'Anda tidak memiliki akses' };
+    }
+
+    if (status === 400 && errorData?.error === 'LOCKED') {
+      return { success: false, error: 'LOCKED', message: errorData?.message || 'Permohonan tidak bisa dibatalkan' };
+    }
+
+    logger.error('❌ Failed to cancel service request', {
+      request_number: requestNumber,
+      error: error.message,
+      status,
+    });
+
+    return { success: false, error: 'INTERNAL_ERROR', message: 'Terjadi kesalahan saat membatalkan layanan' };
+  }
+}
+
+/**
+ * Request edit token for service request (owner validation)
+ */
+export async function requestServiceRequestEditToken(
+  requestNumber: string,
+  wa_user_id: string
+): Promise<EditTokenResult> {
+  logger.info('Requesting service request edit token', {
+    request_number: requestNumber,
+    wa_user_id,
+  });
+
+  try {
+    const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/edit-token`;
+    const response = await axios.post(
+      url,
+      { wa_user_id },
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+
+    return {
+      success: true,
+      request_number: response.data?.data?.request_number,
+      edit_token: response.data?.data?.edit_token,
+      edit_token_expires_at: response.data?.data?.edit_token_expires_at,
+    };
+  } catch (error: any) {
+    const status = error.response?.status;
+    const errorData = error.response?.data;
+
+    if (status === 404) {
+      return { success: false, error: 'NOT_FOUND', message: 'Permohonan layanan tidak ditemukan' };
+    }
+
+    if (status === 403) {
+      return { success: false, error: 'NOT_OWNER', message: errorData?.message || 'Anda tidak memiliki akses' };
+    }
+
+    if (status === 400 && errorData?.error === 'LOCKED') {
+      return { success: false, error: 'LOCKED', message: errorData?.message || 'Permohonan tidak bisa diubah' };
+    }
+
+    logger.error('❌ Failed to request edit token', {
+      request_number: requestNumber,
+      error: error.message,
+      status,
+    });
+
+    return { success: false, error: 'INTERNAL_ERROR', message: 'Terjadi kesalahan saat menyiapkan link edit' };
+  }
+}
+
+/**
+ * Update complaint by user (owner validation)
+ */
+export async function updateComplaintByUser(
+  complaintId: string,
+  wa_user_id: string,
+  data: { alamat?: string; deskripsi?: string; rt_rw?: string }
+): Promise<UpdateComplaintResult> {
+  logger.info('Updating complaint by user', {
+    complaint_id: complaintId,
+    wa_user_id,
+  });
+
+  try {
+    const url = `${config.caseServiceUrl}/laporan/${complaintId}/update`;
+    const response = await axios.patch(
+      url,
+      { wa_user_id, ...data },
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+
+    return {
+      success: true,
+      message: 'Laporan berhasil diperbarui',
+      data: response.data.data,
+    };
+  } catch (error: any) {
+    const errorCode = error.response?.data?.error as UpdateComplaintResult['error'];
+    const errorMessage = error.response?.data?.message || 'Gagal memperbarui laporan';
+
+    logger.error('❌ Failed to update complaint by user', {
+      complaint_id: complaintId,
+      error: error.message,
+      status: error.response?.status,
+      errorCode,
+    });
+
+    return {
+      success: false,
+      error: errorCode || 'INTERNAL_ERROR',
+      message: errorMessage,
+    };
+  }
+}
+
 export interface HistoryItem {
-  type: 'complaint' | 'reservation';
+  type: 'complaint' | 'service';
   id: string;
   display_id: string;
   description: string;
@@ -362,14 +572,14 @@ export interface UserHistoryResponse {
   status: string;
   data: {
     complaints: any[];
-    reservations: any[];
+    services: any[];
     combined: HistoryItem[];
     total: number;
   };
 }
 
 /**
- * Get user's complaint and ticket history
+ * Get user's complaint and service request history
  */
 export async function getUserHistory(wa_user_id: string): Promise<UserHistoryResponse['data'] | null> {
   logger.info('Fetching user history from Case Service', {

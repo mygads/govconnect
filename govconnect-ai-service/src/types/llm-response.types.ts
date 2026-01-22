@@ -3,11 +3,13 @@ import { z } from 'zod';
 export const LLMResponseSchema = z.object({
   intent: z.enum([
     'CREATE_COMPLAINT', 
-    'CREATE_RESERVATION', 
-    'UPDATE_RESERVATION',
+    'SERVICE_INFO',
+    'CREATE_SERVICE_REQUEST',
+    'UPDATE_SERVICE_REQUEST',
+    'UPDATE_COMPLAINT',
     'CHECK_STATUS', 
     'CANCEL_COMPLAINT', 
-    'CANCEL_RESERVATION',
+    'CANCEL_SERVICE_REQUEST',
     'HISTORY', 
     'KNOWLEDGE_QUERY', 
     'QUESTION', 
@@ -21,27 +23,22 @@ export const LLMResponseSchema = z.object({
     rt_rw: z.string().optional(),
     jenis: z.string().optional(),
     
-    // For CREATE_RESERVATION
-    service_code: z.string().optional(),
+    // For SERVICE_INFO / CREATE_SERVICE_REQUEST
+    service_id: z.string().optional(),
+    service_slug: z.string().optional(),
+    request_number: z.string().optional(),
     citizen_data: z.object({
       nama_lengkap: z.string().optional(),
       nik: z.string().optional(),
       alamat: z.string().optional(),
       no_hp: z.string().optional(),
     }).passthrough().optional(), // passthrough allows additional fields per service
-    reservation_date: z.string().optional(),
-    reservation_time: z.string().optional(),
-    
-    // For UPDATE_RESERVATION
-    new_reservation_date: z.string().optional(),
-    new_reservation_time: z.string().optional(),
     
     // For KNOWLEDGE_QUERY
     knowledge_category: z.string().optional(),
     
-    // For CHECK_STATUS / CANCEL
+    // For CHECK_STATUS / CANCEL / UPDATE_COMPLAINT
     complaint_id: z.string().optional(),
-    reservation_id: z.string().optional(),
     cancel_reason: z.string().optional(),
     
     // Common

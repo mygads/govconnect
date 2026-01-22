@@ -22,7 +22,7 @@ export interface BatchedStats {
     todayCount: number;
     weekCount: number;
   };
-  reservations: {
+  services: {
     total: number;
     byStatus: Record<string, number>;
     todayCount: number;
@@ -62,10 +62,10 @@ export async function getBatchedDashboardStats(): Promise<BatchedStats> {
       complaintByKategori,
       complaintToday,
       complaintWeek,
-      reservationTotal,
-      reservationByStatus,
-      reservationToday,
-      reservationPending,
+      serviceTotal,
+      serviceByStatus,
+      serviceToday,
+      servicePending,
     ] = await Promise.all([
       // Complaint stats
       prisma.complaint.count(),
@@ -83,17 +83,17 @@ export async function getBatchedDashboardStats(): Promise<BatchedStats> {
       prisma.complaint.count({
         where: { created_at: { gte: weekAgo } },
       }),
-      // Reservation stats
-      prisma.reservation.count(),
-      prisma.reservation.groupBy({
+      // Service request stats
+      prisma.serviceRequest.count(),
+      prisma.serviceRequest.groupBy({
         by: ['status'],
         _count: { status: true },
       }),
-      prisma.reservation.count({
+      prisma.serviceRequest.count({
         where: { created_at: { gte: today } },
       }),
-      prisma.reservation.count({
-        where: { status: 'pending' },
+      prisma.serviceRequest.count({
+        where: { status: 'baru' },
       }),
     ]);
 
@@ -110,13 +110,13 @@ export async function getBatchedDashboardStats(): Promise<BatchedStats> {
         todayCount: complaintToday,
         weekCount: complaintWeek,
       },
-      reservations: {
-        total: reservationTotal,
+      services: {
+        total: serviceTotal,
         byStatus: Object.fromEntries(
-          reservationByStatus.map(s => [s.status, s._count.status])
+          serviceByStatus.map(s => [s.status, s._count.status])
         ),
-        todayCount: reservationToday,
-        pendingCount: reservationPending,
+        todayCount: serviceToday,
+        pendingCount: servicePending,
       },
     };
 
@@ -138,12 +138,12 @@ export async function getBatchedDashboardStats(): Promise<BatchedStats> {
  */
 export async function getBatchedUserData(wa_user_id: string): Promise<{
   complaints: any[];
-  reservations: any[];
+  services: any[];
   totalComplaints: number;
-  totalReservations: number;
+  totalServices: number;
 }> {
   try {
-    const [complaints, reservations, totalComplaints, totalReservations] = await Promise.all([
+    const [complaints, services, totalComplaints, totalServices] = await Promise.all([
       prisma.complaint.findMany({
         where: { wa_user_id },
         orderBy: { created_at: 'desc' },
@@ -156,29 +156,26 @@ export async function getBatchedUserData(wa_user_id: string): Promise<{
           created_at: true,
         },
       }),
-      prisma.reservation.findMany({
+      prisma.serviceRequest.findMany({
         where: { wa_user_id },
         orderBy: { created_at: 'desc' },
         take: 10,
         select: {
           id: true,
-          reservation_id: true,
           status: true,
-          reservation_date: true,
-          service: {
-            select: { name: true },
-          },
+          request_number: true,
+          service: { select: { name: true } },
         },
       }),
       prisma.complaint.count({ where: { wa_user_id } }),
-      prisma.reservation.count({ where: { wa_user_id } }),
+      prisma.serviceRequest.count({ where: { wa_user_id } }),
     ]);
 
     return {
       complaints,
-      reservations,
+      services,
       totalComplaints,
-      totalReservations,
+      totalServices,
     };
   } catch (error: any) {
     logger.error('[QueryBatcher] Failed to fetch user data', { 

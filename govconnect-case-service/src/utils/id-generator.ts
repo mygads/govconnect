@@ -26,17 +26,16 @@ export async function generateComplaintId(): Promise<string> {
 }
 
 /**
- * Generate unique ticket ID in format: TIK-YYYYMMDD-XXX
- * Example: TIK-20251124-001
+ * Generate unique service request ID in format: LAY-YYYYMMDD-XXX
+ * Example: LAY-20251124-001
  */
-export async function generateTicketId(): Promise<string> {
+export async function generateServiceRequestId(): Promise<string> {
   const today = new Date();
   const dateStr = formatDateForId(today);
-  
-  // Count today's tickets
+
   const { startOfDay, endOfDay } = getDayBounds(today);
-  
-  const count = await prisma.ticket.count({
+
+  const count = await prisma.serviceRequest.count({
     where: {
       created_at: {
         gte: startOfDay,
@@ -44,10 +43,11 @@ export async function generateTicketId(): Promise<string> {
       },
     },
   });
-  
+
   const sequence = String(count + 1).padStart(3, '0');
-  return `${config.idPrefixTicket}-${dateStr}-${sequence}`;
+  return `${config.idPrefixServiceRequest}-${dateStr}-${sequence}`;
 }
+
 
 /**
  * Format date to YYYYMMDD string

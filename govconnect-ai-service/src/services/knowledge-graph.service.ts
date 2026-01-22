@@ -284,8 +284,8 @@ export function getFollowUpSuggestions(
   // Intent-based suggestions
   if (currentIntent === 'CREATE_COMPLAINT') {
     suggestions.push('Mau cek status laporan sebelumnya?');
-  } else if (currentIntent === 'CREATE_RESERVATION') {
-    suggestions.push('Mau lihat syarat dokumen yang diperlukan?');
+  } else if (currentIntent === 'CREATE_SERVICE_REQUEST') {
+    suggestions.push('Mau lihat syarat layanan yang diperlukan?');
   } else if (currentIntent === 'CHECK_STATUS') {
     suggestions.push('Mau buat laporan baru?');
   }
