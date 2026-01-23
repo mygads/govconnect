@@ -46,6 +46,12 @@ import { getEnhancedContext, updateContext, recordDataCollected, recordCompleted
 import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
 import { linkUserToPhone, recordChannelActivity, updateSharedData, getCrossChannelContextForLLM } from './cross-channel-context.service';
 import { normalizeText } from './text-normalizer.service';
+import {
+  appendAntiHallucinationInstruction,
+  hasKnowledgeInPrompt,
+  logAntiHallucinationEvent,
+  needsAntiHallucinationRetry,
+} from './anti-hallucination.service';
 
 // ==================== TYPES ====================
 
@@ -1430,21 +1436,45 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
     
     const { response: llmResponse, metrics } = llmResult;
+
+    // Anti-hallucination gate (jam operasional/biaya) when knowledge is empty
+    // NOTE: Knowledge context is embedded inside systemPrompt when available.
+    const hasKnowledge = hasKnowledgeInPrompt(systemPrompt);
+    const gate = needsAntiHallucinationRetry({
+      replyText: llmResponse.reply_text,
+      guidanceText: llmResponse.guidance_text,
+      hasKnowledge,
+    });
+
+    if (gate.shouldRetry) {
+      logAntiHallucinationEvent({
+        userId,
+        channel,
+        reason: gate.reason,
+        model: metrics.model,
+      });
+
+      const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
+      const retryResult = await callGemini(retryPrompt);
+      if (retryResult?.response?.reply_text) {
+        llmResult.response = retryResult.response;
+      }
+    }
     
     // Track analytics
     aiAnalyticsService.recordIntent(
       userId,
-      llmResponse.intent,
+      llmResult.response.intent,
       metrics.durationMs,
       systemPrompt.length,
-      llmResponse.reply_text.length,
+      llmResult.response.reply_text.length,
       metrics.model
     );
     
     logger.info('[UnifiedProcessor] LLM response received', {
       userId,
       channel,
-      intent: llmResponse.intent,
+      intent: llmResult.response.intent,
       durationMs: metrics.durationMs,
     });
     
@@ -1452,45 +1482,46 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     tracker.preparing();
     
     // Step 9: Handle intent
-    let finalReplyText = llmResponse.reply_text;
-    let guidanceText = llmResponse.guidance_text || '';
+    const effectiveLlmResponse = llmResult.response;
+    let finalReplyText = effectiveLlmResponse.reply_text;
+    let guidanceText = effectiveLlmResponse.guidance_text || '';
     
-    switch (llmResponse.intent) {
+    switch (effectiveLlmResponse.intent) {
       case 'CREATE_COMPLAINT':
         const rateLimitCheck = rateLimiterService.checkRateLimit(userId);
         if (!rateLimitCheck.allowed) {
           finalReplyText = rateLimitCheck.message || 'Anda telah mencapai batas laporan hari ini.';
         } else {
-          finalReplyText = await handleComplaintCreation(userId, llmResponse, message, mediaUrl);
+          finalReplyText = await handleComplaintCreation(userId, effectiveLlmResponse, message, mediaUrl);
         }
         break;
       
       case 'SERVICE_INFO':
-        finalReplyText = await handleServiceInfo(userId, llmResponse);
+        finalReplyText = await handleServiceInfo(userId, effectiveLlmResponse);
         break;
       
       case 'CREATE_SERVICE_REQUEST':
-        finalReplyText = await handleServiceRequestCreation(userId, llmResponse);
+        finalReplyText = await handleServiceRequestCreation(userId, effectiveLlmResponse);
         break;
 
       case 'UPDATE_COMPLAINT':
-        finalReplyText = await handleComplaintUpdate(userId, llmResponse);
+        finalReplyText = await handleComplaintUpdate(userId, effectiveLlmResponse);
         break;
 
       case 'UPDATE_SERVICE_REQUEST':
-        finalReplyText = await handleServiceRequestEditLink(userId, llmResponse);
+        finalReplyText = await handleServiceRequestEditLink(userId, effectiveLlmResponse);
         break;
       
       case 'CHECK_STATUS':
-        finalReplyText = await handleStatusCheck(userId, llmResponse);
+        finalReplyText = await handleStatusCheck(userId, effectiveLlmResponse);
         break;
       
       case 'CANCEL_COMPLAINT':
-        finalReplyText = await handleCancellationRequest(userId, 'laporan', llmResponse);
+        finalReplyText = await handleCancellationRequest(userId, 'laporan', effectiveLlmResponse);
         break;
 
       case 'CANCEL_SERVICE_REQUEST':
-        finalReplyText = await handleCancellationRequest(userId, 'layanan', llmResponse);
+        finalReplyText = await handleCancellationRequest(userId, 'layanan', effectiveLlmResponse);
         break;
       
       case 'HISTORY':
@@ -1499,10 +1530,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       
       case 'KNOWLEDGE_QUERY':
         if (preloadedRAGContext && typeof preloadedRAGContext === 'object' && 
-            preloadedRAGContext.contextString && llmResponse.reply_text?.length > 20) {
+            preloadedRAGContext.contextString && effectiveLlmResponse.reply_text?.length > 20) {
           logger.info('[UnifiedProcessor] Using pre-loaded knowledge response');
         } else {
-          finalReplyText = await handleKnowledgeQuery(userId, message, llmResponse);
+          finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
         }
         break;
       
@@ -1524,15 +1555,15 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     // Step 10.6: Update conversation context
     updateContext(userId, {
-      currentIntent: llmResponse.intent,
+      currentIntent: effectiveLlmResponse.intent,
       intentConfidence: optimization?.fastIntent?.confidence || 0.8,
-      collectedData: llmResponse.fields,
-      missingFields: llmResponse.fields?.missing_info || [],
+      collectedData: effectiveLlmResponse.fields,
+      missingFields: effectiveLlmResponse.fields?.missing_info || [],
     });
     
     // Step 10.7: Post-process - Cache response for future use (only for cacheable intents)
-    if (['KNOWLEDGE_QUERY', 'GREETING', 'QUESTION'].includes(llmResponse.intent)) {
-      postProcessResponse(message, finalResponse, llmResponse.intent, finalGuidance);
+    if (['KNOWLEDGE_QUERY', 'GREETING', 'QUESTION'].includes(effectiveLlmResponse.intent)) {
+      postProcessResponse(message, finalResponse, effectiveLlmResponse.intent, finalGuidance);
     }
     
     const processingTimeMs = Date.now() - startTime;
@@ -1543,7 +1574,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     logger.info('✅ [UnifiedProcessor] Message processed', {
       userId,
       channel,
-      intent: llmResponse.intent,
+      intent: effectiveLlmResponse.intent,
       processingTimeMs,
       fastClassified: !!optimization?.fastIntent,
     });

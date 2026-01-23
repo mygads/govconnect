@@ -19,10 +19,16 @@ import { publishAIReply, publishMessageStatus } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { startTyping, stopTyping, isUserInTakeover, markMessagesAsRead } from './channel-client.service';
 import { aiAnalyticsService } from './ai-analytics.service';
-import { isSpamMessage } from './rag.service';
+import { isSpamMessage, shouldRetrieveContext } from './rag.service';
 import { sanitizeUserInput } from './context-builder.service';
 import { detectLanguage } from './language-detection.service';
 import { analyzeSentiment, needsHumanEscalation } from './sentiment-analysis.service';
+import { getKelurahanInfoContext, getRAGContext } from './knowledge.service';
+import {
+  appendAntiHallucinationInstruction,
+  logAntiHallucinationEvent,
+  needsAntiHallucinationRetry,
+} from './anti-hallucination.service';
 
 // Import action handlers from original orchestrator
 import { 
@@ -190,11 +196,36 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     
     // Step 5: LAYER 2 - Response Generation
     logger.info('💬 Starting Layer 2 - Response Generation', { wa_user_id });
+
+    // Knowledge prefetch (so Layer 2 can answer hours/info safely)
+    let knowledgeContext = '';
+    try {
+      const villageId = process.env.DEFAULT_VILLAGE_ID;
+      const isGreeting = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i.test(sanitizedMessage.trim());
+      const looksLikeQuestion = shouldRetrieveContext(sanitizedMessage);
+
+      if (isGreeting) {
+        const info = await getKelurahanInfoContext(villageId);
+        if (info && info.trim()) {
+          knowledgeContext = `KNOWLEDGE BASE YANG TERSEDIA:\n${info}`;
+        }
+      } else if (looksLikeQuestion) {
+        const rag = await getRAGContext(sanitizedMessage, undefined, villageId);
+        if (rag?.totalResults > 0 && rag.contextString) {
+          knowledgeContext = `KNOWLEDGE BASE YANG TERSEDIA:\n${rag.contextString}`;
+        }
+      }
+    } catch (error: any) {
+      logger.warn('⚠️ 2-layer knowledge prefetch failed', { wa_user_id, error: error.message });
+    }
     
     const layer2Input = {
       layer1_output: enhancedLayer1Output,
       wa_user_id,
-      conversation_context: await getConversationContext(wa_user_id),
+      conversation_context: [
+        await getConversationContext(wa_user_id),
+        knowledgeContext,
+      ].filter(Boolean).join('\n\n'),
       user_name: enhancedLayer1Output.extracted_data.nama_lengkap,
     };
     
@@ -203,6 +234,29 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     if (!layer2Output) {
       logger.warn('⚠️ Layer 2 failed, using fallback', { wa_user_id });
       layer2Output = generateFallbackResponse(enhancedLayer1Output);
+    }
+
+    // Anti-hallucination gate: if no knowledge and response mentions hours/cost, retry once
+    const gate = needsAntiHallucinationRetry({
+      replyText: layer2Output.reply_text,
+      guidanceText: layer2Output.guidance_text,
+      hasKnowledge: !!knowledgeContext,
+    });
+    if (gate.shouldRetry) {
+      logAntiHallucinationEvent({
+        userId: wa_user_id,
+        channel: 'whatsapp',
+        reason: gate.reason,
+      });
+
+      const retryInput = {
+        ...layer2Input,
+        conversation_context: appendAntiHallucinationInstruction(layer2Input.conversation_context || ''),
+      };
+      const retry = await callLayer2LLM(retryInput);
+      if (retry?.reply_text) {
+        layer2Output = retry;
+      }
     }
     
     logger.info('✅ Layer 2 completed', {

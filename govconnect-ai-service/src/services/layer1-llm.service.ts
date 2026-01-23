@@ -16,12 +16,40 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import { modelStatsService } from './model-stats.service';
 
-// Layer 1 uses the smallest, cheapest models first
-const LAYER1_MODEL_PRIORITY = [
-  'gemini-2.0-flash-lite',    // Smallest, cheapest
-  'gemini-2.5-flash-lite',    // Backup small model
-  'gemini-2.0-flash',         // Fallback to regular if needed
+// Layer 1 uses the smallest, cheapest models first.
+// Override via ENV (comma-separated): LAYER1_MODELS=gemini-2.0-flash-lite,gemini-2.5-flash-lite
+const DEFAULT_LAYER1_MODEL_PRIORITY = [
+  'gemini-2.0-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
 ];
+
+const LAYER1_ALLOWED_MODELS = new Set([
+  'gemini-2.0-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
+  'gemini-2.5-flash',
+]);
+
+function parseModelListEnv(envValue: string | undefined, fallback: string[]): string[] {
+  const raw = (envValue || '').trim();
+  if (!raw) return fallback;
+
+  const models = raw
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+
+  const unique: string[] = [];
+  for (const model of models) {
+    if (!LAYER1_ALLOWED_MODELS.has(model)) continue;
+    if (!unique.includes(model)) unique.push(model);
+  }
+
+  return unique.length > 0 ? unique : fallback;
+}
+
+const LAYER1_MODEL_PRIORITY = parseModelListEnv(process.env.LAYER1_MODELS, DEFAULT_LAYER1_MODEL_PRIORITY);
 
 export interface Layer1Input {
   message: string;

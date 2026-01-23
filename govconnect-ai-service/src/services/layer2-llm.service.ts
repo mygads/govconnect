@@ -18,12 +18,40 @@ import { config } from '../config/env';
 import { Layer1Output } from './layer1-llm.service';
 import { modelStatsService } from './model-stats.service';
 
-// Layer 2 uses larger, more capable models for better responses
-const LAYER2_MODEL_PRIORITY = [
-  'gemini-2.5-flash',         // Best balance of quality and cost
-  'gemini-2.0-flash',         // Backup good model
-  'gemini-2.5-flash-lite',    // Fallback if needed
+// Layer 2 uses larger, more capable models for better responses.
+// Override via ENV (comma-separated): LAYER2_MODELS=gemini-2.5-flash,gemini-2.0-flash
+const DEFAULT_LAYER2_MODEL_PRIORITY = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.5-flash-lite',
 ];
+
+const LAYER2_ALLOWED_MODELS = new Set([
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash-lite',
+]);
+
+function parseModelListEnv(envValue: string | undefined, fallback: string[]): string[] {
+  const raw = (envValue || '').trim();
+  if (!raw) return fallback;
+
+  const models = raw
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+
+  const unique: string[] = [];
+  for (const model of models) {
+    if (!LAYER2_ALLOWED_MODELS.has(model)) continue;
+    if (!unique.includes(model)) unique.push(model);
+  }
+
+  return unique.length > 0 ? unique : fallback;
+}
+
+const LAYER2_MODEL_PRIORITY = parseModelListEnv(process.env.LAYER2_MODELS, DEFAULT_LAYER2_MODEL_PRIORITY);
 
 export interface Layer2Input {
   layer1_output: Layer1Output;
@@ -93,8 +121,8 @@ TONE GUIDELINES:
 PROACTIVE GUIDANCE:
 - After service request: Remind to fill the public form & how to check status
 - After complaint: Explain handling timeline
-- Outside hours: Mention office hours
-- Payment: Always mention "FREE" for services
+- Outside hours: Mention office hours ONLY if available in knowledge (Profil Desa)
+- Payment: Don't claim it's free/paid unless knowledge explicitly says so
 - Documents: Never ask users to send service documents via chat
 
 OUTPUT (JSON):

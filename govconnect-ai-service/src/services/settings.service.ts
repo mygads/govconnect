@@ -4,8 +4,11 @@ import { config } from '../config/env';
 
 interface SystemSettings {
   ai_chatbot_enabled: string;
-  ai_model_primary: string;
-  ai_model_fallback: string;
+  // NOTE: Model selection is configured via ENV only (not dashboard UI).
+  // These fields may exist in the dashboard response for backward compatibility,
+  // but must not be used by AI service.
+  ai_model_primary?: string;
+  ai_model_fallback?: string;
 }
 
 // Cache settings for performance (refresh every 60 seconds)
@@ -53,8 +56,6 @@ export async function getSettings(): Promise<SystemSettings> {
     // Return defaults if fetch fails
     return {
       ai_chatbot_enabled: 'true',
-      ai_model_primary: 'gemini-2.0-flash',
-      ai_model_fallback: 'gemini-2.0-flash-lite',
     };
   }
 }

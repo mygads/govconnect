@@ -15,12 +15,11 @@ import { config } from '../config/env';
 import { LLMResponse, LLMResponseSchema, LLMMetrics } from '../types/llm-response.types';
 import { JSON_SCHEMA_FOR_GEMINI } from '../prompts/system-prompt';
 import { modelStatsService } from './model-stats.service';
-import { getSettings } from './settings.service';
 
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
 // Available models pool - December 2025
-// Models are sorted by: 1) Dashboard settings (primary first), 2) Success rate
+// Models are sorted by: 1) ENV (primary/fallback), 2) Success rate
 // https://ai.google.dev/pricing
 const AVAILABLE_MODELS = [
   'gemini-2.5-flash',         // Hybrid reasoning, 1M context, $0.30/$2.50 per 1M tokens
@@ -71,16 +70,15 @@ function calculateBackoffDelay(attempt: number, baseDelay: number = BASE_RETRY_D
 
 /**
  * Get dynamically sorted model priority based on:
- * 1. Dashboard settings (primary model first, then fallback)
+ * 1. ENV (primary model first, then fallback)
  * 2. Success rates from model stats
  */
 async function getModelPriority(): Promise<string[]> {
   try {
-    // Get settings from dashboard
-    const settings = await getSettings();
-    // Default ke gemini-2.0-flash yang lebih stabil untuk JSON output
-    const primaryModel = settings.ai_model_primary || 'gemini-2.0-flash';
-    const fallbackModel = settings.ai_model_fallback || 'gemini-2.0-flash-lite';
+    // NOTE: Model selection must NOT be configurable from Dashboard UI.
+    // Configure via ENV only.
+    const primaryModel = (process.env.LLM_MODEL_PRIMARY || 'gemini-2.0-flash').trim();
+    const fallbackModel = (process.env.LLM_MODEL_FALLBACK || 'gemini-2.0-flash-lite').trim();
     
     // Build priority list: primary first, then fallback, then others
     const priorityModels: string[] = [];
@@ -88,11 +86,19 @@ async function getModelPriority(): Promise<string[]> {
     // Add primary if it's in available models
     if (AVAILABLE_MODELS.includes(primaryModel)) {
       priorityModels.push(primaryModel);
+    } else {
+      logger.warn('⚠️ Primary model from ENV is not in AVAILABLE_MODELS, ignoring', {
+        primaryModel,
+      });
     }
     
     // Add fallback if different from primary and in available models
     if (fallbackModel !== primaryModel && AVAILABLE_MODELS.includes(fallbackModel)) {
       priorityModels.push(fallbackModel);
+    } else if (fallbackModel !== primaryModel) {
+      logger.warn('⚠️ Fallback model from ENV is not in AVAILABLE_MODELS, ignoring', {
+        fallbackModel,
+      });
     }
     
     // Add remaining models sorted by success rate
@@ -109,7 +115,7 @@ async function getModelPriority(): Promise<string[]> {
     
     return finalPriority;
   } catch (error) {
-    logger.warn('⚠️ Failed to get settings, using default priority', { error });
+    logger.warn('⚠️ Failed to calculate model priority, using default priority', { error });
     return modelStatsService.getModelPriority(AVAILABLE_MODELS);
   }
 }
