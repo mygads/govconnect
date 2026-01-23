@@ -45,7 +45,7 @@ export default function StatistikPage() {
       setStats(data)
       setError(null)
     } catch (err: any) {
-      setError(err.message || "Failed to load statistics")
+      setError(err.message || "Gagal memuat statistik")
     } finally {
       setLoading(false)
     }
@@ -81,9 +81,9 @@ export default function StatistikPage() {
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2">
               <AlertCircle className="h-5 w-5" />
-              Error Loading Data
+              Gagal memuat data
             </CardTitle>
-            <CardDescription>{error || "No data available"}</CardDescription>
+            <CardDescription>{error || "Tidak ada data"}</CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -123,7 +123,7 @@ export default function StatistikPage() {
     labels: stats.complaints.by_kategori ? Object.keys(stats.complaints.by_kategori).map(k => k.replace(/_/g, " ")) : [],
     datasets: [
       {
-        label: "Laporan by Kategori",
+        label: "Laporan per Kategori",
         data: stats.complaints.by_kategori ? Object.values(stats.complaints.by_kategori) : [],
         backgroundColor: [
           "rgba(59, 130, 246, 0.6)",

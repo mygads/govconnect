@@ -124,7 +124,7 @@ export default function TestingKnowledgePage() {
       <div>
         <h1 className="text-3xl font-bold text-foreground">Uji Pengetahuan</h1>
         <p className="text-muted-foreground mt-2">
-          Uji relevansi knowledge base dan dokumen sebelum dipakai AI.
+          Uji relevansi basis pengetahuan dan dokumen sebelum dipakai AI.
         </p>
       </div>
 
@@ -191,7 +191,7 @@ export default function TestingKnowledgePage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between rounded-lg border p-3">
                     <div>
-                      <p className="text-sm font-medium">Knowledge Base</p>
+                      <p className="text-sm font-medium">Basis Pengetahuan</p>
                       <p className="text-xs text-muted-foreground">Ambil dari entri pengetahuan</p>
                     </div>
                     <Switch checked={includeKnowledge} onCheckedChange={setIncludeKnowledge} />

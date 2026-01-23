@@ -131,7 +131,7 @@ export default function VillageProfilePage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground">Profil Desa</h1>
-        <p className="text-muted-foreground mt-2">Kelola informasi profil desa untuk knowledge base dan form publik.</p>
+        <p className="text-muted-foreground mt-2">Kelola informasi profil desa untuk basis pengetahuan dan form publik.</p>
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">

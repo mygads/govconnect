@@ -508,7 +508,6 @@ export const livechat = {
 // Named export for backward compatibility
 // These are shorthand methods that map to the service methods
 export const apiClient = {
-  channel,
   case: caseService,
   ai,
   livechat,

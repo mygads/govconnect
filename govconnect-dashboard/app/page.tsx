@@ -82,7 +82,7 @@ export default function LandingPage() {
                 {isDark ? <Sun className="h-4 w-4 text-yellow-500" /> : <Moon className="h-4 w-4 text-slate-600" />}
               </Button>
               <Button asChild size="sm" className="hidden sm:flex rounded-full bg-secondary hover:bg-secondary/90 text-xs px-4 h-8">
-                <Link href="/login">Login</Link>
+                <Link href="/login">Masuk</Link>
               </Button>
               <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden rounded-full w-8 h-8">
                 {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
@@ -99,7 +99,7 @@ export default function LandingPage() {
               </Link>
             ))}
             <Button asChild size="sm" className="w-full mt-2 rounded-full bg-secondary text-xs">
-              <Link href="/login">Login Dashboard</Link>
+              <Link href="/login">Masuk Dashboard</Link>
             </Button>
           </div>
         </motion.div>
@@ -119,7 +119,7 @@ export default function LandingPage() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-secondary"></span>
                 </span>
-                <span className="text-xs font-medium text-secondary">AI-Powered Government Services</span>
+                <span className="text-xs font-medium text-secondary">Layanan Pemerintahan Berbasis AI</span>
               </motion.div>
 
               <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold leading-tight mb-3">
@@ -128,7 +128,7 @@ export default function LandingPage() {
                 dengan AI
               </h1>
               <p className="text-sm md:text-base text-muted-foreground mb-5 max-w-lg mx-auto lg:mx-0">
-                Platform automation berbasis AI untuk layanan pemerintahan. Knowledge base cerdas, pelaporan real-time, dan multi-channel dalam satu sistem.
+                Platform automation berbasis AI untuk layanan pemerintahan. Basis pengetahuan cerdas, pelaporan real-time, dan multi-channel dalam satu sistem.
               </p>
               
               <div className="flex flex-col sm:flex-row gap-2.5 justify-center lg:justify-start mb-6">
@@ -147,7 +147,7 @@ export default function LandingPage() {
               <div className="grid grid-cols-3 gap-3 sm:gap-6">
                 {[
                   { value: "24/7", label: "Online", icon: Clock },
-                  { value: "Multi-Level", label: "Pemerintahan", icon: Building2 },
+                  { value: "Multi-Tingkat", label: "Pemerintahan", icon: Building2 },
                   { value: "Real-time", label: "Terintegrasi", icon: Activity },
                 ].map((stat, i) => (
                   <div key={i} className="text-center lg:text-left">
@@ -199,15 +199,15 @@ export default function LandingPage() {
               Solusi <span className="bg-gradient-to-r from-secondary to-primary bg-clip-text text-transparent">Transformasi Digital</span> Layanan Pemerintahan
             </motion.h2>
             <motion.p variants={staggerItem} className="text-sm text-muted-foreground">
-              Platform yang menghubungkan masyarakat dengan pemerintah melalui AI. Knowledge base terintegrasi dengan database pemerintahan untuk data real-time.
+              Platform yang menghubungkan masyarakat dengan pemerintah melalui AI. Basis pengetahuan terintegrasi dengan database pemerintahan untuk data real-time.
             </motion.p>
           </motion.div>
 
           <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="grid sm:grid-cols-3 gap-4">
             {[
-              { icon: Brain, title: "AI Knowledge Base", desc: "Informasi pemerintahan yang mudah diakses, dapat diupdate dan terhubung database.", color: "from-blue-500 to-cyan-500" },
+              { icon: Brain, title: "Basis Pengetahuan AI", desc: "Informasi pemerintahan yang mudah diakses, dapat diperbarui dan terhubung ke database.", color: "from-blue-500 to-cyan-500" },
               { icon: Database, title: "Data Real-time", desc: "Terhubung dengan service pemerintahan untuk data dinamis otomatis.", color: "from-green-500 to-emerald-500" },
-              { icon: Zap, title: "Response 24/7", desc: "AI assistant siap melayani kapan saja dengan response cepat dan akurat.", color: "from-orange-500 to-amber-500" },
+              { icon: Zap, title: "Respons 24/7", desc: "AI assistant siap melayani kapan saja dengan respons cepat dan akurat.", color: "from-orange-500 to-amber-500" },
             ].map((item, i) => (
               <motion.div key={i} variants={staggerItem}>
                 <Card className="group hover:shadow-lg transition-all duration-300 border-border/50 hover:border-secondary/50 h-full">
@@ -366,9 +366,9 @@ export default function LandingPage() {
           <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
               { step: "1", icon: MessageCircle, title: "Masyarakat Menghubungi", desc: "Via WhatsApp atau webchat di website pemerintah" },
-              { step: "2", icon: Brain, title: "AI Memproses", desc: "AI memahami pertanyaan/permintaan dan mencari jawaban dari knowledge base" },
+              { step: "2", icon: Brain, title: "AI Memproses", desc: "AI memahami pertanyaan/permintaan dan mencari jawaban dari basis pengetahuan" },
               { step: "3", icon: Database, title: "Akses Data", desc: "Jika perlu, AI mengambil data real-time dari database pemerintahan" },
-              { step: "4", icon: Zap, title: "Response Instan", desc: "Masyarakat mendapat jawaban dalam hitungan detik, 24/7" },
+              { step: "4", icon: Zap, title: "Respons Instan", desc: "Masyarakat mendapat jawaban dalam hitungan detik, 24/7" },
             ].map((item, i) => (
               <motion.div key={i} variants={staggerItem}>
                 <Card className="h-full text-center border-border/50 relative overflow-hidden">
@@ -504,7 +504,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="text-center mb-8">
             <motion.span variants={staggerItem} className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary bg-secondary/10 px-3 py-1 rounded-full mb-3">
-              <Play className="w-3 h-3" />Live Demo
+              <Play className="w-3 h-3" />Demo Langsung
             </motion.span>
             <motion.h2 variants={staggerItem} className="text-xl sm:text-2xl md:text-3xl font-bold mb-2">
               Coba Langsung <span className="bg-gradient-to-r from-secondary to-primary bg-clip-text text-transparent">Demo GovConnect</span>
@@ -642,12 +642,12 @@ export default function LandingPage() {
 
           <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[
-              { icon: Brain, title: "AI & NLP", desc: "Natural Language Processing untuk memahami bahasa manusia dengan akurat", features: ["Bahasa Indonesia", "Multi-intent", "Context-aware"] },
-              { icon: Database, title: "Knowledge Base", desc: "Database pengetahuan yang dapat diupdate dan diintegrasikan", features: ["Real-time sync", "Version control", "Easy update"] },
+              { icon: Brain, title: "AI & NLP", desc: "Natural Language Processing untuk memahami bahasa manusia dengan akurat", features: ["Bahasa Indonesia", "Multi-inten", "Sadar konteks"] },
+              { icon: Database, title: "Basis Pengetahuan", desc: "Database pengetahuan yang dapat diperbarui dan diintegrasikan", features: ["Sinkronisasi real-time", "Kontrol versi", "Mudah diperbarui"] },
               { icon: Network, title: "Multi-Channel", desc: "Integrasi dengan berbagai platform komunikasi", features: ["WhatsApp API", "Webchat Widget"] },
-              { icon: Shield, title: "Keamanan", desc: "Standar keamanan tinggi untuk data pemerintahan", features: ["Encryption", "Access control", "Audit log"] },
-              { icon: LineChart, title: "Analytics", desc: "Dashboard analitik untuk monitoring dan reporting", features: ["Real-time stats", "Export report", "Insights"] },
-              { icon: RefreshCw, title: "Scalable", desc: "Arsitektur yang dapat berkembang sesuai kebutuhan", features: ["Cloud-ready", "High availability", "Auto-scaling"] },
+              { icon: Shield, title: "Keamanan", desc: "Standar keamanan tinggi untuk data pemerintahan", features: ["Enkripsi", "Kontrol akses", "Log audit"] },
+              { icon: LineChart, title: "Analitik", desc: "Dashboard analitik untuk pemantauan dan pelaporan", features: ["Statistik real-time", "Ekspor laporan", "Wawasan"] },
+              { icon: RefreshCw, title: "Skalabel", desc: "Arsitektur yang dapat berkembang sesuai kebutuhan", features: ["Siap cloud", "Ketersediaan tinggi", "Skalabilitas otomatis"] },
             ].map((item, i) => (
               <motion.div key={i} variants={staggerItem}>
                 <Card className="h-full border-border/50 hover:border-secondary/50 transition-all">
@@ -702,7 +702,7 @@ export default function LandingPage() {
                       { aspect: "Waktu Response", before: "Menit - Jam", after: "< 3 Detik" },
                       { aspect: "Jam Operasional", before: "Jam Kerja (8 jam)", after: "24/7 (Non-stop)" },
                       { aspect: "Akses Layanan", before: "Harus ke kantor", after: "Dari mana saja" },
-                      { aspect: "Kapasitas Layanan", before: "Terbatas petugas", after: "Unlimited" },
+                      { aspect: "Kapasitas Layanan", before: "Terbatas petugas", after: "Tak terbatas" },
                       { aspect: "Konsistensi Jawaban", before: "Bervariasi", after: "Konsisten & Akurat" },
                       { aspect: "Tracking Status", before: "Manual / Tidak ada", after: "Real-time Otomatis" },
                       { aspect: "Laporan Darurat", before: "Proses lambat", after: "Alert Prioritas Instan" },
@@ -740,10 +740,10 @@ export default function LandingPage() {
           <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {[
               { step: "1", title: "Konsultasi", desc: "Diskusi kebutuhan & assessment", icon: MessageCircle },
-              { step: "2", title: "Kustomisasi", desc: "Setup knowledge base & flow", icon: Settings },
+              { step: "2", title: "Kustomisasi", desc: "Siapkan basis pengetahuan & alur", icon: Settings },
               { step: "3", title: "Integrasi", desc: "Koneksi channel & database", icon: Network },
               { step: "4", title: "Training", desc: "Pelatihan admin & petugas", icon: Users },
-              { step: "5", title: "Go Live", desc: "Launch & monitoring", icon: Rocket },
+              { step: "5", title: "Mulai Operasional", desc: "Peluncuran & pemantauan", icon: Rocket },
             ].map((item, i) => (
               <motion.div key={i} variants={staggerItem}>
                 <Card className="h-full text-center border-border/50 relative">
@@ -767,7 +767,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="text-center mb-8">
             <motion.span variants={staggerItem} className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary bg-primary/10 px-3 py-1 rounded-full mb-3">
-              <Target className="w-3 h-3" />Use Cases
+              <Target className="w-3 h-3" />Contoh Kasus
             </motion.span>
             <motion.h2 variants={staggerItem} className="text-xl sm:text-2xl md:text-3xl font-bold mb-2">
               Untuk Semua <span className="bg-gradient-to-r from-secondary to-primary bg-clip-text text-transparent">Tingkat Pemerintahan</span>
@@ -796,7 +796,7 @@ export default function LandingPage() {
 
           {/* Integration Channels */}
           <motion.div variants={fadeInUp} initial="hidden" whileInView="visible" viewport={{ once: true }} className="mb-8">
-            <h3 className="text-sm font-semibold text-center mb-4">Multi-Channel Integration</h3>
+            <h3 className="text-sm font-semibold text-center mb-4">Integrasi Multi-Channel</h3>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
                 { icon: WhatsAppIcon, title: "WhatsApp", gradient: "from-green-500 to-green-600" },
@@ -826,10 +826,10 @@ export default function LandingPage() {
                     <p className="text-xs text-muted-foreground mb-4">Semua channel dalam satu dashboard untuk monitoring dan response.</p>
                     <ul className="space-y-2">
                       {[
-                        { icon: LayoutDashboard, text: "Unified inbox semua channel" },
+                        { icon: LayoutDashboard, text: "Kotak masuk terpadu semua channel" },
                         { icon: GitBranch, text: "Distribusi tugas otomatis" },
                         { icon: LineChart, text: "Analitik terpusat" },
-                        { icon: RefreshCw, text: "Knowledge base real-time" },
+                        { icon: RefreshCw, text: "Basis pengetahuan real-time" },
                       ].map((item, i) => (
                         <li key={i} className="flex items-center gap-2 text-xs">
                           <div className="w-5 h-5 rounded bg-secondary/20 flex items-center justify-center shrink-0">
@@ -862,7 +862,7 @@ export default function LandingPage() {
               <span className="text-xs font-semibold">Fitur Darurat</span>
             </motion.div>
             <motion.h2 variants={staggerItem} className="text-xl sm:text-2xl md:text-3xl font-bold mb-2">
-              Alert <span className="text-destructive">Laporan Darurat</span> & Bencana
+              Peringatan <span className="text-destructive">Laporan Darurat</span> & Bencana
             </motion.h2>
             <motion.p variants={staggerItem} className="text-sm text-muted-foreground max-w-xl mx-auto">
               Notifikasi prioritas tinggi untuk laporan bencana, langsung ke pusat.
@@ -980,12 +980,12 @@ export default function LandingPage() {
                 { q: "Apa itu GovConnect?", a: "GovConnect adalah platform AI yang menghubungkan masyarakat dengan pemerintah. Masyarakat bisa bertanya informasi, melapor masalah, mengajukan layanan, dan mengajukan surat via WhatsApp atau webchat - semuanya dijawab AI 24/7." },
                 { q: "Untuk tingkat pemerintahan apa saja?", a: "Semua tingkat: kelurahan/desa, kecamatan, kabupaten/kota, provinsi, hingga pusat. Juga cocok untuk instansi khusus seperti kepolisian, puskesmas, dinas pendidikan, BPJS, samsat, dan lainnya." },
                 { q: "Apa saja yang bisa dilakukan masyarakat?", a: "Banyak! Tanya informasi (syarat KTP, jam buka, dll), lapor masalah (jalan rusak, lampu mati, banjir), ajukan layanan administrasi (domisili, pengantar, SKCK), cek status pengajuan, dan pengaduan pelayanan." },
-                { q: "Bagaimana AI bisa menjawab dengan benar?", a: "AI dilatih dengan knowledge base yang berisi informasi layanan pemerintahan. Knowledge base ini bisa diupdate kapan saja dan bisa terhubung dengan database pemerintahan untuk data real-time yang selalu akurat." },
+                { q: "Bagaimana AI bisa menjawab dengan benar?", a: "AI dilatih dengan basis pengetahuan yang berisi informasi layanan pemerintahan. Basis pengetahuan ini bisa diperbarui kapan saja dan bisa terhubung dengan database pemerintahan untuk data real-time yang selalu akurat." },
                 { q: "Bisa terhubung dengan sistem yang sudah ada?", a: "Ya! GovConnect dapat diintegrasikan dengan database dan sistem pemerintahan yang sudah ada. Jadi AI bisa mengambil data real-time seperti status pengajuan, jadwal, kuota, dll." },
                 { q: "Channel apa saja yang didukung?", a: "WhatsApp (via Business API) dan Webchat yang bisa dipasang di website pemerintah. Semua channel dikontrol dari satu dashboard terpusat." },
                 { q: "Bagaimana dengan laporan darurat/bencana?", a: "Ada fitur alert prioritas! AI mendeteksi kata kunci darurat dan langsung mengirim notifikasi khusus ke petugas/pusat. Laporan bencana tidak akan terlewat." },
                 { q: "Bagaimana keamanan datanya?", a: "Data dienkripsi end-to-end dengan standar keamanan tinggi. Akses dashboard dikontrol dengan role-based access sesuai struktur organisasi. Ada audit log untuk tracking semua aktivitas." },
-                { q: "Berapa lama proses implementasi?", a: "Tergantung kompleksitas, biasanya 2-4 minggu. Meliputi: konsultasi kebutuhan, setup knowledge base, integrasi channel, training admin, dan go-live dengan monitoring." },
+                { q: "Berapa lama proses implementasi?", a: "Tergantung kompleksitas, biasanya 2-4 minggu. Meliputi: konsultasi kebutuhan, setup basis pengetahuan, integrasi channel, pelatihan admin, dan mulai operasional dengan pemantauan." },
                 { q: "Bagaimana cara memulai?", a: "Hubungi tim kami untuk konsultasi gratis. Anda juga bisa coba demo yang sudah kami siapkan via WhatsApp di +62 896-6817-6764 atau webchat di pojok kanan bawah halaman ini." },
               ].map((item, i) => (
                 <AccordionItem key={i} value={`item-${i}`} className="border border-border/50 rounded-lg px-3 data-[state=open]:border-secondary/50">
@@ -1046,7 +1046,7 @@ export default function LandingPage() {
             <div>
               <h4 className="text-xs font-semibold mb-3">Fitur</h4>
               <ul className="space-y-1.5 text-xs text-muted-foreground">
-                {["Knowledge Base AI", "Pelaporan & Tracking", "Permohonan Layanan", "Multi-Channel"].map((item, i) => (
+                {["Basis Pengetahuan AI", "Pelaporan & Pelacakan", "Permohonan Layanan", "Multi-Channel"].map((item, i) => (
                   <li key={i}><Link href="#fitur" className="hover:text-secondary transition-colors">{item}</Link></li>
                 ))}
               </ul>
@@ -1061,8 +1061,8 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="flex flex-col sm:flex-row justify-between items-center gap-2 border-t border-border/50 pt-4 text-[10px] text-muted-foreground">
-            <p>&copy; {new Date().getFullYear()} GovConnect. All rights reserved.</p>
-            <p>Powered by <a href="https://genfity.com" target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">Genfity Digital Solution</a></p>
+            <p>&copy; {new Date().getFullYear()} GovConnect. Hak cipta dilindungi.</p>
+            <p>Didukung oleh <a href="https://genfity.com" target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">Genfity Digital Solution</a></p>
           </div>
         </div>
       </footer>

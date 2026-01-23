@@ -479,7 +479,7 @@ export default function AIAnalyticsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Brain className="h-6 w-6 text-primary" />
-            AI Analytics
+            Analitik AI
           </h1>
           <p className="text-muted-foreground">
             Monitoring performa dan penggunaan AI chatbot
@@ -487,7 +487,7 @@ export default function AIAnalyticsPage() {
         </div>
         <Button onClick={fetchData} variant="outline" size="sm">
           <RefreshCcw className="h-4 w-4 mr-2" />
-          Refresh
+          Muat Ulang
         </Button>
       </div>
 
@@ -497,7 +497,7 @@ export default function AIAnalyticsPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Requests</p>
+                <p className="text-sm font-medium text-muted-foreground">Total Permintaan</p>
                 <p className="text-3xl font-bold">{formatNumber(summary?.totalRequests || 0)}</p>
                 <p className="text-xs text-muted-foreground mt-1">pesan diproses AI</p>
               </div>

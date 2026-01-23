@@ -210,12 +210,12 @@ export default function RegisterPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="username">Username</Label>
+                  <Label htmlFor="username">Nama Pengguna</Label>
                   <Input
                     id="username"
                     value={form.username}
                     onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
-                    placeholder="username"
+                    placeholder="nama pengguna"
                     required
                   />
                 </div>
@@ -238,7 +238,7 @@ export default function RegisterPage() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password">Kata Sandi</Label>
                   <div className="relative">
                     <Input
                       id="password"
@@ -270,14 +270,14 @@ export default function RegisterPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Konfirmasi Password</Label>
+                  <Label htmlFor="confirmPassword">Konfirmasi Kata Sandi</Label>
                   <div className="relative">
                     <Input
                       id="confirmPassword"
                       type={showConfirmPassword ? "text" : "password"}
                       value={form.confirmPassword}
                       onChange={(e) => setForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
-                      placeholder="Ulangi password"
+                      placeholder="Ulangi kata sandi"
                       required
                     />
                     <button

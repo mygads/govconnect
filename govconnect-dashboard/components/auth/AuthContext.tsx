@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (!response.ok) {
       const error = await response.json()
-      throw new Error(error.error || 'Login failed')
+      throw new Error(error.error || 'Login gagal')
     }
 
     const data = await response.json()

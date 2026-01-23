@@ -49,7 +49,7 @@ export default function LaporanListPage() {
       setComplaints(data.data || [])
       setError(null)
     } catch (err: any) {
-      setError(err.message || "Failed to load complaints")
+      setError(err.message || "Gagal memuat pengaduan")
     } finally {
       setLoading(false)
     }
@@ -95,13 +95,13 @@ export default function LaporanListPage() {
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2">
               <AlertCircle className="h-5 w-5" />
-              Error Loading Data
+              Gagal Memuat Data
             </CardTitle>
             <CardDescription>{error}</CardDescription>
           </CardHeader>
           <CardContent>
             <Button onClick={fetchComplaints} variant="outline">
-              Retry
+              Coba Lagi
             </Button>
           </CardContent>
         </Card>
@@ -113,25 +113,25 @@ export default function LaporanListPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center flex-wrap gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">List Laporan</h1>
+          <h1 className="text-3xl font-bold text-foreground">Pengaduan Warga</h1>
           <p className="text-muted-foreground mt-2">
             Kelola semua laporan masuk dari warga
           </p>
         </div>
         <Button onClick={fetchComplaints} variant="outline">
-          Refresh
+          Muat Ulang
         </Button>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Filter & Search</CardTitle>
+          <CardTitle>Filter & Pencarian</CardTitle>
           <div className="flex gap-4 mt-4 flex-wrap">
             <div className="flex-1 min-w-[200px]">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Cari nomor laporan, WA, atau kategori..."
+                  placeholder="Cari nomor pengaduan, WA, atau kategori..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="pl-9"
@@ -167,20 +167,27 @@ export default function LaporanListPage() {
               >
                 Selesai
               </Button>
+              <Button
+                variant={statusFilter === "ditolak" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setStatusFilter("ditolak")}
+              >
+                Ditolak
+              </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent>
           {filteredComplaints.length === 0 ? (
             <div className="text-center py-12">
-              <p className="text-muted-foreground">Tidak ada data laporan</p>
+              <p className="text-muted-foreground">Belum ada pengaduan masuk</p>
             </div>
           ) : (
             <div className="rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>No. Laporan</TableHead>
+                    <TableHead>No. Pengaduan</TableHead>
                     <TableHead>WhatsApp</TableHead>
                     <TableHead>Kategori</TableHead>
                     <TableHead>Deskripsi</TableHead>
@@ -234,7 +241,7 @@ export default function LaporanListPage() {
             </div>
           )}
           <div className="mt-4 text-sm text-muted-foreground">
-            Menampilkan {filteredComplaints.length} dari {complaints.length} laporan
+            Menampilkan {filteredComplaints.length} dari {complaints.length} pengaduan
           </div>
         </CardContent>
       </Card>

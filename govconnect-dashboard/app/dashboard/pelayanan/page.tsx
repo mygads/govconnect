@@ -116,7 +116,7 @@ export default function ServiceRequestsPage() {
         </div>
         <Button variant="outline" onClick={fetchRequests} className="gap-2">
           <RefreshCw className="h-4 w-4" />
-          Refresh
+          Muat Ulang
         </Button>
       </div>
 

@@ -104,7 +104,7 @@ export default function RateLimitPage() {
       if (rateLimitRes.ok) setData(await rateLimitRes.json())
       if (blacklistRes.ok) setBlacklist(await blacklistRes.json())
     } catch (err: any) {
-      setError(err.message || 'Failed to load data')
+      setError(err.message || 'Gagal memuat data')
     } finally {
       setLoading(false)
     }
@@ -208,7 +208,7 @@ export default function RateLimitPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Shield className="h-6 w-6 text-primary" />
-            Rate Limiting
+            Rate Limit
           </h1>
           <p className="text-muted-foreground">
             Kontrol rate limit dan blacklist nomor spam
@@ -216,7 +216,7 @@ export default function RateLimitPage() {
         </div>
         <Button onClick={fetchData} variant="outline" size="sm">
           <RefreshCcw className="h-4 w-4 mr-2" />
-          Refresh
+          Muat Ulang
         </Button>
       </div>
 
@@ -243,7 +243,7 @@ export default function RateLimitPage() {
                 <span className="text-sm font-medium">Status</span>
               </div>
               <Badge variant={data?.config.enabled ? "default" : "secondary"}>
-                {data?.config.enabled ? 'ENABLED' : 'DISABLED'}
+                {data?.config.enabled ? 'AKTIF' : 'NONAKTIF'}
               </Badge>
             </div>
             
@@ -268,7 +268,7 @@ export default function RateLimitPage() {
                 <Ban className="h-4 w-4 text-red-500" />
                 <span className="text-sm font-medium">Auto Blacklist</span>
               </div>
-              <p className="text-2xl font-bold">{data?.config.autoBlacklistViolations || 10} violations</p>
+              <p className="text-2xl font-bold">{data?.config.autoBlacklistViolations || 10} pelanggaran</p>
             </div>
           </div>
           
@@ -284,7 +284,7 @@ export default function RateLimitPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Blocked</p>
+                <p className="text-sm font-medium text-muted-foreground">Total Diblokir</p>
                 <p className="text-2xl font-bold">{data?.stats.totalBlocked || 0}</p>
               </div>
               <AlertTriangle className="h-8 w-8 text-yellow-500 opacity-80" />
@@ -296,7 +296,7 @@ export default function RateLimitPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Blacklisted Numbers</p>
+                <p className="text-sm font-medium text-muted-foreground">Total Nomor Blacklist</p>
                 <p className="text-2xl font-bold">{data?.stats.totalBlacklisted || 0}</p>
               </div>
               <UserX className="h-8 w-8 text-red-500 opacity-80" />
@@ -308,7 +308,7 @@ export default function RateLimitPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Active Users Today</p>
+                <p className="text-sm font-medium text-muted-foreground">Pengguna Aktif Hari Ini</p>
                 <p className="text-2xl font-bold">{data?.stats.activeUsers || 0}</p>
               </div>
               <Shield className="h-8 w-8 text-green-500 opacity-80" />
@@ -323,7 +323,7 @@ export default function RateLimitPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-yellow-500" />
-              Top Violators
+              Pelanggar Terbanyak
             </CardTitle>
             <CardDescription>
               Nomor dengan pelanggaran rate limit terbanyak
@@ -334,9 +334,9 @@ export default function RateLimitPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Nomor WhatsApp</TableHead>
-                  <TableHead className="text-right">Violations</TableHead>
+                  <TableHead className="text-right">Pelanggaran</TableHead>
                   <TableHead className="text-right">Laporan Hari Ini</TableHead>
-                  <TableHead className="text-center">Action</TableHead>
+                  <TableHead className="text-center">Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -453,7 +453,7 @@ export default function RateLimitPage() {
                   <TableHead>Ditambahkan</TableHead>
                   <TableHead>Oleh</TableHead>
                   <TableHead>Kadaluarsa</TableHead>
-                  <TableHead className="text-center">Action</TableHead>
+                  <TableHead className="text-center">Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

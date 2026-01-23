@@ -213,7 +213,7 @@ export default function ServiceRequestDetailPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CheckCircle className="h-5 w-5" />
-            Update Status
+            Perbarui Status
           </CardTitle>
           <CardDescription>Perbarui status dan catatan admin.</CardDescription>
         </CardHeader>

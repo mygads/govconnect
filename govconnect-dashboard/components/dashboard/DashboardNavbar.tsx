@@ -49,7 +49,7 @@ export function DashboardNavbar() {
         >
           <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
           <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-          <span className="sr-only">Toggle theme</span>
+          <span className="sr-only">Ganti tema</span>
         </Button>
 
         <div className="border-r dark:border-white/60 h-6 ml-2"></div>
@@ -71,14 +71,14 @@ export function DashboardNavbar() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            <DropdownMenuLabel>Akun Saya</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem 
               onClick={() => router.push('/dashboard/settings')} 
               className="cursor-pointer"
             >
               <Settings className="mr-2 h-4 w-4" />
-              <span>Settings</span>
+              <span>Pengaturan</span>
             </DropdownMenuItem>
             {user?.role === 'superadmin' && (
               <DropdownMenuItem 
@@ -92,7 +92,7 @@ export function DashboardNavbar() {
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="cursor-pointer text-destructive">
               <LogOut className="mr-2 h-4 w-4" />
-              <span>Log out</span>
+              <span>Keluar</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -66,7 +66,7 @@ export interface Layer1Output {
 const LAYER1_SYSTEM_PROMPT = `You are Layer 1 AI - INTENT CLASSIFIER & DATA VALIDATOR.
 
 PRIMARY TASKS:
-1. Classify user intent (9 types)
+1. Classify user intent (12 types)
 2. Validate pre-extracted data
 3. Calculate confidence score
 

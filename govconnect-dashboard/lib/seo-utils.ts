@@ -192,7 +192,7 @@ export const pageMetadataPresets = {
   }),
   
   login: createPageMetadata({
-    title: 'Login Dashboard',
+    title: 'Masuk Dashboard',
     description: 'Login ke dashboard GovConnect untuk mengelola layanan pemerintahan digital.',
     path: '/login',
     noIndex: true,

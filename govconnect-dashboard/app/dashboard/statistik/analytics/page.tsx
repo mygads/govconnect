@@ -55,7 +55,7 @@ export default function AnalyticsPage() {
       setTrendData(data)
       setError(null)
     } catch (err: any) {
-      setError(err.message || "Failed to load trends")
+      setError(err.message || "Gagal memuat tren")
     } finally {
       setLoading(false)
     }
@@ -100,9 +100,9 @@ export default function AnalyticsPage() {
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2">
               <AlertCircle className="h-5 w-5" />
-              Error Loading Data
+              Gagal memuat data
             </CardTitle>
-            <CardDescription>{error || "No data available"}</CardDescription>
+            <CardDescription>{error || "Tidak ada data"}</CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -260,7 +260,7 @@ export default function AnalyticsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Trend Analysis</h1>
+          <h1 className="text-3xl font-bold text-foreground">Analisis Tren</h1>
           <p className="text-muted-foreground mt-2">
             Analisis tren laporan dan prediksi volume
           </p>
@@ -327,7 +327,7 @@ export default function AnalyticsPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Growth Rate</p>
+                <p className="text-sm font-medium text-muted-foreground">Laju Pertumbuhan</p>
                 <div className="flex items-center gap-2">
                   <p className="text-2xl font-bold">{Math.abs(trendData.summary.growthRate)}%</p>
                   {trendData.summary.growthRate >= 0 ? (
@@ -478,7 +478,7 @@ export default function AnalyticsPage() {
                 <Clock className="h-6 w-6 text-orange-600 dark:text-orange-400" />
               </div>
               <div>
-                <h3 className="font-semibold text-lg">Peak Hours Insight</h3>
+                <h3 className="font-semibold text-lg">Insight Jam Tersibuk</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   Laporan paling banyak masuk pada jam <span className="font-bold text-orange-600">{trendData.peakAnalysis.peakHour.label}</span>.
                   Pastikan admin tersedia pada waktu tersebut untuk respons cepat.
@@ -495,10 +495,10 @@ export default function AnalyticsPage() {
                 <Calendar className="h-6 w-6 text-green-600 dark:text-green-400" />
               </div>
               <div>
-                <h3 className="font-semibold text-lg">Peak Day Insight</h3>
+                <h3 className="font-semibold text-lg">Insight Hari Tersibuk</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   Hari <span className="font-bold text-green-600">{trendData.peakAnalysis.peakDay.label}</span> adalah hari tersibuk.
-                  Pertimbangkan untuk menambah resources pada hari tersebut.
+                  Pertimbangkan untuk menambah sumber daya pada hari tersebut.
                 </p>
               </div>
             </div>

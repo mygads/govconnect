@@ -291,7 +291,7 @@ export default function ChannelSettingsPage() {
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={fetchSessionStatus} disabled={sessionLoading}>
                   <RefreshCw className="h-4 w-4 mr-2" />
-                  Refresh
+                  Muat Ulang
                 </Button>
               </div>
               <div className="flex flex-wrap gap-2">

@@ -307,7 +307,7 @@ export default function LiveChatPage() {
         },
       })
 
-      if (!response.ok) throw new Error("Failed to fetch messages")
+      if (!response.ok) throw new Error("Gagal mengambil pesan")
 
       const data = await response.json()
       if (data.success) {
@@ -460,7 +460,7 @@ export default function LiveChatPage() {
         fetchConversationsSilent()
 
         toast({
-          title: "Takeover Aktif",
+          title: "Ambil Alih Aktif",
           description: "Anda sekarang menangani percakapan ini. AI tidak akan membalas.",
         })
       } else {
@@ -503,16 +503,16 @@ export default function LiveChatPage() {
         fetchConversationsSilent()
 
         toast({
-          title: "Takeover Selesai",
+          title: "Ambil Alih Selesai",
           description: "AI Bot akan kembali menangani percakapan ini.",
         })
       } else {
-        throw new Error(data.error || "Gagal mengakhiri takeover")
+        throw new Error(data.error || "Gagal mengakhiri ambil alih")
       }
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Gagal mengakhiri takeover",
+        description: error.message || "Gagal mengakhiri ambil alih",
         variant: "destructive",
       })
     } finally {
@@ -731,7 +731,7 @@ export default function LiveChatPage() {
                 </TabsTrigger>
                 <TabsTrigger value="takeover" className="flex-1 text-xs">
                   <Hand className="h-3 w-3 mr-1" />
-                  Takeover
+                  Ambil Alih
                 </TabsTrigger>
                 <TabsTrigger value="bot" className="flex-1 text-xs">
                   <Bot className="h-3 w-3 mr-1" />
@@ -812,7 +812,7 @@ export default function LiveChatPage() {
                           {conv.is_takeover ? (
                             <Badge variant="outline" className="text-orange-600 border-orange-300 text-xs py-0">
                               <Hand className="h-3 w-3 mr-1" />
-                              Takeover
+                              Ambil Alih
                             </Badge>
                           ) : processingStatuses[conv.wa_user_id] && processingStatuses[conv.wa_user_id].stage !== 'completed' && processingStatuses[conv.wa_user_id].stage !== 'error' ? (
                             <Badge variant="outline" className="text-blue-600 border-blue-300 text-xs py-0 animate-pulse">
@@ -923,7 +923,7 @@ export default function LiveChatPage() {
                       disabled={isTogglingTakeover}
                     >
                       <Hand className="h-4 w-4 mr-1" />
-                      <span className="hidden sm:inline">Takeover</span>
+                      <span className="hidden sm:inline">Ambil Alih</span>
                     </Button>
                   )}
                 </div>
@@ -966,7 +966,7 @@ export default function LiveChatPage() {
                                 <>
                                   <span className="mx-0.5">•</span>
                                   <span className="capitalize text-[10px]">
-                                    {msg.source === 'ADMIN' ? 'Admin' : msg.source === 'AI' ? 'AI' : 'System'}
+                                    {msg.source === 'ADMIN' ? 'Admin' : msg.source === 'AI' ? 'AI' : 'Sistem'}
                                   </span>
                                   {/* Read status indicator */}
                                   {msg.is_read !== false ? (
@@ -1052,7 +1052,7 @@ export default function LiveChatPage() {
                   <div className="text-center text-muted-foreground py-2 bg-muted/50 rounded-lg">
                     <Bot className="h-5 w-5 mx-auto mb-1" />
                     <p className="text-sm">AI Bot sedang menangani percakapan ini.</p>
-                    <p className="text-xs">Klik "Takeover" untuk mengambil alih.</p>
+                    <p className="text-xs">Klik "Ambil Alih" untuk mengambil alih.</p>
                   </div>
                 )}
               </div>
@@ -1077,7 +1077,7 @@ export default function LiveChatPage() {
           <DialogHeader>
             <DialogTitle>Ambil Alih Percakapan</DialogTitle>
             <DialogDescription>
-              Dengan mengambil alih percakapan ini, AI Bot tidak akan membalas pesan dari pengguna ini hingga Anda mengakhiri takeover.
+              Dengan mengambil alih percakapan ini, AI Bot tidak akan membalas pesan dari pengguna ini hingga Anda mengakhiri ambil alih.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4 space-y-4">
@@ -1111,7 +1111,7 @@ export default function LiveChatPage() {
                 Alasan {takeoverReasonTemplate === "Lainnya" ? "(wajib)" : "(bisa diedit)"}
               </label>
               <Input
-                placeholder="Tulis alasan takeover..."
+                placeholder="Tulis alasan ambil alih..."
                 value={takeoverReason}
                 onChange={(e) => setTakeoverReason(e.target.value)}
                 className="mt-2"

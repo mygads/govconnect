@@ -118,7 +118,7 @@ export function GovConnectSidebar() {
           icon: Smartphone,
         },
         {
-          title: "Live Chat & Takeover",
+          title: "Live Chat & Ambil Alih",
           url: "/dashboard/livechat",
           icon: MessageCircle,
         },
@@ -128,7 +128,7 @@ export function GovConnectSidebar() {
       title: "Basis Pengetahuan",
       items: [
         {
-          title: "Knowledge Base & Dokumen",
+          title: "Basis Pengetahuan & Dokumen",
           url: "/dashboard/knowledge",
           icon: Brain,
         },

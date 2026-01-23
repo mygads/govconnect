@@ -57,7 +57,7 @@ export default function FormLayout({
                                 {isDark ? <Sun className="h-4 w-4 text-yellow-500" /> : <Moon className="h-4 w-4 text-slate-600" />}
                             </Button>
                             <Button asChild size="sm" className="hidden sm:flex rounded-full bg-secondary hover:bg-secondary/90 text-xs px-4 h-8">
-                                <Link href="/login">Login</Link>
+                                <Link href="/login">Masuk</Link>
                             </Button>
                             <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden rounded-full w-8 h-8">
                                 {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
@@ -81,7 +81,7 @@ export default function FormLayout({
                                 </Link>
                             ))}
                             <Button asChild size="sm" className="w-full mt-2 rounded-full bg-secondary text-xs">
-                                <Link href="/login">Login Dashboard</Link>
+                                <Link href="/login">Masuk Dashboard</Link>
                             </Button>
                         </div>
                     </div>

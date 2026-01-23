@@ -306,7 +306,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                   </div>
                   <div>
                     <h3 className="font-semibold text-sm">
-                      {isTakeover ? (adminName || 'Admin') : 'GovConnect Assistant'}
+                      {isTakeover ? (adminName || 'Admin') : 'Asisten GovConnect'}
                     </h3>
                     <p className="text-xs text-white/80">
                       {isTakeover ? '🟢 Admin sedang membantu Anda' : 'Online • Siap membantu'}
@@ -431,7 +431,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
               
               {/* Footer */}
               <p className="text-[10px] text-muted-foreground text-center mt-2">
-                Powered by GovConnect AI • Tekan Enter untuk kirim
+                Didukung oleh GovConnect AI • Tekan Enter untuk kirim
               </p>
             </div>
           </motion.div>

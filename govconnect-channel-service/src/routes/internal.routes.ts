@@ -29,7 +29,9 @@ import {
   handleGetChannelAccount,
   handleUpsertChannelAccount,
 } from '../controllers/channel-account.controller';
+import { handleUploadMedia } from '../controllers/media-upload.controller';
 import { internalAuth } from '../middleware/auth.middleware';
+import { uploadPublicMedia } from '../middleware/upload.middleware';
 import {
   validateGetMessages,
   validateSendMessage,
@@ -74,5 +76,8 @@ router.delete('/conversations/:wa_user_id', handleDeleteConversation);
 // Channel account settings per village
 router.get('/channel-accounts/:village_id', handleGetChannelAccount);
 router.put('/channel-accounts/:village_id', handleUpsertChannelAccount);
+
+// Media upload (used by Dashboard public form & admin updates)
+router.post('/media/upload', uploadPublicMedia.single('file'), handleUploadMedia);
 
 export default router;

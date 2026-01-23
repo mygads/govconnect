@@ -188,7 +188,7 @@ export default function LoginPage() {
               </div>
               <div>
                 <CardTitle className="text-2xl font-bold">
-                  Login Dashboard
+                  Masuk Dashboard
                 </CardTitle>
                 <CardDescription className="text-base mt-2">
                   Masuk untuk mengelola layanan kelurahan
@@ -199,12 +199,12 @@ export default function LoginPage() {
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div className="space-y-2">
                   <Label htmlFor="username" className="text-sm font-medium">
-                    Username
+                    Nama Pengguna
                   </Label>
                   <Input
                     id="username"
                     type="text"
-                    placeholder="Masukkan username"
+                    placeholder="Masukkan nama pengguna"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     disabled={isSubmitting}
@@ -214,13 +214,13 @@ export default function LoginPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password" className="text-sm font-medium">
-                    Password
+                    Kata Sandi
                   </Label>
                   <div className="relative">
                     <Input
                       id="password"
                       type={showPassword ? "text" : "password"}
-                      placeholder="Masukkan password"
+                      placeholder="Masukkan kata sandi"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       disabled={isSubmitting}
@@ -276,30 +276,12 @@ export default function LoginPage() {
                   </Link>
                 </p>
               </form>
-
-              {/* Demo Credentials */}
-              <div className="mt-8 p-4 bg-muted/50 rounded-lg border border-border/50">
-                <p className="text-xs text-muted-foreground text-center mb-2">
-                  Demo Credentials
-                </p>
-                <div className="flex justify-center gap-4 text-sm">
-                  <div className="text-center">
-                    <p className="text-muted-foreground">Username</p>
-                    <p className="font-mono font-semibold">admin</p>
-                  </div>
-                  <div className="w-px bg-border" />
-                  <div className="text-center">
-                    <p className="text-muted-foreground">Password</p>
-                    <p className="font-mono font-semibold">admin123</p>
-                  </div>
-                </div>
-              </div>
             </CardContent>
           </Card>
 
           {/* Footer */}
           <p className="text-center text-xs text-muted-foreground mt-8">
-            &copy; {new Date().getFullYear()} GovConnect. Powered by{" "}
+            &copy; {new Date().getFullYear()} GovConnect. Didukung oleh{" "}
             <a
               href="https://genfity.com"
               target="_blank"

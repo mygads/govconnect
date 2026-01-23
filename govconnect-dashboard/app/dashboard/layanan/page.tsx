@@ -99,7 +99,7 @@ export default function LayananPage() {
             Daftar layanan yang tersedia untuk form publik dan WhatsApp.
           </p>
         </div>
-        <Button onClick={fetchServices} variant="outline">Refresh</Button>
+        <Button onClick={fetchServices} variant="outline">Muat Ulang</Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

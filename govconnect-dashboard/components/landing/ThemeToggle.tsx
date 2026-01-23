@@ -39,7 +39,7 @@ export const ThemeToggle = () => {
       size="icon"
       className="rounded-full"
       onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      aria-label="Toggle theme"
+      aria-label="Ganti tema"
     >
       {theme === "dark" ? (
         <Sun className="h-5 w-5 transition-transform duration-200 rotate-0 scale-100" />

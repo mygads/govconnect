@@ -56,6 +56,7 @@ export default function LaporanDetailPage() {
   const [updateNote, setUpdateNote] = useState("")
   const [updateImageUrl, setUpdateImageUrl] = useState("")
   const [savingUpdate, setSavingUpdate] = useState(false)
+  const [uploadingImage, setUploadingImage] = useState(false)
 
   useEffect(() => {
     if (params.id) {
@@ -71,10 +72,33 @@ export default function LaporanDetailPage() {
       setNewStatus(data.status)
       setError(null)
     } catch (err: any) {
-      setError(err.message || "Failed to load complaint detail")
+      setError(err.message || "Gagal memuat detail pengaduan")
     } finally {
       setLoading(false)
     }
+  }
+
+  const uploadAdminImage = async (file: File) => {
+    const formData = new FormData()
+    formData.append("file", file)
+
+    const response = await fetch("/api/uploads", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => null)
+      throw new Error(err?.error || "Gagal mengunggah foto")
+    }
+
+    const data = await response.json()
+    const url = data?.data?.url
+    if (!url) throw new Error("Gagal mengunggah foto")
+    return url as string
   }
 
   const handleUpdateStatus = async () => {
@@ -92,7 +116,7 @@ export default function LaporanDetailPage() {
       setAdminNotes("")
       setError(null)
     } catch (err: any) {
-      setError(err.message || "Failed to update status")
+      setError(err.message || "Gagal memperbarui status")
     } finally {
       setUpdating(false)
     }
@@ -159,13 +183,13 @@ export default function LaporanDetailPage() {
           <CardHeader>
             <CardTitle className="text-destructive flex items-center gap-2">
               <AlertCircle className="h-5 w-5" />
-              Error Loading Data
+              Gagal Memuat Data
             </CardTitle>
-            <CardDescription>{error || "Complaint not found"}</CardDescription>
+            <CardDescription>{error || "Pengaduan tidak ditemukan"}</CardDescription>
           </CardHeader>
           <CardContent>
             <Button onClick={() => fetchComplaintDetail(params.id as string)} variant="outline">
-              Retry
+              Coba Lagi
             </Button>
           </CardContent>
         </Card>
@@ -183,7 +207,7 @@ export default function LaporanDetailPage() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold text-foreground">{complaint.complaint_id}</h1>
-            <p className="text-sm text-muted-foreground">Detail Laporan Warga</p>
+            <p className="text-sm text-muted-foreground">Detail Pengaduan Warga</p>
           </div>
         </div>
         <Button variant="outline" onClick={() => printReceipt(complaint)}>
@@ -196,13 +220,13 @@ export default function LaporanDetailPage() {
         <div className="md:col-span-2 space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Informasi Laporan</CardTitle>
-              <CardDescription>Detail lengkap laporan dari warga</CardDescription>
+              <CardTitle>Informasi Pengaduan</CardTitle>
+              <CardDescription>Detail lengkap pengaduan dari warga</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">Nomor Laporan</Label>
+                  <Label className="text-muted-foreground">Nomor Pengaduan</Label>
                   <p className="font-mono font-semibold text-foreground">{complaint.complaint_id}</p>
                 </div>
                 <div className="space-y-2">
@@ -233,12 +257,12 @@ export default function LaporanDetailPage() {
                 <div className="space-y-2">
                   <Label className="text-muted-foreground flex items-center gap-2">
                     <Image className="h-4 w-4" />
-                    Foto Laporan
+                    Foto Pengaduan
                   </Label>
                   <div className="relative rounded-lg overflow-hidden border bg-muted">
                     <img 
                       src={complaint.foto_url} 
-                      alt="Foto laporan"
+                      alt="Foto pengaduan"
                       className="w-full max-h-96 object-contain"
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
@@ -297,7 +321,7 @@ export default function LaporanDetailPage() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Status Laporan</CardTitle>
+              <CardTitle>Status Pengaduan</CardTitle>
               <CardDescription>Update status penanganan</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -342,12 +366,12 @@ export default function LaporanDetailPage() {
                 {updating ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Updating...
+                    Memperbarui...
                   </>
                 ) : (
                   <>
                     <CheckCircle className="mr-2 h-4 w-4" />
-                    Update Status
+                    Perbarui Status
                   </>
                 )}
               </Button>
@@ -371,16 +395,38 @@ export default function LaporanDetailPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="updateImage">URL Foto (Opsional)</Label>
+                <Label htmlFor="updateImage">Foto Penanganan (Opsional)</Label>
                 <Input
                   id="updateImage"
-                  placeholder="https://contoh.com/foto.jpg"
-                  value={updateImageUrl}
-                  onChange={(e) => setUpdateImageUrl(e.target.value)}
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  disabled={uploadingImage}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+
+                    try {
+                      setUploadingImage(true)
+                      const url = await uploadAdminImage(file)
+                      setUpdateImageUrl(url)
+                      setError(null)
+                    } catch (err: any) {
+                      setUpdateImageUrl("")
+                      setError(err.message || "Gagal mengunggah foto")
+                    } finally {
+                      setUploadingImage(false)
+                      e.target.value = ""
+                    }
+                  }}
                 />
+                {updateImageUrl ? (
+                  <p className="text-xs text-muted-foreground">Foto berhasil diunggah.</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Format: JPG/PNG, maks 5MB.</p>
+                )}
               </div>
-              <Button onClick={handleCreateUpdate} disabled={savingUpdate || !updateNote.trim()}>
-                {savingUpdate ? "Menyimpan..." : "Simpan Update"}
+              <Button onClick={handleCreateUpdate} disabled={savingUpdate || uploadingImage || !updateNote.trim()}>
+                {savingUpdate ? "Menyimpan..." : uploadingImage ? "Mengunggah foto..." : "Simpan Update"}
               </Button>
             </CardContent>
           </Card>
