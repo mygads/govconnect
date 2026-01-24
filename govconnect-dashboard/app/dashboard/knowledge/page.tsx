@@ -625,23 +625,26 @@ export default function KnowledgePage() {
             Kelola entri basis pengetahuan dan dokumen untuk respons AI
           </p>
         </div>
-        <Button 
-          onClick={handleGenerateAllEmbeddings}
-          disabled={embeddingLoading}
-          className="bg-linear-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
-        >
-          {embeddingLoading ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Memproses...
-            </>
-          ) : (
-            <>
-              <Sparkles className="h-4 w-4 mr-2" />
-              Generate Semua Embedding
-            </>
-          )}
-        </Button>
+        {/* Button embed hanya muncul di tab knowledge-base, dokumen sudah auto-embed */}
+        {activeTab === 'knowledge-base' && (
+          <Button 
+            onClick={handleGenerateAllEmbeddings}
+            disabled={embeddingLoading}
+            className="bg-linear-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+          >
+            {embeddingLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Memproses...
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4 mr-2" />
+                Generate Semua Embedding
+              </>
+            )}
+          </Button>
+        )}
       </div>
 
       {/* Stats Cards */}

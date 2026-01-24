@@ -5,6 +5,8 @@ import { isRouteAllowed, type AdminRole } from './lib/rbac'
 
 const PUBLIC_PATHS = ['/login', '/register', '/form', '/api/public']
 const AUTH_API_PATHS = ['/api/auth']
+// Internal API paths that use x-internal-api-key instead of JWT
+const INTERNAL_API_PATHS = ['/api/internal']
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
@@ -14,10 +16,15 @@ function isAuthApiPath(pathname: string) {
   return AUTH_API_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
 }
 
+function isInternalApiPath(pathname: string) {
+  return INTERNAL_API_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  if (isPublicPath(pathname) || isAuthApiPath(pathname)) {
+  // Skip auth check for public, auth, and internal API paths
+  if (isPublicPath(pathname) || isAuthApiPath(pathname) || isInternalApiPath(pathname)) {
     return NextResponse.next()
   }
 

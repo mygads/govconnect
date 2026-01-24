@@ -38,12 +38,18 @@ export async function GET(request: NextRequest) {
   try {
     // Verify internal API key
     const expectedApiKey = normalizeInternalApiKey(getInternalApiKey())
+    const apiKey = getProvidedInternalApiKey(request)
+    
+    // Debug logging
+    console.log('[Internal API] Expected key exists:', !!expectedApiKey)
+    console.log('[Internal API] Provided key exists:', !!apiKey)
+    console.log('[Internal API] Keys match:', apiKey === expectedApiKey)
+    
     if (!expectedApiKey) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
     }
-    const apiKey = getProvidedInternalApiKey(request)
     if (!apiKey || apiKey !== expectedApiKey) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: 'Unauthorized', debug: { expectedExists: !!expectedApiKey, providedExists: !!apiKey } }, { status: 401 })
     }
 
     // Get query parameters

@@ -186,13 +186,13 @@ router.get('/:id', async (req: Request, res: Response) => {
  */
 router.post('/search', async (req: Request, res: Response) => {
   try {
-    const { query, topK, minScore, categories } = req.body;
+    const { query, topK, minScore, categories, villageId } = req.body;
 
     if (!query) {
       return res.status(400).json({ error: 'Query is required' });
     }
 
-    logger.info('Knowledge vector search', { queryLength: query.length });
+    logger.info('Knowledge vector search', { queryLength: query.length, villageId });
 
     // Generate query embedding
     const queryEmbedding = await generateEmbedding(query, {
@@ -206,6 +206,7 @@ router.post('/search', async (req: Request, res: Response) => {
       topK: topK || 5,
       minScore: minScore || 0.7,
       categories,
+      villageId,
       sourceTypes: ['knowledge'],
     });
 

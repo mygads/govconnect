@@ -76,7 +76,6 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     nama_lengkap: "",
     nik: "",
     alamat: "",
-    no_hp: "",
     wa_user_id: "",
   });
 
@@ -106,8 +105,7 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
           nama_lengkap: data.citizen_data_json?.nama_lengkap || "",
           nik: data.citizen_data_json?.nik || "",
           alamat: data.citizen_data_json?.alamat || "",
-          no_hp: data.citizen_data_json?.no_hp || "",
-          wa_user_id: data.wa_user_id || "",
+          wa_user_id: data.wa_user_id || data.citizen_data_json?.wa_user_id || data.citizen_data_json?.no_hp || "",
         });
         setRequirementsData((data.requirement_data_json || {}) as Record<string, string>);
         setError(null);
@@ -441,32 +439,18 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-semibold flex items-center gap-1">
-                  <Phone className="w-3.5 h-3.5" /> Nomor HP <span className="text-red-500">*</span>
+                  <Phone className="w-3.5 h-3.5" /> Nomor WhatsApp <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
-                  value={citizenData.no_hp}
-                  onChange={(e) => updateCitizenField("no_hp", e.target.value)}
-                  placeholder="08xxxxxxxxxx"
+                  value={citizenData.wa_user_id}
+                  onChange={(e) => updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""))}
+                  placeholder="628xxxxxxxxxx"
                   className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
                   required
                 />
+                <p className="text-[10px] text-muted-foreground">Format: 628xxxxxxxxxx (tanpa tanda + atau spasi)</p>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold flex items-center gap-1">
-                <MessageCircle className="w-3.5 h-3.5" /> Nomor WhatsApp (628xxx) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={citizenData.wa_user_id}
-                onChange={(e) => updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""))}
-                placeholder="628xxxxxxxxxx"
-                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
-                required
-              />
-              <p className="text-[10px] text-muted-foreground">Pastikan format diawali 628.</p>
             </div>
           </CardContent>
         </Card>
