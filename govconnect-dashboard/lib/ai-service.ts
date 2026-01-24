@@ -11,6 +11,7 @@ import { ai } from './api-client';
 
 interface KnowledgeVectorPayload {
   id: string;
+  village_id?: string;
   title: string;
   content: string;
   category: string;

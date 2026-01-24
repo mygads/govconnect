@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
 // Internal API for AI service to update document status
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'govconnect-internal-2025-secret'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+function getInternalApiKey(): string | null {
+  return process.env['INTERNAL_API_KEY'] || null
+}
 
 /**
  * PUT /api/internal/documents/[id]
@@ -14,9 +20,13 @@ export async function PUT(
 ) {
   try {
     // Verify internal API key
+    const expectedApiKey = getInternalApiKey()
+    if (!expectedApiKey) {
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
+    }
     const apiKey = request.headers.get('x-internal-api-key')
-    if (!apiKey || apiKey !== INTERNAL_API_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+    if (!apiKey || apiKey !== expectedApiKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { id } = await params
@@ -54,8 +64,8 @@ export async function GET(
   try {
     // Verify internal API key
     const apiKey = request.headers.get('x-internal-api-key')
-    if (!apiKey || apiKey !== INTERNAL_API_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+    if (!apiKey || apiKey !== getInternalApiKey()) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { id } = await params

@@ -27,6 +27,7 @@ import {
 } from '../controllers/whatsapp.controller';
 import {
   handleGetChannelAccount,
+  handleListChannelAccounts,
   handleUpsertChannelAccount,
 } from '../controllers/channel-account.controller';
 import { handleUploadMedia } from '../controllers/media-upload.controller';
@@ -74,6 +75,7 @@ router.post('/conversations/:wa_user_id/retry', handleRetryAI);
 router.delete('/conversations/:wa_user_id', handleDeleteConversation);
 
 // Channel account settings per village
+router.get('/channel-accounts', handleListChannelAccounts);
 router.get('/channel-accounts/:village_id', handleGetChannelAccount);
 router.put('/channel-accounts/:village_id', handleUpsertChannelAccount);
 

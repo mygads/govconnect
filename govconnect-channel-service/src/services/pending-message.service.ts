@@ -2,6 +2,7 @@ import prisma from '../config/database';
 import logger from '../utils/logger';
 
 export interface PendingMessageData {
+  village_id?: string;
   wa_user_id: string;
   message_id: string;
   message_text: string;
@@ -9,6 +10,7 @@ export interface PendingMessageData {
 
 export interface PendingMessage {
   id: string;
+  village_id: string;
   wa_user_id: string;
   message_id: string;
   message_text: string;
@@ -19,13 +21,19 @@ export interface PendingMessage {
   updated_at: Date;
 }
 
+function resolveVillageId(villageId?: string): string {
+  return villageId || process.env.DEFAULT_VILLAGE_ID || 'default';
+}
+
 /**
  * Add message to pending queue
  */
 export async function addPendingMessage(data: PendingMessageData): Promise<PendingMessage> {
   try {
+    const villageId = resolveVillageId(data.village_id);
     const pending = await prisma.pendingMessage.create({
       data: {
+        village_id: villageId,
         wa_user_id: data.wa_user_id,
         message_id: data.message_id,
         message_text: data.message_text,
@@ -55,9 +63,13 @@ export async function addPendingMessage(data: PendingMessageData): Promise<Pendi
 /**
  * Get all pending messages for a user (for batching)
  */
-export async function getPendingMessagesForUser(wa_user_id: string): Promise<PendingMessage[]> {
+export async function getPendingMessagesForUser(
+  wa_user_id: string,
+  village_id?: string
+): Promise<PendingMessage[]> {
   return prisma.pendingMessage.findMany({
     where: {
+      village_id: resolveVillageId(village_id),
       wa_user_id,
       status: 'pending',
     },

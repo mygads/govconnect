@@ -133,6 +133,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
     // Sync to AI Service - re-embed with new content
     updateKnowledgeVector(id, {
+      village_id: knowledge.village_id || undefined,
       title: knowledge.title,
       content: knowledge.content,
       category: knowledge.category,

@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const sessionId = searchParams.get('sessionId');
+    const villageId = searchParams.get('villageId');
     const since = searchParams.get('since');
 
     if (!sessionId) {
@@ -33,6 +34,9 @@ export async function GET(request: NextRequest) {
     const pollUrl = new URL(baseUrl);
     if (since) {
       pollUrl.searchParams.set('since', since);
+    }
+    if (villageId) {
+      pollUrl.searchParams.set('village_id', villageId);
     }
     
     const pollResponse = await fetch(pollUrl.toString(), {

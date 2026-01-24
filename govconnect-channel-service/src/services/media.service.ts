@@ -4,6 +4,7 @@ import path from 'path';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { GenfityWebhookPayload, GenfityMediaMessage } from '../types/webhook.types';
+import { getAccessTokenForVillage } from './wa.service';
 
 // Storage configuration
 const MEDIA_STORAGE_PATH = process.env.MEDIA_STORAGE_PATH || '/app/uploads';
@@ -233,11 +234,17 @@ export async function downloadWhatsAppMedia(
   mediaMessage: GenfityMediaMessage,
   mediaType: 'image' | 'video' | 'audio' | 'document',
   waUserId: string,
-  messageId: string
+  messageId: string,
+  villageId?: string
 ): Promise<SavedMediaResult | null> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
-      logger.warn('WA_ACCESS_TOKEN not configured, cannot download media');
+    const resolved = await getAccessTokenForVillage(villageId);
+    const accessToken = resolved.token;
+    if (!accessToken) {
+      logger.warn('No WhatsApp session token available, cannot download media', {
+        village_id: resolved.village_id,
+        token_source: resolved.source,
+      });
       return null;
     }
 
@@ -279,7 +286,7 @@ export async function downloadWhatsAppMedia(
 
     const response = await axios.post(url, requestBody, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token: accessToken,
         'Content-Type': 'application/json',
       },
       timeout: 60000, // 60 seconds for media download
@@ -320,7 +327,8 @@ export async function downloadWhatsAppMedia(
 export async function processMediaFromWebhook(
   payload: GenfityWebhookPayload,
   waUserId: string,
-  messageId: string
+  messageId: string,
+  villageId?: string
 ): Promise<MediaInfo> {
   const mediaInfo = extractMediaInfo(payload);
   
@@ -412,7 +420,8 @@ export async function processMediaFromWebhook(
         mediaMessage,
         mediaInfo.mediaType,
         waUserId,
-        messageId
+        messageId,
+        villageId
       );
       
       if (downloadedResult) {

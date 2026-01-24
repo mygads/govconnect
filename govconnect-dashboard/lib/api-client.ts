@@ -20,14 +20,15 @@
  */
 
 // Service URLs - Direct connection to each service
-export const CHANNEL_SERVICE_URL = process.env.CHANNEL_SERVICE_URL || '';
-export const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
-export const CASE_SERVICE_URL = process.env.CASE_SERVICE_URL || '';
-export const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || '';
+// Use bracket access so values are read at runtime in Next standalone builds.
+export const CHANNEL_SERVICE_URL = process.env['CHANNEL_SERVICE_URL'] || '';
+export const AI_SERVICE_URL = process.env['AI_SERVICE_URL'] || '';
+export const CASE_SERVICE_URL = process.env['CASE_SERVICE_URL'] || '';
+export const NOTIFICATION_SERVICE_URL = process.env['NOTIFICATION_SERVICE_URL'] || '';
 
 // Fallback to single endpoint (backward compatibility)
-export const API_BASE_URL = process.env.API_BASE_URL || '';
-export const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'govconnect-internal-2025-secret';
+export const API_BASE_URL = process.env['API_BASE_URL'] || '';
+export const INTERNAL_API_KEY = process.env['INTERNAL_API_KEY'] || 'govconnect-internal-2025-secret';
 
 // Auth token storage
 let authToken: string | null = null;

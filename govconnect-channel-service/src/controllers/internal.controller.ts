@@ -15,6 +15,7 @@ import logger from '../utils/logger';
  */
 export async function getMessages(req: Request, res: Response): Promise<void> {
   try {
+    const village_id = req.query.village_id as string | undefined;
     const wa_user_id = req.query.wa_user_id as string;
     const limit = parseInt(req.query.limit as string) || 30;
 
@@ -28,7 +29,7 @@ export async function getMessages(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const messages = await getMessageHistory(wa_user_id, limit);
+    const messages = await getMessageHistory(wa_user_id, limit, village_id);
 
     res.json({
       messages: messages.map((m) => ({
@@ -53,14 +54,15 @@ export async function getMessages(req: Request, res: Response): Promise<void> {
  */
 export async function sendMessage(req: Request, res: Response): Promise<void> {
   try {
-    const { wa_user_id, message } = req.body;
+    const { village_id, wa_user_id, message } = req.body;
 
     // Send via WhatsApp API
-    const result = await sendTextMessage(wa_user_id, message);
+    const result = await sendTextMessage(wa_user_id, message, village_id);
 
     if (result.success && result.message_id) {
       // Save outgoing message
       await saveOutgoingMessage({
+        village_id,
         wa_user_id,
         message_id: result.message_id,
         message_text: message,
@@ -69,6 +71,7 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
 
       // Log success
       await logSentMessage({
+        village_id,
         wa_user_id,
         message_text: message,
         status: 'sent',
@@ -81,6 +84,7 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
     } else {
       // Log failure
       await logSentMessage({
+        village_id,
         wa_user_id,
         message_text: message,
         status: 'failed',
@@ -105,12 +109,14 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
  */
 export async function setTyping(req: Request, res: Response): Promise<void> {
   try {
-    const { wa_user_id, state = 'composing' } = req.body;
+    const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
+    const { village_id: bodyVillageId, wa_user_id, state = 'composing' } = req.body;
+    const village_id = bodyVillageId || headerVillageId;
     
     // Map 'stop' to 'paused' since WA API doesn't have 'stop'
     const waState = state === 'stop' ? 'paused' : state;
 
-    const result = await sendTypingIndicator(wa_user_id, waState);
+    const result = await sendTypingIndicator(wa_user_id, waState, village_id);
 
     if (result) {
       logger.debug('Typing indicator sent', { wa_user_id, state });
@@ -136,7 +142,9 @@ export async function setTyping(req: Request, res: Response): Promise<void> {
  */
 export async function storeMessage(req: Request, res: Response): Promise<void> {
   try {
-    const { wa_user_id, message_id, message_text, direction, source, metadata } = req.body;
+    const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
+    const { village_id: bodyVillageId, wa_user_id, message_id, message_text, direction, source, metadata } = req.body;
+    const village_id = bodyVillageId || headerVillageId;
     
     if (!wa_user_id || !message_text) {
       res.status(400).json({ 
@@ -152,6 +160,7 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
     if (direction === 'IN') {
       // Save incoming message (from user)
       message = await saveIncomingMessage({
+        village_id,
         wa_user_id,
         message_id: finalMessageId,
         message_text,
@@ -159,6 +168,7 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
     } else {
       // Save outgoing message (from AI or admin)
       message = await saveOutgoingMessage({
+        village_id,
         wa_user_id,
         message_id: finalMessageId,
         message_text,
@@ -175,7 +185,8 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
       wa_user_id,
       message_text.substring(0, 100),
       userName,
-      unreadAction
+      unreadAction,
+      village_id
     );
     
     logger.info('Message stored in database', { 
@@ -207,7 +218,9 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
  */
 export async function markMessagesRead(req: Request, res: Response): Promise<void> {
   try {
-    const { wa_user_id, message_ids } = req.body;
+    const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
+    const { village_id: bodyVillageId, wa_user_id, message_ids } = req.body;
+    const village_id = bodyVillageId || headerVillageId;
     
     if (!wa_user_id || !message_ids || !Array.isArray(message_ids)) {
       res.status(400).json({ 
@@ -218,7 +231,7 @@ export async function markMessagesRead(req: Request, res: Response): Promise<voi
     
     // Mark messages as read in WhatsApp
     // Use wa_user_id as both chat and sender for simplicity
-    await markMessageAsRead(message_ids, wa_user_id, wa_user_id);
+    await markMessageAsRead(message_ids, wa_user_id, wa_user_id, village_id);
     
     logger.info('Messages marked as read', { 
       wa_user_id, 

@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import logger from '../utils/logger';
+import { getQueryString } from '../utils/http';
 
 // ===== Complaint Categories =====
 export async function handleGetComplaintCategories(req: Request, res: Response) {
   try {
-    const { village_id } = req.query as { village_id?: string };
+    const village_id = getQueryString(req.query.village_id);
     const data = await prisma.complaintCategory.findMany({
       where: village_id ? { village_id } : undefined,
       orderBy: { created_at: 'asc' },
@@ -81,7 +82,8 @@ export async function handleDeleteComplaintCategory(req: Request, res: Response)
 // ===== Complaint Types =====
 export async function handleGetComplaintTypes(req: Request, res: Response) {
   try {
-    const { category_id, village_id } = req.query as { category_id?: string; village_id?: string };
+    const category_id = getQueryString(req.query.category_id);
+    const village_id = getQueryString(req.query.village_id);
     const data = await prisma.complaintType.findMany({
       where: {
         ...(category_id ? { category_id } : {}),

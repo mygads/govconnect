@@ -259,6 +259,7 @@ export async function forceReconnect(): Promise<void> {
  * AI Reply Event payload interface
  */
 interface AIReplyEvent {
+  village_id?: string;
   wa_user_id: string;
   reply_text: string;
   guidance_text?: string;  // Optional second message for guidance/follow-up
@@ -329,6 +330,7 @@ export async function startConsumingAIReply(): Promise<void> {
         const guidanceText = formatText(payload.guidance_text || '');
         
         logger.info('📨 AI reply event received', {
+          village_id: payload.village_id,
           wa_user_id: payload.wa_user_id,
           intent: payload.intent,
           messageLength: replyText?.length,
@@ -339,7 +341,7 @@ export async function startConsumingAIReply(): Promise<void> {
         // Send main reply message via WhatsApp
         // NOTE: Message is already saved to database by AI Service via storeAIReplyInDatabase()
         // We only need to send to WhatsApp here - DO NOT save again to avoid duplicates!
-        const result = await sendTextMessage(payload.wa_user_id, replyText);
+        const result = await sendTextMessage(payload.wa_user_id, replyText, payload.village_id);
 
         if (result.success) {
           logger.info('✅ AI reply sent to WhatsApp successfully', {
@@ -353,7 +355,7 @@ export async function startConsumingAIReply(): Promise<void> {
             // Small delay to ensure messages appear in order
             await new Promise(resolve => setTimeout(resolve, 500));
             
-            const guidanceResult = await sendTextMessage(payload.wa_user_id, guidanceText);
+            const guidanceResult = await sendTextMessage(payload.wa_user_id, guidanceText, payload.village_id);
             
             if (guidanceResult.success) {
               logger.info('✅ AI guidance message sent to WhatsApp successfully', {
@@ -369,8 +371,8 @@ export async function startConsumingAIReply(): Promise<void> {
           }
 
           // Update conversation summary with AI response and reset unread count (AI handled it)
-          await updateConversation(payload.wa_user_id, replyText, undefined, 'reset');
-          await clearAIStatus(payload.wa_user_id);
+          await updateConversation(payload.wa_user_id, replyText, undefined, 'reset', payload.village_id);
+          await clearAIStatus(payload.wa_user_id, payload.village_id);
           
           // Mark messages as completed - handle both single and batched messages
           const messageIdsToComplete: string[] = [];
@@ -425,6 +427,7 @@ export async function startConsumingAIReply(): Promise<void> {
  * AI Error Event payload interface
  */
 interface AIErrorEvent {
+  village_id?: string;
   wa_user_id: string;
   error_message: string;
   message_id?: string;
@@ -467,13 +470,14 @@ export async function startConsumingAIError(): Promise<void> {
         const payload: AIErrorEvent = JSON.parse(msg.content.toString());
         
         logger.info('📨 AI error event received', {
+          village_id: payload.village_id,
           wa_user_id: payload.wa_user_id,
           error_message: payload.error_message,
           batched_message_ids: payload.batched_message_ids,
         });
 
         // Set AI error status in conversation
-        await setAIError(payload.wa_user_id, payload.error_message, payload.message_id);
+        await setAIError(payload.wa_user_id, payload.error_message, payload.message_id, payload.village_id);
 
         // Mark batched messages as failed for retry
         if (payload.batched_message_ids && payload.batched_message_ids.length > 0) {
@@ -512,6 +516,7 @@ export async function startConsumingAIError(): Promise<void> {
  * Message Status Event payload interface
  */
 interface MessageStatusEvent {
+  village_id?: string;
   wa_user_id: string;
   message_ids: string[];
   status: 'processing' | 'completed' | 'failed';
@@ -554,6 +559,7 @@ export async function startConsumingMessageStatus(): Promise<void> {
         const payload: MessageStatusEvent = JSON.parse(msg.content.toString());
         
         logger.info('📨 Message status event received', {
+          village_id: payload.village_id,
           wa_user_id: payload.wa_user_id,
           status: payload.status,
           messageCount: payload.message_ids.length,
@@ -564,7 +570,7 @@ export async function startConsumingMessageStatus(): Promise<void> {
           case 'completed':
             await markMessagesAsCompleted(payload.message_ids);
             // Clear AI processing status when completed
-            await clearAIStatus(payload.wa_user_id);
+            await clearAIStatus(payload.wa_user_id, payload.village_id);
             logger.info('✅ Messages completed and removed from pending queue', {
               count: payload.message_ids.length,
               messageIds: payload.message_ids,
@@ -575,7 +581,12 @@ export async function startConsumingMessageStatus(): Promise<void> {
               await markMessageAsFailed(msgId, payload.error_message || 'Unknown error');
             }
             // Set AI error status when failed
-            await setAIError(payload.wa_user_id, payload.error_message || 'Unknown error', payload.message_ids[0]);
+            await setAIError(
+              payload.wa_user_id,
+              payload.error_message || 'Unknown error',
+              payload.message_ids[0],
+              payload.village_id
+            );
             break;
           case 'processing':
             // No action needed - already marked when published to queue

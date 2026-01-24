@@ -10,11 +10,11 @@ import { buildUrl, ServicePath, INTERNAL_API_KEY } from '@/lib/api-client';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { sessionId, message } = body;
+    const { sessionId, message, villageId } = body;
 
-    if (!sessionId || !message) {
+    if (!sessionId || !message || !villageId) {
       return NextResponse.json(
-        { success: false, error: 'Session ID dan pesan diperlukan' },
+        { success: false, error: 'Session ID, villageId, dan pesan diperlukan' },
         { status: 400 }
       );
     }
@@ -40,6 +40,7 @@ export async function POST(request: NextRequest) {
         session_id: sessionId,
         message: message,
         channel: 'web',
+        village_id: villageId,
       }),
     });
 

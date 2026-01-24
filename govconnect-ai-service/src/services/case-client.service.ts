@@ -7,6 +7,7 @@ interface ComplaintData {
   wa_user_id: string;
   kategori: string;
   deskripsi: string;
+  village_id?: string;
   alamat?: string;
   rt_rw?: string;
   foto_url?: string;

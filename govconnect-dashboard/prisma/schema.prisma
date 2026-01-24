@@ -241,3 +241,28 @@ model important_contacts {
   @@index([category_id])
   @@index([phone])
 }
+
+// ==================== GENFITY WHATSAPP SESSIONS ====================
+
+model genfity_whatsapp_sessions {
+  id           String   @id @default(cuid())
+  village_id   String   @unique // One session per village
+  session_id   String   @unique // Genfity session ID
+  session_name String
+  token        String   // Session token for API calls
+  status       String   @default("pending")
+  connected    Boolean  @default(false)
+  logged_in    Boolean  @default(false)
+  jid          String?  // WhatsApp JID (user@s.whatsapp.net)
+  qrcode       String?  @db.Text
+  message      String?  @db.Text
+  webhook      String?
+  events       String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@index([village_id])
+  @@index([session_id])
+  @@index([connected])
+}
+

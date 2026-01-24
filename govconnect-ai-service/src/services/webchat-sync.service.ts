@@ -18,6 +18,7 @@ const INTERNAL_API_KEY = config.internalApiKey;
  */
 export async function saveWebchatMessage(data: {
   session_id: string;
+  village_id?: string;
   message: string;
   direction: 'IN' | 'OUT';
   source?: 'USER' | 'AI' | 'ADMIN';
@@ -28,6 +29,7 @@ export async function saveWebchatMessage(data: {
     await axios.post(
       `${CHANNEL_SERVICE_URL}/internal/messages`,
       {
+        village_id: data.village_id,
         wa_user_id: data.session_id,
         message_id: messageId,
         message_text: data.message,
@@ -41,6 +43,7 @@ export async function saveWebchatMessage(data: {
       {
         headers: {
           'x-internal-api-key': INTERNAL_API_KEY,
+          ...(data.village_id ? { 'x-village-id': data.village_id } : {}),
           'Content-Type': 'application/json',
         },
         timeout: 5000,
@@ -86,7 +89,19 @@ export async function updateWebchatConversation(data: {
  * Check if webchat session is taken over by admin
  * Uses /internal/takeover/:wa_user_id/status endpoint
  */
-export async function checkWebchatTakeover(session_id: string): Promise<{
+export async function checkWebchatTakeover(
+  session_id: string,
+  village_id?: string
+): Promise<{
+  is_takeover: boolean;
+  admin_id?: string;
+  admin_name?: string;
+}>;
+
+export async function checkWebchatTakeover(
+  session_id: string,
+  village_id?: string
+): Promise<{
   is_takeover: boolean;
   admin_id?: string;
   admin_name?: string;
@@ -95,8 +110,12 @@ export async function checkWebchatTakeover(session_id: string): Promise<{
     const response = await axios.get(
       `${CHANNEL_SERVICE_URL}/internal/takeover/${encodeURIComponent(session_id)}/status`,
       {
+        params: {
+          ...(village_id ? { village_id } : {}),
+        },
         headers: {
           'x-internal-api-key': INTERNAL_API_KEY,
+          ...(village_id ? { 'x-village-id': village_id } : {}),
         },
         timeout: 3000,
       }
@@ -125,7 +144,21 @@ export async function checkWebchatTakeover(session_id: string): Promise<{
  * Get pending admin messages for webchat session
  * Called by webchat to check if admin has sent any messages while user was away
  */
-export async function getAdminMessages(session_id: string, since?: Date): Promise<Array<{
+export async function getAdminMessages(
+  session_id: string,
+  since?: Date,
+  village_id?: string
+): Promise<Array<{
+  message: string;
+  admin_name?: string;
+  timestamp: Date;
+}>>;
+
+export async function getAdminMessages(
+  session_id: string,
+  since?: Date,
+  village_id?: string
+): Promise<Array<{
   message: string;
   admin_name?: string;
   timestamp: Date;
@@ -137,9 +170,11 @@ export async function getAdminMessages(session_id: string, since?: Date): Promis
         params: {
           wa_user_id: session_id,
           limit: 20, // Increase limit to get more messages
+          ...(village_id ? { village_id } : {}),
         },
         headers: {
           'x-internal-api-key': INTERNAL_API_KEY,
+          ...(village_id ? { 'x-village-id': village_id } : {}),
         },
         timeout: 3000,
       }

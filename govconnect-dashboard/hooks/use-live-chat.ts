@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ChatMessage,
   ChatSession,
+  ChatVillage,
   LiveChatState,
   LIVECHAT_SESSION_KEY,
   generateSessionId,
@@ -45,6 +46,14 @@ export function useLiveChat() {
       const savedSession = localStorage.getItem(LIVECHAT_SESSION_KEY);
       if (savedSession) {
         const parsed = JSON.parse(savedSession) as ChatSession;
+
+        // Backward-compat: older sessions didn't store village
+        if (!parsed || !(parsed as any).village?.id) {
+          localStorage.removeItem(LIVECHAT_SESSION_KEY);
+          setIsLoaded(true);
+          return;
+        }
+
         // Convert date strings back to Date objects
         parsed.createdAt = new Date(parsed.createdAt);
         parsed.lastActivity = new Date(parsed.lastActivity);
@@ -105,9 +114,10 @@ export function useLiveChat() {
 
 
   // Initialize new session
-  const initSession = useCallback(() => {
+  const initSession = useCallback((village: ChatVillage) => {
     const newSession: ChatSession = {
       sessionId: generateSessionId(),
+      village,
       messages: [],
       createdAt: new Date(),
       lastActivity: new Date(),
@@ -117,20 +127,41 @@ export function useLiveChat() {
     return newSession;
   }, []);
 
-  // Open chat widget
-  const openChat = useCallback(() => {
+  // Select/switch village
+  const selectVillage = useCallback((village: ChatVillage) => {
     setState(prev => {
-      // Initialize session if not exists
       if (!prev.session) {
         const newSession: ChatSession = {
           sessionId: generateSessionId(),
+          village,
           messages: [],
           createdAt: new Date(),
           lastActivity: new Date(),
           isActive: true,
         };
-        return { ...prev, isOpen: true, isMinimized: false, session: newSession, unreadCount: 0 };
+        return { ...prev, session: newSession, unreadCount: 0 };
       }
+
+      // If switching village, start fresh session
+      if (prev.session.village?.id !== village.id) {
+        const newSession: ChatSession = {
+          sessionId: generateSessionId(),
+          village,
+          messages: [],
+          createdAt: new Date(),
+          lastActivity: new Date(),
+          isActive: true,
+        };
+        return { ...prev, session: newSession, unreadCount: 0 };
+      }
+
+      return prev;
+    });
+  }, []);
+
+  // Open chat widget
+  const openChat = useCallback(() => {
+    setState(prev => {
       return { ...prev, isOpen: true, isMinimized: false, unreadCount: 0 };
     });
   }, []);
@@ -154,17 +185,6 @@ export function useLiveChat() {
   const toggleChat = useCallback(() => {
     setState(prev => {
       if (!prev.isOpen) {
-        // Opening chat
-        if (!prev.session) {
-          const newSession: ChatSession = {
-            sessionId: generateSessionId(),
-            messages: [],
-            createdAt: new Date(),
-            lastActivity: new Date(),
-            isActive: true,
-          };
-          return { ...prev, isOpen: true, isMinimized: false, session: newSession, unreadCount: 0 };
-        }
         return { ...prev, isOpen: true, isMinimized: false, unreadCount: 0 };
       }
       return { ...prev, isOpen: false };
@@ -225,10 +245,10 @@ export function useLiveChat() {
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim()) return;
 
-    // Ensure session exists
-    let currentSession = state.session;
-    if (!currentSession) {
-      currentSession = initSession();
+    // Require village selection before sending
+    const currentSession = state.session;
+    if (!currentSession?.village?.id) {
+      return;
     }
 
     // Add user message
@@ -275,6 +295,7 @@ export function useLiveChat() {
         },
         body: JSON.stringify({
           sessionId: currentSession?.sessionId || state.session?.sessionId,
+          villageId: currentSession.village.id,
           message: content.trim(),
         }),
       });
@@ -326,19 +347,26 @@ export function useLiveChat() {
 
   // Clear chat / Start new session
   const clearChat = useCallback(() => {
+    setState(prev => {
+      if (!prev.session?.village?.id) return prev;
+
+      const newSession: ChatSession = {
+        sessionId: generateSessionId(),
+        village: prev.session.village,
+        messages: [],
+        createdAt: new Date(),
+        lastActivity: new Date(),
+        isActive: true,
+      };
+      return { ...prev, session: newSession, unreadCount: 0 };
+    });
+  }, []);
+
+  const switchVillage = useCallback(() => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(LIVECHAT_SESSION_KEY);
     }
-    
-    const newSession: ChatSession = {
-      sessionId: generateSessionId(),
-      messages: [],
-      createdAt: new Date(),
-      lastActivity: new Date(),
-      isActive: true,
-    };
-    
-    setState(prev => ({ ...prev, session: newSession, unreadCount: 0 }));
+    setState(prev => ({ ...prev, session: null, unreadCount: 0 }));
   }, []);
 
   // Mark all messages as read
@@ -354,12 +382,15 @@ export function useLiveChat() {
 
   // Poll for admin messages - always poll when session exists
   useEffect(() => {
-    if (!state.session?.sessionId) return;
+    if (!state.session?.sessionId || !state.session?.village?.id) return;
+
+    const sessionId = state.session.sessionId;
+    const villageId = state.session.village.id;
 
     const pollInterval = setInterval(async () => {
       try {
         const response = await fetch(
-          `/api/webchat/poll?sessionId=${state.session?.sessionId}&since=${lastPollRef.current.toISOString()}`
+          `/api/webchat/poll?sessionId=${encodeURIComponent(sessionId)}&villageId=${encodeURIComponent(villageId)}&since=${lastPollRef.current.toISOString()}`
         );
         
         if (!response.ok) return;
@@ -435,13 +466,14 @@ export function useLiveChat() {
     }, 2000); // Poll every 2 seconds for faster response
 
     return () => clearInterval(pollInterval);
-  }, [state.session?.sessionId]);
+  }, [state.session?.sessionId, state.session?.village?.id]);
 
   return {
     // State
     isOpen: state.isOpen,
     isMinimized: state.isMinimized,
     session: state.session,
+    selectedVillage: state.session?.village || null,
     messages: state.session?.messages || [],
     isTyping: state.isTyping,
     processingStatus, // Real-time AI processing status
@@ -458,6 +490,8 @@ export function useLiveChat() {
     toggleChat,
     sendMessage,
     clearChat,
+    selectVillage,
+    switchVillage,
     markAllAsRead,
     
     // Refs

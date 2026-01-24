@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MessageCircle,
+  MapPin,
   X,
   Minus,
   Send,
@@ -18,6 +19,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLiveChat } from "@/hooks/use-live-chat";
 import { ChatMessage } from "@/lib/live-chat-types";
 import Image from "next/image";
@@ -173,6 +175,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
     isLoaded,
     isTakeover,
     adminName,
+    selectedVillage,
     openChat,
     closeChat,
     minimizeChat,
@@ -180,13 +183,47 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
     toggleChat,
     sendMessage,
     clearChat,
+    selectVillage,
+    switchVillage,
     messagesEndRef,
   } = useLiveChat();
 
   const [inputValue, setInputValue] = useState("");
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [villages, setVillages] = useState<Array<{ id: string; name: string; slug: string }>>([]);
+  const [villagesLoading, setVillagesLoading] = useState(false);
+  const [villagesError, setVillagesError] = useState<string | null>(null);
+  const [villagesFetched, setVillagesFetched] = useState(false);
+  const [selectedVillageId, setSelectedVillageId] = useState<string>("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  const canChat = !!selectedVillage?.id;
+
+  // Fetch villages list when chat is opened and no village selected yet
+  useEffect(() => {
+    if (!isOpen || canChat || villagesLoading || villagesFetched) return;
+
+    setVillagesLoading(true);
+    setVillagesError(null);
+
+    fetch('/api/public/webchat/villages')
+      .then(async (res) => {
+        if (!res.ok) return { success: false, data: [] };
+        return res.json();
+      })
+      .then((json) => {
+        const data = Array.isArray(json?.data) ? json.data : [];
+        setVillages(data);
+      })
+      .catch((err) => {
+        setVillagesError(err?.message || 'Gagal memuat daftar desa');
+      })
+      .finally(() => {
+        setVillagesLoading(false);
+        setVillagesFetched(true);
+      });
+  }, [isOpen, canChat, villagesLoading, villagesFetched]);
 
   // Auto scroll to bottom when messages change
   useEffect(() => {
@@ -212,6 +249,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
 
   const handleSend = () => {
     if (!inputValue.trim()) return;
+    if (!canChat) return;
     sendMessage(inputValue);
     setInputValue("");
     if (inputRef.current) {
@@ -229,6 +267,12 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
   const handleClearChat = () => {
     clearChat();
     setShowClearConfirm(false);
+  };
+
+  const handleStartWithVillage = () => {
+    const v = villages.find((x) => x.id === selectedVillageId);
+    if (!v) return;
+    selectVillage({ id: v.id, name: v.name, slug: v.slug });
   };
 
   if (!isLoaded) return null;
@@ -311,10 +355,31 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                     <p className="text-xs text-white/80">
                       {isTakeover ? '🟢 Admin sedang membantu Anda' : 'Online • Siap membantu'}
                     </p>
+                    <p className="text-[11px] text-white/80 mt-0.5 flex items-center gap-1">
+                      <MapPin className="w-3 h-3" />
+                      {canChat ? `Terhubung ke: ${selectedVillage?.name}` : 'Pilih desa terlebih dulu'}
+                    </p>
                   </div>
                 </div>
                 
                 <div className="flex items-center gap-1">
+                  {/* Switch Village */}
+                  {canChat && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setShowClearConfirm(false);
+                        setSelectedVillageId('');
+                        switchVillage();
+                      }}
+                      className="w-8 h-8 text-white/80 hover:text-white hover:bg-white/10 rounded-full"
+                      title="Ganti Desa"
+                    >
+                      <MapPin className="w-4 h-4" />
+                    </Button>
+                  )}
+
                   {/* New Chat Button */}
                   <Button
                     variant="ghost"
@@ -391,7 +456,49 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
               ref={messagesContainerRef}
               className="flex-1 overflow-y-auto py-4 space-y-2 bg-gradient-to-b from-background to-muted/30"
             >
-              {messages.length === 0 ? (
+              {!canChat ? (
+                <div className="px-4">
+                  <div className="border border-border bg-card/80 rounded-2xl p-4">
+                    <p className="text-sm font-medium">Pilih desa untuk memulai chat</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Chat akan terhubung ke basis pengetahuan desa yang dipilih.
+                    </p>
+
+                    <div className="mt-4 space-y-3">
+                      <Select value={selectedVillageId} onValueChange={setSelectedVillageId}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder={villagesLoading ? 'Memuat daftar desa...' : 'Pilih desa'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {villages.map((v) => (
+                            <SelectItem key={v.id} value={v.id}>
+                              {v.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {villagesError && (
+                        <p className="text-xs text-destructive">{villagesError}</p>
+                      )}
+
+                      {!villagesLoading && !villagesError && villagesFetched && villages.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Belum ada desa yang tersedia untuk Webchat.
+                        </p>
+                      )}
+
+                      <Button
+                        onClick={handleStartWithVillage}
+                        disabled={!selectedVillageId || villagesLoading}
+                        className="w-full"
+                      >
+                        Mulai Chat
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : messages.length === 0 ? (
                 <WelcomeMessage />
               ) : (
                 <>
@@ -413,6 +520,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
+                    disabled={!canChat}
                     placeholder="Ketik pesan..."
                     rows={1}
                     className="w-full resize-none rounded-xl border border-border bg-muted/50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-secondary/50 focus:border-secondary transition-all placeholder:text-muted-foreground"
@@ -422,7 +530,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                 
                 <Button
                   onClick={handleSend}
-                  disabled={!inputValue.trim() || isTyping}
+                  disabled={!canChat || !inputValue.trim() || isTyping}
                   className="w-11 h-11 rounded-xl bg-gradient-to-br from-secondary to-primary hover:from-secondary/90 hover:to-primary/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 >
                   <Send className="w-5 h-5 text-white" />

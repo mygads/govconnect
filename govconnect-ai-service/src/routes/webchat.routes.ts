@@ -27,6 +27,7 @@ import {
   saveWebchatMessage,
   updateWebchatConversation,
   checkWebchatTakeover,
+  getAdminMessages,
 } from '../services/webchat-sync.service';
 import {
   addWebchatMessageToBatch,
@@ -44,12 +45,13 @@ logger.info('🏗️ Webchat architecture selected', {
 
 const DEFAULT_VILLAGE_ID = process.env.DEFAULT_VILLAGE_ID || '';
 
-async function isWebchatEnabled(): Promise<boolean> {
-  if (!DEFAULT_VILLAGE_ID) return true;
+async function isWebchatEnabled(villageId?: string): Promise<boolean> {
+  const resolvedVillageId = villageId || DEFAULT_VILLAGE_ID;
+  if (!resolvedVillageId) return true;
 
   try {
     const response = await axios.get(
-      `${config.channelServiceUrl}/internal/channel-accounts/${DEFAULT_VILLAGE_ID}`,
+      `${config.channelServiceUrl}/internal/channel-accounts/${resolvedVillageId}`,
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,
@@ -62,6 +64,8 @@ async function isWebchatEnabled(): Promise<boolean> {
     if (typeof enabled === 'boolean') return enabled;
     return true;
   } catch (error: any) {
+    // If channel account doesn't exist, treat as disabled
+    if (error?.response?.status === 404) return false;
     logger.warn('Failed to check webchat channel settings, allowing by default', {
       error: error.message,
     });
@@ -78,6 +82,7 @@ async function processWebchatMessage(params: {
   userId: string;
   message: string;
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  village_id?: string;
 }): Promise<ProcessMessageResult> {
   if (USE_2_LAYER_ARCHITECTURE) {
     // Use 2-Layer architecture (same as WhatsApp)
@@ -89,6 +94,7 @@ async function processWebchatMessage(params: {
       userId: params.userId,
       message: params.message,
       conversationHistory: params.conversationHistory,
+      village_id: params.village_id,
     });
   }
   
@@ -98,6 +104,7 @@ async function processWebchatMessage(params: {
     message: params.message,
     channel: 'webchat',
     conversationHistory: params.conversationHistory,
+    villageId: params.village_id,
   });
 }
 
@@ -135,11 +142,20 @@ router.post('/', async (req: Request, res: Response) => {
   
   try {
     const { session_id, message, channel } = req.body;
+    const village_id: string | undefined = req.body.village_id || req.body.villageId;
     
     if (!session_id || !message) {
       res.status(400).json({
         success: false,
         error: 'session_id dan message diperlukan',
+      });
+      return;
+    }
+
+    if (!village_id) {
+      res.status(400).json({
+        success: false,
+        error: 'village_id diperlukan',
       });
       return;
     }
@@ -153,7 +169,7 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const webchatEnabled = await isWebchatEnabled();
+    const webchatEnabled = await isWebchatEnabled(village_id);
     if (!webchatEnabled) {
       res.json({
         success: true,
@@ -168,10 +184,11 @@ router.post('/', async (req: Request, res: Response) => {
       session_id,
       messageLength: message.length,
       channel: channel || 'webchat',
+      village_id,
     });
 
     // Check if admin has taken over this conversation
-    const takeoverStatus = await checkWebchatTakeover(session_id);
+    const takeoverStatus = await checkWebchatTakeover(session_id, village_id);
     if (takeoverStatus.is_takeover) {
       // Cancel any pending batch when takeover is active
       cancelWebchatBatch(session_id);
@@ -179,6 +196,7 @@ router.post('/', async (req: Request, res: Response) => {
       // Save user message to database but don't process with AI
       await saveWebchatMessage({
         session_id,
+        village_id,
         message,
         direction: 'IN',
         source: 'USER',
@@ -224,6 +242,7 @@ router.post('/', async (req: Request, res: Response) => {
     // Save incoming message to Channel Service (for Live Chat dashboard)
     saveWebchatMessage({
       session_id,
+      village_id,
       message,
       direction: 'IN',
       source: 'USER',
@@ -273,6 +292,7 @@ router.post('/', async (req: Request, res: Response) => {
         role: m.role,
         content: m.content,
       })),
+      village_id,
     });
     
     // Add assistant response to session
@@ -285,6 +305,7 @@ router.post('/', async (req: Request, res: Response) => {
     // Save AI response to Channel Service (for Live Chat dashboard)
     saveWebchatMessage({
       session_id,
+      village_id,
       message: result.response,
       direction: 'OUT',
       source: 'AI',
@@ -405,6 +426,7 @@ router.get('/:session_id/poll', async (req: Request, res: Response) => {
   try {
     const { session_id } = req.params;
     const since = req.query.since ? new Date(req.query.since as string) : undefined;
+    const village_id = (req.query.village_id || req.query.villageId) as string | undefined;
     
     if (!session_id.startsWith('web_')) {
       res.status(400).json({
@@ -413,15 +435,22 @@ router.get('/:session_id/poll', async (req: Request, res: Response) => {
       });
       return;
     }
+
+    if (!village_id) {
+      res.status(400).json({
+        success: false,
+        error: 'village_id is required',
+      });
+      return;
+    }
     
     // Check takeover status
-    const takeoverStatus = await checkWebchatTakeover(session_id);
+    const takeoverStatus = await checkWebchatTakeover(session_id, village_id);
     
     // Get admin messages if in takeover
     let adminMessages: Array<{ message: string; admin_name?: string; timestamp: Date }> = [];
     if (takeoverStatus.is_takeover) {
-      const { getAdminMessages } = await import('../services/webchat-sync.service');
-      adminMessages = await getAdminMessages(session_id, since);
+      adminMessages = await getAdminMessages(session_id, since, village_id);
       
       // Add admin messages to local session for consistency
       const session = webChatSessions.get(session_id);

@@ -175,6 +175,7 @@ export async function POST(request: NextRequest) {
     const aiFormData = new FormData()
     aiFormData.append('file', file)
     aiFormData.append('documentId', documentId)
+    if (session.admin.village_id) aiFormData.append('village_id', session.admin.village_id)
     if (title) aiFormData.append('title', title)
     if (category) aiFormData.append('category', category)
 

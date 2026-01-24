@@ -15,13 +15,13 @@ import {
   GenfityWebhookPayload,
 } from '../types/webhook.types';
 
-async function isWaChannelEnabled(): Promise<boolean> {
-  const defaultVillageId = process.env.DEFAULT_VILLAGE_ID;
-  if (!defaultVillageId) return true;
+async function isWaChannelEnabled(villageId?: string): Promise<boolean> {
+  const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
+  if (!resolvedVillageId) return true;
 
   try {
     const account = await prisma.channel_accounts.findUnique({
-      where: { village_id: defaultVillageId },
+      where: { village_id: resolvedVillageId },
     });
 
     if (!account) return true;
@@ -45,6 +45,9 @@ async function isWaChannelEnabled(): Promise<boolean> {
 export async function handleWebhook(req: Request, res: Response): Promise<void> {
   try {
     let payload: GenfityWebhookPayload;
+    // In genfity-wa form mode, these are top-level fields alongside jsonData
+    const formInstanceName: string | undefined = req.body?.instanceName;
+    const formUserId: string | undefined = req.body?.userID;
     
     // Handle both JSON and form-urlencoded formats
     if (req.body.jsonData) {
@@ -61,10 +64,18 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       payload = req.body;
     }
 
+    // Resolve village_id (tenant) from webhook context.
+    // We rely on instanceName being set to villageId when session is created.
+    const instanceName: string | undefined =
+      formInstanceName || payload.instanceName || formUserId || payload.userID;
+    const villageId: string | undefined = instanceName || process.env.DEFAULT_VILLAGE_ID;
+
     // Debug: Log full payload structure
     logger.debug('Webhook received', { 
       type: payload.type, 
       hasEvent: !!payload.event,
+      instanceName,
+      villageId,
       eventKeys: payload.event ? Object.keys(payload.event) : [],
       fullPayload: JSON.stringify(payload).substring(0, 2000) // First 2000 chars
     });
@@ -193,7 +204,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     
     // Process media if present (non-blocking)
     let mediaInfo: MediaInfo = { hasMedia: false };
-    const mediaPromise = processMediaFromWebhook(payload, waUserId, messageId)
+    const mediaPromise = processMediaFromWebhook(payload, waUserId, messageId, villageId)
       .then(info => {
         mediaInfo = info;
         if (info.hasMedia) {
@@ -214,6 +225,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
     // Save message to database
     await saveIncomingMessage({
+      village_id: villageId,
       wa_user_id: waUserId,
       message_id: messageId,
       message_text: message,
@@ -222,16 +234,17 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
     // Update conversation for live chat
     const pushName = payload.event?.Info.PushName || undefined;
-    await updateConversation(waUserId, message, pushName, true);
+    await updateConversation(waUserId, message, pushName, true, villageId);
 
     // Wait for media processing to complete
     await mediaPromise;
 
-    const waChannelEnabled = await isWaChannelEnabled();
+    const waChannelEnabled = await isWaChannelEnabled(villageId);
     if (!waChannelEnabled) {
       logger.info('WA channel disabled, skipping AI processing', {
         wa_user_id: waUserId,
         message_id: messageId,
+        village_id: villageId,
       });
       res.json({ status: 'ok', message_id: messageId, mode: 'disabled' });
       return;
@@ -240,12 +253,12 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // ============================================
     // STEP 3: CHECK TAKEOVER STATUS
     // ============================================
-    const inTakeover = await isUserInTakeover(waUserId);
+    const inTakeover = await isUserInTakeover(waUserId, villageId);
     
     if (inTakeover) {
       // User is being handled by admin - don't process with AI
       // Cancel any pending batch for this user
-      cancelBatch(waUserId);
+      cancelBatch(waUserId, villageId);
       
       logger.info('User in takeover mode, skipping AI processing', {
         wa_user_id: waUserId,
@@ -260,18 +273,20 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // ============================================
     // Add to pending queue (for retry if needed)
     await addPendingMessage({
+      village_id: villageId,
       wa_user_id: waUserId,
       message_id: messageId,
       message_text: message,
     });
 
     // Set AI status to queued
-    await setAIProcessing(waUserId, messageId);
+    await setAIProcessing(waUserId, messageId, villageId);
 
     // Add to message batcher
     // The batcher will wait for more messages before sending to AI
     // This prevents spam and combines multiple messages into one AI request
     const { isNewBatch, batchSize } = addMessageToBatch(
+      villageId,
       waUserId,
       messageId,
       message,
@@ -285,6 +300,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     );
     
     logger.info('Message added to batch for AI processing', {
+      village_id: villageId,
       wa_user_id: waUserId,
       message_id: messageId,
       is_new_batch: isNewBatch,
@@ -292,6 +308,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     });
 
     logger.info('Webhook processed successfully', {
+      village_id: villageId,
       from: waUserId,
       message_id: messageId,
       has_media: mediaInfo.hasMedia,

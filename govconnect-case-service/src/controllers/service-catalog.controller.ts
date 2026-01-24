@@ -6,11 +6,12 @@ import logger from '../utils/logger';
 import { generateServiceRequestId } from '../utils/id-generator';
 import { publishEvent } from '../services/rabbitmq.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
+import { getQueryString } from '../utils/http';
 
 // ===== Service Categories =====
 export async function handleGetServiceCategories(req: Request, res: Response) {
   try {
-    const { village_id } = req.query as { village_id?: string };
+    const village_id = getQueryString(req.query.village_id);
     const data = await prisma.serviceCategory.findMany({
       where: village_id ? { village_id } : undefined,
       orderBy: { created_at: 'asc' }
@@ -41,7 +42,8 @@ export async function handleCreateServiceCategory(req: Request, res: Response) {
 // ===== Services =====
 export async function handleGetServices(req: Request, res: Response) {
   try {
-    const { village_id, category_id } = req.query as { village_id?: string; category_id?: string };
+    const village_id = getQueryString(req.query.village_id);
+    const category_id = getQueryString(req.query.category_id);
     const data = await prisma.serviceItem.findMany({
       where: {
         ...(village_id ? { village_id } : {}),
@@ -120,7 +122,8 @@ export async function handleUpdateService(req: Request, res: Response) {
 
 export async function handleGetServiceBySlug(req: Request, res: Response) {
   try {
-    const { village_id, slug } = req.query as { village_id?: string; slug?: string };
+    const village_id = getQueryString(req.query.village_id);
+    const slug = getQueryString(req.query.slug);
     if (!village_id || !slug) {
       return res.status(400).json({ error: 'village_id and slug are required' });
     }
@@ -212,7 +215,11 @@ export async function handleDeleteRequirement(req: Request, res: Response) {
 // ===== Service Requests =====
 export async function handleGetServiceRequests(req: Request, res: Response) {
   try {
-    const { wa_user_id, service_id, status, request_number, village_id } = req.query as { wa_user_id?: string; service_id?: string; status?: string; request_number?: string; village_id?: string };
+    const wa_user_id = getQueryString(req.query.wa_user_id);
+    const service_id = getQueryString(req.query.service_id);
+    const status = getQueryString(req.query.status);
+    const request_number = getQueryString(req.query.request_number);
+    const village_id = getQueryString(req.query.village_id);
     const data = await prisma.serviceRequest.findMany({
       where: {
         ...(wa_user_id ? { wa_user_id } : {}),
@@ -353,7 +360,7 @@ export async function handleGenerateServiceRequestEditToken(req: Request, res: R
 
 export async function handleGetServiceRequestByToken(req: Request, res: Response) {
   try {
-    const { token } = req.query as { token?: string };
+    const token = getQueryString(req.query.token);
     if (!token) {
       return res.status(400).json({ error: 'token is required' });
     }

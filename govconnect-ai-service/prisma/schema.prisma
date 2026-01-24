@@ -18,6 +18,7 @@ datasource db {
 
 model knowledge_vectors {
   id                String   @id // Same ID as dashboard.knowledge_base
+  village_id         String?
   title             String
   content           String   @db.Text
   category          String
@@ -38,6 +39,7 @@ model knowledge_vectors {
   updated_at        DateTime @updatedAt
   
   @@index([category])
+  @@index([village_id])
   @@index([quality_score])
 }
 
@@ -48,6 +50,7 @@ model knowledge_vectors {
 model document_vectors {
   id                String   @id @default(cuid())
   document_id       String   // Reference to dashboard.knowledge_documents
+  village_id         String?
   chunk_index       Int
   content           String   @db.Text
   
@@ -66,6 +69,7 @@ model document_vectors {
   
   @@unique([document_id, chunk_index])
   @@index([document_id])
+  @@index([village_id])
   @@index([category])
 }
 

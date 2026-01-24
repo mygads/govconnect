@@ -37,6 +37,7 @@ interface BatchedMessage {
 }
 
 interface UserBatch {
+  village_id: string;
   wa_user_id: string;
   messages: BatchedMessage[];
   timer: NodeJS.Timeout | null;
@@ -46,11 +47,20 @@ interface UserBatch {
 // In-memory batch storage (per user)
 const userBatches = new Map<string, UserBatch>();
 
+function resolveVillageId(villageId?: string): string {
+  return villageId || process.env.DEFAULT_VILLAGE_ID || 'default';
+}
+
+function batchKey(villageId: string, waUserId: string): string {
+  return `${villageId}:${waUserId}`;
+}
+
 /**
  * Add message to batch for a user
  * Returns true if this is a new batch, false if added to existing batch
  */
 export function addMessageToBatch(
+  village_id: string | undefined,
   wa_user_id: string,
   message_id: string,
   message_text: string,
@@ -63,8 +73,11 @@ export function addMessageToBatch(
   }
 ): { isNewBatch: boolean; batchSize: number; adaptiveDelayMs?: number } {
   const now = Date.now();
+
+  const resolvedVillageId = resolveVillageId(village_id);
+  const key = batchKey(resolvedVillageId, wa_user_id);
   
-  let batch = userBatches.get(wa_user_id);
+  let batch = userBatches.get(key);
   let isNewBatch = false;
   
   // Calculate adaptive delay based on user typing patterns
@@ -90,12 +103,13 @@ export function addMessageToBatch(
   if (!batch) {
     // Create new batch
     batch = {
+      village_id: resolvedVillageId,
       wa_user_id,
       messages: [],
       timer: null,
       first_message_at: now,
     };
-    userBatches.set(wa_user_id, batch);
+    userBatches.set(key, batch);
     isNewBatch = true;
     
     logger.info('📦 New message batch started', {
@@ -132,13 +146,13 @@ export function addMessageToBatch(
       wa_user_id,
       batch_size: batch.messages.length,
     });
-    processBatch(wa_user_id);
+    processBatch(resolvedVillageId, wa_user_id);
     return { isNewBatch, batchSize: 0, adaptiveDelayMs: batchDelayMs }; // Batch was processed
   }
   
   // Set new timer with adaptive delay
   batch.timer = setTimeout(() => {
-    processBatch(wa_user_id);
+    processBatch(resolvedVillageId, wa_user_id);
   }, batchDelayMs);
   
   logger.info('📨 Message added to batch', {
@@ -155,8 +169,10 @@ export function addMessageToBatch(
 /**
  * Process a user's batch - combine messages and send to AI
  */
-async function processBatch(wa_user_id: string): Promise<void> {
-  const batch = userBatches.get(wa_user_id);
+async function processBatch(village_id: string, wa_user_id: string): Promise<void> {
+  const resolvedVillageId = resolveVillageId(village_id);
+  const key = batchKey(resolvedVillageId, wa_user_id);
+  const batch = userBatches.get(key);
   
   if (!batch || batch.messages.length === 0) {
     logger.warn('Empty batch for user', { wa_user_id });
@@ -175,9 +191,10 @@ async function processBatch(wa_user_id: string): Promise<void> {
   const messageIds = messages.map(m => m.message_id);
   
   // Clear the batch
-  userBatches.delete(wa_user_id);
+  userBatches.delete(key);
   
   logger.info('📤 Processing message batch', {
+    village_id: batch.village_id,
     wa_user_id,
     message_count: messages.length,
     message_ids: messageIds,
@@ -210,6 +227,7 @@ async function processBatch(wa_user_id: string): Promise<void> {
   if (isRabbitConnected()) {
     try {
       await publishEvent(rabbitmqConfig.ROUTING_KEYS.MESSAGE_RECEIVED, {
+        village_id: batch.village_id,
         wa_user_id,
         message: combinedMessage,
         message_id: messages[messages.length - 1].message_id, // Use latest message ID as primary
@@ -248,14 +266,16 @@ async function processBatch(wa_user_id: string): Promise<void> {
 /**
  * Cancel batch for a user (e.g., when takeover starts)
  */
-export function cancelBatch(wa_user_id: string): void {
-  const batch = userBatches.get(wa_user_id);
+export function cancelBatch(wa_user_id: string, village_id?: string): void {
+  const resolvedVillageId = resolveVillageId(village_id);
+  const key = batchKey(resolvedVillageId, wa_user_id);
+  const batch = userBatches.get(key);
   
   if (batch) {
     if (batch.timer) {
       clearTimeout(batch.timer);
     }
-    userBatches.delete(wa_user_id);
+    userBatches.delete(key);
     
     logger.info('🚫 Batch cancelled', {
       wa_user_id,
@@ -267,12 +287,14 @@ export function cancelBatch(wa_user_id: string): void {
 /**
  * Get current batch status for a user
  */
-export function getBatchStatus(wa_user_id: string): {
+export function getBatchStatus(wa_user_id: string, village_id?: string): {
   hasBatch: boolean;
   messageCount: number;
   waitingMs: number;
 } {
-  const batch = userBatches.get(wa_user_id);
+  const resolvedVillageId = resolveVillageId(village_id);
+  const key = batchKey(resolvedVillageId, wa_user_id);
+  const batch = userBatches.get(key);
   
   if (!batch) {
     return { hasBatch: false, messageCount: 0, waitingMs: 0 };
@@ -289,16 +311,18 @@ export function getBatchStatus(wa_user_id: string): {
  * Get all active batches (for monitoring)
  */
 export function getAllBatches(): {
+  village_id: string;
   wa_user_id: string;
   message_count: number;
   waiting_ms: number;
 }[] {
-  const result: { wa_user_id: string; message_count: number; waiting_ms: number }[] = [];
+  const result: { village_id: string; wa_user_id: string; message_count: number; waiting_ms: number }[] = [];
   const now = Date.now();
   
-  userBatches.forEach((batch, wa_user_id) => {
+  userBatches.forEach((batch) => {
     result.push({
-      wa_user_id,
+      village_id: batch.village_id,
+      wa_user_id: batch.wa_user_id,
       message_count: batch.messages.length,
       waiting_ms: now - batch.first_message_at,
     });
@@ -312,11 +336,11 @@ export function getAllBatches(): {
  */
 export async function flushAllBatches(): Promise<void> {
   logger.info('🔄 Flushing all pending batches...', { count: userBatches.size });
-  
-  const userIds = Array.from(userBatches.keys());
-  
-  for (const wa_user_id of userIds) {
-    await processBatch(wa_user_id);
+
+  const batches = Array.from(userBatches.values());
+
+  for (const batch of batches) {
+    await processBatch(batch.village_id, batch.wa_user_id);
   }
   
   logger.info('✅ All batches flushed');

@@ -85,15 +85,36 @@ export async function POST(request: NextRequest) {
       }),
     })
 
-    const result = await response.json()
+    let result: any = null
+    try {
+      result = await response.json()
+    } catch {
+      result = null
+    }
 
     if (!response.ok) {
+      // Degrade gracefully for upstream 5xx (AI unavailable, embedding fetch failed, etc.)
+      if (response.status >= 500) {
+        return NextResponse.json({
+          data: [],
+          total: 0,
+          searchTimeMs: 0,
+          warning: result?.error || 'AI search unavailable',
+        })
+      }
+
       return NextResponse.json({ error: result?.error || 'Gagal melakukan pencarian' }, { status: response.status })
     }
 
     return NextResponse.json(result)
   } catch (error) {
     console.error('Testing knowledge error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    // Network/infra errors should not break UI; return empty search results.
+    return NextResponse.json({
+      data: [],
+      total: 0,
+      searchTimeMs: 0,
+      warning: 'AI search unavailable',
+    })
   }
 }

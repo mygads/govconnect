@@ -77,7 +77,6 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
         nama_lengkap: "",
         nik: "",
         alamat: "",
-        no_hp: "",
         wa_user_id: "",
     });
 
@@ -91,7 +90,6 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
             setCitizenData((prev) => ({
                 ...prev,
                 wa_user_id: waUser,
-                no_hp: waUser.startsWith("628") ? `0${waUser.slice(2)}` : prev.no_hp,
             }));
         }
     }, [searchParams]);
@@ -160,7 +158,8 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
 
     function isFormComplete() {
         if (!service) return false;
-        if (!citizenData.nama_lengkap || !citizenData.nik || !citizenData.alamat || !citizenData.no_hp || !citizenData.wa_user_id) return false;
+        if (service.mode === "offline") return false;
+        if (!citizenData.nama_lengkap || !citizenData.nik || !citizenData.alamat || !citizenData.wa_user_id) return false;
         if (!isValidWaNumber(citizenData.wa_user_id)) return false;
         if (citizenData.nik.length !== 16) return false;
 
@@ -242,6 +241,11 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
         setSubmitting(true);
 
         try {
+            // Derive no_hp from wa_user_id (628xxx -> 08xxx)
+            const derivedNoHp = citizenData.wa_user_id.startsWith("628")
+                ? `0${citizenData.wa_user_id.slice(2)}`
+                : citizenData.wa_user_id;
+            
             const response = await fetch("/api/public/service-requests", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -252,7 +256,7 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                         nama_lengkap: citizenData.nama_lengkap,
                         nik: citizenData.nik,
                         alamat: citizenData.alamat,
-                        no_hp: citizenData.no_hp,
+                        no_hp: derivedNoHp,
                     },
                     requirement_data: requirementsData,
                 }),
@@ -438,32 +442,18 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                             </div>
                             <div className="space-y-2">
                                 <label className="text-xs font-semibold flex items-center gap-1">
-                                    <Phone className="w-3.5 h-3.5" /> Nomor HP <span className="text-red-500">*</span>
+                                    <Phone className="w-3.5 h-3.5" /> Nomor WhatsApp <span className="text-red-500">*</span>
                                 </label>
                                 <input
                                     type="text"
-                                    value={citizenData.no_hp}
-                                    onChange={(e) => updateCitizenField("no_hp", e.target.value)}
-                                    placeholder="08xxxxxxxxxx"
+                                    value={citizenData.wa_user_id}
+                                    onChange={(e) => updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""))}
+                                    placeholder="628xxxxxxxxxx"
                                     className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
                                     required
                                 />
+                                <p className="text-[10px] text-muted-foreground">Format: 628xxxxxxxxxx (tanpa tanda + atau spasi)</p>
                             </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="text-xs font-semibold flex items-center gap-1">
-                                <MessageCircle className="w-3.5 h-3.5" /> Nomor WhatsApp (628xxx) <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="text"
-                                value={citizenData.wa_user_id}
-                                onChange={(e) => updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""))}
-                                placeholder="628xxxxxxxxxx"
-                                className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
-                                required
-                            />
-                            <p className="text-[10px] text-muted-foreground">Pastikan format diawali 628.</p>
                         </div>
                     </CardContent>
                 </Card>
@@ -591,6 +581,15 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                     <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/30">
                         <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
                         <p className="text-xs text-red-700 dark:text-red-300">{error}</p>
+                    </div>
+                )}
+
+                {service?.mode === "offline" && (
+                    <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/30">
+                        <Info className="w-4 h-4 text-amber-700 dark:text-amber-300 shrink-0 mt-0.5" />
+                        <p className="text-xs text-amber-800 dark:text-amber-200">
+                            Layanan ini <b>offline</b>. Permohonan tidak bisa dikirim online. Silakan datang ke kantor kelurahan.
+                        </p>
                     </div>
                 )}
 

@@ -40,7 +40,8 @@ export async function GET(request: NextRequest) {
         id: session.admin.id,
         username: session.admin.username,
         name: session.admin.name,
-        role: session.admin.role
+        role: session.admin.role,
+        village_id: session.admin.village_id ?? null,
       }
     })
   } catch (error) {

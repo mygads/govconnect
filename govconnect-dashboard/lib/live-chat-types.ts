@@ -11,8 +11,15 @@ export interface ChatMessage {
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'error';
 }
 
+export interface ChatVillage {
+  id: string;
+  name: string;
+  slug?: string;
+}
+
 export interface ChatSession {
   sessionId: string;
+  village: ChatVillage;
   messages: ChatMessage[];
   createdAt: Date;
   lastActivity: Date;
@@ -29,6 +36,7 @@ export interface LiveChatState {
 
 export interface SendMessagePayload {
   sessionId: string;
+  villageId: string;
   message: string;
 }
 

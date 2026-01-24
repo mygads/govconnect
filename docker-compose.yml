@@ -29,13 +29,16 @@ services:
       NODE_ENV: ${NODE_ENV}
       PORT: 3001
       SERVICE_NAME: channel-service
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_channel
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_channel
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/govconnect
       RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      GENFITY_APP_API_URL: ${GENFITY_APP_API_URL:-}
+      GENFITY_APP_CUSTOMER_API_KEY: ${GENFITY_APP_CUSTOMER_API_KEY:-}
       WA_WEBHOOK_VERIFY_TOKEN: ${WA_WEBHOOK_VERIFY_TOKEN}
       WA_API_URL: ${WA_API_URL}
       WA_ACCESS_TOKEN: ${WA_ACCESS_TOKEN}
+      WA_DRY_RUN: ${WA_DRY_RUN}
       CASE_SERVICE_URL: http://case-service:3003
       NOTIFICATION_SERVICE_URL: http://notification-service:3004
       MEDIA_STORAGE_PATH: /app/uploads
@@ -45,7 +48,7 @@ services:
       MAX_BATCH_SIZE: ${MAX_BATCH_SIZE}
       USE_ADAPTIVE_BATCHING: ${USE_ADAPTIVE_BATCHING}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
-      PUBLIC_CHANNEL_BASE_URL: ${PUBLIC_CHANNEL_BASE_URL}
+      PUBLIC_CHANNEL_BASE_URL: ${PUBLIC_CHANNEL_BASE_URL:-http://localhost:3001}
       DEFAULT_VILLAGE_ID: ${DEFAULT_VILLAGE_ID}
       LOG_LEVEL: ${LOG_LEVEL}
       LOG_DIR: ${LOG_DIR}
@@ -77,12 +80,13 @@ services:
       PORT: 3002
       SERVICE_NAME: ai-service
       # AI Service has its own database for vector storage
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_ai
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_ai
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/govconnect
       RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
       CHANNEL_SERVICE_URL: http://channel-service:3001
       CASE_SERVICE_URL: http://case-service:3003
-      DASHBOARD_SERVICE_URL: http://dashboard:3000
+      # Use host.docker.internal when dashboard runs on host, otherwise use dashboard:3000
+      DASHBOARD_SERVICE_URL: http://host.docker.internal:3000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY}
@@ -125,7 +129,7 @@ services:
       NODE_ENV: ${NODE_ENV}
       PORT: 3003
       SERVICE_NAME: case-service
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_case
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_case
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/govconnect
       RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
@@ -158,7 +162,7 @@ services:
       NODE_ENV: ${NODE_ENV}
       PORT: 3004
       SERVICE_NAME: notification-service
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_notification
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_notification
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/govconnect
       RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
       CHANNEL_SERVICE_URL: http://channel-service:3001
@@ -187,10 +191,10 @@ services:
       dockerfile: Dockerfile
     image: govconnect-dashboard:local
     ports:
-      - "3000:3000"
+      - "${DASHBOARD_PORT:-3000}:3000"
     environment:
       NODE_ENV: ${NODE_ENV}
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_dashboard
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_dashboard
       JWT_SECRET: ${JWT_SECRET}
       # Direct service URLs (internal communication, bypasses Nginx)
       CHANNEL_SERVICE_URL: http://channel-service:3001
@@ -213,7 +217,7 @@ services:
       - infra-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:3000/api/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
       interval: 30s
       timeout: 15s
       retries: 5

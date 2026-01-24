@@ -8,6 +8,8 @@ interface EnvConfig {
   DATABASE_URL: string;
   RABBITMQ_URL: string;
   INTERNAL_API_KEY: string;
+  GENFITY_APP_API_URL: string;
+  GENFITY_APP_CUSTOMER_API_KEY: string;
   WA_API_URL: string;
   WA_ACCESS_TOKEN: string;
   WA_WEBHOOK_VERIFY_TOKEN: string; // Optional - if empty, webhook verification is disabled
@@ -38,8 +40,15 @@ function validateEnv(): EnvConfig {
     DATABASE_URL: process.env.DATABASE_URL!,
     RABBITMQ_URL: process.env.RABBITMQ_URL!,
     INTERNAL_API_KEY: process.env.INTERNAL_API_KEY!,
+    // Genfity App Customer API (API-key based) for WhatsApp session management
+    // Examples:
+    // - https://genfity.com
+    // - https://genfity.com/api/customer-api
+    GENFITY_APP_API_URL: process.env.GENFITY_APP_API_URL || '',
+    // API key used as: Authorization: Bearer gf_...
+    GENFITY_APP_CUSTOMER_API_KEY: process.env.GENFITY_APP_CUSTOMER_API_KEY || '',
     // WA_API_URL: WhatsApp provider base URL (includes /wa prefix)
-    WA_API_URL: process.env.WA_API_URL || 'https://api-wa.genfity.com/wa',
+    WA_API_URL: process.env.WA_API_URL || 'https://wa-api.genfity.com/wa',
     // WA_ACCESS_TOKEN: Session token from genfity-wa
     WA_ACCESS_TOKEN: process.env.WA_ACCESS_TOKEN || '',
     // WA_WEBHOOK_VERIFY_TOKEN: Optional - if empty, accepts any webhook without verification

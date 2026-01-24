@@ -35,6 +35,19 @@ const DEFAULT_MODEL = 'gemini-embedding-001';
 const DEFAULT_DIMENSIONS: EmbeddingDimension = 768;
 const MAX_BATCH_SIZE = 100; // Gemini API limit
 
+function isBlankText(text: unknown): boolean {
+  return typeof text !== 'string' || text.trim().length === 0;
+}
+
+function makeZeroEmbedding(dimensions: number, modelLabel: string): EmbeddingResult {
+  return {
+    values: Array.from({ length: dimensions }, () => 0),
+    dimensions,
+    model: modelLabel,
+    normalized: false,
+  };
+}
+
 // ============================================================================
 // EMBEDDING CACHE - Reduces API calls for similar/repeated queries
 // ============================================================================
@@ -197,6 +210,16 @@ export async function generateEmbedding(
 
   const startTime = Date.now();
 
+  // Empty/blank text is not embeddable; return zero vector so callers can continue safely.
+  // This prevents batch embedding failures when some records have empty content.
+  if (isBlankText(text)) {
+    logger.warn('generateEmbedding called with blank text; returning zero vector', {
+      taskType,
+      dimensions: outputDimensionality,
+    });
+    return makeZeroEmbedding(outputDimensionality, 'empty');
+  }
+
   // Check cache for query embeddings (RETRIEVAL_QUERY task type)
   // Only cache queries since document embeddings are stored in DB
   if (useCache && taskType === 'RETRIEVAL_QUERY') {
@@ -326,30 +349,54 @@ export async function generateBatchEmbeddings(
     };
   }
 
+  // Gemini batchEmbedContents can fail if some entries are blank.
+  // We skip blank entries in the API call and fill their slots with zero vectors.
+  const cleanedTexts = texts.map((t) => (typeof t === 'string' ? t : ''));
+  const nonBlankTexts: string[] = [];
+  const nonBlankIndexes: number[] = [];
+  for (let i = 0; i < cleanedTexts.length; i++) {
+    if (!isBlankText(cleanedTexts[i])) {
+      nonBlankIndexes.push(i);
+      nonBlankTexts.push(cleanedTexts[i]);
+    }
+  }
+
+  if (nonBlankTexts.length === 0) {
+    return {
+      embeddings: cleanedTexts.map(() => makeZeroEmbedding(outputDimensionality, 'empty')),
+      processingTimeMs: 0,
+    };
+  }
+
   // Split into batches if needed
-  if (texts.length > MAX_BATCH_SIZE) {
+  if (nonBlankTexts.length > MAX_BATCH_SIZE) {
     logger.info('Splitting large batch into smaller chunks', {
-      totalTexts: texts.length,
+      totalTexts: nonBlankTexts.length,
       batchSize: MAX_BATCH_SIZE,
     });
 
-    const allEmbeddings: EmbeddingResult[] = [];
-    
-    for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
-      const batch = texts.slice(i, i + MAX_BATCH_SIZE);
-      const batchResult = await generateBatchEmbeddings(batch, options);
-      allEmbeddings.push(...batchResult.embeddings);
+    // We must preserve original positions; process in chunks of non-blank inputs.
+    const filled: EmbeddingResult[] = cleanedTexts.map(() => makeZeroEmbedding(outputDimensionality, 'empty'));
+    for (let i = 0; i < nonBlankTexts.length; i += MAX_BATCH_SIZE) {
+      const chunkTexts = nonBlankTexts.slice(i, i + MAX_BATCH_SIZE);
+      const chunkIndexes = nonBlankIndexes.slice(i, i + MAX_BATCH_SIZE);
+      const chunkResult = await generateBatchEmbeddings(chunkTexts, options);
+      for (let j = 0; j < chunkIndexes.length; j++) {
+        if (chunkResult.embeddings[j]) {
+          filled[chunkIndexes[j]] = chunkResult.embeddings[j];
+        }
+      }
     }
 
     return {
-      embeddings: allEmbeddings,
+      embeddings: filled,
       processingTimeMs: Date.now() - startTime,
     };
   }
 
   try {
     logger.info('Generating batch embeddings', {
-      count: texts.length,
+      count: nonBlankTexts.length,
       model,
       dimensions: outputDimensionality,
       taskType,
@@ -361,13 +408,13 @@ export async function generateBatchEmbeddings(
     // Prepare batch request - batchEmbedContents expects array of EmbedContentRequest
     // where content is a string
     const batchResult = await embeddingModel.batchEmbedContents({
-      requests: texts.map(text => ({
+      requests: nonBlankTexts.map(text => ({
         content: { role: 'user', parts: [{ text }] },
       })),
     });
 
     // Process results
-    const embeddings: EmbeddingResult[] = batchResult.embeddings.map(embedding => {
+    const nonBlankEmbeddings: EmbeddingResult[] = batchResult.embeddings.map(embedding => {
       let values = embedding.values;
 
       // Truncate to desired dimensions if needed
@@ -388,18 +435,26 @@ export async function generateBatchEmbeddings(
       };
     });
 
+    const embeddings: EmbeddingResult[] = cleanedTexts.map(() => makeZeroEmbedding(outputDimensionality, 'empty'));
+    for (let i = 0; i < nonBlankIndexes.length; i++) {
+      const idx = nonBlankIndexes[i];
+      if (nonBlankEmbeddings[i]) {
+        embeddings[idx] = nonBlankEmbeddings[i];
+      }
+    }
+
     const endTime = Date.now();
     const latencyMs = endTime - startTime;
 
     // Update stats
-    stats.totalEmbeddingsGenerated += texts.length;
+    stats.totalEmbeddingsGenerated += nonBlankTexts.length;
     stats.averageLatencyMs = (stats.averageLatencyMs + latencyMs) / 2;
     stats.lastEmbeddingAt = new Date();
     updateSuccessRate(true);
 
     logger.info('Batch embeddings generated successfully', {
-      count: embeddings.length,
-      avgDimensions: embeddings[0]?.dimensions,
+      count: nonBlankEmbeddings.length,
+      avgDimensions: nonBlankEmbeddings[0]?.dimensions,
       latencyMs,
     });
 

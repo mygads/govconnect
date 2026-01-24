@@ -35,6 +35,7 @@ interface TwoLayerWebchatParams {
   userId: string;
   message: string;
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  village_id?: string;
 }
 
 /**
@@ -42,7 +43,7 @@ interface TwoLayerWebchatParams {
  */
 export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Promise<ProcessMessageResult> {
   const startTime = Date.now();
-  const { userId, message, conversationHistory } = params;
+  const { userId, message, conversationHistory, village_id } = params;
 
   logger.info('🎯 Processing webchat with 2-Layer architecture', {
     userId,
@@ -142,7 +143,8 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
         enhancedLayer1,
         layer2Output,
         userId,
-        sanitizedMessage
+        sanitizedMessage,
+        village_id
       );
     }
 
@@ -235,14 +237,18 @@ async function handleWebchatAction(
   layer1Output: any,
   layer2Output: any,
   userId: string,
-  message: string
+  message: string,
+  village_id?: string
 ): Promise<string> {
   logger.info('🎬 Handling webchat action', { userId, action });
 
   try {
     const mockLlmResponse = {
       intent: layer1Output.intent,
-      fields: layer1Output.extracted_data,
+      fields: {
+        ...layer1Output.extracted_data,
+        ...(village_id ? { village_id } : {}),
+      },
       reply_text: layer2Output.reply_text,
       guidance_text: layer2Output.guidance_text,
       needs_knowledge: layer2Output.needs_knowledge,

@@ -60,6 +60,8 @@ export type ChannelType = 'whatsapp' | 'webchat' | 'other';
 export interface ProcessMessageInput {
   /** Unique user identifier (wa_user_id for WhatsApp, session_id for webchat) */
   userId: string;
+  /** Optional tenant context (GovConnect village_id) */
+  villageId?: string;
   /** The message text from user */
   message: string;
   /** Channel source */
@@ -103,6 +105,7 @@ const pendingAddressConfirmation: Map<string, {
   alamat: string;
   kategori: string;
   deskripsi: string;
+  village_id?: string;
   timestamp: number;
   foto_url?: string;
 }> = new Map();
@@ -455,6 +458,7 @@ export async function handleComplaintCreation(
       alamat,
       kategori,
       deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
+      village_id: villageId,
       timestamp: Date.now(),
       foto_url: mediaUrl,
     });
@@ -477,6 +481,7 @@ export async function handleComplaintCreation(
     wa_user_id: userId,
     kategori,
     deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
+    village_id: villageId,
     alamat: alamat || undefined,
     rt_rw: rt_rw || '',
     foto_url: mediaUrl,
@@ -1150,6 +1155,7 @@ export function setPendingAddressConfirmation(userId: string, data: {
   alamat: string;
   kategori: string;
   deskripsi: string;
+  village_id?: string;
   timestamp: number;
   foto_url?: string;
 }) {
@@ -1483,6 +1489,15 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     // Step 9: Handle intent
     const effectiveLlmResponse = llmResult.response;
+
+    // If webhook already resolved tenant, enforce it deterministically.
+    if (input.villageId) {
+      effectiveLlmResponse.fields = {
+        ...(effectiveLlmResponse.fields || {}),
+        village_id: input.villageId,
+      } as any;
+    }
+
     let finalReplyText = effectiveLlmResponse.reply_text;
     let guidanceText = effectiveLlmResponse.guidance_text || '';
     
@@ -1642,7 +1657,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 async function handlePendingAddressConfirmation(
   userId: string,
   message: string,
-  pendingConfirm: { alamat: string; kategori: string; deskripsi: string; timestamp: number; foto_url?: string },
+  pendingConfirm: { alamat: string; kategori: string; deskripsi: string; village_id?: string; timestamp: number; foto_url?: string },
   mediaUrl?: string
 ): Promise<string | null> {
   // Check if user confirmed
@@ -1655,6 +1670,7 @@ async function handlePendingAddressConfirmation(
       wa_user_id: userId,
       kategori: pendingConfirm.kategori,
       deskripsi: pendingConfirm.deskripsi,
+      village_id: pendingConfirm.village_id,
       alamat: pendingConfirm.alamat,
       rt_rw: '',
       foto_url: pendingConfirm.foto_url,
@@ -1682,6 +1698,7 @@ async function handlePendingAddressConfirmation(
       wa_user_id: userId,
       kategori: pendingConfirm.kategori,
       deskripsi: pendingConfirm.deskripsi,
+      village_id: pendingConfirm.village_id,
       alamat: message.trim(),
       rt_rw: '',
       foto_url: pendingConfirm.foto_url,

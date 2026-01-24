@@ -12,6 +12,7 @@ datasource db {
 
 model Message {
   id           String   @id @default(cuid())
+  village_id   String
   wa_user_id   String   // 628xxx (WhatsApp user phone number)
   message_id   String   @unique // Unique message ID from WhatsApp provider
   message_text String   @db.Text
@@ -20,7 +21,7 @@ model Message {
   timestamp    DateTime @default(now())
   createdAt    DateTime @default(now())
   
-  @@index([wa_user_id, timestamp])
+  @@index([village_id, wa_user_id, timestamp])
   @@index([direction])
   @@index([message_id])
   @@map("messages")
@@ -28,13 +29,14 @@ model Message {
 
 model SendLog {
   id           String   @id @default(cuid())
+  village_id   String
   wa_user_id   String
   message_text String   @db.Text
   status       String   // "sent" | "failed"
   error_msg    String?  @db.Text
   timestamp    DateTime @default(now())
   
-  @@index([wa_user_id])
+  @@index([village_id, wa_user_id])
   @@index([status])
   @@index([timestamp])
   @@map("send_logs")
@@ -85,6 +87,7 @@ model channel_accounts {
 // Takeover sessions - when admin takes over conversation from AI
 model TakeoverSession {
   id           String    @id @default(cuid())
+  village_id   String
   wa_user_id   String    // User being taken over
   admin_id     String    // Admin user ID who took over
   admin_name   String?   // Admin display name
@@ -92,17 +95,18 @@ model TakeoverSession {
   ended_at     DateTime? // null = still active
   reason       String?   // Optional reason for takeover
   
-  @@index([wa_user_id])
+  @@index([village_id, wa_user_id])
   @@index([admin_id])
   @@index([started_at])
-  @@index([wa_user_id, ended_at]) // For finding active takeover
+  @@index([village_id, wa_user_id, ended_at]) // For finding active takeover
   @@map("takeover_sessions")
 }
 
 // Conversation summary for live chat list
 model Conversation {
   id                   String   @id @default(cuid())
-  wa_user_id           String   @unique
+  village_id           String
+  wa_user_id           String
   user_name            String?  // WhatsApp push name
   last_message         String?  @db.Text
   last_message_at      DateTime @default(now())
@@ -114,6 +118,8 @@ model Conversation {
   created_at           DateTime @default(now())
   updated_at           DateTime @default(now()) @updatedAt
   
+  @@unique([village_id, wa_user_id])
+  @@index([village_id])
   @@index([is_takeover])
   @@index([last_message_at])
   @@index([ai_status])
@@ -123,6 +129,7 @@ model Conversation {
 // Pending messages queue - for batching and retry
 model PendingMessage {
   id           String   @id @default(cuid())
+  village_id   String
   wa_user_id   String   // User phone number
   message_id   String   @unique // WhatsApp message ID
   message_text String   @db.Text
@@ -132,7 +139,7 @@ model PendingMessage {
   created_at   DateTime @default(now())
   updated_at   DateTime @default(now()) @updatedAt
   
-  @@index([wa_user_id, status])
+  @@index([village_id, wa_user_id, status])
   @@index([status, created_at])
   @@map("pending_messages")
 }

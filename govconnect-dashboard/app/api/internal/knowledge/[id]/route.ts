@@ -2,7 +2,35 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
 // Internal API for AI service to get single knowledge item
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'govconnect-internal-2025-secret'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+function getInternalApiKey(): string | null {
+  return process.env['INTERNAL_API_KEY'] || null
+}
+
+function normalizeInternalApiKey(value: string | null): string | null {
+  if (!value) return null
+  let key = value.trim()
+  if (key.toLowerCase().startsWith('bearer ')) {
+    key = key.slice('bearer '.length).trim()
+  }
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim()
+  }
+  return key.length > 0 ? key : null
+}
+
+function getProvidedInternalApiKey(request: NextRequest): string | null {
+  return (
+    normalizeInternalApiKey(request.headers.get('x-internal-api-key')) ||
+    normalizeInternalApiKey(request.headers.get('authorization'))
+  )
+}
 
 /**
  * GET /api/internal/knowledge/[id]
@@ -14,9 +42,13 @@ export async function GET(
 ) {
   try {
     // Verify internal API key
-    const apiKey = request.headers.get('x-internal-api-key')
-    if (!apiKey || apiKey !== INTERNAL_API_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+    const expectedApiKey = normalizeInternalApiKey(getInternalApiKey())
+    if (!expectedApiKey) {
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
+    }
+    const apiKey = getProvidedInternalApiKey(request)
+    if (!apiKey || apiKey !== expectedApiKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { id } = await params

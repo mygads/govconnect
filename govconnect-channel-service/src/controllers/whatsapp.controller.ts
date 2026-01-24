@@ -29,7 +29,7 @@ async function syncChannelAccountNumber(villageId: string, waNumber?: string | n
 
   const webhookUrl = (process.env.PUBLIC_CHANNEL_BASE_URL || process.env.PUBLIC_BASE_URL || '')
     .replace(/\/$/, '');
-  const webhook = webhookUrl ? `${webhookUrl}/webhook/whatsapp` : '';
+  const webhook = webhookUrl ? `${webhookUrl}/webhook` : '';
 
   await prisma.channel_accounts.upsert({
     where: { village_id: villageId },
@@ -48,6 +48,34 @@ async function syncChannelAccountNumber(villageId: string, waNumber?: string | n
   });
 }
 
+async function syncSessionState(villageId: string): Promise<{
+  connected: boolean;
+  loggedIn: boolean;
+  wa_number: string | null;
+}> {
+  const session = await getStoredSession(villageId);
+  if (!session) {
+    throw new Error('Session belum dibuat');
+  }
+
+  const status = await getSessionStatus(session.wa_token);
+  const waNumber = status.jid ? status.jid.replace(/@s\.whatsapp\.net$/i, '') : session.wa_number;
+
+  await updateStoredSessionStatus({
+    villageId,
+    status: status.connected ? 'connected' : 'disconnected',
+    waNumber: waNumber || null,
+  });
+
+  await syncChannelAccountNumber(villageId, waNumber || null);
+
+  return {
+    connected: status.connected,
+    loggedIn: status.loggedIn,
+    wa_number: waNumber || null,
+  };
+}
+
 /**
  * Get WhatsApp session status
  * GET /internal/whatsapp/status
@@ -62,7 +90,15 @@ export async function getStatus(_req: Request, res: Response): Promise<void> {
 
     const session = await getStoredSession(villageId);
     if (!session) {
-      res.status(404).json({ success: false, error: 'Session belum dibuat' });
+      res.json({
+        success: true,
+        data: {
+          exists: false,
+          connected: false,
+          loggedIn: false,
+          wa_number: null,
+        },
+      });
       return;
     }
 
@@ -108,6 +144,14 @@ export async function createSession(req: Request, res: Response): Promise<void> 
     const adminId = typeof req.body?.admin_id === 'string' ? req.body.admin_id : undefined;
     const result = await createSessionForVillage({ villageId, adminId });
 
+    // Best-effort: sync status immediately so DB is always aligned with WA server.
+    // This will typically show disconnected/not logged in until QR is scanned.
+    try {
+      await syncSessionState(villageId);
+    } catch (e: any) {
+      logger.debug('Post-create session sync skipped/failed', { error: e?.message, village_id: villageId });
+    }
+
     res.json({
       success: true,
       data: result,
@@ -140,6 +184,13 @@ export async function connect(_req: Request, res: Response): Promise<void> {
     }
 
     const result = await connectSession(session.wa_token);
+
+    // Sync status after connect so DB reflects latest WA state
+    try {
+      await syncSessionState(villageId);
+    } catch (e: any) {
+      logger.debug('Post-connect session sync failed', { error: e?.message, village_id: villageId });
+    }
     res.json({
       success: true,
       data: result,
@@ -172,6 +223,13 @@ export async function disconnect(_req: Request, res: Response): Promise<void> {
     }
 
     const result = await disconnectSession(session.wa_token);
+
+    // Sync status after disconnect
+    try {
+      await syncSessionState(villageId);
+    } catch (e: any) {
+      logger.debug('Post-disconnect session sync failed', { error: e?.message, village_id: villageId });
+    }
     res.json({
       success: true,
       data: result,
@@ -204,6 +262,13 @@ export async function logout(_req: Request, res: Response): Promise<void> {
     }
 
     const result = await logoutSession(session.wa_token);
+
+    // Sync status after logout
+    try {
+      await syncSessionState(villageId);
+    } catch (e: any) {
+      logger.debug('Post-logout session sync failed', { error: e?.message, village_id: villageId });
+    }
     res.json({
       success: true,
       data: result,

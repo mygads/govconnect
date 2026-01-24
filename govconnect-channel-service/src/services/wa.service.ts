@@ -9,6 +9,10 @@ let sessionSettings = {
   typingIndicator: false,
 };
 
+function isDryRun(): boolean {
+  return (process.env.WA_DRY_RUN || '').toLowerCase() === 'true';
+}
+
 async function getSessionByVillageId(villageId: string) {
   return prisma.wa_sessions.findUnique({
     where: { village_id: villageId },
@@ -42,13 +46,13 @@ async function upsertSession(params: {
   });
 }
 
-async function getDefaultChannelAccount() {
-  const defaultVillageId = process.env.DEFAULT_VILLAGE_ID;
-  if (!defaultVillageId) return null;
+async function getDefaultChannelAccount(villageId?: string) {
+  const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
+  if (!resolvedVillageId) return null;
 
   try {
     return await prisma.channel_accounts.findUnique({
-      where: { village_id: defaultVillageId },
+      where: { village_id: resolvedVillageId },
     });
   } catch (error: any) {
     logger.warn('Failed to load channel account', { error: error.message });
@@ -56,16 +60,73 @@ async function getDefaultChannelAccount() {
   }
 }
 
-async function resolveAccessToken(): Promise<string> {
-  const defaultVillageId = process.env.DEFAULT_VILLAGE_ID;
-  if (defaultVillageId) {
-    const session = await getSessionByVillageId(defaultVillageId);
-    if (session?.wa_token) return session.wa_token;
+function getPublicWhatsAppWebhookUrl(): string {
+  const base = (process.env.PUBLIC_CHANNEL_BASE_URL || process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
+  // Channel Service supports multiple webhook paths (/, /webhook, /webhook/whatsapp).
+  // Use /webhook as the canonical public URL.
+  return base ? `${base}/webhook` : '';
+}
+
+async function createSessionViaGenfityApp(params: { villageId: string; webhook: string }) {
+  if (!config.GENFITY_APP_API_URL || !config.GENFITY_APP_CUSTOMER_API_KEY) {
+    throw new Error('Genfity customer-api config missing (GENFITY_APP_API_URL / GENFITY_APP_CUSTOMER_API_KEY)');
   }
 
-  const account = await getDefaultChannelAccount();
-  if (account?.wa_token) return account.wa_token;
-  return config.WA_ACCESS_TOKEN;
+  const base = config.GENFITY_APP_API_URL.replace(/\/$/, '');
+  const customerApiBase = /\/api\/customer-api$/.test(base) ? base : `${base}/api/customer-api`;
+  const url = `${customerApiBase}/whatsapp/sessions`;
+
+  const response = await axios.post(
+    url,
+    {
+      name: params.villageId,
+      webhook: params.webhook || '',
+      events: 'All',
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${config.GENFITY_APP_CUSTOMER_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    }
+  );
+
+  const payload = response.data;
+  if (!payload?.success) {
+    const err = payload?.error || 'Failed to create session via genfity-app';
+    throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
+  }
+
+  const token = payload?.data?.token;
+  if (!token) {
+    throw new Error('Token sesi tidak ditemukan dari genfity-app');
+  }
+
+  return { token, sessionId: payload?.data?.sessionId || payload?.data?.id || null };
+}
+
+type ResolvedAccessToken = {
+  token: string;
+  source: 'session' | 'channel_account' | 'default';
+  village_id?: string;
+};
+
+async function resolveAccessToken(villageId?: string): Promise<ResolvedAccessToken> {
+  const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
+  if (resolvedVillageId) {
+    const session = await getSessionByVillageId(resolvedVillageId);
+    if (session?.wa_token) return { token: session.wa_token, source: 'session', village_id: resolvedVillageId };
+  }
+
+  const account = await getDefaultChannelAccount(resolvedVillageId);
+  if (account?.wa_token) return { token: account.wa_token, source: 'channel_account', village_id: resolvedVillageId };
+  return { token: config.WA_ACCESS_TOKEN, source: 'default', village_id: resolvedVillageId };
+}
+
+// Exported for other modules that must call WA provider via session token (e.g., media download).
+export async function getAccessTokenForVillage(villageId?: string): Promise<ResolvedAccessToken> {
+  return resolveAccessToken(villageId);
 }
 
 /**
@@ -115,6 +176,18 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
     if (!token) {
       logger.warn('WhatsApp token not configured');
       return { connected: false, loggedIn: false };
+    }
+
+    if (isDryRun()) {
+      return {
+        connected: false,
+        loggedIn: false,
+        jid: '',
+        qrcode: '',
+        name: 'dry-run',
+        events: 'All',
+        webhook: '',
+      };
     }
 
     const url = `${config.WA_API_URL}/session/status`;
@@ -231,18 +304,39 @@ export async function createSessionForVillage(params: {
     return { existing: true };
   }
 
-  const url = `${config.WA_API_URL}/session/create`;
+  const webhook = getPublicWhatsAppWebhookUrl();
+  let token: string;
+  let sessionId: string | null = null;
 
-  const response = await axios.post(url, {
-    Name: params.villageId,
-  }, {
-    timeout: 15000,
-  });
+  // Preferred path: create session via genfity-app customer-api so it consumes the admin subscription quota.
+  if (config.GENFITY_APP_API_URL && config.GENFITY_APP_CUSTOMER_API_KEY) {
+    const created = await createSessionViaGenfityApp({ villageId: params.villageId, webhook });
+    token = created.token;
+    sessionId = created.sessionId;
+  } else {
+    if (isDryRun()) {
+      token = `dryrun_${params.villageId}_${Date.now()}`;
+    } else {
+    // Backward-compatible fallback: create directly on WA provider.
+    const url = `${config.WA_API_URL}/session/create`;
 
-  const data = response.data?.data || response.data;
-  const token = extractSessionToken(data);
-  if (!token) {
-    throw new Error('Token sesi tidak ditemukan dari server WA');
+    const response = await axios.post(
+      url,
+      {
+        Name: params.villageId,
+      },
+      {
+        timeout: 15000,
+      }
+    );
+
+    const data = response.data?.data || response.data;
+    const extracted = extractSessionToken(data);
+    if (!extracted) {
+      throw new Error('Token sesi tidak ditemukan dari server WA');
+    }
+    token = extracted;
+    }
   }
 
   await upsertSession({
@@ -251,7 +345,14 @@ export async function createSessionForVillage(params: {
     token,
   });
 
-  return { existing: false };
+  if (!webhook) {
+    logger.warn('PUBLIC_CHANNEL_BASE_URL/PUBLIC_BASE_URL not set; webhook not configured during session creation', {
+      village_id: params.villageId,
+      via: config.GENFITY_APP_API_URL && config.GENFITY_APP_CUSTOMER_API_KEY ? 'genfity-app' : 'wa-provider',
+    });
+  }
+
+  return { existing: false, session_id: sessionId };
 }
 
 export async function updateStoredSessionStatus(params: {
@@ -304,6 +405,11 @@ export async function connectSession(token: string): Promise<{ details: string }
       throw new Error('WhatsApp token not configured');
     }
 
+    if (isDryRun()) {
+      logger.info('WA_DRY_RUN: connectSession skipped');
+      return { details: 'Connected (dry-run)' };
+    }
+
     const url = `${config.WA_API_URL}/session/connect`;
     
     const response = await axios.post(url, {
@@ -341,6 +447,11 @@ export async function disconnectSession(token: string): Promise<{ details: strin
       throw new Error('WhatsApp token not configured');
     }
 
+    if (isDryRun()) {
+      logger.info('WA_DRY_RUN: disconnectSession skipped');
+      return { details: 'Disconnected (dry-run)' };
+    }
+
     const url = `${config.WA_API_URL}/session/disconnect`;
     
     const response = await axios.post(url, {}, {
@@ -372,6 +483,11 @@ export async function logoutSession(token: string): Promise<{ details: string }>
   try {
     if (!token) {
       throw new Error('WhatsApp token not configured');
+    }
+
+    if (isDryRun()) {
+      logger.info('WA_DRY_RUN: logoutSession skipped');
+      return { details: 'Logged out (dry-run)' };
     }
 
     const url = `${config.WA_API_URL}/session/logout`;
@@ -407,6 +523,10 @@ export async function getQRCode(token: string): Promise<{ QRCode: string; alread
   try {
     if (!token) {
       throw new Error('WhatsApp token not configured');
+    }
+
+    if (isDryRun()) {
+      return { QRCode: 'dry-run-qr-not-available' };
     }
 
     const url = `${config.WA_API_URL}/session/qr`;
@@ -452,6 +572,11 @@ export async function pairPhone(token: string, phone: string): Promise<{ Linking
   try {
     if (!token) {
       throw new Error('WhatsApp token not configured');
+    }
+
+    if (isDryRun()) {
+      logger.info('WA_DRY_RUN: pairPhone skipped', { phone });
+      return { LinkingCode: 'DRYRUN-CODE' };
     }
 
     const url = `${config.WA_API_URL}/session/pairphone`;
@@ -571,15 +696,26 @@ export function isTypingIndicatorEnabled(): boolean {
  */
 export async function sendTypingIndicator(
   phone: string,
-  state: 'composing' | 'paused' = 'composing'
+  state: 'composing' | 'paused' = 'composing',
+  villageId?: string
 ): Promise<boolean> {
   if (!sessionSettings.typingIndicator) {
     return false;
   }
   
   try {
-    if (!config.WA_ACCESS_TOKEN) {
-      return false;
+    const resolved = await resolveAccessToken(villageId);
+    const accessToken = resolved.token;
+    if (!accessToken) return false;
+
+    if ((process.env.WA_DRY_RUN || '').toLowerCase() === 'true') {
+      logger.info('WA_DRY_RUN: Skipping typing indicator', {
+        village_id: resolved.village_id,
+        phone,
+        state,
+        token_source: resolved.source,
+      });
+      return true;
     }
 
     const url = `${config.WA_API_URL}/chat/presence`;
@@ -590,7 +726,7 @@ export async function sendTypingIndicator(
       Media: '',
     }, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token: accessToken,
         'Content-Type': 'application/json',
       },
       timeout: 5000,
@@ -614,7 +750,8 @@ export async function sendTypingIndicator(
 export async function markMessageAsRead(
   messageIds: string[],
   chatPhone: string,
-  senderPhone: string
+  senderPhone: string,
+  villageId?: string
 ): Promise<boolean> {
   // Always reload settings from database to get latest value
   // This ensures setting changes from dashboard are reflected immediately
@@ -640,8 +777,18 @@ export async function markMessageAsRead(
   }
   
   try {
-    if (!config.WA_ACCESS_TOKEN) {
-      return false;
+    const resolved = await resolveAccessToken(villageId);
+    const accessToken = resolved.token;
+    if (!accessToken) return false;
+
+    if ((process.env.WA_DRY_RUN || '').toLowerCase() === 'true') {
+      logger.info('WA_DRY_RUN: Skipping mark-as-read', {
+        village_id: resolved.village_id,
+        chatPhone,
+        messageCount: messageIds.length,
+        token_source: resolved.source,
+      });
+      return true;
     }
 
     const url = `${config.WA_API_URL}/chat/markread`;
@@ -652,7 +799,7 @@ export async function markMessageAsRead(
       SenderPhone: senderPhone,
     }, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token: accessToken,
         'Content-Type': 'application/json',
       },
       timeout: 5000,
@@ -683,10 +830,11 @@ export async function markMessageAsRead(
  */
 export async function sendTextMessage(
   to: string,
-  message: string
+  message: string,
+  villageId?: string
 ): Promise<{ success: boolean; message_id?: string; error?: string }> {
   try {
-    const account = await getDefaultChannelAccount();
+    const account = await getDefaultChannelAccount(villageId);
     if (account && account.enabled_wa === false) {
       logger.info('WhatsApp channel disabled, message not sent', { to });
       return {
@@ -695,13 +843,27 @@ export async function sendTextMessage(
       };
     }
 
-    const accessToken = await resolveAccessToken();
+    const resolved = await resolveAccessToken(villageId);
+    const accessToken = resolved.token;
     if (!accessToken) {
       logger.warn('WhatsApp token not configured, message not sent');
       return {
         success: false,
         error: 'WhatsApp not configured',
       };
+    }
+
+    // Dry-run mode: do not hit external WA API. Useful for tenant isolation verification.
+    if ((process.env.WA_DRY_RUN || '').toLowerCase() === 'true') {
+      const normalizedPhone = normalizePhoneNumber(to);
+      const fakeMessageId = `dryrun_${Date.now()}`;
+      logger.info('WA_DRY_RUN: Skipping WhatsApp API call', {
+        village_id: resolved.village_id,
+        to: normalizedPhone,
+        token_source: resolved.source,
+        message_id: fakeMessageId,
+      });
+      return { success: true, message_id: fakeMessageId };
     }
 
     // Normalize phone number - remove any non-digit characters and ensure starts with country code

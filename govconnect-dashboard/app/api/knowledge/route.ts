@@ -161,6 +161,7 @@ export async function POST(request: NextRequest) {
     // Sync to AI Service vector database (fire and forget)
     addKnowledgeVector({
       id: knowledge.id,
+      village_id: knowledge.village_id || undefined,
       title: knowledge.title,
       content: knowledge.content,
       category: knowledge.category,

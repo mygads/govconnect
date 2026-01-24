@@ -60,12 +60,25 @@ router.post('/', async (req: Request, res: Response) => {
     if (embedding && Array.isArray(embedding)) {
       queryEmbedding = embedding;
     } else {
-      const embeddingResult = await generateEmbedding(query, {
-        taskType: 'RETRIEVAL_QUERY',
-        outputDimensionality: 768,
-        useCache: true,
-      });
-      queryEmbedding = embeddingResult.values;
+      try {
+        const embeddingResult = await generateEmbedding(query, {
+          taskType: 'RETRIEVAL_QUERY',
+          outputDimensionality: 768,
+          useCache: true,
+        });
+        queryEmbedding = embeddingResult.values;
+      } catch (error: any) {
+        const searchTimeMs = Date.now() - startTime;
+        logger.warn('Embedding generation failed; returning empty search results', {
+          error: error?.message,
+        });
+        return res.status(200).json({
+          data: [],
+          total: 0,
+          searchTimeMs,
+          warning: 'Embedding generation failed',
+        });
+      }
     }
 
     // Search vectors

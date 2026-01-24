@@ -4,14 +4,21 @@ import { MessageData } from '../types/message.types';
 
 const MAX_MESSAGES = 30;
 
+function resolveVillageId(villageId?: string): string {
+  return villageId || process.env.DEFAULT_VILLAGE_ID || 'default';
+}
+
 /**
  * Save incoming message with FIFO enforcement
  */
 export async function saveIncomingMessage(data: MessageData): Promise<any> {
   logger.info('Saving incoming message', {
+    village_id: data.village_id,
     wa_user_id: data.wa_user_id,
     message_id: data.message_id,
   });
+
+  const villageId = resolveVillageId(data.village_id);
 
   // Check duplicate
   const existing = await prisma.message.findUnique({
@@ -26,6 +33,7 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
   // Save message
   const message = await prisma.message.create({
     data: {
+      village_id: villageId,
       wa_user_id: data.wa_user_id,
       message_id: data.message_id,
       message_text: data.message_text,
@@ -36,7 +44,7 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
   });
 
   // Enforce FIFO
-  await enforeFIFO(data.wa_user_id);
+  await enforeFIFO(villageId, data.wa_user_id);
 
   logger.info('Incoming message saved', { id: message.id });
   return message;
@@ -48,8 +56,10 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
 export async function saveOutgoingMessage(
   data: MessageData & { source: 'AI' | 'SYSTEM' | 'ADMIN' }
 ): Promise<any> {
+  const villageId = resolveVillageId(data.village_id);
   const message = await prisma.message.create({
     data: {
+      village_id: villageId,
       wa_user_id: data.wa_user_id,
       message_id: data.message_id,
       message_text: data.message_text,
@@ -60,7 +70,7 @@ export async function saveOutgoingMessage(
   });
 
   // Enforce FIFO
-  await enforeFIFO(data.wa_user_id);
+  await enforeFIFO(villageId, data.wa_user_id);
 
   logger.info('Outgoing message saved', { id: message.id });
   return message;
@@ -69,9 +79,9 @@ export async function saveOutgoingMessage(
 /**
  * Maintain maximum 30 messages per user (FIFO)
  */
-async function enforeFIFO(wa_user_id: string): Promise<void> {
+async function enforeFIFO(village_id: string, wa_user_id: string): Promise<void> {
   const count = await prisma.message.count({
-    where: { wa_user_id },
+    where: { village_id, wa_user_id },
   });
 
   if (count > MAX_MESSAGES) {
@@ -79,7 +89,7 @@ async function enforeFIFO(wa_user_id: string): Promise<void> {
 
     // Get oldest messages
     const oldestMessages = await prisma.message.findMany({
-      where: { wa_user_id },
+      where: { village_id, wa_user_id },
       orderBy: { timestamp: 'asc' },
       take: toDelete,
       select: { id: true },
@@ -103,10 +113,12 @@ async function enforeFIFO(wa_user_id: string): Promise<void> {
  */
 export async function getMessageHistory(
   wa_user_id: string,
-  limit: number = 30
+  limit: number = 30,
+  village_id?: string
 ): Promise<any[]> {
+  const resolvedVillageId = resolveVillageId(village_id);
   const messages = await prisma.message.findMany({
-    where: { wa_user_id },
+    where: { village_id: resolvedVillageId, wa_user_id },
     orderBy: { timestamp: 'desc' },
     take: limit,
   });
@@ -134,13 +146,16 @@ export async function checkDuplicateMessage(message_id: string): Promise<boolean
  * Log sent message
  */
 export async function logSentMessage(data: {
+  village_id?: string;
   wa_user_id: string;
   message_text: string;
   status: 'sent' | 'failed';
   error_msg?: string;
 }): Promise<any> {
+  const villageId = resolveVillageId(data.village_id);
   return prisma.sendLog.create({
     data: {
+      village_id: villageId,
       wa_user_id: data.wa_user_id,
       message_text: data.message_text,
       status: data.status,

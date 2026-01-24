@@ -1,8 +1,13 @@
 import prisma from '../config/database';
 import logger from '../utils/logger';
 
+function resolveVillageId(villageId?: string): string {
+  return villageId || process.env.DEFAULT_VILLAGE_ID || 'default';
+}
+
 export interface TakeoverSession {
   id: string;
+  village_id: string;
   wa_user_id: string;
   admin_id: string;
   admin_name: string | null;
@@ -13,6 +18,7 @@ export interface TakeoverSession {
 
 export interface ConversationSummary {
   id: string;
+  village_id: string;
   wa_user_id: string;
   user_name: string | null;
   last_message: string | null;
@@ -27,10 +33,15 @@ export interface ConversationSummary {
 /**
  * Check if a user is currently in takeover mode
  */
-export async function isUserInTakeover(wa_user_id: string): Promise<boolean> {
+export async function isUserInTakeover(
+  wa_user_id: string,
+  village_id?: string
+): Promise<boolean> {
   try {
+    const resolvedVillageId = resolveVillageId(village_id);
     const session = await prisma.takeoverSession.findFirst({
       where: {
+        village_id: resolvedVillageId,
         wa_user_id,
         ended_at: null, // Active session
       },
@@ -45,10 +56,15 @@ export async function isUserInTakeover(wa_user_id: string): Promise<boolean> {
 /**
  * Get active takeover session for a user
  */
-export async function getActiveTakeover(wa_user_id: string): Promise<TakeoverSession | null> {
+export async function getActiveTakeover(
+  wa_user_id: string,
+  village_id?: string
+): Promise<TakeoverSession | null> {
   try {
+    const resolvedVillageId = resolveVillageId(village_id);
     const session = await prisma.takeoverSession.findFirst({
       where: {
+        village_id: resolvedVillageId,
         wa_user_id,
         ended_at: null,
       },
@@ -67,13 +83,16 @@ export async function startTakeover(
   wa_user_id: string,
   admin_id: string,
   admin_name?: string,
-  reason?: string
+  reason?: string,
+  village_id?: string
 ): Promise<TakeoverSession> {
+  const resolvedVillageId = resolveVillageId(village_id);
   // End any existing takeover first
-  await endTakeover(wa_user_id);
+  await endTakeover(wa_user_id, resolvedVillageId);
 
   const session = await prisma.takeoverSession.create({
     data: {
+      village_id: resolvedVillageId,
       wa_user_id,
       admin_id,
       admin_name,
@@ -83,9 +102,15 @@ export async function startTakeover(
 
   // Update conversation to mark as takeover
   await prisma.conversation.upsert({
-    where: { wa_user_id },
+    where: {
+      village_id_wa_user_id: {
+        village_id: resolvedVillageId,
+        wa_user_id,
+      },
+    },
     update: { is_takeover: true },
     create: {
+      village_id: resolvedVillageId,
       wa_user_id,
       is_takeover: true,
     },
@@ -98,10 +123,12 @@ export async function startTakeover(
 /**
  * End takeover for a user
  */
-export async function endTakeover(wa_user_id: string): Promise<boolean> {
+export async function endTakeover(wa_user_id: string, village_id?: string): Promise<boolean> {
   try {
+    const resolvedVillageId = resolveVillageId(village_id);
     const result = await prisma.takeoverSession.updateMany({
       where: {
+        village_id: resolvedVillageId,
         wa_user_id,
         ended_at: null,
       },
@@ -113,7 +140,12 @@ export async function endTakeover(wa_user_id: string): Promise<boolean> {
     if (result.count > 0) {
       // Update conversation to mark as not takeover
       await prisma.conversation.update({
-        where: { wa_user_id },
+        where: {
+          village_id_wa_user_id: {
+            village_id: resolvedVillageId,
+            wa_user_id,
+          },
+        },
         data: { is_takeover: false },
       });
 
@@ -151,11 +183,18 @@ export async function updateConversation(
   wa_user_id: string,
   last_message: string,
   user_name?: string,
-  incrementUnread: boolean | 'reset' = true
+  incrementUnread: boolean | 'reset' = true,
+  village_id?: string
 ): Promise<void> {
   try {
+    const resolvedVillageId = resolveVillageId(village_id);
     const existingConv = await prisma.conversation.findUnique({
-      where: { wa_user_id },
+      where: {
+        village_id_wa_user_id: {
+          village_id: resolvedVillageId,
+          wa_user_id,
+        },
+      },
     });
 
     // Determine new unread count
@@ -172,7 +211,12 @@ export async function updateConversation(
     }
 
     await prisma.conversation.upsert({
-      where: { wa_user_id },
+      where: {
+        village_id_wa_user_id: {
+          village_id: resolvedVillageId,
+          wa_user_id,
+        },
+      },
       update: {
         last_message: last_message.substring(0, 500),
         last_message_at: new Date(),
@@ -180,6 +224,7 @@ export async function updateConversation(
         user_name: user_name || existingConv?.user_name,
       },
       create: {
+        village_id: resolvedVillageId,
         wa_user_id,
         user_name,
         last_message: last_message.substring(0, 500),
@@ -196,8 +241,14 @@ export async function updateConversation(
  */
 export async function markConversationAsRead(wa_user_id: string): Promise<void> {
   try {
+    const village_id = resolveVillageId(undefined);
     await prisma.conversation.update({
-      where: { wa_user_id },
+      where: {
+        village_id_wa_user_id: {
+          village_id,
+          wa_user_id,
+        },
+      },
       data: { unread_count: 0 },
     });
   } catch (error: any) {
@@ -232,8 +283,14 @@ export async function getConversations(
  * Get conversation by wa_user_id
  */
 export async function getConversation(wa_user_id: string): Promise<ConversationSummary | null> {
+  const village_id = resolveVillageId(undefined);
   return prisma.conversation.findUnique({
-    where: { wa_user_id },
+    where: {
+      village_id_wa_user_id: {
+        village_id,
+        wa_user_id,
+      },
+    },
   });
 }
 
@@ -242,16 +299,17 @@ export async function getConversation(wa_user_id: string): Promise<ConversationS
  */
 export async function deleteConversationHistory(wa_user_id: string): Promise<void> {
   try {
+    const village_id = resolveVillageId(undefined);
     // Delete all messages for this user
     await prisma.message.deleteMany({
-      where: { wa_user_id },
+      where: { village_id, wa_user_id },
     });
 
     // Delete all takeover sessions for this user using raw query
-    await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE wa_user_id = ${wa_user_id}`;
+    await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE village_id = ${village_id} AND wa_user_id = ${wa_user_id}`;
 
     // Delete the conversation record using raw query
-    await prisma.$executeRaw`DELETE FROM conversations WHERE wa_user_id = ${wa_user_id}`;
+    await prisma.$executeRaw`DELETE FROM conversations WHERE village_id = ${village_id} AND wa_user_id = ${wa_user_id}`;
 
     logger.info('Deleted conversation history', { wa_user_id });
   } catch (error: any) {
@@ -263,16 +321,27 @@ export async function deleteConversationHistory(wa_user_id: string): Promise<voi
 /**
  * Set AI processing status to "processing"
  */
-export async function setAIProcessing(wa_user_id: string, message_id: string): Promise<void> {
+export async function setAIProcessing(
+  wa_user_id: string,
+  message_id: string,
+  village_id?: string
+): Promise<void> {
   try {
+    const resolvedVillageId = resolveVillageId(village_id);
     await prisma.conversation.upsert({
-      where: { wa_user_id },
+      where: {
+        village_id_wa_user_id: {
+          village_id: resolvedVillageId,
+          wa_user_id,
+        },
+      },
       update: {
         ai_status: 'processing',
         pending_message_id: message_id,
         ai_error_message: null,
       },
       create: {
+        village_id: resolvedVillageId,
         wa_user_id,
         ai_status: 'processing',
         pending_message_id: message_id,
@@ -287,10 +356,16 @@ export async function setAIProcessing(wa_user_id: string, message_id: string): P
 /**
  * Clear AI processing status (success)
  */
-export async function clearAIStatus(wa_user_id: string): Promise<void> {
+export async function clearAIStatus(wa_user_id: string, village_id?: string): Promise<void> {
   try {
+    const resolvedVillageId = resolveVillageId(village_id);
     await prisma.conversation.update({
-      where: { wa_user_id },
+      where: {
+        village_id_wa_user_id: {
+          village_id: resolvedVillageId,
+          wa_user_id,
+        },
+      },
       data: {
         ai_status: null,
         ai_error_message: null,
@@ -306,10 +381,21 @@ export async function clearAIStatus(wa_user_id: string): Promise<void> {
 /**
  * Set AI error status (failed)
  */
-export async function setAIError(wa_user_id: string, error_message: string, message_id?: string): Promise<void> {
+export async function setAIError(
+  wa_user_id: string,
+  error_message: string,
+  message_id?: string,
+  village_id?: string
+): Promise<void> {
   try {
+    const resolvedVillageId = resolveVillageId(village_id);
     await prisma.conversation.update({
-      where: { wa_user_id },
+      where: {
+        village_id_wa_user_id: {
+          village_id: resolvedVillageId,
+          wa_user_id,
+        },
+      },
       data: {
         ai_status: 'error',
         ai_error_message: error_message.substring(0, 500),
@@ -327,8 +413,14 @@ export async function setAIError(wa_user_id: string, error_message: string, mess
  */
 export async function getPendingMessage(wa_user_id: string): Promise<{ message_id: string; message_text: string } | null> {
   try {
+    const village_id = resolveVillageId(undefined);
     const conversation = await prisma.conversation.findUnique({
-      where: { wa_user_id },
+      where: {
+        village_id_wa_user_id: {
+          village_id,
+          wa_user_id,
+        },
+      },
     });
 
     if (!conversation?.pending_message_id) {
@@ -337,6 +429,7 @@ export async function getPendingMessage(wa_user_id: string): Promise<{ message_i
 
     const message = await prisma.message.findFirst({
       where: {
+        village_id,
         wa_user_id,
         message_id: conversation.pending_message_id,
       },

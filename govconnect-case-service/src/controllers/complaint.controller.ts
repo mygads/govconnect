@@ -10,6 +10,7 @@ import {
 } from '../services/complaint.service';
 import { checkDuplicateComplaint, checkGlobalDuplicate } from '../services/complaint-deduplication.service';
 import logger from '../utils/logger';
+import { getQueryInt, getQueryString } from '../utils/http';
 
 /**
  * POST /laporan/create
@@ -86,15 +87,15 @@ export async function handleCreateComplaint(req: Request, res: Response) {
 export async function handleGetComplaints(req: Request, res: Response) {
   try {
     const filters = {
-      status: req.query.status as string,
-      kategori: req.query.kategori as string,
-      category_id: req.query.category_id as string,
-      type_id: req.query.type_id as string,
-      rt_rw: req.query.rt_rw as string,
-      wa_user_id: req.query.wa_user_id as string,
-      village_id: req.query.village_id as string,
-      limit: parseInt(req.query.limit as string) || 20,
-      offset: parseInt(req.query.offset as string) || 0,
+      status: getQueryString(req.query.status),
+      kategori: getQueryString(req.query.kategori),
+      category_id: getQueryString(req.query.category_id),
+      type_id: getQueryString(req.query.type_id),
+      rt_rw: getQueryString(req.query.rt_rw),
+      wa_user_id: getQueryString(req.query.wa_user_id),
+      village_id: getQueryString(req.query.village_id),
+      limit: getQueryInt(req.query.limit, 20),
+      offset: getQueryInt(req.query.offset, 0),
     };
     
     const result = await getComplaintsList(filters);

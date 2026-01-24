@@ -23,6 +23,7 @@ import {
 
 export interface KnowledgeVectorInput {
   id: string;
+  villageId?: string | null;
   title: string;
   content: string;
   category: string;
@@ -39,6 +40,7 @@ export interface KnowledgeVectorInput {
 export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promise<void> {
   const {
     id,
+    villageId = null,
     title,
     content,
     category,
@@ -54,15 +56,16 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
 
     await prisma.$executeRaw`
       INSERT INTO knowledge_vectors (
-        id, title, content, category, keywords, 
+        id, village_id, title, content, category, keywords, 
         embedding, embedding_model, quality_score,
         created_at, updated_at
       ) VALUES (
-        ${id}, ${title}, ${content}, ${category}, ${keywords},
+        ${id}, ${villageId}, ${title}, ${content}, ${category}, ${keywords},
         ${embeddingStr}::vector, ${embeddingModel}, ${qualityScore},
         NOW(), NOW()
       )
       ON CONFLICT (id) DO UPDATE SET
+        village_id = EXCLUDED.village_id,
         title = EXCLUDED.title,
         content = EXCLUDED.content,
         category = EXCLUDED.category,
@@ -123,6 +126,7 @@ export async function getKnowledgeVector(id: string) {
 
 export interface DocumentChunkInput {
   documentId: string;
+  villageId?: string | null;
   chunkIndex: number;
   content: string;
   embedding: number[];
@@ -148,12 +152,12 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
         
         await tx.$executeRaw`
           INSERT INTO document_vectors (
-            id, document_id, chunk_index, content,
+            id, document_id, village_id, chunk_index, content,
             document_title, category, page_number, section_title,
             embedding, embedding_model, created_at
           ) VALUES (
             ${`${chunk.documentId}_${chunk.chunkIndex}`},
-            ${chunk.documentId}, ${chunk.chunkIndex}, ${chunk.content},
+            ${chunk.documentId}, ${chunk.villageId || null}, ${chunk.chunkIndex}, ${chunk.content},
             ${chunk.documentTitle || null}, ${chunk.category || null}, 
             ${chunk.pageNumber || null}, ${chunk.sectionTitle || null},
             ${embeddingStr}::vector, ${chunk.embeddingModel || 'gemini-embedding-001'},
@@ -165,7 +169,8 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
             category = EXCLUDED.category,
             page_number = EXCLUDED.page_number,
             section_title = EXCLUDED.section_title,
-            embedding = EXCLUDED.embedding
+            embedding = EXCLUDED.embedding,
+            village_id = EXCLUDED.village_id
         `;
       }
     });

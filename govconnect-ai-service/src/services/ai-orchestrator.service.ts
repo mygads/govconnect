@@ -56,6 +56,7 @@ import { processUnifiedMessage } from './unified-message-processor.service';
  */
 export async function processMessage(event: MessageReceivedEvent): Promise<void> {
   const { 
+    village_id,
     wa_user_id, 
     message, 
     message_id, 
@@ -78,6 +79,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
   }
   
   logger.info('🎯 Processing WhatsApp message', {
+    village_id,
     wa_user_id,
     message_id,
     messageLength: message.length,
@@ -89,13 +91,14 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
   
   // Mark messages as read in WhatsApp
   const messageIdsToRead = is_batched && batched_message_ids ? batched_message_ids : [message_id];
-  markMessagesAsRead(wa_user_id, messageIdsToRead).catch((err) => {
+  markMessagesAsRead(wa_user_id, messageIdsToRead, village_id).catch((err) => {
     logger.warn('Failed to mark messages as read', { error: err.message });
   });
   
   // Notify that we're processing
   if (is_batched && batched_message_ids) {
     await publishMessageStatus({
+      village_id,
       wa_user_id,
       message_ids: batched_message_ids,
       status: 'processing',
@@ -108,17 +111,17 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     if (!aiEnabled) {
       logger.info('⏸️ AI chatbot is disabled', { wa_user_id, message_id });
       if (is_batched && batched_message_ids) {
-        await publishMessageStatus({ wa_user_id, message_ids: batched_message_ids, status: 'completed' });
+        await publishMessageStatus({ village_id, wa_user_id, message_ids: batched_message_ids, status: 'completed' });
       }
       return;
     }
     
     // Check if user is in takeover mode
-    const takeover = await isUserInTakeover(wa_user_id);
+    const takeover = await isUserInTakeover(wa_user_id, village_id);
     if (takeover) {
       logger.info('👤 User is in takeover mode', { wa_user_id, message_id });
       if (is_batched && batched_message_ids) {
-        await publishMessageStatus({ wa_user_id, message_ids: batched_message_ids, status: 'completed' });
+        await publishMessageStatus({ village_id, wa_user_id, message_ids: batched_message_ids, status: 'completed' });
       }
       return;
     }
@@ -127,13 +130,13 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     if (isSpamMessage(message)) {
       logger.warn('🚫 Spam message detected', { wa_user_id, message_id });
       if (is_batched && batched_message_ids) {
-        await publishMessageStatus({ wa_user_id, message_ids: batched_message_ids, status: 'completed' });
+        await publishMessageStatus({ village_id, wa_user_id, message_ids: batched_message_ids, status: 'completed' });
       }
       return;
     }
     
     // Start typing indicator
-    await startTyping(wa_user_id);
+    await startTyping(wa_user_id, village_id);
     
     // ============================================
     // DELEGATE TO UNIFIED MESSAGE PROCESSOR
@@ -144,20 +147,22 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       channel: 'whatsapp',
       mediaUrl: media_public_url || media_url,
       mediaType: media_type,
+      villageId: village_id,
     });
     
     // Stop typing indicator
-    await stopTyping(wa_user_id);
+    await stopTyping(wa_user_id, village_id);
     
     if (!result.success && result.error === 'Spam message detected') {
       if (is_batched && batched_message_ids) {
-        await publishMessageStatus({ wa_user_id, message_ids: batched_message_ids, status: 'completed' });
+        await publishMessageStatus({ village_id, wa_user_id, message_ids: batched_message_ids, status: 'completed' });
       }
       return;
     }
     
     // Publish AI reply
     await publishAIReply({
+      village_id,
       wa_user_id,
       reply_text: result.response,
       guidance_text: result.guidanceText,
@@ -168,6 +173,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     // Mark messages as completed
     if (is_batched && batched_message_ids) {
       await publishMessageStatus({
+        village_id,
         wa_user_id,
         message_ids: batched_message_ids,
         status: 'completed',
@@ -183,7 +189,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     
   } catch (error: any) {
     // Stop typing indicator on error
-    await stopTyping(wa_user_id);
+    await stopTyping(wa_user_id, village_id);
     
     logger.error('❌ Failed to process WhatsApp message', {
       wa_user_id,

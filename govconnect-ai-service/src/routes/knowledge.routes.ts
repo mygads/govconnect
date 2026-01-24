@@ -43,7 +43,7 @@ router.use(verifyInternalKey);
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { id, title, content, category, keywords, qualityScore } = req.body;
+    const { id, title, content, category, keywords, qualityScore, village_id, villageId } = req.body;
 
     if (!id || !title || !content || !category) {
       return res.status(400).json({ 
@@ -62,6 +62,7 @@ router.post('/', async (req: Request, res: Response) => {
     // Store in vector DB
     await upsertKnowledgeVector({
       id,
+      villageId: village_id || villageId || null,
       title,
       content,
       category,
@@ -92,7 +93,7 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { title, content, category, keywords, qualityScore } = req.body;
+    const { title, content, category, keywords, qualityScore, village_id, villageId } = req.body;
 
     if (!title || !content || !category) {
       return res.status(400).json({ 
@@ -111,6 +112,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     // Upsert will replace the old vector
     await upsertKnowledgeVector({
       id,
+      villageId: village_id || villageId || null,
       title,
       content,
       category,
@@ -283,6 +285,7 @@ router.post('/embed-all', async (_req: Request, res: Response) => {
           try {
             await upsertKnowledgeVector({
               id: batch[j].id,
+              villageId: batch[j].village_id || null,
               title: batch[j].title || '',
               content: batch[j].content,
               category: batch[j].category || 'informasi_umum',

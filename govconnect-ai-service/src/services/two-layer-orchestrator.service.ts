@@ -50,7 +50,7 @@ import { extractCitizenDataFromHistory } from './entity-extractor.service';
  */
 export async function processTwoLayerMessage(event: MessageReceivedEvent): Promise<void> {
   const startTime = Date.now(); // Track processing start time for analytics
-  const { wa_user_id, message, message_id, has_media, media_url, media_public_url, media_type, is_batched, batched_message_ids } = event;
+  const { village_id, wa_user_id, message, message_id, has_media, media_url, media_public_url, media_type, is_batched, batched_message_ids } = event;
   
   // Validate required fields
   if (!wa_user_id || !message || !message_id) {
@@ -63,6 +63,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
   }
   
   logger.info('🎯 Processing 2-Layer message', {
+    village_id,
     wa_user_id,
     message_id,
     messageLength: message.length,
@@ -77,12 +78,13 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     ? batched_message_ids 
     : [message_id];
   
-  markMessagesAsRead(wa_user_id, messageIdsToRead).catch((err) => {
+  markMessagesAsRead(wa_user_id, messageIdsToRead, village_id).catch((err) => {
     logger.warn('Failed to mark messages as read', { error: err.message });
   });
   
   // Notify processing status (for both single and batched messages)
   await publishMessageStatus({
+    village_id,
     wa_user_id,
     message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
     status: 'processing',
@@ -94,6 +96,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     if (!aiEnabled) {
       logger.info('⏸️ AI chatbot is disabled, skipping message processing', { wa_user_id, message_id });
       await publishMessageStatus({
+        village_id,
         wa_user_id,
         message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
         status: 'completed',
@@ -101,10 +104,11 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
       return;
     }
     
-    const takeover = await isUserInTakeover(wa_user_id);
+    const takeover = await isUserInTakeover(wa_user_id, village_id);
     if (takeover) {
       logger.info('👤 User is in takeover mode, admin will handle this message', { wa_user_id, message_id });
       await publishMessageStatus({
+        village_id,
         wa_user_id,
         message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
         status: 'completed',
@@ -120,6 +124,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
         messagePreview: message.substring(0, 50),
       });
       await publishMessageStatus({
+        village_id,
         wa_user_id,
         message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
         status: 'completed',
@@ -151,11 +156,11 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     }
     
     // Step 1: Start typing indicator
-    await startTyping(wa_user_id);
+    await startTyping(wa_user_id, village_id);
     
     // Step 2: PRE-EXTRACTION - Extract entities before Layer 1
     logger.info('🔍 Pre-extracting entities', { wa_user_id });
-    const conversationHistory = await getConversationHistory(wa_user_id);
+    const conversationHistory = await getConversationHistory(wa_user_id, village_id);
     const { extractAllEntities } = await import('./entity-extractor.service');
     const preExtractedEntities = extractAllEntities(sanitizedMessage, conversationHistory);
     
@@ -200,7 +205,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     // Knowledge prefetch (so Layer 2 can answer hours/info safely)
     let knowledgeContext = '';
     try {
-      const villageId = process.env.DEFAULT_VILLAGE_ID;
+      const villageId = village_id || process.env.DEFAULT_VILLAGE_ID;
       const isGreeting = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i.test(sanitizedMessage.trim());
       const looksLikeQuestion = shouldRetrieveContext(sanitizedMessage);
 
@@ -223,23 +228,24 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
       layer1_output: enhancedLayer1Output,
       wa_user_id,
       conversation_context: [
-        await getConversationContext(wa_user_id),
+        await getConversationContext(wa_user_id, village_id),
         knowledgeContext,
       ].filter(Boolean).join('\n\n'),
       user_name: enhancedLayer1Output.extracted_data.nama_lengkap,
     };
     
-    let layer2Output = await callLayer2LLM(layer2Input);
-    
-    if (!layer2Output) {
+    const initialLayer2Output = await callLayer2LLM(layer2Input);
+    if (!initialLayer2Output) {
       logger.warn('⚠️ Layer 2 failed, using fallback', { wa_user_id });
-      layer2Output = generateFallbackResponse(enhancedLayer1Output);
     }
+
+    // Always ensure Layer 2 output is non-null for the rest of the flow
+    let ensuredLayer2Output: Layer2Output = initialLayer2Output ?? generateFallbackResponse(enhancedLayer1Output);
 
     // Anti-hallucination gate: if no knowledge and response mentions hours/cost, retry once
     const gate = needsAntiHallucinationRetry({
-      replyText: layer2Output.reply_text,
-      guidanceText: layer2Output.guidance_text,
+      replyText: ensuredLayer2Output.reply_text,
+      guidanceText: ensuredLayer2Output.guidance_text,
       hasKnowledge: !!knowledgeContext,
     });
     if (gate.shouldRetry) {
@@ -255,30 +261,30 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
       };
       const retry = await callLayer2LLM(retryInput);
       if (retry?.reply_text) {
-        layer2Output = retry;
+        ensuredLayer2Output = retry;
       }
     }
     
     logger.info('✅ Layer 2 completed', {
       wa_user_id,
-      replyLength: layer2Output.reply_text.length,
-      hasGuidance: !!layer2Output.guidance_text,
-      nextAction: layer2Output.next_action,
-      confidence: layer2Output.confidence,
+      replyLength: ensuredLayer2Output.reply_text.length,
+      hasGuidance: !!ensuredLayer2Output.guidance_text,
+      nextAction: ensuredLayer2Output.next_action,
+      confidence: ensuredLayer2Output.confidence,
     });
     
     // Step 6: Stop typing indicator
-    await stopTyping(wa_user_id);
+    await stopTyping(wa_user_id, village_id);
     
     // Step 7: Handle actions based on intent
-    let finalReplyText = layer2Output.reply_text;
-    let guidanceText = layer2Output.guidance_text || '';
+    let finalReplyText = ensuredLayer2Output.reply_text;
+    let guidanceText = ensuredLayer2Output.guidance_text || '';
     
-    if (layer2Output.next_action && enhancedLayer1Output.confidence >= 0.7) {
+    if (ensuredLayer2Output.next_action && enhancedLayer1Output.confidence >= 0.7) {
       finalReplyText = await handleAction(
-        layer2Output.next_action,
+        ensuredLayer2Output.next_action,
         enhancedLayer1Output,
-        layer2Output,
+        ensuredLayer2Output,
         wa_user_id,
         sanitizedMessage,
         media_public_url || media_url
@@ -304,6 +310,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     
     // Step 10: Publish AI reply
     await publishAIReply({
+      village_id,
       wa_user_id,
       reply_text: finalReplyText,
       guidance_text: guidanceText || undefined,
@@ -313,6 +320,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     
     // Mark as completed (for both single and batched messages)
     await publishMessageStatus({
+      village_id,
       wa_user_id,
       message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
       status: 'completed',
@@ -323,13 +331,13 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
       message_id,
       intent: enhancedLayer1Output.intent,
       layer1Confidence: enhancedLayer1Output.confidence,
-      layer2Confidence: layer2Output.confidence,
+      layer2Confidence: ensuredLayer2Output.confidence,
       hasGuidance: !!guidanceText,
       isBatched: is_batched,
     });
     
   } catch (error: any) {
-    await stopTyping(wa_user_id);
+    await stopTyping(wa_user_id, village_id);
     
     logger.error('❌ Failed to process 2-layer message', {
       wa_user_id,
@@ -344,6 +352,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     
     // Mark as failed (for both single and batched messages)
     await publishMessageStatus({
+      village_id,
       wa_user_id,
       message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
       status: 'failed',
@@ -506,14 +515,14 @@ async function handleAction(
 /**
  * Get conversation history for Layer 1 context
  */
-async function getConversationHistory(wa_user_id: string): Promise<string> {
+async function getConversationHistory(wa_user_id: string, village_id?: string): Promise<string> {
   try {
     const axios = (await import('axios')).default;
     const { config } = await import('../config/env');
     
     const url = `${config.channelServiceUrl}/internal/messages`;
     const response = await axios.get(url, {
-      params: { wa_user_id, limit: 5 },
+      params: { wa_user_id, limit: 5, ...(village_id ? { village_id } : {}) },
       headers: { 'x-internal-api-key': config.internalApiKey },
       timeout: 3000,
     });
@@ -531,14 +540,14 @@ async function getConversationHistory(wa_user_id: string): Promise<string> {
 /**
  * Get conversation context for Layer 2
  */
-async function getConversationContext(wa_user_id: string): Promise<string> {
+async function getConversationContext(wa_user_id: string, village_id?: string): Promise<string> {
   try {
     const axios = (await import('axios')).default;
     const { config } = await import('../config/env');
     
     const url = `${config.channelServiceUrl}/internal/messages`;
     const response = await axios.get(url, {
-      params: { wa_user_id, limit: 3 },
+      params: { wa_user_id, limit: 3, ...(village_id ? { village_id } : {}) },
       headers: { 'x-internal-api-key': config.internalApiKey },
       timeout: 3000,
     });

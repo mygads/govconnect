@@ -373,9 +373,15 @@ DATABASE_URL="postgresql://user:pass@localhost:5432/gc_channel_db"
 # RabbitMQ
 RABBITMQ_URL="amqp://user:pass@localhost:5672"
 
-# WA Provider (Cloud API / Wuzapi)
-WA_API_URL="https://api.whatsapp.com/v1"
-WA_API_TOKEN="xxx"
+# WA Provider (genfity-wa / whatsapp-api)
+# WA_API_URL harus mengarah ke prefix `/wa`
+WA_API_URL="https://wa-api.genfity.com/wa"
+
+# Token fallback (opsional). Umumnya token sesi disimpan otomatis di DB internal.
+WA_ACCESS_TOKEN=""
+
+# Dry run (opsional) untuk testing tanpa outbound call
+WA_DRY_RUN=false
 
 # Internal API Keys (untuk inter-service auth)
 INTERNAL_API_KEY="govconnect-internal-2025-secret"

@@ -1,4 +1,5 @@
 export interface MessageData {
+  village_id?: string;
   wa_user_id: string;
   message_id: string;
   message_text: string;
@@ -16,11 +17,13 @@ export interface OutgoingMessageData extends MessageData {
 }
 
 export interface MessageHistoryQuery {
+  village_id?: string;
   wa_user_id: string;
   limit?: number;
 }
 
 export interface SendMessageRequest {
+  village_id?: string;
   wa_user_id: string;
   message: string;
 }
@@ -43,6 +46,7 @@ export interface MessageHistoryResponse {
 }
 
 export interface RabbitMQMessagePayload {
+  village_id?: string;
   wa_user_id: string;
   message: string;
   message_id: string;

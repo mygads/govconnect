@@ -14,6 +14,12 @@ import { getMessageHistory, saveOutgoingMessage } from '../services/message.serv
 import { sendTextMessage } from '../services/wa.service';
 import logger from '../utils/logger';
 
+function resolveVillageId(req: Request): string | undefined {
+  const queryVillageId = typeof req.query.village_id === 'string' ? req.query.village_id : undefined;
+  const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
+  return queryVillageId || headerVillageId;
+}
+
 /**
  * Start takeover for a user
  * POST /internal/takeover/:wa_user_id
@@ -22,13 +28,14 @@ export async function handleStartTakeover(req: Request, res: Response): Promise<
   try {
     const { wa_user_id } = req.params;
     const { admin_id, admin_name, reason } = req.body;
+    const villageId = resolveVillageId(req);
 
     if (!wa_user_id || !admin_id) {
       res.status(400).json({ error: 'wa_user_id and admin_id are required' });
       return;
     }
 
-    const session = await startTakeover(wa_user_id, admin_id, admin_name, reason);
+    const session = await startTakeover(wa_user_id, admin_id, admin_name, reason, villageId);
     
     res.json({
       success: true,
@@ -48,13 +55,14 @@ export async function handleStartTakeover(req: Request, res: Response): Promise<
 export async function handleEndTakeover(req: Request, res: Response): Promise<void> {
   try {
     const { wa_user_id } = req.params;
+    const villageId = resolveVillageId(req);
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
       return;
     }
 
-    const ended = await endTakeover(wa_user_id);
+    const ended = await endTakeover(wa_user_id, villageId);
     
     res.json({
       success: true,
@@ -93,8 +101,9 @@ export async function handleGetActiveTakeovers(_req: Request, res: Response): Pr
 export async function handleCheckTakeover(req: Request, res: Response): Promise<void> {
   try {
     const { wa_user_id } = req.params;
+    const villageId = resolveVillageId(req);
     
-    const session = await getActiveTakeover(wa_user_id);
+    const session = await getActiveTakeover(wa_user_id, villageId);
     
     res.json({
       success: true,

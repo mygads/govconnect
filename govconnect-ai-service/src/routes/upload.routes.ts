@@ -151,7 +151,12 @@ async function parseFileContent(filePath: string, mimeType: string): Promise<str
  */
 router.post('/document', verifyInternalKey, upload.single('file'), async (req: Request, res: Response) => {
   const file = req.file;
-  const { documentId, title, category } = req.body;
+  const { documentId, title, category, village_id, villageId } = req.body;
+  const resolvedVillageId: string | null = (typeof village_id === 'string' && village_id.length > 0)
+    ? village_id
+    : (typeof villageId === 'string' && villageId.length > 0)
+      ? villageId
+      : null;
   
   if (!file) {
     return res.status(400).json({ error: 'No file provided' });
@@ -197,6 +202,7 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
     // Store chunks with embeddings to vector DB
     await addDocumentChunks(embeddedChunks.map((chunk, idx) => ({
       documentId,
+      villageId: resolvedVillageId,
       chunkIndex: idx,
       content: chunk.content,
       embedding: chunk.embedding,

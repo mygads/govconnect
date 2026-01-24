@@ -4,14 +4,46 @@ import prisma from '@/lib/prisma'
 // Internal API for AI service to query knowledge base
 // Uses internal API key for authentication
 
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'govconnect-internal-2025-secret'
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+function getInternalApiKey(): string | null {
+  // Use bracket access so Next standalone build doesn't inline at build-time.
+  return process.env['INTERNAL_API_KEY'] || null
+}
+
+function normalizeInternalApiKey(value: string | null): string | null {
+  if (!value) return null
+  let key = value.trim()
+  if (key.toLowerCase().startsWith('bearer ')) {
+    key = key.slice('bearer '.length).trim()
+  }
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim()
+  }
+  return key.length > 0 ? key : null
+}
+
+function getProvidedInternalApiKey(request: NextRequest): string | null {
+  return (
+    normalizeInternalApiKey(request.headers.get('x-internal-api-key')) ||
+    normalizeInternalApiKey(request.headers.get('authorization'))
+  )
+}
 
 export async function GET(request: NextRequest) {
   try {
     // Verify internal API key
-    const apiKey = request.headers.get('x-internal-api-key')
-    if (!apiKey || apiKey !== INTERNAL_API_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+    const expectedApiKey = normalizeInternalApiKey(getInternalApiKey())
+    if (!expectedApiKey) {
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
+    }
+    const apiKey = getProvidedInternalApiKey(request)
+    if (!apiKey || apiKey !== expectedApiKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     // Get query parameters
@@ -69,6 +101,7 @@ export async function GET(request: NextRequest) {
       take: limit,
       select: {
         id: true,
+        village_id: true,
         title: true,
         content: true,
         category: true,
@@ -77,8 +110,9 @@ export async function GET(request: NextRequest) {
     })
 
     // Format for AI consumption
-    const formattedKnowledge = knowledge.map((k: { id: string; title: string; content: string; category: string; keywords: string[] }) => ({
+    const formattedKnowledge = knowledge.map((k: { id: string; village_id: string | null; title: string; content: string; category: string; keywords: string[] }) => ({
       id: k.id,
+      village_id: k.village_id,
       title: k.title,
       content: k.content,
       category: k.category,
@@ -101,9 +135,13 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Verify internal API key
-    const apiKey = request.headers.get('x-internal-api-key')
-    if (!apiKey || apiKey !== INTERNAL_API_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+    const expectedApiKey = normalizeInternalApiKey(getInternalApiKey())
+    if (!expectedApiKey) {
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
+    }
+    const apiKey = getProvidedInternalApiKey(request)
+    if (!apiKey || apiKey !== expectedApiKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const body = await request.json()

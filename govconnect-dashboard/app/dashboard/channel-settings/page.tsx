@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { Wifi, Save, RefreshCw, Trash2, QrCode } from "lucide-react"
 
@@ -24,6 +25,22 @@ interface SessionStatus {
   wa_number?: string
 }
 
+interface AuthMeResponse {
+  user: {
+    id: string
+    username: string
+    name: string
+    role: string
+    village_id: string | null
+  }
+}
+
+interface VillageItem {
+  id: string
+  name: string
+  slug?: string
+}
+
 export default function ChannelSettingsPage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -31,7 +48,11 @@ export default function ChannelSettingsPage() {
   const [sessionLoading, setSessionLoading] = useState(false)
   const [qrCode, setQrCode] = useState<string | null>(null)
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null)
+  const [sessionExists, setSessionExists] = useState<boolean | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [auth, setAuth] = useState<AuthMeResponse["user"] | null>(null)
+  const [villages, setVillages] = useState<VillageItem[]>([])
+  const [selectedVillageId, setSelectedVillageId] = useState<string | null>(null)
   const [settings, setSettings] = useState<ChannelSettings>({
     wa_number: "",
     webhook_url: "",
@@ -40,11 +61,56 @@ export default function ChannelSettingsPage() {
   })
 
   useEffect(() => {
+    const bootstrap = async () => {
+      try {
+        const token = localStorage.getItem("token")
+        if (!token) return
+
+        const meRes = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!meRes.ok) return
+        const meJson = (await meRes.json()) as AuthMeResponse
+        setAuth(meJson.user)
+
+        if (meJson.user.village_id) {
+          setSelectedVillageId(meJson.user.village_id)
+          return
+        }
+
+        if (meJson.user.role === "superadmin") {
+          const vRes = await fetch("/api/superadmin/villages", {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          if (!vRes.ok) return
+          const vJson = await vRes.json()
+          const list = (vJson.data || []) as VillageItem[]
+          setVillages(list)
+          if (list.length > 0) {
+            setSelectedVillageId(list[0].id)
+          }
+        }
+      } catch (e) {
+        console.error("Failed to bootstrap channel settings:", e)
+      }
+    }
+    bootstrap()
+  }, [])
+
+  const withVillage = (path: string) => {
+    if (!selectedVillageId) return path
+    const joiner = path.includes("?") ? "&" : "?"
+    return `${path}${joiner}village_id=${encodeURIComponent(selectedVillageId)}`
+  }
+
+  useEffect(() => {
     const fetchSettings = async () => {
+      if (!selectedVillageId) return
       try {
         setLoading(true)
-        const response = await fetch("/api/channel-settings", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        const token = localStorage.getItem("token")
+        const response = await fetch(withVillage("/api/channel-settings"), {
+          headers: { Authorization: `Bearer ${token}` },
         })
         if (response.ok) {
           const data = await response.json()
@@ -61,21 +127,55 @@ export default function ChannelSettingsPage() {
         setLoading(false)
       }
     }
+
     fetchSettings()
     fetchSessionStatus()
-  }, [])
+  }, [selectedVillageId])
 
   const fetchSessionStatus = async () => {
     try {
-      setSessionLoading(true)
-      const response = await fetch("/api/whatsapp/status", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!response.ok) {
+      if (!selectedVillageId) {
         setSessionStatus(null)
+        setSessionExists(null)
+        setQrCode(null)
         return
       }
-      const data = await response.json()
+      setSessionLoading(true)
+      const response = await fetch(withVillage("/api/whatsapp/status"), {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
+
+      // Jika backend masih mengembalikan 404 untuk "session belum dibuat",
+      // map ke state yang benar supaya UI tidak spam polling.
+      if (response.status === 404 || data?.error === 'Session belum dibuat') {
+        setSessionExists(false)
+        setSessionStatus(null)
+        setQrCode(null)
+        return
+      }
+
+      if (!response.ok) {
+        setSessionStatus(null)
+        setSessionExists(null)
+        setQrCode(null)
+        return
+      }
+
+      // Dashboard API memetakan "belum ada session" => exists=false (status 200)
+      if (data?.data?.exists === false) {
+        setSessionExists(false)
+        setSessionStatus(null)
+        setQrCode(null)
+        return
+      }
+
+      setSessionExists(true)
       setSessionStatus({
         connected: Boolean(data.data?.connected),
         loggedIn: Boolean(data.data?.loggedIn),
@@ -87,6 +187,8 @@ export default function ChannelSettingsPage() {
       }
     } catch (error) {
       setSessionStatus(null)
+      setSessionExists(null)
+      setQrCode(null)
     } finally {
       setSessionLoading(false)
     }
@@ -97,6 +199,9 @@ export default function ChannelSettingsPage() {
       clearInterval(pollingRef.current)
     }
 
+    // Jangan polling kalau session belum dibuat / belum diketahui
+    if (!selectedVillageId || sessionExists !== true) return
+
     pollingRef.current = setInterval(() => {
       fetchSessionStatus()
     }, 8000)
@@ -106,25 +211,32 @@ export default function ChannelSettingsPage() {
         clearInterval(pollingRef.current)
       }
     }
-  }, [])
+  }, [selectedVillageId, sessionExists])
 
   const handleCreateSession = async () => {
     try {
       setSessionLoading(true)
-      const response = await fetch("/api/whatsapp/session", {
+      const response = await fetch(withVillage("/api/whatsapp/session"), {
         method: "POST",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
 
-      const data = await response.json()
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
       if (!response.ok) {
-        throw new Error(data.error || "Gagal membuat session")
+        throw new Error(data?.error || data?.message || "Gagal membuat session")
       }
 
       toast({
         title: "Session Siap",
         description: data.data?.existing ? "Session sudah ada. Silakan konek QR." : "Session baru dibuat. Silakan konek QR.",
       })
+
+      setSessionExists(true)
     } catch (error: any) {
       toast({
         title: "Gagal",
@@ -133,28 +245,74 @@ export default function ChannelSettingsPage() {
       })
     } finally {
       setSessionLoading(false)
+      fetchSessionStatus()
+    }
+  }
+
+  const handleDisconnectSession = async () => {
+    try {
+      setSessionLoading(true)
+      const response = await fetch(withVillage("/api/whatsapp/disconnect"), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || "Gagal disconnect session")
+      }
+
+      setQrCode(null)
+      toast({
+        title: "Disconnected",
+        description: "WhatsApp berhasil diputuskan.",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Gagal",
+        description: error.message || "Gagal disconnect session",
+        variant: "destructive",
+      })
+    } finally {
+      setSessionLoading(false)
+      fetchSessionStatus()
     }
   }
 
   const handleConnectSession = async () => {
     try {
       setSessionLoading(true)
-      const response = await fetch("/api/whatsapp/connect", {
+      const response = await fetch(withVillage("/api/whatsapp/connect"), {
         method: "POST",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
 
-      const data = await response.json()
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
       if (!response.ok) {
-        throw new Error(data.error || "Gagal menghubungkan session")
+        throw new Error(data?.error || data?.message || "Gagal menghubungkan session")
       }
 
-      const qrResponse = await fetch("/api/whatsapp/qr", {
+      const qrResponse = await fetch(withVillage("/api/whatsapp/qr"), {
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
-      const qrData = await qrResponse.json()
+      let qrData: any = null
+      try {
+        qrData = await qrResponse.json()
+      } catch {
+        qrData = null
+      }
       if (qrResponse.ok) {
-        const qrValue = qrData.data?.QRCode || ""
+        const qrValue = qrData?.data?.QRCode || ""
         setQrCode(qrValue)
       }
 
@@ -177,14 +335,19 @@ export default function ChannelSettingsPage() {
   const handleDeleteSession = async () => {
     try {
       setSessionLoading(true)
-      const response = await fetch("/api/whatsapp/session", {
+      const response = await fetch(withVillage("/api/whatsapp/session"), {
         method: "DELETE",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
 
-      const data = await response.json()
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
       if (!response.ok) {
-        throw new Error(data.error || "Gagal menghapus session")
+        throw new Error(data?.error || data?.message || "Gagal menghapus session")
       }
 
       setSessionStatus(null)
@@ -209,7 +372,7 @@ export default function ChannelSettingsPage() {
     setSaving(true)
 
     try {
-      const response = await fetch("/api/channel-settings", {
+      const response = await fetch(withVillage("/api/channel-settings"), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -222,8 +385,13 @@ export default function ChannelSettingsPage() {
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menyimpan pengaturan channel")
+        let error: any = null
+        try {
+          error = await response.json()
+        } catch {
+          error = null
+        }
+        throw new Error(error?.error || error?.message || "Gagal menyimpan pengaturan channel")
       }
 
       toast({
@@ -256,6 +424,30 @@ export default function ChannelSettingsPage() {
         <h1 className="text-3xl font-bold text-foreground">Koneksi WhatsApp</h1>
         <p className="text-muted-foreground mt-2">Buat session WhatsApp, scan QR, dan kelola status koneksi.</p>
       </div>
+
+      {auth?.role === "superadmin" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Pilih Desa</CardTitle>
+            <CardDescription>Superadmin perlu memilih desa untuk mengelola koneksi WhatsApp & webhook.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Label>Desa</Label>
+            <Select value={selectedVillageId || ""} onValueChange={(v) => setSelectedVillageId(v)}>
+              <SelectTrigger className="w-full max-w-md">
+                <SelectValue placeholder="Pilih desa" />
+              </SelectTrigger>
+              <SelectContent>
+                {villages.map((v) => (
+                  <SelectItem key={v.id} value={v.id}>
+                    {v.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+      )}
 
       <form onSubmit={handleSave} className="space-y-6">
         <Card>
@@ -295,20 +487,40 @@ export default function ChannelSettingsPage() {
                 </Button>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={handleCreateSession} disabled={sessionLoading}>
-                  <Wifi className="h-4 w-4 mr-2" />
-                  Buat Session
-                </Button>
-                <Button type="button" variant="secondary" onClick={handleConnectSession} disabled={sessionLoading}>
-                  <QrCode className="h-4 w-4 mr-2" />
-                  Konek & Ambil QR
-                </Button>
-                <Button type="button" variant="destructive" onClick={handleDeleteSession} disabled={sessionLoading}>
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Hapus Session
-                </Button>
+                {(sessionExists === null || sessionExists === false) && (
+                  <Button type="button" onClick={handleCreateSession} disabled={sessionLoading}>
+                    <Wifi className="h-4 w-4 mr-2" />
+                    Buat Session
+                  </Button>
+                )}
+
+                {sessionExists === true && !sessionStatus?.connected && (
+                  <>
+                    <Button type="button" variant="secondary" onClick={handleConnectSession} disabled={sessionLoading}>
+                      <QrCode className="h-4 w-4 mr-2" />
+                      Konek & Ambil QR
+                    </Button>
+                    <Button type="button" variant="destructive" onClick={handleDeleteSession} disabled={sessionLoading}>
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Hapus Session
+                    </Button>
+                  </>
+                )}
+
+                {sessionExists === true && sessionStatus?.connected && (
+                  <>
+                    <Button type="button" variant="outline" onClick={handleDisconnectSession} disabled={sessionLoading}>
+                      <Wifi className="h-4 w-4 mr-2" />
+                      Disconnect
+                    </Button>
+                    <Button type="button" variant="destructive" onClick={handleDeleteSession} disabled={sessionLoading}>
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Hapus Session
+                    </Button>
+                  </>
+                )}
               </div>
-              {qrCode && (
+              {qrCode && sessionExists === true && !sessionStatus?.connected && (
                 <div className="rounded-lg border p-4 bg-muted/40 text-center">
                   <p className="text-xs text-muted-foreground mb-3">Scan QR untuk login WhatsApp</p>
                   <img

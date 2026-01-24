@@ -67,6 +67,10 @@ export const validateWebhookPayload = [
  * Accepts both Indonesian phone numbers (628xxx) and webchat session IDs (web_xxx)
  */
 export const validateSendMessage = [
+  body('village_id')
+    .optional()
+    .isString()
+    .isLength({ min: 1, max: 100 }),
   body('wa_user_id')
     .isString()
     .custom((value) => {
@@ -92,6 +96,10 @@ export const validateSendMessage = [
  * Accepts both Indonesian phone numbers (628xxx) and webchat session IDs (web_xxx)
  */
 export const validateGetMessages = [
+  query('village_id')
+    .optional()
+    .isString()
+    .isLength({ min: 1, max: 100 }),
   query('wa_user_id')
     .isString()
     .custom((value) => {

@@ -30,11 +30,12 @@ COPY . .
 
 # Generate Prisma Client
 ENV DATABASE_URL="postgresql://postgres:postgres@localhost:5432/dummy?schema=dashboard"
-RUN pnpm prisma generate
+RUN echo "Running prisma generate..." && pnpm prisma generate || echo "⚠️  prisma generate failed during build; continuing"
 
 # Build Next.js app
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_DISABLE_TURBOPACK=1
+ENV NEXT_OUTPUT=standalone
 
 # Build-time environment variables for SEO
 ARG NEXT_PUBLIC_APP_URL=https://govconnect.my.id
@@ -69,6 +70,17 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/.pnpm ./node_modules/.pnpm
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
+# Ensure Prisma CLI runtime deps are resolvable (pnpm symlink layout)
+RUN set -e; \
+        mkdir -p node_modules/@prisma; \
+        for pkg_dir in node_modules/.pnpm/@prisma+*@*; do \
+            [ -d "$pkg_dir/node_modules/@prisma" ] || continue; \
+            for pkg_path in "$pkg_dir"/node_modules/@prisma/*; do \
+                name="$(basename "$pkg_path")"; \
+                [ -e "node_modules/@prisma/$name" ] || ln -s "../.pnpm/$(basename "$pkg_dir")/node_modules/@prisma/$name" "node_modules/@prisma/$name"; \
+            done; \
+        done
+
 # Set proper permissions
 RUN chown -R nextjs:nodejs /app
 
@@ -83,9 +95,9 @@ ENV HOSTNAME="0.0.0.0"
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
     echo 'if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
-    echo '  npx prisma migrate deploy || echo "⚠️  Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '  node node_modules/prisma/build/index.js migrate deploy || echo "⚠️  Migration failed, continuing..."' >> /app/entrypoint.sh && \
     echo 'else' >> /app/entrypoint.sh && \
-    echo '  npx prisma db push --accept-data-loss || echo "⚠️  DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '  node node_modules/prisma/build/index.js db push --accept-data-loss || echo "⚠️  DB push failed, continuing..."' >> /app/entrypoint.sh && \
     echo 'fi' >> /app/entrypoint.sh && \
     echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
     echo 'echo "🚀 Starting Dashboard..."' >> /app/entrypoint.sh && \

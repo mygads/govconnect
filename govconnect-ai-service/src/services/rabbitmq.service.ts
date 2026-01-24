@@ -553,6 +553,7 @@ function startAIRetryWorker(onMessage: (event: MessageReceivedEvent) => Promise<
           
           // Publish error for dashboard monitoring (admin can manually retry)
           await publishAIError({
+            village_id: item.event.village_id,
             wa_user_id: item.event.wa_user_id,
             error_message: `FAILED after ${AI_MAX_RETRY_ATTEMPTS} retries: ${item.lastError}`,
             pending_message_id: item.event.message_id,
@@ -1252,6 +1253,7 @@ async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
     
     // Store main reply message
     const mainReplyData = {
+      village_id: payload.village_id,
       wa_user_id: payload.wa_user_id,
       message_text: payload.reply_text,
       direction: 'OUT',
@@ -1270,6 +1272,7 @@ async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
       headers: {
         'x-internal-api-key': config.internalApiKey,
         'Content-Type': 'application/json',
+        ...(payload.village_id ? { 'x-village-id': payload.village_id } : {}),
       },
       timeout: 15000,
     });
@@ -1283,6 +1286,7 @@ async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
     // Store guidance text as separate message if present
     if (payload.guidance_text && payload.guidance_text.trim()) {
       const guidanceData = {
+        village_id: payload.village_id,
         wa_user_id: payload.wa_user_id,
         message_text: payload.guidance_text,
         direction: 'OUT',
@@ -1302,6 +1306,7 @@ async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
         headers: {
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
+          ...(payload.village_id ? { 'x-village-id': payload.village_id } : {}),
         },
         timeout: 15000,
       });

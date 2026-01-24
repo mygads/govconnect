@@ -9,7 +9,8 @@ import { config } from '../config/env';
  */
 export async function sendTypingIndicator(
   wa_user_id: string,
-  state: 'composing' | 'paused' | 'stop' = 'composing'
+  state: 'composing' | 'paused' | 'stop' = 'composing',
+  village_id?: string
 ): Promise<boolean> {
   // Skip WhatsApp API calls in testing mode
   if (config.testingMode) {
@@ -26,6 +27,7 @@ export async function sendTypingIndicator(
     await axios.post(
       url,
       {
+        village_id,
         wa_user_id,
         state,
       },
@@ -58,15 +60,15 @@ export async function sendTypingIndicator(
 /**
  * Start typing indicator (composing)
  */
-export async function startTyping(wa_user_id: string): Promise<boolean> {
-  return sendTypingIndicator(wa_user_id, 'composing');
+export async function startTyping(wa_user_id: string, village_id?: string): Promise<boolean> {
+  return sendTypingIndicator(wa_user_id, 'composing', village_id);
 }
 
 /**
  * Stop typing indicator
  */
-export async function stopTyping(wa_user_id: string): Promise<boolean> {
-  return sendTypingIndicator(wa_user_id, 'stop');
+export async function stopTyping(wa_user_id: string, village_id?: string): Promise<boolean> {
+  return sendTypingIndicator(wa_user_id, 'stop', village_id);
 }
 
 /**
@@ -77,7 +79,8 @@ export async function stopTyping(wa_user_id: string): Promise<boolean> {
  */
 export async function markMessagesAsRead(
   wa_user_id: string,
-  message_ids: string[]
+  message_ids: string[],
+  village_id?: string
 ): Promise<boolean> {
   // Skip WhatsApp API calls in testing mode
   if (config.testingMode) {
@@ -94,6 +97,7 @@ export async function markMessagesAsRead(
     await axios.post(
       url,
       {
+        village_id,
         wa_user_id,
         message_ids,
       },
@@ -127,7 +131,7 @@ export async function markMessagesAsRead(
  * @param wa_user_id - User's WhatsApp phone number
  * @returns true if user is in takeover mode, false otherwise
  */
-export async function isUserInTakeover(wa_user_id: string): Promise<boolean> {
+export async function isUserInTakeover(wa_user_id: string, village_id?: string): Promise<boolean> {
   // Skip takeover check in testing mode (assume AI always processes)
   if (config.testingMode) {
     logger.debug('TESTING MODE: Skipping takeover check (AI processes)', {
@@ -143,6 +147,7 @@ export async function isUserInTakeover(wa_user_id: string): Promise<boolean> {
       headers: {
         'x-internal-api-key': config.internalApiKey,
       },
+      params: village_id ? { village_id } : undefined,
       timeout: 5000,
     });
     
