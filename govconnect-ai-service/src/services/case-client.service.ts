@@ -3,6 +3,15 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { resilientHttp } from './circuit-breaker.service';
 
+function normalizeTo628(input: string): string {
+  const digits = (input || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('0')) return `62${digits.slice(1)}`;
+  if (digits.startsWith('62')) return digits;
+  if (digits.startsWith('8')) return `62${digits}`;
+  return digits;
+}
+
 interface ComplaintData {
   wa_user_id: string;
   kategori: string;
@@ -32,8 +41,9 @@ interface ComplaintResponse {
  * Only WhatsApp message sending is skipped (handled in rabbitmq.service.ts).
  */
 export async function createComplaint(data: ComplaintData): Promise<string | null> {
+  const normalizedWaUserId = normalizeTo628(data.wa_user_id);
   logger.info('Creating complaint in Case Service', {
-    wa_user_id: data.wa_user_id,
+    wa_user_id: normalizedWaUserId,
     kategori: data.kategori,
     testingMode: config.testingMode,
   });
@@ -42,7 +52,10 @@ export async function createComplaint(data: ComplaintData): Promise<string | nul
     const url = `${config.caseServiceUrl}/laporan/create`;
     const response = await resilientHttp.post<ComplaintResponse>(
       url,
-      data,
+      {
+        ...data,
+        wa_user_id: normalizedWaUserId || data.wa_user_id,
+      },
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,
@@ -296,9 +309,10 @@ export async function getServiceRequestStatusWithOwnership(
   requestNumber: string,
   wa_user_id: string
 ): Promise<{ success: boolean; error?: string; message?: string; data?: any }> {
+  const normalizedWaUserId = normalizeTo628(wa_user_id) || wa_user_id;
   logger.info('Fetching service request status with ownership check', {
     request_number: requestNumber,
-    wa_user_id,
+    wa_user_id: normalizedWaUserId,
   });
 
   try {
@@ -306,7 +320,7 @@ export async function getServiceRequestStatusWithOwnership(
     const response = await axios.get(
       url,
       {
-        params: { request_number: requestNumber, wa_user_id },
+        params: { request_number: requestNumber, wa_user_id: normalizedWaUserId },
         headers: {
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
@@ -341,9 +355,10 @@ export async function cancelComplaint(
   wa_user_id: string,
   cancel_reason?: string
 ): Promise<CancelResult> {
+  const normalizedWaUserId = normalizeTo628(wa_user_id) || wa_user_id;
   logger.info('Cancelling complaint in Case Service', {
     complaint_id: complaintId,
-    wa_user_id,
+    wa_user_id: normalizedWaUserId,
   });
   
   try {
@@ -351,7 +366,7 @@ export async function cancelComplaint(
     const response = await axios.post<CancelResponse>(
       url,
       {
-        wa_user_id,
+        wa_user_id: normalizedWaUserId,
         cancel_reason,
       },
       {
@@ -400,16 +415,17 @@ export async function cancelServiceRequest(
   wa_user_id: string,
   cancel_reason?: string
 ): Promise<CancelResult> {
+  const normalizedWaUserId = normalizeTo628(wa_user_id) || wa_user_id;
   logger.info('Cancelling service request in Case Service', {
     request_number: requestNumber,
-    wa_user_id,
+    wa_user_id: normalizedWaUserId,
   });
 
   try {
     const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/cancel`;
     const response = await axios.post<CancelResponse>(
       url,
-      { wa_user_id, cancel_reason },
+      { wa_user_id: normalizedWaUserId, cancel_reason },
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,
@@ -457,16 +473,17 @@ export async function requestServiceRequestEditToken(
   requestNumber: string,
   wa_user_id: string
 ): Promise<EditTokenResult> {
+  const normalizedWaUserId = normalizeTo628(wa_user_id) || wa_user_id;
   logger.info('Requesting service request edit token', {
     request_number: requestNumber,
-    wa_user_id,
+    wa_user_id: normalizedWaUserId,
   });
 
   try {
     const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/edit-token`;
     const response = await axios.post(
       url,
-      { wa_user_id },
+      { wa_user_id: normalizedWaUserId },
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,

@@ -7,6 +7,12 @@ import { generateServiceRequestId } from '../utils/id-generator';
 import { publishEvent } from '../services/rabbitmq.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import { getQueryString } from '../utils/http';
+import {
+  isValidCitizenWaNumber,
+  normalizeCitizenWaForStorage,
+  normalizeTo628,
+  sameCitizenWa,
+} from '../utils/wa-normalizer';
 
 // ===== Service Categories =====
 export async function handleGetServiceCategories(req: Request, res: Response) {
@@ -215,7 +221,8 @@ export async function handleDeleteRequirement(req: Request, res: Response) {
 // ===== Service Requests =====
 export async function handleGetServiceRequests(req: Request, res: Response) {
   try {
-    const wa_user_id = getQueryString(req.query.wa_user_id);
+    const wa_user_id_raw = getQueryString(req.query.wa_user_id);
+    const wa_user_id = wa_user_id_raw ? normalizeTo628(wa_user_id_raw) : null;
     const service_id = getQueryString(req.query.service_id);
     const status = getQueryString(req.query.status);
     const request_number = getQueryString(req.query.request_number);
@@ -245,20 +252,25 @@ export async function handleCreateServiceRequest(req: Request, res: Response) {
       return res.status(400).json({ error: 'service_id and wa_user_id are required' });
     }
 
+    const normalizedWaUserId = normalizeCitizenWaForStorage(String(wa_user_id));
+    if (!isValidCitizenWaNumber(normalizedWaUserId)) {
+      return res.status(400).json({ error: 'wa_user_id tidak valid. Gunakan format 628xxxxxxxxxx' });
+    }
+
     const requestNumber = await generateServiceRequestId();
 
     const created = await prisma.serviceRequest.create({
       data: {
         request_number: requestNumber,
         service_id,
-        wa_user_id,
+        wa_user_id: normalizedWaUserId,
         citizen_data_json: citizen_data_json || {},
         requirement_data_json: requirement_data_json || {},
       }
     });
 
     publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.SERVICE_REQUESTED, {
-      wa_user_id,
+      wa_user_id: normalizedWaUserId,
       request_number: created.request_number,
       service_id,
     }).catch((error) => {
@@ -290,12 +302,15 @@ export async function handleGetServiceRequestById(req: Request, res: Response) {
 export async function handleUpdateServiceRequestStatus(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { status, admin_notes } = req.body;
+    const { status, admin_notes, result_file_url, result_file_name, result_description } = req.body;
     const data = await prisma.serviceRequest.update({
       where: { id },
       data: {
         status: status ?? undefined,
         admin_notes: admin_notes ?? undefined,
+        result_file_url: result_file_url ?? undefined,
+        result_file_name: result_file_name ?? undefined,
+        result_description: result_description ?? undefined,
       }
     });
     return res.json({ data });
@@ -325,7 +340,7 @@ export async function handleGenerateServiceRequestEditToken(req: Request, res: R
       return res.status(404).json({ error: 'NOT_FOUND', message: 'Permohonan layanan tidak ditemukan' });
     }
 
-    if (request.wa_user_id !== wa_user_id) {
+    if (!sameCitizenWa(request.wa_user_id, wa_user_id)) {
       return res.status(403).json({ error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk mengubah layanan ini' });
     }
 
@@ -465,7 +480,7 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
       return res.status(404).json({ error: 'Request not found' });
     }
 
-    if (existing.wa_user_id !== wa_user_id) {
+    if (!sameCitizenWa(existing.wa_user_id, wa_user_id)) {
       return res.status(403).json({ error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk membatalkan layanan ini' });
     }
 
@@ -501,7 +516,7 @@ export async function handleDeleteServiceRequest(req: Request, res: Response) {
 
 export async function handleGetServiceHistory(req: Request, res: Response) {
   try {
-    const { wa_user_id } = req.params;
+    const wa_user_id = normalizeTo628(req.params.wa_user_id);
     const data = await prisma.serviceRequest.findMany({
       where: { wa_user_id },
       include: { service: true },

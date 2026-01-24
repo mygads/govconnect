@@ -79,6 +79,15 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     wa_user_id: "",
   });
 
+  function normalizeTo628(input: string): string {
+    const digits = (input || "").replace(/\D/g, "");
+    if (!digits) return "";
+    if (digits.startsWith("0")) return `62${digits.slice(1)}`;
+    if (digits.startsWith("62")) return digits;
+    if (digits.startsWith("8")) return `62${digits}`;
+    return digits;
+  }
+
   const [requirementsData, setRequirementsData] = useState<Record<string, string>>({});
   const [fileUploading, setFileUploading] = useState<Record<string, boolean>>({});
   const [fileErrors, setFileErrors] = useState<Record<string, string>>({});
@@ -101,11 +110,18 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
         }
         const data = result.data as ServiceRequest;
         setServiceRequest(data);
+
+        const waFromData =
+          data.wa_user_id ||
+          data.citizen_data_json?.wa_user_id ||
+          data.citizen_data_json?.no_hp ||
+          "";
+
         setCitizenData({
           nama_lengkap: data.citizen_data_json?.nama_lengkap || "",
           nik: data.citizen_data_json?.nik || "",
           alamat: data.citizen_data_json?.alamat || "",
-          wa_user_id: data.wa_user_id || data.citizen_data_json?.wa_user_id || data.citizen_data_json?.no_hp || "",
+          wa_user_id: normalizeTo628(waFromData),
         });
         setRequirementsData((data.requirement_data_json || {}) as Record<string, string>);
         setError(null);
@@ -162,7 +178,7 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
 
   function isFormComplete() {
     if (!serviceRequest) return false;
-    if (!citizenData.nama_lengkap || !citizenData.nik || !citizenData.alamat || !citizenData.no_hp || !citizenData.wa_user_id) return false;
+    if (!citizenData.nama_lengkap || !citizenData.nik || !citizenData.alamat || !citizenData.wa_user_id) return false;
     if (!isValidWaNumber(citizenData.wa_user_id)) return false;
     if (citizenData.nik.length !== 16) return false;
 
@@ -250,6 +266,11 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     setSubmitting(true);
 
     try {
+      // Derive no_hp from wa_user_id (628xxx -> 08xxx)
+      const derivedNoHp = citizenData.wa_user_id.startsWith("628")
+        ? `0${citizenData.wa_user_id.slice(2)}`
+        : citizenData.wa_user_id;
+
       const response = await fetch(`/api/public/service-requests/${serviceRequest.request_number}/by-token`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -259,7 +280,7 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
             nama_lengkap: citizenData.nama_lengkap,
             nik: citizenData.nik,
             alamat: citizenData.alamat,
-            no_hp: citizenData.no_hp,
+            no_hp: derivedNoHp,
           },
           requirement_data: requirementsData,
         }),

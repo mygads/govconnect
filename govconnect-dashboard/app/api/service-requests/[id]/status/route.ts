@@ -24,7 +24,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
     const { id } = await context.params
     const body = await request.json()
-    const { status, admin_notes } = body
+    const { status, admin_notes, result_file_url, result_file_name, result_description } = body
 
     if (!status) {
       return NextResponse.json({ error: 'status is required' }, { status: 400 })
@@ -33,7 +33,13 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/service-requests/${id}/status`), {
       method: 'PATCH',
       headers: getHeaders(),
-      body: JSON.stringify({ status, admin_notes }),
+      body: JSON.stringify({ 
+        status, 
+        admin_notes,
+        result_file_url,
+        result_file_name,
+        result_description,
+      }),
     })
 
     if (!response.ok) {

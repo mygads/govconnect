@@ -162,6 +162,12 @@ model ServiceRequest {
   requirement_data_json Json
   status                String   @default("baru") // baru|proses|selesai|ditolak|dibatalkan
   admin_notes           String?  @db.Text
+  
+  // Hasil dari admin (file dan deskripsi)
+  result_file_url       String?  // URL file hasil (surat, dokumen, dll)
+  result_file_name      String?  // Nama file asli
+  result_description    String?  @db.Text // Deskripsi hasil dari admin
+  
   edit_token            String?  @unique
   edit_token_expires_at DateTime?
   edit_token_used_at    DateTime?

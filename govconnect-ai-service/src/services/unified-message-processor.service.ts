@@ -535,8 +535,28 @@ export async function handleComplaintCreation(
 }
 
 /**
- * Handle service information request
+ * Handle service information request - Query requirements from database
  */
+function normalizeTo628(input: string): string {
+  const digits = (input || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('0')) return `62${digits.slice(1)}`;
+  if (digits.startsWith('62')) return digits;
+  if (digits.startsWith('8')) return `62${digits}`;
+  return digits;
+}
+
+function isValidCitizenWaNumber(value: string): boolean {
+  return /^628\d{8,12}$/.test(value);
+}
+
+function buildPublicServiceFormUrl(baseUrl: string, villageSlug: string, serviceSlug: string, userId: string): string {
+  const url = `${baseUrl}/form/${villageSlug}/${serviceSlug}`;
+  const waUser = normalizeTo628(userId);
+  if (!isValidCitizenWaNumber(waUser)) return url;
+  return `${url}?user=${encodeURIComponent(waUser)}`;
+}
+
 export async function handleServiceInfo(userId: string, llmResponse: any): Promise<string> {
   const { service_slug, service_id } = llmResponse.fields || {};
   
@@ -544,7 +564,71 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     return llmResponse.reply_text || 'Baik Kak, layanan apa yang ingin ditanyakan?';
   }
   
-  return llmResponse.reply_text || 'Baik Kak, saya cek dulu info layanan tersebut ya.';
+  try {
+    const { config } = await import('../config/env');
+    const axios = (await import('axios')).default;
+    
+    // Query service details from case-service
+    const villageId = process.env.DEFAULT_VILLAGE_ID || '';
+    let serviceUrl = '';
+    
+    if (service_id) {
+      serviceUrl = `${config.caseServiceUrl}/services/${service_id}`;
+    } else if (service_slug) {
+      serviceUrl = `${config.caseServiceUrl}/services/by-slug?village_id=${villageId}&slug=${service_slug}`;
+    }
+    
+    const response = await axios.get(serviceUrl, {
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      timeout: 5000,
+    });
+    
+    const service = response.data?.data;
+    
+    if (!service) {
+      return llmResponse.reply_text || 'Maaf Kak, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.';
+    }
+    
+    // Build requirements list
+    const requirements = service.requirements || [];
+    let requirementsList = '';
+    if (requirements.length > 0) {
+      requirementsList = requirements
+        .sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0))
+        .map((req: any, i: number) => {
+          const required = req.is_required ? ' (wajib)' : ' (opsional)';
+          return `${i + 1}. ${req.label}${required}`;
+        })
+        .join('\n');
+    }
+    
+    // Check if service is available online
+    const isOnline = service.mode === 'online' || service.mode === 'both';
+    const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
+    const villageSlug = process.env.DEFAULT_VILLAGE_SLUG || 'desa';
+    
+    let replyText = `📋 *${service.name}*\n\n`;
+    
+    if (service.description) {
+      replyText += `${service.description}\n\n`;
+    }
+    
+    if (requirementsList) {
+      replyText += `*Persyaratan:*\n${requirementsList}\n\n`;
+    }
+    
+    if (isOnline) {
+      const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug, userId);
+      replyText += `💡 Layanan ini bisa diproses secara *online*.\n\nMau langsung proses pengajuannya Kak? Silakan isi formulir di link berikut:\n${formUrl}`;
+    } else {
+      replyText += `📍 Layanan ini harus diproses secara *offline* di kantor kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas ya Kak.`;
+    }
+    
+    return replyText;
+  } catch (error: any) {
+    logger.error('Failed to fetch service info', { error: error.message, service_slug, service_id });
+    return llmResponse.reply_text || 'Baik Kak, saya cek dulu info layanan tersebut ya.';
+  }
 }
 
 /**
@@ -564,7 +648,7 @@ export async function handleServiceRequestCreation(userId: string, llmResponse: 
   
   const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
   const villageSlug = process.env.DEFAULT_VILLAGE_SLUG || 'desa';
-  const formUrl = `${baseUrl}/form/${villageSlug}/${service_slug}?user=${encodeURIComponent(userId)}`;
+  const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service_slug, userId);
   
   return `Baik Kak, ini link formulir layanan:\n${formUrl}\n\nSilakan isi data di formulir tersebut. Setelah submit, Kakak akan menerima nomor layanan untuk cek status.`;
 }
@@ -1015,6 +1099,7 @@ function buildNaturalStatusResponse(complaint: any): string {
 
 /**
  * Build natural response for service request status
+ * Now includes result file and description from admin
  */
 function buildNaturalServiceStatusResponse(serviceRequest: any): string {
   const statusMap: Record<string, { emoji: string; text: string }> = {
@@ -1033,7 +1118,28 @@ function buildNaturalServiceStatusResponse(serviceRequest: any): string {
   message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
 
   if (serviceRequest.admin_notes) {
-    message += `\n💬 _Catatan petugas: "${serviceRequest.admin_notes}"_`;
+    message += `\n💬 _Catatan petugas: "${serviceRequest.admin_notes}"_\n`;
+  }
+
+  // Add result description if available
+  if (serviceRequest.result_description) {
+    message += `\n📝 *Hasil:* ${serviceRequest.result_description}\n`;
+  }
+
+  // Add result file link if available
+  if (serviceRequest.result_file_url) {
+    const fileName = serviceRequest.result_file_name || 'Dokumen Hasil';
+    message += `\n📎 *Dokumen:* ${fileName}\n`;
+    message += `🔗 Link download: ${serviceRequest.result_file_url}\n`;
+  }
+
+  // Add guidance based on status
+  if (serviceRequest.status === 'selesai' && serviceRequest.result_file_url) {
+    message += `\n_Silakan download dokumen di atas ya Kak. Terima kasih sudah menggunakan layanan kami! 🙏_`;
+  } else if (serviceRequest.status === 'selesai') {
+    message += `\n_Layanan sudah selesai. Terima kasih! 🙏_`;
+  } else if (serviceRequest.status === 'ditolak') {
+    message += `\n_Jika ada pertanyaan, silakan hubungi kantor kelurahan ya Kak._`;
   }
 
   return message;

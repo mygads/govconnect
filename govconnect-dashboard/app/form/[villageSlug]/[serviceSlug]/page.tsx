@@ -49,6 +49,7 @@ interface ServiceResponse {
         id: string;
         name: string;
         slug: string;
+        wa_number?: string | null;
     };
 }
 
@@ -68,6 +69,7 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
 
     const [service, setService] = useState<ServiceItem | null>(null);
     const [villageName, setVillageName] = useState<string>("");
+    const [villageWaNumber, setVillageWaNumber] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -84,8 +86,18 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
     const [fileUploading, setFileUploading] = useState<Record<string, boolean>>({});
     const [fileErrors, setFileErrors] = useState<Record<string, string>>({});
 
+    function normalizeTo628(input: string): string {
+        const digits = (input || "").replace(/\D/g, "");
+        if (!digits) return "";
+        if (digits.startsWith("0")) return `62${digits.slice(1)}`;
+        if (digits.startsWith("62")) return digits;
+        if (digits.startsWith("8")) return `62${digits}`;
+        return digits;
+    }
+
     useEffect(() => {
-        const waUser = searchParams.get("user") || "";
+        const waUserRaw = searchParams.get("user") || "";
+        const waUser = normalizeTo628(waUserRaw);
         if (waUser) {
             setCitizenData((prev) => ({
                 ...prev,
@@ -104,6 +116,7 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                 }
                 setService(result.data);
                 setVillageName(result.village?.name || "");
+                setVillageWaNumber(result.village?.wa_number ? normalizeTo628(result.village.wa_number) : null);
             } catch (err: any) {
                 setError(err.message || "Gagal memuat layanan");
             } finally {
@@ -306,6 +319,13 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
     }
 
     if (success) {
+        const botNumber = villageWaNumber ? normalizeTo628(villageWaNumber) : "";
+        const canChatBot = !!success.request_number && /^62\d{8,15}$/.test(botNumber);
+        const waMessage = success.request_number ? `Cek status ${success.request_number}` : "";
+        const waLink = canChatBot
+            ? `https://wa.me/${botNumber}?text=${encodeURIComponent(waMessage)}`
+            : "";
+
         return (
             <div className="max-w-lg mx-auto py-8">
                 <Card className="border-green-200/50 dark:border-green-800/30 bg-linear-to-br from-green-50/50 to-emerald-50/50 dark:from-green-950/20 dark:to-emerald-950/20">
@@ -333,6 +353,19 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                         <p className="text-xs text-muted-foreground">
                             Status dapat dicek melalui WhatsApp dengan menyebutkan nomor layanan di atas.
                         </p>
+
+                        {canChatBot ? (
+                            <Button asChild className="w-full bg-secondary hover:bg-secondary/90">
+                                <a href={waLink} target="_blank" rel="noreferrer">
+                                    <MessageCircle className="w-4 h-4 mr-2" />
+                                    Cek Status via WhatsApp
+                                </a>
+                            </Button>
+                        ) : (
+                            <div className="text-[10px] text-muted-foreground border border-border/50 rounded-xl p-3 bg-background/70">
+                                Nomor WhatsApp bot desa belum tersedia. Silakan chat bot desa dan kirim pesan: <b>{waMessage}</b>
+                            </div>
+                        )}
 
                         <div className="flex gap-3">
                             <Button variant="outline" asChild className="flex-1">

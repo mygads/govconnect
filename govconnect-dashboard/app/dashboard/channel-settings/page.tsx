@@ -1,15 +1,34 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
-import { Wifi, Save, RefreshCw, Trash2, QrCode } from "lucide-react"
+import { 
+  Wifi, 
+  Save, 
+  RefreshCw, 
+  Trash2, 
+  QrCode, 
+  CheckCircle, 
+  XCircle,
+  Smartphone,
+  X
+} from "lucide-react"
 
 interface ChannelSettings {
   wa_number: string
@@ -23,6 +42,7 @@ interface SessionStatus {
   loggedIn: boolean
   jid?: string
   wa_number?: string
+  qrcode?: string
 }
 
 interface AuthMeResponse {
@@ -46,10 +66,8 @@ export default function ChannelSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [sessionLoading, setSessionLoading] = useState(false)
-  const [qrCode, setQrCode] = useState<string | null>(null)
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null)
   const [sessionExists, setSessionExists] = useState<boolean | null>(null)
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [auth, setAuth] = useState<AuthMeResponse["user"] | null>(null)
   const [villages, setVillages] = useState<VillageItem[]>([])
   const [selectedVillageId, setSelectedVillageId] = useState<string | null>(null)
@@ -59,6 +77,24 @@ export default function ChannelSettingsPage() {
     enabled_wa: false,
     enabled_webchat: true,
   })
+
+  // QR Dialog states
+  const [showQrDialog, setShowQrDialog] = useState(false)
+  const [qrCode, setQrCode] = useState<string>("")
+  const [qrLoading, setQrLoading] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
+  
+  // Polling refs
+  const statusPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const qrPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (statusPollingRef.current) clearInterval(statusPollingRef.current)
+      if (qrPollingRef.current) clearInterval(qrPollingRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -97,11 +133,155 @@ export default function ChannelSettingsPage() {
     bootstrap()
   }, [])
 
-  const withVillage = (path: string) => {
+  const withVillage = useCallback((path: string) => {
     if (!selectedVillageId) return path
     const joiner = path.includes("?") ? "&" : "?"
     return `${path}${joiner}village_id=${encodeURIComponent(selectedVillageId)}`
-  }
+  }, [selectedVillageId])
+
+  // Fetch session status - returns the status data
+  const fetchSessionStatus = useCallback(async (): Promise<SessionStatus | null> => {
+    try {
+      if (!selectedVillageId) {
+        setSessionStatus(null)
+        setSessionExists(null)
+        setQrCode("")
+        return null
+      }
+      
+      const response = await fetch(withVillage("/api/whatsapp/status"), {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
+
+      // Session belum dibuat
+      if (response.status === 404 || data?.error === 'Session belum dibuat') {
+        setSessionExists(false)
+        setSessionStatus(null)
+        setQrCode("")
+        return null
+      }
+
+      if (!response.ok) {
+        setSessionStatus(null)
+        setSessionExists(null)
+        setQrCode("")
+        return null
+      }
+
+      // Dashboard API memetakan "belum ada session" => exists=false (status 200)
+      if (data?.data?.exists === false) {
+        setSessionExists(false)
+        setSessionStatus(null)
+        setQrCode("")
+        return null
+      }
+
+      setSessionExists(true)
+      
+      const status: SessionStatus = {
+        connected: Boolean(data.data?.connected),
+        loggedIn: Boolean(data.data?.loggedIn),
+        jid: data.data?.jid,
+        wa_number: data.data?.wa_number || "",
+        qrcode: data.data?.qrcode || "",
+      }
+      
+      setSessionStatus(status)
+      
+      // Update QR code if available
+      if (data.data?.qrcode) {
+        setQrCode(data.data.qrcode)
+      }
+      
+      // Update wa_number in settings if available
+      if (data.data?.wa_number) {
+        setSettings((prev) => ({ ...prev, wa_number: data.data.wa_number }))
+      }
+
+      return status
+    } catch (error) {
+      console.error("Error fetching session status:", error)
+      setSessionStatus(null)
+      setSessionExists(null)
+      setQrCode("")
+      return null
+    }
+  }, [selectedVillageId, withVillage])
+
+  // Fetch QR code
+  const fetchQRCode = useCallback(async () => {
+    try {
+      setQrLoading(true)
+      const response = await fetch(withVillage("/api/whatsapp/qr"), {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
+      
+      if (response.ok && data?.data?.QRCode) {
+        setQrCode(data.data.QRCode)
+      }
+    } catch (error) {
+      console.error("Error fetching QR code:", error)
+    } finally {
+      setQrLoading(false)
+    }
+  }, [withVillage])
+
+  // Stop all polling
+  const stopPolling = useCallback(() => {
+    if (statusPollingRef.current) {
+      clearInterval(statusPollingRef.current)
+      statusPollingRef.current = null
+    }
+    if (qrPollingRef.current) {
+      clearInterval(qrPollingRef.current)
+      qrPollingRef.current = null
+    }
+  }, [])
+
+  // Start polling for QR dialog
+  const startQrPolling = useCallback(() => {
+    stopPolling()
+    
+    // Status polling every 1 second
+    statusPollingRef.current = setInterval(async () => {
+      const status = await fetchSessionStatus()
+      if (status?.loggedIn) {
+        console.log("[QR_DIALOG] Session logged in, stopping polling")
+        stopPolling()
+        toast({
+          title: "WhatsApp Terhubung!",
+          description: "Session WhatsApp berhasil terautentikasi.",
+        })
+      }
+    }, 1000)
+
+    // QR code polling every 2 seconds
+    qrPollingRef.current = setInterval(async () => {
+      await fetchQRCode()
+    }, 2000)
+  }, [fetchSessionStatus, fetchQRCode, stopPolling, toast])
+
+  // Handle close QR dialog
+  const handleCloseQrDialog = useCallback(() => {
+    stopPolling()
+    setShowQrDialog(false)
+    setQrCode("")
+    fetchSessionStatus()
+  }, [stopPolling, fetchSessionStatus])
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -130,88 +310,7 @@ export default function ChannelSettingsPage() {
 
     fetchSettings()
     fetchSessionStatus()
-  }, [selectedVillageId])
-
-  const fetchSessionStatus = async () => {
-    try {
-      if (!selectedVillageId) {
-        setSessionStatus(null)
-        setSessionExists(null)
-        setQrCode(null)
-        return
-      }
-      setSessionLoading(true)
-      const response = await fetch(withVillage("/api/whatsapp/status"), {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      let data: any = null
-      try {
-        data = await response.json()
-      } catch {
-        data = null
-      }
-
-      // Jika backend masih mengembalikan 404 untuk "session belum dibuat",
-      // map ke state yang benar supaya UI tidak spam polling.
-      if (response.status === 404 || data?.error === 'Session belum dibuat') {
-        setSessionExists(false)
-        setSessionStatus(null)
-        setQrCode(null)
-        return
-      }
-
-      if (!response.ok) {
-        setSessionStatus(null)
-        setSessionExists(null)
-        setQrCode(null)
-        return
-      }
-
-      // Dashboard API memetakan "belum ada session" => exists=false (status 200)
-      if (data?.data?.exists === false) {
-        setSessionExists(false)
-        setSessionStatus(null)
-        setQrCode(null)
-        return
-      }
-
-      setSessionExists(true)
-      setSessionStatus({
-        connected: Boolean(data.data?.connected),
-        loggedIn: Boolean(data.data?.loggedIn),
-        jid: data.data?.jid,
-        wa_number: data.data?.wa_number || "",
-      })
-      if (data.data?.wa_number) {
-        setSettings((prev) => ({ ...prev, wa_number: data.data.wa_number }))
-      }
-    } catch (error) {
-      setSessionStatus(null)
-      setSessionExists(null)
-      setQrCode(null)
-    } finally {
-      setSessionLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current)
-    }
-
-    // Jangan polling kalau session belum dibuat / belum diketahui
-    if (!selectedVillageId || sessionExists !== true) return
-
-    pollingRef.current = setInterval(() => {
-      fetchSessionStatus()
-    }, 8000)
-
-    return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current)
-      }
-    }
-  }, [selectedVillageId, sessionExists])
+  }, [selectedVillageId, withVillage, fetchSessionStatus])
 
   const handleCreateSession = async () => {
     try {
@@ -267,11 +366,12 @@ export default function ChannelSettingsPage() {
         throw new Error(data?.error || data?.message || "Gagal disconnect session")
       }
 
-      setQrCode(null)
+      setQrCode("")
       toast({
         title: "Disconnected",
         description: "WhatsApp berhasil diputuskan.",
       })
+      await fetchSessionStatus()
     } catch (error: any) {
       toast({
         title: "Gagal",
@@ -280,61 +380,72 @@ export default function ChannelSettingsPage() {
       })
     } finally {
       setSessionLoading(false)
-      fetchSessionStatus()
     }
   }
 
-  const handleConnectSession = async () => {
+  // Handle View QR - Opens modal and starts polling
+  const handleViewQR = async () => {
+    setShowQrDialog(true)
+    setQrCode("")
+    setIsConnecting(true)
+    
     try {
-      setSessionLoading(true)
-      const response = await fetch(withVillage("/api/whatsapp/connect"), {
+      // First try to connect the session
+      const connectResponse = await fetch(withVillage("/api/whatsapp/connect"), {
         method: "POST",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
 
-      let data: any = null
+      let connectData: any = null
       try {
-        data = await response.json()
+        connectData = await connectResponse.json()
       } catch {
-        data = null
+        connectData = null
       }
-      if (!response.ok) {
-        throw new Error(data?.error || data?.message || "Gagal menghubungkan session")
+      
+      // Handle "already connected" as success - session is connected, just need to get QR
+      const alreadyConnected = connectData?.error === "already connected" || 
+                               connectData?.error?.includes?.("already connected")
+      
+      if (!connectResponse.ok && !alreadyConnected) {
+        throw new Error(connectData?.error || connectData?.message || "Gagal menghubungkan session")
       }
 
-      const qrResponse = await fetch(withVillage("/api/whatsapp/qr"), {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      let qrData: any = null
-      try {
-        qrData = await qrResponse.json()
-      } catch {
-        qrData = null
-      }
-      if (qrResponse.ok) {
-        const qrValue = qrData?.data?.QRCode || ""
-        setQrCode(qrValue)
+      // Check initial status
+      const initialStatus = await fetchSessionStatus()
+      
+      if (initialStatus?.loggedIn) {
+        toast({
+          title: "Sudah Terhubung",
+          description: "Session WhatsApp sudah terautentikasi.",
+        })
+        return
       }
 
-      toast({
-        title: "Session Terhubung",
-        description: "Scan QR untuk login WhatsApp.",
-      })
+      // Fetch initial QR code
+      await fetchQRCode()
+      
+      // Start polling
+      startQrPolling()
+      
     } catch (error: any) {
       toast({
         title: "Gagal",
         description: error.message || "Gagal menghubungkan session",
         variant: "destructive",
       })
+      setShowQrDialog(false)
     } finally {
-      setSessionLoading(false)
-      fetchSessionStatus()
+      setIsConnecting(false)
     }
   }
 
   const handleDeleteSession = async () => {
     try {
       setSessionLoading(true)
+      stopPolling()
+      setShowQrDialog(false)
+      
       const response = await fetch(withVillage("/api/whatsapp/session"), {
         method: "DELETE",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
@@ -351,7 +462,8 @@ export default function ChannelSettingsPage() {
       }
 
       setSessionStatus(null)
-      setQrCode(null)
+      setSessionExists(false)
+      setQrCode("")
       toast({
         title: "Session Dihapus",
         description: "Session WhatsApp berhasil dihapus.",
@@ -365,6 +477,12 @@ export default function ChannelSettingsPage() {
     } finally {
       setSessionLoading(false)
     }
+  }
+
+  // Extract phone number from JID
+  const getPhoneNumber = (jid?: string) => {
+    if (!jid) return null
+    return jid.split('@')[0].split(':')[0]
   }
 
   const handleSave = async (e: React.FormEvent) => {
@@ -459,34 +577,87 @@ export default function ChannelSettingsPage() {
             <CardDescription>Session disimpan otomatis di server dan tidak memerlukan input token manual.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="wa_number">Nomor WhatsApp Terhubung</Label>
-              <Input
-                id="wa_number"
-                value={settings.wa_number}
-                readOnly
-                className="bg-muted"
-                placeholder="Belum terhubung"
-              />
+            {/* Connection Status Overview */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-lg border p-4 space-y-2">
+                <Label className="text-sm font-medium">Status Koneksi</Label>
+                <div className="flex items-center gap-2">
+                  {sessionStatus?.connected ? (
+                    <Badge variant="default" className="bg-green-100 text-green-800">
+                      <CheckCircle className="w-3 h-3 mr-1" />
+                      Tersambung
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="bg-red-100 text-red-800">
+                      <XCircle className="w-3 h-3 mr-1" />
+                      Tidak Tersambung
+                    </Badge>
+                  )}
+                </div>
+              </div>
+              
+              <div className="rounded-lg border p-4 space-y-2">
+                <Label className="text-sm font-medium">Status Login</Label>
+                <div className="flex items-center gap-2">
+                  {sessionStatus?.loggedIn ? (
+                    <Badge variant="default" className="bg-green-100 text-green-800">
+                      <CheckCircle className="w-3 h-3 mr-1" />
+                      Sudah Login
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                      <QrCode className="w-3 h-3 mr-1" />
+                      Perlu Scan QR
+                    </Badge>
+                  )}
+                </div>
+              </div>
             </div>
+
+            {/* WhatsApp Number */}
+            {sessionStatus?.loggedIn && sessionStatus?.jid && (
+              <div className="rounded-lg border p-4 bg-green-50">
+                <div className="flex items-center gap-2 text-green-800">
+                  <Smartphone className="w-4 h-4" />
+                  <span className="font-medium">Nomor WhatsApp Terhubung</span>
+                </div>
+                <p className="text-lg font-mono mt-1 text-green-900">
+                  +{getPhoneNumber(sessionStatus.jid)}
+                </p>
+              </div>
+            )}
+
+            {/* Webhook URL */}
             <div className="space-y-2">
               <Label>Webhook URL (hanya baca)</Label>
               <Input value={settings.webhook_url || ""} readOnly className="bg-muted" />
             </div>
-            <div className="rounded-lg border p-3 space-y-2">
+
+            {/* Action Buttons */}
+            <div className="rounded-lg border p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium">Status Session</p>
+                  <p className="text-sm font-medium">Kelola Session</p>
                   <p className="text-xs text-muted-foreground">
-                    {sessionStatus?.connected ? "Tersambung" : "Belum tersambung"}
+                    {sessionExists === false && "Session belum dibuat"}
+                    {sessionExists === true && !sessionStatus?.loggedIn && "Session siap, perlu scan QR"}
+                    {sessionExists === true && sessionStatus?.loggedIn && "Session aktif dan terhubung"}
                   </p>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={fetchSessionStatus} disabled={sessionLoading}>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Muat Ulang
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => fetchSessionStatus()} 
+                  disabled={sessionLoading}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-2 ${sessionLoading ? 'animate-spin' : ''}`} />
+                  Refresh
                 </Button>
               </div>
+              
               <div className="flex flex-wrap gap-2">
+                {/* Session belum dibuat */}
                 {(sessionExists === null || sessionExists === false) && (
                   <Button type="button" onClick={handleCreateSession} disabled={sessionLoading}>
                     <Wifi className="h-4 w-4 mr-2" />
@@ -494,11 +665,12 @@ export default function ChannelSettingsPage() {
                   </Button>
                 )}
 
-                {sessionExists === true && !sessionStatus?.connected && (
+                {/* Session ada tapi belum login */}
+                {sessionExists === true && !sessionStatus?.loggedIn && (
                   <>
-                    <Button type="button" variant="secondary" onClick={handleConnectSession} disabled={sessionLoading}>
+                    <Button type="button" onClick={handleViewQR} disabled={sessionLoading}>
                       <QrCode className="h-4 w-4 mr-2" />
-                      Konek & Ambil QR
+                      Lihat QR Code
                     </Button>
                     <Button type="button" variant="destructive" onClick={handleDeleteSession} disabled={sessionLoading}>
                       <Trash2 className="h-4 w-4 mr-2" />
@@ -507,7 +679,8 @@ export default function ChannelSettingsPage() {
                   </>
                 )}
 
-                {sessionExists === true && sessionStatus?.connected && (
+                {/* Session ada dan sudah login */}
+                {sessionExists === true && sessionStatus?.loggedIn && (
                   <>
                     <Button type="button" variant="outline" onClick={handleDisconnectSession} disabled={sessionLoading}>
                       <Wifi className="h-4 w-4 mr-2" />
@@ -520,17 +693,9 @@ export default function ChannelSettingsPage() {
                   </>
                 )}
               </div>
-              {qrCode && sessionExists === true && !sessionStatus?.connected && (
-                <div className="rounded-lg border p-4 bg-muted/40 text-center">
-                  <p className="text-xs text-muted-foreground mb-3">Scan QR untuk login WhatsApp</p>
-                  <img
-                    src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
-                    alt="QR WhatsApp"
-                    className="mx-auto w-48 h-48"
-                  />
-                </div>
-              )}
             </div>
+
+            {/* Channel Toggles */}
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
                 <p className="text-sm font-medium">Aktifkan WhatsApp</p>
@@ -561,6 +726,112 @@ export default function ChannelSettingsPage() {
           </Button>
         </div>
       </form>
+
+      {/* QR Code Dialog */}
+      <Dialog open={showQrDialog} onOpenChange={handleCloseQrDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="h-5 w-5" />
+              Autentikasi WhatsApp
+            </DialogTitle>
+            <DialogDescription>
+              Scan QR code dengan WhatsApp untuk menghubungkan session
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Session Status in Dialog */}
+            <div className="bg-muted/50 p-3 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm font-medium">Status Session</Label>
+                {(qrLoading || isConnecting) && (
+                  <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Koneksi:</span>
+                  <span className={`ml-2 font-medium ${sessionStatus?.connected ? 'text-green-600' : 'text-red-600'}`}>
+                    {sessionStatus?.connected ? 'Ya' : 'Tidak'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Login:</span>
+                  <span className={`ml-2 font-medium ${sessionStatus?.loggedIn ? 'text-green-600' : 'text-orange-600'}`}>
+                    {sessionStatus?.loggedIn ? 'Ya' : 'Menunggu'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Success State */}
+            {sessionStatus?.loggedIn && sessionStatus?.jid && (
+              <div className="bg-green-50 border border-green-200 p-4 rounded-lg text-center">
+                <CheckCircle className="mx-auto h-12 w-12 text-green-600 mb-2" />
+                <p className="text-green-800 font-medium">WhatsApp Terhubung!</p>
+                <p className="text-green-700 text-sm mt-1">
+                  Nomor: +{getPhoneNumber(sessionStatus.jid)}
+                </p>
+                <p className="text-green-600 text-xs mt-2">
+                  Session siap digunakan. Anda bisa menutup dialog ini.
+                </p>
+              </div>
+            )}
+
+            {/* QR Code Display */}
+            {!sessionStatus?.loggedIn && (
+              <>
+                {isConnecting ? (
+                  <div className="text-center py-8">
+                    <RefreshCw className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
+                    <p className="mt-2 text-sm text-muted-foreground">Menghubungkan session...</p>
+                  </div>
+                ) : qrCode ? (
+                  <div className="space-y-3">
+                    <div className="flex justify-center p-4 bg-white rounded-lg border">
+                      <img
+                        src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
+                        alt="WhatsApp QR Code"
+                        className="w-52 h-52"
+                      />
+                    </div>
+                    <div className="text-center space-y-1">
+                      <p className="text-xs text-muted-foreground">
+                        QR code diperbarui otomatis setiap 2 detik
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Buka WhatsApp &gt; Menu &gt; Linked Devices &gt; Link a Device
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <QrCode className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">Memuat QR code...</p>
+                  </div>
+                )}
+
+                {/* Connection Required Warning */}
+                {sessionStatus && !sessionStatus.connected && !isConnecting && (
+                  <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-center">
+                    <XCircle className="mx-auto h-6 w-6 text-amber-600 mb-1" />
+                    <p className="text-amber-800 text-sm font-medium">Session Disconnected</p>
+                    <p className="text-amber-600 text-xs">Menunggu koneksi ke server WhatsApp...</p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseQrDialog}>
+              <X className="h-4 w-4 mr-2" />
+              Tutup
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

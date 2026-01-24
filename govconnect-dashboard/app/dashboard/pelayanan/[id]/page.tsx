@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { 
   Select, 
   SelectContent, 
@@ -31,7 +32,10 @@ import {
   Inbox,
   ClipboardList,
   MessageSquare,
-  Loader2
+  Loader2,
+  Upload,
+  Download,
+  FileCheck
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Separator } from "@/components/ui/separator"
@@ -42,6 +46,9 @@ interface ServiceRequest {
   wa_user_id: string
   status: string
   admin_notes?: string | null
+  result_file_url?: string | null
+  result_file_name?: string | null
+  result_description?: string | null
   created_at: string
   updated_at?: string
   citizen_data_json?: Record<string, any>
@@ -130,6 +137,11 @@ export default function ServiceRequestDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState("")
   const [adminNotes, setAdminNotes] = useState("")
+  const [resultDescription, setResultDescription] = useState("")
+  const [resultFile, setResultFile] = useState<File | null>(null)
+  const [resultFileUrl, setResultFileUrl] = useState("")
+  const [resultFileName, setResultFileName] = useState("")
+  const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const fetchRequest = async (id: string) => {
@@ -147,6 +159,9 @@ export default function ServiceRequestDetailPage() {
       setRequest(payload)
       setStatus(payload.status || "baru")
       setAdminNotes(payload.admin_notes || "")
+      setResultDescription(payload.result_description || "")
+      setResultFileUrl(payload.result_file_url || "")
+      setResultFileName(payload.result_file_name || "")
       setError(null)
     } catch (err: any) {
       setError(err.message || "Gagal memuat permohonan")
@@ -161,6 +176,38 @@ export default function ServiceRequestDetailPage() {
     }
   }, [params])
 
+  const handleFileUpload = async (file: File) => {
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error("Gagal upload file")
+      }
+
+      const data = await response.json()
+      setResultFileUrl(data.url || data.file_url)
+      setResultFileName(file.name)
+      setResultFile(null)
+      toast({ title: "File berhasil diupload" })
+    } catch (err: any) {
+      toast({
+        title: "Gagal upload",
+        description: err.message,
+        variant: "destructive",
+      })
+    } finally {
+      setUploading(false)
+    }
+  }
+
   const handleSave = async () => {
     if (!request) return
     setSaving(true)
@@ -171,7 +218,13 @@ export default function ServiceRequestDetailPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
-        body: JSON.stringify({ status, admin_notes: adminNotes }),
+        body: JSON.stringify({ 
+          status, 
+          admin_notes: adminNotes,
+          result_file_url: resultFileUrl || null,
+          result_file_name: resultFileName || null,
+          result_description: resultDescription || null,
+        }),
       })
 
       if (!response.ok) {
@@ -435,12 +488,75 @@ export default function ServiceRequestDetailPage() {
                   value={adminNotes}
                   onChange={(e) => setAdminNotes(e.target.value)}
                   placeholder="Catatan untuk warga (opsional)"
-                  rows={4}
+                  rows={3}
                   className="resize-none"
                 />
                 <p className="text-xs text-muted-foreground">Catatan ini akan dikirim ke warga melalui WhatsApp</p>
               </div>
-              <Button onClick={handleSave} disabled={saving} className="w-full gap-2">
+              
+              <Separator />
+              
+              {/* Hasil/File Upload - untuk status selesai */}
+              <div className="space-y-3">
+                <Label className="flex items-center gap-2">
+                  <FileCheck className="h-4 w-4" />
+                  Hasil Layanan (Opsional)
+                </Label>
+                <p className="text-xs text-muted-foreground -mt-1">Upload file hasil (surat, dokumen) yang akan dikirim ke warga</p>
+                
+                {resultFileUrl ? (
+                  <div className="flex items-center gap-2 p-3 rounded-lg border bg-green-50 dark:bg-green-900/20">
+                    <FileText className="h-5 w-5 text-green-600 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{resultFileName || "File hasil"}</p>
+                      <a 
+                        href={resultFileUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-xs text-green-600 hover:underline"
+                      >
+                        Lihat file
+                      </a>
+                    </div>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => {
+                        setResultFileUrl("")
+                        setResultFileName("")
+                      }}
+                    >
+                      <XCircle className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) {
+                          handleFileUpload(file)
+                        }
+                      }}
+                      disabled={uploading}
+                      className="flex-1"
+                    />
+                    {uploading && <Loader2 className="h-4 w-4 animate-spin" />}
+                  </div>
+                )}
+                
+                <Textarea
+                  value={resultDescription}
+                  onChange={(e) => setResultDescription(e.target.value)}
+                  placeholder="Deskripsi hasil layanan (misal: Surat domisili sudah jadi, silakan diambil atau download file di atas)"
+                  rows={2}
+                  className="resize-none"
+                />
+              </div>
+              
+              <Button onClick={handleSave} disabled={saving || uploading} className="w-full gap-2">
                 {saving ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />

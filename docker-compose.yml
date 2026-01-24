@@ -25,6 +25,9 @@ services:
     image: govconnect-channel-service:local
     ports:
       - "3001:3001"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     environment:
       NODE_ENV: ${NODE_ENV}
       PORT: 3001
@@ -85,8 +88,8 @@ services:
       RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
       CHANNEL_SERVICE_URL: http://channel-service:3001
       CASE_SERVICE_URL: http://case-service:3003
-      # Use host.docker.internal when dashboard runs on host, otherwise use dashboard:3000
-      DASHBOARD_SERVICE_URL: http://host.docker.internal:3000
+      # Use dashboard container by default; override via .env if dashboard runs on host
+      DASHBOARD_SERVICE_URL: ${DASHBOARD_SERVICE_URL:-http://dashboard:3000}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY}

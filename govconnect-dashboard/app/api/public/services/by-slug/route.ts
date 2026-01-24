@@ -2,7 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 const CASE_SERVICE_URL = process.env.CASE_SERVICE_URL || "http://localhost:3003";
+const CHANNEL_SERVICE_URL = process.env.CHANNEL_SERVICE_URL || "http://localhost:3001";
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || "";
+
+async function safeReadJson(response: Response): Promise<any | null> {
+    try {
+        return await response.json();
+    } catch {
+        return null;
+    }
+}
 
 export async function GET(request: NextRequest) {
     try {
@@ -48,12 +57,44 @@ export async function GET(request: NextRequest) {
 
         const result = await response.json();
 
+        // Bot WA number is owned by channel-service (per village). Best-effort: do not fail page.
+        let villageWaNumber: string | null = null;
+        try {
+            const waStatusRes = await fetch(
+                `${CHANNEL_SERVICE_URL}/internal/whatsapp/status?village_id=${encodeURIComponent(village.id)}`,
+                {
+                    headers: {
+                        "x-internal-api-key": INTERNAL_API_KEY,
+                    },
+                }
+            );
+            const waStatusJson = await safeReadJson(waStatusRes);
+            villageWaNumber = (waStatusJson as any)?.data?.wa_number || null;
+
+            // Fallback: if session isn't created/connected yet, channel_account may still have wa_number.
+            if (!villageWaNumber) {
+                const accountRes = await fetch(
+                    `${CHANNEL_SERVICE_URL}/internal/channel-accounts/${encodeURIComponent(village.id)}`,
+                    {
+                        headers: {
+                            "x-internal-api-key": INTERNAL_API_KEY,
+                        },
+                    }
+                );
+                const accountJson = await safeReadJson(accountRes);
+                villageWaNumber = (accountJson as any)?.data?.wa_number || null;
+            }
+        } catch {
+            villageWaNumber = null;
+        }
+
         return NextResponse.json({
             data: result.data,
             village: {
                 id: village.id,
                 name: village.name,
                 slug: village.slug,
+                wa_number: villageWaNumber,
             },
         });
     } catch (error) {

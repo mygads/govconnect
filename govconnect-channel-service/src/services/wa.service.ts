@@ -430,6 +430,13 @@ export async function connectSession(token: string): Promise<{ details: string }
       details: data.Details || data.details || 'Connected',
     };
   } catch (error: any) {
+    // Handle "already connected" as success - session is connected, just not logged in yet
+    const errorMsg = error.response?.data?.error || error.message || '';
+    if (errorMsg === 'already connected' || errorMsg.includes('already connected')) {
+      logger.info('WhatsApp session already connected', { details: errorMsg });
+      return { details: 'Already connected' };
+    }
+    
     logger.error('Failed to connect session', {
       error: error.message,
       response: error.response?.data,
