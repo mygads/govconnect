@@ -32,7 +32,10 @@ coverage
 README.md
 *.md
 
-# Always include lock/workspace files (defensive)
+# Always include build-critical files
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
+!tsconfig.json
+!src/**
+!prisma/**

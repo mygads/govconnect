@@ -12,10 +12,10 @@ RUN npm install -g pnpm
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
+COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY . .
@@ -40,10 +40,10 @@ RUN npm install -g pnpm
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
+COPY package.json pnpm-lock.yaml ./
 
 # Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile || pnpm install --prod --no-frozen-lockfile
+RUN pnpm install --prod --frozen-lockfile
 
 # Install prisma as dev dependency for generate command
 RUN pnpm add -D prisma@6.19.0

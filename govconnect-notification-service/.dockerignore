@@ -13,6 +13,13 @@ dist
 .dockerignore
 Dockerfile
 
+# Always include build-critical files
+!package.json
+!pnpm-lock.yaml
+!tsconfig.json
+!src/**
+!prisma/**
+
 # Always include lockfile (defensive)
 !package.json
 !pnpm-lock.yaml
