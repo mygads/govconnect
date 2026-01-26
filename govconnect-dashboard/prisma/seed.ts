@@ -156,13 +156,48 @@ async function main() {
 
     // Basis pengetahuan tidak di-seed jika dokumen sudah tersedia.
 
+    type ImportantContact = { name: string; phone: string; description: string }
+
     const importantCategories = [
       'Pelayanan',
       'Pengaduan',
       'Keamanan',
       'Kesehatan',
       'Pemadam',
-    ]
+    ] as const
+
+    type ImportantCategoryName = (typeof importantCategories)[number]
+
+    const contactsByCategory: Record<ImportantCategoryName, ImportantContact[]> = {
+      Pelayanan: [
+        { name: 'Kecamatan Bola', phone: '+62 852-5582-9256', description: 'Nomor pelayanan kecamatan' },
+        { name: 'Kelurahan Solo', phone: '+62 853-3295-0944', description: 'Nomor pelayanan kelurahan' },
+        { name: 'Desa Pasir Putih', phone: '+62 821-2999-5145', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Pattanga', phone: '+62 822-6181-5145', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Sanreseng Ade', phone: '+62 821-3400-9525', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Lattimu', phone: '+62 853-4972-3275', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Ujung Tanah', phone: '+62 821-2424-1303', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Rajamawellang', phone: '+62 813-5353-2832', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Bola', phone: '+62 823-3545-1792', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Lempong', phone: '+62 853-9423-4648', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Balielo', phone: '+62 823-4645-4449', description: 'Nomor pelayanan desa' },
+        { name: 'Desa Manurung', phone: '+62 821-9364-5087', description: 'Nomor pelayanan desa' },
+      ],
+      Pengaduan: [
+        { name: 'Kecamatan Bola', phone: '+62 852-4061-9726', description: 'Nomor pengaduan kecamatan' },
+        { name: 'Admin Desa Sanreseng Ade', phone: '+62 819-3088-1342', description: 'Admin pengaduan desa' },
+      ],
+      Keamanan: [
+        { name: 'Polsek Bola', phone: '+62 821-8811-8778', description: 'Layanan keamanan Polsek' },
+        { name: 'Danpos Bola', phone: '+62 853-9963-9869', description: 'Layanan keamanan Danpos' },
+      ],
+      Kesehatan: [
+        { name: 'Puskesmas Solo', phone: '+62 853-6373-2235', description: 'Layanan kesehatan puskesmas' },
+      ],
+      Pemadam: [
+        { name: 'DAMKAR Sektor Bola', phone: '+62 821-9280-0935', description: 'Pemadam kebakaran sektor bola' },
+      ],
+    }
 
     for (const categoryName of importantCategories) {
       const category = await prisma.important_contact_categories.upsert({
@@ -171,36 +206,7 @@ async function main() {
         create: { id: `${village.slug}-${categoryName.toLowerCase().replace(/\s+/g, '-')}`, name: categoryName, village_id: village.id },
       })
 
-      const contacts = {
-        Pelayanan: [
-          { name: 'Kecamatan Bola', phone: '+62 852-5582-9256', description: 'Nomor pelayanan kecamatan' },
-          { name: 'Kelurahan Solo', phone: '+62 853-3295-0944', description: 'Nomor pelayanan kelurahan' },
-          { name: 'Desa Pasir Putih', phone: '+62 821-2999-5145', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Pattanga', phone: '+62 822-6181-5145', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Sanreseng Ade', phone: '+62 821-3400-9525', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Lattimu', phone: '+62 853-4972-3275', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Ujung Tanah', phone: '+62 821-2424-1303', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Rajamawellang', phone: '+62 813-5353-2832', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Bola', phone: '+62 823-3545-1792', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Lempong', phone: '+62 853-9423-4648', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Balielo', phone: '+62 823-4645-4449', description: 'Nomor pelayanan desa' },
-          { name: 'Desa Manurung', phone: '+62 821-9364-5087', description: 'Nomor pelayanan desa' },
-        ],
-        Pengaduan: [
-          { name: 'Kecamatan Bola', phone: '+62 852-4061-9726', description: 'Nomor pengaduan kecamatan' },
-          { name: 'Admin Desa Sanreseng Ade', phone: '+62 819-3088-1342', description: 'Admin pengaduan desa' },
-        ],
-        Keamanan: [
-          { name: 'Polsek Bola', phone: '+62 821-8811-8778', description: 'Layanan keamanan Polsek' },
-          { name: 'Danpos Bola', phone: '+62 853-9963-9869', description: 'Layanan keamanan Danpos' },
-        ],
-        Kesehatan: [
-          { name: 'Puskesmas Solo', phone: '+62 853-6373-2235', description: 'Layanan kesehatan puskesmas' },
-        ],
-        Pemadam: [
-          { name: 'DAMKAR Sektor Bola', phone: '+62 821-9280-0935', description: 'Pemadam kebakaran sektor bola' },
-        ],
-      }[categoryName as keyof typeof contacts] || []
+      const contacts = contactsByCategory[categoryName]
 
       for (const contact of contacts) {
         await prisma.important_contacts.upsert({
