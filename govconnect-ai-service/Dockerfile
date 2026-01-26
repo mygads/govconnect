@@ -6,13 +6,13 @@ WORKDIR /app
 RUN npm install -g pnpm
 
 # Copy package files
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* tsconfig.json prisma.config.ts ./
 
 # Install dependencies
 RUN pnpm install
 
-# Copy source code
-COPY . .
+COPY prisma ./prisma
+COPY src ./src
 
 # Build TypeScript (provide dummy DATABASE_URL for prisma generate)
 ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
