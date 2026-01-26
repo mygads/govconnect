@@ -31,3 +31,8 @@ coverage
 # Ignore documentation
 README.md
 *.md
+
+# Always include lock/workspace files (defensive)
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml

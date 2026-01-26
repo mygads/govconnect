@@ -53,3 +53,7 @@ docs
 
 # Prisma
 prisma/migrations
+
+# Always include lockfile (defensive)
+!package.json
+!pnpm-lock.yaml

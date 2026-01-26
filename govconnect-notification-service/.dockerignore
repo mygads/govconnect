@@ -12,3 +12,7 @@ logs
 dist
 .dockerignore
 Dockerfile
+
+# Always include lockfile (defensive)
+!package.json
+!pnpm-lock.yaml

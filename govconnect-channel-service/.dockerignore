@@ -11,3 +11,7 @@ prisma-test.js
 direct-pg-test.js
 .vscode
 .idea
+
+# Always include lockfile (defensive)
+!package.json
+!pnpm-lock.yaml
