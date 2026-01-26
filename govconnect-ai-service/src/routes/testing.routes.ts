@@ -2,11 +2,12 @@ import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { processUnifiedMessage } from '../services/unified-message-processor.service';
+import { firstHeader } from '../utils/http';
 
 const router = Router();
 
 function verifyInternalKey(req: Request, res: Response, next: Function) {
-  const apiKey = req.headers['x-internal-api-key'];
+  const apiKey = firstHeader(req.headers['x-internal-api-key']);
 
   if (!apiKey || apiKey !== config.internalApiKey) {
     return res.status(403).json({ error: 'Unauthorized' });

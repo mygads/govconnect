@@ -31,6 +31,7 @@ import testingRoutes from './routes/testing.routes';
 import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
 import { config } from './config/env';
+import { firstQuery } from './utils/http';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -226,7 +227,7 @@ app.post('/admin/failed-messages/retry-all', async (req: Request, res: Response)
  */
 app.delete('/admin/failed-messages', (req: Request, res: Response) => {
   try {
-    const clearAll = req.query.all === 'true';
+    const clearAll = firstQuery((req.query as any)?.all) === 'true';
 
     logger.info('Admin clear failed messages', { clearAll });
 

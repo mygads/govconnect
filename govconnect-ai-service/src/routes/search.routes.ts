@@ -18,12 +18,13 @@ import {
   getVectorDbStats,
   recordBatchRetrievals,
 } from '../services/vector-db.service';
+import { firstHeader } from '../utils/http';
 
 const router = Router();
 
 // Middleware to verify internal API key
 function verifyInternalKey(req: Request, res: Response, next: Function) {
-  const apiKey = req.headers['x-internal-api-key'];
+  const apiKey = firstHeader(req.headers['x-internal-api-key']);
   if (!apiKey || apiKey !== config.internalApiKey) {
     return res.status(403).json({ error: 'Unauthorized' });
   }

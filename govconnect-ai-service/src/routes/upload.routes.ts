@@ -19,6 +19,7 @@ import logger from '../utils/logger';
 import { processDocumentWithEmbeddings } from '../services/document-processor.service';
 import { addDocumentChunks } from '../services/vector-db.service';
 import { config } from '../config/env';
+import { firstHeader } from '../utils/http';
 
 const router = Router();
 
@@ -68,7 +69,7 @@ const upload = multer({
 
 // Internal API key verification middleware
 function verifyInternalKey(req: Request, res: Response, next: Function) {
-  const apiKey = req.headers['x-internal-api-key'];
+  const apiKey = firstHeader(req.headers['x-internal-api-key']);
   
   if (!apiKey || apiKey !== config.internalApiKey) {
     return res.status(403).json({ error: 'Unauthorized' });

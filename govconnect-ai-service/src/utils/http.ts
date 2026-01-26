@@ -1,0 +1,18 @@
+export type MaybeString = string | string[] | undefined
+
+export function firstString(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    const first = value[0]
+    return typeof first === 'string' ? first : undefined
+  }
+  return undefined
+}
+
+export function firstHeader(value: MaybeString): string | undefined {
+  return firstString(value)
+}
+
+export function firstQuery(value: unknown): string | undefined {
+  return firstString(value)
+}
