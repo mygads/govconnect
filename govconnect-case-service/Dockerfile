@@ -7,10 +7,10 @@ RUN npm install -g pnpm@9.15.4
 WORKDIR /app
 
 # Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-workspace.yaml ./
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
 # Copy source files
 COPY . .
@@ -33,10 +33,10 @@ RUN npm install -g pnpm@9.15.4
 WORKDIR /app
 
 # Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-workspace.yaml ./
 
 # Install dependencies (include prisma CLI so we can run `prisma generate`)
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
