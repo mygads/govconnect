@@ -401,7 +401,7 @@ export default function ComplaintMetaPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
@@ -435,6 +435,20 @@ export default function ComplaintMetaPage() {
                   {types.filter(t => t.is_urgent).length}
                 </p>
                 <p className="text-sm text-muted-foreground">Jenis Urgent</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-gray-500" />
+              <div>
+                <p className="text-2xl font-bold">
+                  {types.filter(t => t.require_address).length}
+                </p>
+                <p className="text-sm text-muted-foreground">Wajib Alamat</p>
               </div>
             </div>
           </CardContent>

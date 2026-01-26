@@ -32,6 +32,22 @@ export function DashboardNavbar() {
       .slice(0, 2)
   }
 
+  const formatRoleLabel = (role?: string | null) => {
+    if (!role) return 'Administrator'
+    const normalized = role.toLowerCase()
+    const map: Record<string, string> = {
+      superadmin: 'Super Admin',
+      super_admin: 'Super Admin',
+      village_admin: 'Admin Desa',
+      admin: 'Admin',
+    }
+    if (map[normalized]) return map[normalized]
+    return normalized
+      .split('_')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+  }
+
   return (
     <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-white dark:bg-gray-950 px-4 shadow-sm">
       <SidebarTrigger className="-ml-1 h-8 w-8 hover:bg-accent rounded-md transition-colors" />
@@ -65,7 +81,7 @@ export function DashboardNavbar() {
               </Avatar>
               <div className="hidden md:block text-left">
                 <p className="text-xs font-medium text-foreground">{user?.name || 'Admin'}</p>
-                <p className="text-xs text-muted-foreground">{user?.role || 'Administrator'}</p>
+                <p className="text-xs text-muted-foreground">{formatRoleLabel(user?.role)}</p>
               </div>
               <ChevronDown className="h-4 w-4 text-gray-500 dark:text-gray-400" />
             </Button>

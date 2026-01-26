@@ -125,8 +125,9 @@ export async function handleGetConversations(req: Request, res: Response): Promi
   try {
     const status = (req.query.status as 'all' | 'takeover' | 'bot') || 'all';
     const limit = parseInt(req.query.limit as string) || 50;
+    const villageId = resolveVillageId(req);
 
-    const conversations = await getConversations(status, limit);
+    const conversations = await getConversations(status, limit, villageId);
     
     res.json({
       success: true,
@@ -147,13 +148,14 @@ export async function handleGetConversation(req: Request, res: Response): Promis
   try {
     const { wa_user_id } = req.params;
     const limit = parseInt(req.query.limit as string) || 50;
+    const villageId = resolveVillageId(req);
 
-    const conversation = await getConversation(wa_user_id);
-    const messages = await getMessageHistory(wa_user_id, limit);
-    const takeoverSession = await getActiveTakeover(wa_user_id);
+    const conversation = await getConversation(wa_user_id, villageId);
+    const messages = await getMessageHistory(wa_user_id, limit, villageId);
+    const takeoverSession = await getActiveTakeover(wa_user_id, villageId);
 
     // Mark as read when admin opens conversation
-    await markConversationAsRead(wa_user_id);
+    await markConversationAsRead(wa_user_id, villageId);
     
     res.json({
       success: true,
@@ -182,6 +184,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
   try {
     const { wa_user_id } = req.params;
     const { message, admin_id, admin_name } = req.body;
+    const villageId = resolveVillageId(req);
 
     if (!message) {
       res.status(400).json({ error: 'message is required' });
@@ -189,7 +192,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     }
 
     // Check if takeover is active (optional - can still send without takeover)
-    const isTakeover = await isUserInTakeover(wa_user_id);
+    const isTakeover = await isUserInTakeover(wa_user_id, villageId);
     
     // Check if this is a webchat user (starts with web_)
     const isWebchatUser = wa_user_id.startsWith('web_');
@@ -207,7 +210,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       });
 
       // Update conversation summary and reset unread count (admin has responded)
-      await updateConversation(wa_user_id, message, undefined, 'reset');
+      await updateConversation(wa_user_id, message, undefined, 'reset', villageId);
 
       logger.info('Admin sent webchat message', {
         wa_user_id,
@@ -226,7 +229,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       });
     } else {
       // For WhatsApp users, send via WhatsApp API
-      const result = await sendTextMessage(wa_user_id, message);
+      const result = await sendTextMessage(wa_user_id, message, villageId);
 
       if (result.success) {
         // Generate message ID if not provided by WA
@@ -234,6 +237,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
         
         // Save message to database so it appears in chat history
         await saveOutgoingMessage({
+          village_id: villageId,
           wa_user_id,
           message_id: messageId,
           message_text: message,
@@ -241,7 +245,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
         });
 
         // Update conversation summary and reset unread count (admin has responded)
-        await updateConversation(wa_user_id, message, undefined, 'reset');
+        await updateConversation(wa_user_id, message, undefined, 'reset', villageId);
 
         logger.info('Admin sent WhatsApp message', {
           wa_user_id,
@@ -278,8 +282,9 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
 export async function handleMarkAsRead(req: Request, res: Response): Promise<void> {
   try {
     const { wa_user_id } = req.params;
+    const villageId = resolveVillageId(req);
 
-    await markConversationAsRead(wa_user_id);
+    await markConversationAsRead(wa_user_id, villageId);
     
     res.json({
       success: true,
@@ -298,6 +303,7 @@ export async function handleMarkAsRead(req: Request, res: Response): Promise<voi
 export async function handleDeleteConversation(req: Request, res: Response): Promise<void> {
   try {
     const { wa_user_id } = req.params;
+    const villageId = resolveVillageId(req);
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
@@ -307,7 +313,7 @@ export async function handleDeleteConversation(req: Request, res: Response): Pro
     // Import prisma for direct database operations
     const { deleteConversationHistory } = await import('../services/takeover.service');
     
-    await deleteConversationHistory(wa_user_id);
+    await deleteConversationHistory(wa_user_id, villageId);
     
     logger.info('Conversation deleted', { wa_user_id });
     

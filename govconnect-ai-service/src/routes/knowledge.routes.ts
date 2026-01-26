@@ -20,6 +20,7 @@ import {
   upsertKnowledgeVector,
   deleteKnowledgeVector,
   getKnowledgeVector,
+  getKnowledgeEmbeddingStatuses,
   searchVectors,
   getVectorDbStats,
 } from '../services/vector-db.service';
@@ -235,6 +236,36 @@ router.get('/stats', async (_req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/knowledge/status
+ * Get embedding status for a list of knowledge IDs
+ */
+router.post('/status', async (req: Request, res: Response) => {
+  try {
+    const { ids } = req.body || {};
+
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ error: 'ids must be an array' });
+    }
+
+    const uniqueIds = Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.trim())));
+    if (uniqueIds.length === 0) {
+      return res.json({ data: [] });
+    }
+
+    if (uniqueIds.length > 500) {
+      return res.status(400).json({ error: 'Too many ids (max 500)' });
+    }
+
+    const statuses = await getKnowledgeEmbeddingStatuses(uniqueIds);
+
+    return res.json({ data: statuses });
+  } catch (error: any) {
+    logger.error('Failed to get knowledge embedding statuses', { error: error.message });
+    return res.status(500).json({ error: 'Failed to get knowledge embedding statuses' });
+  }
+});
+
+/**
  * POST /api/knowledge/embed-all
  * Bulk embed all knowledge items from Dashboard
  * Migrated from /api/internal/embed-all-knowledge
@@ -267,7 +298,7 @@ router.post('/embed-all', async (_req: Request, res: Response) => {
     }
     
     let processed = 0;
-    let failed = 0;
+    const failedMap = new Map<string, any>();
     
     // Process in batches of 10
     const batchSize = 10;
@@ -296,26 +327,68 @@ router.post('/embed-all', async (_req: Request, res: Response) => {
             });
             processed++;
           } catch (storeError) {
-            failed++;
+            failedMap.set(batch[j].id, batch[j]);
           }
         }
       } catch (batchError: any) {
         logger.error('Batch embedding failed', { error: batchError.message });
-        failed += batch.length;
+        batch.forEach((item: any) => failedMap.set(item.id, item));
+      }
+    }
+
+    // Retry failed items once
+    if (failedMap.size > 0) {
+      logger.warn('Retrying failed knowledge embeddings', { count: failedMap.size });
+      const retryItems = Array.from(failedMap.values());
+      failedMap.clear();
+
+      const retryBatchSize = 5;
+      for (let i = 0; i < retryItems.length; i += retryBatchSize) {
+        const retryBatch = retryItems.slice(i, i + retryBatchSize);
+        const retryTexts = retryBatch.map((k: any) => k.title ? `${k.title}\n\n${k.content}` : k.content);
+
+        try {
+          const retryEmbeddings = await generateBatchEmbeddings(retryTexts, {
+            taskType: 'RETRIEVAL_DOCUMENT',
+            outputDimensionality: 768,
+          });
+
+          for (let j = 0; j < retryBatch.length; j++) {
+            try {
+              await upsertKnowledgeVector({
+                id: retryBatch[j].id,
+                villageId: retryBatch[j].village_id || null,
+                title: retryBatch[j].title || '',
+                content: retryBatch[j].content,
+                category: retryBatch[j].category || 'informasi_umum',
+                keywords: retryBatch[j].keywords || [],
+                embedding: retryEmbeddings.embeddings[j].values,
+                embeddingModel: retryEmbeddings.embeddings[j].model,
+              });
+              processed++;
+            } catch (retryStoreError) {
+              failedMap.set(retryBatch[j].id, retryBatch[j]);
+            }
+          }
+        } catch (retryBatchError: any) {
+          logger.error('Retry batch embedding failed', { error: retryBatchError.message });
+          retryBatch.forEach((item: any) => failedMap.set(item.id, item));
+        }
       }
     }
     
     logger.info('Bulk knowledge embedding completed', {
       processed,
-      failed,
+      failed: failedMap.size,
       total: knowledgeItems.length,
     });
     
     return res.json({
       success: true,
       processed,
-      failed,
+      failed: failedMap.size,
       total: knowledgeItems.length,
+      failed_ids: Array.from(failedMap.keys()),
     });
   } catch (error: any) {
     logger.error('Bulk knowledge embedding failed', {

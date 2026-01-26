@@ -78,8 +78,15 @@ services:
     image: govconnect-ai-service:local
     ports:
       - "3002:3002"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     environment:
       NODE_ENV: ${NODE_ENV}
+      NODE_OPTIONS: ${NODE_OPTIONS:-"--dns-result-order=ipv4first"}
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      NO_PROXY: ${NO_PROXY}
       PORT: 3002
       SERVICE_NAME: ai-service
       # AI Service has its own database for vector storage

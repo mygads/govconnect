@@ -2,11 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
+import Image from "next/image"
+import { useTheme } from "next-themes"
+import { motion } from "framer-motion"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ArrowLeft } from "lucide-react"
 
 function slugify(value: string) {
   return value
@@ -18,6 +22,7 @@ function slugify(value: string) {
 }
 
 export default function RegisterPage() {
+  const { resolvedTheme } = useTheme()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -25,6 +30,7 @@ export default function RegisterPage() {
   const [slugEdited, setSlugEdited] = useState(false)
   const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid" | "error">("idle")
   const [slugMessage, setSlugMessage] = useState("")
+  const [mounted, setMounted] = useState(false)
 
   const [form, setForm] = useState({
     username: "",
@@ -44,6 +50,10 @@ export default function RegisterPage() {
       }))
     }
   }, [form.village_name, slugEdited])
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     const slug = form.village_slug.trim().toLowerCase()
@@ -179,25 +189,114 @@ export default function RegisterPage() {
     }
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-6">
-      <div className="w-full max-w-xl">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6"
-        >
-          <span>Kembali ke Beranda</span>
-        </Link>
+  const logoSrc =
+    mounted && resolvedTheme === "dark"
+      ? "/logo-dashboard-dark.png"
+      : "/logo-dashboard.png"
 
-        <Card>
-          <CardHeader className="space-y-2">
-            <CardTitle className="text-2xl font-bold">Daftar Akun Desa</CardTitle>
-            <CardDescription>
-              Buat akun admin untuk mengelola layanan desa/kelurahan.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-5">
+  return (
+    <div className="min-h-screen flex">
+      {/* Left Side - Branding */}
+      <div className="hidden lg:flex lg:w-1/2 bg-linear-to-br from-primary via-primary/90 to-secondary relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute top-20 left-20 w-64 h-64 border border-white/30 rounded-full" />
+          <div className="absolute top-40 right-20 w-32 h-32 border border-white/20 rounded-full" />
+          <div className="absolute bottom-40 left-40 w-48 h-48 border border-white/20 rounded-full" />
+          <div className="absolute bottom-20 right-40 w-24 h-24 bg-white/10 rounded-full" />
+        </div>
+
+        <div className="relative z-10 flex flex-col justify-center px-12 xl:px-20">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+          >
+            <h1 className="text-4xl xl:text-5xl font-bold text-white mb-6 leading-tight">
+              Mulai Gunakan
+              <br />
+              <span className="text-white/90">GovConnect Dashboard</span>
+            </h1>
+            <p className="text-lg text-white/80 mb-8 max-w-md leading-relaxed">
+              Daftarkan desa/kelurahan Anda untuk mengelola layanan, pengaduan, dan komunikasi warga.
+            </p>
+
+            <div className="space-y-4">
+              {[
+                "Pusat kendali layanan desa",
+                "Pengaduan warga terstruktur",
+                "Knowledge base untuk AI",
+                "Channel WhatsApp terintegrasi",
+              ].map((feature, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.3 + index * 0.1 }}
+                  className="flex items-center gap-3 text-white/90"
+                >
+                  <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                    <svg
+                      className="w-3.5 h-3.5 text-white"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  </div>
+                  <span>{feature}</span>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+
+        <div className="absolute bottom-0 left-0 right-0 h-32 bg-linear-to-t from-black/20 to-transparent" />
+      </div>
+
+      {/* Right Side - Register Form */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center bg-background p-6 sm:p-8">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-xl"
+        >
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Kembali ke Beranda</span>
+          </Link>
+
+          <Card className="border-0 shadow-none lg:shadow-xl lg:border">
+            <CardHeader className="space-y-4 text-center pb-2">
+              <div className="flex justify-center">
+                <div className="relative h-12 w-40">
+                  <Image
+                    src={logoSrc}
+                    alt="GovConnect Logo"
+                    fill
+                    className="object-contain"
+                    priority
+                  />
+                </div>
+              </div>
+              <div>
+                <CardTitle className="text-2xl font-bold">Daftar Akun Desa</CardTitle>
+                <CardDescription className="text-base mt-2">
+                  Buat akun admin untuk mengelola layanan desa/kelurahan.
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="name">Nama Admin</Label>
@@ -385,6 +484,7 @@ export default function RegisterPage() {
             </form>
           </CardContent>
         </Card>
+        </motion.div>
       </div>
     </div>
   )

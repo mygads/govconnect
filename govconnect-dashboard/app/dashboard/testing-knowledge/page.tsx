@@ -1,83 +1,43 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Switch } from "@/components/ui/switch"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 
-interface KnowledgeCategory {
-  id: string
-  name: string
-}
-
-interface SearchResult {
-  id: string
-  content: string
-  score: number
-  source: string
-  sourceType: "knowledge" | "document"
-  metadata?: {
-    category?: string
-    keywords?: string[]
-    documentId?: string
-    sectionTitle?: string
-    pageNumber?: number
-    qualityScore?: number
+interface TestResult {
+  success: boolean
+  data?: {
+    response: string
+    guidanceText?: string
+    intent: string
+    fields?: Record<string, any>
+    metadata?: {
+      processingTimeMs: number
+      model?: string
+      hasKnowledge: boolean
+      knowledgeConfidence?: string
+      sentiment?: string
+      language?: string
+    }
   }
+  error?: string
 }
 
 export default function TestingKnowledgePage() {
   const { toast } = useToast()
-  const [categories, setCategories] = useState<KnowledgeCategory[]>([])
-  const [categoryId, setCategoryId] = useState<string>("all")
   const [query, setQuery] = useState("")
-  const [includeKnowledge, setIncludeKnowledge] = useState(true)
-  const [includeDocuments, setIncludeDocuments] = useState(true)
-  const [topK, setTopK] = useState(5)
-  const [minScore, setMinScore] = useState(0.6)
   const [loading, setLoading] = useState(false)
-  const [results, setResults] = useState<SearchResult[]>([])
-  const [searchTimeMs, setSearchTimeMs] = useState<number | null>(null)
-
-  const fetchCategories = async () => {
-    try {
-      const response = await fetch("/api/knowledge/categories", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setCategories(Array.isArray(data.data) ? data.data : [])
-      }
-    } catch {
-      toast({
-        title: "Error",
-        description: "Gagal memuat kategori",
-        variant: "destructive",
-      })
-    }
-  }
-
-  useEffect(() => {
-    fetchCategories()
-  }, [])
+  const [result, setResult] = useState<TestResult | null>(null)
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!query.trim()) {
       toast({ title: "Error", description: "Pertanyaan wajib diisi", variant: "destructive" })
-      return
-    }
-
-    if (!includeKnowledge && !includeDocuments) {
-      toast({ title: "Error", description: "Pilih minimal satu sumber data", variant: "destructive" })
       return
     }
 
@@ -91,48 +51,41 @@ export default function TestingKnowledgePage() {
         },
         body: JSON.stringify({
           query,
-          category_id: categoryId !== "all" ? categoryId : undefined,
-          include_knowledge: includeKnowledge,
-          include_documents: includeDocuments,
-          top_k: topK,
-          min_score: minScore,
         }),
       })
 
-      const data = await response.json()
+      const data = (await response.json()) as TestResult
       if (!response.ok) {
-        throw new Error(data?.error || "Gagal melakukan pencarian")
+        throw new Error(data?.error || "Gagal memproses pertanyaan")
       }
 
-      setResults(Array.isArray(data.data) ? data.data : [])
-      setSearchTimeMs(typeof data.searchTimeMs === "number" ? data.searchTimeMs : null)
+      setResult(data)
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Gagal melakukan pencarian",
+        description: error.message || "Gagal memproses pertanyaan",
         variant: "destructive",
       })
+      setResult(null)
     } finally {
       setLoading(false)
     }
   }
-
-  const formatScore = (score: number) => `${(score * 100).toFixed(1)}%`
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground">Uji Pengetahuan</h1>
         <p className="text-muted-foreground mt-2">
-          Uji relevansi basis pengetahuan dan dokumen sebelum dipakai AI.
+          Uji respons AI langsung tanpa masuk ke riwayat chat.
         </p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">✨ Form Uji Pengetahuan</CardTitle>
+          <CardTitle className="flex items-center gap-2">✨ Form Uji AI</CardTitle>
           <CardDescription>
-            Masukkan pertanyaan untuk melihat hasil pencarian RAG.
+            Masukkan pertanyaan untuk mengetes jawaban AI seperti alur WhatsApp/Web.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -148,70 +101,11 @@ export default function TestingKnowledgePage() {
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Kategori</Label>
-                <Select value={categoryId} onValueChange={setCategoryId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Semua Kategori" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Semua Kategori</SelectItem>
-                    {categories.map((cat) => (
-                      <SelectItem key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Jumlah Hasil</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={topK}
-                  onChange={(e) => setTopK(Number(e.target.value) || 1)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Skor Minimum</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={minScore}
-                  onChange={(e) => setMinScore(Number(e.target.value) || 0)}
-                />
-              </div>
-              <div className="space-y-3">
-                <Label>Sumber Data</Label>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border p-3">
-                    <div>
-                      <p className="text-sm font-medium">Basis Pengetahuan</p>
-                      <p className="text-xs text-muted-foreground">Ambil dari entri pengetahuan</p>
-                    </div>
-                    <Switch checked={includeKnowledge} onCheckedChange={setIncludeKnowledge} />
-                  </div>
-                  <div className="flex items-center justify-between rounded-lg border p-3">
-                    <div>
-                      <p className="text-sm font-medium">Dokumen</p>
-                      <p className="text-xs text-muted-foreground">Ambil dari dokumen terindeks</p>
-                    </div>
-                    <Switch checked={includeDocuments} onCheckedChange={setIncludeDocuments} />
-                  </div>
-                </div>
-              </div>
-            </div>
-
             <Button type="submit" disabled={loading} className="w-full md:w-auto">
               {loading ? (
-                <>Mencari...</>
+                <>Memproses...</>
               ) : (
-                <>Uji Pengetahuan</>
+                <>Uji AI</>
               )}
             </Button>
           </form>
@@ -220,11 +114,9 @@ export default function TestingKnowledgePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Hasil Pencarian</CardTitle>
+          <CardTitle>Hasil Uji AI</CardTitle>
           <CardDescription>
-            {searchTimeMs !== null
-              ? `Waktu pencarian: ${searchTimeMs} ms`
-              : "Hasil akan muncul setelah melakukan pencarian."}
+            Hasil akan muncul setelah pertanyaan diproses.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -232,48 +124,56 @@ export default function TestingKnowledgePage() {
             <div className="flex items-center justify-center py-10">
               <div className="text-muted-foreground">Memuat...</div>
             </div>
-          ) : results.length === 0 ? (
+          ) : !result?.data ? (
             <div className="text-center text-muted-foreground py-8">
               Belum ada hasil.
             </div>
           ) : (
-            results.map((result) => (
-              <Card key={result.id} className="border">
-                <CardContent className="pt-4 space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge
-                      className={
-                        result.sourceType === "knowledge"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-secondary text-secondary-foreground"
-                      }
-                    >
-                      {result.sourceType === "knowledge" ? "Knowledge" : "Dokumen"}
-                    </Badge>
+            <Card className="border">
+              <CardContent className="pt-4 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="bg-primary text-primary-foreground">AI Response</Badge>
+                  <Badge className="border border-border bg-background text-foreground">
+                    Intent: {result.data.intent}
+                  </Badge>
+                  {result.data.metadata?.hasKnowledge && (
                     <Badge className="border border-border bg-background text-foreground">
-                      Skor {formatScore(result.score)}
+                      Knowledge: Ya
                     </Badge>
-                    {result.metadata?.category && (
-                      <Badge className="border border-border bg-background text-foreground">
-                        {result.metadata.category}
-                      </Badge>
-                    )}
-                  </div>
-                  <div>
-                    <p className="font-semibold">{result.source}</p>
-                    {result.metadata?.sectionTitle && (
-                      <p className="text-xs text-muted-foreground">Bagian: {result.metadata.sectionTitle}</p>
-                    )}
-                    {typeof result.metadata?.pageNumber === "number" && (
-                      <p className="text-xs text-muted-foreground">Halaman: {result.metadata.pageNumber}</p>
-                    )}
-                  </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Jawaban</p>
                   <p className="text-sm text-muted-foreground whitespace-pre-line">
-                    {result.content}
+                    {result.data.response}
                   </p>
-                </CardContent>
-              </Card>
-            ))
+                </div>
+                {result.data.guidanceText && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Tindak Lanjut</p>
+                    <p className="text-sm text-muted-foreground whitespace-pre-line">
+                      {result.data.guidanceText}
+                    </p>
+                  </div>
+                )}
+                {result.data.metadata && (
+                  <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                    <div>Waktu Proses: {result.data.metadata.processingTimeMs} ms</div>
+                    <div>Model: {result.data.metadata.model || "-"}</div>
+                    <div>Sentimen: {result.data.metadata.sentiment || "-"}</div>
+                    <div>Bahasa: {result.data.metadata.language || "-"}</div>
+                  </div>
+                )}
+                {result.data.fields && Object.keys(result.data.fields).length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Ekstraksi</p>
+                    <pre className="text-xs bg-muted/60 rounded-md p-3 overflow-auto">
+                      {JSON.stringify(result.data.fields, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
         </CardContent>
       </Card>

@@ -593,6 +593,7 @@ export default function KnowledgePage() {
   const getFileIcon = (mimeType: string) => {
     if (mimeType === 'application/pdf') return <File className="h-4 w-4 text-red-500" />
     if (mimeType.includes('word')) return <FileText className="h-4 w-4 text-blue-500" />
+    if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return <FileText className="h-4 w-4 text-orange-500" />
     if (mimeType === 'text/csv') return <FileSpreadsheet className="h-4 w-4 text-green-500" />
     return <FileText className="h-4 w-4 text-gray-500" />
   }
@@ -625,26 +626,6 @@ export default function KnowledgePage() {
             Kelola entri basis pengetahuan dan dokumen untuk respons AI
           </p>
         </div>
-        {/* Button embed hanya muncul di tab knowledge-base, dokumen sudah auto-embed */}
-        {activeTab === 'knowledge-base' && (
-          <Button 
-            onClick={handleGenerateAllEmbeddings}
-            disabled={embeddingLoading}
-            className="bg-linear-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
-          >
-            {embeddingLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Memproses...
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4 mr-2" />
-                Generate Semua Embedding
-              </>
-            )}
-          </Button>
-        )}
       </div>
 
       {/* Stats Cards */}
@@ -745,6 +726,24 @@ export default function KnowledgePage() {
                 <Button type="button" onClick={() => { resetKnowledgeForm(); setIsAddKnowledgeOpen(true) }}>
                   <Plus className="h-4 w-4 mr-2" />
                   Tambah
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleGenerateAllEmbeddings}
+                  disabled={embeddingLoading}
+                  className="bg-linear-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+                >
+                  {embeddingLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Memproses...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4 mr-2" />
+                      Generate Semua Embedding
+                    </>
+                  )}
                 </Button>
               </form>
             </CardContent>
@@ -937,7 +936,7 @@ export default function KnowledgePage() {
                           <TableCell>{doc.total_chunks ?? '-'}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
-                              <Button variant="ghost" size="sm" onClick={() => window.open(doc.file_url, '_blank')} title="View">
+                              <Button variant="ghost" size="sm" onClick={() => window.location.href = `/api/documents/${doc.id}/download`} title="Download">
                                 <Eye className="h-4 w-4" />
                               </Button>
                               {(doc.status === 'pending' || doc.status === 'failed') && (
@@ -1095,12 +1094,12 @@ export default function KnowledgePage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Unggah Dokumen</DialogTitle>
-            <DialogDescription>Unggah dokumen untuk menambah basis pengetahuan AI. Didukung: PDF, DOCX, TXT, MD, CSV</DialogDescription>
+            <DialogDescription>Unggah dokumen untuk menambah basis pengetahuan AI. Didukung: PDF, DOC/DOCX, PPT/PPTX, TXT, MD, CSV</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="file">File *</Label>
-              <Input id="file" type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.docx,.doc,.txt,.md,.csv" />
+              <Input id="file" type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.docx,.doc,.ppt,.pptx,.txt,.md,.csv" />
               {uploadFile && <p className="text-sm text-muted-foreground">Dipilih: {uploadFile.name} ({formatFileSize(uploadFile.size)})</p>}
             </div>
             <div className="space-y-2">

@@ -547,7 +547,7 @@ export default function ChannelSettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Pilih Desa</CardTitle>
-            <CardDescription>Superadmin perlu memilih desa untuk mengelola koneksi WhatsApp & webhook.</CardDescription>
+            <CardDescription>Superadmin perlu memilih desa untuk mengelola koneksi WhatsApp.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             <Label>Desa</Label>
@@ -626,12 +626,6 @@ export default function ChannelSettingsPage() {
                 </p>
               </div>
             )}
-
-            {/* Webhook URL */}
-            <div className="space-y-2">
-              <Label>Webhook URL (hanya baca)</Label>
-              <Input value={settings.webhook_url || ""} readOnly className="bg-muted" />
-            </div>
 
             {/* Action Buttons */}
             <div className="rounded-lg border p-4 space-y-3">

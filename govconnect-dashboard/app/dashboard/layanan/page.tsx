@@ -41,7 +41,9 @@ import {
   Link as LinkIcon,
   X,
   Copy,
-  Check
+  Check,
+  ExternalLink,
+  GripVertical
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -127,6 +129,9 @@ export default function LayananPage() {
   const [requirements, setRequirements] = useState<ServiceRequirement[]>([])
   const [reqLoading, setReqLoading] = useState(false)
   const [editingRequirement, setEditingRequirement] = useState<ServiceRequirement | null>(null)
+  const [draggingRequirementId, setDraggingRequirementId] = useState<string | null>(null)
+  const [dragOverRequirementId, setDragOverRequirementId] = useState<string | null>(null)
+  const [isReordering, setIsReordering] = useState(false)
 
   // Form states
   const [saving, setSaving] = useState(false)
@@ -145,7 +150,7 @@ export default function LayananPage() {
     is_required: true,
     help_text: "",
     options: "",
-    order_index: 0,
+    order_index: 1,
   })
 
   // Copy state
@@ -205,7 +210,7 @@ export default function LayananPage() {
     }
   }
 
-  const fetchRequirements = async (serviceId: string) => {
+  const fetchRequirements = async (serviceId: string): Promise<ServiceRequirement[]> => {
     try {
       setReqLoading(true)
       const response = await fetch(`/api/layanan/${serviceId}/requirements`, {
@@ -213,16 +218,24 @@ export default function LayananPage() {
       })
       if (!response.ok) throw new Error("Gagal memuat persyaratan")
       const data = await response.json()
-      setRequirements(data.data || [])
+      const list = data.data || []
+      setRequirements(list)
+      return list
     } catch (err: any) {
       toast({
         title: "Gagal",
         description: err.message,
         variant: "destructive",
       })
+      return []
     } finally {
       setReqLoading(false)
     }
+  }
+
+  const getNextOrderIndex = (list: ServiceRequirement[]) => {
+    const maxOrder = list.reduce((acc, item) => Math.max(acc, item.order_index ?? 0), 0)
+    return Math.max(1, maxOrder + 1)
   }
 
   // Category handlers
@@ -411,16 +424,16 @@ export default function LayananPage() {
   const openRequirementModal = async (service: Service) => {
     setActiveService(service)
     setEditingRequirement(null)
+    setRequirementModalOpen(true)
+    const list = await fetchRequirements(service.id)
     setRequirementForm({
       label: "",
       field_type: "text",
       is_required: true,
       help_text: "",
       options: "",
-      order_index: 0,
+      order_index: getNextOrderIndex(list),
     })
-    setRequirementModalOpen(true)
-    await fetchRequirements(service.id)
   }
 
   const handleSaveRequirement = async () => {
@@ -428,6 +441,20 @@ export default function LayananPage() {
     
     try {
       setSaving(true)
+
+      const normalizedOrder = Math.max(1, Number(requirementForm.order_index) || 1)
+      const duplicateOrder = requirements.some((req) =>
+        (req.order_index ?? 0) === normalizedOrder && req.id !== editingRequirement?.id
+      )
+
+      if (duplicateOrder) {
+        toast({
+          title: "Urutan duplikat",
+          description: "Urutan persyaratan sudah dipakai. Pilih angka lain.",
+          variant: "destructive",
+        })
+        return
+      }
       
       let options_json = null
       if ((requirementForm.field_type === "select" || requirementForm.field_type === "radio") && requirementForm.options.trim()) {
@@ -450,7 +477,7 @@ export default function LayananPage() {
           is_required: requirementForm.is_required,
           help_text: requirementForm.help_text || null,
           options_json,
-          order_index: requirementForm.order_index,
+          order_index: normalizedOrder,
         }),
       })
 
@@ -468,27 +495,28 @@ export default function LayananPage() {
       
       // Clear form but keep modal open (don't close modal)
       if (!editingRequirement) {
+        const updated = await fetchRequirements(activeService.id)
         setRequirementForm({
           label: "",
           field_type: "text",
           is_required: true,
           help_text: "",
           options: "",
-          order_index: requirementForm.order_index + 1,
+          order_index: getNextOrderIndex(updated),
         })
       } else {
         setEditingRequirement(null)
+        const updated = await fetchRequirements(activeService.id)
         setRequirementForm({
           label: "",
           field_type: "text",
           is_required: true,
           help_text: "",
           options: "",
-          order_index: 0,
+          order_index: getNextOrderIndex(updated),
         })
       }
       
-      await fetchRequirements(activeService.id)
       fetchAll() // Refresh service list to update requirement count
     } catch (error: any) {
       toast({
@@ -509,7 +537,9 @@ export default function LayananPage() {
       is_required: req.is_required,
       help_text: req.help_text || "",
       options: Array.isArray(req.options_json) ? req.options_json.join(", ") : "",
-      order_index: req.order_index || 0,
+      order_index: req.order_index && req.order_index > 0
+        ? req.order_index
+        : getNextOrderIndex(requirements),
     })
   }
 
@@ -540,6 +570,55 @@ export default function LayananPage() {
         description: error.message,
         variant: "destructive",
       })
+    }
+  }
+
+  const handleReorderRequirements = async (dragId: string, dropId: string) => {
+    if (!activeService || dragId === dropId || isReordering) return
+
+    const ordered = [...requirements].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+    const fromIndex = ordered.findIndex((req) => req.id === dragId)
+    const toIndex = ordered.findIndex((req) => req.id === dropId)
+
+    if (fromIndex < 0 || toIndex < 0) return
+
+    const next = [...ordered]
+    const [moved] = next.splice(fromIndex, 1)
+    next.splice(toIndex, 0, moved)
+
+    const normalized = next.map((req, idx) => ({ ...req, order_index: idx + 1 }))
+    setRequirements(normalized)
+    setIsReordering(true)
+
+    try {
+      await Promise.all(
+        normalized.map((req) =>
+          fetch(`/api/layanan/requirements/${req.id}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+            body: JSON.stringify({ order_index: req.order_index }),
+          })
+        )
+      )
+
+      toast({
+        title: "Urutan diperbarui",
+        description: "Urutan persyaratan berhasil disimpan.",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Gagal",
+        description: error.message || "Gagal memperbarui urutan persyaratan",
+        variant: "destructive",
+      })
+      await fetchRequirements(activeService.id)
+    } finally {
+      setIsReordering(false)
+      setDraggingRequirementId(null)
+      setDragOverRequirementId(null)
     }
   }
 
@@ -575,6 +654,8 @@ export default function LayananPage() {
   const filteredCategories = categories.filter(c => 
     c.name.toLowerCase().includes(searchCategory.toLowerCase())
   )
+
+  const orderedRequirements = [...requirements].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
 
   // Group services by category
   const groupedServices = filteredServices.reduce((acc, service) => {
@@ -1083,6 +1164,7 @@ export default function LayananPage() {
                   <Label>Urutan</Label>
                   <Input
                     type="number"
+                    min={1}
                     value={requirementForm.order_index}
                     onChange={(e) => setRequirementForm(prev => ({ ...prev, order_index: Number(e.target.value) }))}
                   />
@@ -1141,7 +1223,7 @@ export default function LayananPage() {
                         is_required: true,
                         help_text: "",
                         options: "",
-                        order_index: 0,
+                        order_index: getNextOrderIndex(requirements),
                       })
                     }}
                   >
@@ -1170,28 +1252,57 @@ export default function LayananPage() {
                 </div>
               ) : (
                 <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {requirements.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)).map((req) => (
+                  {orderedRequirements.map((req, index) => {
+                    const displayOrder = req.order_index && req.order_index > 0 ? req.order_index : index + 1
+
+                    return (
                     <div 
                       key={req.id} 
+                      draggable={!isReordering}
+                      onDragStart={() => setDraggingRequirementId(req.id)}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        setDragOverRequirementId(req.id)
+                      }}
+                      onDragLeave={() => setDragOverRequirementId(null)}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        if (draggingRequirementId) {
+                          handleReorderRequirements(draggingRequirementId, req.id)
+                        }
+                      }}
+                      onDragEnd={() => {
+                        setDraggingRequirementId(null)
+                        setDragOverRequirementId(null)
+                      }}
                       className={`p-3 border rounded-lg transition-colors ${
                         editingRequirement?.id === req.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                      } ${
+                        draggingRequirementId === req.id ? 'opacity-70' : ''
+                      } ${
+                        dragOverRequirementId === req.id ? 'border-primary/60 bg-primary/10' : ''
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium text-sm">{req.label}</span>
-                            <Badge variant="outline" className="text-xs">
-                              {fieldTypeLabels[req.field_type] || req.field_type}
-                            </Badge>
-                            {req.is_required && (
-                              <Badge variant="secondary" className="text-xs">Wajib</Badge>
+                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                          <div className="mt-0.5 text-muted-foreground cursor-grab">
+                            <GripVertical className="h-4 w-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium text-sm">{req.label}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {fieldTypeLabels[req.field_type] || req.field_type}
+                              </Badge>
+                              {req.is_required && (
+                                <Badge variant="secondary" className="text-xs">Wajib</Badge>
+                              )}
+                              <Badge variant="outline" className="text-xs">Urutan {displayOrder}</Badge>
+                            </div>
+                            {req.help_text && (
+                              <p className="text-xs text-muted-foreground mt-1">{req.help_text}</p>
                             )}
                           </div>
-                          {req.help_text && (
-                            <p className="text-xs text-muted-foreground mt-1">{req.help_text}</p>
-                          )}
-                          <p className="text-xs text-muted-foreground mt-1">Urutan: {req.order_index || 0}</p>
                         </div>
                         <div className="flex gap-1">
                           <Button 
@@ -1213,7 +1324,7 @@ export default function LayananPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               )}
             </div>
@@ -1297,6 +1408,15 @@ function ServiceCard({ service, publicLink, copiedId, onCopy, onEdit, onDelete, 
           <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
             <LinkIcon className="h-3 w-3 text-muted-foreground shrink-0" />
             <span className="text-xs truncate flex-1 font-mono">{publicLink}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              onClick={() => window.open(publicLink, "_blank")}
+              title="Preview"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"

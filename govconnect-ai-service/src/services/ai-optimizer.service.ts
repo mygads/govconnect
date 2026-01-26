@@ -16,7 +16,7 @@ import { fastClassifyIntent, FastClassifyResult, isSimpleConfirmation, isSimpleT
 import { getCachedResponse, setCachedResponse, getCacheStats, preWarmCache } from './response-cache.service';
 import { extractAllEntities, mergeEntities, ExtractionResult } from './entity-extractor.service';
 import { ProcessMessageInput, ProcessMessageResult } from './unified-message-processor.service';
-import { matchTemplate } from './response-templates.service';
+import { matchTemplate, TemplateContext } from './response-templates.service';
 
 // ==================== TYPES ====================
 
@@ -63,7 +63,8 @@ const QUICK_RESPONSES: Record<string, { response: string; guidance?: string }> =
 export function preProcessMessage(
   message: string,
   userId: string,
-  conversationHistory?: string
+  conversationHistory?: string,
+  templateContext?: TemplateContext
 ): OptimizationResult {
   const optimizationApplied: string[] = [];
   let shouldSkipLLM = false;
@@ -87,7 +88,7 @@ export function preProcessMessage(
   }
   
   // 2. Check Response Templates (pattern-based, no LLM needed)
-  const templateMatch = matchTemplate(message);
+  const templateMatch = matchTemplate(message, templateContext);
   if (templateMatch.matched && templateMatch.response) {
     optimizationApplied.push('template_match');
     shouldSkipLLM = true;

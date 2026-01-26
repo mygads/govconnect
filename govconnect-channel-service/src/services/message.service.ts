@@ -116,9 +116,13 @@ export async function getMessageHistory(
   limit: number = 30,
   village_id?: string
 ): Promise<any[]> {
-  const resolvedVillageId = resolveVillageId(village_id);
+  const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
+  const where: any = { wa_user_id };
+  if (resolvedVillageId) {
+    where.village_id = resolvedVillageId;
+  }
   const messages = await prisma.message.findMany({
-    where: { village_id: resolvedVillageId, wa_user_id },
+    where,
     orderBy: { timestamp: 'desc' },
     take: limit,
   });

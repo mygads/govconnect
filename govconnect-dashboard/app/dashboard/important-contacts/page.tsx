@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
+import { Badge } from "@/components/ui/badge"
 import {
   Select,
   SelectContent,
@@ -14,7 +15,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Phone, PlusCircle } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Phone, PlusCircle, X } from "lucide-react"
 
 interface ContactCategory {
   id: string
@@ -42,6 +51,8 @@ export default function ImportantContactsPage() {
     phone: "",
     description: "",
   })
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false)
+  const [contactModalOpen, setContactModalOpen] = useState(false)
 
   const fetchData = async () => {
     try {
@@ -94,6 +105,7 @@ export default function ImportantContactsPage() {
       }
 
       setNewCategory("")
+      setCategoryModalOpen(false)
       await fetchData()
       toast({
         title: "Kategori ditambahkan",
@@ -132,6 +144,7 @@ export default function ImportantContactsPage() {
       }
 
       setNewContact({ category_id: "", name: "", phone: "", description: "" })
+      setContactModalOpen(false)
       await fetchData()
       toast({
         title: "Nomor penting ditambahkan",
@@ -157,41 +170,91 @@ export default function ImportantContactsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">Nomor Penting</h1>
-        <p className="text-muted-foreground mt-2">Kelola daftar kontak darurat dan nomor penting untuk kebutuhan pengaduan.</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Nomor Penting</h1>
+          <p className="text-muted-foreground mt-2">Kelola daftar kontak darurat dan nomor penting untuk kebutuhan pengaduan.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setCategoryModalOpen(true)}>
+            <PlusCircle className="h-4 w-4 mr-2" />
+            Tambah Kategori
+          </Button>
+          <Button onClick={() => setContactModalOpen(true)}>
+            <Phone className="h-4 w-4 mr-2" />
+            Tambah Nomor
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <PlusCircle className="h-5 w-5" />
-              Tambah Kategori
-            </CardTitle>
-            <CardDescription>Kelompokkan nomor penting berdasarkan kategori.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Label htmlFor="category-name">Nama Kategori</Label>
-            <Input
-              id="category-name"
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              placeholder="Polisi, Damkar, Ambulans"
-            />
-            <Button onClick={handleAddCategory}>Simpan Kategori</Button>
-          </CardContent>
-        </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Daftar Nomor Penting</CardTitle>
+          <CardDescription>Semua kontak darurat yang sudah disimpan.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {contacts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Belum ada nomor penting.</p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {contacts.map((contact) => (
+                <Card key={contact.id} className="border">
+                  <CardContent className="pt-5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-semibold text-foreground truncate">
+                        {contact.name}
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        {contact.category?.name || "-"}
+                      </Badge>
+                    </div>
+                    <div className="text-sm font-medium">{contact.phone}</div>
+                    {contact.description && (
+                      <p className="text-xs text-muted-foreground">{contact.description}</p>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Phone className="h-5 w-5" />
-              Tambah Nomor Penting
-            </CardTitle>
-            <CardDescription>Data kontak yang akan muncul untuk laporan urgent.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
+      <Dialog open={categoryModalOpen} onOpenChange={setCategoryModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Tambah Kategori</DialogTitle>
+            <DialogDescription>Kelompokkan nomor penting berdasarkan kategori.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="category-name">Nama Kategori</Label>
+              <Input
+                id="category-name"
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+                placeholder="Polisi, Damkar, Ambulans"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCategoryModalOpen(false)}>
+              <X className="h-4 w-4 mr-2" />Tutup
+            </Button>
+            <Button onClick={handleAddCategory} disabled={!newCategory.trim()}>
+              Simpan Kategori
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={contactModalOpen} onOpenChange={setContactModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Tambah Nomor Penting</DialogTitle>
+            <DialogDescription>Data kontak yang akan muncul untuk laporan urgent.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
             <div className="space-y-2">
               <Label>Kategori</Label>
               <Select
@@ -234,37 +297,17 @@ export default function ImportantContactsPage() {
                 placeholder="Kontak piket 24 jam"
               />
             </div>
-            <Button onClick={handleAddContact} disabled={!newContact.category_id}>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setContactModalOpen(false)}>
+              <X className="h-4 w-4 mr-2" />Tutup
+            </Button>
+            <Button onClick={handleAddContact} disabled={!newContact.category_id || !newContact.name || !newContact.phone}>
               Simpan Nomor
             </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Daftar Nomor Penting</CardTitle>
-          <CardDescription>Semua kontak darurat yang sudah disimpan.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {contacts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Belum ada nomor penting.</p>
-          ) : (
-            <div className="space-y-3">
-              {contacts.map((contact) => (
-                <div key={contact.id} className="border rounded-lg p-4 flex flex-col gap-1">
-                  <div className="text-sm font-semibold text-foreground">{contact.name}</div>
-                  <div className="text-xs text-muted-foreground">Kategori: {contact.category?.name || "-"}</div>
-                  <div className="text-sm">{contact.phone}</div>
-                  {contact.description && (
-                    <p className="text-xs text-muted-foreground">{contact.description}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

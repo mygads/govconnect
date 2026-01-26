@@ -128,7 +128,7 @@ export function GovConnectSidebar() {
       title: "Basis Pengetahuan",
       items: [
         {
-          title: "Basis Pengetahuan & Dokumen",
+          title: "Basis Pengetahuan",
           url: "/dashboard/knowledge",
           icon: Brain,
         },
@@ -151,11 +151,6 @@ export function GovConnectSidebar() {
           title: "Nomor Penting",
           url: "/dashboard/important-contacts",
           icon: Bell,
-        },
-        {
-          title: "Akun Admin",
-          url: "/dashboard/settings",
-          icon: Settings2,
         },
       ],
     },

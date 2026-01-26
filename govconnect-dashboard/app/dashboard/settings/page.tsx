@@ -16,6 +16,22 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false)
   const [passwordLoading, setPasswordLoading] = useState(false)
 
+  const formatRoleLabel = (role?: string | null) => {
+    if (!role) return 'Admin'
+    const normalized = role.toLowerCase()
+    const map: Record<string, string> = {
+      superadmin: 'Super Admin',
+      super_admin: 'Super Admin',
+      village_admin: 'Admin Desa',
+      admin: 'Admin',
+    }
+    if (map[normalized]) return map[normalized]
+    return normalized
+      .split('_')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+  }
+
   const [profile, setProfile] = useState({
     name: user?.name || '',
     username: user?.username || '',
@@ -172,9 +188,9 @@ export default function SettingsPage() {
                 <Input
                   id="role"
                   type="text"
-                  value={user?.role || 'admin'}
+                  value={formatRoleLabel(user?.role)}
                   disabled
-                  className="bg-muted capitalize"
+                  className="bg-muted"
                 />
               </div>
 

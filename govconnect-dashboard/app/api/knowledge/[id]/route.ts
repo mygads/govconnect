@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
-import { updateKnowledgeVector, deleteKnowledgeVector } from '@/lib/ai-service'
+import { deleteKnowledgeVector } from '@/lib/ai-service'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -116,31 +116,40 @@ export async function PUT(request: NextRequest, { params }: Params) {
       ? keywords.map((k: string) => k.toLowerCase().trim()).filter(Boolean)
       : undefined
 
+    const resolvedTitle = title ?? existing.title
+    const resolvedContent = content ?? existing.content
+    const resolvedCategory = resolvedCategoryName ?? existing.category
+    const resolvedCategoryIdFinal = resolvedCategoryId ?? existing.category_id ?? undefined
+    const resolvedKeywords = processedKeywords ?? existing.keywords
+
+    const hasEmbeddingChanges =
+      resolvedTitle !== existing.title ||
+      resolvedContent !== existing.content ||
+      resolvedCategory !== existing.category ||
+      resolvedCategoryIdFinal !== existing.category_id ||
+      JSON.stringify(resolvedKeywords ?? []) !== JSON.stringify(existing.keywords ?? [])
+
     // Update knowledge entry
     const knowledge = await prisma.knowledge_base.update({
       where: { id },
       data: {
-        ...(title && { title }),
-        ...(content && { content }),
-        ...(resolvedCategoryName && { category: resolvedCategoryName }),
-        ...(resolvedCategoryId && { category_id: resolvedCategoryId }),
-        ...(processedKeywords && { keywords: processedKeywords }),
+        title: resolvedTitle,
+        content: resolvedContent,
+        category: resolvedCategory,
+        category_id: resolvedCategoryIdFinal,
+        keywords: resolvedKeywords,
         ...(is_active !== undefined && { is_active }),
         ...(priority !== undefined && { priority }),
         admin_id: session.admin_id,
       },
     })
 
-    // Sync to AI Service - re-embed with new content
-    updateKnowledgeVector(id, {
-      village_id: knowledge.village_id || undefined,
-      title: knowledge.title,
-      content: knowledge.content,
-      category: knowledge.category,
-      keywords: knowledge.keywords,
-    }).catch(err => {
-      console.error('Failed to sync knowledge update to AI Service:', err)
-    })
+    if (hasEmbeddingChanges) {
+      // Reset embedding status by deleting existing vector
+      deleteKnowledgeVector(id).catch(err => {
+        console.error('Failed to reset knowledge embedding in AI Service:', err)
+      })
+    }
 
     return NextResponse.json({
       status: 'success',

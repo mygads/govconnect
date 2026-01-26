@@ -34,6 +34,9 @@ const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 const DEFAULT_MODEL = 'gemini-embedding-001';
 const DEFAULT_DIMENSIONS: EmbeddingDimension = 768;
 const MAX_BATCH_SIZE = 100; // Gemini API limit
+const EMBEDDING_RETRY_COUNT = parseInt(process.env.EMBEDDING_RETRY_COUNT || '2', 10);
+const EMBEDDING_RETRY_BASE_MS = parseInt(process.env.EMBEDDING_RETRY_BASE_MS || '750', 10);
+const EMBEDDING_RETRY_MAX_MS = parseInt(process.env.EMBEDDING_RETRY_MAX_MS || '5000', 10);
 
 function isBlankText(text: unknown): boolean {
   return typeof text !== 'string' || text.trim().length === 0;
@@ -46,6 +49,43 @@ function makeZeroEmbedding(dimensions: number, modelLabel: string): EmbeddingRes
     model: modelLabel,
     normalized: false,
   };
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  maxRetries: number = EMBEDDING_RETRY_COUNT
+): Promise<T> {
+  let lastError: any;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+
+      if (attempt >= maxRetries) {
+        break;
+      }
+
+      const backoff = Math.min(
+        EMBEDDING_RETRY_BASE_MS * Math.pow(2, attempt),
+        EMBEDDING_RETRY_MAX_MS
+      );
+      const jitter = Math.floor(Math.random() * 250);
+
+      logger.warn(`${label} failed, retrying`, {
+        attempt: attempt + 1,
+        maxRetries,
+        backoffMs: backoff + jitter,
+        error: error.message,
+      });
+
+      await new Promise(resolve => setTimeout(resolve, backoff + jitter));
+    }
+  }
+
+  throw lastError;
 }
 
 // ============================================================================
@@ -255,7 +295,10 @@ export async function generateEmbedding(
     const embeddingModel = genAI.getGenerativeModel({ model });
 
     // Call Gemini API - embedContent accepts string directly or EmbedContentRequest
-    const result = await embeddingModel.embedContent(text);
+    const result = await withRetry(
+      () => embeddingModel.embedContent(text),
+      'embedContent'
+    );
 
     let values = result.embedding.values;
 
@@ -405,13 +448,18 @@ export async function generateBatchEmbeddings(
     // Get embedding model
     const embeddingModel = genAI.getGenerativeModel({ model });
 
-    // Prepare batch request - batchEmbedContents expects array of EmbedContentRequest
-    // where content is a string
-    const batchResult = await embeddingModel.batchEmbedContents({
-      requests: nonBlankTexts.map(text => ({
-        content: { role: 'user', parts: [{ text }] },
-      })),
-    });
+    // Prepare batch request - include model explicitly to avoid API validation issues
+    const requestModel = model.startsWith('models/') ? model : `models/${model}`;
+    const batchResult = await withRetry(
+      () =>
+        embeddingModel.batchEmbedContents({
+          requests: nonBlankTexts.map(text => ({
+            model: requestModel,
+            content: { role: 'user', parts: [{ text }] },
+          })),
+        }),
+      'batchEmbedContents'
+    );
 
     // Process results
     const nonBlankEmbeddings: EmbeddingResult[] = batchResult.embeddings.map(embedding => {
@@ -463,17 +511,60 @@ export async function generateBatchEmbeddings(
       processingTimeMs: latencyMs,
     };
   } catch (error: any) {
-    const endTime = Date.now();
-    stats.errorCount++;
-    updateSuccessRate(false);
-
-    logger.error('Failed to generate batch embeddings', {
+    logger.warn('Batch embedding failed, attempting single-request fallback', {
       error: error.message,
-      count: texts.length,
-      latencyMs: endTime - startTime,
+      count: nonBlankTexts.length,
     });
 
-    throw error;
+    try {
+      const fallbackEmbeddings = await Promise.all(
+        nonBlankTexts.map(text =>
+          generateEmbedding(text, {
+            model,
+            outputDimensionality,
+            taskType,
+            normalize,
+            useCache: false,
+          })
+        )
+      );
+
+      const embeddings: EmbeddingResult[] = cleanedTexts.map(() =>
+        makeZeroEmbedding(outputDimensionality, 'empty')
+      );
+      for (let i = 0; i < nonBlankIndexes.length; i++) {
+        const idx = nonBlankIndexes[i];
+        if (fallbackEmbeddings[i]) {
+          embeddings[idx] = fallbackEmbeddings[i];
+        }
+      }
+
+      const latencyMs = Date.now() - startTime;
+
+      logger.info('Fallback single embeddings generated successfully', {
+        count: fallbackEmbeddings.length,
+        avgDimensions: fallbackEmbeddings[0]?.dimensions,
+        latencyMs,
+      });
+
+      return {
+        embeddings,
+        processingTimeMs: latencyMs,
+      };
+    } catch (fallbackError: any) {
+      const endTime = Date.now();
+      stats.errorCount++;
+      updateSuccessRate(false);
+
+      logger.error('Failed to generate batch embeddings', {
+        error: error.message,
+        fallbackError: fallbackError.message,
+        count: texts.length,
+        latencyMs: endTime - startTime,
+      });
+
+      throw error;
+    }
   }
 }
 

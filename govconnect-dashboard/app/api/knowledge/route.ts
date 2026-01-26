@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { addKnowledgeVector } from '@/lib/ai-service'
+import { ai } from '@/lib/api-client'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -71,8 +72,38 @@ export async function GET(request: NextRequest) {
       prisma.knowledge_base.count({ where }),
     ])
 
+    let enriched = knowledge
+
+    try {
+      const ids = knowledge.map((item) => item.id)
+      if (ids.length > 0) {
+        const statusResponse = await ai.getKnowledgeStatuses(ids)
+        if (statusResponse.ok) {
+          const statusJson = await statusResponse.json()
+          const statuses = Array.isArray(statusJson.data) ? statusJson.data : []
+          const statusMap = new Map<string, { id: string; embedding_model?: string | null; updated_at?: string | Date }>(
+            statuses.map((status: { id: string; embedding_model?: string | null; updated_at?: string | Date }) => [
+              status.id,
+              status,
+            ])
+          )
+
+          enriched = knowledge.map((item) => {
+            const status = statusMap.get(item.id)
+            return {
+              ...item,
+              embedding_model: status?.embedding_model || null,
+              last_embedded_at: status?.updated_at || null,
+            }
+          })
+        }
+      }
+    } catch (statusError) {
+      console.warn('Failed to fetch embedding status:', statusError)
+    }
+
     return NextResponse.json({
-      data: knowledge,
+      data: enriched,
       pagination: {
         total,
         limit,

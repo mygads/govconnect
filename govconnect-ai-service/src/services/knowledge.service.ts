@@ -21,6 +21,14 @@ interface KnowledgeSearchResult {
   context: string;
 }
 
+interface VillageProfileSummary {
+  id?: string;
+  name?: string | null;
+  short_name?: string | null;
+  address?: string | null;
+  gmaps_url?: string | null;
+}
+
 // Feature flag for RAG-based search
 const USE_RAG_SEARCH = process.env.USE_RAG_SEARCH !== 'false'; // Default: true
 
@@ -188,12 +196,58 @@ export async function getRAGContext(query: string, categories?: string[], villag
 }
 
 /**
+ * Get village profile summary directly from Dashboard DB
+ * Use for greeting personalization (no embedding needed)
+ */
+export async function getVillageProfileSummary(villageId?: string): Promise<VillageProfileSummary | null> {
+  if (!villageId) return null;
+
+  try {
+    const response = await axios.get<{ data: VillageProfileSummary | null }>(
+      `${config.dashboardServiceUrl}/api/internal/village-profile`,
+      {
+        params: { village_id: villageId },
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+        },
+        timeout: 5000,
+      }
+    );
+
+    return response.data.data || null;
+  } catch (error: any) {
+    logger.warn('Failed to get village profile summary', {
+      error: error.message,
+      villageId,
+    });
+    return null;
+  }
+}
+
+/**
  * Get kelurahan information context for greetings
  * This fetches basic kelurahan info (nama, alamat) to personalize welcome message
  */
 export async function getKelurahanInfoContext(villageId?: string): Promise<string> {
   try {
     logger.debug('Fetching kelurahan info for greeting');
+
+    const profile = await getVillageProfileSummary(villageId);
+    if (profile?.name) {
+      const profileContext = [
+        `Nama Desa/Kelurahan: ${profile.name || '-'}`,
+        `Nama Singkat: ${profile.short_name || '-'}`,
+        `Alamat: ${profile.address || '-'}`,
+        `Google Maps: ${profile.gmaps_url || '-'}`,
+      ].join('\n');
+
+      logger.info('Using village profile for greeting context', {
+        villageId,
+        name: profile.name,
+      });
+
+      return `PROFIL DESA (DATABASE)\n${profileContext}`;
+    }
     
     // Try RAG-based search with specific query for kelurahan info
     const ragContext = await retrieveContext('informasi kelurahan nama alamat', {

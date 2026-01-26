@@ -148,6 +148,8 @@ export type SupportedMimeType =
   | 'application/pdf'
   | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'  // DOCX
   | 'application/msword'     // DOC
+  | 'application/vnd.openxmlformats-officedocument.presentationml.presentation' // PPTX
+  | 'application/vnd.ms-powerpoint' // PPT
   | 'text/plain'
   | 'text/markdown'
   | 'text/csv';

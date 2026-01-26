@@ -239,18 +239,26 @@ export async function updateConversation(
 /**
  * Mark conversation as read (reset unread count)
  */
-export async function markConversationAsRead(wa_user_id: string): Promise<void> {
+export async function markConversationAsRead(wa_user_id: string, village_id?: string): Promise<void> {
   try {
-    const village_id = resolveVillageId(undefined);
-    await prisma.conversation.update({
-      where: {
-        village_id_wa_user_id: {
-          village_id,
-          wa_user_id,
+    const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
+
+    if (resolvedVillageId) {
+      await prisma.conversation.update({
+        where: {
+          village_id_wa_user_id: {
+            village_id: resolvedVillageId,
+            wa_user_id,
+          },
         },
-      },
-      data: { unread_count: 0 },
-    });
+        data: { unread_count: 0 },
+      });
+    } else {
+      await prisma.conversation.updateMany({
+        where: { wa_user_id },
+        data: { unread_count: 0 },
+      });
+    }
   } catch (error: any) {
     // Conversation might not exist
     logger.debug('Could not mark conversation as read', { wa_user_id });
@@ -262,13 +270,19 @@ export async function markConversationAsRead(wa_user_id: string): Promise<void> 
  */
 export async function getConversations(
   filter: 'all' | 'takeover' | 'bot' = 'all',
-  limit: number = 50
+  limit: number = 50,
+  village_id?: string
 ): Promise<ConversationSummary[]> {
+  const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
   const where = filter === 'all' 
     ? {} 
     : filter === 'takeover' 
       ? { is_takeover: true }
       : { is_takeover: false };
+
+  if (resolvedVillageId) {
+    Object.assign(where, { village_id: resolvedVillageId });
+  }
 
   return prisma.conversation.findMany({
     where,
@@ -282,34 +296,49 @@ export async function getConversations(
 /**
  * Get conversation by wa_user_id
  */
-export async function getConversation(wa_user_id: string): Promise<ConversationSummary | null> {
-  const village_id = resolveVillageId(undefined);
-  return prisma.conversation.findUnique({
-    where: {
-      village_id_wa_user_id: {
-        village_id,
-        wa_user_id,
+export async function getConversation(wa_user_id: string, village_id?: string): Promise<ConversationSummary | null> {
+  const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
+
+  if (resolvedVillageId) {
+    return prisma.conversation.findUnique({
+      where: {
+        village_id_wa_user_id: {
+          village_id: resolvedVillageId,
+          wa_user_id,
+        },
       },
-    },
+    });
+  }
+
+  return prisma.conversation.findFirst({
+    where: { wa_user_id },
+    orderBy: { last_message_at: 'desc' },
   });
 }
 
 /**
  * Delete conversation and all related data for a user
  */
-export async function deleteConversationHistory(wa_user_id: string): Promise<void> {
+export async function deleteConversationHistory(wa_user_id: string, village_id?: string): Promise<void> {
   try {
-    const village_id = resolveVillageId(undefined);
+    const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
+    const where: any = { wa_user_id };
+    if (resolvedVillageId) {
+      where.village_id = resolvedVillageId;
+    }
     // Delete all messages for this user
     await prisma.message.deleteMany({
-      where: { village_id, wa_user_id },
+      where,
     });
 
     // Delete all takeover sessions for this user using raw query
-    await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE village_id = ${village_id} AND wa_user_id = ${wa_user_id}`;
-
-    // Delete the conversation record using raw query
-    await prisma.$executeRaw`DELETE FROM conversations WHERE village_id = ${village_id} AND wa_user_id = ${wa_user_id}`;
+    if (resolvedVillageId) {
+      await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE village_id = ${resolvedVillageId} AND wa_user_id = ${wa_user_id}`;
+      await prisma.$executeRaw`DELETE FROM conversations WHERE village_id = ${resolvedVillageId} AND wa_user_id = ${wa_user_id}`;
+    } else {
+      await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE wa_user_id = ${wa_user_id}`;
+      await prisma.$executeRaw`DELETE FROM conversations WHERE wa_user_id = ${wa_user_id}`;
+    }
 
     logger.info('Deleted conversation history', { wa_user_id });
   } catch (error: any) {

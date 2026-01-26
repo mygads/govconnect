@@ -45,6 +45,22 @@ export interface TemplateMatch {
   confidence: number;
 }
 
+export interface TemplateContext {
+  villageName?: string | null;
+  villageShortName?: string | null;
+}
+
+function personalizeGreetingResponse(response: string, context?: TemplateContext): string {
+  const villageName = context?.villageName?.trim();
+  if (!villageName) return response;
+
+  const shortName = context?.villageShortName?.trim();
+  const label = shortName ? `${villageName} (${shortName})` : villageName;
+
+  // Append a consistent location line without altering the main greeting tone
+  return `${response}\n\n📍 Terhubung ke: ${label}`;
+}
+
 // ==================== MAIN FUNCTION ====================
 
 /**
@@ -52,14 +68,15 @@ export interface TemplateMatch {
  * Returns response if matched, null otherwise
  * Uses centralized patterns from constants/intent-patterns.ts
  */
-export function matchTemplate(message: string): TemplateMatch {
+export function matchTemplate(message: string, context?: TemplateContext): TemplateMatch {
   const cleanMessage = message.trim();
 
   // Check greetings (using centralized patterns)
   if (matchesAnyPattern(cleanMessage, GREETING_PATTERNS)) {
+    const baseResponse = getRandomItem(GREETING_RESPONSES);
     return {
       matched: true,
-      response: getRandomItem(GREETING_RESPONSES),
+      response: personalizeGreetingResponse(baseResponse, context),
       intent: 'GREETING',
       confidence: 0.95,
     };

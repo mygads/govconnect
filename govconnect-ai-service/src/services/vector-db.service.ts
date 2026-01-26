@@ -122,6 +122,26 @@ export async function getKnowledgeVector(id: string) {
   }
 }
 
+/**
+ * Get embedding status for multiple knowledge IDs
+ */
+export async function getKnowledgeEmbeddingStatuses(ids: string[]) {
+  if (!ids.length) return [];
+
+  try {
+    const results = await prisma.$queryRaw<Array<{ id: string; embedding_model: string | null; updated_at: Date }>>`
+      SELECT id, embedding_model, updated_at
+      FROM knowledge_vectors
+      WHERE id IN (${Prisma.join(ids)})
+    `;
+
+    return results || [];
+  } catch (error: any) {
+    logger.error('Failed to get knowledge embedding statuses', { error: error.message });
+    return [];
+  }
+}
+
 // ==================== DOCUMENT VECTORS ====================
 
 export interface DocumentChunkInput {

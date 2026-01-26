@@ -51,6 +51,8 @@ const upload = multer({
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'application/msword',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'application/vnd.ms-powerpoint',
       'text/plain',
       'text/markdown',
       'text/csv',
@@ -59,7 +61,7 @@ const upload = multer({
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('File type not supported. Allowed: PDF, DOCX, DOC, TXT, MD, CSV'));
+      cb(new Error('File type not supported. Allowed: PDF, DOCX, DOC, PPT, PPTX, TXT, MD, CSV'));
     }
   }
 });
@@ -126,19 +128,84 @@ async function parseFileContent(filePath: string, mimeType: string): Promise<str
     }
   }
   
-  if (mimeType.includes('wordprocessingml') || mimeType === 'application/msword') {
+  if (mimeType.includes('wordprocessingml')) {
     try {
       const mammoth = await import('mammoth');
       const result = await mammoth.extractRawText({ path: filePath });
-      
+
       if (!result.value || result.value.trim().length === 0) {
         throw new Error('DOCX contains no extractable text.');
       }
-      
+
       return result.value;
     } catch (docxError: any) {
       logger.error('DOCX parsing error', { error: docxError.message });
       throw new Error(`Failed to parse DOCX: ${docxError.message}`);
+    }
+  }
+
+  if (mimeType === 'application/msword') {
+    try {
+      const textract: any = await import('textract');
+      const extractedText = await new Promise<string>((resolve, reject) => {
+        textract.fromFileWithPath(filePath, (error: any, text: string) => {
+          if (error) reject(error);
+          else resolve(text || '');
+        });
+      });
+
+      if (!extractedText || extractedText.trim().length === 0) {
+        throw new Error('DOC contains no extractable text.');
+      }
+
+      return extractedText;
+    } catch (docError: any) {
+      logger.error('DOC parsing error', { error: docError.message });
+      throw new Error(`Failed to parse DOC: ${docError.message}`);
+    }
+  }
+
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+    try {
+      const officeParser: any = await import('officeparser');
+      const parseOfficeAsync = officeParser.parseOfficeAsync || officeParser.default?.parseOfficeAsync || officeParser.parseOffice;
+
+      if (!parseOfficeAsync) {
+        throw new Error('Office parser not available');
+      }
+
+      const result = await parseOfficeAsync(filePath);
+      const text = typeof result === 'string' ? result : result?.text || '';
+
+      if (!text || text.trim().length === 0) {
+        throw new Error('PPTX contains no extractable text.');
+      }
+
+      return text;
+    } catch (pptxError: any) {
+      logger.error('PPTX parsing error', { error: pptxError.message });
+      throw new Error(`Failed to parse PPTX: ${pptxError.message}`);
+    }
+  }
+
+  if (mimeType === 'application/vnd.ms-powerpoint') {
+    try {
+      const textract: any = await import('textract');
+      const extractedText = await new Promise<string>((resolve, reject) => {
+        textract.fromFileWithPath(filePath, (error: any, text: string) => {
+          if (error) reject(error);
+          else resolve(text || '');
+        });
+      });
+
+      if (!extractedText || extractedText.trim().length === 0) {
+        throw new Error('PPT contains no extractable text.');
+      }
+
+      return extractedText;
+    } catch (pptError: any) {
+      logger.error('PPT parsing error', { error: pptError.message });
+      throw new Error(`Failed to parse PPT: ${pptError.message}`);
     }
   }
   

@@ -27,6 +27,7 @@ import searchRoutes from './routes/search.routes';
 import uploadRoutes from './routes/upload.routes';
 import webchatRoutes from './routes/webchat.routes';
 import statusRoutes from './routes/status.routes';
+import testingRoutes from './routes/testing.routes';
 import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
 import { config } from './config/env';
@@ -561,6 +562,10 @@ app.use('/uploads/documents', express.static(uploadsDir, {
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     } else if (ext === '.doc') {
       res.setHeader('Content-Type', 'application/msword');
+    } else if (ext === '.pptx') {
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+    } else if (ext === '.ppt') {
+      res.setHeader('Content-Type', 'application/vnd.ms-powerpoint');
     } else if (ext === '.txt' || ext === '.md') {
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     } else if (ext === '.csv') {
@@ -577,6 +582,7 @@ app.use('/api/search', searchRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/webchat', webchatRoutes);
 app.use('/api/status', statusRoutes);
+app.use('/api/testing', testingRoutes);
 
 app.get('/stats/embeddings', async (req: Request, res: Response) => {
   try {

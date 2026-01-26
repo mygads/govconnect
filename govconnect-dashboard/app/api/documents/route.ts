@@ -111,6 +111,8 @@ export async function POST(request: NextRequest) {
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'application/msword',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'application/vnd.ms-powerpoint',
       'text/plain',
       'text/markdown',
       'text/csv',
@@ -118,7 +120,7 @@ export async function POST(request: NextRequest) {
 
     if (!allowedTypes.includes(file.type)) {
       return NextResponse.json(
-        { error: `File type not supported. Allowed: PDF, DOCX, DOC, TXT, MD, CSV` },
+        { error: `File type not supported. Allowed: PDF, DOCX, DOC, PPT, PPTX, TXT, MD, CSV` },
         { status: 400 }
       )
     }

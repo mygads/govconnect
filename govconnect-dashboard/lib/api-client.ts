@@ -261,6 +261,17 @@ export const ai = {
   },
 
   /**
+   * Get embedding status for knowledge IDs
+   */
+  async getKnowledgeStatuses(ids: string[]) {
+    return apiFetch(buildUrl(ServicePath.AI, '/api/knowledge/status'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ ids }),
+    });
+  },
+
+  /**
    * Upload document to AI service for processing
    */
   async uploadDocument(formData: FormData) {
@@ -378,12 +389,19 @@ export const ai = {
 };
 
 // ==================== LIVECHAT (Channel Service) ====================
+function withVillage(path: string, villageId?: string) {
+  if (!villageId) return path;
+  const joiner = path.includes('?') ? '&' : '?';
+  return `${path}${joiner}village_id=${encodeURIComponent(villageId)}`;
+}
+
 export const livechat = {
   /**
    * Get conversations
    */
-  async getConversations(status: string = 'all') {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/conversations?status=${status}`), {
+  async getConversations(status: string = 'all', villageId?: string) {
+    const path = withVillage(`/internal/conversations?status=${status}`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       headers: getHeaders(),
     });
   },
@@ -418,8 +436,9 @@ export const livechat = {
   /**
    * Get conversation by wa_user_id
    */
-  async getConversation(waUserId: string) {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/conversations/${encodeURIComponent(waUserId)}`), {
+  async getConversation(waUserId: string, villageId?: string) {
+    const path = withVillage(`/internal/conversations/${encodeURIComponent(waUserId)}`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       headers: getHeaders(),
     });
   },
@@ -427,8 +446,9 @@ export const livechat = {
   /**
    * Delete conversation
    */
-  async deleteConversation(waUserId: string) {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/conversations/${encodeURIComponent(waUserId)}`), {
+  async deleteConversation(waUserId: string, villageId?: string) {
+    const path = withVillage(`/internal/conversations/${encodeURIComponent(waUserId)}`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       method: 'DELETE',
       headers: getHeaders(),
     });
@@ -437,8 +457,9 @@ export const livechat = {
   /**
    * Send message
    */
-  async sendMessage(waUserId: string, data: { message: string }) {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/conversations/${encodeURIComponent(waUserId)}/send`), {
+  async sendMessage(waUserId: string, data: { message: string }, villageId?: string) {
+    const path = withVillage(`/internal/conversations/${encodeURIComponent(waUserId)}/send`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -448,8 +469,9 @@ export const livechat = {
   /**
    * Retry message
    */
-  async retryMessage(waUserId: string, data: { messageId: string }) {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/conversations/${encodeURIComponent(waUserId)}/retry`), {
+  async retryMessage(waUserId: string, data: { messageId: string }, villageId?: string) {
+    const path = withVillage(`/internal/conversations/${encodeURIComponent(waUserId)}/retry`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -459,8 +481,9 @@ export const livechat = {
   /**
    * Mark as read
    */
-  async markAsRead(waUserId: string) {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/conversations/${encodeURIComponent(waUserId)}/read`), {
+  async markAsRead(waUserId: string, villageId?: string) {
+    const path = withVillage(`/internal/conversations/${encodeURIComponent(waUserId)}/read`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       method: 'POST',
       headers: getHeaders(),
     });
@@ -478,8 +501,9 @@ export const livechat = {
   /**
    * Get takeover status
    */
-  async getTakeoverStatus(waUserId: string) {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/takeover/${encodeURIComponent(waUserId)}/status`), {
+  async getTakeoverStatus(waUserId: string, villageId?: string) {
+    const path = withVillage(`/internal/takeover/${encodeURIComponent(waUserId)}/status`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       headers: getHeaders(),
     });
   },
@@ -487,8 +511,9 @@ export const livechat = {
   /**
    * Start takeover
    */
-  async startTakeover(waUserId: string, data: { admin_id: string; admin_name: string }) {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/takeover/${encodeURIComponent(waUserId)}`), {
+  async startTakeover(waUserId: string, data: { admin_id: string; admin_name: string }, villageId?: string) {
+    const path = withVillage(`/internal/takeover/${encodeURIComponent(waUserId)}`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -498,8 +523,9 @@ export const livechat = {
   /**
    * End takeover
    */
-  async endTakeover(waUserId: string) {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/takeover/${encodeURIComponent(waUserId)}`), {
+  async endTakeover(waUserId: string, villageId?: string) {
+    const path = withVillage(`/internal/takeover/${encodeURIComponent(waUserId)}`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       method: 'DELETE',
       headers: getHeaders(),
     });

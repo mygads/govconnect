@@ -33,7 +33,7 @@ import {
   HistoryItem,
 } from './case-client.service';
 import { getImportantContacts } from './important-contacts.service';
-import { searchKnowledge, getRAGContext, getKelurahanInfoContext } from './knowledge.service';
+import { searchKnowledge, getRAGContext, getKelurahanInfoContext, getVillageProfileSummary } from './knowledge.service';
 import { shouldRetrieveContext, isSpamMessage } from './rag.service';
 import { detectLanguage, getLanguageContext } from './language-detection.service';
 import { analyzeSentiment, getSentimentContext, needsHumanEscalation } from './sentiment-analysis.service';
@@ -1296,7 +1296,7 @@ export function setPendingCancelConfirmation(userId: string, data: {
  */
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   const startTime = Date.now();
-  const { userId, message, channel, conversationHistory, mediaUrl } = input;
+  const { userId, message, channel, conversationHistory, mediaUrl, villageId } = input;
   
   // Import processing status tracker
   const { createProcessingTracker } = await import('./processing-status.service');
@@ -1388,7 +1388,21 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     // Step 2.5: AI Optimization - Pre-process message
     const historyString = conversationHistory?.map(m => `${m.role}: ${m.content}`).join('\n') || '';
-    const optimization = preProcessMessage(message, userId, historyString);
+    const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
+    const greetingPattern = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i;
+    let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
+
+    if (greetingPattern.test(message.trim())) {
+      const profile = await getVillageProfileSummary(resolvedVillageId);
+      if (profile?.name) {
+        templateContext = {
+          villageName: profile.name,
+          villageShortName: profile.short_name || null,
+        };
+      }
+    }
+
+    const optimization = preProcessMessage(message, userId, historyString, templateContext);
     
     // Step 2.6: Check if we can use fast path (skip LLM)
     if (shouldUseFastPath(optimization, !!pendingConfirm)) {
@@ -1459,20 +1473,20 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     let preloadedRAGContext: RAGContext | string | undefined;
     let graphContext = '';
-    const isGreeting = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i.test(sanitizedMessage.trim());
+    const isGreeting = greetingPattern.test(sanitizedMessage.trim());
     const looksLikeQuestion = shouldRetrieveContext(sanitizedMessage);
-    const villageId = process.env.DEFAULT_VILLAGE_ID;
+    const prefetchVillageId = resolvedVillageId;
     
     if (isGreeting) {
       try {
-        const kelurahanInfo = await getKelurahanInfoContext(villageId);
+        const kelurahanInfo = await getKelurahanInfoContext(prefetchVillageId);
         if (kelurahanInfo) preloadedRAGContext = kelurahanInfo;
       } catch (error: any) {
         logger.warn('[UnifiedProcessor] Failed to fetch kelurahan info', { error: error.message });
       }
     } else if (looksLikeQuestion) {
       try {
-        const ragContext = await getRAGContext(sanitizedMessage, undefined, villageId);
+        const ragContext = await getRAGContext(sanitizedMessage, undefined, prefetchVillageId);
         if (ragContext.totalResults > 0) preloadedRAGContext = ragContext;
       } catch (error: any) {
         logger.warn('[UnifiedProcessor] RAG fetch failed', { error: error.message });
