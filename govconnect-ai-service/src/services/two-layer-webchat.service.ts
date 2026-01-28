@@ -19,6 +19,9 @@ import { isSpamMessage } from './rag.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { getCachedResponse, setCachedResponse } from './response-cache.service';
 
+// For knowledge-heavy questions, the unified processor provides grounded RAG + village context.
+import { processUnifiedMessage } from './unified-message-processor.service';
+
 // Import action handlers
 import {
   handleComplaintCreation,
@@ -65,6 +68,25 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
     // Step 2: Sanitize and preprocess
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = applyTypoCorrections(sanitizedMessage);
+
+    // Webchat QA accuracy: default to the unified processor for ALL webchat messages.
+    // The unified processor is the single source of truth with RAG + tenant scoping + anti-hallucination.
+    // Can be disabled for legacy 2-layer testing by setting WEBCHAT_FORCE_UNIFIED=false.
+    const forceUnified = process.env.WEBCHAT_FORCE_UNIFIED !== 'false';
+    if (forceUnified) {
+      logger.info('🧭 Routing webchat to unified processor (forced)', {
+        userId,
+        village_id,
+      });
+
+      return await processUnifiedMessage({
+        userId,
+        message,
+        channel: 'webchat',
+        conversationHistory,
+        villageId: village_id,
+      });
+    }
 
     // Step 3: Check cache first
     const cached = getCachedResponse(sanitizedMessage);
@@ -117,6 +139,24 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
       intent: enhancedLayer1.intent,
       confidence: enhancedLayer1.confidence,
     });
+
+    // Webchat knowledge/Q&A accuracy: route KNOWLEDGE_QUERY and SERVICE_INFO through the unified processor
+    // so responses are grounded in RAG + village profile/KB, avoiding hallucination.
+    if (enhancedLayer1.intent === 'KNOWLEDGE_QUERY' || enhancedLayer1.intent === 'SERVICE_INFO') {
+      logger.info('📚 Routing webchat to unified processor for knowledge', {
+        userId,
+        intent: enhancedLayer1.intent,
+        village_id,
+      });
+
+      return await processUnifiedMessage({
+        userId,
+        message: message,
+        channel: 'webchat',
+        conversationHistory,
+        villageId: village_id,
+      });
+    }
 
     // Step 8: Layer 2 - Response Generation
     logger.info('💬 Layer 2 - Response Generation', { userId });

@@ -146,6 +146,28 @@ export async function buildKnowledgeQueryContext(
 ) {
   logger.info('Building knowledge query context', { wa_user_id });
 
+  const KNOWLEDGE_QA_SYSTEM_PROMPT = `Anda adalah **Gana** (petugas layanan desa/kelurahan).
+
+ATURAN OUTPUT (WAJIB):
+1) Output HANYA JSON valid sesuai schema sistem (intent, fields, reply_text, guidance_text, needs_knowledge, follow_up_questions)
+2) intent WAJIB = "KNOWLEDGE_QUERY"
+3) reply_text WAJIB menjawab pertanyaan user berdasarkan KNOWLEDGE_CONTEXT.
+
+ATURAN ANTI-HALUSINASI (KRITIS):
+- Jawab HANYA dari KNOWLEDGE_CONTEXT di bawah.
+- DILARANG mengarang alamat, jam operasional, nomor telepon, tautan, biaya, atau prosedur yang tidak ada di KNOWLEDGE_CONTEXT.
+- DILARANG mengarahkan user untuk mengisi form publik / mengirim link layanan, kecuali link tersebut benar-benar ada di KNOWLEDGE_CONTEXT.
+- Jika informasi tidak ada di KNOWLEDGE_CONTEXT, reply_text harus menyatakan data belum tersedia untuk desa/kelurahan ini dan (opsional) menyarankan hubungi kantor pada jam kerja.
+
+KNOWLEDGE_CONTEXT:
+{knowledge_context}
+
+CONVERSATION_HISTORY:
+{history}
+
+PESAN TERAKHIR USER:
+{user_message}`;
+
   try {
     // Fetch message history from Channel Service
     const messages = await fetchMessageHistory(wa_user_id, config.maxHistoryMessages);
@@ -154,7 +176,7 @@ export async function buildKnowledgeQueryContext(
     const conversationHistory = formatConversationHistory(messages);
     
     // Build full prompt using knowledge-specific template
-    const systemPrompt = SYSTEM_PROMPT_WITH_KNOWLEDGE
+    const systemPrompt = KNOWLEDGE_QA_SYSTEM_PROMPT
       .replace('{knowledge_context}', knowledgeContext)
       .replace('{history}', conversationHistory)
       .replace('{user_message}', currentMessage);
@@ -176,7 +198,7 @@ export async function buildKnowledgeQueryContext(
     });
     
     // Fallback
-    const fallbackPrompt = SYSTEM_PROMPT_WITH_KNOWLEDGE
+    const fallbackPrompt = KNOWLEDGE_QA_SYSTEM_PROMPT
       .replace('{knowledge_context}', knowledgeContext)
       .replace('{history}', '(No conversation history available)')
       .replace('{user_message}', currentMessage);

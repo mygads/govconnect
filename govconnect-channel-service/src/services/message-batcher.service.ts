@@ -25,6 +25,7 @@ import {
 const DEFAULT_BATCH_DELAY_MS = parseInt(process.env.MESSAGE_BATCH_DELAY_MS || '3000', 10); // 3 seconds default
 const MAX_BATCH_SIZE = parseInt(process.env.MAX_BATCH_SIZE || '10', 10); // Max messages per batch
 const USE_ADAPTIVE_BATCHING = process.env.USE_ADAPTIVE_BATCHING !== 'false'; // Enable by default
+const PUBLISH_RETRY_DELAY_MS = parseInt(process.env.MESSAGE_BATCH_PUBLISH_RETRY_DELAY_MS || '5000', 10);
 
 interface BatchedMessage {
   message_id: string;
@@ -176,7 +177,7 @@ async function processBatch(village_id: string, wa_user_id: string): Promise<voi
   
   if (!batch || batch.messages.length === 0) {
     logger.warn('Empty batch for user', { wa_user_id });
-    userBatches.delete(wa_user_id);
+    userBatches.delete(key);
     return;
   }
   
@@ -186,12 +187,9 @@ async function processBatch(village_id: string, wa_user_id: string): Promise<voi
     batch.timer = null;
   }
   
-  // Get all messages
+  // Get all messages (do not clear the batch yet; we may need to retry publishing)
   const messages = [...batch.messages];
   const messageIds = messages.map(m => m.message_id);
-  
-  // Clear the batch
-  userBatches.delete(key);
   
   logger.info('📤 Processing message batch', {
     village_id: batch.village_id,
@@ -248,17 +246,41 @@ async function processBatch(village_id: string, wa_user_id: string): Promise<voi
         message_count: messages.length,
         combined_length: combinedMessage.length,
       });
+
+      // Clear the batch only after publish succeeds
+      userBatches.delete(key);
     } catch (error: any) {
       logger.error('Failed to publish batched message', {
         error: error.message,
         wa_user_id,
         message_ids: messageIds,
       });
+
+      // Keep the batch and retry later
+      batch.timer = setTimeout(() => {
+        processBatch(resolvedVillageId, wa_user_id);
+      }, PUBLISH_RETRY_DELAY_MS);
+      logger.warn('🔁 Retrying batched publish later', {
+        wa_user_id,
+        message_ids: messageIds,
+        retry_delay_ms: PUBLISH_RETRY_DELAY_MS,
+      });
     }
   } else {
-    logger.warn('RabbitMQ not connected, batched messages in pending queue', {
+    // Keep the batch and retry later; do not drop messages during transient RabbitMQ outages.
+    logger.warn('RabbitMQ not connected, deferring batched publish', {
       wa_user_id,
       message_ids: messageIds,
+    });
+
+    batch.timer = setTimeout(() => {
+      processBatch(resolvedVillageId, wa_user_id);
+    }, PUBLISH_RETRY_DELAY_MS);
+
+    logger.warn('🔁 Will retry batched publish when RabbitMQ is back', {
+      wa_user_id,
+      message_ids: messageIds,
+      retry_delay_ms: PUBLISH_RETRY_DELAY_MS,
     });
   }
 }

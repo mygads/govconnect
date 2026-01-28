@@ -30,10 +30,12 @@ import {
   updateComplaintByUser,
   getServiceRequestStatusWithOwnership,
   requestServiceRequestEditToken,
+  getServiceRequirements,
+  ServiceRequirementDefinition,
   HistoryItem,
 } from './case-client.service';
 import { getImportantContacts } from './important-contacts.service';
-import { searchKnowledge, getRAGContext, getKelurahanInfoContext, getVillageProfileSummary } from './knowledge.service';
+import { searchKnowledge, searchKnowledgeKeywordsOnly, getRAGContext, getKelurahanInfoContext, getVillageProfileSummary } from './knowledge.service';
 import { shouldRetrieveContext, isSpamMessage } from './rag.service';
 import { detectLanguage, getLanguageContext } from './language-detection.service';
 import { analyzeSentiment, getSentimentContext, needsHumanEscalation } from './sentiment-analysis.service';
@@ -119,6 +121,14 @@ const pendingCancelConfirmation: Map<string, {
   timestamp: number;
 }> = new Map();
 
+// Online service form offer state cache
+// Key: userId, Value: { service_slug, village_id, timestamp }
+const pendingServiceFormOffer: Map<string, {
+  service_slug: string;
+  village_id?: string;
+  timestamp: number;
+}> = new Map();
+
 // Complaint types cache (per village)
 const complaintTypeCache: Map<string, { data: any[]; timestamp: number }> = new Map();
 
@@ -136,6 +146,12 @@ setInterval(() => {
     if (now - value.timestamp > expireMs) {
       pendingCancelConfirmation.delete(key);
       logger.debug('Cleaned up expired cancel confirmation', { userId: key });
+    }
+  }
+  for (const [key, value] of pendingServiceFormOffer.entries()) {
+    if (now - value.timestamp > expireMs) {
+      pendingServiceFormOffer.delete(key);
+      logger.debug('Cleaned up expired service form offer', { userId: key });
     }
   }
 }, 60 * 1000);
@@ -557,6 +573,17 @@ function buildPublicServiceFormUrl(baseUrl: string, villageSlug: string, service
   return `${url}?user=${encodeURIComponent(waUser)}`;
 }
 
+async function resolveVillageSlugForPublicForm(villageId?: string): Promise<string> {
+  if (!villageId) return process.env.DEFAULT_VILLAGE_SLUG || 'desa';
+  try {
+    const profile = await getVillageProfileSummary(villageId);
+    if (profile?.short_name) return profile.short_name;
+  } catch {
+    // ignore
+  }
+  return process.env.DEFAULT_VILLAGE_SLUG || 'desa';
+}
+
 export async function handleServiceInfo(userId: string, llmResponse: any): Promise<string> {
   const { service_slug, service_id } = llmResponse.fields || {};
   
@@ -569,7 +596,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     const axios = (await import('axios')).default;
     
     // Query service details from case-service
-    const villageId = process.env.DEFAULT_VILLAGE_ID || '';
+    const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
     let serviceUrl = '';
     
     if (service_id) {
@@ -605,7 +632,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     // Check if service is available online
     const isOnline = service.mode === 'online' || service.mode === 'both';
     const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
-    const villageSlug = process.env.DEFAULT_VILLAGE_SLUG || 'desa';
+    const villageSlug = await resolveVillageSlugForPublicForm(villageId);
     
     let replyText = `📋 *${service.name}*\n\n`;
     
@@ -618,8 +645,14 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     }
     
     if (isOnline) {
-      const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug, userId);
-      replyText += `💡 Layanan ini bisa diproses secara *online*.\n\nMau langsung proses pengajuannya Kak? Silakan isi formulir di link berikut:\n${formUrl}`;
+      // Offer first, then send the form link only when the user confirms.
+      setPendingServiceFormOffer(userId, {
+        service_slug: service.slug,
+        village_id: villageId,
+        timestamp: Date.now(),
+      });
+
+      replyText += `💡 Layanan ini bisa diproses secara *online*.\n\nMau sekalian saya bantu buat pengajuan sekarang?\nBalas *iya* untuk saya kirim link formulir (atau balas *tidak* jika belum).`;
     } else {
       replyText += `📍 Layanan ini harus diproses secara *offline* di kantor kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas ya Kak.`;
     }
@@ -640,17 +673,38 @@ export async function handleServiceRequestCreation(userId: string, llmResponse: 
   if (!service_slug) {
     return llmResponse.reply_text || 'Mohon sebutkan nama layanan yang ingin diajukan ya Kak.';
   }
-  
-  const replyText = llmResponse.reply_text || '';
-  if (replyText.includes('http://') || replyText.includes('https://')) {
-    return replyText;
+
+  const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
+
+  try {
+    const { config } = await import('../config/env');
+    const axios = (await import('axios')).default;
+
+    const response = await axios.get(`${config.caseServiceUrl}/services/by-slug`, {
+      params: { village_id: villageId, slug: service_slug },
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      timeout: 5000,
+    });
+
+    const service = response.data?.data;
+    if (!service) {
+      return `Maaf Kak, layanan tersebut tidak ditemukan di database. Silakan tanyakan layanan lain ya.`;
+    }
+
+    const isOnline = service.mode === 'online' || service.mode === 'both';
+    if (!isOnline) {
+      return `📍 *${service.name}* saat ini hanya bisa diproses secara *offline* di kantor kelurahan/desa.\n\nSilakan datang ke kantor dengan membawa persyaratan yang diperlukan ya Kak.`;
+    }
+
+    const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
+    const villageSlug = await resolveVillageSlugForPublicForm(villageId);
+    const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug || service_slug, userId);
+
+    return `Baik Kak, ini link formulir layanan:\n${formUrl}\n\nSilakan isi data di formulir tersebut. Setelah submit, Kakak akan menerima nomor layanan untuk cek status.`;
+  } catch (error: any) {
+    logger.error('Failed to validate service before sending form link', { error: error.message, service_slug, villageId });
+    return llmResponse.reply_text || 'Maaf Kak, saya belum bisa menyiapkan link formulirnya sekarang. Coba lagi sebentar ya.';
   }
-  
-  const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
-  const villageSlug = process.env.DEFAULT_VILLAGE_SLUG || 'desa';
-  const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service_slug, userId);
-  
-  return `Baik Kak, ini link formulir layanan:\n${formUrl}\n\nSilakan isi data di formulir tersebut. Setelah submit, Kakak akan menerima nomor layanan untuk cek status.`;
 }
 
 /**
@@ -823,6 +877,7 @@ function extractAddressFromComplaintMessage(message: string, userId: string): st
  */
 export async function handleStatusCheck(userId: string, llmResponse: any): Promise<string> {
   const { complaint_id, request_number } = llmResponse.fields;
+  const detailMode = !!(llmResponse.fields?.detail_mode || llmResponse.fields?.detail);
   
   if (!complaint_id && !request_number) {
     if (llmResponse.reply_text) return llmResponse.reply_text;
@@ -844,7 +899,7 @@ export async function handleStatusCheck(userId: string, llmResponse: any): Promi
       return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';
     }
     
-    return buildNaturalStatusResponse(result.data);
+    return detailMode ? buildComplaintDetailResponse(result.data) : buildNaturalStatusResponse(result.data);
   }
   
   if (request_number) {
@@ -860,7 +915,15 @@ export async function handleStatusCheck(userId: string, llmResponse: any): Promi
       return 'Maaf Kak, ada kendala saat mengecek status layanan. Coba lagi ya! 🙏';
     }
     
-    return buildNaturalServiceStatusResponse(result.data);
+    if (!detailMode) return buildNaturalServiceStatusResponse(result.data);
+
+    let requirementDefs: ServiceRequirementDefinition[] = [];
+    const serviceId: string | undefined = result.data?.service_id || result.data?.serviceId;
+    if (serviceId) {
+      requirementDefs = await getServiceRequirements(String(serviceId));
+    }
+
+    return buildServiceRequestDetailResponse(result.data, requirementDefs);
   }
   
   return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';
@@ -986,14 +1049,207 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
   
   try {
     const categories = llmResponse.fields?.knowledge_category ? [llmResponse.fields.knowledge_category] : undefined;
-    const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID;
-    const knowledgeResult = await searchKnowledge(message, categories, villageId);
-    
-    if (knowledgeResult.total === 0) {
-      return 'Maaf, saya belum memiliki informasi tentang hal tersebut. Untuk informasi lebih lanjut, silakan hubungi kantor kelurahan langsung atau datang pada jam kerja.';
+    const villageId: string | undefined = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID;
+
+    const normalizedQuery = (message || '').toLowerCase();
+    const profile = await getVillageProfileSummary(villageId);
+    const officeName = profile?.name || 'kantor desa/kelurahan';
+
+    // Deterministic (no-LLM) answers for profile/office info to prevent hallucination.
+    // If the data isn't in DB, we explicitly say it's unavailable.
+    const isAskingAddress = /(alamat|lokasi|maps|google\s*maps)/i.test(normalizedQuery);
+    const isAskingHours = /(jam|operasional|buka|tutup|hari\s*kerja)/i.test(normalizedQuery);
+    const isTrackingNumberQuestion = /(\b(LAP|LAY)-\d{8}-\d{3}\b)/i.test(message) || /\bnomor\s+(layanan|pengaduan)\b/i.test(normalizedQuery);
+    // Avoid treating generic mentions of "WA/Webchat" as a contact request.
+    // Only route to contact lookup when user explicitly asks for a number/contact/hotline.
+    const isAskingContact =
+      !isTrackingNumberQuestion &&
+      /(kontak|hubungi|telepon|telp|call\s*center|hotline|\bnomor\b(\s+(wa|whatsapp|telp|telepon|kontak|hp))?)/i.test(normalizedQuery);
+
+    if (isAskingAddress) {
+      const parts: string[] = [`📍 *Alamat ${officeName}*`];
+      if (profile?.address) {
+        parts.push(profile.address);
+      }
+      if (profile?.gmaps_url) {
+        parts.push(`Google Maps: ${profile.gmaps_url}`);
+      }
+
+      if (!profile?.address && !profile?.gmaps_url) {
+        return `Maaf, data alamat/lokasi untuk *${officeName}* belum tersedia di database.`;
+      }
+
+      return parts.join('\n');
     }
-    
-    const { systemPrompt } = await buildKnowledgeQueryContext(userId, message, knowledgeResult.context);
+
+    if (isAskingHours) {
+      const hours: any = profile?.operating_hours;
+      if (!hours || typeof hours !== 'object') {
+        return `Maaf, data jam operasional untuk *${officeName}* belum tersedia di database.`;
+      }
+
+      const dayKeys = ['senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'minggu'] as const;
+      const requestedDay = dayKeys.find(d => new RegExp(`\\b${d}\\b`, 'i').test(normalizedQuery));
+
+      const formatDay = (day: string, schedule: any): string => {
+        const open = schedule?.open ?? null;
+        const close = schedule?.close ?? null;
+        if (!open || !close) return `- ${day.charAt(0).toUpperCase() + day.slice(1)}: Tutup`;
+        return `- ${day.charAt(0).toUpperCase() + day.slice(1)}: ${open}–${close}`;
+      };
+
+      const lines: string[] = [`🕐 *Jam Operasional ${officeName}*`];
+      if (requestedDay) {
+        lines.push(formatDay(requestedDay, (hours as any)[requestedDay]));
+      } else {
+        for (const day of dayKeys) {
+          lines.push(formatDay(day, (hours as any)[day]));
+        }
+      }
+
+      return lines.join('\n');
+    }
+
+    if (isAskingContact) {
+      const wantsPengaduan = /pengaduan/i.test(normalizedQuery);
+      const wantsPelayanan = /pelayanan|layanan/i.test(normalizedQuery);
+
+      const categoryName = wantsPengaduan ? 'Pengaduan' : wantsPelayanan ? 'Pelayanan' : null;
+      let contacts = await getImportantContacts(villageId || '', categoryName);
+      if ((!contacts || contacts.length === 0) && categoryName) {
+        contacts = await getImportantContacts(villageId || '');
+      }
+
+      if (!contacts || contacts.length === 0) {
+        return `Maaf, data kontak penting untuk *${officeName}* belum tersedia di database.`;
+      }
+
+      const profileNameLower = (profile?.name || '').toLowerCase();
+      const scored = contacts
+        .map(c => {
+          const nameLower = (c.name || '').toLowerCase();
+          const categoryLower = (c.category?.name || '').toLowerCase();
+          let score = 0;
+          if (profileNameLower && nameLower.includes(profileNameLower)) score += 5;
+          if (wantsPengaduan && categoryLower.includes('pengaduan')) score += 3;
+          if (wantsPelayanan && categoryLower.includes('pelayanan')) score += 3;
+          if (/admin/i.test(nameLower)) score += 1;
+          return { c, score };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      const top = scored.slice(0, 3).map(s => s.c);
+      const lines: string[] = [`📞 *Kontak ${officeName}*`];
+      for (const c of top) {
+        const extra = c.description ? ` — ${c.description}` : '';
+        lines.push(`- ${c.name}: ${c.phone}${extra}`);
+      }
+      return lines.join('\n');
+    }
+
+    const preloadedContext: string | undefined = llmResponse.fields?._preloaded_knowledge_context;
+    let contextString = preloadedContext;
+    let total = contextString ? 1 : 0;
+
+    if (!contextString) {
+      const knowledgeResult = await searchKnowledge(message, categories, villageId);
+      total = knowledgeResult.total;
+      contextString = knowledgeResult.context;
+    }
+
+    const tryExtractDeterministicKbAnswer = (queryLower: string, ctx: string): string | null => {
+      const context = ctx || '';
+
+      // 5W1H
+      if (/\b5w1h\b/i.test(queryLower) && /(\bwhat\b\s*:|\bwhere\b\s*:|\bwhen\b\s*:|\bwho\b\s*:)/i.test(context)) {
+        const labels = ['What', 'Where', 'When', 'Who', 'Why/How'] as const;
+        const lines: string[] = ['Prinsip 5W1H untuk laporan:'];
+        for (const label of labels) {
+          const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const match = context.match(new RegExp(`(^|\\n)\\s*[-*]\\s*(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*:\\s*([^\\n]+)`, 'i'));
+          if (match?.[2]) {
+            lines.push(`- ${label}: ${match[2].trim()}`);
+          }
+        }
+        if (lines.length >= 3) return lines.join('\n');
+      }
+
+      // Prioritas penanganan
+      if (/prioritas/i.test(queryLower) && /(tinggi\s*:|sedang\s*:|rendah\s*:)/i.test(context)) {
+        const labels = ['Tinggi', 'Sedang', 'Rendah'] as const;
+        const lines: string[] = ['Prioritas penanganan pengaduan:'];
+        for (const label of labels) {
+          const match = context.match(new RegExp(`(^|\\n)\\s*[-*]\\s*(?:\\*\\*)?${label}(?:\\*\\*)?\\s*:\\s*([^\\n]+)`, 'i'));
+          if (match?.[2]) {
+            lines.push(`- ${label}: ${match[2].trim()}`);
+          }
+        }
+        if (lines.length >= 3) return lines.join('\n');
+      }
+
+      // Embedding (glossary)
+      if (/\bembedding\b/i.test(queryLower)) {
+        const match = context.match(/(^|\n)\s*[-*]\s*(?:\*\*)?Embedding(?:\*\*)?\s*:\s*([^\n]+)/i);
+        if (match?.[2]) {
+          return `Embedding: ${match[2].trim()}`;
+        }
+      }
+
+      // Data usage purpose
+      if (/\bdata\b/i.test(queryLower) && /(digunakan|tujuan)/i.test(queryLower)) {
+        // Prefer the KB phrasing that includes "proses layanan" when available.
+        const usedForProses = context.match(/data\s+digunakan\s+untuk\s+(proses\s+layanan[^\n]*)/i);
+        const usedForGeneric = context.match(/data\s+digunakan\s+untuk\s+([^\n]+)/i);
+        const usedTail = (usedForProses?.[1] || usedForGeneric?.[1])?.trim();
+        const accessedBy = context.match(/data\s+hanya\s+diakses\s+oleh\s+([^\n]+)/i);
+        if (usedTail || accessedBy?.[1]) {
+          const lines: string[] = ['Tujuan penggunaan data layanan digital:'];
+          if (usedTail) lines.push(`- Data digunakan untuk ${usedTail}`);
+          if (accessedBy?.[1]) lines.push(`- Data hanya diakses oleh ${accessedBy[1].trim()}`);
+          return lines.join('\n');
+        }
+      }
+
+      return null;
+    };
+
+    // Deterministic KB extraction for anchored terms (prevents the second LLM step from omitting key lines).
+    const deterministicFromContext = contextString ? tryExtractDeterministicKbAnswer(normalizedQuery, contextString) : null;
+    if (deterministicFromContext) {
+      return deterministicFromContext;
+    }
+
+    // If RAG context misses these anchored KB terms, force a keyword-only lookup and retry deterministic extraction.
+    const wants5w1h = /\b5w1h\b/i.test(normalizedQuery);
+    const wantsPriority = /prioritas/i.test(normalizedQuery);
+    const wantsEmbedding = /\bembedding\b/i.test(normalizedQuery);
+    const wantsDataPurpose = /\bdata\b/i.test(normalizedQuery) && /(digunakan|tujuan)/i.test(normalizedQuery);
+    if (wants5w1h || wantsPriority || wantsEmbedding || wantsDataPurpose) {
+      const forcedQuery = wants5w1h
+        ? '5W1H What Where When Who Why How'
+        : wantsPriority
+          ? 'Prioritas Penanganan Tinggi Sedang Rendah'
+          : wantsEmbedding
+            ? 'Embedding vektor pencarian'
+            : 'Tujuan Penggunaan Data proses layanan pengaduan diakses admin';
+
+      const kw = await searchKnowledgeKeywordsOnly(forcedQuery, undefined, villageId);
+      if (kw?.context) {
+        const deterministicFromKeyword = tryExtractDeterministicKbAnswer(normalizedQuery, kw.context);
+        if (deterministicFromKeyword) {
+          return deterministicFromKeyword;
+        }
+        // Otherwise, enrich context for the LLM step.
+        contextString = [contextString, kw.context].filter(Boolean).join('\n\n---\n\n');
+        total = Math.max(total, kw.total || 0);
+      }
+    }
+
+    if (!contextString || total === 0) {
+      return `Maaf, saya belum memiliki informasi tentang hal tersebut untuk *${officeName}*. Jika perlu, silakan hubungi kantor desa/kelurahan pada jam kerja.`;
+    }
+
+    const { systemPrompt } = await buildKnowledgeQueryContext(userId, message, contextString);
     const knowledgeResult2 = await callGemini(systemPrompt);
     
     if (!knowledgeResult2) {
@@ -1103,7 +1359,7 @@ function buildNaturalStatusResponse(complaint: any): string {
  */
 function buildNaturalServiceStatusResponse(serviceRequest: any): string {
   const statusMap: Record<string, { emoji: string; text: string }> = {
-    'baru': { emoji: '📥', text: 'Diterima' },
+    'baru': { emoji: '🆕', text: 'Baru' },
     'proses': { emoji: '🔄', text: 'Diproses' },
     'selesai': { emoji: '✅', text: 'Selesai' },
     'ditolak': { emoji: '❌', text: 'Ditolak' },
@@ -1145,6 +1401,150 @@ function buildNaturalServiceStatusResponse(serviceRequest: any): string {
   return message;
 }
 
+function maskSensitiveId(value: string, keepStart = 4, keepEnd = 4): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.length <= keepStart + keepEnd) return text;
+  const masked = '*'.repeat(Math.max(3, text.length - keepStart - keepEnd));
+  return `${text.slice(0, keepStart)}${masked}${text.slice(-keepEnd)}`;
+}
+
+function toSafeDate(value: any): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatDateTimeId(date: Date | null): string {
+  if (!date) return '-';
+  return date.toISOString().replace('T', ' ').replace('Z', ' UTC');
+}
+
+function buildComplaintDetailResponse(complaint: any): string {
+  const statusInfo = getStatusInfo(complaint.status);
+  const createdAt = toSafeDate(complaint.created_at || complaint.createdAt);
+  const updatedAt = toSafeDate(complaint.updated_at || complaint.updatedAt);
+
+  let message = `📄 *Detail Laporan*\n\n`;
+  message += `🆔 *Nomor:* ${complaint.complaint_id}\n`;
+  message += `📌 *Jenis:* ${formatKategori(complaint.kategori)}\n`;
+  if (complaint.alamat) message += `📍 *Lokasi:* ${complaint.alamat}\n`;
+  if (complaint.rt_rw) message += `🏠 *RT/RW:* ${complaint.rt_rw}\n`;
+  if (complaint.deskripsi) message += `\n📝 *Deskripsi:*\n${complaint.deskripsi}\n`;
+
+  message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
+  message += `${statusInfo.description}\n`;
+
+  if (complaint.admin_notes) {
+    message += `\n💬 *Catatan petugas:*\n${complaint.admin_notes}\n`;
+  }
+
+  message += `\n🗓️ *Dibuat:* ${formatDateTimeId(createdAt)}\n`;
+  message += `🕐 *Update terakhir:* ${formatDateTimeId(updatedAt)}\n`;
+
+  return message;
+}
+
+function buildServiceRequestDetailResponse(serviceRequest: any, requirementDefs: ServiceRequirementDefinition[] = []): string {
+  const statusMap: Record<string, { emoji: string; text: string }> = {
+    'baru': { emoji: '🆕', text: 'Baru' },
+    'proses': { emoji: '🔄', text: 'Diproses' },
+    'selesai': { emoji: '✅', text: 'Selesai' },
+    'ditolak': { emoji: '❌', text: 'Ditolak' },
+    'dibatalkan': { emoji: '🔴', text: 'Dibatalkan' },
+  };
+  const statusInfo = statusMap[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
+  const createdAt = toSafeDate(serviceRequest.created_at || serviceRequest.createdAt);
+  const updatedAt = toSafeDate(serviceRequest.updated_at || serviceRequest.updatedAt);
+
+  let message = `📄 *Detail Layanan*\n\n`;
+  message += `🆔 *Nomor:* ${serviceRequest.request_number}\n`;
+  message += `📌 *Layanan:* ${serviceRequest.service?.name || 'Layanan Administrasi'}\n`;
+  message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
+
+  if (serviceRequest.admin_notes) {
+    message += `\n💬 *Catatan petugas:*\n${serviceRequest.admin_notes}\n`;
+  }
+
+  if (serviceRequest.result_description) {
+    message += `\n📝 *Hasil:* ${serviceRequest.result_description}\n`;
+  }
+
+  if (serviceRequest.result_file_url) {
+    const fileName = serviceRequest.result_file_name || 'Dokumen Hasil';
+    message += `\n📎 *Dokumen:* ${fileName}\n`;
+    message += `🔗 Link download: ${serviceRequest.result_file_url}\n`;
+  }
+
+  const citizen = serviceRequest.citizen_data_json || {};
+  const reqData = serviceRequest.requirement_data_json || {};
+  const reqFilledCount = typeof reqData === 'object' && reqData ? Object.values(reqData).filter(Boolean).length : 0;
+
+  message += `\n👤 *Data pemohon (ringkas):*\n`;
+  if (citizen.nama_lengkap) message += `• Nama: ${citizen.nama_lengkap}\n`;
+  if (citizen.nik) message += `• NIK: ${maskSensitiveId(String(citizen.nik), 4, 4)}\n`;
+  if (citizen.alamat) message += `• Alamat: ${citizen.alamat}\n`;
+  if (citizen.wa_user_id) message += `• WA: ${citizen.wa_user_id}\n`;
+
+  const hasDefs = Array.isArray(requirementDefs) && requirementDefs.length > 0;
+  if (!hasDefs) {
+    message += `• Persyaratan terisi: ${reqFilledCount}\n`;
+  }
+
+  if (hasDefs) {
+    const defsSorted = [...requirementDefs].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    const totalRequired = defsSorted.filter(d => d.is_required).length;
+    const filledRequired = defsSorted.filter(d => d.is_required && !!(reqData as any)?.[d.id]).length;
+    message += `• Persyaratan wajib terisi: ${filledRequired}/${totalRequired}\n`;
+
+    const isProbablyUrl = (value: unknown): boolean => {
+      const s = typeof value === 'string' ? value : '';
+      return /^https?:\/\//i.test(s) || /\.(pdf|jpg|jpeg|png|doc|docx)(\?|#|$)/i.test(s);
+    };
+
+    const safeValueSummary = (def: ServiceRequirementDefinition, rawValue: any): string | null => {
+      if (!rawValue) return null;
+      if (def.field_type === 'file') return 'Terlampir';
+      if (isProbablyUrl(rawValue)) return 'Terlampir';
+      const s = String(rawValue);
+      const cleaned = s.replace(/\s+/g, ' ').trim();
+      if (!cleaned) return null;
+      if (cleaned.length > 60) return `${cleaned.slice(0, 57)}...`;
+      return cleaned;
+    };
+
+    const missingRequired = defsSorted.filter(d => d.is_required && !(reqData as any)?.[d.id]);
+    if (missingRequired.length > 0) {
+      const missLines = missingRequired.map(d => `❌ ${d.label}`).join('\n');
+      message += `\n⚠️ *Persyaratan wajib belum lengkap:*\n${missLines}\n`;
+    } else if (totalRequired > 0) {
+      message += `\n✅ *Semua persyaratan wajib sudah lengkap.*\n`;
+    }
+
+    const filledSummaries = defsSorted
+      .map(d => {
+        const raw = (reqData as any)?.[d.id];
+        const summary = safeValueSummary(d, raw);
+        if (!summary) return null;
+        return `✅ ${d.label}: ${summary}`;
+      })
+      .filter(Boolean) as string[];
+
+    // Keep the output compact: show up to 10 filled summaries.
+    if (filledSummaries.length > 0) {
+      message += `\n📎 *Ringkasan persyaratan terisi:*\n${filledSummaries.slice(0, 10).join('\n')}\n`;
+      if (filledSummaries.length > 10) {
+        message += `(${filledSummaries.length - 10} item lainnya disembunyikan)\n`;
+      }
+    }
+  }
+
+  message += `\n🗓️ *Dibuat:* ${formatDateTimeId(createdAt)}\n`;
+  message += `🕐 *Update terakhir:* ${formatDateTimeId(updatedAt)}\n`;
+
+  return message;
+}
+
 function formatRelativeTime(date: Date): string {
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -1175,7 +1575,7 @@ function formatKategori(kategori: string): string {
 
 function getStatusInfo(status: string): { emoji: string; text: string; description: string } {
   const statusMap: Record<string, { emoji: string; text: string; description: string }> = {
-    'baru': { emoji: '🆕', text: 'Baru Diterima', description: 'Laporan Kakak baru kami terima dan akan segera kami tindak lanjuti ya!' },
+    'baru': { emoji: '🆕', text: 'Baru', description: 'Laporan Kakak baru kami terima dan akan segera kami tindak lanjuti ya!' },
     'pending': { emoji: '⏳', text: 'Menunggu Verifikasi', description: 'Saat ini sedang dalam tahap verifikasi oleh tim kami. Mohon ditunggu ya!' },
     'proses': { emoji: '🔄', text: 'Sedang Diproses', description: 'Kabar baik! Petugas kami sudah menangani laporan ini.' },
     'selesai': { emoji: '✅', text: 'Selesai', description: 'Yeay! Laporan sudah selesai ditangani. Terima kasih sudah melapor! 🙏' },
@@ -1279,6 +1679,22 @@ export function setPendingCancelConfirmation(userId: string, data: {
   timestamp: number;
 }) {
   pendingCancelConfirmation.set(userId, data);
+}
+
+export function getPendingServiceFormOffer(userId: string) {
+  return pendingServiceFormOffer.get(userId);
+}
+
+export function clearPendingServiceFormOffer(userId: string) {
+  pendingServiceFormOffer.delete(userId);
+}
+
+export function setPendingServiceFormOffer(userId: string, data: {
+  service_slug: string;
+  village_id?: string;
+  timestamp: number;
+}) {
+  pendingServiceFormOffer.set(userId, data);
 }
 
 /**
@@ -1385,6 +1801,47 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
       };
     }
+
+    // Step 2.2: Check pending online service form offer
+    const pendingOffer = pendingServiceFormOffer.get(userId);
+    if (pendingOffer) {
+      if (isConfirmationResponse(message)) {
+        clearPendingServiceFormOffer(userId);
+        const llmLike = {
+          intent: 'CREATE_SERVICE_REQUEST',
+          fields: {
+            service_slug: pendingOffer.service_slug,
+            ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
+          },
+          reply_text: '',
+        };
+
+        const linkReply = await handleServiceRequestCreation(userId, llmLike);
+        return {
+          success: true,
+          response: linkReply,
+          intent: 'CREATE_SERVICE_REQUEST',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      if (isNegativeConfirmation(message)) {
+        clearPendingServiceFormOffer(userId);
+        return {
+          success: true,
+          response: 'Baik Kak, siap. Kalau Kakak mau proses nanti, kabari saya ya. 😊',
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      return {
+        success: true,
+        response: 'Mau saya kirim link formulirnya sekarang? Balas *iya* atau *tidak* ya Kak.',
+        intent: 'CREATE_SERVICE_REQUEST',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
     
     // Step 2.5: AI Optimization - Pre-process message
     const historyString = conversationHistory?.map(m => `${m.role}: ${m.content}`).join('\n') || '';
@@ -1403,9 +1860,40 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     const optimization = preProcessMessage(message, userId, historyString, templateContext);
+
+    // Step 2.55: Deterministic status check fast-path (avoid LLM misclassification)
+    if (
+      !pendingConfirm &&
+      optimization.fastIntent?.intent === 'CHECK_STATUS' &&
+      (optimization.fastIntent.extractedFields?.complaint_id || optimization.fastIntent.extractedFields?.request_number)
+    ) {
+      const fastFields = {
+        ...(optimization.fastIntent.extractedFields || {}),
+        ...(resolvedVillageId ? { village_id: resolvedVillageId } : {}),
+      };
+
+      const fastLlmLike = {
+        intent: 'CHECK_STATUS',
+        fields: fastFields,
+        reply_text: '',
+      };
+
+      const responseText = await handleStatusCheck(userId, fastLlmLike);
+      return {
+        success: true,
+        response: responseText,
+        intent: 'CHECK_STATUS',
+        fields: fastFields,
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+        },
+      };
+    }
     
     // Step 2.6: Check if we can use fast path (skip LLM)
-    if (shouldUseFastPath(optimization, !!pendingConfirm)) {
+    const shouldBypassFastPath = /(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message);
+    if (!shouldBypassFastPath && shouldUseFastPath(optimization, !!pendingConfirm)) {
       const fastResult = buildFastPathResponse(optimization, startTime);
       if (fastResult) {
         logger.info('⚡ [UnifiedProcessor] Using fast path', {
@@ -1620,6 +2108,27 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     let finalReplyText = effectiveLlmResponse.reply_text;
     let guidanceText = effectiveLlmResponse.guidance_text || '';
+
+    // Deterministic override: office profile questions (address/hours/contact) must NEVER
+    // turn into service request links or other hallucinated outputs.
+    const isOfficeInfoQuestion = /(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message);
+    const hasTrackingId = /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(message);
+    const looksLikeInfoQuestion = /(\?|\b(apa|bagaimana|gimana|cara|syarat|format|status|cek\s+status|berkas|dokumen|panduan|sop|alur|notifikasi|checklist)\b)/i.test(message);
+    const looksLikeCreateService = /\b(ajukan|buat|bikin|minta)\b.*\b(surat|izin|layanan)\b/i.test(message);
+    if (isOfficeInfoQuestion) {
+      effectiveLlmResponse.intent = 'KNOWLEDGE_QUERY';
+      finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
+    } else if (looksLikeInfoQuestion && !hasTrackingId && !looksLikeCreateService) {
+      // Ground informational Q&A (format/syarat/status/SOP/panduan/etc) via KB/RAG, even if LLM intent is misclassified.
+      effectiveLlmResponse.intent = 'KNOWLEDGE_QUERY';
+      if (preloadedRAGContext && typeof preloadedRAGContext === 'object' && preloadedRAGContext.contextString) {
+        effectiveLlmResponse.fields = {
+          ...(effectiveLlmResponse.fields || {}),
+          _preloaded_knowledge_context: preloadedRAGContext.contextString,
+        } as any;
+      }
+      finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
+    } else {
     
     switch (effectiveLlmResponse.intent) {
       case 'CREATE_COMPLAINT':
@@ -1632,7 +2141,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         break;
       
       case 'SERVICE_INFO':
-        finalReplyText = await handleServiceInfo(userId, effectiveLlmResponse);
+        // Guard: office profile questions sometimes get misclassified as SERVICE_INFO.
+        // Route them to the grounded knowledge handler to avoid form-link hallucinations.
+        if (/(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message)) {
+          finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
+        } else {
+          finalReplyText = await handleServiceInfo(userId, effectiveLlmResponse);
+        }
         break;
       
       case 'CREATE_SERVICE_REQUEST':
@@ -1664,12 +2179,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         break;
       
       case 'KNOWLEDGE_QUERY':
-        if (preloadedRAGContext && typeof preloadedRAGContext === 'object' && 
-            preloadedRAGContext.contextString && effectiveLlmResponse.reply_text?.length > 20) {
-          logger.info('[UnifiedProcessor] Using pre-loaded knowledge response');
-        } else {
-          finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
+        if (preloadedRAGContext && typeof preloadedRAGContext === 'object' && preloadedRAGContext.contextString) {
+          effectiveLlmResponse.fields = {
+            ...(effectiveLlmResponse.fields || {}),
+            _preloaded_knowledge_context: preloadedRAGContext.contextString,
+          } as any;
         }
+        finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
         break;
       
       case 'QUESTION':
@@ -1677,6 +2193,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       default:
         // GREETING and other intents - use LLM reply as-is
         break;
+    }
     }
     
     // Step 10: Validate response

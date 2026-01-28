@@ -65,6 +65,7 @@ export async function GET(request: NextRequest) {
           address: true,
           gmaps_url: true,
           short_name: true,
+          operating_hours: true,
         },
       }),
     ])
@@ -80,6 +81,7 @@ export async function GET(request: NextRequest) {
         short_name: profile?.short_name || village?.slug || null,
         address: profile?.address || null,
         gmaps_url: profile?.gmaps_url || null,
+        operating_hours: profile?.operating_hours || null,
       },
     })
   } catch (error) {

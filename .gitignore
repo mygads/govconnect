@@ -80,6 +80,9 @@ media/
 docs/_build/
 docs/.doctrees/
 
+# QA artifacts (generated)
+scripts/qa-results/
+
 # Python (if using any Python scripts)
 __pycache__/
 *.py[cod]

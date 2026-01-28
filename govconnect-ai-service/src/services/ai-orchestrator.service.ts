@@ -39,6 +39,9 @@ export {
   getPendingAddressConfirmation,
   clearPendingAddressConfirmation,
   setPendingAddressConfirmation,
+  getPendingServiceFormOffer,
+  clearPendingServiceFormOffer,
+  setPendingServiceFormOffer,
 } from './unified-message-processor.service';
 
 import { processUnifiedMessage } from './unified-message-processor.service';

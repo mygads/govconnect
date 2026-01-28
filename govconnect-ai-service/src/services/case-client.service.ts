@@ -596,6 +596,39 @@ export interface UserHistoryResponse {
   };
 }
 
+export interface ServiceRequirementDefinition {
+  id: string;
+  label: string;
+  field_type: string;
+  is_required: boolean;
+  help_text?: string | null;
+  order_index?: number | null;
+}
+
+export async function getServiceRequirements(serviceId: string): Promise<ServiceRequirementDefinition[]> {
+  if (!serviceId) return [];
+
+  try {
+    const url = `${config.caseServiceUrl}/services/${serviceId}/requirements`;
+    const response = await axios.get<{ data: ServiceRequirementDefinition[] }>(url, {
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10000,
+    });
+
+    return Array.isArray(response.data?.data) ? response.data.data : [];
+  } catch (error: any) {
+    logger.warn('Failed to fetch service requirements', {
+      service_id: serviceId,
+      error: error.message,
+      status: error.response?.status,
+    });
+    return [];
+  }
+}
+
 /**
  * Get user's complaint and service request history
  */

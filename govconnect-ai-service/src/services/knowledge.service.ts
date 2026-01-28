@@ -27,6 +27,7 @@ interface VillageProfileSummary {
   short_name?: string | null;
   address?: string | null;
   gmaps_url?: string | null;
+  operating_hours?: any | null;
 }
 
 // Feature flag for RAG-based search
@@ -50,6 +51,15 @@ export async function searchKnowledge(query: string, categories?: string[], vill
       try {
         const ragResult = await searchKnowledgeWithRAG(query, categories, villageId);
         if (ragResult.total > 0) {
+          // If RAG returns results but misses key terms, augment with keyword search for higher precision.
+          // This helps for glossary/command-style queries (e.g., 5W1H, embedding, "cek status").
+          if (shouldAugmentRagWithKeywordSearch(query, ragResult.context)) {
+            const keywordResult = await searchKnowledgeWithKeywords(query, undefined, villageId);
+            if (keywordResult.total > 0) {
+              return mergeKnowledgeResults(ragResult, keywordResult);
+            }
+          }
+
           return ragResult;
         }
         // If RAG returns no results, fall back to keyword search
@@ -78,6 +88,67 @@ export async function searchKnowledge(query: string, categories?: string[], vill
 }
 
 /**
+ * Keyword-only knowledge search (bypasses RAG).
+ * Useful for exact-term queries where the answer is explicitly present in KB (e.g., glossary/commands)
+ * and we want deterministic extraction.
+ */
+export async function searchKnowledgeKeywordsOnly(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
+  try {
+    return await searchKnowledgeWithKeywords(query, categories, villageId);
+  } catch (error: any) {
+    logger.warn('Keyword-only knowledge search failed', {
+      error: error?.message,
+    });
+    return { data: [], total: 0, context: '' };
+  }
+}
+
+function shouldAugmentRagWithKeywordSearch(query: string, ragContext: string): boolean {
+  const q = (query || '').toLowerCase();
+  const ctx = (ragContext || '').toLowerCase();
+
+  if (q.includes('5w1h') && !(ctx.includes('5w1h') || ctx.includes('what:') || ctx.includes('where:') || ctx.includes('when:'))) {
+    return true;
+  }
+
+  if (q.includes('prioritas') && !(ctx.includes('tinggi') || ctx.includes('sedang') || ctx.includes('rendah'))) {
+    return true;
+  }
+
+  if (q.includes('embedding') && !(ctx.includes('embedding') || ctx.includes('vektor') || ctx.includes('vector'))) {
+    return true;
+  }
+
+  if (q.includes('cek status') && !ctx.includes('cek status')) {
+    return true;
+  }
+
+  if (
+    (q.includes('data') && (q.includes('digunakan') || q.includes('tujuan'))) &&
+    !(ctx.includes('proses layanan') || ctx.includes('pengaduan') || ctx.includes('diakses'))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function mergeKnowledgeResults(a: KnowledgeSearchResult, b: KnowledgeSearchResult): KnowledgeSearchResult {
+  const byId = new Map<string, KnowledgeItem>();
+  for (const item of a.data || []) byId.set(item.id, item);
+  for (const item of b.data || []) byId.set(item.id, item);
+
+  const contextParts = [a.context, b.context].filter(Boolean);
+  const mergedContext = contextParts.join('\n\n---\n\n');
+
+  return {
+    data: Array.from(byId.values()),
+    total: byId.size,
+    context: mergedContext,
+  };
+}
+
+/**
  * Search knowledge base using RAG (semantic search with embeddings)
  * 
  * NOTE: minScore tuned to 0.55 for better recall with Indonesian language
@@ -85,14 +156,31 @@ export async function searchKnowledge(query: string, categories?: string[], vill
  */
 async function searchKnowledgeWithRAG(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
   const inferredCategories = categories || inferCategories(query);
-  
-  const ragContext = await retrieveContext(query, {
+
+  // First attempt: use inferred categories (better precision when correct)
+  let ragContext = await retrieveContext(query, {
     topK: 5,
     minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
     categories: inferredCategories.length > 0 ? inferredCategories : undefined,
     sourceTypes: ['knowledge', 'document'], // Search both knowledge and documents
     villageId,
   });
+
+  // Fallback: if category inference is wrong, do a second attempt WITHOUT category filtering.
+  // This improves recall for generic KB (e.g., glossary/5W1H) that may not match inferred categories.
+  if (ragContext.totalResults === 0 && inferredCategories.length > 0) {
+    logger.debug('RAG search fallback: retrying without category filter', {
+      inferredCategories,
+    });
+
+    ragContext = await retrieveContext(query, {
+      topK: 5,
+      minScore: 0.55,
+      categories: undefined,
+      sourceTypes: ['knowledge', 'document'],
+      villageId,
+    });
+  }
 
   if (ragContext.totalResults === 0) {
     return {
@@ -239,6 +327,7 @@ export async function getKelurahanInfoContext(villageId?: string): Promise<strin
         `Nama Singkat: ${profile.short_name || '-'}`,
         `Alamat: ${profile.address || '-'}`,
         `Google Maps: ${profile.gmaps_url || '-'}`,
+        `Jam Operasional: ${profile.operating_hours ? JSON.stringify(profile.operating_hours) : '-'}`,
       ].join('\n');
 
       logger.info('Using village profile for greeting context', {

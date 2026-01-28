@@ -95,16 +95,21 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
         return digits;
     }
 
-    useEffect(() => {
+    const waUserPrefill = useMemo(() => {
         const waUserRaw = searchParams.get("user") || "";
-        const waUser = normalizeTo628(waUserRaw);
-        if (waUser) {
+        return normalizeTo628(waUserRaw);
+    }, [searchParams]);
+
+    const isWaPrefilled = !!waUserPrefill;
+
+    useEffect(() => {
+        if (waUserPrefill) {
             setCitizenData((prev) => ({
                 ...prev,
-                wa_user_id: waUser,
+                wa_user_id: waUserPrefill,
             }));
         }
-    }, [searchParams]);
+    }, [waUserPrefill]);
 
     useEffect(() => {
         const loadService = async () => {
@@ -480,12 +485,20 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                                 <input
                                     type="text"
                                     value={citizenData.wa_user_id}
-                                    onChange={(e) => updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""))}
+                                    readOnly={isWaPrefilled}
+                                    onChange={(e) => {
+                                        if (isWaPrefilled) return;
+                                        updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""));
+                                    }}
                                     placeholder="628xxxxxxxxxx"
                                     className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
                                     required
                                 />
-                                <p className="text-[10px] text-muted-foreground">Format: 628xxxxxxxxxx (tanpa tanda + atau spasi)</p>
+                                {isWaPrefilled ? (
+                                    <p className="text-[10px] text-muted-foreground">Nomor WhatsApp terisi otomatis dari tautan WhatsApp dan tidak bisa diubah.</p>
+                                ) : (
+                                    <p className="text-[10px] text-muted-foreground">Format: 628xxxxxxxxxx (tanpa tanda + atau spasi)</p>
+                                )}
                             </div>
                         </div>
                     </CardContent>

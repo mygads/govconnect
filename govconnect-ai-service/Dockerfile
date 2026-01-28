@@ -23,9 +23,6 @@ FROM node:23-alpine
 
 WORKDIR /app
 
-# Install CA certificates for outbound HTTPS (Gemini API)
-RUN apk add --no-cache ca-certificates && update-ca-certificates
-
 RUN npm install -g pnpm
 
 # Copy package files
