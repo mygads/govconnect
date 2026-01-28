@@ -3,13 +3,13 @@ FROM node:23-alpine AS builder
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm
+RUN npm install -g pnpm@9.15.4
 
 # Copy package files
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* tsconfig.json prisma.config.ts ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json prisma.config.ts ./
 
 # Install dependencies
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 
 COPY prisma ./prisma
 COPY src ./src
@@ -23,13 +23,13 @@ FROM node:23-alpine
 
 WORKDIR /app
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@9.15.4
 
 # Copy package files
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # Install production dependencies only
-RUN pnpm install --prod
+RUN pnpm install --prod --frozen-lockfile
 
 # Copy prisma schema
 COPY prisma ./prisma

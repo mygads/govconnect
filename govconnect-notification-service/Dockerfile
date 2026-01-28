@@ -7,7 +7,7 @@ FROM node:23-alpine AS builder
 RUN apk add --no-cache openssl
 
 # Install pnpm
-RUN npm install -g pnpm
+RUN npm install -g pnpm@9.15.4
 
 WORKDIR /app
 
@@ -35,18 +35,15 @@ FROM node:23-alpine
 RUN apk add --no-cache openssl
 
 # Install pnpm
-RUN npm install -g pnpm
+RUN npm install -g pnpm@9.15.4
 
 WORKDIR /app
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
-
-# Install prisma as dev dependency for generate command
-RUN pnpm add -D prisma@6.19.0
+# Install dependencies (include Prisma CLI for generate/migrations)
+RUN pnpm install --frozen-lockfile
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
