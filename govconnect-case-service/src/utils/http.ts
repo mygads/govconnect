@@ -1,5 +1,14 @@
 export function getQueryString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const first = value[0];
+    return typeof first === 'string' ? first : undefined;
+  }
+  return undefined;
+}
+
+export function getParamString(value: unknown): string | undefined {
+  return getQueryString(value);
 }
 
 export function getQueryInt(value: unknown, defaultValue: number): number {

@@ -33,7 +33,7 @@ import {
   addWebchatMessageToBatch,
   cancelWebchatBatch,
 } from '../services/webchat-batcher.service';
-import { firstQuery } from '../utils/http';
+import { firstQuery, firstString } from '../utils/http';
 
 // Unified architecture flag - controls BOTH WhatsApp AND Webchat
 const USE_2_LAYER_ARCHITECTURE = process.env.USE_2_LAYER_ARCHITECTURE === 'true';
@@ -366,7 +366,15 @@ router.post('/', async (req: Request, res: Response) => {
  * GET /api/webchat/:session_id
  */
 router.get('/:session_id', (req: Request, res: Response) => {
-  const { session_id } = req.params;
+  const session_id = firstString((req.params as any)?.session_id);
+
+  if (!session_id) {
+    res.status(400).json({
+      success: false,
+      error: 'session_id is required',
+    });
+    return;
+  }
   
   const session = webChatSessions.get(session_id);
   
@@ -394,7 +402,15 @@ router.get('/:session_id', (req: Request, res: Response) => {
  * DELETE /api/webchat/:session_id
  */
 router.delete('/:session_id', (req: Request, res: Response) => {
-  const { session_id } = req.params;
+  const session_id = firstString((req.params as any)?.session_id);
+
+  if (!session_id) {
+    res.status(400).json({
+      success: false,
+      error: 'session_id is required',
+    });
+    return;
+  }
   
   const deleted = webChatSessions.delete(session_id);
   
@@ -425,12 +441,20 @@ router.get('/stats', (_req: Request, res: Response) => {
  */
 router.get('/:session_id/poll', async (req: Request, res: Response) => {
   try {
-    const { session_id } = req.params;
+    const session_id = firstString((req.params as any)?.session_id);
     const sinceRaw = firstQuery((req.query as any)?.since);
     const since = sinceRaw ? new Date(sinceRaw) : undefined;
 
     const village_id = firstQuery((req.query as any)?.village_id ?? (req.query as any)?.villageId);
     
+    if (!session_id) {
+      res.status(400).json({
+        success: false,
+        error: 'session_id is required',
+      });
+      return;
+    }
+
     if (!session_id.startsWith('web_')) {
       res.status(400).json({
         success: false,

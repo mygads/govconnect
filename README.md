@@ -126,26 +126,27 @@ curl http://localhost:3000/api/health  # Dashboard
 
 ### 4. Access UIs
 
-| Service | URL |
-|---------|-----|
-| Dashboard | http://localhost:3000 |
-| RabbitMQ | http://localhost:15672 (admin/${RABBITMQ_PASSWORD}) |
-| Grafana | http://localhost:3100 (admin/govconnect-grafana-2025) |
-| Prometheus | http://localhost:9090 |
+| Service    | URL                                                   |
+| ---------- | ----------------------------------------------------- |
+| Dashboard  | http://localhost:${DASHBOARD_PORT:-3000}              |
+| RabbitMQ   | http://localhost:15672 (admin/${RABBITMQ_PASSWORD})   |
+| Grafana    | http://localhost:3100 (admin/govconnect-grafana-2025) |
+| Prometheus | http://localhost:9090                                 |
 
 ## 📊 Database
 
 **Separate PostgreSQL databases** untuk setiap service yang menyimpan data (no schema needed, uses `public` by default):
 
-| Service | Database | Description |
-|---------|----------|-------------|
-| Channel | `gc_channel` | Messages, send logs, conversations |
-| Case | `gc_case` | Complaints, service requests |
-| Notification | `gc_notification` | Notification logs, templates |
-| Dashboard | `gc_dashboard` | Admin users, settings, knowledge base |
-| AI Orchestrator | - | Stateless (no database) |
+| Service         | Database          | Description                           |
+| --------------- | ----------------- | ------------------------------------- |
+| Channel         | `gc_channel`      | Messages, send logs, conversations    |
+| Case            | `gc_case`         | Complaints, service requests          |
+| Notification    | `gc_notification` | Notification logs, templates          |
+| Dashboard       | `gc_dashboard`    | Admin users, settings, knowledge base |
+| AI Orchestrator | -                 | Stateless (no database)               |
 
 Connection string format:
+
 ```bash
 # Standard format (no schema parameter needed)
 DATABASE_URL=postgresql://postgres:password@postgres:5432/gc_{service}
@@ -155,6 +156,7 @@ DATABASE_URL=postgresql://postgres:postgres_secret_2025@postgres:5432/gc_channel
 ```
 
 **Important Notes:**
+
 - ✅ All services use `DATABASE_URL` environment variable
 - ✅ No schema parameter in connection string (uses `public` by default)
 - ✅ Each stateful service has its own database for isolation and scalability
@@ -191,8 +193,31 @@ git push origin main
 ```
 
 **Untuk perubahan cepat tanpa migration file:**
+
 - Container akan otomatis menjalankan `prisma db push` jika tidak ada folder `migrations/`
 - Ini cocok untuk development tapi tidak recommended untuk production
+
+## 🧯 Troubleshooting (Local Docker)
+
+### 1) Channel Service restart-loop karena Prisma `db push` gagal
+
+Gejala umum: container `channel-service` terus restart dengan error seperti “Added the required column `village_id` … not possible … use --force-reset”.
+
+Solusi cepat untuk local (data di DB `gc_channel` akan dihapus):
+
+```bash
+docker compose stop channel-service
+docker compose run --rm channel-service sh -lc "pnpm prisma db push --force-reset"
+docker compose up -d channel-service
+```
+
+### 2) Build TypeScript gagal karena `string | string[]`
+
+Jika `docker compose build` gagal dengan error TypeScript dari Express (`req.params` / `req.query` bertipe `string | string[]`), pastikan parsing param/query dinormalisasi ke `string` (gunakan helper yang sudah ada di masing-masing service), lalu rebuild:
+
+```bash
+docker compose build ai-service case-service
+```
 
 ### AI Orchestrator (Stateless)
 
@@ -200,12 +225,12 @@ AI Orchestrator **tidak menggunakan database** dan tidak menyimpan data.
 
 ## 🐰 RabbitMQ Events
 
-| Event | Producer | Consumer |
-|-------|----------|----------|
-| `whatsapp.message.received` | Channel | AI |
-| `govconnect.ai.reply` | AI | Notification |
-| `govconnect.complaint.created` | Case | Notification |
-| `govconnect.service.requested` | Case | Notification |
+| Event                          | Producer | Consumer     |
+| ------------------------------ | -------- | ------------ |
+| `whatsapp.message.received`    | Channel  | AI           |
+| `govconnect.ai.reply`          | AI       | Notification |
+| `govconnect.complaint.created` | Case     | Notification |
+| `govconnect.service.requested` | Case     | Notification |
 
 ## 📁 Project Structure
 
@@ -263,15 +288,15 @@ pnpm dev
 
 ### Local Development Ports
 
-| Service | Port |
-|---------|------|
-| Dashboard | 3000 |
-| Channel | 3001 |
-| AI | 3002 |
-| Case | 3003 |
-| Notification | 3004 |
-| PostgreSQL | 5432 |
-| RabbitMQ | 5672, 15672 |
+| Service      | Port        |
+| ------------ | ----------- |
+| Dashboard    | 3000        |
+| Channel      | 3001        |
+| AI           | 3002        |
+| Case         | 3003        |
+| Notification | 3004        |
+| PostgreSQL   | 5432        |
+| RabbitMQ     | 5672, 15672 |
 
 ## 🌐 Network Architecture
 
@@ -304,18 +329,18 @@ GovConnect menggunakan **komunikasi langsung antar service** (tanpa gateway agre
 
 ### Environment URL Patterns
 
-| Mode | Service URL Pattern | Example |
-|------|---------------------|---------|
-| **Local Dev (npm)** | `http://localhost:PORT` | `http://localhost:3003` |
-| **Docker Compose** | `http://service-name:PORT` | `http://case-service:3003` |
-| **Docker Swarm** | `http://service-name:PORT` | `http://case-service:3003` |
+| Mode                | Service URL Pattern        | Example                         |
+| ------------------- | -------------------------- | ------------------------------- |
+| **Local Dev (npm)** | `http://localhost:PORT`    | `http://localhost:3003`         |
+| **Docker Compose**  | `http://service-name:PORT` | `http://case-service:3003`      |
+| **Docker Swarm**    | `http://service-name:PORT` | `http://case-service:3003`      |
 | **External Client** | `https://<service-domain>` | `https://case.govconnect.my.id` |
 
 ### Best Practice Rules
 
 1. **Internal Service-to-Service**: Selalu gunakan Docker internal network (`http://service-name:port`).
-       - Lebih cepat dan langsung
-       - Tidak bergantung gateway agregasi
+   - Lebih cepat dan langsung
+   - Tidak bergantung gateway agregasi
 
 2. **External Client Access**: Akses masing-masing service langsung melalui domain publiknya.
 
@@ -323,8 +348,8 @@ GovConnect menggunakan **komunikasi langsung antar service** (tanpa gateway agre
    - Browser → `/api/*` routes (Next.js API Routes)
    - Server-side → `http://service-name:port` (Direct internal)
 
-4. **Webhook (WhatsApp)**: 
-       - Masuk langsung ke Channel Service (domain publik channel)
+4. **Webhook (WhatsApp)**:
+   - Masuk langsung ke Channel Service (domain publik channel)
 
 ## 📚 Documentation
 

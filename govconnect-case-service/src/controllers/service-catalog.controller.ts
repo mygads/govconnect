@@ -6,7 +6,7 @@ import logger from '../utils/logger';
 import { generateServiceRequestId } from '../utils/id-generator';
 import { publishEvent } from '../services/rabbitmq.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
-import { getQueryString } from '../utils/http';
+import { getParamString, getQueryString } from '../utils/http';
 import {
   isValidCitizenWaNumber,
   normalizeCitizenWaForStorage,
@@ -67,7 +67,10 @@ export async function handleGetServices(req: Request, res: Response) {
 
 export async function handleGetServiceById(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const service = await prisma.serviceItem.findUnique({
       where: { id },
       include: { requirements: true, category: true }
@@ -106,7 +109,10 @@ export async function handleCreateService(req: Request, res: Response) {
 
 export async function handleUpdateService(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { name, description, slug, mode, is_active, category_id } = req.body;
     const service = await prisma.serviceItem.update({
       where: { id },
@@ -148,7 +154,10 @@ export async function handleGetServiceBySlug(req: Request, res: Response) {
 // ===== Requirements =====
 export async function handleGetRequirements(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const requirements = await prisma.serviceRequirement.findMany({
       where: { service_id: id },
       orderBy: { order_index: 'asc' }
@@ -162,7 +171,10 @@ export async function handleGetRequirements(req: Request, res: Response) {
 
 export async function handleCreateRequirement(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { label, field_type, is_required, options_json, help_text, order_index } = req.body;
     if (!label || !field_type) {
       return res.status(400).json({ error: 'label and field_type are required' });
@@ -187,7 +199,10 @@ export async function handleCreateRequirement(req: Request, res: Response) {
 
 export async function handleUpdateRequirement(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { label, field_type, is_required, options_json, help_text, order_index } = req.body;
     const requirement = await prisma.serviceRequirement.update({
       where: { id },
@@ -209,7 +224,10 @@ export async function handleUpdateRequirement(req: Request, res: Response) {
 
 export async function handleDeleteRequirement(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     await prisma.serviceRequirement.delete({ where: { id } });
     return res.json({ status: 'success' });
   } catch (error: any) {
@@ -286,7 +304,10 @@ export async function handleCreateServiceRequest(req: Request, res: Response) {
 
 export async function handleGetServiceRequestById(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const data = await prisma.serviceRequest.findUnique({
       where: { id },
       include: { service: true },
@@ -301,7 +322,10 @@ export async function handleGetServiceRequestById(req: Request, res: Response) {
 
 export async function handleUpdateServiceRequestStatus(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { status, admin_notes, result_file_url, result_file_name, result_description } = req.body;
     const data = await prisma.serviceRequest.update({
       where: { id },
@@ -322,7 +346,10 @@ export async function handleUpdateServiceRequestStatus(req: Request, res: Respon
 
 export async function handleGenerateServiceRequestEditToken(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { wa_user_id } = req.body as { wa_user_id?: string };
 
     if (!wa_user_id) {
@@ -409,7 +436,10 @@ export async function handleGetServiceRequestByToken(req: Request, res: Response
 
 export async function handleUpdateServiceRequestByToken(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { edit_token, citizen_data_json, requirement_data_json } = req.body as {
       edit_token?: string;
       citizen_data_json?: Record<string, any>;
@@ -462,7 +492,10 @@ export async function handleUpdateServiceRequestByToken(req: Request, res: Respo
 
 export async function handleCancelServiceRequest(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { wa_user_id, cancel_reason } = req.body as { wa_user_id?: string; cancel_reason?: string };
 
     if (!wa_user_id) {
@@ -505,7 +538,10 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
 
 export async function handleDeleteServiceRequest(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     await prisma.serviceRequest.delete({ where: { id } });
     return res.json({ status: 'success' });
   } catch (error: any) {
@@ -516,7 +552,17 @@ export async function handleDeleteServiceRequest(req: Request, res: Response) {
 
 export async function handleGetServiceHistory(req: Request, res: Response) {
   try {
-    const wa_user_id = normalizeTo628(req.params.wa_user_id);
+    const wa_user_id_raw = getParamString((req.params as any)?.wa_user_id);
+
+    if (!wa_user_id_raw) {
+      return res.status(400).json({
+        status: 'error',
+        error: 'INVALID_PHONE',
+        message: 'Invalid phone number format',
+      });
+    }
+
+    const wa_user_id = normalizeTo628(wa_user_id_raw);
     const data = await prisma.serviceRequest.findMany({
       where: { wa_user_id },
       include: { service: true },

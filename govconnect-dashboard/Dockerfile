@@ -72,14 +72,24 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
 # Ensure Prisma CLI runtime deps are resolvable (pnpm symlink layout)
 RUN set -e; \
-        mkdir -p node_modules/@prisma; \
-        for pkg_dir in node_modules/.pnpm/@prisma+*@*; do \
-            [ -d "$pkg_dir/node_modules/@prisma" ] || continue; \
-            for pkg_path in "$pkg_dir"/node_modules/@prisma/*; do \
-                name="$(basename "$pkg_path")"; \
-                [ -e "node_modules/@prisma/$name" ] || ln -s "../.pnpm/$(basename "$pkg_dir")/node_modules/@prisma/$name" "node_modules/@prisma/$name"; \
-            done; \
-        done
+    mkdir -p node_modules/@prisma; \
+    for pkg_dir in node_modules/.pnpm/@prisma+*@*; do \
+    [ -d "$pkg_dir/node_modules/@prisma" ] || continue; \
+    for pkg_path in "$pkg_dir"/node_modules/@prisma/*; do \
+    name="$(basename "$pkg_path")"; \
+    [ -e "node_modules/@prisma/$name" ] || ln -s "../.pnpm/$(basename "$pkg_dir")/node_modules/@prisma/$name" "node_modules/@prisma/$name"; \
+    done; \
+    done
+
+# Ensure bcryptjs is resolvable in pnpm layout (needed by prisma seed)
+RUN set -e; \
+    if [ ! -e node_modules/bcryptjs ]; then \
+    for pkg_dir in node_modules/.pnpm/bcryptjs@*; do \
+    [ -d "$pkg_dir/node_modules/bcryptjs" ] || continue; \
+    ln -s ".pnpm/$(basename "$pkg_dir")/node_modules/bcryptjs" "node_modules/bcryptjs"; \
+    break; \
+    done; \
+    fi
 
 # Set proper permissions
 RUN chown -R nextjs:nodejs /app
@@ -95,14 +105,24 @@ ENV HOSTNAME="0.0.0.0"
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
     echo 'if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
-    echo '  node node_modules/prisma/build/index.js migrate deploy || echo "⚠️  Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '  node node_modules/prisma/build/index.js migrate deploy || (echo "⚠️  Migration failed, trying db push..." && node node_modules/prisma/build/index.js db push --accept-data-loss) || echo "⚠️  DB push failed, continuing..."' >> /app/entrypoint.sh && \
     echo 'else' >> /app/entrypoint.sh && \
     echo '  node node_modules/prisma/build/index.js db push --accept-data-loss || echo "⚠️  DB push failed, continuing..."' >> /app/entrypoint.sh && \
     echo 'fi' >> /app/entrypoint.sh && \
     echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
+    echo 'if [ "${RUN_SEED:-false}" = "true" ]; then' >> /app/entrypoint.sh && \
+    echo '  echo "🌱 Running prisma seed..."' >> /app/entrypoint.sh && \
+    echo '  node node_modules/prisma/build/index.js db seed || echo "⚠️  Seed failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'fi' >> /app/entrypoint.sh && \
     echo 'echo "🚀 Starting Dashboard..."' >> /app/entrypoint.sh && \
     echo 'exec node server.js' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
+
+# Prisma seed untuk dashboard pakai `tsx prisma/seed.ts` (lihat package.json#prisma.seed)
+# Standalone output Next.js tidak membawa binary tsx, jadi install runtime ringan.
+USER root
+RUN npm install -g tsx@4.20.6
+USER nextjs
 
 # Start with entrypoint
 CMD ["/app/entrypoint.sh"]

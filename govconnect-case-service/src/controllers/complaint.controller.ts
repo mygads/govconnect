@@ -10,7 +10,7 @@ import {
 } from '../services/complaint.service';
 import { checkDuplicateComplaint, checkGlobalDuplicate } from '../services/complaint-deduplication.service';
 import logger from '../utils/logger';
-import { getQueryInt, getQueryString } from '../utils/http';
+import { getParamString, getQueryInt, getQueryString } from '../utils/http';
 
 /**
  * POST /laporan/create
@@ -69,7 +69,7 @@ export async function handleCreateComplaint(req: Request, res: Response) {
         message: `Ada ${globalCheck.similarCount} laporan serupa di lokasi yang sama`,
       };
     }
-    
+
     return res.status(201).json({
       status: 'success',
       data: responseData,
@@ -120,7 +120,10 @@ export async function handleGetComplaints(req: Request, res: Response) {
  */
 export async function handleGetComplaintById(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const complaint = await getComplaintById(id);
     
     if (!complaint) {
@@ -140,7 +143,10 @@ export async function handleGetComplaintById(req: Request, res: Response) {
  */
 export async function handleCheckComplaintStatus(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { wa_user_id } = req.body;
     
     if (!wa_user_id) {
@@ -172,7 +178,10 @@ export async function handleCheckComplaintStatus(req: Request, res: Response) {
  */
 export async function handleUpdateComplaintStatus(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { status, admin_notes } = req.body;
     
     const complaint = await updateComplaintStatus(id, { status, admin_notes });
@@ -207,7 +216,10 @@ export async function handleGetComplaintStatistics(req: Request, res: Response) 
  */
 export async function handleCancelComplaint(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { wa_user_id, cancel_reason } = req.body;
     
     if (!wa_user_id) {
@@ -248,7 +260,10 @@ export async function handleCancelComplaint(req: Request, res: Response) {
  */
 export async function handleUpdateComplaintByUser(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParamString((req.params as any)?.id);
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { wa_user_id, alamat, deskripsi, rt_rw } = req.body;
 
     const result = await updateComplaintByUser(id, { wa_user_id, alamat, deskripsi, rt_rw });

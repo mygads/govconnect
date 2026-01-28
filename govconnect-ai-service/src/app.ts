@@ -173,7 +173,11 @@ app.get('/admin/failed-messages', (req: Request, res: Response) => {
  */
 app.post('/admin/failed-messages/:messageId/retry', async (req: Request, res: Response) => {
   try {
-    const { messageId } = req.params;
+    const messageId = firstQuery((req.params as any)?.messageId);
+    if (!messageId) {
+      res.status(400).json({ error: 'messageId is required' });
+      return;
+    }
 
     logger.info('Admin retry requested', { messageId });
 
@@ -310,7 +314,11 @@ app.get('/stats/models', (req: Request, res: Response) => {
 
 app.get('/stats/models/:modelName', (req: Request, res: Response) => {
   try {
-    const { modelName } = req.params;
+    const modelName = firstQuery((req.params as any)?.modelName);
+    if (!modelName) {
+      res.status(400).json({ error: 'modelName is required' });
+      return;
+    }
     const stats = modelStatsService.getModelStats(modelName);
 
     if (!stats) {
@@ -441,7 +449,11 @@ app.get('/rate-limit', (req: Request, res: Response) => {
 
 app.get('/rate-limit/check/:wa_user_id', (req: Request, res: Response) => {
   try {
-    const { wa_user_id } = req.params;
+    const wa_user_id = firstQuery((req.params as any)?.wa_user_id);
+    if (!wa_user_id) {
+      res.status(400).json({ error: 'wa_user_id is required' });
+      return;
+    }
     const result = rateLimiterService.checkRateLimit(wa_user_id);
     const userInfo = rateLimiterService.getUserInfo(wa_user_id);
 
@@ -499,7 +511,11 @@ app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
 
 app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) => {
   try {
-    const { wa_user_id } = req.params;
+    const wa_user_id = firstQuery((req.params as any)?.wa_user_id);
+    if (!wa_user_id) {
+      res.status(400).json({ error: 'wa_user_id is required' });
+      return;
+    }
     const removed = rateLimiterService.removeFromBlacklist(wa_user_id);
 
     if (removed) {
@@ -523,7 +539,11 @@ app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) =>
 
 app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
   try {
-    const { wa_user_id } = req.params;
+    const wa_user_id = firstQuery((req.params as any)?.wa_user_id);
+    if (!wa_user_id) {
+      res.status(400).json({ error: 'wa_user_id is required' });
+      return;
+    }
     const reset = rateLimiterService.resetUserViolations(wa_user_id);
 
     if (reset) {

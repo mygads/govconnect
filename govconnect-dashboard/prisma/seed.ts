@@ -52,7 +52,8 @@ async function main() {
     console.log('   Role: superadmin\n')
   }
 
-  const shouldSeedSangresengAde = (process.env.SEED_SANRESENG_ADE || '').toLowerCase() === 'true'
+  const seedFlag = (process.env.SEED_SANGRESENG_ADE || process.env.SEED_SANRESENG_ADE || '').toLowerCase()
+  const shouldSeedSangresengAde = seedFlag === 'true'
   if (shouldSeedSangresengAde) {
     console.log('\n🌾 Seeding Desa Sanreseng Ade (dummy data)...')
 
@@ -62,11 +63,22 @@ async function main() {
     const villageAdminName = (process.env.SANGRESENG_ADMIN_NAME || 'Admin Desa Sanreseng Ade').trim()
     const villageAdminPassword = (process.env.SANGRESENG_ADMIN_PASSWORD || 'SangresengAde2026!').trim()
 
-    const village = await prisma.villages.upsert({
+    const fixedVillageId = (process.env.DEFAULT_VILLAGE_ID || '').trim()
+
+    const existingVillage = await prisma.villages.findUnique({
       where: { slug: villageSlug },
-      update: { name: villageName, is_active: true },
-      create: { name: villageName, slug: villageSlug, is_active: true },
     })
+
+    const village = existingVillage
+      ? await prisma.villages.update({
+          where: { id: existingVillage.id },
+          data: { name: villageName, is_active: true },
+        })
+      : await prisma.villages.create({
+          data: fixedVillageId
+            ? { id: fixedVillageId, name: villageName, slug: villageSlug, is_active: true }
+            : { name: villageName, slug: villageSlug, is_active: true },
+        })
 
     const existingVillageAdmin = await prisma.admin_users.findUnique({
       where: { username: villageAdminUsername },
@@ -238,7 +250,8 @@ async function main() {
   console.log('✅ Database seeding completed!')
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
   console.log('\n📝 Login:')
-  console.log('   URL: http://localhost:3000')
+  const dashboardPort = (process.env.DASHBOARD_PORT || '').trim() || '3000'
+  console.log(`   URL: http://localhost:${dashboardPort}`)
   console.log(`   Username: ${username}`)
   console.log('   Password: (lihat output di atas / env SUPERADMIN_PASSWORD)')
   console.log('\n⚠️  IMPORTANT: Ganti kata sandi setelah login pertama!\n')

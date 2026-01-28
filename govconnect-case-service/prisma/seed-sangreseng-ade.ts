@@ -371,9 +371,9 @@ const COMPLAINT_SEEDS = [
 ];
 
 async function main() {
-  const villageId = process.env.VILLAGE_ID;
+  const villageId = (process.env.VILLAGE_ID || process.env.DEFAULT_VILLAGE_ID || '').trim();
   if (!villageId) {
-    throw new Error('VILLAGE_ID is required for seeding Desa Sanreseng Ade data');
+    throw new Error('VILLAGE_ID atau DEFAULT_VILLAGE_ID wajib di-set untuk seed Desa Sanreseng Ade');
   }
 
   console.log('🌱 Seeding Case Service data for Desa Sanreseng Ade...');

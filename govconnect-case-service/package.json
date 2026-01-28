@@ -12,6 +12,9 @@
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed-services.ts",
     "prisma:seed:sangreseng": "tsx prisma/seed-sangreseng-ade.ts",
+    "db:seed:services": "dotenv -e .env -- tsx prisma/seed-services.ts",
+    "db:seed:desa": "dotenv -e .env -- tsx prisma/seed-sangreseng-ade.ts",
+    "db:seed": "pnpm db:seed:services && pnpm db:seed:desa",
     "type-check": "tsc --noEmit"
   },
   "keywords": [
@@ -43,7 +46,9 @@
     "@types/node": "^24.10.1",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
+    "dotenv-cli": "^11.0.0",
     "prisma": "6.19.0",
+    "ts-node": "^10.9.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }

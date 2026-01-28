@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { GOVERNMENT_SERVICES, DEFAULT_OPERATING_HOURS } from '../src/config/services';
+import { GOVERNMENT_SERVICES } from '../dist/config/services';
 
 const prisma = new PrismaClient();
 
@@ -14,7 +14,10 @@ function slugify(input: string): string {
 async function main() {
   console.log('🌱 Seeding government services...\n');
 
-  const villageId = process.env.DEFAULT_VILLAGE_ID || 'desa-001';
+  const villageId = (process.env.VILLAGE_ID || process.env.DEFAULT_VILLAGE_ID || '').trim();
+  if (!villageId) {
+    throw new Error('VILLAGE_ID atau DEFAULT_VILLAGE_ID wajib di-set untuk menjalankan seed-services');
+  }
 
   // Ensure categories exist (by village + name)
   const categoryIdByName = new Map<string, string>();
