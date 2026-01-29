@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import prisma from '../config/database'
 import logger from '../utils/logger'
+import { getQuery } from '../utils/http'
 
 const router: Router = Router()
 
@@ -169,7 +170,7 @@ router.get('/by-status', async (req: Request, res: Response) => {
 
 router.get('/trends', async (req: Request, res: Response) => {
   try {
-    const period = (req.query.period as string) || 'weekly' // weekly, monthly
+    const period = getQuery(req, 'period') || 'weekly' // weekly, monthly
     const now = new Date()
     
     // Calculate date ranges

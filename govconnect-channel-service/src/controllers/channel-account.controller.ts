@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import logger from '../utils/logger';
+import { getParam, getQuery } from '../utils/http';
 
 function buildWebhookUrl(): string {
   const baseUrl = process.env.PUBLIC_CHANNEL_BASE_URL || process.env.PUBLIC_BASE_URL || '';
@@ -10,7 +11,10 @@ function buildWebhookUrl(): string {
 
 export async function handleGetChannelAccount(req: Request, res: Response) {
   try {
-    const { village_id } = req.params;
+    const village_id = getParam(req, 'village_id');
+    if (!village_id) {
+      return res.status(400).json({ error: 'village_id is required' });
+    }
     const account = await prisma.channel_accounts.findUnique({
       where: { village_id },
     });
@@ -33,7 +37,10 @@ export async function handleGetChannelAccount(req: Request, res: Response) {
 
 export async function handleUpsertChannelAccount(req: Request, res: Response) {
   try {
-    const { village_id } = req.params;
+    const village_id = getParam(req, 'village_id');
+    if (!village_id) {
+      return res.status(400).json({ error: 'village_id is required' });
+    }
     const {
       wa_number,
       enabled_wa,
@@ -73,7 +80,7 @@ export async function handleUpsertChannelAccount(req: Request, res: Response) {
 
 export async function handleListChannelAccounts(req: Request, res: Response) {
   try {
-    const enabledWebchatRaw = req.query.enabled_webchat;
+    const enabledWebchatRaw = getQuery(req, 'enabled_webchat');
     const enabledWebchat =
       enabledWebchatRaw === 'true' ? true : enabledWebchatRaw === 'false' ? false : undefined;
 

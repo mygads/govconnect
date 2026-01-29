@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import logger from '../utils/logger';
+import { getQuery } from '../utils/http';
 
 const MEDIA_INTERNAL_URL = process.env.MEDIA_INTERNAL_URL || 'http://channel-service:3001/uploads';
 const MEDIA_PUBLIC_URL = process.env.MEDIA_PUBLIC_URL || 'http://localhost:3001/uploads';
@@ -16,7 +17,7 @@ function getScope(raw: unknown): string {
 
 export async function handleUploadMedia(req: Request, res: Response): Promise<void> {
   try {
-    const scope = getScope((req.query as any)?.scope);
+    const scope = getScope(getQuery(req, 'scope'));
 
     const file = (req as any).file as Express.Multer.File | undefined;
     if (!file) {

@@ -24,7 +24,7 @@ import {
   searchVectors,
   getVectorDbStats,
 } from '../services/vector-db.service';
-import { firstHeader } from '../utils/http';
+import { firstHeader, getParam } from '../utils/http';
 
 const router = Router();
 
@@ -94,7 +94,10 @@ router.post('/', async (req: Request, res: Response) => {
  */
 router.put('/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { title, content, category, keywords, qualityScore, village_id, villageId } = req.body;
 
     if (!title || !content || !category) {
@@ -144,7 +147,10 @@ router.put('/:id', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
 
     logger.info('Deleting knowledge vector', { id });
 
@@ -167,7 +173,10 @@ router.delete('/:id', async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
 
     const knowledge = await getKnowledgeVector(id);
 

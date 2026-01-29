@@ -8,6 +8,7 @@ import {
 import { updateConversation } from '../services/takeover.service';
 import { sendTextMessage, sendTypingIndicator, markMessageAsRead } from '../services/wa.service';
 import logger from '../utils/logger';
+import { getQuery } from '../utils/http';
 
 /**
  * Get message history
@@ -15,9 +16,10 @@ import logger from '../utils/logger';
  */
 export async function getMessages(req: Request, res: Response): Promise<void> {
   try {
-    const village_id = req.query.village_id as string | undefined;
-    const wa_user_id = req.query.wa_user_id as string;
-    const limit = parseInt(req.query.limit as string) || 30;
+    const village_id = getQuery(req, 'village_id');
+    const wa_user_id = getQuery(req, 'wa_user_id');
+    const limitRaw = getQuery(req, 'limit');
+    const limit = limitRaw ? parseInt(limitRaw, 10) : 30;
 
     // Validate wa_user_id
     if (!wa_user_id) {

@@ -10,7 +10,7 @@ import {
 } from '../services/complaint.service';
 import { checkDuplicateComplaint, checkGlobalDuplicate } from '../services/complaint-deduplication.service';
 import logger from '../utils/logger';
-import { getQueryInt, getQueryString } from '../utils/http';
+import { getParam, getQuery, getQueryInt } from '../utils/http';
 
 /**
  * POST /laporan/create
@@ -87,15 +87,15 @@ export async function handleCreateComplaint(req: Request, res: Response) {
 export async function handleGetComplaints(req: Request, res: Response) {
   try {
     const filters = {
-      status: getQueryString(req.query.status),
-      kategori: getQueryString(req.query.kategori),
-      category_id: getQueryString(req.query.category_id),
-      type_id: getQueryString(req.query.type_id),
-      rt_rw: getQueryString(req.query.rt_rw),
-      wa_user_id: getQueryString(req.query.wa_user_id),
-      village_id: getQueryString(req.query.village_id),
-      limit: getQueryInt(req.query.limit, 20),
-      offset: getQueryInt(req.query.offset, 0),
+      status: getQuery(req, 'status'),
+      kategori: getQuery(req, 'kategori'),
+      category_id: getQuery(req, 'category_id'),
+      type_id: getQuery(req, 'type_id'),
+      rt_rw: getQuery(req, 'rt_rw'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      village_id: getQuery(req, 'village_id'),
+      limit: getQueryInt(getQuery(req, 'limit'), 20),
+      offset: getQueryInt(getQuery(req, 'offset'), 0),
     };
     
     const result = await getComplaintsList(filters);
@@ -120,7 +120,10 @@ export async function handleGetComplaints(req: Request, res: Response) {
  */
 export async function handleGetComplaintById(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const complaint = await getComplaintById(id);
     
     if (!complaint) {
@@ -140,7 +143,10 @@ export async function handleGetComplaintById(req: Request, res: Response) {
  */
 export async function handleCheckComplaintStatus(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { wa_user_id } = req.body;
     
     if (!wa_user_id) {
@@ -172,7 +178,10 @@ export async function handleCheckComplaintStatus(req: Request, res: Response) {
  */
 export async function handleUpdateComplaintStatus(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { status, admin_notes } = req.body;
     
     const complaint = await updateComplaintStatus(id, { status, admin_notes });
@@ -207,7 +216,10 @@ export async function handleGetComplaintStatistics(req: Request, res: Response) 
  */
 export async function handleCancelComplaint(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { wa_user_id, cancel_reason } = req.body;
     
     if (!wa_user_id) {
@@ -248,7 +260,10 @@ export async function handleCancelComplaint(req: Request, res: Response) {
  */
 export async function handleUpdateComplaintByUser(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { wa_user_id, alamat, deskripsi, rt_rw } = req.body;
 
     const result = await updateComplaintByUser(id, { wa_user_id, alamat, deskripsi, rt_rw });

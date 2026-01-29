@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getUserHistory } from '../services/user-history.service';
+import { getParam } from '../utils/http';
 import logger from '../utils/logger';
 
 /**
@@ -8,7 +9,7 @@ import logger from '../utils/logger';
  */
 export async function handleGetUserHistory(req: Request, res: Response) {
   try {
-    const { wa_user_id } = req.params;
+    const wa_user_id = getParam(req, 'wa_user_id');
 
     if (!wa_user_id || !/^628\d{8,12}$/.test(wa_user_id)) {
       return res.status(400).json({

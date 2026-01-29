@@ -11,6 +11,7 @@ import { addPendingMessage } from '../services/pending-message.service';
 import { addMessageToBatch, cancelBatch } from '../services/message-batcher.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
+import { getQuery } from '../utils/http';
 import { 
   GenfityWebhookPayload,
 } from '../types/webhook.types';
@@ -538,9 +539,9 @@ function extractPhoneFromJID(jid: string): string {
  * This allows simpler webhook setup without verify token.
  */
 export function verifyWebhook(req: Request, res: Response): void {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+  const mode = getQuery(req, 'hub.mode');
+  const token = getQuery(req, 'hub.verify_token');
+  const challenge = getQuery(req, 'hub.challenge');
 
   const verifyToken = process.env.WA_WEBHOOK_VERIFY_TOKEN;
 

@@ -19,7 +19,7 @@ import logger from '../utils/logger';
 import { processDocumentWithEmbeddings } from '../services/document-processor.service';
 import { addDocumentChunks } from '../services/vector-db.service';
 import { config } from '../config/env';
-import { firstHeader } from '../utils/http';
+import { firstHeader, getParam } from '../utils/http';
 
 const router = Router();
 
@@ -325,7 +325,12 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
  * Delete document and its vectors
  */
 router.delete('/document/:documentId', verifyInternalKey, async (req: Request, res: Response) => {
-  const { documentId } = req.params;
+  const documentId = getParam(req, 'documentId');
+  if (!documentId) {
+    return res.status(400).json({
+      error: 'documentId is required',
+    });
+  }
   
   try {
     const { deleteDocumentVectors } = await import('../services/vector-db.service');

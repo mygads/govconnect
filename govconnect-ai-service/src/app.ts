@@ -31,7 +31,7 @@ import testingRoutes from './routes/testing.routes';
 import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
 import { config } from './config/env';
-import { firstQuery } from './utils/http';
+import { getParam, getQuery } from './utils/http';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -113,7 +113,6 @@ app.get('/stats/retry-queue', (req: Request, res: Response) => {
         maxRetryAttempts: 10,
         pendingMessages: aiRetryQueue.pendingMessages.map(msg => ({
           wa_user_id: msg.wa_user_id,
-          message_id: msg.message_id,
           attempts: msg.attempts,
           maxAttempts: 10,
           willRetry: msg.attempts < 10,
@@ -173,7 +172,14 @@ app.get('/admin/failed-messages', (req: Request, res: Response) => {
  */
 app.post('/admin/failed-messages/:messageId/retry', async (req: Request, res: Response) => {
   try {
-    const { messageId } = req.params;
+    const messageId = getParam(req, 'messageId');
+    const clearAll = getQuery(req, 'all') === 'true';
+    if (!messageId) {
+      res.status(400).json({
+        error: 'messageId is required',
+      });
+      return;
+    }
 
     logger.info('Admin retry requested', { messageId });
 
@@ -227,7 +233,7 @@ app.post('/admin/failed-messages/retry-all', async (req: Request, res: Response)
  */
 app.delete('/admin/failed-messages', (req: Request, res: Response) => {
   try {
-    const clearAll = firstQuery((req.query as any)?.all) === 'true';
+    const clearAll = getQuery(req, 'all') === 'true';
 
     logger.info('Admin clear failed messages', { clearAll });
 
@@ -303,14 +309,19 @@ app.get('/stats/models', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get model stats',
-      message: error.message,
     });
   }
 });
 
 app.get('/stats/models/:modelName', (req: Request, res: Response) => {
   try {
-    const { modelName } = req.params;
+    const modelName = getParam(req, 'modelName');
+    if (!modelName) {
+      res.status(400).json({
+        error: 'modelName is required',
+      });
+      return;
+    }
     const stats = modelStatsService.getModelStats(modelName);
 
     if (!stats) {
@@ -441,7 +452,13 @@ app.get('/rate-limit', (req: Request, res: Response) => {
 
 app.get('/rate-limit/check/:wa_user_id', (req: Request, res: Response) => {
   try {
-    const { wa_user_id } = req.params;
+    const wa_user_id = getParam(req, 'wa_user_id');
+    if (!wa_user_id) {
+      res.status(400).json({
+        error: 'wa_user_id is required',
+      });
+      return;
+    }
     const result = rateLimiterService.checkRateLimit(wa_user_id);
     const userInfo = rateLimiterService.getUserInfo(wa_user_id);
 
@@ -499,7 +516,13 @@ app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
 
 app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) => {
   try {
-    const { wa_user_id } = req.params;
+    const wa_user_id = getParam(req, 'wa_user_id');
+    if (!wa_user_id) {
+      res.status(400).json({
+        error: 'wa_user_id is required',
+      });
+      return;
+    }
     const removed = rateLimiterService.removeFromBlacklist(wa_user_id);
 
     if (removed) {
@@ -523,7 +546,13 @@ app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) =>
 
 app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
   try {
-    const { wa_user_id } = req.params;
+    const wa_user_id = getParam(req, 'wa_user_id');
+    if (!wa_user_id) {
+      res.status(400).json({
+        error: 'wa_user_id is required',
+      });
+      return;
+    }
     const reset = rateLimiterService.resetUserViolations(wa_user_id);
 
     if (reset) {

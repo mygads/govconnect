@@ -4,6 +4,7 @@ import path from 'path';
 import multer from 'multer';
 import type { Request } from 'express';
 import type { FileFilterCallback } from 'multer';
+import { getQuery } from '../utils/http';
 
 const MEDIA_STORAGE_PATH = process.env.MEDIA_STORAGE_PATH || '/app/uploads';
 
@@ -36,7 +37,7 @@ function isAllowedMimeType(mimeType: string): boolean {
 
 const storage = multer.diskStorage({
   destination(req: Request, _file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) {
-    const scope = getScope((req.query as any)?.scope);
+    const scope = getScope(getQuery(req, 'scope'));
     const dir = path.join(MEDIA_STORAGE_PATH, 'public', scope);
     ensureDir(dir);
     cb(null, dir);

@@ -12,6 +12,7 @@
 
 import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
+import { getParam } from '../utils/http';
 import {
   getStatus,
   isProcessing,
@@ -82,7 +83,14 @@ router.get('/active', (_req: Request, res: Response) => {
  * Server-Sent Events (SSE) for real-time status updates
  */
 router.get('/stream/:userId', (req: Request, res: Response) => {
-  const { userId } = req.params;
+  const userId = getParam(req, 'userId');
+  if (!userId) {
+    res.status(400).json({
+      success: false,
+      error: 'userId is required',
+    });
+    return;
+  }
   
   // Set SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -138,7 +146,13 @@ router.get('/stream/:userId', (req: Request, res: Response) => {
  * MUST be LAST because it's a catch-all dynamic route
  */
 router.get('/:userId', (req: Request, res: Response) => {
-  const { userId } = req.params;
+  const userId = getParam(req, 'userId');
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      error: 'userId is required',
+    });
+  }
   
   try {
     const status = getStatus(userId);

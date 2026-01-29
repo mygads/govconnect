@@ -1,12 +1,12 @@
 import { Request, Response } from 'express';
 import prisma from '../config/database';
 import logger from '../utils/logger';
-import { getQueryString } from '../utils/http';
+import { getParam, getQuery } from '../utils/http';
 
 // ===== Complaint Categories =====
 export async function handleGetComplaintCategories(req: Request, res: Response) {
   try {
-    const village_id = getQueryString(req.query.village_id);
+    const village_id = getQuery(req, 'village_id');
     const data = await prisma.complaintCategory.findMany({
       where: village_id ? { village_id } : undefined,
       orderBy: { created_at: 'asc' },
@@ -36,7 +36,10 @@ export async function handleCreateComplaintCategory(req: Request, res: Response)
 
 export async function handleUpdateComplaintCategory(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { name, description } = req.body;
     if (!name) {
       return res.status(400).json({ error: 'name is required' });
@@ -58,7 +61,10 @@ export async function handleUpdateComplaintCategory(req: Request, res: Response)
 
 export async function handleDeleteComplaintCategory(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const existing = await prisma.complaintCategory.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: 'Category not found' });
@@ -82,8 +88,8 @@ export async function handleDeleteComplaintCategory(req: Request, res: Response)
 // ===== Complaint Types =====
 export async function handleGetComplaintTypes(req: Request, res: Response) {
   try {
-    const category_id = getQueryString(req.query.category_id);
-    const village_id = getQueryString(req.query.village_id);
+    const category_id = getQuery(req, 'category_id');
+    const village_id = getQuery(req, 'village_id');
     const data = await prisma.complaintType.findMany({
       where: {
         ...(category_id ? { category_id } : {}),
@@ -125,7 +131,10 @@ export async function handleCreateComplaintType(req: Request, res: Response) {
 
 export async function handleUpdateComplaintType(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { name, description, is_urgent, require_address, send_important_contacts, important_contact_category } = req.body;
     if (!name) {
       return res.status(400).json({ error: 'name is required' });
@@ -154,7 +163,10 @@ export async function handleUpdateComplaintType(req: Request, res: Response) {
 
 export async function handleDeleteComplaintType(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const existing = await prisma.complaintType.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: 'Type not found' });
@@ -170,7 +182,10 @@ export async function handleDeleteComplaintType(req: Request, res: Response) {
 // ===== Complaint Updates =====
 export async function handleCreateComplaintUpdate(req: Request, res: Response) {
   try {
-    const { id } = req.params;
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
     const { admin_id, note_text, image_url } = req.body;
     if (!note_text) {
       return res.status(400).json({ error: 'note_text is required' });
