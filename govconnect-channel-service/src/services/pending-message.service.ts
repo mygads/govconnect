@@ -45,7 +45,7 @@ export async function addPendingMessage(data: PendingMessageData): Promise<Pendi
         message_id: data.message_id,
         message_text: data.message_text,
         status: 'pending',
-      },
+      } as any,
     });
     
     logger.info('📥 Message added to pending queue', {
@@ -54,7 +54,7 @@ export async function addPendingMessage(data: PendingMessageData): Promise<Pendi
       message_id: data.message_id,
     });
     
-    return pending;
+    return pending as PendingMessage;
   } catch (error: any) {
     // Handle duplicate
     if (error.code === 'P2002') {
@@ -62,7 +62,7 @@ export async function addPendingMessage(data: PendingMessageData): Promise<Pendi
       const existing = await prisma.pendingMessage.findUnique({
         where: { message_id: data.message_id },
       });
-      return existing!;
+      return existing as PendingMessage;
     }
     throw error;
   }
@@ -82,11 +82,11 @@ export async function getPendingMessagesForUser(
       channel,
       channel_identifier,
       status: 'pending',
-    },
+    } as any,
     orderBy: {
       created_at: 'asc', // Oldest first
     },
-  });
+  }) as unknown as PendingMessage[];
 }
 
 /**
@@ -100,7 +100,7 @@ export async function getNextPendingMessage(): Promise<PendingMessage | null> {
     orderBy: {
       created_at: 'asc',
     },
-  });
+  }) as unknown as PendingMessage | null;
 }
 
 /**

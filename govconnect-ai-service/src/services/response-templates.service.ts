@@ -54,11 +54,12 @@ function personalizeGreetingResponse(response: string, context?: TemplateContext
   const villageName = context?.villageName?.trim();
   if (!villageName) return response;
 
-  const shortName = context?.villageShortName?.trim();
-  const label = shortName ? `${villageName} (${shortName})` : villageName;
+  // Inject village name into the main greeting line for a more natural opening
+  if (/layanan\s+GovConnect/i.test(response)) {
+    return response.replace(/layanan\s+GovConnect\.?/i, `layanan GovConnect ${villageName}.`);
+  }
 
-  // Append a consistent location line without altering the main greeting tone
-  return `${response}\n\n📍 Terhubung ke: ${label}`;
+  return `${response} ${villageName}.`;
 }
 
 // ==================== MAIN FUNCTION ====================
@@ -70,16 +71,13 @@ function personalizeGreetingResponse(response: string, context?: TemplateContext
  */
 export function matchTemplate(message: string, context?: TemplateContext): TemplateMatch {
   const cleanMessage = message.trim();
+  const lower = cleanMessage.toLowerCase();
+  const isLikelyName = /^[a-zA-Z]{2,20}(?:\s+[a-zA-Z]{2,20})?$/.test(cleanMessage)
+    && !['ya', 'iya', 'y', 'tidak', 'bukan', 'ok', 'oke', 'siap', 'baik'].includes(lower);
 
-  // Check greetings (using centralized patterns)
+  // Skip greeting templates to avoid repetitive canned responses
   if (matchesAnyPattern(cleanMessage, GREETING_PATTERNS)) {
-    const baseResponse = getRandomItem(GREETING_RESPONSES);
-    return {
-      matched: true,
-      response: personalizeGreetingResponse(baseResponse, context),
-      intent: 'GREETING',
-      confidence: 0.95,
-    };
+    return { matched: false, confidence: 0 };
   }
 
   // Check thanks (using centralized patterns)

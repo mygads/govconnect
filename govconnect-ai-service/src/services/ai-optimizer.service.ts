@@ -12,11 +12,11 @@
  */
 
 import logger from '../utils/logger';
-import { fastClassifyIntent, FastClassifyResult, isSimpleConfirmation, isSimpleThanks } from './fast-intent-classifier.service';
-import { getCachedResponse, setCachedResponse, getCacheStats, preWarmCache } from './response-cache.service';
+import { FastClassifyResult, isSimpleConfirmation, isSimpleThanks } from './fast-intent-classifier.service';
+import { getCacheStats } from './response-cache.service';
 import { extractAllEntities, mergeEntities, ExtractionResult } from './entity-extractor.service';
 import { ProcessMessageInput, ProcessMessageResult } from './unified-message-processor.service';
-import { matchTemplate, TemplateContext } from './response-templates.service';
+import { TemplateContext } from './response-templates.service';
 
 // ==================== TYPES ====================
 
@@ -67,81 +67,7 @@ export function preProcessMessage(
   templateContext?: TemplateContext
 ): OptimizationResult {
   const optimizationApplied: string[] = [];
-  let shouldSkipLLM = false;
-  
-  // 1. Fast Intent Classification
-  const fastIntent = fastClassifyIntent(message);
-  if (fastIntent) {
-    optimizationApplied.push('fast_intent');
-    
-    if (fastIntent.skipLLM) {
-      shouldSkipLLM = true;
-      optimizationApplied.push('skip_llm');
-    }
-    
-    logger.info('[AIOptimizer] Fast intent classified', {
-      userId,
-      intent: fastIntent.intent,
-      confidence: fastIntent.confidence,
-      skipLLM: fastIntent.skipLLM,
-    });
-  }
-  
-  // 2. Check Response Templates (pattern-based, no LLM needed)
-  const templateMatch = matchTemplate(message, templateContext);
-  if (templateMatch.matched && templateMatch.response) {
-    optimizationApplied.push('template_match');
-    shouldSkipLLM = true;
-    
-    logger.info('[AIOptimizer] Template matched', {
-      userId,
-      intent: templateMatch.intent,
-      confidence: templateMatch.confidence,
-    });
-    
-    return {
-      shouldSkipLLM: true,
-      fastIntent: fastIntent || {
-        intent: templateMatch.intent || 'UNKNOWN',
-        confidence: templateMatch.confidence,
-        skipLLM: true,
-        extractedFields: {},
-        reason: 'Template matched',
-      },
-      cachedResponse: {
-        response: templateMatch.response,
-        intent: templateMatch.intent || 'UNKNOWN',
-      },
-      optimizationApplied,
-    };
-  }
-  
-  // 3. Check Response Cache (only for cacheable intents)
-  if (fastIntent && ['KNOWLEDGE_QUERY', 'GREETING'].includes(fastIntent.intent)) {
-    const cached = getCachedResponse(message, fastIntent.intent);
-    if (cached) {
-      optimizationApplied.push('cache_hit');
-      shouldSkipLLM = true;
-      
-      logger.info('[AIOptimizer] Cache hit', {
-        userId,
-        intent: cached.intent,
-      });
-      
-      return {
-        shouldSkipLLM: true,
-        fastIntent,
-        cachedResponse: {
-          response: cached.response,
-          guidanceText: cached.guidanceText,
-          intent: cached.intent,
-        },
-        optimizationApplied,
-      };
-    }
-  }
-  
-  // 4. Entity Pre-extraction
+  // Full LLM mode: no fast intent/template/cache, only entity pre-extraction.
   const extractedEntities = extractAllEntities(message, conversationHistory);
   if (extractedEntities.extractedCount > 0) {
     optimizationApplied.push('entity_extraction');
@@ -154,8 +80,8 @@ export function preProcessMessage(
   }
   
   return {
-    shouldSkipLLM,
-    fastIntent,
+    shouldSkipLLM: false,
+    fastIntent: null,
     extractedEntities,
     optimizationApplied,
   };
@@ -186,8 +112,7 @@ export function postProcessResponse(
   intent: string,
   guidanceText?: string
 ): void {
-  // Cache the response for future use
-  setCachedResponse(originalMessage, response, intent, guidanceText);
+  return;
 }
 
 // ==================== METRICS & MONITORING ====================
@@ -218,10 +143,7 @@ export function getOptimizationStats(): {
  */
 export function initializeOptimizer(): void {
   logger.info('[AIOptimizer] Initializing...');
-  
-  // Pre-warm cache with common responses
-  preWarmCache();
-  
+
   logger.info('[AIOptimizer] Initialization complete');
 }
 
@@ -245,25 +167,6 @@ export function shouldUseFastPath(
   optimization: OptimizationResult,
   hasPendingState: boolean
 ): boolean {
-  // Don't skip if there's pending state that needs handling
-  if (hasPendingState) {
-    return false;
-  }
-  
-  // Use fast path if we have cached response
-  if (optimization.cachedResponse) {
-    return true;
-  }
-  
-  // Use fast path for simple intents
-  if (optimization.fastIntent?.skipLLM) {
-    const quickResponse = getQuickResponse(
-      optimization.fastIntent.intent,
-      optimization.fastIntent.extractedFields
-    );
-    return quickResponse !== null;
-  }
-  
   return false;
 }
 

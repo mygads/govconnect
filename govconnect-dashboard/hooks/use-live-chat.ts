@@ -313,6 +313,16 @@ export function useLiveChat() {
           status: 'delivered',
         });
 
+        if (data.guidanceText && String(data.guidanceText).trim()) {
+          setTimeout(() => {
+            addMessage({
+              content: String(data.guidanceText),
+              role: 'assistant',
+              status: 'delivered',
+            });
+          }, 300);
+        }
+
         // Mark user message as read
         setTimeout(() => {
           updateMessageStatus(userMessage.id, 'read');

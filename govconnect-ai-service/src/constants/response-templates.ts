@@ -17,9 +17,9 @@ import { IntentType } from './intent-patterns';
 // ==================== GREETING RESPONSES ====================
 
 export const GREETING_RESPONSES = [
-  'Halo, selamat datang di layanan GovConnect.\nSebelumnya boleh kami tahu ini dengan siapa Pak/Bu?',
   'Selamat datang di layanan GovConnect.\nBoleh kami tahu nama Bapak/Ibu terlebih dahulu?',
-  'Halo, selamat datang.\nMohon informasikan nama Bapak/Ibu agar kami bisa membantu dengan tepat.',
+  'Selamat datang di layanan GovConnect.\nMohon informasikan nama Bapak/Ibu agar kami bisa membantu dengan tepat.',
+  'Selamat datang di layanan GovConnect.\nSebelum melanjutkan, mohon tuliskan nama Bapak/Ibu.',
 ];
 
 // ==================== THANKS RESPONSES ====================

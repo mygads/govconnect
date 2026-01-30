@@ -60,6 +60,12 @@ GovConnect adalah platform layanan desa/kelurahan berbasis WhatsApp dan web yang
 - Memantau semua desa, melihat analytics global, dan setting sistem.
 - Pengaturan model AI **hanya lewat ENV**, tidak ada menu ubah model di dashboard.
 
+### 9) Evaluasi Kualitas AI (Golden Set)
+- Super admin dapat menjalankan evaluasi kualitas jawaban AI berbasis **golden set**.
+- Metrik utama: **akurasi intent**, **akurasi keyword**, dan **akurasi total**.
+- Evaluasi ini bersifat **stateless** (tanpa penyimpanan di DB AI).
+- Hasil evaluasi disimpan di **Dashboard DB** untuk tren jangka panjang.
+
 ---
 
 ## 🧱 Arsitektur Tingkat Tinggi

@@ -58,6 +58,16 @@ function cleanupPendingServiceDisambiguation(): void {
   }
 }
 
+function normalizeServiceHandlerOutput(result: string | { replyText: string; guidanceText?: string }): { replyText: string; guidanceText?: string } {
+  if (typeof result === 'string') {
+    return { replyText: result };
+  }
+  return {
+    replyText: result.replyText,
+    guidanceText: result.guidanceText,
+  };
+}
+
 async function getServiceCatalogForVillage(villageId: string): Promise<Array<{ name?: string; slug?: string }>> {
   const cached = serviceCatalogCache.get(villageId);
   if (cached && cached.expiresAt > Date.now()) return cached.services;
@@ -501,12 +511,13 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
           needs_knowledge: false,
         };
 
-        const deterministic = await handleServiceInfo(wa_user_id, llmLike);
+        const deterministic = normalizeServiceHandlerOutput(await handleServiceInfo(wa_user_id, llmLike));
         await stopTyping(wa_user_id, village_id);
         await publishAIReply({
           village_id,
           wa_user_id,
-          reply_text: validateResponse(deterministic),
+          reply_text: validateResponse(deterministic.replyText),
+          guidance_text: deterministic.guidanceText ? validateResponse(deterministic.guidanceText) : undefined,
           message_id: is_batched ? undefined : message_id,
           batched_message_ids: is_batched ? batched_message_ids : undefined,
         });
@@ -540,12 +551,13 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
           needs_knowledge: false,
         };
 
-        const deterministic = await handleServiceInfo(wa_user_id, llmLike);
+        const deterministic = normalizeServiceHandlerOutput(await handleServiceInfo(wa_user_id, llmLike));
         await stopTyping(wa_user_id, village_id);
         await publishAIReply({
           village_id,
           wa_user_id,
-          reply_text: validateResponse(deterministic),
+          reply_text: validateResponse(deterministic.replyText),
+          guidance_text: deterministic.guidanceText ? validateResponse(deterministic.guidanceText) : undefined,
           message_id: is_batched ? undefined : message_id,
           batched_message_ids: is_batched ? batched_message_ids : undefined,
         });
@@ -914,15 +926,37 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     let guidanceText = ensuredLayer2Output.guidance_text || '';
     
     if (ensuredLayer2Output.next_action && enhancedLayer1Output.confidence >= 0.7) {
-      finalReplyText = await handleAction(
-        ensuredLayer2Output.next_action,
-        enhancedLayer1Output,
-        ensuredLayer2Output,
-        village_id,
-        wa_user_id,
-        sanitizedMessage,
-        media_public_url || media_url
-      );
+      if (ensuredLayer2Output.next_action === 'SERVICE_INFO') {
+        const mockLlmResponse = {
+          intent: enhancedLayer1Output.intent,
+          fields: {
+            ...enhancedLayer1Output.extracted_data,
+            village_id: village_id || (enhancedLayer1Output.extracted_data as any)?.village_id || process.env.DEFAULT_VILLAGE_ID,
+            _original_message: sanitizedMessage,
+          },
+          reply_text: ensuredLayer2Output.reply_text,
+          guidance_text: ensuredLayer2Output.guidance_text,
+          needs_knowledge: ensuredLayer2Output.needs_knowledge,
+        };
+
+        const serviceInfoResult = normalizeServiceHandlerOutput(await handleServiceInfo(wa_user_id, mockLlmResponse));
+        finalReplyText = serviceInfoResult.replyText;
+        guidanceText = serviceInfoResult.guidanceText || '';
+      } else {
+        finalReplyText = await handleAction(
+          ensuredLayer2Output.next_action,
+          enhancedLayer1Output,
+          ensuredLayer2Output,
+          village_id,
+          wa_user_id,
+          sanitizedMessage,
+          media_public_url || media_url
+        );
+
+        if (ensuredLayer2Output.next_action === 'CREATE_SERVICE_REQUEST') {
+          guidanceText = '';
+        }
+      }
     }
     
     // Step 8: Validate and sanitize final response
@@ -979,6 +1013,37 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
       error: error.message,
       isBatched: is_batched,
     });
+
+    // Fallback otomatis jika LLM gagal total
+    try {
+      const fallbackText = 'Maaf, sistem kami sedang mengalami kendala. Silakan coba lagi beberapa saat ya.';
+      await publishAIReply({
+        village_id,
+        wa_user_id,
+        reply_text: fallbackText,
+        message_id: is_batched ? undefined : message_id,
+        batched_message_ids: is_batched ? batched_message_ids : undefined,
+      });
+
+      await publishMessageStatus({
+        village_id,
+        wa_user_id,
+        message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
+        status: 'completed',
+      });
+
+      logger.warn('⚠️ Fallback response sent after 2-layer failure', {
+        wa_user_id,
+        message_id,
+      });
+      return;
+    } catch (fallbackError: any) {
+      logger.error('❌ Failed to send fallback response', {
+        wa_user_id,
+        message_id,
+        error: fallbackError.message,
+      });
+    }
     
     // Add to retry queue
     const { addToAIRetryQueue } = await import('./rabbitmq.service');
@@ -1109,6 +1174,7 @@ async function handleAction(
       fields: {
         ...layer1Output.extracted_data,
         village_id: village_id || (layer1Output.extracted_data as any)?.village_id || process.env.DEFAULT_VILLAGE_ID,
+        _original_message: message,
       },
       reply_text: layer2Output.reply_text,
       guidance_text: layer2Output.guidance_text,
@@ -1120,7 +1186,7 @@ async function handleAction(
         return await handleComplaintCreation(wa_user_id, 'whatsapp', mockLlmResponse, message, mediaUrl);
       
       case 'SERVICE_INFO':
-        return await handleServiceInfo(wa_user_id, mockLlmResponse);
+        return normalizeServiceHandlerOutput(await handleServiceInfo(wa_user_id, mockLlmResponse)).replyText;
       
       case 'CREATE_SERVICE_REQUEST':
         return await handleServiceRequestCreation(wa_user_id, 'whatsapp', mockLlmResponse);

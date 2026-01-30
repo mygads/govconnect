@@ -17,10 +17,8 @@ import { sanitizeUserInput } from './context-builder.service';
 import { analyzeSentiment } from './sentiment-analysis.service';
 import { isSpamMessage } from './rag.service';
 import { aiAnalyticsService } from './ai-analytics.service';
-import { getCachedResponse, setCachedResponse } from './response-cache.service';
-
-// For knowledge-heavy questions, the unified processor provides grounded RAG + village context.
-import { processUnifiedMessage } from './unified-message-processor.service';
+import { getKelurahanInfoContext, getRAGContext } from './knowledge.service';
+import { shouldRetrieveContext } from './rag.service';
 
 // Import action handlers
 import {
@@ -69,42 +67,9 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = applyTypoCorrections(sanitizedMessage);
 
-    // Webchat QA accuracy: default to the unified processor for ALL webchat messages.
-    // The unified processor is the single source of truth with RAG + tenant scoping + anti-hallucination.
-    // Can be disabled for legacy 2-layer testing by setting WEBCHAT_FORCE_UNIFIED=false.
-    const forceUnified = process.env.WEBCHAT_FORCE_UNIFIED !== 'false';
-    if (forceUnified) {
-      logger.info('🧭 Routing webchat to unified processor (forced)', {
-        userId,
-        village_id,
-      });
+    // Full LLM mode: always use 2-Layer architecture for webchat
 
-      return await processUnifiedMessage({
-        userId,
-        message,
-        channel: 'webchat',
-        conversationHistory,
-        villageId: village_id,
-      });
-    }
-
-    // Step 3: Check cache first
-    const cached = getCachedResponse(sanitizedMessage);
-    if (cached) {
-      logger.info('📦 Cache HIT for webchat', { userId, intent: cached.intent });
-      return {
-        success: true,
-        response: cached.response,
-        guidanceText: cached.guidanceText,
-        intent: cached.intent,
-        metadata: {
-          processingTimeMs: Date.now() - startTime,
-          hasKnowledge: false,
-        },
-      };
-    }
-
-    // Step 4: Sentiment analysis
+    // Step 3: Sentiment analysis
     const sentiment = analyzeSentiment(sanitizedMessage, userId);
 
     // Step 5: Pre-extract entities
@@ -140,31 +105,33 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
       confidence: enhancedLayer1.confidence,
     });
 
-    // Webchat knowledge/Q&A accuracy: route KNOWLEDGE_QUERY and SERVICE_INFO through the unified processor
-    // so responses are grounded in RAG + village profile/KB, avoiding hallucination.
-    if (enhancedLayer1.intent === 'KNOWLEDGE_QUERY' || enhancedLayer1.intent === 'SERVICE_INFO') {
-      logger.info('📚 Routing webchat to unified processor for knowledge', {
-        userId,
-        intent: enhancedLayer1.intent,
-        village_id,
-      });
-
-      return await processUnifiedMessage({
-        userId,
-        message: message,
-        channel: 'webchat',
-        conversationHistory,
-        villageId: village_id,
-      });
-    }
-
     // Step 8: Layer 2 - Response Generation
     logger.info('💬 Layer 2 - Response Generation', { userId });
+
+    let knowledgeContext = '';
+    try {
+      const isGreeting = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i.test(sanitizedMessage.trim());
+      const looksLikeQuestion = shouldRetrieveContext(sanitizedMessage);
+
+      if (isGreeting) {
+        const info = await getKelurahanInfoContext(village_id || process.env.DEFAULT_VILLAGE_ID);
+        if (info && info.trim()) {
+          knowledgeContext = `KNOWLEDGE BASE YANG TERSEDIA:\n${info}`;
+        }
+      } else if (looksLikeQuestion) {
+        const rag = await getRAGContext(sanitizedMessage, undefined, village_id || process.env.DEFAULT_VILLAGE_ID);
+        if (rag?.totalResults > 0 && rag.contextString) {
+          knowledgeContext = `KNOWLEDGE BASE YANG TERSEDIA:\n${rag.contextString}`;
+        }
+      }
+    } catch (error: any) {
+      logger.warn('⚠️ Webchat knowledge prefetch failed', { userId, error: error.message });
+    }
 
     let layer2Output = await callLayer2LLM({
       layer1_output: enhancedLayer1,
       wa_user_id: userId,
-      conversation_context: historyText,
+      conversation_context: [historyText, knowledgeContext].filter(Boolean).join('\n\n'),
       user_name: enhancedLayer1.extracted_data.nama_lengkap,
     });
 
@@ -186,12 +153,29 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
         sanitizedMessage,
         village_id
       );
+
+      if (layer2Output.next_action === 'CREATE_SERVICE_REQUEST') {
+        guidanceText = '';
+      }
+    } else if (enhancedLayer1.intent === 'SERVICE_INFO') {
+      const mockLlmResponse = {
+        intent: enhancedLayer1.intent,
+        fields: {
+          ...enhancedLayer1.extracted_data,
+          ...(village_id ? { village_id } : {}),
+          _original_message: sanitizedMessage,
+        },
+        reply_text: layer2Output.reply_text,
+        guidance_text: layer2Output.guidance_text,
+        needs_knowledge: layer2Output.needs_knowledge,
+      };
+
+      const serviceInfoResult = normalizeServiceHandlerOutput(await handleServiceInfo(userId, mockLlmResponse));
+      finalResponse = serviceInfoResult.replyText;
+      guidanceText = serviceInfoResult.guidanceText || '';
     }
 
-    // Step 10: Cache response if cacheable
-    setCachedResponse(sanitizedMessage, finalResponse, enhancedLayer1.intent, guidanceText);
-
-    // Step 11: Record analytics
+    // Step 10: Record analytics
     const processingTimeMs = Date.now() - startTime;
     aiAnalyticsService.recordIntent(
       userId,
@@ -269,6 +253,16 @@ async function enhanceWithHistory(layer1Output: any, userId: string): Promise<an
   }
 }
 
+function normalizeServiceHandlerOutput(result: string | { replyText: string; guidanceText?: string }): { replyText: string; guidanceText?: string } {
+  if (typeof result === 'string') {
+    return { replyText: result };
+  }
+  return {
+    replyText: result.replyText,
+    guidanceText: result.guidanceText,
+  };
+}
+
 /**
  * Handle webchat-specific actions
  */
@@ -288,6 +282,7 @@ async function handleWebchatAction(
       fields: {
         ...layer1Output.extracted_data,
         ...(village_id ? { village_id } : {}),
+        _original_message: message,
       },
       reply_text: layer2Output.reply_text,
       guidance_text: layer2Output.guidance_text,
@@ -299,7 +294,7 @@ async function handleWebchatAction(
         return await handleComplaintCreation(userId, 'webchat', mockLlmResponse, message);
 
       case 'SERVICE_INFO':
-        return await handleServiceInfo(userId, mockLlmResponse);
+        return normalizeServiceHandlerOutput(await handleServiceInfo(userId, mockLlmResponse)).replyText;
 
       case 'CREATE_SERVICE_REQUEST':
         return await handleServiceRequestCreation(userId, 'webchat', mockLlmResponse);

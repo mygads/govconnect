@@ -349,6 +349,26 @@ export const ai = {
   },
 
   /**
+   * Get golden set summary
+   */
+  async getGoldenSetSummary() {
+    return apiFetch(buildUrl(ServicePath.AI, '/stats/golden-set'), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Run golden set evaluation
+   */
+  async runGoldenSetEvaluation(payload: { items: Array<Record<string, any>>; village_id?: string }) {
+    return apiFetch(buildUrl(ServicePath.AI, '/stats/golden-set/run'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /**
    * Get rate limit config
    */
   async getRateLimit() {

@@ -24,6 +24,7 @@ Dokumen ini menambahkan mapping terbaru sesuai perubahan fitur desa/kelurahan. B
 7. **RAG Scoped per Desa** (filter `village_id` di retrieval)
 8. **Profil Desa → Knowledge Base** (sinkron otomatis saat update)
 9. **Edit/Batal Layanan via WA** (token & konfirmasi)
+10. **Evaluasi Golden Set** untuk mengukur kualitas jawaban LLM
 
 ---
 
@@ -37,4 +38,4 @@ Dokumen ini menambahkan mapping terbaru sesuai perubahan fitur desa/kelurahan. B
 
 ## 🔐 Role & Akses
 - Desa Admin: kelola data desa
-- Super Admin: monitor semua desa
+- Super Admin: monitor semua desa + jalankan evaluasi golden set

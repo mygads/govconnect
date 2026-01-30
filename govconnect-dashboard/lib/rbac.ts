@@ -9,6 +9,7 @@ const DISABLED_PATH_PREFIXES: string[] = []
 
 const ROLE_RULES: RouteRule[] = [
   { path: '/dashboard/ai-analytics', roles: ['superadmin'] },
+  { path: '/dashboard/superadmin/ai-quality', roles: ['superadmin'] },
   { path: '/dashboard/statistik/analytics', roles: ['superadmin'] },
   { path: '/dashboard/settings/rate-limit', roles: ['superadmin'] },
   { path: '/dashboard/settings/notifications', roles: ['superadmin'] },

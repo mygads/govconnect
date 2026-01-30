@@ -51,6 +51,12 @@ Dokumen ini menggantikan konsep lama dan fokus pada **layanan administrasi** den
 
 ---
 
+## 🤖 Catatan AI
+- Informasi layanan di WA/Webchat diproses oleh **LLM 2-layer**.
+- Evaluasi kualitas jawaban layanan dilakukan lewat **golden set** oleh super admin.
+
+---
+
 ## 🗄️ Skema Data (Case Service)
 
 ### ServiceCategory

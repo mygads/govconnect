@@ -67,6 +67,45 @@ model system_settings {
   created_at  DateTime @default(now())
 }
 
+// ==================== AI GOLDEN SET ====================
+
+model ai_golden_set_runs {
+  id               String   @id @default(cuid())
+  run_id           String   @unique
+  total            Int
+  intent_accuracy  Float
+  keyword_accuracy Float
+  overall_accuracy Float
+  thresholds       Json
+  status           Json
+  started_at       DateTime
+  completed_at     DateTime
+  created_at       DateTime @default(now())
+
+  items            ai_golden_set_items[]
+
+  @@index([completed_at])
+}
+
+model ai_golden_set_items {
+  id              String   @id @default(cuid())
+  run_id          String
+  query           String   @db.Text
+  expected_intent String?
+  predicted_intent String
+  reply_text      String   @db.Text
+  intent_match    Boolean?
+  keyword_match   Boolean?
+  keyword_score   Float?
+  score           Float
+  latency_ms      Int
+  created_at      DateTime @default(now())
+
+  run             ai_golden_set_runs @relation(fields: [run_id], references: [id], onDelete: Cascade)
+
+  @@index([run_id])
+}
+
 // ==================== KNOWLEDGE BASE ====================
 // Note: Embeddings are now stored in AI Service vector database
 // Dashboard only stores metadata for admin management

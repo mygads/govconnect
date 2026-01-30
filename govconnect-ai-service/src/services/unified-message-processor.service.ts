@@ -43,7 +43,7 @@ import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { RAGContext } from '../types/embedding.types';
 import { preProcessMessage, postProcessResponse, shouldUseFastPath, buildFastPathResponse } from './ai-optimizer.service';
-import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile } from './user-profile.service';
+import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile } from './user-profile.service';
 import { getEnhancedContext, updateContext, recordDataCollected, recordCompletedAction, getContextForLLM } from './conversation-context.service';
 import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
 import { linkUserToPhone, recordChannelActivity, updateSharedData, getCrossChannelContextForLLM } from './cross-channel-context.service';
@@ -188,8 +188,6 @@ export function validateResponse(response: string): string {
   }
   
   let cleaned = response;
-  
-  // Remove any profanity
   for (const pattern of PROFANITY_PATTERNS) {
     cleaned = cleaned.replace(pattern, '***');
   }
@@ -352,11 +350,149 @@ export function detectEmergencyComplaint(deskripsi: string, currentMessage: stri
   return hasEmergencyKeyword || (isHighPriorityCategory && hasBlockingKeyword);
 }
 
+type HandlerResult = string | { replyText: string; guidanceText?: string };
+
+function normalizeHandlerResult(result: HandlerResult): { replyText: string; guidanceText?: string } {
+  if (typeof result === 'string') {
+    return { replyText: result };
+  }
+  return {
+    replyText: result.replyText,
+    guidanceText: result.guidanceText,
+  };
+}
+
 function normalizeLookupKey(value: string): string {
   return normalizeText(value || '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+async function resolveServiceSlugFromSearch(query: string, villageId?: string): Promise<{ slug: string; name?: string } | null> {
+  const trimmedQuery = (query || '').trim();
+  if (!trimmedQuery) return null;
+
+  try {
+    const { config } = await import('../config/env');
+    const axios = (await import('axios')).default;
+    const response = await axios.get(`${config.caseServiceUrl}/services/search`, {
+      params: {
+        village_id: villageId,
+        q: trimmedQuery,
+        limit: 5,
+      },
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      timeout: 5000,
+    });
+
+    const services = Array.isArray(response.data?.data) ? response.data.data : [];
+    if (!services.length) return null;
+
+    const queryKey = normalizeLookupKey(trimmedQuery);
+
+    const synonymMap: Record<string, string[]> = {
+      ktp: ['kartu tanda penduduk', 'e ktp', 'ektp', 'ktpel', 'ktp el'],
+      kk: ['kartu keluarga'],
+      domisili: ['surat domisili', 'keterangan domisili', 'alamat tinggal'],
+      pindah: ['mutasi', 'pindah datang', 'pindah keluar'],
+      usaha: ['sku', 'surat keterangan usaha'],
+      kelahiran: ['akta lahir', 'akte lahir'],
+      kematian: ['akta mati', 'akte mati'],
+      nikah: ['kawin', 'pernikahan'],
+      pengantar: ['antar', 'surat pengantar'],
+      kehilangan: ['hilang', 'kehilangan', 'rusak', 'penggantian'],
+    };
+
+    const buildSynonymSet = (text: string): Set<string> => {
+      const base = normalizeLookupKey(text);
+      const tokens = new Set(base.split(' ').filter(Boolean));
+      const expanded = new Set<string>(tokens);
+
+      for (const token of tokens) {
+        const synonyms = synonymMap[token];
+        if (synonyms) {
+          for (const syn of synonyms) {
+            const synKey = normalizeLookupKey(syn);
+            synKey.split(' ').filter(Boolean).forEach(t => expanded.add(t));
+          }
+        }
+      }
+
+      for (const [key, synonyms] of Object.entries(synonymMap)) {
+        if (base.includes(key)) {
+          for (const syn of synonyms) {
+            const synKey = normalizeLookupKey(syn);
+            synKey.split(' ').filter(Boolean).forEach(t => expanded.add(t));
+          }
+        }
+        for (const syn of synonyms) {
+          if (base.includes(normalizeLookupKey(syn))) {
+            expanded.add(key);
+            const synKey = normalizeLookupKey(syn);
+            synKey.split(' ').filter(Boolean).forEach(t => expanded.add(t));
+          }
+        }
+      }
+
+      return expanded;
+    };
+
+    const queryTokens = buildSynonymSet(queryKey);
+
+    const scoreService = (service: any): number => {
+      const name = normalizeLookupKey(service?.name || '');
+      const slug = normalizeLookupKey(service?.slug || '');
+      const desc = normalizeLookupKey(service?.description || '');
+      const combined = `${name} ${slug} ${desc}`.trim();
+      if (!combined) return 0;
+
+      let score = 0;
+      if (queryKey && combined.includes(queryKey)) score += 20;
+      if (queryKey && name.includes(queryKey)) score += 15;
+      if (queryKey && slug.includes(queryKey)) score += 12;
+
+      const serviceTokens = new Set(combined.split(' ').filter(Boolean));
+      let overlap = 0;
+      for (const token of queryTokens) {
+        if (serviceTokens.has(token)) overlap += 1;
+      }
+      score += overlap * 8;
+
+      // Synonym-driven boosts
+      const boostedPairs: Array<[RegExp, RegExp]> = [
+        [/\b(ktp|ektp|ktpel)\b/i, /\bktp\b/i],
+        [/\b(kk|kartu\s+keluarga)\b/i, /\bkk\b/i],
+        [/\b(domisili|tinggal|alamat)\b/i, /domisili/i],
+        [/\b(pindah|mutasi)\b/i, /pindah|mutasi/i],
+        [/\b(sku|usaha)\b/i, /usaha|sku/i],
+        [/\b(akta|akte)\s+lahir\b/i, /lahir/i],
+        [/\b(akta|akte)\s+mati\b/i, /mati|kematian/i],
+        [/\b(kawin|nikah|pernikahan)\b/i, /nikah|kawin/i],
+        [/\b(hilang|rusak|penggantian)\b/i, /penggantian|perubahan|rusak|hilang/i],
+      ];
+
+      for (const [qPattern, sPattern] of boostedPairs) {
+        if (qPattern.test(queryKey) && sPattern.test(combined)) {
+          score += 10;
+        }
+      }
+
+      return score;
+    };
+
+    const best = services
+      .map((s: any) => ({ s, score: scoreService(s) }))
+      .sort((a: any, b: any) => b.score - a.score)[0];
+
+    if (!best || best.score < 10) return null;
+    if (!best.s?.slug) return null;
+
+    return { slug: String(best.s.slug), name: String(best.s.name || '') };
+  } catch (error: any) {
+    logger.warn('Service search lookup failed', { error: error.message, villageId });
+    return null;
+  }
 }
 
 async function getCachedComplaintTypes(villageId?: string): Promise<any[]> {
@@ -594,7 +730,7 @@ function normalizeTo628(input: string): string {
 }
 
 function extractNameFromText(text: string): string | null {
-  const cleaned = (text || '').trim();
+  const cleaned = (text || '').trim().replace(/[.!?,]+$/g, '').trim();
   if (!cleaned) return null;
 
   const lower = cleaned.toLowerCase();
@@ -602,7 +738,10 @@ function extractNameFromText(text: string): string | null {
   if (stopWords.has(lower)) return null;
 
   const patterns = [
+    /^nama\s+([a-zA-Z\s]{2,30})$/i,
+    /^nama\s*:\s*([a-zA-Z\s]{2,30})$/i,
     /nama\s+(?:saya|aku|gue|gw)\s+(?:adalah\s+)?([a-zA-Z\s]{2,30})/i,
+    /^([a-zA-Z\s]{2,30})\s+itu\s+nama\s+saya$/i,
     /saya\s+([a-zA-Z\s]{2,30})/i,
     /panggil\s+saya\s+([a-zA-Z\s]{2,30})/i,
   ];
@@ -610,13 +749,16 @@ function extractNameFromText(text: string): string | null {
   for (const pattern of patterns) {
     const match = cleaned.match(pattern);
     if (match && match[1]) {
-      const name = match[1].trim().split(/\s+/).slice(0, 2).join(' ');
+      const rawName = match[1].trim();
+      const normalized = rawName.replace(/^(pak|bu|bapak|ibu)\s+/i, '').trim();
+      const name = normalized.split(/\s+/).slice(0, 2).join(' ');
       return name.charAt(0).toUpperCase() + name.slice(1);
     }
   }
 
-  if (cleaned.length >= 2 && cleaned.length <= 20 && /^[a-zA-Z]+$/.test(cleaned)) {
-    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+  if (cleaned.length >= 2 && cleaned.length <= 30 && /^[a-zA-Z]+(?:\s+[a-zA-Z]+)?$/.test(cleaned)) {
+    const normalized = cleaned.replace(/^(pak|bu|bapak|ibu)\s+/i, '').trim();
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
   }
 
   return null;
@@ -633,11 +775,62 @@ function extractNameFromHistory(history?: Array<{ role: 'user' | 'assistant'; co
   return null;
 }
 
+function getLastAssistantMessage(history?: Array<{ role: 'user' | 'assistant'; content: string }>): string {
+  if (!history || history.length === 0) return '';
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const item = history[i];
+    if (item.role === 'assistant') return item.content || '';
+  }
+  return '';
+}
+
+function extractNameFromAssistantPrompt(text?: string): string | null {
+  const cleaned = (text || '').trim();
+  if (!cleaned) return null;
+  const match = cleaned.match(/(?:dengan|ini)\s+(?:Bapak|Ibu|Pak|Bu|Bapak\/Ibu)\s+([a-zA-Z\s]{2,30})/i);
+  if (!match?.[1]) return null;
+  const name = match[1].trim().split(/\s+/).slice(0, 2).join(' ');
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 function wasNamePrompted(history?: Array<{ role: 'user' | 'assistant'; content: string }>): boolean {
   if (!history || history.length === 0) return false;
   const lastAssistant = [...history].reverse().find(item => item.role === 'assistant');
   if (!lastAssistant) return false;
   return /(nama|dengan\s+siapa|siapa\s+nama)/i.test(lastAssistant.content);
+}
+
+async function fetchConversationHistoryFromChannel(
+  wa_user_id: string,
+  village_id?: string
+): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+  try {
+    const { config } = await import('../config/env');
+    const axios = (await import('axios')).default;
+    const response = await axios.get(`${config.channelServiceUrl}/internal/messages`, {
+      params: { wa_user_id, limit: 30, ...(village_id ? { village_id } : {}) },
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      timeout: 3000,
+    });
+
+    const messages = Array.isArray(response.data?.messages) ? response.data.messages : [];
+    const ordered = [...messages].sort((a: any, b: any) => {
+      const aTime = new Date(a.timestamp || a.created_at || 0).getTime();
+      const bTime = new Date(b.timestamp || b.created_at || 0).getTime();
+      return aTime - bTime;
+    });
+
+    return ordered.map((m: any) => ({
+      role: m.direction === 'IN' ? 'user' : 'assistant',
+      content: m.message_text || '',
+    }));
+  } catch (error: any) {
+    logger.warn('Failed to load WhatsApp history for name detection', {
+      wa_user_id,
+      error: error.message,
+    });
+    return [];
+  }
 }
 
 function buildChannelParams(
@@ -654,6 +847,13 @@ function buildChannelParams(
 
 function isValidCitizenWaNumber(value: string): boolean {
   return /^628\d{8,12}$/.test(value);
+}
+
+function getPublicFormBaseUrl(): string {
+  return (process.env.PUBLIC_FORM_BASE_URL
+    || process.env.PUBLIC_BASE_URL
+    || 'https://govconnect.my.id'
+  ).replace(/\/$/, '');
 }
 
 function buildPublicServiceFormUrl(
@@ -704,11 +904,25 @@ async function resolveVillageSlugForPublicForm(villageId?: string): Promise<stri
   return process.env.DEFAULT_VILLAGE_SLUG || 'desa';
 }
 
-export async function handleServiceInfo(userId: string, llmResponse: any): Promise<string> {
-  const { service_slug, service_id } = llmResponse.fields || {};
+export async function handleServiceInfo(userId: string, llmResponse: any): Promise<HandlerResult> {
+  let { service_slug, service_id } = llmResponse.fields || {};
+  const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
+  const rawMessage = llmResponse.fields?._original_message || llmResponse.fields?.service_name || llmResponse.fields?.service_query || '';
+
+  if (!service_slug && !service_id && rawMessage) {
+    const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
+    if (resolved?.slug) {
+      service_slug = resolved.slug;
+      llmResponse.fields = {
+        ...(llmResponse.fields || {}),
+        service_slug: resolved.slug,
+        service_name: resolved.name || llmResponse.fields?.service_name,
+      } as any;
+    }
+  }
   
   if (!service_slug && !service_id) {
-    return llmResponse.reply_text || 'Baik Pak/Bu, layanan apa yang ingin ditanyakan?';
+    return { replyText: llmResponse.reply_text || 'Baik Pak/Bu, layanan apa yang ingin ditanyakan?' };
   }
   
   try {
@@ -716,7 +930,6 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     const axios = (await import('axios')).default;
     
     // Query service details from case-service
-    const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
     let serviceUrl = '';
     
     if (service_id) {
@@ -751,10 +964,11 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     
     // Check if service is available online
     const isOnline = service.mode === 'online' || service.mode === 'both';
-    const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
+    const baseUrl = getPublicFormBaseUrl();
     const villageSlug = await resolveVillageSlugForPublicForm(villageId);
     
     let replyText = `Baik Pak/Bu, untuk pembuatan ${service.name} persyaratannya antara lain:\n\n`;
+    let guidanceText = '';
 
     if (requirementsList) {
       replyText += `${requirementsList}\n\n`;
@@ -770,15 +984,15 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
         timestamp: Date.now(),
       });
 
-      replyText += 'Apakah Bapak/Ibu ingin mengajukan layanan ini secara online?';
+      guidanceText = 'Apakah Bapak/Ibu ingin mengajukan layanan ini secara online?';
     } else {
       replyText += 'Layanan ini diproses secara offline di kantor kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
     }
     
-    return replyText;
+    return { replyText, guidanceText: guidanceText || undefined };
   } catch (error: any) {
     logger.error('Failed to fetch service info', { error: error.message, service_slug, service_id });
-    return llmResponse.reply_text || 'Baik Pak/Bu, saya cek dulu info layanan tersebut ya.';
+    return { replyText: llmResponse.reply_text || 'Baik Pak/Bu, saya cek dulu info layanan tersebut ya.' };
   }
 }
 
@@ -814,7 +1028,7 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
       return `${service.name} saat ini hanya bisa diproses secara offline di kantor kelurahan/desa.\n\nSilakan datang ke kantor dengan membawa persyaratan yang diperlukan.`;
     }
 
-    const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
+    const baseUrl = getPublicFormBaseUrl();
     const villageSlug = await resolveVillageSlugForPublicForm(villageId);
     const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug || service_slug, userId, channel === 'webchat' ? 'webchat' : 'whatsapp');
 
@@ -1328,6 +1542,102 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       return lines.join('\n');
     }
 
+    const tryAnswerFromServiceCatalog = async (): Promise<string | null> => {
+      const queryLower = normalizedQuery;
+      const isServiceRelated = /(kartu\s+keluarga|\bkk\b|kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el|pergantian|ganti\s+kk|kk\s+baru|kk\s+hilang|kk\s+rusak|surat\s+keterangan|surat\s+pengantar|izin\s+keramaian|domisili|tidak\s+mampu|usaha|dukcapil)/i.test(queryLower);
+      if (!isServiceRelated) return null;
+
+      try {
+        const { config } = await import('../config/env');
+        const axios = (await import('axios')).default;
+        const response = await axios.get(`${config.caseServiceUrl}/services`, {
+          params: { village_id: villageId },
+          headers: { 'x-internal-api-key': config.internalApiKey },
+          timeout: 5000,
+        });
+
+        const services = Array.isArray(response.data?.data) ? response.data.data : [];
+        if (!services.length) return null;
+
+        const scoreService = (service: any): number => {
+          const name = String(service?.name || '').toLowerCase();
+          const desc = String(service?.description || '').toLowerCase();
+          const slug = String(service?.slug || '').toLowerCase();
+          let score = 0;
+          if (/(kartu\s+keluarga|\bkk\b)/i.test(queryLower)) {
+            if (/(kartu\s+keluarga|\bkk\b)/i.test(name)) score += 5;
+            if (/(kartu\s+keluarga|\bkk\b)/i.test(desc)) score += 3;
+            if (/(kartu\s+keluarga|\bkk\b)/i.test(slug)) score += 3;
+          }
+          if (/(kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el)/i.test(queryLower)) {
+            if (/(kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el)/i.test(name)) score += 5;
+            if (/(kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el)/i.test(desc)) score += 3;
+            if (/(kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el)/i.test(slug)) score += 3;
+          }
+          if (/(pergantian|ganti|hilang|rusak|barcode|baru)/i.test(queryLower)) {
+            if (/(pergantian|ganti|hilang|rusak|barcode|baru)/i.test(name)) score += 3;
+            if (/(pergantian|ganti|hilang|rusak|barcode|baru)/i.test(desc)) score += 2;
+            if (/(pergantian|ganti|hilang|rusak|barcode|baru)/i.test(slug)) score += 2;
+          }
+          if (/(surat\s+keterangan\s+usaha|\bsku\b)/i.test(queryLower)) {
+            if (/\bsku\b|surat\s+keterangan\s+usaha/i.test(name)) score += 5;
+            if (/\bsku\b|surat\s+keterangan\s+usaha/i.test(desc)) score += 3;
+          }
+          return score;
+        };
+
+        const ranked = services
+          .map((s: any) => ({ s, score: scoreService(s) }))
+          .filter((x: any) => x.score > 0)
+          .sort((a: any, b: any) => b.score - a.score);
+
+        const best = ranked[0]?.s;
+        if (!best) return null;
+
+        const requirements = best.requirements || [];
+        let requirementsList = '';
+        if (requirements.length > 0) {
+          requirementsList = requirements
+            .sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0))
+            .map((req: any, i: number) => {
+              const required = req.is_required ? ' (wajib)' : ' (opsional)';
+              return `${i + 1}. ${req.label}${required}`;
+            })
+            .join('\n');
+        }
+
+        const isOnline = best.mode === 'online' || best.mode === 'both';
+        let replyText = `Baik Pak/Bu, untuk ${best.name} persyaratannya antara lain:\n\n`;
+
+        if (requirementsList) {
+          replyText += `${requirementsList}\n\n`;
+        } else if (best.description) {
+          replyText += `${best.description}\n\n`;
+        }
+
+        if (isOnline) {
+          setPendingServiceFormOffer(userId, {
+            service_slug: best.slug,
+            village_id: villageId,
+            timestamp: Date.now(),
+          });
+          replyText += 'Apakah Bapak/Ibu ingin mengajukan layanan ini secara online?';
+        } else {
+          replyText += 'Layanan ini diproses secara offline di kantor kelurahan/desa.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
+        }
+
+        return replyText;
+      } catch (error: any) {
+        logger.warn('Service catalog lookup failed', { error: error.message });
+        return null;
+      }
+    };
+
+    const catalogAnswer = await tryAnswerFromServiceCatalog();
+    if (catalogAnswer) {
+      return catalogAnswer;
+    }
+
     const preloadedContext: string | undefined = llmResponse.fields?._preloaded_knowledge_context;
     let contextString = preloadedContext;
     let total = contextString ? 1 : 0;
@@ -1394,10 +1704,18 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       return null;
     };
 
+    const appendServiceOfferIfNeeded = (text: string): string => {
+      if (!text) return text;
+      if (/(ajukan|mengajukan|link|formulir)/i.test(text)) return text;
+      const looksLikeServiceQuery = /(sku|skd|sktm|spktp|spkk|spskck|spakta|ikr|surat\s+keterangan\s+usaha|surat\s+keterangan\s+domisili|surat\s+keterangan\s+tidak\s+mampu|surat\s+pengantar|izin\s+keramaian)/i.test(normalizedQuery);
+      if (!looksLikeServiceQuery) return text;
+      return `${text}\n\nJika Bapak/Ibu ingin mengajukan layanan ini, kami bisa bantu kirimkan link pengajuan.`;
+    };
+
     // Deterministic KB extraction for anchored terms (prevents the second LLM step from omitting key lines).
     const deterministicFromContext = contextString ? tryExtractDeterministicKbAnswer(normalizedQuery, contextString) : null;
     if (deterministicFromContext) {
-      return deterministicFromContext;
+      return appendServiceOfferIfNeeded(deterministicFromContext);
     }
 
     // If RAG context misses these anchored KB terms, force a keyword-only lookup and retry deterministic extraction.
@@ -1437,7 +1755,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       return 'Maaf, terjadi kendala teknis. Silakan coba lagi dalam beberapa saat.';
     }
     
-    return knowledgeResult2.response.reply_text;
+    return appendServiceOfferIfNeeded(knowledgeResult2.response.reply_text);
   } catch (error: any) {
     logger.error('Failed to handle knowledge query', { userId, error: error.message });
     return 'Maaf, terjadi kesalahan saat mencari informasi. Mohon coba lagi dalam beberapa saat.';
@@ -1940,6 +2258,7 @@ export function setPendingServiceFormOffer(userId: string, data: {
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId } = input;
+  let resolvedHistory = conversationHistory;
   
   // Import processing status tracker
   const { createProcessingTracker } = await import('./processing-status.service');
@@ -1972,6 +2291,14 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
     const greetingPattern = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i;
 
+    if (channel === 'whatsapp' && (!resolvedHistory || resolvedHistory.length === 0)) {
+      resolvedHistory = await fetchConversationHistoryFromChannel(userId, resolvedVillageId);
+      logger.info('📚 [UnifiedProcessor] Loaded WhatsApp history', {
+        userId,
+        historyCount: resolvedHistory?.length || 0,
+      });
+    }
+
     const pendingName = pendingNameConfirmation.get(userId);
     if (pendingName) {
       if (isConfirmationResponse(message)) {
@@ -2003,15 +2330,85 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       };
     }
 
+    const lastPromptedName = extractNameFromAssistantPrompt(getLastAssistantMessage(resolvedHistory));
+    if (lastPromptedName) {
+      if (isConfirmationResponse(message)) {
+        logger.info('🧭 [UnifiedProcessor] Name confirmation via history', {
+          userId,
+          name: lastPromptedName,
+          source: 'history_prompt',
+        });
+        updateProfile(userId, { nama_lengkap: lastPromptedName });
+        return {
+          success: true,
+          response: `Baik, terima kasih Pak/Bu ${lastPromptedName}. Ada yang bisa kami bantu?`,
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      if (isNegativeConfirmation(message)) {
+        return {
+          success: true,
+          response: 'Mohon maaf, boleh kami tahu nama yang benar?',
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+    }
+
+    // Step 2.2: Check pending online service form offer
+    const pendingOffer = pendingServiceFormOffer.get(userId);
+    if (pendingOffer) {
+      const wantsFormLink = /\b(link|tautan|formulir|form|online)\b/i.test(message);
+      if (isConfirmationResponse(message) || wantsFormLink) {
+        clearPendingServiceFormOffer(userId);
+        const llmLike = {
+          intent: 'CREATE_SERVICE_REQUEST',
+          fields: {
+            service_slug: pendingOffer.service_slug,
+            ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
+          },
+          reply_text: '',
+        };
+
+        const linkReply = await handleServiceRequestCreation(userId, channel, llmLike);
+        return {
+          success: true,
+          response: linkReply,
+          intent: 'CREATE_SERVICE_REQUEST',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      if (isNegativeConfirmation(message)) {
+        clearPendingServiceFormOffer(userId);
+        return {
+          success: true,
+          response: 'Baik Pak/Bu, siap. Kalau Bapak/Ibu mau proses nanti, kabari kami ya.',
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      return {
+        success: true,
+        response: 'Apakah Bapak/Ibu ingin kami kirim link formulirnya sekarang? Balas *iya* atau *tidak* ya.',
+        intent: 'CREATE_SERVICE_REQUEST',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
+
     // Hard gate: wajib tahu nama sebelum proses apa pun
-    const knownName = extractNameFromHistory(conversationHistory);
+    const profileName = getProfile(userId).nama_lengkap || null;
+    const knownName = extractNameFromHistory(resolvedHistory) || profileName;
     const currentName = extractNameFromText(message);
     if (!knownName && !currentName) {
-      const askedNameBefore = wasNamePrompted(conversationHistory);
+      const askedNameBefore = wasNamePrompted(resolvedHistory);
       if (askedNameBefore) {
         return {
           success: true,
-          response: 'Mohon maaf Pak/Bu, yang kami perlukan adalah nama Anda agar kami bisa membantu dengan tepat.',
+          response: 'Maaf Pak/Bu, saya belum menangkap nama Anda. Mohon tuliskan nama Anda, misalnya: "Nama saya Yoga".',
           intent: 'QUESTION',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
@@ -2022,8 +2419,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         const villageLabel = profile?.name ? profile.name : 'Desa/Kelurahan';
         return {
           success: true,
-          response: `Halo, selamat datang di layanan GovConnect ${villageLabel}.
-Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
+          response: `Selamat datang di layanan GovConnect ${villageLabel}.
+Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
           intent: 'QUESTION',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
@@ -2038,6 +2435,17 @@ Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
     }
 
     if (!knownName && currentName) {
+      const explicitName = /(nama\s+(saya|aku|gue|gw)|panggil\s+saya)/i.test(message);
+      if (explicitName) {
+        updateProfile(userId, { nama_lengkap: currentName });
+        return {
+          success: true,
+          response: `Baik, terima kasih Pak/Bu ${currentName}. Ada yang bisa kami bantu?`,
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
       pendingNameConfirmation.set(userId, { name: currentName, timestamp: Date.now() });
       return {
         success: true,
@@ -2107,49 +2515,8 @@ Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
       };
     }
 
-    // Step 2.2: Check pending online service form offer
-    const pendingOffer = pendingServiceFormOffer.get(userId);
-    if (pendingOffer) {
-      if (isConfirmationResponse(message)) {
-        clearPendingServiceFormOffer(userId);
-        const llmLike = {
-          intent: 'CREATE_SERVICE_REQUEST',
-          fields: {
-            service_slug: pendingOffer.service_slug,
-            ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
-          },
-          reply_text: '',
-        };
-
-        const linkReply = await handleServiceRequestCreation(userId, channel, llmLike);
-        return {
-          success: true,
-          response: linkReply,
-          intent: 'CREATE_SERVICE_REQUEST',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
-        };
-      }
-
-      if (isNegativeConfirmation(message)) {
-        clearPendingServiceFormOffer(userId);
-        return {
-          success: true,
-          response: 'Baik Pak/Bu, siap. Kalau Bapak/Ibu mau proses nanti, kabari kami ya.',
-          intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
-        };
-      }
-
-      return {
-        success: true,
-        response: 'Apakah Bapak/Ibu ingin kami kirim link formulirnya sekarang? Balas *iya* atau *tidak* ya.',
-        intent: 'CREATE_SERVICE_REQUEST',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
-      };
-    }
-    
     // Step 2.5: AI Optimization - Pre-process message
-    const historyString = conversationHistory?.map(m => `${m.role}: ${m.content}`).join('\n') || '';
+    const historyString = resolvedHistory?.map(m => `${m.role}: ${m.content}`).join('\n') || '';
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
 
     if (greetingPattern.test(message.trim())) {
@@ -2164,8 +2531,11 @@ Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
 
     const optimization = preProcessMessage(message, userId, historyString, templateContext);
 
+    const forceLlmIntent = process.env.FORCE_LLM_INTENT === 'true';
+
     // Step 2.55: Deterministic status check fast-path (avoid LLM misclassification)
     if (
+      !forceLlmIntent &&
       !pendingConfirm &&
       optimization.fastIntent?.intent === 'CHECK_STATUS' &&
       (optimization.fastIntent.extractedFields?.complaint_id || optimization.fastIntent.extractedFields?.request_number)
@@ -2196,7 +2566,7 @@ Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
     
     // Step 2.6: Check if we can use fast path (skip LLM)
     const shouldBypassFastPath = /(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message);
-    if (!shouldBypassFastPath && shouldUseFastPath(optimization, !!pendingConfirm)) {
+    if (!forceLlmIntent && !shouldBypassFastPath && shouldUseFastPath(optimization, !!pendingConfirm)) {
       const fastResult = buildFastPathResponse(optimization, startTime);
       if (fastResult) {
         logger.info('⚡ [UnifiedProcessor] Using fast path', {
@@ -2315,8 +2685,8 @@ Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
     let systemPrompt: string;
     let messageCount: number;
     
-    if (channel === 'webchat' && conversationHistory) {
-      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, conversationHistory, preloadedRAGContext);
+    if (channel === 'webchat' && resolvedHistory) {
+      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, resolvedHistory, preloadedRAGContext);
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     } else {
@@ -2409,6 +2779,11 @@ Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
       } as any;
     }
 
+    effectiveLlmResponse.fields = {
+      ...(effectiveLlmResponse.fields || {}),
+      _original_message: message,
+    } as any;
+
     let finalReplyText = effectiveLlmResponse.reply_text;
     let guidanceText = effectiveLlmResponse.guidance_text || '';
 
@@ -2432,6 +2807,37 @@ Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
       }
       finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
     } else {
+
+    const infoInquiryPattern = /(\?|\b(syarat|persyaratan|berkas|dokumen|info|informasi|biaya|lama|alur|panduan|cara|prosedur)\b)/i;
+    const applyVerbPattern = /\b(ajukan|daftar|buat|bikin|mohon|minta|proses|kirim|ajukan|submit)\b/i;
+    const serviceNounPattern = /\b(layanan|surat|izin|permohonan|pelayanan)\b/i;
+    const wantsFormPattern = /\b(link|tautan|formulir|form|online)\b/i;
+
+    const looksLikeInquiry = infoInquiryPattern.test(message);
+    const explicitApplyRequest = (applyVerbPattern.test(message) || wantsFormPattern.test(message)) && serviceNounPattern.test(message);
+
+    if (effectiveLlmResponse.intent === 'CREATE_SERVICE_REQUEST' && looksLikeInquiry && !explicitApplyRequest) {
+      effectiveLlmResponse.intent = 'SERVICE_INFO';
+    }
+
+    if (['SERVICE_INFO', 'CREATE_SERVICE_REQUEST'].includes(effectiveLlmResponse.intent)) {
+      const hasServiceRef = !!(effectiveLlmResponse.fields?.service_slug || effectiveLlmResponse.fields?.service_id);
+      if (!hasServiceRef) {
+        const resolved = await resolveServiceSlugFromSearch(message, resolvedVillageId);
+        if (resolved?.slug) {
+          const existingServiceName = (effectiveLlmResponse.fields as any)?.service_name;
+          effectiveLlmResponse.fields = {
+            ...(effectiveLlmResponse.fields || {}),
+            service_slug: resolved.slug,
+            service_name: resolved.name || existingServiceName,
+          } as any;
+        }
+      }
+
+      if (effectiveLlmResponse.intent === 'SERVICE_INFO' && explicitApplyRequest && effectiveLlmResponse.fields?.service_slug) {
+        effectiveLlmResponse.intent = 'CREATE_SERVICE_REQUEST';
+      }
+    }
     
     switch (effectiveLlmResponse.intent) {
       case 'CREATE_COMPLAINT':
@@ -2449,7 +2855,11 @@ Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
         if (/(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message)) {
           finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
         } else {
-          finalReplyText = await handleServiceInfo(userId, effectiveLlmResponse);
+          const serviceInfoResult = normalizeHandlerResult(await handleServiceInfo(userId, effectiveLlmResponse));
+          finalReplyText = serviceInfoResult.replyText;
+          if (serviceInfoResult.guidanceText && !guidanceText) {
+            guidanceText = serviceInfoResult.guidanceText;
+          }
         }
         break;
       

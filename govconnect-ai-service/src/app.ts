@@ -32,6 +32,7 @@ import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
 import { config } from './config/env';
 import { getParam, getQuery } from './utils/http';
+import { runGoldenSetEvaluation, getGoldenSetSummary } from './services/golden-set-eval.service';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -40,6 +41,15 @@ promClient.collectDefaultMetrics({
 });
 
 const app = express();
+
+function requireInternalKey(req: Request, res: Response): boolean {
+  const apiKey = req.headers['x-internal-api-key'];
+  if (!apiKey || apiKey !== config.internalApiKey) {
+    res.status(403).json({ error: 'Forbidden' });
+    return false;
+  }
+  return true;
+}
 
 app.use(express.json());
 
@@ -429,6 +439,40 @@ app.post('/stats/analytics/fix', (req: Request, res: Response) => {
 });
 
 // ===========================================
+// Golden Set Evaluation Endpoints
+app.get('/stats/golden-set', (req: Request, res: Response) => {
+  if (!requireInternalKey(req, res)) return;
+  try {
+    const data = getGoldenSetSummary();
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get golden set summary',
+      message: error.message,
+    });
+  }
+});
+
+app.post('/stats/golden-set/run', async (req: Request, res: Response) => {
+  if (!requireInternalKey(req, res)) return;
+  try {
+    const { items, village_id } = req.body || {};
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ error: 'items is required' });
+      return;
+    }
+
+    const result = await runGoldenSetEvaluation(items, village_id);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to run golden set evaluation',
+      message: error.message,
+    });
+  }
+});
+
+// ===========================================
 // Rate Limiter Endpoints
 app.get('/rate-limit', (req: Request, res: Response) => {
   try {
@@ -649,8 +693,8 @@ app.get('/stats/optimization', (req: Request, res: Response) => {
       },
       topCachedQueries: topQueries,
       conversationFSM: fsmStats,
-      architecture: process.env.USE_2_LAYER_ARCHITECTURE === 'true' ? '2-Layer LLM' : 'Single Layer',
-      description: 'AI optimization stats including response caching, fast intent classification, and conversation FSM',
+      architecture: '2-Layer LLM (forced)',
+      description: 'AI stats (full LLM mode, without fast intent/template/cache)',
     });
   } catch (error: any) {
     res.status(500).json({
@@ -697,12 +741,12 @@ app.get('/stats/dashboard', async (req: Request, res: Response) => {
     const modelStats = modelStatsService.getAllStats();
     const analyticsData = aiAnalyticsService.getSummary();
 
-    const architecture = process.env.USE_2_LAYER_ARCHITECTURE === 'true' ? '2-Layer LLM' : 'Single Layer';
+    const architecture = '2-Layer LLM (forced)';
 
     res.json({
       architecture: {
         current: architecture,
-        envVar: 'USE_2_LAYER_ARCHITECTURE',
+        envVar: 'USE_2_LAYER_ARCHITECTURE (ignored)',
         appliesTo: ['WhatsApp', 'Webchat'],
       },
       performance: {
@@ -883,6 +927,8 @@ app.get('/', (req: Request, res: Response) => {
       analyticsIntents: '/stats/analytics/intents',
       analyticsFlow: '/stats/analytics/flow',
       analyticsTokens: '/stats/analytics/tokens',
+      goldenSetSummary: '/stats/golden-set',
+      goldenSetRun: 'POST /stats/golden-set/run',
       embeddingStats: '/stats/embeddings',
       optimizationStats: '/stats/optimization',
       conversationFSM: '/stats/conversation-fsm',

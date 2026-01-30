@@ -35,12 +35,11 @@ import {
 } from '../services/webchat-batcher.service';
 import { getParam, getQuery } from '../utils/http';
 
-// Unified architecture flag - controls BOTH WhatsApp AND Webchat
-const USE_2_LAYER_ARCHITECTURE = process.env.USE_2_LAYER_ARCHITECTURE === 'true';
+// Full LLM mode: always use 2-Layer architecture
+const USE_2_LAYER_ARCHITECTURE = true;
 
 logger.info('🏗️ Webchat architecture selected', {
-  architecture: USE_2_LAYER_ARCHITECTURE ? '2-Layer LLM' : 'Single Layer',
-  envVar: 'USE_2_LAYER_ARCHITECTURE',
+  architecture: '2-Layer LLM (forced)',
   note: 'Same architecture as WhatsApp channel',
 });
 
@@ -306,11 +305,24 @@ router.post('/', async (req: Request, res: Response) => {
       direction: 'OUT',
       source: 'AI',
     }).catch(() => {}); // Don't block on sync failure
+
+    if (result.guidanceText && result.guidanceText.trim()) {
+      saveWebchatMessage({
+        session_id,
+        village_id,
+        message: result.guidanceText,
+        direction: 'OUT',
+        source: 'AI',
+      }).catch(() => {});
+    }
     
     // Update conversation in Channel Service
+    const latestMessage = result.guidanceText && result.guidanceText.trim()
+      ? result.guidanceText
+      : result.response;
     updateWebchatConversation({
       session_id,
-      last_message: result.response.substring(0, 100),
+      last_message: latestMessage.substring(0, 100),
       unread_count: 0,
     }).catch(() => {}); // Don't block on sync failure
     

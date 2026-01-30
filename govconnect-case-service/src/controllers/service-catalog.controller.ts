@@ -92,6 +92,53 @@ export async function handleGetServices(req: Request, res: Response) {
   }
 }
 
+export async function handleSearchServices(req: Request, res: Response) {
+  try {
+    const village_id = getQuery(req, 'village_id');
+    const category_id = getQuery(req, 'category_id');
+    const rawQuery = getQuery(req, 'q') || getQuery(req, 'query') || '';
+    const include_inactive = (getQuery(req, 'include_inactive') || '').toString().toLowerCase() === 'true';
+
+    const query = rawQuery.trim();
+    if (!query) {
+      return res.status(400).json({ error: 'q is required' });
+    }
+
+    const limitRaw = parseInt((getQuery(req, 'limit') || '20').toString(), 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 20;
+
+    logger.info('Search services', {
+      village_id,
+      category_id,
+      query,
+      include_inactive,
+      limit,
+    });
+
+    const data = await prisma.serviceItem.findMany({
+      where: {
+        ...(village_id ? { village_id } : {}),
+        ...(category_id ? { category_id } : {}),
+        ...(include_inactive ? {} : { is_active: true }),
+        OR: [
+          { name: { contains: query, mode: 'insensitive' } },
+          { description: { contains: query, mode: 'insensitive' } },
+          { slug: { contains: query, mode: 'insensitive' } },
+          { category: { name: { contains: query, mode: 'insensitive' } } },
+        ],
+      },
+      include: { requirements: true, category: true },
+      orderBy: { created_at: 'asc' },
+      take: limit,
+    });
+
+    return res.json({ data });
+  } catch (error: any) {
+    logger.error('Search services error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 export async function handleGetServiceById(req: Request, res: Response) {
   try {
     const id = getParam(req, 'id');

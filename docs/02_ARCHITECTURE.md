@@ -67,6 +67,8 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 - Query data via REST ke Case Service & Dashboard Service
 - Publish event reply ke Notification Service
 - **RAG scoped per desa** melalui `village_id` untuk konteks knowledge & dokumen
+- **Full LLM 2-Layer** untuk semua channel (LLM1: intent+entity, LLM2: response)
+- **Evaluasi Golden Set** untuk mengukur akurasi intent/keyword
 
 **Database:** ❌ Tidak ada
 

@@ -44,6 +44,7 @@ export interface ChatResponse {
   success: boolean;
   message?: string;
   response?: string;
+  guidanceText?: string;
   error?: string;
 }
 

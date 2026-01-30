@@ -42,7 +42,9 @@ import {
 
 interface Conversation {
   id: string
-  wa_user_id: string
+  wa_user_id: string | null
+  channel: "WHATSAPP" | "WEBCHAT"
+  channel_identifier: string
   user_name: string | null
   last_message: string | null
   last_message_at: string
@@ -123,6 +125,14 @@ export default function LiveChatPage() {
   const [newMessageCount, setNewMessageCount] = useState(0)
   const lastScrollTopRef = useRef<number>(0)
   const isNearBottomRef = useRef<boolean>(true)
+
+  const getConversationKey = (conv?: Conversation | null) =>
+    conv?.wa_user_id || conv?.channel_identifier || ""
+
+  const isWebchatConversation = (conv?: Conversation | null) => {
+    const key = getConversationKey(conv)
+    return conv?.channel === "WEBCHAT" || key.startsWith("web_")
+  }
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -213,7 +223,7 @@ export default function LiveChatPage() {
     setHasNewMessages(false)
     setNewMessageCount(0)
     isNearBottomRef.current = true
-  }, [selectedConversation?.wa_user_id])
+  }, [getConversationKey(selectedConversation)])
 
   // Fetch processing statuses for all active conversations
   const fetchProcessingStatuses = useCallback(async () => {
@@ -263,7 +273,7 @@ export default function LiveChatPage() {
         // Update selected conversation if it exists in the new data
         if (selectedConversationRef.current) {
           const updated = (data.data || []).find(
-            (c: Conversation) => c.wa_user_id === selectedConversationRef.current?.wa_user_id
+            (c: Conversation) => getConversationKey(c) === getConversationKey(selectedConversationRef.current)
           )
           if (updated) {
             setSelectedConversation(updated)
@@ -276,10 +286,10 @@ export default function LiveChatPage() {
   }, [activeTab])
 
   // Fetch messages silently (no loading state for polling)
-  const fetchMessagesSilent = useCallback(async (wa_user_id: string) => {
+  const fetchMessagesSilent = useCallback(async (conversationKey: string) => {
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch(`/api/livechat/conversations/${encodeURIComponent(wa_user_id)}`, {
+      const response = await fetch(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -297,11 +307,11 @@ export default function LiveChatPage() {
   }, [])
 
   // Fetch messages with loading (for initial selection)
-  const fetchMessagesWithLoading = useCallback(async (wa_user_id: string) => {
+  const fetchMessagesWithLoading = useCallback(async (conversationKey: string) => {
     setIsInitialMessagesLoading(true)
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch(`/api/livechat/conversations/${encodeURIComponent(wa_user_id)}`, {
+      const response = await fetch(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -315,7 +325,7 @@ export default function LiveChatPage() {
         previousMessagesLengthRef.current = 0 // Reset so it scrolls
 
         // Mark as read
-        await fetch(`/api/livechat/conversations/${encodeURIComponent(wa_user_id)}/read`, {
+        await fetch(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}/read`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
@@ -357,7 +367,7 @@ export default function LiveChatPage() {
       fetchConversationsSilent()
       fetchProcessingStatuses() // Also fetch processing statuses
       if (selectedConversationRef.current) {
-        fetchMessagesSilent(selectedConversationRef.current.wa_user_id)
+        fetchMessagesSilent(getConversationKey(selectedConversationRef.current))
       }
     }, 2000) // Poll every 2 seconds for more responsive status updates
 
@@ -380,7 +390,7 @@ export default function LiveChatPage() {
   const handleSelectConversation = async (conv: Conversation) => {
     setSelectedConversation(conv)
     previousMessagesLengthRef.current = 0
-    await fetchMessagesWithLoading(conv.wa_user_id)
+    await fetchMessagesWithLoading(getConversationKey(conv))
   }
 
   // Send message
@@ -394,7 +404,7 @@ export default function LiveChatPage() {
     try {
       const token = localStorage.getItem("token")
       const response = await fetch(
-        `/api/livechat/conversations/${encodeURIComponent(selectedConversation.wa_user_id)}/send`,
+        `/api/livechat/conversations/${encodeURIComponent(getConversationKey(selectedConversation))}/send`,
         {
           method: "POST",
           headers: {
@@ -408,7 +418,7 @@ export default function LiveChatPage() {
       const data = await response.json()
       if (data.success) {
         // Fetch messages to get the new one
-        await fetchMessagesSilent(selectedConversation.wa_user_id)
+        await fetchMessagesSilent(getConversationKey(selectedConversation))
         toast({
           title: "Pesan Terkirim",
           description: "Pesan berhasil dikirim ke pengguna.",
@@ -436,7 +446,7 @@ export default function LiveChatPage() {
     try {
       const token = localStorage.getItem("token")
       const response = await fetch(
-        `/api/livechat/takeover/${encodeURIComponent(selectedConversation.wa_user_id)}`,
+        `/api/livechat/takeover/${encodeURIComponent(getConversationKey(selectedConversation))}`,
         {
           method: "POST",
           headers: {
@@ -485,7 +495,7 @@ export default function LiveChatPage() {
     try {
       const token = localStorage.getItem("token")
       const response = await fetch(
-        `/api/livechat/takeover/${encodeURIComponent(selectedConversation.wa_user_id)}`,
+        `/api/livechat/takeover/${encodeURIComponent(getConversationKey(selectedConversation))}`,
         {
           method: "DELETE",
           headers: {
@@ -528,7 +538,7 @@ export default function LiveChatPage() {
     try {
       const token = localStorage.getItem("token")
       const response = await fetch(
-        `/api/livechat/conversations/${encodeURIComponent(selectedConversation.wa_user_id)}`,
+        `/api/livechat/conversations/${encodeURIComponent(getConversationKey(selectedConversation))}`,
         {
           method: "DELETE",
           headers: {
@@ -565,12 +575,12 @@ export default function LiveChatPage() {
   }
 
   // Retry AI processing
-  const handleRetryAI = async (wa_user_id: string) => {
+  const handleRetryAI = async (conversationKey: string) => {
     setIsRetryingAI(true)
     try {
       const token = localStorage.getItem("token")
       const response = await fetch(
-        `/api/livechat/conversations/${encodeURIComponent(wa_user_id)}/retry`,
+        `/api/livechat/conversations/${encodeURIComponent(conversationKey)}/retry`,
         {
           method: "POST",
           headers: {
@@ -605,8 +615,9 @@ export default function LiveChatPage() {
   // Filter conversations by search
   const filteredConversations = conversations.filter((conv) => {
     const searchLower = searchQuery.toLowerCase()
+    const key = getConversationKey(conv).toLowerCase()
     return (
-      conv.wa_user_id.includes(searchLower) ||
+      key.includes(searchLower) ||
       conv.user_name?.toLowerCase().includes(searchLower) ||
       conv.last_message?.toLowerCase().includes(searchLower)
     )
@@ -629,7 +640,7 @@ export default function LiveChatPage() {
     if (name) {
       return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     }
-    return phone.slice(-2)
+    return phone ? phone.slice(-2) : "??"
   }
 
   // Check if message contains image URL
@@ -687,7 +698,7 @@ export default function LiveChatPage() {
             />
           </div>
           {caption && (
-            <p className="text-sm whitespace-pre-wrap break-words">{caption}</p>
+            <p className="text-sm whitespace-pre-wrap wrap-break-word">{caption}</p>
           )}
         </div>
       )
@@ -698,13 +709,13 @@ export default function LiveChatPage() {
       return (
         <div className="flex items-center gap-2">
           <ImageIcon className="h-4 w-4" />
-          <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+          <p className="text-sm whitespace-pre-wrap wrap-break-word">{msg.message_text}</p>
         </div>
       )
     }
 
     return (
-      <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+      <p className="text-sm whitespace-pre-wrap wrap-break-word">{msg.message_text}</p>
     )
   }
 
@@ -773,13 +784,13 @@ export default function LiveChatPage() {
                     <div className="flex items-start gap-3">
                       <Avatar className="h-10 w-10 shrink-0">
                         <AvatarFallback className={`text-xs ${conv.is_takeover ? "bg-orange-500 text-white" : "bg-green-500 text-white"}`}>
-                          {getInitials(conv.user_name, conv.wa_user_id)}
+                          {getInitials(conv.user_name, getConversationKey(conv))}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <p className="font-medium text-sm truncate">
-                            {conv.user_name || conv.wa_user_id}
+                            {conv.user_name || getConversationKey(conv)}
                           </p>
                           <span className="text-xs text-muted-foreground shrink-0 ml-2">
                             {formatTime(conv.last_message_at)}
@@ -797,7 +808,7 @@ export default function LiveChatPage() {
                         </div>
                         <div className="mt-1 flex items-center gap-1 flex-wrap">
                           {/* Channel Badge */}
-                          {conv.wa_user_id.startsWith('web_') ? (
+                          {isWebchatConversation(conv) ? (
                             <Badge variant="outline" className="text-purple-600 border-purple-300 text-xs py-0">
                               <MessageCircle className="h-3 w-3 mr-1" />
                               Webchat
@@ -814,17 +825,17 @@ export default function LiveChatPage() {
                               <Hand className="h-3 w-3 mr-1" />
                               Ambil Alih
                             </Badge>
-                          ) : processingStatuses[conv.wa_user_id] && processingStatuses[conv.wa_user_id].stage !== 'completed' && processingStatuses[conv.wa_user_id].stage !== 'error' ? (
+                          ) : processingStatuses[getConversationKey(conv)] && processingStatuses[getConversationKey(conv)].stage !== 'completed' && processingStatuses[getConversationKey(conv)].stage !== 'error' ? (
                             <Badge variant="outline" className="text-blue-600 border-blue-300 text-xs py-0 animate-pulse">
                               <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                              {processingStatuses[conv.wa_user_id].message}
+                              {processingStatuses[getConversationKey(conv)].message}
                             </Badge>
                           ) : conv.ai_status === 'processing' ? (
                             <Badge variant="outline" className="text-blue-600 border-blue-300 text-xs py-0 animate-pulse">
                               <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                               AI Memproses...
                             </Badge>
-                          ) : conv.ai_status === 'error' || processingStatuses[conv.wa_user_id]?.stage === 'error' ? (
+                          ) : conv.ai_status === 'error' || processingStatuses[getConversationKey(conv)]?.stage === 'error' ? (
                             <div className="flex items-center gap-1">
                               <Badge variant="outline" className="text-red-600 border-red-300 text-xs py-0">
                                 <AlertTriangle className="h-3 w-3 mr-1" />
@@ -833,7 +844,7 @@ export default function LiveChatPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  handleRetryAI(conv.wa_user_id)
+                                  handleRetryAI(getConversationKey(conv))
                                 }}
                                 disabled={isRetryingAI}
                                 className="inline-flex items-center text-xs text-blue-600 hover:text-blue-800 hover:underline disabled:opacity-50"
@@ -875,22 +886,22 @@ export default function LiveChatPage() {
                   </Button>
                   <Avatar className="h-9 w-9">
                     <AvatarFallback className={`text-xs ${selectedConversation.is_takeover ? "bg-orange-500 text-white" : "bg-green-500 text-white"}`}>
-                      {getInitials(selectedConversation.user_name, selectedConversation.wa_user_id)}
+                      {getInitials(selectedConversation.user_name, getConversationKey(selectedConversation))}
                     </AvatarFallback>
                   </Avatar>
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-sm">
-                        {selectedConversation.user_name || selectedConversation.wa_user_id}
+                        {selectedConversation.user_name || getConversationKey(selectedConversation)}
                       </p>
-                      {selectedConversation.wa_user_id.startsWith('web_') && (
+                      {isWebchatConversation(selectedConversation) && (
                         <Badge variant="outline" className="text-purple-600 border-purple-300 text-xs py-0">
                           Webchat
                         </Badge>
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {selectedConversation.wa_user_id}
+                      {getConversationKey(selectedConversation)}
                     </p>
                   </div>
                 </div>
@@ -1000,20 +1011,20 @@ export default function LiveChatPage() {
               </div>
 
               {/* AI Processing Status Indicator */}
-              {selectedConversation && processingStatuses[selectedConversation.wa_user_id] &&
-                processingStatuses[selectedConversation.wa_user_id].stage !== 'completed' &&
-                processingStatuses[selectedConversation.wa_user_id].stage !== 'error' && (
+              {selectedConversation && processingStatuses[getConversationKey(selectedConversation)] &&
+                processingStatuses[getConversationKey(selectedConversation)].stage !== 'completed' &&
+                processingStatuses[getConversationKey(selectedConversation)].stage !== 'error' && (
                   <div className="px-3 py-2 border-t bg-blue-50 dark:bg-blue-950 shrink-0">
                     <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span className="text-sm font-medium">
-                        {processingStatuses[selectedConversation.wa_user_id].message}
+                        {processingStatuses[getConversationKey(selectedConversation)].message}
                       </span>
                     </div>
                     <div className="mt-1.5 h-1.5 bg-blue-200 dark:bg-blue-800 rounded-full overflow-hidden">
                       <div
                         className="h-full bg-blue-500 rounded-full transition-all duration-500 ease-out"
-                        style={{ width: `${processingStatuses[selectedConversation.wa_user_id].progress}%` }}
+                        style={{ width: `${processingStatuses[getConversationKey(selectedConversation)].progress}%` }}
                       />
                     </div>
                   </div>
@@ -1157,7 +1168,7 @@ export default function LiveChatPage() {
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground">
-              Pengguna: <span className="font-medium text-foreground">{selectedConversation?.user_name || selectedConversation?.wa_user_id}</span>
+              Pengguna: <span className="font-medium text-foreground">{selectedConversation?.user_name || getConversationKey(selectedConversation)}</span>
             </p>
           </div>
           <DialogFooter>

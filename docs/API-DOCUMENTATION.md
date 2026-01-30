@@ -965,6 +965,29 @@ Get token usage breakdown.
 #### GET /stats/dashboard
 Comprehensive dashboard stats.
 
+#### GET /stats/golden-set
+Get ringkasan evaluasi golden set (super admin only).
+
+#### POST /stats/golden-set/run
+Run evaluasi golden set.
+
+Catatan:
+- Hasil run disimpan di Dashboard DB untuk tren jangka panjang.
+
+**Request Body:**
+```json
+{
+  "items": [
+    {
+      "id": "gs-ktp-rusak",
+      "query": "KTP saya rusak, mau ganti baru gimana ya?",
+      "expected_intent": "SERVICE_INFO",
+      "expected_keywords": ["persyaratan", "KTP", "KK"]
+    }
+  ]
+}
+```
+
 #### POST /stats/analyze-complexity
 Analyze message complexity.
 

@@ -61,6 +61,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       response: aiData.response || aiData.message || 'Terima kasih atas pesan Anda.',
+      guidanceText: aiData.guidanceText || '',
       metadata: aiData.metadata,
     });
 

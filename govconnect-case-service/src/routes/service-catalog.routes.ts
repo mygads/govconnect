@@ -4,6 +4,7 @@ import {
   handleGetServiceCategories,
   handleCreateServiceCategory,
   handleGetServices,
+  handleSearchServices,
   handleCreateService,
   handleUpdateService,
   handleGetServiceById,
@@ -32,6 +33,7 @@ router.post('/service-categories', handleCreateServiceCategory);
 
 // Services
 router.get('/services', handleGetServices);
+router.get('/services/search', handleSearchServices);
 router.get('/services/by-slug', handleGetServiceBySlug);
 router.post('/services', handleCreateService);
 router.get('/services/:id', handleGetServiceById);

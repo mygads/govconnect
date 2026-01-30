@@ -176,6 +176,12 @@ export function GovConnectSidebar() {
           roles: ["superadmin"],
         },
         {
+          title: "AI Golden Set",
+          url: "/dashboard/superadmin/ai-quality",
+          icon: Activity,
+          roles: ["superadmin"],
+        },
+        {
           title: "Pengaturan Notifikasi",
           url: "/dashboard/settings/notifications",
           icon: Bell,

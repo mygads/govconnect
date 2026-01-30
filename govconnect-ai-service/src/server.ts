@@ -3,7 +3,6 @@ import app from './app';
 import logger from './utils/logger';
 import { config } from './config/env';
 import { connectRabbitMQ, startConsuming, disconnectRabbitMQ } from './services/rabbitmq.service';
-import { processMessage } from './services/ai-orchestrator.service';
 import { processTwoLayerMessage } from './services/two-layer-orchestrator.service';
 import { initializeOptimizer } from './services/ai-optimizer.service';
 
@@ -22,17 +21,13 @@ async function startServer() {
     // Connect to RabbitMQ
     await connectRabbitMQ();
     
-    // Start consuming messages with 2-Layer Architecture
-    // Use environment variable to switch between architectures
-    const use2LayerArchitecture = process.env.USE_2_LAYER_ARCHITECTURE === 'true';
-    const messageProcessor = use2LayerArchitecture ? processTwoLayerMessage : processMessage;
-    
+    // Full LLM mode: always use 2-Layer Architecture
     logger.info('🏗️ Architecture selected', {
-      architecture: use2LayerArchitecture ? '2-Layer LLM' : 'Single Layer',
-      processor: use2LayerArchitecture ? 'processTwoLayerMessage' : 'processMessage',
+      architecture: '2-Layer LLM (forced)',
+      processor: 'processTwoLayerMessage',
     });
     
-    await startConsuming(messageProcessor);
+    await startConsuming(processTwoLayerMessage);
     
     // Start Express server (for health checks)
     server = app.listen(config.port, () => {

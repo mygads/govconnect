@@ -125,12 +125,9 @@ Dokumen ini menjelaskan alur utama sesuai fitur terbaru: knowledge base terpadu,
 ---
 
 ## 📌 Catatan Flow Penting
-- **Profil Desa** adalah input teks dan ikut knowledge base.
-- **Knowledge base file**: PDF/DOC/DOCX/TXT.
-- **Form publik** hanya untuk layanan administrasi, bukan pengaduan.
-- **Detail pengaduan**: admin bisa memberi update penanganan berupa teks dan foto.
-- **AI model** hanya dikonfigurasi via ENV (tidak ada halaman ubah model).
-- **Semua halaman admin dalam Bahasa Indonesia**.
+- AI Orchestrator memakai **LLM 2-layer** untuk semua channel.
+- Jika LLM gagal, sistem mengirim fallback message agar user tetap mendapat respons.
+- Evaluasi kualitas menggunakan **golden set** dilakukan oleh super admin.
 │    AI Service       │
 │  - Generate Reply   │
 └──────┬──────────────┘

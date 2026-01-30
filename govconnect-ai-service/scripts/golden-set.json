@@ -1,0 +1,62 @@
+[
+  {
+    "id": "gs-ktp-rusak",
+    "query": "KTP saya rusak, mau ganti baru gimana ya?",
+    "expected_intent": "SERVICE_INFO",
+    "expected_keywords": ["persyaratan", "KTP", "KK"]
+  },
+  {
+    "id": "gs-kk-hilang",
+    "query": "KK hilang, prosesnya bagaimana?",
+    "expected_intent": "SERVICE_INFO",
+    "expected_keywords": ["persyaratan", "KK"]
+  },
+  {
+    "id": "gs-laporan-jalan",
+    "query": "Jalan depan rumah saya berlubang besar",
+    "expected_intent": "CREATE_COMPLAINT",
+    "expected_keywords": ["laporan", "lokasi"]
+  },
+  {
+    "id": "gs-cek-status",
+    "query": "Cek status LAP-20260101-001",
+    "expected_intent": "CHECK_STATUS",
+    "expected_keywords": ["status"]
+  },
+  {
+    "id": "gs-jam-operasional",
+    "query": "Jam operasional kantor kelurahan kapan?",
+    "expected_intent": "KNOWLEDGE_QUERY",
+    "expected_keywords": ["jam", "operasional"]
+  },
+  {
+    "id": "gs-izin-keramaian",
+    "query": "Mau izin keramaian untuk acara RW, syaratnya apa?",
+    "expected_intent": "SERVICE_INFO",
+    "expected_keywords": ["persyaratan"]
+  },
+  {
+    "id": "gs-rt-rw",
+    "query": "Bagaimana cek data RT/RW?",
+    "expected_intent": "KNOWLEDGE_QUERY",
+    "expected_keywords": ["RT", "RW"]
+  },
+  {
+    "id": "gs-pengaduan-sampah",
+    "query": "Sampah menumpuk di gang belakang, tolong bantu",
+    "expected_intent": "CREATE_COMPLAINT",
+    "expected_keywords": ["laporan", "alamat"]
+  },
+  {
+    "id": "gs-layanan-domisili",
+    "query": "Buat surat keterangan domisili gimana?",
+    "expected_intent": "SERVICE_INFO",
+    "expected_keywords": ["persyaratan", "domisili"]
+  },
+  {
+    "id": "gs-pertanyaan-umum",
+    "query": "Halo, bisa bantu apa saja?",
+    "expected_intent": "QUESTION",
+    "expected_keywords": ["layanan", "pengaduan"]
+  }
+]
