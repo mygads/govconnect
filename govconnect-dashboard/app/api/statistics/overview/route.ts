@@ -23,21 +23,23 @@ export async function GET(request: NextRequest) {
         const data = await response.json()
         console.log('Case service statistics response:', data)
         // Transform data to match dashboard expectations
-        // Case service returns: { totalLaporan, totalLayanan, laporan: {baru, proses, selesai, ditolak, hariIni}, layanan: {baru, proses, selesai, ditolak, hariIni} }
+        // Case service returns: { totalLaporan, totalLayanan, laporan: {open, process, done, canceled, reject, hariIni}, layanan: {open, process, done, canceled, reject, hariIni} }
         return NextResponse.json({
           complaints: {
             total: data.totalLaporan || 0,
-            baru: data.laporan?.baru || 0,
-            proses: data.laporan?.proses || 0,
-            selesai: data.laporan?.selesai || 0,
-            ditolak: data.laporan?.ditolak || 0,
+            open: data.laporan?.open || 0,
+            process: data.laporan?.process || 0,
+            done: data.laporan?.done || 0,
+            canceled: data.laporan?.canceled || 0,
+            reject: data.laporan?.reject || 0,
           },
           services: {
             total: data.totalLayanan || 0,
-            baru: data.layanan?.baru || 0,
-            proses: data.layanan?.proses || 0,
-            selesai: data.layanan?.selesai || 0,
-            ditolak: data.layanan?.ditolak || 0,
+            open: data.layanan?.open || 0,
+            process: data.layanan?.process || 0,
+            done: data.layanan?.done || 0,
+            canceled: data.layanan?.canceled || 0,
+            reject: data.layanan?.reject || 0,
           },
         })
       }
@@ -49,17 +51,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       complaints: {
         total: 0,
-        baru: 0,
-        proses: 0,
-        selesai: 0,
-        ditolak: 0,
+        open: 0,
+        process: 0,
+        done: 0,
+        canceled: 0,
+        reject: 0,
       },
       services: {
         total: 0,
-        baru: 0,
-        proses: 0,
-        selesai: 0,
-        ditolak: 0,
+        open: 0,
+        process: 0,
+        done: 0,
+        canceled: 0,
+        reject: 0,
       },
     })
   } catch (error) {

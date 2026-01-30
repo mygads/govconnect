@@ -1,5 +1,6 @@
 import prisma from '../config/database';
 import logger from '../utils/logger';
+import { ChannelType, Prisma } from '@prisma/client';
 
 export interface HistoryItem {
   type: 'complaint' | 'service';
@@ -18,11 +19,26 @@ export interface UserHistoryResult {
   total: number;
 }
 
-export async function getUserHistory(wa_user_id: string): Promise<UserHistoryResult> {
+export async function getUserHistory(params: {
+  wa_user_id?: string;
+  channel?: ChannelType | 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier?: string;
+}): Promise<UserHistoryResult> {
+  const normalizedChannel = (params.channel || ChannelType.WHATSAPP).toString().toUpperCase();
+  const channel = normalizedChannel === 'WEBCHAT'
+    ? ChannelType.WEBCHAT
+    : ChannelType.WHATSAPP;
+  const complaintIdentity: Prisma.ComplaintWhereInput = channel === ChannelType.WEBCHAT
+    ? { channel: ChannelType.WEBCHAT, channel_identifier: params.channel_identifier ?? undefined }
+    : { wa_user_id: params.wa_user_id ?? undefined };
+  const serviceIdentity: Prisma.ServiceRequestWhereInput = channel === ChannelType.WEBCHAT
+    ? { channel: ChannelType.WEBCHAT, channel_identifier: params.channel_identifier ?? undefined }
+    : { wa_user_id: params.wa_user_id ?? undefined };
+
   try {
     const [complaints, services] = await Promise.all([
       prisma.complaint.findMany({
-        where: { wa_user_id },
+        where: complaintIdentity,
         orderBy: { created_at: 'desc' },
         take: 30,
         select: {
@@ -36,7 +52,7 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
         },
       }),
       prisma.serviceRequest.findMany({
-        where: { wa_user_id },
+        where: serviceIdentity,
         orderBy: { created_at: 'desc' },
         take: 30,
         select: {
@@ -76,7 +92,9 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
     ].sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
 
     logger.info('User history fetched', {
-      wa_user_id,
+      wa_user_id: params.wa_user_id,
+      channel,
+      channel_identifier: params.channel_identifier,
       complaints: complaints.length,
       services: services.length,
     });
@@ -89,7 +107,9 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
     };
   } catch (error: any) {
     logger.error('Failed to fetch user history', {
-      wa_user_id,
+      wa_user_id: params.wa_user_id,
+      channel,
+      channel_identifier: params.channel_identifier,
       error: error.message,
     });
     throw error;

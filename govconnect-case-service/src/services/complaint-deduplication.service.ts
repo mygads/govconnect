@@ -11,6 +11,7 @@
  * - Better resource allocation
  */
 
+import { ChannelType, Prisma } from '@prisma/client';
 import prisma from '../config/database';
 import logger from '../utils/logger';
 
@@ -24,7 +25,9 @@ export interface DuplicateCheckResult {
 }
 
 export interface CreateComplaintData {
-  wa_user_id: string;
+  wa_user_id?: string;
+  channel?: ChannelType | 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier?: string;
   kategori: string;
   deskripsi: string;
   alamat: string;
@@ -50,15 +53,23 @@ export async function checkDuplicateComplaint(
     cutoffTime.setHours(cutoffTime.getHours() - DUPLICATE_CHECK_HOURS);
 
     // Find recent complaints from same user with same category
+    const normalizedChannel = (data.channel || ChannelType.WHATSAPP).toString().toUpperCase();
+    const channel = normalizedChannel === 'WEBCHAT'
+      ? ChannelType.WEBCHAT
+      : ChannelType.WHATSAPP;
+    const identityWhere: Prisma.ComplaintWhereInput = channel === ChannelType.WEBCHAT
+      ? { channel: ChannelType.WEBCHAT, channel_identifier: data.channel_identifier ?? undefined }
+      : { wa_user_id: data.wa_user_id ?? undefined };
+
     const recentComplaints = await prisma.complaint.findMany({
       where: {
-        wa_user_id: data.wa_user_id,
+        ...identityWhere,
         kategori: data.kategori,
         created_at: {
           gte: cutoffTime,
         },
         status: {
-          notIn: ['ditolak', 'dibatalkan'],
+          notIn: ['DONE', 'CANCELED', 'REJECT'],
         },
       },
       select: {
@@ -98,6 +109,8 @@ export async function checkDuplicateComplaint(
         if (overallSimilarity >= MIN_SIMILARITY_THRESHOLD) {
           logger.info('[Deduplication] Duplicate complaint detected', {
             wa_user_id: data.wa_user_id,
+            channel,
+            channel_identifier: data.channel_identifier,
             existingId: existing.complaint_id,
             addressSimilarity: addressSimilarity.toFixed(2),
             descSimilarity: descSimilarity.toFixed(2),
@@ -140,7 +153,7 @@ export async function checkGlobalDuplicate(
           gte: cutoffTime,
         },
         status: {
-          notIn: ['ditolak', 'dibatalkan', 'selesai'],
+          notIn: ['DONE', 'CANCELED', 'REJECT'],
         },
       },
       select: {

@@ -16,11 +16,11 @@ Case Service mengelola **Laporan Warga** dan **Permohonan Layanan** dalam sistem
 ### Laporan (Complaint)
 - Pengaduan tentang masalah infrastruktur
 - Kategori: jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak
-- Status: baru → proses → selesai/ditolak
+- Status: OPEN → PROCESS → DONE/CANCELED/REJECT
 
 ### Permohonan Layanan (Service Requests)
 - Permohonan layanan administrasi dari warga
-- Status: baru → proses → selesai/ditolak/dibatalkan
+- Status: OPEN → PROCESS → DONE/CANCELED/REJECT
 
 ## Authentication
 - Internal APIs: Header \`X-Internal-API-Key\`
@@ -64,7 +64,7 @@ Case Service mengelola **Laporan Warga** dan **Permohonan Layanan** dalam sistem
           summary: 'Get complaints list',
           description: 'Get paginated list of complaints with optional filters',
           parameters: [
-            { in: 'query', name: 'status', schema: { type: 'string', enum: ['baru', 'proses', 'selesai', 'ditolak'] }, description: 'Filter by status' },
+            { in: 'query', name: 'status', schema: { type: 'string', enum: ['OPEN', 'PROCESS', 'DONE', 'CANCELED', 'REJECT'] }, description: 'Filter by status' },
             { in: 'query', name: 'kategori', schema: { type: 'string' }, description: 'Filter by kategori' },
             { in: 'query', name: 'limit', schema: { type: 'integer', default: 20 }, description: 'Items per page' },
             { in: 'query', name: 'offset', schema: { type: 'integer', default: 0 }, description: 'Pagination offset' },
@@ -95,7 +95,7 @@ Case Service mengelola **Laporan Warga** dan **Permohonan Layanan** dalam sistem
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: true,
-            content: { 'application/json': { schema: { type: 'object', required: ['status'], properties: { status: { type: 'string', enum: ['baru', 'proses', 'selesai', 'ditolak'] }, admin_notes: { type: 'string', description: 'Notes from admin' } } } } },
+            content: { 'application/json': { schema: { type: 'object', required: ['status'], properties: { status: { type: 'string', enum: ['OPEN', 'PROCESS', 'DONE', 'CANCELED', 'REJECT'] }, admin_notes: { type: 'string', description: 'Notes from admin' } } } } },
           },
           responses: { '200': { description: 'Status updated', content: { 'application/json': { schema: { $ref: '#/components/schemas/Complaint' } } } }, '404': { description: 'Not found' } },
         },
@@ -331,7 +331,7 @@ Case Service mengelola **Laporan Warga** dan **Permohonan Layanan** dalam sistem
             alamat: { type: 'string' },
             rt_rw: { type: 'string' },
             foto_url: { type: 'string', nullable: true },
-            status: { type: 'string', enum: ['baru', 'proses', 'selesai', 'ditolak'] },
+            status: { type: 'string', enum: ['OPEN', 'PROCESS', 'DONE', 'CANCELED', 'REJECT'] },
             admin_notes: { type: 'string', nullable: true },
             created_at: { type: 'string', format: 'date-time' },
             updated_at: { type: 'string', format: 'date-time' },

@@ -1,6 +1,8 @@
 export interface MessageData {
   village_id?: string;
-  wa_user_id: string;
+  wa_user_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier: string;
   message_id: string;
   message_text: string;
   timestamp?: Date;
@@ -18,13 +20,16 @@ export interface OutgoingMessageData extends MessageData {
 
 export interface MessageHistoryQuery {
   village_id?: string;
-  wa_user_id: string;
+  channel_identifier: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
   limit?: number;
 }
 
 export interface SendMessageRequest {
   village_id?: string;
-  wa_user_id: string;
+  wa_user_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier?: string;
   message: string;
 }
 

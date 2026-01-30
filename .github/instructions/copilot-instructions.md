@@ -9,8 +9,8 @@ Dokumen ini mengarahkan GitHub Copilot agar konsisten dengan kebutuhan GovConnec
 
 ## ✅ Aturan Umum
 - Ikuti arsitektur **5 service** dan prinsip **1 service = 1 database**.
-- **AI Orchestrator stateless** (tidak boleh simpan data di DB AI).
-- **Chat history hanya di Channel Service** (FIFO 30 pesan).
+- **AI Orchestrator stateless** (tidak boleh simpan data di DB AI atau memory session persisten).
+- **Chat history hanya di Channel Service** (FIFO 30 pesan, pakai `channel` + `channel_identifier`).
 - Jangan mengubah konfigurasi model AI di UI; hanya lewat **ENV**.
 - Jangan mengakses DB antar service secara langsung; gunakan REST/RabbitMQ.
 - Selalu jaga naming convention yang sudah ada (kebab-case file, camelCase function, PascalCase class).
@@ -101,7 +101,8 @@ AI wajib mengembalikan JSON valid sesuai schema:
 - Layanan punya deskripsi, slug, mode (online|offline|both).
 - Persyaratan dinamis: file/text/textarea/select/radio/date/number.
 - Form publik: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`.
-- Prefill WA via `?user=628xxx`.
+- Prefill WA via `?wa=628xxx`.
+- Prefill Webchat via `?session=web_xxx`.
 
 ## ✅ Pengaduan
 - Kategori → banyak jenis.

@@ -12,6 +12,8 @@
 
 import logger from '../utils/logger';
 
+const CROSS_CHANNEL_ENABLED = false;
+
 // ==================== TYPES ====================
 
 export interface ChannelIdentity {
@@ -49,6 +51,7 @@ const userIdToPhone = new Map<string, string>();
  * Extract phone number from user ID
  */
 export function extractPhoneNumber(userId: string): string | null {
+  if (!CROSS_CHANNEL_ENABLED) return null;
   // WhatsApp format: 628xxx
   if (/^628\d{8,12}$/.test(userId)) {
     return userId;
@@ -67,6 +70,7 @@ export function extractPhoneNumber(userId: string): string | null {
  * Link a user ID to a phone number
  */
 export function linkUserToPhone(userId: string, phoneNumber: string): void {
+  if (!CROSS_CHANNEL_ENABLED) return;
   const normalizedPhone = normalizePhoneNumber(phoneNumber);
   if (!normalizedPhone) return;
   
@@ -106,6 +110,7 @@ export function linkUserToPhone(userId: string, phoneNumber: string): void {
  * Normalize phone number to 628xxx format
  */
 export function normalizePhoneNumber(phone: string): string | null {
+  if (!CROSS_CHANNEL_ENABLED) return null;
   if (!phone) return null;
   
   // Remove non-digits
@@ -128,6 +133,7 @@ export function normalizePhoneNumber(phone: string): string | null {
  * Get cross-channel context for a user
  */
 export function getCrossChannelContext(userId: string): CrossChannelContext | null {
+  if (!CROSS_CHANNEL_ENABLED) return null;
   // Try direct phone extraction
   const phone = extractPhoneNumber(userId);
   if (phone) {
@@ -147,6 +153,7 @@ export function getCrossChannelContext(userId: string): CrossChannelContext | nu
  * Get linked user ID for another channel
  */
 export function getLinkedUserId(userId: string, targetChannel: 'whatsapp' | 'webchat'): string | null {
+  if (!CROSS_CHANNEL_ENABLED) return null;
   const context = getCrossChannelContext(userId);
   if (!context) return null;
   
@@ -164,6 +171,7 @@ export function updateSharedData(
   userId: string,
   data: Partial<CrossChannelContext['sharedData']>
 ): void {
+  if (!CROSS_CHANNEL_ENABLED) return;
   const phone = extractPhoneNumber(userId) || userIdToPhone.get(userId);
   if (!phone) return;
   
@@ -195,6 +203,7 @@ export function updateSharedData(
  * Get shared data for a user
  */
 export function getSharedData(userId: string): CrossChannelContext['sharedData'] | null {
+  if (!CROSS_CHANNEL_ENABLED) return null;
   const context = getCrossChannelContext(userId);
   return context?.sharedData || null;
 }
@@ -206,6 +215,7 @@ export function setPreferredChannel(
   userId: string,
   channel: 'whatsapp' | 'webchat'
 ): void {
+  if (!CROSS_CHANNEL_ENABLED) return;
   const phone = extractPhoneNumber(userId) || userIdToPhone.get(userId);
   if (!phone) return;
   
@@ -220,6 +230,7 @@ export function setPreferredChannel(
  * Record activity on a channel
  */
 export function recordChannelActivity(userId: string): void {
+  if (!CROSS_CHANNEL_ENABLED) return;
   const phone = extractPhoneNumber(userId) || userIdToPhone.get(userId);
   if (!phone) return;
   
@@ -234,6 +245,7 @@ export function recordChannelActivity(userId: string): void {
  * Check if user has activity on another channel
  */
 export function hasOtherChannelActivity(userId: string): boolean {
+  if (!CROSS_CHANNEL_ENABLED) return false;
   const context = getCrossChannelContext(userId);
   if (!context) return false;
   
@@ -251,6 +263,7 @@ export function hasOtherChannelActivity(userId: string): boolean {
  * Get context string for LLM prompt
  */
 export function getCrossChannelContextForLLM(userId: string): string {
+  if (!CROSS_CHANNEL_ENABLED) return '';
   const context = getCrossChannelContext(userId);
   if (!context) return '';
   

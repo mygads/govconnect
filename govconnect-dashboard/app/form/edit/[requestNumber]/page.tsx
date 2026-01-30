@@ -98,12 +98,19 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
 
   useEffect(() => {
     const token = searchParams.get("token");
+    const waParam = searchParams.get("wa");
+    const sessionParam = searchParams.get("session");
     if (!token || !requestNumber) return;
 
     const loadRequest = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`/api/public/service-requests/by-token?token=${encodeURIComponent(token)}`);
+        const identityQuery = waParam
+          ? `&wa=${encodeURIComponent(waParam)}`
+          : sessionParam
+            ? `&session_id=${encodeURIComponent(sessionParam)}`
+            : "";
+        const response = await fetch(`/api/public/service-requests/by-token?token=${encodeURIComponent(token)}${identityQuery}`);
         const result = await response.json();
         if (!response.ok) {
           throw new Error(result?.error || "Token tidak valid atau sudah kedaluwarsa");
@@ -258,6 +265,8 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     }
 
     const token = searchParams.get("token");
+    const waParam = searchParams.get("wa");
+    const sessionParam = searchParams.get("session");
     if (!token) {
       setError("Token tidak ditemukan. Silakan minta link edit baru dari WhatsApp.");
       return;
@@ -276,6 +285,8 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           edit_token: token,
+          ...(sessionParam ? { session_id: sessionParam } : {}),
+          ...(waParam ? { wa_user_id: normalizeTo628(waParam) } : {}),
           citizen_data: {
             nama_lengkap: citizenData.nama_lengkap,
             nik: citizenData.nik,

@@ -87,7 +87,7 @@ $tests = @(
   @{ Name = 'How to use GovConnect'; Message = 'Gimana cara menggunakan GovConnect lewat WA/Webchat?' ; ExpectIntent = 'KNOWLEDGE_QUERY'; MustContain=@('layanan','pengaduan'); MustNotContain=$commonMustNotContain; AllowLinks=$false },
   @{ Name = 'Recommended service message format'; Message = 'Contoh format pesan yang direkomendasikan untuk layanan apa?' ; ExpectIntent = 'KNOWLEDGE_QUERY'; MustContain=@('Saya ingin','Nama'); MustNotContain=$commonMustNotContain; AllowLinks=$false },
   @{ Name = '5W1H guidance'; Message = 'Apa itu prinsip 5W1H untuk laporan?' ; ExpectIntent = 'KNOWLEDGE_QUERY'; MustContain=@('What','Where','When'); MustNotContain=$commonMustNotContain; AllowLinks=$false },
-  @{ Name = 'Status & notification flow'; Message = 'Jelaskan status layanan/pengaduan dan notifikasinya' ; ExpectIntent = 'KNOWLEDGE_QUERY'; MustContain=@('baru','proses'); MustNotContain=$commonMustNotContain; AllowLinks=$false },
+  @{ Name = 'Status & notification flow'; Message = 'Jelaskan status layanan/pengaduan dan notifikasinya' ; ExpectIntent = 'KNOWLEDGE_QUERY'; MustContain=@('OPEN','PROCESS','DONE','CANCELED','REJECT'); MustNotContain=$commonMustNotContain; AllowLinks=$false },
 
   # --- Seeded KB: SOP pengaduan ---
   @{ Name = 'Complaint checklist'; Message = 'Checklist laporan pengaduan yang berkualitas apa saja?' ; ExpectIntent = 'KNOWLEDGE_QUERY'; MustContain=@('Lokasi','Waktu'); MustNotContain=$commonMustNotContain; AllowLinks=$false },

@@ -111,26 +111,40 @@ async function processWebchatMessage(params: {
 
 const router = Router();
 
-// In-memory store untuk web chat sessions
-// Dalam production, gunakan Redis atau database
-const webChatSessions = new Map<string, {
-  messages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: Date }>;
-  createdAt: Date;
-  lastActivity: Date;
-}>();
+async function fetchWebchatHistory(params: {
+  session_id: string;
+  village_id?: string;
+  limit?: number;
+}): Promise<Array<{ role: 'user' | 'assistant'; content: string; timestamp: Date }>> {
+  try {
+    const response = await axios.get(`${config.channelServiceUrl}/internal/messages`, {
+      params: {
+        channel_identifier: params.session_id,
+        channel: 'WEBCHAT',
+        limit: params.limit ?? 30,
+        ...(params.village_id ? { village_id: params.village_id } : {}),
+      },
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+        ...(params.village_id ? { 'x-village-id': params.village_id } : {}),
+      },
+      timeout: 5000,
+    });
 
-// Cleanup old sessions (older than 24 hours)
-setInterval(() => {
-  const now = Date.now();
-  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-  
-  for (const [sessionId, session] of webChatSessions.entries()) {
-    if (now - session.lastActivity.getTime() > maxAge) {
-      webChatSessions.delete(sessionId);
-      logger.info('Cleaned up old web chat session', { sessionId });
-    }
+    const messages = response.data?.messages || [];
+    return messages.map((m: any) => ({
+      role: m.direction === 'IN' ? 'user' : 'assistant',
+      content: m.message_text,
+      timestamp: new Date(m.timestamp),
+    }));
+  } catch (error: any) {
+    logger.warn('Failed to fetch webchat history from Channel Service', {
+      session_id: params.session_id,
+      error: error.message,
+    });
+    return [];
   }
-}, 60 * 60 * 1000); // Run every hour
+}
 
 /**
  * Process web chat message
@@ -221,24 +235,12 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
     
-    // Get or create session
-    let session = webChatSessions.get(session_id);
-    if (!session) {
-      session = {
-        messages: [],
-        createdAt: new Date(),
-        lastActivity: new Date(),
-      };
-      webChatSessions.set(session_id, session);
-    }
-    
-    // Add user message to session immediately (for history)
-    session.messages.push({
-      role: 'user',
-      content: message,
-      timestamp: new Date(),
+    // Build conversation history from Channel Service (stateless)
+    const historyMessages = await fetchWebchatHistory({
+      session_id,
+      village_id,
+      limit: 30,
     });
-    session.lastActivity = new Date();
     
     // Save incoming message to Channel Service (for Live Chat dashboard)
     saveWebchatMessage({
@@ -289,18 +291,11 @@ router.post('/', async (req: Request, res: Response) => {
     const result = await processWebchatMessage({
       userId: session_id,
       message: batchResult.combinedMessage, // Use combined message from batch
-      conversationHistory: session.messages.map((m) => ({
-        role: m.role,
+      conversationHistory: [...historyMessages, { role: 'user', content: batchResult.combinedMessage, timestamp: new Date() }].map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
         content: m.content,
       })),
       village_id,
-    });
-    
-    // Add assistant response to session
-    session.messages.push({
-      role: 'assistant',
-      content: result.response,
-      timestamp: new Date(),
     });
     
     // Save AI response to Channel Service (for Live Chat dashboard)
@@ -336,7 +331,7 @@ router.post('/', async (req: Request, res: Response) => {
       metadata: {
         session_id,
         processingTimeMs: result.metadata.processingTimeMs,
-        messageCount: session.messages.length,
+        messageCount: historyMessages.length + 1,
         model: result.metadata.model,
         hasKnowledge: result.metadata.hasKnowledge,
         knowledgeConfidence: result.metadata.knowledgeConfidence,
@@ -374,26 +369,37 @@ router.get('/:session_id', (req: Request, res: Response) => {
     });
     return;
   }
-  
-  const session = webChatSessions.get(session_id);
-  
-  if (!session) {
-    res.status(404).json({
-      success: false,
-      error: 'Session tidak ditemukan',
+
+  const village_id = getQuery(req, 'village_id') ?? getQuery(req, 'villageId');
+
+  fetchWebchatHistory({
+    session_id,
+    village_id: village_id ? String(village_id) : undefined,
+    limit: 30,
+  })
+    .then((messages) => {
+      if (!messages || messages.length === 0) {
+        res.status(404).json({
+          success: false,
+          error: 'Session tidak ditemukan',
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        session: {
+          session_id,
+          messages,
+        },
+      });
+    })
+    .catch(() => {
+      res.status(500).json({
+        success: false,
+        error: 'Gagal mengambil riwayat sesi',
+      });
     });
-    return;
-  }
-  
-  res.json({
-    success: true,
-    session: {
-      session_id,
-      messages: session.messages,
-      createdAt: session.createdAt,
-      lastActivity: session.lastActivity,
-    },
-  });
 });
 
 /**
@@ -409,13 +415,33 @@ router.delete('/:session_id', (req: Request, res: Response) => {
     });
     return;
   }
-  
-  const deleted = webChatSessions.delete(session_id);
-  
-  res.json({
-    success: true,
-    deleted,
-  });
+
+  const village_id = getQuery(req, 'village_id') ?? getQuery(req, 'villageId');
+
+  axios
+    .delete(`${config.channelServiceUrl}/internal/conversations/${encodeURIComponent(session_id)}`, {
+      params: {
+        channel: 'WEBCHAT',
+        ...(village_id ? { village_id } : {}),
+      },
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+        ...(village_id ? { 'x-village-id': village_id } : {}),
+      },
+      timeout: 5000,
+    })
+    .then(() => {
+      res.json({
+        success: true,
+        deleted: true,
+      });
+    })
+    .catch((error: any) => {
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Gagal menghapus sesi',
+      });
+    });
 });
 
 /**
@@ -425,7 +451,7 @@ router.delete('/:session_id', (req: Request, res: Response) => {
 router.get('/stats', (_req: Request, res: Response) => {
   res.json({
     success: true,
-    activeSessions: webChatSessions.size,
+    activeSessions: 0,
   });
 });
 
@@ -475,26 +501,6 @@ router.get('/:session_id/poll', async (req: Request, res: Response) => {
     let adminMessages: Array<{ message: string; admin_name?: string; timestamp: Date }> = [];
     if (takeoverStatus.is_takeover) {
       adminMessages = await getAdminMessages(session_id, since, village_id);
-      
-      // Add admin messages to local session for consistency
-      const session = webChatSessions.get(session_id);
-      if (session && adminMessages.length > 0) {
-        for (const msg of adminMessages) {
-          // Check if message already exists in session
-          const exists = session.messages.some(
-            m => m.role === 'assistant' && m.content === msg.message && 
-                 Math.abs(m.timestamp.getTime() - msg.timestamp.getTime()) < 1000
-          );
-          if (!exists) {
-            session.messages.push({
-              role: 'assistant',
-              content: msg.message,
-              timestamp: msg.timestamp,
-            });
-          }
-        }
-        session.lastActivity = new Date();
-      }
     }
     
     res.json({

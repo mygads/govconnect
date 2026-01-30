@@ -43,7 +43,7 @@ import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { RAGContext } from '../types/embedding.types';
 import { preProcessMessage, postProcessResponse, shouldUseFastPath, buildFastPathResponse } from './ai-optimizer.service';
-import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage } from './user-profile.service';
+import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile } from './user-profile.service';
 import { getEnhancedContext, updateContext, recordDataCollected, recordCompletedAction, getContextForLLM } from './conversation-context.service';
 import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
 import { linkUserToPhone, recordChannelActivity, updateSharedData, getCrossChannelContextForLLM } from './cross-channel-context.service';
@@ -121,6 +121,13 @@ const pendingCancelConfirmation: Map<string, {
   timestamp: number;
 }> = new Map();
 
+// Name confirmation state cache
+// Key: userId, Value: { name, timestamp }
+const pendingNameConfirmation: Map<string, {
+  name: string;
+  timestamp: number;
+}> = new Map();
+
 // Online service form offer state cache
 // Key: userId, Value: { service_slug, village_id, timestamp }
 const pendingServiceFormOffer: Map<string, {
@@ -146,6 +153,12 @@ setInterval(() => {
     if (now - value.timestamp > expireMs) {
       pendingCancelConfirmation.delete(key);
       logger.debug('Cleaned up expired cancel confirmation', { userId: key });
+    }
+  }
+  for (const [key, value] of pendingNameConfirmation.entries()) {
+    if (now - value.timestamp > expireMs) {
+      pendingNameConfirmation.delete(key);
+      logger.debug('Cleaned up expired name confirmation', { userId: key });
     }
   }
   for (const [key, value] of pendingServiceFormOffer.entries()) {
@@ -399,9 +412,10 @@ function buildImportantContactsMessage(contacts: Array<{ name: string; phone: st
  * Handle complaint creation
  */
 export async function handleComplaintCreation(
-  userId: string, 
-  llmResponse: any, 
-  currentMessage: string, 
+  userId: string,
+  channel: ChannelType,
+  llmResponse: any,
+  currentMessage: string,
   mediaUrl?: string
 ): Promise<string> {
   const { kategori, rt_rw } = llmResponse.fields || {};
@@ -459,8 +473,21 @@ export async function handleComplaintCreation(
       return 'Mohon jelaskan jenis masalah yang ingin dilaporkan (contoh: jalan rusak, lampu mati, sampah, dll).';
     }
     if (!alamat) {
-      const kategoriLabel = kategori.replace(/_/g, ' ');
-      return `Baik, saya akan catat laporan ${kategoriLabel} Anda. Boleh sebutkan alamat lengkapnya?`;
+      const kategoriLabelMap: Record<string, string> = {
+        jalan_rusak: 'jalan rusak',
+        lampu_mati: 'lampu jalan yang mati',
+        sampah: 'penumpukan sampah',
+        drainase: 'selokan/saluran air yang tersumbat',
+        banjir: 'banjir',
+        pohon_tumbang: 'pohon tumbang',
+        fasilitas_rusak: 'fasilitas umum yang rusak',
+      };
+      const kategoriLabel = kategoriLabelMap[kategori] || kategori.replace(/_/g, ' ');
+      const isEmergencyNeedAddress = detectEmergencyComplaint(deskripsi || '', currentMessage, kategori);
+      if (isEmergencyNeedAddress) {
+        return 'Baik Pak/Bu, mohon segera kirimkan alamat lokasi kejadian.';
+      }
+      return `Baik Pak/Bu, mohon jelaskan lokasi ${kategoriLabel} tersebut.`;
     }
     
     return llmResponse.reply_text;
@@ -480,8 +507,8 @@ export async function handleComplaintCreation(
     });
     
     const kategoriLabel = kategori.replace(/_/g, ' ');
-    const photoNote = mediaUrl ? '\n\n📷 Foto Anda sudah kami terima.' : '';
-    return `📍 Alamat "${alamat}" sepertinya kurang spesifik untuk laporan ${kategoriLabel}.${photoNote}\n\nApakah Anda ingin menambahkan detail alamat (nomor rumah, RT/RW, nama jalan lengkap) atau ketik "ya" untuk tetap menggunakan alamat ini?`;
+    const photoNote = mediaUrl ? '\n\nFoto Anda sudah kami terima.' : '';
+    return `Alamat "${alamat}" sepertinya kurang spesifik untuk laporan ${kategoriLabel}.${photoNote}\n\nApakah Bapak/Ibu ingin menambahkan detail alamat (nomor rumah, RT/RW, nama jalan lengkap) atau balas "YA" untuk tetap menggunakan alamat ini?`;
   }
   
   // Check if this is an emergency complaint
@@ -493,8 +520,11 @@ export async function handleComplaintCreation(
     : detectEmergencyComplaint(deskripsi || '', currentMessage, kategori);
   
   // Create complaint in Case Service
+  const isWebchatChannel = channel === 'webchat';
   const complaintId = await createComplaint({
-    wa_user_id: userId,
+    wa_user_id: isWebchatChannel ? undefined : userId,
+    channel: isWebchatChannel ? 'WEBCHAT' : 'WHATSAPP',
+    channel_identifier: userId,
     kategori,
     deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
     village_id: villageId,
@@ -526,7 +556,8 @@ export async function handleComplaintCreation(
       recordDataCollected(userId, 'alamat', alamat);
     }
     
-    const withPhoto = mediaUrl ? ' 📷' : '';
+    const hasRtRw = Boolean(rt_rw) || /\brt\b|\brw\b/i.test(alamat || '');
+    const withPhotoNote = mediaUrl ? '\nFoto pendukung sudah kami terima.' : '';
     
     let importantContactsMessage = '';
     if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
@@ -539,11 +570,11 @@ export async function handleComplaintCreation(
     }
 
     if (isEmergency) {
-      logger.info('🚨 Emergency complaint detected', { userId, complaintId, kategori, deskripsi });
-      return `🚨 PRIORITAS TINGGI\n\nTerima kasih laporannya Kak! Ini situasi darurat yang perlu penanganan segera.\n\nSaya sudah catat sebagai LAPORAN PRIORITAS dengan nomor ${complaintId}.${withPhoto}\n\nTim kami akan segera ke lokasi ${alamat || 'yang Anda laporkan'}.\n\n⚠️ Untuk keamanan, mohon hindari area tersebut dulu ya Kak.${importantContactsMessage}`;
+      logger.info('Emergency complaint detected', { userId, complaintId, kategori, deskripsi });
     }
-    
-    return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan survey lokasi dalam 1-3 hari kerja${alamat ? ` di ${alamat}` : ''}.${importantContactsMessage}`;
+
+    const statusLine = isEmergency || hasRtRw ? '\nStatus laporan saat ini: OPEN.' : '';
+    return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${statusLine}${withPhotoNote}${importantContactsMessage}`;
   }
   
   aiAnalyticsService.recordFailure('CREATE_COMPLAINT');
@@ -562,15 +593,104 @@ function normalizeTo628(input: string): string {
   return digits;
 }
 
+function extractNameFromText(text: string): string | null {
+  const cleaned = (text || '').trim();
+  if (!cleaned) return null;
+
+  const lower = cleaned.toLowerCase();
+  const stopWords = new Set(['ya', 'iya', 'y', 'tidak', 'gak', 'nggak', 'ok', 'oke', 'sip', 'siap', 'baik']);
+  if (stopWords.has(lower)) return null;
+
+  const patterns = [
+    /nama\s+(?:saya|aku|gue|gw)\s+(?:adalah\s+)?([a-zA-Z\s]{2,30})/i,
+    /saya\s+([a-zA-Z\s]{2,30})/i,
+    /panggil\s+saya\s+([a-zA-Z\s]{2,30})/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim().split(/\s+/).slice(0, 2).join(' ');
+      return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+  }
+
+  if (cleaned.length >= 2 && cleaned.length <= 20 && /^[a-zA-Z]+$/.test(cleaned)) {
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+  }
+
+  return null;
+}
+
+function extractNameFromHistory(history?: Array<{ role: 'user' | 'assistant'; content: string }>): string | null {
+  if (!history || history.length === 0) return null;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const item = history[i];
+    if (item.role !== 'user') continue;
+    const name = extractNameFromText(item.content);
+    if (name) return name;
+  }
+  return null;
+}
+
+function wasNamePrompted(history?: Array<{ role: 'user' | 'assistant'; content: string }>): boolean {
+  if (!history || history.length === 0) return false;
+  const lastAssistant = [...history].reverse().find(item => item.role === 'assistant');
+  if (!lastAssistant) return false;
+  return /(nama|dengan\s+siapa|siapa\s+nama)/i.test(lastAssistant.content);
+}
+
+function buildChannelParams(
+  channel: ChannelType,
+  userId: string
+): { channel: 'WEBCHAT' | 'WHATSAPP'; wa_user_id?: string; channel_identifier?: string } {
+  const isWebchat = channel === 'webchat';
+  return {
+    channel: isWebchat ? 'WEBCHAT' : 'WHATSAPP',
+    wa_user_id: isWebchat ? undefined : userId,
+    channel_identifier: isWebchat ? userId : undefined,
+  };
+}
+
 function isValidCitizenWaNumber(value: string): boolean {
   return /^628\d{8,12}$/.test(value);
 }
 
-function buildPublicServiceFormUrl(baseUrl: string, villageSlug: string, serviceSlug: string, userId: string): string {
+function buildPublicServiceFormUrl(
+  baseUrl: string,
+  villageSlug: string,
+  serviceSlug: string,
+  userId: string,
+  channel: 'whatsapp' | 'webchat'
+): string {
   const url = `${baseUrl}/form/${villageSlug}/${serviceSlug}`;
+  if (channel === 'webchat') {
+    return `${url}?session=${encodeURIComponent(userId)}`;
+  }
   const waUser = normalizeTo628(userId);
   if (!isValidCitizenWaNumber(waUser)) return url;
-  return `${url}?user=${encodeURIComponent(waUser)}`;
+  return `${url}?wa=${encodeURIComponent(waUser)}`;
+}
+
+function buildEditServiceFormUrl(
+  baseUrl: string,
+  requestNumber: string,
+  token: string,
+  userId: string,
+  channel: 'whatsapp' | 'webchat'
+): string {
+  const url = `${baseUrl}/form/edit/${encodeURIComponent(requestNumber)}`;
+  const params = new URLSearchParams();
+  params.set('token', token);
+  if (channel === 'webchat') {
+    params.set('session', userId);
+  } else {
+    const waUser = normalizeTo628(userId);
+    if (isValidCitizenWaNumber(waUser)) {
+      params.set('wa', waUser);
+    }
+  }
+  return `${url}?${params.toString()}`;
 }
 
 async function resolveVillageSlugForPublicForm(villageId?: string): Promise<string> {
@@ -588,7 +708,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
   const { service_slug, service_id } = llmResponse.fields || {};
   
   if (!service_slug && !service_id) {
-    return llmResponse.reply_text || 'Baik Kak, layanan apa yang ingin ditanyakan?';
+    return llmResponse.reply_text || 'Baik Pak/Bu, layanan apa yang ingin ditanyakan?';
   }
   
   try {
@@ -613,7 +733,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     const service = response.data?.data;
     
     if (!service) {
-      return llmResponse.reply_text || 'Maaf Kak, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.';
+      return llmResponse.reply_text || 'Mohon maaf Pak/Bu, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.';
     }
     
     // Build requirements list
@@ -634,16 +754,14 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
     const villageSlug = await resolveVillageSlugForPublicForm(villageId);
     
-    let replyText = `📋 *${service.name}*\n\n`;
-    
-    if (service.description) {
+    let replyText = `Baik Pak/Bu, untuk pembuatan ${service.name} persyaratannya antara lain:\n\n`;
+
+    if (requirementsList) {
+      replyText += `${requirementsList}\n\n`;
+    } else if (service.description) {
       replyText += `${service.description}\n\n`;
     }
-    
-    if (requirementsList) {
-      replyText += `*Persyaratan:*\n${requirementsList}\n\n`;
-    }
-    
+
     if (isOnline) {
       // Offer first, then send the form link only when the user confirms.
       setPendingServiceFormOffer(userId, {
@@ -652,26 +770,26 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
         timestamp: Date.now(),
       });
 
-      replyText += `💡 Layanan ini bisa diproses secara *online*.\n\nMau sekalian saya bantu buat pengajuan sekarang?\nBalas *iya* untuk saya kirim link formulir (atau balas *tidak* jika belum).`;
+      replyText += 'Apakah Bapak/Ibu ingin mengajukan layanan ini secara online?';
     } else {
-      replyText += `📍 Layanan ini harus diproses secara *offline* di kantor kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas ya Kak.`;
+      replyText += 'Layanan ini diproses secara offline di kantor kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
     }
     
     return replyText;
   } catch (error: any) {
     logger.error('Failed to fetch service info', { error: error.message, service_slug, service_id });
-    return llmResponse.reply_text || 'Baik Kak, saya cek dulu info layanan tersebut ya.';
+    return llmResponse.reply_text || 'Baik Pak/Bu, saya cek dulu info layanan tersebut ya.';
   }
 }
 
 /**
  * Handle service request creation (send public form link)
  */
-export async function handleServiceRequestCreation(userId: string, llmResponse: any): Promise<string> {
+export async function handleServiceRequestCreation(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
   const { service_slug } = llmResponse.fields || {};
   
   if (!service_slug) {
-    return llmResponse.reply_text || 'Mohon sebutkan nama layanan yang ingin diajukan ya Kak.';
+    return llmResponse.reply_text || 'Mohon sebutkan nama layanan yang ingin diajukan ya Pak/Bu.';
   }
 
   const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
@@ -688,54 +806,60 @@ export async function handleServiceRequestCreation(userId: string, llmResponse: 
 
     const service = response.data?.data;
     if (!service) {
-      return `Maaf Kak, layanan tersebut tidak ditemukan di database. Silakan tanyakan layanan lain ya.`;
+      return 'Mohon maaf Pak/Bu, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.';
     }
 
     const isOnline = service.mode === 'online' || service.mode === 'both';
     if (!isOnline) {
-      return `📍 *${service.name}* saat ini hanya bisa diproses secara *offline* di kantor kelurahan/desa.\n\nSilakan datang ke kantor dengan membawa persyaratan yang diperlukan ya Kak.`;
+      return `${service.name} saat ini hanya bisa diproses secara offline di kantor kelurahan/desa.\n\nSilakan datang ke kantor dengan membawa persyaratan yang diperlukan.`;
     }
 
     const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
     const villageSlug = await resolveVillageSlugForPublicForm(villageId);
-    const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug || service_slug, userId);
+    const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug || service_slug, userId, channel === 'webchat' ? 'webchat' : 'whatsapp');
 
-    return `Baik Kak, ini link formulir layanan:\n${formUrl}\n\nSilakan isi data di formulir tersebut. Setelah submit, Kakak akan menerima nomor layanan untuk cek status.`;
+    return `Baik Pak/Bu, silakan mengisi permohonan melalui link berikut:\n${formUrl}\n\nSetelah dikirim, Bapak/Ibu akan mendapatkan nomor layanan.`;
   } catch (error: any) {
     logger.error('Failed to validate service before sending form link', { error: error.message, service_slug, villageId });
-    return llmResponse.reply_text || 'Maaf Kak, saya belum bisa menyiapkan link formulirnya sekarang. Coba lagi sebentar ya.';
+    return llmResponse.reply_text || 'Mohon maaf Pak/Bu, saya belum bisa menyiapkan link formulirnya sekarang. Coba lagi sebentar ya.';
   }
 }
 
 /**
  * Handle service request edit (send edit link with token)
  */
-export async function handleServiceRequestEditLink(userId: string, llmResponse: any): Promise<string> {
+export async function handleServiceRequestEditLink(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
   const { request_number } = llmResponse.fields || {};
 
   if (!request_number) {
-    return llmResponse.reply_text || 'Mohon sebutkan nomor layanan yang ingin diubah ya Kak (contoh: LAY-20251201-001).';
+    return llmResponse.reply_text || 'Baik Pak/Bu, link tersebut sudah tidak berlaku. Apakah Bapak/Ibu ingin kami kirimkan link pembaruan yang baru?';
   }
 
-  const tokenResult = await requestServiceRequestEditToken(request_number, userId);
+  const tokenResult = await requestServiceRequestEditToken(request_number, buildChannelParams(channel, userId));
 
   if (!tokenResult.success) {
     if (tokenResult.error === 'NOT_FOUND') {
-      return `Permohonan layanan *${request_number}* tidak ditemukan. Mohon cek nomor layanan ya Kak.`;
+      return `Permohonan layanan *${request_number}* tidak ditemukan. Mohon cek nomor layanan ya Pak/Bu.`;
     }
     if (tokenResult.error === 'NOT_OWNER') {
-      return `Maaf Kak, permohonan *${request_number}* bukan milik Kakak, jadi tidak bisa diubah 🙏`;
+      return `Mohon maaf Pak/Bu, permohonan *${request_number}* bukan milik Anda, jadi tidak bisa diubah.`;
     }
     if (tokenResult.error === 'LOCKED') {
-      return `Permohonan *${request_number}* sudah selesai/ditolak/dibatalkan sehingga tidak bisa diubah.`;
+      return `Mohon maaf Pak/Bu, layanan *${request_number}* sudah selesai/dibatalkan/ditolak sehingga tidak dapat diperbarui.`;
     }
-    return tokenResult.message || 'Maaf Kak, ada kendala saat menyiapkan link edit.';
+    return tokenResult.message || 'Mohon maaf Pak/Bu, ada kendala saat menyiapkan link edit.';
   }
 
   const baseUrl = (process.env.PUBLIC_FORM_BASE_URL || process.env.PUBLIC_BASE_URL || 'https://govconnect.my.id').replace(/\/$/, '');
-  const editUrl = `${baseUrl}/form/edit/${encodeURIComponent(request_number)}?token=${encodeURIComponent(tokenResult.edit_token || '')}`;
+  const editUrl = buildEditServiceFormUrl(
+    baseUrl,
+    request_number,
+    tokenResult.edit_token || '',
+    userId,
+    channel === 'webchat' ? 'webchat' : 'whatsapp'
+  );
 
-  return `Baik Kak, ini link untuk mengubah data permohonan layanan:\n${editUrl}\n\nLink ini berlaku 24 jam dan hanya bisa dipakai sekali.`;
+  return `Baik Pak/Bu, perubahan data layanan hanya dapat dilakukan melalui website.\n\nSilakan lakukan pembaruan melalui link berikut:\n${editUrl}\n\nLink ini hanya berlaku satu kali.`;
 }
 
 /**
@@ -875,46 +999,74 @@ function extractAddressFromComplaintMessage(message: string, userId: string): st
  * Handle status check for complaints dan permohonan layanan
  * Now includes ownership validation - user can only check their own records
  */
-export async function handleStatusCheck(userId: string, llmResponse: any): Promise<string> {
+export async function handleStatusCheck(userId: string, channel: ChannelType, llmResponse: any, currentMessage: string = ''): Promise<string> {
   const { complaint_id, request_number } = llmResponse.fields;
   const detailMode = !!(llmResponse.fields?.detail_mode || llmResponse.fields?.detail);
   
   if (!complaint_id && !request_number) {
     if (llmResponse.reply_text) return llmResponse.reply_text;
-    return 'Halo Kak! Untuk cek status, boleh sebutkan nomornya ya (contoh: LAP-20251201-001 atau LAY-20251201-001) 📋';
+    const ctx = getEnhancedContext(userId);
+    const lastComplaint = ctx.keyPoints
+      .slice()
+      .reverse()
+      .find(point => /CREATE_COMPLAINT berhasil:/i.test(point));
+    const inferredComplaintId = lastComplaint?.split('berhasil:')[1]?.trim();
+    if (inferredComplaintId) {
+      llmResponse.fields.complaint_id = inferredComplaintId;
+    } else {
+      return 'Untuk cek status, mohon sebutkan nomor laporan atau layanan ya Pak/Bu (contoh: LAP-20251201-001 atau LAY-20251201-001).';
+    }
   }
   
   if (complaint_id) {
     // Use ownership validation - user can only check their own complaints
     const { getComplaintStatusWithOwnership } = await import('./case-client.service');
-    const result = await getComplaintStatusWithOwnership(complaint_id, userId);
+    const result = await getComplaintStatusWithOwnership(complaint_id, buildChannelParams(channel, userId));
     
     if (!result.success) {
       if (result.error === 'NOT_FOUND') {
-        return `Hmm, kami tidak menemukan laporan dengan nomor *${complaint_id}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor laporan biasanya seperti ini: LAP-20251201-001`;
+        return `Mohon maaf Pak/Bu, kami tidak menemukan laporan dengan nomor *${complaint_id}*.\n\nSilakan cek ulang format nomor laporan (contoh: LAP-20251201-001).`;
       }
       if (result.error === 'NOT_OWNER') {
-        return `Maaf Kak, laporan *${complaint_id}* bukan milik Kakak ya 🙏\n\nSilakan cek kembali nomor laporan Anda. Jika lupa, ketik "riwayat" untuk melihat daftar laporan Anda.`;
+        return `Mohon maaf Pak/Bu, laporan *${complaint_id}* bukan milik Anda.\n\nSilakan cek kembali nomor laporan Anda. Jika lupa, ketik "riwayat" untuk melihat daftar laporan Anda.`;
       }
-      return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';
+      return 'Mohon maaf Pak/Bu, ada kendala saat mengecek status. Silakan coba lagi.';
+    }
+
+    if (!result.data) {
+      return 'Mohon maaf Pak/Bu, ada kendala saat menampilkan detail laporan. Silakan coba lagi.';
     }
     
+    if (!detailMode) {
+      const isExplicitCheck = /(cek|status|cek\s+laporan|cek\s+lagi)/i.test(currentMessage || '');
+      const statusInfo = getStatusInfo(result.data.status);
+      if (!isExplicitCheck && statusInfo.text === 'PROCESS') {
+        return `Mohon maaf Pak/Bu, laporan ${complaint_id} masih dalam proses penanganan oleh petugas desa.`;
+      }
+      if (!isExplicitCheck && statusInfo.text === 'OPEN') {
+        return `Mohon maaf Pak/Bu, laporan ${complaint_id} masih menunggu untuk diproses oleh petugas desa.`;
+      }
+    }
     return detailMode ? buildComplaintDetailResponse(result.data) : buildNaturalStatusResponse(result.data);
   }
   
   if (request_number) {
-    const result = await getServiceRequestStatusWithOwnership(request_number, userId);
+    const result = await getServiceRequestStatusWithOwnership(request_number, buildChannelParams(channel, userId));
     
     if (!result.success) {
       if (result.error === 'NOT_FOUND') {
-        return `Hmm, kami tidak menemukan permohonan layanan dengan nomor *${request_number}* nih Kak 🤔\n\nCoba cek lagi ya, format nomor layanan biasanya seperti ini: LAY-20251201-001`;
+        return `Mohon maaf Pak/Bu, kami tidak menemukan permohonan layanan dengan nomor *${request_number}*.\n\nSilakan cek ulang format nomor layanan (contoh: LAY-20251201-001).`;
       }
       if (result.error === 'NOT_OWNER') {
-        return `Maaf Kak, permohonan layanan *${request_number}* bukan milik Kakak ya 🙏\n\nSilakan cek kembali nomor layanan Anda. Jika lupa, ketik "riwayat" untuk melihat daftar layanan Anda.`;
+        return `Mohon maaf Pak/Bu, permohonan layanan *${request_number}* bukan milik Anda.\n\nSilakan cek kembali nomor layanan Anda. Jika lupa, ketik "riwayat" untuk melihat daftar layanan Anda.`;
       }
-      return 'Maaf Kak, ada kendala saat mengecek status layanan. Coba lagi ya! 🙏';
+      return 'Mohon maaf Pak/Bu, ada kendala saat mengecek status layanan. Silakan coba lagi.';
     }
     
+    if (!result.data) {
+      return 'Mohon maaf Pak/Bu, ada kendala saat menampilkan detail layanan. Silakan coba lagi.';
+    }
+
     if (!detailMode) return buildNaturalServiceStatusResponse(result.data);
 
     let requirementDefs: ServiceRequirementDefinition[] = [];
@@ -926,21 +1078,21 @@ export async function handleStatusCheck(userId: string, llmResponse: any): Promi
     return buildServiceRequestDetailResponse(result.data, requirementDefs);
   }
   
-  return 'Maaf Kak, ada kendala saat mengecek status. Coba lagi ya! 🙏';
+  return 'Mohon maaf Pak/Bu, ada kendala saat mengecek status. Silakan coba lagi.';
 }
 
 /**
  * Handle cancellation of complaints
  */
-export async function handleCancellation(userId: string, llmResponse: any): Promise<string> {
+export async function handleCancellation(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
   const { complaint_id, cancel_reason } = llmResponse.fields;
   
   if (!complaint_id) {
     if (llmResponse.reply_text) return llmResponse.reply_text;
-    return 'Halo Kak! Untuk membatalkan laporan, mohon sertakan nomornya ya (contoh: LAP-20251201-001) 📋';
+    return 'Untuk membatalkan laporan, mohon sertakan nomornya ya Pak/Bu (contoh: LAP-20251201-001).';
   }
   
-  const result = await cancelComplaint(complaint_id, userId, cancel_reason);
+  const result = await cancelComplaint(complaint_id, buildChannelParams(channel, userId), cancel_reason);
   
   if (!result.success) {
     return buildCancelErrorResponse('laporan', complaint_id, result.error, result.message);
@@ -960,8 +1112,8 @@ export async function handleCancellationRequest(
   if (!targetId) {
     if (llmResponse.reply_text) return llmResponse.reply_text;
     return type === 'laporan'
-      ? 'Halo Kak! Untuk membatalkan laporan, mohon sertakan nomornya ya (contoh: LAP-20251201-001) 📋'
-      : 'Halo Kak! Untuk membatalkan layanan, mohon sertakan nomornya ya (contoh: LAY-20251201-001) 📋';
+      ? 'Untuk membatalkan laporan, mohon sertakan nomornya ya Pak/Bu (contoh: LAP-20251201-001).'
+      : 'Untuk membatalkan layanan, mohon sertakan nomornya ya Pak/Bu (contoh: LAY-20251201-001).';
   }
 
   setPendingCancelConfirmation(userId, {
@@ -972,20 +1124,20 @@ export async function handleCancellationRequest(
   });
 
   const label = type === 'laporan' ? 'laporan' : 'layanan';
-  return `Sebelum saya batalkan, mohon konfirmasi dulu ya Kak.\n\nApakah Kakak yakin ingin membatalkan ${label} *${targetId}*?\nBalas "ya" untuk lanjut atau "tidak" untuk batal.`;
+  return `Apakah Bapak/Ibu yakin ingin membatalkan ${label} ${targetId}?\nBalas YA untuk konfirmasi.`;
 }
 
 /**
  * Handle cancellation of service requests
  */
-export async function handleServiceRequestCancellation(userId: string, llmResponse: any): Promise<string> {
+export async function handleServiceRequestCancellation(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
   const { request_number, cancel_reason } = llmResponse.fields || {};
 
   if (!request_number) {
-    return llmResponse.reply_text || 'Halo Kak! Untuk membatalkan layanan, mohon sertakan nomornya ya (contoh: LAY-20251201-001) 📋';
+    return llmResponse.reply_text || 'Untuk membatalkan layanan, mohon sertakan nomornya ya Pak/Bu (contoh: LAY-20251201-001).';
   }
 
-  const result = await cancelServiceRequest(request_number, userId, cancel_reason);
+  const result = await cancelServiceRequest(request_number, buildChannelParams(channel, userId), cancel_reason);
 
   if (!result.success) {
     return buildCancelErrorResponse('layanan', request_number, result.error, result.message);
@@ -997,45 +1149,50 @@ export async function handleServiceRequestCancellation(userId: string, llmRespon
 /**
  * Handle complaint update by user
  */
-export async function handleComplaintUpdate(userId: string, llmResponse: any): Promise<string> {
+export async function handleComplaintUpdate(userId: string, channel: ChannelType, llmResponse: any, currentMessage: string = ''): Promise<string> {
   const { complaint_id, alamat, deskripsi, rt_rw } = llmResponse.fields || {};
 
   if (!complaint_id) {
     return llmResponse.reply_text || 'Mohon sebutkan nomor laporan yang ingin diperbarui (contoh: LAP-20251201-001).';
   }
 
-  if (!alamat && !deskripsi && !rt_rw) {
-    return llmResponse.reply_text || 'Data apa yang ingin diperbarui? (alamat/deskripsi/RT RW)';
+  const wantsPhoto = /(kirim|kirimkan|unggah|upload).*(foto|gambar)/i.test(currentMessage || '');
+  if (wantsPhoto) {
+    return 'Baik, silakan kirimkan foto pendukung laporan tersebut.';
   }
 
-  const result = await updateComplaintByUser(complaint_id, userId, { alamat, deskripsi, rt_rw });
+  if (!alamat && !deskripsi && !rt_rw) {
+    return 'Baik, silakan sampaikan keterangan tambahan yang ingin ditambahkan.';
+  }
+
+  const result = await updateComplaintByUser(complaint_id, buildChannelParams(channel, userId), { alamat, deskripsi, rt_rw });
 
   if (!result.success) {
     if (result.error === 'NOT_FOUND') {
       return `Hmm, laporan *${complaint_id}* tidak ditemukan. Coba cek kembali nomor laporan ya.`;
     }
     if (result.error === 'NOT_OWNER') {
-      return `Maaf Kak, laporan *${complaint_id}* bukan milik Kakak, jadi tidak bisa diubah 🙏`;
+      return `Mohon maaf Pak/Bu, laporan *${complaint_id}* bukan milik Anda, jadi tidak bisa diubah.`;
     }
     if (result.error === 'LOCKED') {
-      return `Laporan *${complaint_id}* sudah selesai/ditolak sehingga tidak bisa diubah.`;
+      return `Laporan *${complaint_id}* sudah selesai/dibatalkan/ditolak sehingga tidak bisa diubah.`;
     }
     return result.message || 'Maaf, terjadi kendala saat memperbarui laporan.';
   }
 
-  return `✅ Laporan *${complaint_id}* berhasil diperbarui. Terima kasih sudah melengkapi informasi.`;
+  return `Terima kasih.\nKeterangan laporan ${complaint_id} telah diperbarui.`;
 }
 
 /**
  * Handle user history request
  */
-export async function handleHistory(userId: string): Promise<string> {
+export async function handleHistory(userId: string, channel: ChannelType): Promise<string> {
   logger.info('Handling history request', { userId });
   
-  const history = await getUserHistory(userId);
+  const history = await getUserHistory(buildChannelParams(channel, userId));
   
   if (!history || history.total === 0) {
-    return `📋 *Riwayat Anda*\n\nBelum ada laporan atau layanan.\nKetik pesan untuk memulai.`;
+    return 'Belum ada laporan atau layanan. Silakan kirim pesan untuk memulai.';
   }
   
   return buildHistoryResponse(history.combined, history.total);
@@ -1067,25 +1224,25 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       /(kontak|hubungi|telepon|telp|call\s*center|hotline|\bnomor\b(\s+(wa|whatsapp|telp|telepon|kontak|hp))?)/i.test(normalizedQuery);
 
     if (isAskingAddress) {
-      const parts: string[] = [`📍 *Alamat ${officeName}*`];
-      if (profile?.address) {
-        parts.push(profile.address);
-      }
-      if (profile?.gmaps_url) {
-        parts.push(`Google Maps: ${profile.gmaps_url}`);
-      }
-
       if (!profile?.address && !profile?.gmaps_url) {
-        return `Maaf, data alamat/lokasi untuk *${officeName}* belum tersedia di database.`;
+        return 'Mohon maaf Pak/Bu, informasi alamat kantor belum tersedia. Silakan datang langsung ke kantor desa pada jam kerja.';
       }
 
-      return parts.join('\n');
+      if (profile?.address && profile?.gmaps_url) {
+        return `Kantor ${officeName} beralamat di ${profile.address}.\nLokasi Google Maps:\n${profile.gmaps_url}`;
+      }
+
+      if (profile?.address) {
+        return `Alamat Kantor ${officeName} adalah ${profile.address}.`;
+      }
+
+      return `Tentu Pak/Bu. Berikut lokasi Kantor ${officeName} di Google Maps:\n${profile.gmaps_url}`;
     }
 
     if (isAskingHours) {
       const hours: any = profile?.operating_hours;
       if (!hours || typeof hours !== 'object') {
-        return `Maaf, data jam operasional untuk *${officeName}* belum tersedia di database.`;
+        return 'Mohon maaf Pak/Bu, informasi jam operasional belum tersedia. Silakan datang langsung ke kantor desa pada jam kerja.';
       }
 
       const dayKeys = ['senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'minggu'] as const;
@@ -1094,19 +1251,43 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       const formatDay = (day: string, schedule: any): string => {
         const open = schedule?.open ?? null;
         const close = schedule?.close ?? null;
-        if (!open || !close) return `- ${day.charAt(0).toUpperCase() + day.slice(1)}: Tutup`;
-        return `- ${day.charAt(0).toUpperCase() + day.slice(1)}: ${open}–${close}`;
+        if (!open || !close) return `${day.charAt(0).toUpperCase() + day.slice(1)}: Tutup`;
+        return `${day.charAt(0).toUpperCase() + day.slice(1)}: ${open}–${close}`;
       };
 
-      const lines: string[] = [`🕐 *Jam Operasional ${officeName}*`];
       if (requestedDay) {
-        lines.push(formatDay(requestedDay, (hours as any)[requestedDay]));
-      } else {
-        for (const day of dayKeys) {
-          lines.push(formatDay(day, (hours as any)[day]));
+        const daySchedule = (hours as any)[requestedDay];
+        if (!daySchedule?.open || !daySchedule?.close) {
+          const dayLabel = requestedDay.charAt(0).toUpperCase() + requestedDay.slice(1);
+          if (requestedDay === 'sabtu' || requestedDay === 'minggu') {
+            return 'Mohon maaf Pak/Bu, kantor desa tidak beroperasi pada hari Sabtu dan Minggu.';
+          }
+          return `Mohon maaf Pak/Bu, kantor desa tidak beroperasi pada hari ${dayLabel}.`;
         }
+        const dayLabel = requestedDay.charAt(0).toUpperCase() + requestedDay.slice(1);
+        return `Kantor ${officeName} buka hari ${dayLabel} pukul ${daySchedule.open}–${daySchedule.close}.`;
       }
 
+      const weekdayKeys = ['senin', 'selasa', 'rabu', 'kamis', 'jumat'];
+      const weekendKeys = ['sabtu', 'minggu'];
+      const firstWeekday = (hours as any)[weekdayKeys[0]];
+      const allWeekdaysSame = weekdayKeys.every(day => {
+        const h = (hours as any)[day];
+        return h?.open === firstWeekday?.open && h?.close === firstWeekday?.close;
+      });
+      const weekendsClosed = weekendKeys.every(day => {
+        const h = (hours as any)[day];
+        return !h?.open || !h?.close;
+      });
+
+      if (allWeekdaysSame && firstWeekday?.open && firstWeekday?.close && weekendsClosed) {
+        return `Kantor ${officeName} buka Senin–Jumat, pukul ${firstWeekday.open}–${firstWeekday.close} WIB.`;
+      }
+
+      const lines: string[] = [`Jam operasional ${officeName}:`];
+      for (const day of dayKeys) {
+        lines.push(formatDay(day, (hours as any)[day]));
+      }
       return lines.join('\n');
     }
 
@@ -1121,7 +1302,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       }
 
       if (!contacts || contacts.length === 0) {
-        return `Maaf, data kontak penting untuk *${officeName}* belum tersedia di database.`;
+        return `Mohon maaf Pak/Bu, informasi kontak untuk ${officeName} belum tersedia.`;
       }
 
       const profileNameLower = (profile?.name || '').toLowerCase();
@@ -1139,7 +1320,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
         .sort((a, b) => b.score - a.score);
 
       const top = scored.slice(0, 3).map(s => s.c);
-      const lines: string[] = [`📞 *Kontak ${officeName}*`];
+      const lines: string[] = [`Kontak ${officeName}:`];
       for (const c of top) {
         const extra = c.description ? ` — ${c.description}` : '';
         lines.push(`- ${c.name}: ${c.phone}${extra}`);
@@ -1336,21 +1517,27 @@ function extractTimeFromText(text: string): string | null {
  * Build natural response for complaint status
  */
 function buildNaturalStatusResponse(complaint: any): string {
-  const updatedAt = new Date(complaint.updated_at);
-  const relativeTime = formatRelativeTime(updatedAt);
-  const kategoriText = formatKategori(complaint.kategori);
   const statusInfo = getStatusInfo(complaint.status);
-  
-  let message = `Halo Kak! 👋\n\n`;
-  message += `Berikut info laporan *${complaint.complaint_id}*:\n\n`;
-  message += `📌 *Jenis Laporan:* ${kategoriText}\n`;
-  if (complaint.alamat) message += `📍 *Lokasi:* ${complaint.alamat}\n`;
-  message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
-  message += `\n${statusInfo.description}`;
-  if (complaint.admin_notes) message += `\n\n💬 _Catatan petugas: "${complaint.admin_notes}"_`;
-  message += `\n\n🕐 _Terakhir diupdate ${relativeTime}_`;
-  
-  return message;
+  const complaintId = complaint.complaint_id;
+
+  if (statusInfo.text === 'DONE') {
+    const note = complaint.admin_notes || '-';
+    return `Laporan ${complaintId} telah SELESAI.\nCatatan penanganan: ${note}`;
+  }
+
+  if (statusInfo.text === 'REJECT') {
+    return `Laporan ${complaintId} DITOLAK.\nAlasan penolakan: ${complaint.admin_notes || '-'}`;
+  }
+
+  if (statusInfo.text === 'CANCELED') {
+    return `Laporan ${complaintId} telah DIBATALKAN.\nKeterangan: ${complaint.admin_notes || 'Dibatalkan oleh masyarakat'}`;
+  }
+
+  if (statusInfo.text === 'PROCESS') {
+    return `Status laporan ${complaintId} saat ini adalah PROCESS.`;
+  }
+
+  return `Status laporan ${complaintId} saat ini adalah ${statusInfo.text}.`;
 }
 
 /**
@@ -1359,43 +1546,41 @@ function buildNaturalStatusResponse(complaint: any): string {
  */
 function buildNaturalServiceStatusResponse(serviceRequest: any): string {
   const statusMap: Record<string, { emoji: string; text: string }> = {
-    'baru': { emoji: '🆕', text: 'Baru' },
-    'proses': { emoji: '🔄', text: 'Diproses' },
-    'selesai': { emoji: '✅', text: 'Selesai' },
-    'ditolak': { emoji: '❌', text: 'Ditolak' },
-    'dibatalkan': { emoji: '🔴', text: 'Dibatalkan' },
+    'OPEN': { emoji: '🆕', text: 'OPEN' },
+    'PROCESS': { emoji: '🔄', text: 'PROCESS' },
+    'DONE': { emoji: '✅', text: 'DONE' },
+    'CANCELED': { emoji: '🔴', text: 'CANCELED' },
+    'REJECT': { emoji: '❌', text: 'REJECT' },
+    'baru': { emoji: '🆕', text: 'OPEN' },
+    'proses': { emoji: '🔄', text: 'PROCESS' },
+    'selesai': { emoji: '✅', text: 'DONE' },
+    'dibatalkan': { emoji: '🔴', text: 'CANCELED' },
   };
 
   const statusInfo = statusMap[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
 
-  let message = `Halo Kak! 👋\n\n`;
-  message += `Berikut info layanan *${serviceRequest.request_number}*:\n\n`;
-  message += `📌 *Layanan:* ${serviceRequest.service?.name || 'Layanan Administrasi'}\n`;
-  message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
+  let message = `Baik Pak/Bu, status layanan ${serviceRequest.request_number} saat ini adalah ${statusInfo.text}.`;
 
-  if (serviceRequest.admin_notes) {
-    message += `\n💬 _Catatan petugas: "${serviceRequest.admin_notes}"_\n`;
+  if (statusInfo.text === 'OPEN') {
+    message += `\nPermohonan sedang menunggu untuk diproses.`;
   }
 
-  // Add result description if available
-  if (serviceRequest.result_description) {
-    message += `\n📝 *Hasil:* ${serviceRequest.result_description}\n`;
+  if (statusInfo.text === 'PROCESS') {
+    message += `\nPermohonan Anda sedang diproses oleh petugas desa.`;
   }
 
-  // Add result file link if available
-  if (serviceRequest.result_file_url) {
-    const fileName = serviceRequest.result_file_name || 'Dokumen Hasil';
-    message += `\n📎 *Dokumen:* ${fileName}\n`;
-    message += `🔗 Link download: ${serviceRequest.result_file_url}\n`;
+  if (statusInfo.text === 'DONE') {
+    if (serviceRequest.admin_notes) {
+      message += `\n\nCatatan dari petugas desa:\n${serviceRequest.admin_notes}`;
+    }
   }
 
-  // Add guidance based on status
-  if (serviceRequest.status === 'selesai' && serviceRequest.result_file_url) {
-    message += `\n_Silakan download dokumen di atas ya Kak. Terima kasih sudah menggunakan layanan kami! 🙏_`;
-  } else if (serviceRequest.status === 'selesai') {
-    message += `\n_Layanan sudah selesai. Terima kasih! 🙏_`;
-  } else if (serviceRequest.status === 'ditolak') {
-    message += `\n_Jika ada pertanyaan, silakan hubungi kantor kelurahan ya Kak._`;
+  if (statusInfo.text === 'REJECT') {
+    message += `\n\nAlasan penolakan:\n${serviceRequest.admin_notes || '-'}`;
+  }
+
+  if (statusInfo.text === 'CANCELED') {
+    message += `\n\nKeterangan: ${serviceRequest.admin_notes || 'Dibatalkan'}`;
   }
 
   return message;
@@ -1424,6 +1609,7 @@ function buildComplaintDetailResponse(complaint: any): string {
   const statusInfo = getStatusInfo(complaint.status);
   const createdAt = toSafeDate(complaint.created_at || complaint.createdAt);
   const updatedAt = toSafeDate(complaint.updated_at || complaint.updatedAt);
+  const adminNoteSection = buildAdminNoteSection(complaint.status, complaint.admin_notes);
 
   let message = `📄 *Detail Laporan*\n\n`;
   message += `🆔 *Nomor:* ${complaint.complaint_id}\n`;
@@ -1435,8 +1621,8 @@ function buildComplaintDetailResponse(complaint: any): string {
   message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
   message += `${statusInfo.description}\n`;
 
-  if (complaint.admin_notes) {
-    message += `\n💬 *Catatan petugas:*\n${complaint.admin_notes}\n`;
+  if (adminNoteSection) {
+    message += adminNoteSection;
   }
 
   message += `\n🗓️ *Dibuat:* ${formatDateTimeId(createdAt)}\n`;
@@ -1447,23 +1633,28 @@ function buildComplaintDetailResponse(complaint: any): string {
 
 function buildServiceRequestDetailResponse(serviceRequest: any, requirementDefs: ServiceRequirementDefinition[] = []): string {
   const statusMap: Record<string, { emoji: string; text: string }> = {
-    'baru': { emoji: '🆕', text: 'Baru' },
-    'proses': { emoji: '🔄', text: 'Diproses' },
-    'selesai': { emoji: '✅', text: 'Selesai' },
-    'ditolak': { emoji: '❌', text: 'Ditolak' },
-    'dibatalkan': { emoji: '🔴', text: 'Dibatalkan' },
+    'OPEN': { emoji: '🆕', text: 'OPEN' },
+    'PROCESS': { emoji: '🔄', text: 'PROCESS' },
+    'DONE': { emoji: '✅', text: 'DONE' },
+    'CANCELED': { emoji: '🔴', text: 'CANCELED' },
+    'REJECT': { emoji: '❌', text: 'REJECT' },
+    'baru': { emoji: '🆕', text: 'OPEN' },
+    'proses': { emoji: '🔄', text: 'PROCESS' },
+    'selesai': { emoji: '✅', text: 'DONE' },
+    'dibatalkan': { emoji: '🔴', text: 'CANCELED' },
   };
   const statusInfo = statusMap[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
   const createdAt = toSafeDate(serviceRequest.created_at || serviceRequest.createdAt);
   const updatedAt = toSafeDate(serviceRequest.updated_at || serviceRequest.updatedAt);
+  const adminNoteSection = buildAdminNoteSection(serviceRequest.status, serviceRequest.admin_notes);
 
   let message = `📄 *Detail Layanan*\n\n`;
   message += `🆔 *Nomor:* ${serviceRequest.request_number}\n`;
   message += `📌 *Layanan:* ${serviceRequest.service?.name || 'Layanan Administrasi'}\n`;
   message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
 
-  if (serviceRequest.admin_notes) {
-    message += `\n💬 *Catatan petugas:*\n${serviceRequest.admin_notes}\n`;
+  if (adminNoteSection) {
+    message += adminNoteSection;
   }
 
   if (serviceRequest.result_description) {
@@ -1575,66 +1766,102 @@ function formatKategori(kategori: string): string {
 
 function getStatusInfo(status: string): { emoji: string; text: string; description: string } {
   const statusMap: Record<string, { emoji: string; text: string; description: string }> = {
-    'baru': { emoji: '🆕', text: 'Baru', description: 'Laporan Kakak baru kami terima dan akan segera kami tindak lanjuti ya!' },
-    'pending': { emoji: '⏳', text: 'Menunggu Verifikasi', description: 'Saat ini sedang dalam tahap verifikasi oleh tim kami. Mohon ditunggu ya!' },
-    'proses': { emoji: '🔄', text: 'Sedang Diproses', description: 'Kabar baik! Petugas kami sudah menangani laporan ini.' },
-    'selesai': { emoji: '✅', text: 'Selesai', description: 'Yeay! Laporan sudah selesai ditangani. Terima kasih sudah melapor! 🙏' },
-    'ditolak': { emoji: '❌', text: 'Tidak Dapat Diproses', description: 'Mohon maaf, laporan ini tidak dapat kami proses.' },
+    'OPEN': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
+    'PROCESS': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
+    'DONE': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
+    'CANCELED': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
+    'REJECT': { emoji: '❌', text: 'REJECT', description: 'Laporan ditolak oleh petugas desa.' },
+    'baru': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
+    'proses': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
+    'selesai': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
+    'dibatalkan': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
   };
   return statusMap[status] || { emoji: '📋', text: status, description: 'Silakan tunggu update selanjutnya ya!' };
 }
 
+function buildAdminNoteSection(status: string, adminNotes?: string): string {
+  const normalized = (status || '').toString().toUpperCase();
+  const note = adminNotes ? String(adminNotes).trim() : '';
+
+  if (normalized === 'DONE') {
+    return note ? `\n\n💬 *Catatan petugas:*\n${note}\n` : '';
+  }
+
+  if (normalized === 'REJECT') {
+    return `\n\n📝 *Alasan penolakan:*\n${note || '-'}\n`;
+  }
+
+  if (normalized === 'CANCELED') {
+    return `\n\n📝 *Keterangan:* ${note || 'Dibatalkan'}\n`;
+  }
+
+  return note ? `\n\n💬 *Catatan petugas:*\n${note}\n` : '';
+}
+
 function buildCancelSuccessResponse(type: 'laporan' | 'layanan', id: string, reason: string): string {
   const label = type === 'laporan' ? 'Laporan' : 'Layanan';
-  return `Halo Kak! 👋\n\n✅ ${label} *${id}* sudah berhasil dibatalkan ya.\n\n📝 *Alasan:* ${reason}\n\nKalau ada yang mau dibuat lagi, langsung chat aja ya Kak! 😊`;
+  const note = reason || 'Dibatalkan oleh masyarakat';
+  return `${label} ${id} telah DIBATALKAN.\nKeterangan: ${note}`;
 }
 
 function buildCancelErrorResponse(type: 'laporan' | 'layanan', id: string, error?: string, message?: string): string {
   const label = type === 'laporan' ? 'laporan' : 'layanan';
   switch (error) {
     case 'NOT_FOUND':
-      return `Hmm, kami tidak menemukan ${label} dengan nomor *${id}* nih Kak 🤔`;
+      return `Mohon maaf Pak/Bu, kami tidak menemukan ${label} dengan nomor *${id}*.`;
     case 'NOT_OWNER':
-      return `Maaf Kak, ${label} *${id}* ini bukan milik Kakak, jadi tidak bisa dibatalkan ya 🙏`;
+      return `Mohon maaf Pak/Bu, ${label} *${id}* ini bukan milik Anda, jadi tidak bisa dibatalkan.`;
     case 'ALREADY_COMPLETED':
     case 'LOCKED':
-      return `Maaf Kak, ${label} *${id}* sudah tidak bisa dibatalkan karena statusnya sudah final 📋`;
+      return `Mohon maaf Pak/Bu, ${label} *${id}* sudah tidak bisa dibatalkan karena statusnya sudah final.`;
     default:
-      return `Maaf Kak, ada kendala saat membatalkan ${label}. ${message || 'Coba lagi ya!'} 🙏`;
+      return `Mohon maaf Pak/Bu, ada kendala saat membatalkan ${label}. ${message || 'Silakan coba lagi.'}`;
   }
 }
 
 function buildHistoryResponse(items: HistoryItem[], total: number): string {
-  let message = `📋 *Riwayat Anda* (${total})\n`;
-  
   const complaints = items.filter(i => i.type === 'complaint');
   const services = items.filter(i => i.type === 'service');
-  
+
   if (complaints.length > 0) {
-    message += `\n*LAPORAN*\n`;
+    let message = 'Berikut laporan yang pernah Anda kirimkan:\n\n';
     for (const item of complaints.slice(0, 5)) {
-      const statusEmoji = getStatusEmoji(item.status);
-      message += `• *${item.display_id}* ${statusEmoji}\n  ${item.description.substring(0, 20)}...\n`;
+      const statusLabel = getStatusLabel(item.status);
+      const desc = (item.description || '').trim() || 'Laporan';
+      message += `${item.display_id} – ${desc} – ${statusLabel}\n`;
     }
+    return message.trim();
   }
-  
+
   if (services.length > 0) {
-    message += `\n*LAYANAN*\n`;
+    let message = 'Berikut layanan yang pernah Anda ajukan:\n\n';
     for (const item of services.slice(0, 5)) {
-      const statusEmoji = getStatusEmoji(item.status);
-      message += `• *${item.display_id}* ${statusEmoji}\n  ${item.description.substring(0, 20)}...\n`;
+      const statusLabel = getStatusLabel(item.status);
+      const desc = (item.description || '').trim() || 'Layanan';
+      message += `${item.display_id} – ${desc} – ${statusLabel}\n`;
     }
+    return message.trim();
   }
-  
-  message += `\n💡 Ketik nomor untuk cek detail`;
-  return message;
+
+  return `Berikut riwayat Anda (${total}).`;
 }
 
-function getStatusEmoji(status: string): string {
-  const emojiMap: Record<string, string> = {
-    'baru': '🆕', 'pending': '⏳', 'proses': '🔄', 'selesai': '✅', 'ditolak': '❌', 'dibatalkan': '🔴',
+function getStatusLabel(status: string): string {
+  const normalized = String(status || '').toUpperCase();
+  const map: Record<string, string> = {
+    OPEN: 'OPEN',
+    PROCESS: 'PROCESS',
+    DONE: 'SELESAI',
+    CANCELED: 'DIBATALKAN',
+    REJECT: 'DITOLAK',
+    BARU: 'OPEN',
+    PENDING: 'OPEN',
+    PROSES: 'PROCESS',
+    SELESAI: 'SELESAI',
+    DIBATALKAN: 'DIBATALKAN',
+    DITOLAK: 'DITOLAK',
   };
-  return emojiMap[status] || '📌';
+  return map[normalized] || normalized || 'UNKNOWN';
 }
 
 
@@ -1741,11 +1968,89 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         error: 'Spam message detected',
       };
     }
+
+    const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
+    const greetingPattern = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i;
+
+    const pendingName = pendingNameConfirmation.get(userId);
+    if (pendingName) {
+      if (isConfirmationResponse(message)) {
+        pendingNameConfirmation.delete(userId);
+        updateProfile(userId, { nama_lengkap: pendingName.name });
+        return {
+          success: true,
+          response: `Baik, terima kasih Pak/Bu ${pendingName.name}. Ada yang bisa kami bantu?`,
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      if (isNegativeConfirmation(message)) {
+        pendingNameConfirmation.delete(userId);
+        return {
+          success: true,
+          response: 'Mohon maaf, boleh kami tahu nama yang benar?',
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      return {
+        success: true,
+        response: `Baik, apakah benar ini dengan Bapak/Ibu ${pendingName.name}? Balas YA atau BUKAN ya.`,
+        intent: 'QUESTION',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
+
+    // Hard gate: wajib tahu nama sebelum proses apa pun
+    const knownName = extractNameFromHistory(conversationHistory);
+    const currentName = extractNameFromText(message);
+    if (!knownName && !currentName) {
+      const askedNameBefore = wasNamePrompted(conversationHistory);
+      if (askedNameBefore) {
+        return {
+          success: true,
+          response: 'Mohon maaf Pak/Bu, yang kami perlukan adalah nama Anda agar kami bisa membantu dengan tepat.',
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      if (greetingPattern.test(message.trim())) {
+        const profile = await getVillageProfileSummary(resolvedVillageId);
+        const villageLabel = profile?.name ? profile.name : 'Desa/Kelurahan';
+        return {
+          success: true,
+          response: `Halo, selamat datang di layanan GovConnect ${villageLabel}.
+Sebelumnya boleh kami tahu ini dengan siapa Pak/Bu?`,
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      return {
+        success: true,
+        response: 'Baik Pak/Bu, sebelum melanjutkan boleh kami tahu nama Anda terlebih dahulu?',
+        intent: 'QUESTION',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
+
+    if (!knownName && currentName) {
+      pendingNameConfirmation.set(userId, { name: currentName, timestamp: Date.now() });
+      return {
+        success: true,
+        response: `Baik, apakah benar ini dengan Bapak/Ibu ${currentName}?`,
+        intent: 'QUESTION',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
     
     // Step 2: Check pending address confirmation
     const pendingConfirm = pendingAddressConfirmation.get(userId);
     if (pendingConfirm) {
-      const confirmResult = await handlePendingAddressConfirmation(userId, message, pendingConfirm, mediaUrl);
+      const confirmResult = await handlePendingAddressConfirmation(userId, message, pendingConfirm, channel === 'webchat' ? 'webchat' : 'whatsapp', mediaUrl);
       if (confirmResult) {
         return {
           success: true,
@@ -1762,7 +2067,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       if (isConfirmationResponse(message)) {
         clearPendingCancelConfirmation(userId);
         if (pendingCancel.type === 'laporan') {
-          const result = await cancelComplaint(pendingCancel.id, userId, pendingCancel.reason);
+          const result = await cancelComplaint(pendingCancel.id, buildChannelParams(channel, userId), pendingCancel.reason);
           return {
             success: true,
             response: result.success
@@ -1773,7 +2078,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           };
         }
 
-        const serviceResult = await cancelServiceRequest(pendingCancel.id, userId, pendingCancel.reason);
+        const serviceResult = await cancelServiceRequest(pendingCancel.id, buildChannelParams(channel, userId), pendingCancel.reason);
         return {
           success: true,
           response: serviceResult.success
@@ -1788,7 +2093,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         clearPendingCancelConfirmation(userId);
         return {
           success: true,
-          response: 'Baik Kak, pembatalan saya batalkan. Ada yang bisa saya bantu lagi? 😊',
+          response: 'Baik Pak/Bu, pembatalan saya batalkan. Ada yang bisa kami bantu lagi?',
           intent: 'QUESTION',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
@@ -1796,7 +2101,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
       return {
         success: true,
-        response: 'Mohon konfirmasi ya Kak. Balas "ya" untuk melanjutkan pembatalan, atau "tidak" untuk membatalkan.',
+        response: 'Mohon konfirmasi ya Pak/Bu. Balas "YA" untuk melanjutkan pembatalan, atau "TIDAK" untuk membatalkan.',
         intent: pendingCancel.type === 'laporan' ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
       };
@@ -1816,7 +2121,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           reply_text: '',
         };
 
-        const linkReply = await handleServiceRequestCreation(userId, llmLike);
+        const linkReply = await handleServiceRequestCreation(userId, channel, llmLike);
         return {
           success: true,
           response: linkReply,
@@ -1829,7 +2134,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         clearPendingServiceFormOffer(userId);
         return {
           success: true,
-          response: 'Baik Kak, siap. Kalau Kakak mau proses nanti, kabari saya ya. 😊',
+          response: 'Baik Pak/Bu, siap. Kalau Bapak/Ibu mau proses nanti, kabari kami ya.',
           intent: 'QUESTION',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
@@ -1837,7 +2142,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
       return {
         success: true,
-        response: 'Mau saya kirim link formulirnya sekarang? Balas *iya* atau *tidak* ya Kak.',
+        response: 'Apakah Bapak/Ibu ingin kami kirim link formulirnya sekarang? Balas *iya* atau *tidak* ya.',
         intent: 'CREATE_SERVICE_REQUEST',
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
       };
@@ -1845,8 +2150,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     // Step 2.5: AI Optimization - Pre-process message
     const historyString = conversationHistory?.map(m => `${m.role}: ${m.content}`).join('\n') || '';
-    const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
-    const greetingPattern = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i;
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
 
     if (greetingPattern.test(message.trim())) {
@@ -1878,7 +2181,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         reply_text: '',
       };
 
-      const responseText = await handleStatusCheck(userId, fastLlmLike);
+      const responseText = await handleStatusCheck(userId, channel, fastLlmLike, message);
       return {
         success: true,
         response: responseText,
@@ -2136,7 +2439,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         if (!rateLimitCheck.allowed) {
           finalReplyText = rateLimitCheck.message || 'Anda telah mencapai batas laporan hari ini.';
         } else {
-          finalReplyText = await handleComplaintCreation(userId, effectiveLlmResponse, message, mediaUrl);
+          finalReplyText = await handleComplaintCreation(userId, channel, effectiveLlmResponse, message, mediaUrl);
         }
         break;
       
@@ -2151,19 +2454,19 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         break;
       
       case 'CREATE_SERVICE_REQUEST':
-        finalReplyText = await handleServiceRequestCreation(userId, effectiveLlmResponse);
+        finalReplyText = await handleServiceRequestCreation(userId, channel, effectiveLlmResponse);
         break;
 
       case 'UPDATE_COMPLAINT':
-        finalReplyText = await handleComplaintUpdate(userId, effectiveLlmResponse);
+        finalReplyText = await handleComplaintUpdate(userId, channel, effectiveLlmResponse, message);
         break;
 
       case 'UPDATE_SERVICE_REQUEST':
-        finalReplyText = await handleServiceRequestEditLink(userId, effectiveLlmResponse);
+        finalReplyText = await handleServiceRequestEditLink(userId, channel, effectiveLlmResponse);
         break;
       
       case 'CHECK_STATUS':
-        finalReplyText = await handleStatusCheck(userId, effectiveLlmResponse);
+        finalReplyText = await handleStatusCheck(userId, channel, effectiveLlmResponse, message);
         break;
       
       case 'CANCEL_COMPLAINT':
@@ -2175,7 +2478,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         break;
       
       case 'HISTORY':
-        finalReplyText = await handleHistory(userId);
+        finalReplyText = await handleHistory(userId, channel);
         break;
       
       case 'KNOWLEDGE_QUERY':
@@ -2295,6 +2598,7 @@ async function handlePendingAddressConfirmation(
   userId: string,
   message: string,
   pendingConfirm: { alamat: string; kategori: string; deskripsi: string; village_id?: string; timestamp: number; foto_url?: string },
+  channel: 'whatsapp' | 'webchat',
   mediaUrl?: string
 ): Promise<string | null> {
   // Check if user confirmed
@@ -2304,7 +2608,9 @@ async function handlePendingAddressConfirmation(
     pendingAddressConfirmation.delete(userId);
     
     const complaintId = await createComplaint({
-      wa_user_id: userId,
+      wa_user_id: channel === 'webchat' ? undefined : userId,
+      channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+      channel_identifier: userId,
       kategori: pendingConfirm.kategori,
       deskripsi: pendingConfirm.deskripsi,
       village_id: pendingConfirm.village_id,
@@ -2317,8 +2623,8 @@ async function handlePendingAddressConfirmation(
       throw new Error('Failed to create complaint after address confirmation');
     }
     
-    const withPhoto = pendingConfirm.foto_url ? ' 📷' : '';
-    return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan segera menindaklanjuti laporan Anda.`;
+    const withPhotoNote = pendingConfirm.foto_url ? '\nFoto pendukung sudah kami terima.' : '';
+    return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${withPhotoNote}`;
   }
   
   // Check if user provides more specific address
@@ -2332,7 +2638,9 @@ async function handlePendingAddressConfirmation(
     pendingAddressConfirmation.delete(userId);
     
     const complaintId = await createComplaint({
-      wa_user_id: userId,
+      wa_user_id: channel === 'webchat' ? undefined : userId,
+      channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+      channel_identifier: userId,
       kategori: pendingConfirm.kategori,
       deskripsi: pendingConfirm.deskripsi,
       village_id: pendingConfirm.village_id,
@@ -2345,8 +2653,8 @@ async function handlePendingAddressConfirmation(
       throw new Error('Failed to create complaint with updated address');
     }
     
-    const withPhoto = pendingConfirm.foto_url ? ' 📷' : '';
-    return `✅ Terima kasih! Laporan Anda telah kami terima dengan nomor ${complaintId}.${withPhoto}\n\nPetugas akan segera menindaklanjuti laporan di ${message.trim()}.`;
+    const withPhotoNote = pendingConfirm.foto_url ? '\nFoto pendukung sudah kami terima.' : '';
+    return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${withPhotoNote}`;
   }
   
   // User said something else, clear pending and continue normal flow

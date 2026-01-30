@@ -37,43 +37,43 @@ const STATE_FALLBACKS: Record<ConversationState, string[]> = {
   'IDLE': FALLBACK_TEMPLATES['UNKNOWN'],
   
   'COLLECTING_COMPLAINT_DATA': [
-    'Untuk melanjutkan laporan, saya perlu info lokasi masalahnya Kak. Di mana alamatnya?',
-    'Baik Kak, boleh sebutkan alamat lengkap lokasi masalahnya?',
+    'Untuk melanjutkan laporan, kami perlu info lokasi masalahnya Pak/Bu. Di mana alamatnya?',
+    'Baik Pak/Bu, boleh sebutkan alamat lengkap lokasi masalahnya?',
   ],
   
   'CONFIRMING_COMPLAINT': [
-    'Apakah data laporan sudah benar Kak? Ketik "ya" untuk lanjut atau "tidak" untuk ubah.',
-    'Mau saya proses laporannya Kak? Ketik "ya" atau "lanjut" untuk konfirmasi.',
+    'Apakah data laporan sudah benar Pak/Bu? Ketik "YA" untuk lanjut atau "TIDAK" untuk ubah.',
+    'Apakah Bapak/Ibu ingin kami proses laporannya? Ketik "YA" untuk konfirmasi.',
   ],
   
   'COLLECTING_SERVICE_REQUEST_DATA': [
-    'Untuk permohonan layanan, saya masih perlu beberapa data Kak. Boleh dilengkapi?',
-    'Data layanan belum lengkap Kak. Ada yang perlu ditambahkan?',
+    'Untuk permohonan layanan, kami masih perlu beberapa data Pak/Bu. Boleh dilengkapi?',
+    'Data layanan belum lengkap Pak/Bu. Ada yang perlu ditambahkan?',
   ],
   
   'CONFIRMING_SERVICE_REQUEST': [
-    'Apakah data layanan sudah benar Kak? Ketik "ya" untuk konfirmasi.',
-    'Mau saya proses permohonan layanannya Kak? Ketik "ya" untuk lanjut.',
+    'Apakah data layanan sudah benar Pak/Bu? Ketik "YA" untuk konfirmasi.',
+    'Apakah Bapak/Ibu ingin kami proses permohonan layanannya? Ketik "YA" untuk lanjut.',
   ],
   
   'AWAITING_ADDRESS_DETAIL': [
-    'Alamatnya kurang spesifik Kak. Bisa tambahkan detail seperti RT/RW atau patokan terdekat?',
-    'Boleh sebutkan alamat lebih lengkap Kak? Misalnya nama jalan, nomor, atau patokan.',
+    'Alamatnya kurang spesifik Pak/Bu. Bisa tambahkan detail seperti RT/RW atau patokan terdekat?',
+    'Boleh sebutkan alamat lebih lengkap Pak/Bu? Misalnya nama jalan, nomor, atau patokan.',
   ],
   
   'AWAITING_CONFIRMATION': [
-    'Menunggu konfirmasi Kakak. Ketik "ya" untuk lanjut atau "tidak" untuk batal.',
-    'Silakan konfirmasi Kak. Ketik "ya" atau "tidak".',
+    'Menunggu konfirmasi Pak/Bu. Ketik "YA" untuk lanjut atau "TIDAK" untuk batal.',
+    'Silakan konfirmasi Pak/Bu. Ketik "YA" atau "TIDAK".',
   ],
   
   'CHECK_STATUS_FLOW': [
-    'Untuk cek status, sebutkan nomor laporan atau layanan ya Kak.',
-    'Nomor laporan/layanannya berapa Kak? (contoh: LAP-20251201-001 atau LAY-20251201-001)',
+    'Untuk cek status, sebutkan nomor laporan atau layanan ya Pak/Bu.',
+    'Nomor laporan/layanannya berapa Pak/Bu? (contoh: LAP-20251201-001 atau LAY-20251201-001)',
   ],
   
   'CANCELLATION_FLOW': [
-    'Untuk pembatalan, sebutkan nomor laporan yang mau dibatalkan ya Kak.',
-    'Nomor laporan yang mau dibatalkan berapa Kak?',
+    'Untuk pembatalan, sebutkan nomor laporan yang mau dibatalkan ya Pak/Bu.',
+    'Nomor laporan yang mau dibatalkan berapa Pak/Bu?',
   ],
 };
 

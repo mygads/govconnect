@@ -81,6 +81,7 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 - Status & history layanan
 - CRUD kategori pengaduan & jenis pengaduan
 - Kelola laporan masuk, status, update, media penanganan
+- Status seragam: **OPEN**, **PROCESS**, **DONE**, **CANCELED**, **REJECT**
 
 **Database:** `gc_case`
 - `service_categories`, `services`, `service_requirements`, `service_requests`
@@ -115,6 +116,7 @@ Dokumen ini menggantikan arsitektur lama dan menyesuaikan kebutuhan layanan desa
 - Layanan: CRUD kategori/layanan/persyaratan
 - Pengaduan: kategori/jenis, urgent alert, detail & update
 - Public form: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`
+- Prefill WA: `?wa=628xxx` | Prefill Webchat: `?session=web_xxx`
 - Input layanan hanya via form web; edit memakai token, pembatalan via WA
 
 **Database:** `gc_dashboard`

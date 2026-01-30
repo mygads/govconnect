@@ -11,7 +11,7 @@
       "value": "https://govconnect.my.id",
       "type": "string"
     }
-                      "value": "baru"
+                      "value": "OPEN"
                     },
                     {
                       "key": "limit",
@@ -73,7 +73,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"status\": \"proses\",\n  \"admin_notes\": \"Sedang ditindaklanjuti\"\n}"
+                  "raw": "{\n  \"status\": \"PROCESS\",\n  \"admin_notes\": \"Sedang ditindaklanjuti\"\n}"
                 }
               }
             },

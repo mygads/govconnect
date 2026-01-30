@@ -18,20 +18,23 @@ export async function getMessages(req: Request, res: Response): Promise<void> {
   try {
     const village_id = getQuery(req, 'village_id');
     const wa_user_id = getQuery(req, 'wa_user_id');
+    const channel_identifier = getQuery(req, 'channel_identifier');
+    const channel = (getQuery(req, 'channel') || 'WHATSAPP').toUpperCase() as 'WHATSAPP' | 'WEBCHAT';
     const limitRaw = getQuery(req, 'limit');
     const limit = limitRaw ? parseInt(limitRaw, 10) : 30;
+    const resolvedIdentifier = channel_identifier || wa_user_id;
 
     // Validate wa_user_id
-    if (!wa_user_id) {
+    if (!resolvedIdentifier) {
       res.status(400).json({ 
-        error: 'wa_user_id query parameter is required',
+        error: 'channel_identifier or wa_user_id query parameter is required',
         messages: [],
         total: 0,
       });
       return;
     }
 
-    const messages = await getMessageHistory(wa_user_id, limit, village_id);
+    const messages = await getMessageHistory(resolvedIdentifier, limit, village_id, channel);
 
     res.json({
       messages: messages.map((m) => ({
@@ -66,6 +69,8 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
       await saveOutgoingMessage({
         village_id,
         wa_user_id,
+        channel: 'WHATSAPP',
+        channel_identifier: wa_user_id,
         message_id: result.message_id,
         message_text: message,
         source: 'SYSTEM',
@@ -75,6 +80,8 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
       await logSentMessage({
         village_id,
         wa_user_id,
+        channel: 'WHATSAPP',
+        channel_identifier: wa_user_id,
         message_text: message,
         status: 'sent',
       });
@@ -88,6 +95,8 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
       await logSentMessage({
         village_id,
         wa_user_id,
+        channel: 'WHATSAPP',
+        channel_identifier: wa_user_id,
         message_text: message,
         status: 'failed',
         error_msg: result.error,
@@ -145,12 +154,14 @@ export async function setTyping(req: Request, res: Response): Promise<void> {
 export async function storeMessage(req: Request, res: Response): Promise<void> {
   try {
     const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
-    const { village_id: bodyVillageId, wa_user_id, message_id, message_text, direction, source, metadata } = req.body;
+    const { village_id: bodyVillageId, wa_user_id, channel_identifier, channel, message_id, message_text, direction, source, metadata } = req.body;
     const village_id = bodyVillageId || headerVillageId;
+    const resolvedChannel = (channel || metadata?.channel || 'WHATSAPP') as 'WHATSAPP' | 'WEBCHAT';
+    const resolvedIdentifier = channel_identifier || wa_user_id;
     
-    if (!wa_user_id || !message_text) {
+    if (!resolvedIdentifier || !message_text) {
       res.status(400).json({ 
-        error: 'wa_user_id and message_text are required' 
+        error: 'channel_identifier/wa_user_id and message_text are required' 
       });
       return;
     }
@@ -163,7 +174,9 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
       // Save incoming message (from user)
       message = await saveIncomingMessage({
         village_id,
-        wa_user_id,
+        wa_user_id: resolvedChannel === 'WHATSAPP' ? resolvedIdentifier : undefined,
+        channel: resolvedChannel,
+        channel_identifier: resolvedIdentifier,
         message_id: finalMessageId,
         message_text,
       });
@@ -171,7 +184,9 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
       // Save outgoing message (from AI or admin)
       message = await saveOutgoingMessage({
         village_id,
-        wa_user_id,
+        wa_user_id: resolvedChannel === 'WHATSAPP' ? resolvedIdentifier : undefined,
+        channel: resolvedChannel,
+        channel_identifier: resolvedIdentifier,
         message_id: finalMessageId,
         message_text,
         source: source || 'AI',
@@ -179,24 +194,26 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
     }
     
     // Update conversation
-    const userName = metadata?.channel === 'webchat' ? `Web User ${wa_user_id.substring(4, 12)}` : undefined;
+    const userName = resolvedChannel === 'WEBCHAT' ? `Web User ${resolvedIdentifier.substring(4, 12)}` : undefined;
     // For incoming messages: increment unread count
     // For outgoing messages (AI/admin reply): reset unread count to 0 (message processed)
     const unreadAction = direction === 'IN' ? true : 'reset';
     await updateConversation(
-      wa_user_id,
+      resolvedIdentifier,
       message_text.substring(0, 100),
       userName,
       unreadAction,
-      village_id
+      village_id,
+      resolvedChannel
     );
     
     logger.info('Message stored in database', { 
-      wa_user_id, 
+      channel: resolvedChannel,
+      channel_identifier: resolvedIdentifier,
       message_id: finalMessageId,
       direction,
       source,
-      channel: metadata?.channel,
+      metadata_channel: metadata?.channel,
     });
     
     res.status(201).json({ 

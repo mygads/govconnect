@@ -14,6 +14,33 @@ import {
   sameCitizenWa,
 } from '../utils/wa-normalizer';
 
+function resolveChannelFromRequest(req: Request): 'WHATSAPP' | 'WEBCHAT' {
+  const raw = (req.body?.channel || getQuery(req, 'channel') || '').toString().toUpperCase();
+  if (raw === 'WEBCHAT') return 'WEBCHAT';
+  const sessionId = (req.body?.session_id || req.body?.sessionId || getQuery(req, 'session_id') || getQuery(req, 'sessionId')) as string | undefined;
+  if (sessionId && sessionId.startsWith('web_')) return 'WEBCHAT';
+  return 'WHATSAPP';
+}
+
+function resolveChannelIdentifier(req: Request, channel: 'WHATSAPP' | 'WEBCHAT'): string | null {
+  const sessionId = (req.body?.session_id || req.body?.sessionId || getQuery(req, 'session_id') || getQuery(req, 'sessionId')) as string | undefined;
+  const channelIdentifier = (req.body?.channel_identifier || getQuery(req, 'channel_identifier')) as string | undefined;
+  if (channel === 'WEBCHAT') return sessionId || channelIdentifier || null;
+  const waUserId = (req.body?.wa_user_id || getQuery(req, 'wa_user_id') || getQuery(req, 'wa')) as string | undefined;
+  return waUserId || null;
+}
+
+function isSameRequester(request: { channel: 'WHATSAPP' | 'WEBCHAT'; wa_user_id: string | null; channel_identifier: string | null }, params: {
+  channel: 'WHATSAPP' | 'WEBCHAT';
+  wa_user_id?: string;
+  channel_identifier?: string | null;
+}): boolean {
+  if (params.channel === 'WEBCHAT') {
+    return request.channel === 'WEBCHAT' && !!params.channel_identifier && request.channel_identifier === params.channel_identifier;
+  }
+  return sameCitizenWa(request.wa_user_id || '', params.wa_user_id || '');
+}
+
 // ===== Service Categories =====
 export async function handleGetServiceCategories(req: Request, res: Response) {
   try {
@@ -241,12 +268,15 @@ export async function handleGetServiceRequests(req: Request, res: Response) {
   try {
     const wa_user_id_raw = getQuery(req, 'wa_user_id');
     const wa_user_id = wa_user_id_raw ? normalizeTo628(wa_user_id_raw) : null;
-      const service_id = getQuery(req, 'service_id');
-      const status = getQuery(req, 'status');
-      const request_number = getQuery(req, 'request_number');
-      const village_id = getQuery(req, 'village_id');
+    const channel = resolveChannelFromRequest(req);
+    const channel_identifier = resolveChannelIdentifier(req, channel) || getQuery(req, 'channel_identifier');
+    const service_id = getQuery(req, 'service_id');
+    const status = getQuery(req, 'status');
+    const request_number = getQuery(req, 'request_number');
+    const village_id = getQuery(req, 'village_id');
     const data = await prisma.serviceRequest.findMany({
       where: {
+        ...(channel_identifier ? { channel, channel_identifier } : {}),
         ...(wa_user_id ? { wa_user_id } : {}),
         ...(service_id ? { service_id } : {}),
         ...(status ? { status } : {}),
@@ -266,13 +296,26 @@ export async function handleGetServiceRequests(req: Request, res: Response) {
 export async function handleCreateServiceRequest(req: Request, res: Response) {
   try {
     const { service_id, wa_user_id, citizen_data_json, requirement_data_json } = req.body;
-    if (!service_id || !wa_user_id) {
-      return res.status(400).json({ error: 'service_id and wa_user_id are required' });
+    const channel = resolveChannelFromRequest(req);
+    const channelIdentifier = resolveChannelIdentifier(req, channel) || req.body?.channel_identifier;
+
+    if (!service_id) {
+      return res.status(400).json({ error: 'service_id is required' });
     }
 
-    const normalizedWaUserId = normalizeCitizenWaForStorage(String(wa_user_id));
-    if (!isValidCitizenWaNumber(normalizedWaUserId)) {
-      return res.status(400).json({ error: 'wa_user_id tidak valid. Gunakan format 628xxxxxxxxxx' });
+    let normalizedWaUserId: string | null = null;
+    if (channel === 'WHATSAPP') {
+      if (!wa_user_id) {
+        return res.status(400).json({ error: 'wa_user_id diperlukan untuk channel WHATSAPP' });
+      }
+      normalizedWaUserId = normalizeCitizenWaForStorage(String(wa_user_id));
+      if (!isValidCitizenWaNumber(normalizedWaUserId)) {
+        return res.status(400).json({ error: 'wa_user_id tidak valid. Gunakan format 628xxxxxxxxxx' });
+      }
+    } else {
+      if (!channelIdentifier) {
+        return res.status(400).json({ error: 'session_id/channel_identifier diperlukan untuk channel WEBCHAT' });
+      }
     }
 
     const requestNumber = await generateServiceRequestId();
@@ -282,6 +325,8 @@ export async function handleCreateServiceRequest(req: Request, res: Response) {
         request_number: requestNumber,
         service_id,
         wa_user_id: normalizedWaUserId,
+        channel,
+        channel_identifier: channel === 'WEBCHAT' ? String(channelIdentifier) : normalizedWaUserId,
         citizen_data_json: citizen_data_json || {},
         requirement_data_json: requirement_data_json || {},
       }
@@ -289,6 +334,8 @@ export async function handleCreateServiceRequest(req: Request, res: Response) {
 
     publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.SERVICE_REQUESTED, {
       wa_user_id: normalizedWaUserId,
+      channel: channel.toLowerCase(),
+      channel_identifier: channel === 'WEBCHAT' ? String(channelIdentifier) : normalizedWaUserId,
       request_number: created.request_number,
       service_id,
     }).catch((error) => {
@@ -327,10 +374,20 @@ export async function handleUpdateServiceRequestStatus(req: Request, res: Respon
       return res.status(400).json({ error: 'id is required' });
     }
     const { status, admin_notes, result_file_url, result_file_name, result_description } = req.body;
+    const normalizedStatus = (status || '').toString().toUpperCase();
+
+    if (normalizedStatus && !['OPEN', 'PROCESS', 'DONE', 'CANCELED', 'REJECT'].includes(normalizedStatus)) {
+      return res.status(400).json({ error: 'status tidak valid' });
+    }
+
+    if (['DONE', 'CANCELED', 'REJECT'].includes(normalizedStatus) && (!admin_notes || String(admin_notes).trim() === '')) {
+      return res.status(400).json({ error: 'admin_notes wajib diisi untuk status DONE/CANCELED/REJECT' });
+    }
+
     const data = await prisma.serviceRequest.update({
       where: { id },
       data: {
-        status: status ?? undefined,
+        status: normalizedStatus || undefined,
         admin_notes: admin_notes ?? undefined,
         result_file_url: result_file_url ?? undefined,
         result_file_name: result_file_name ?? undefined,
@@ -350,10 +407,16 @@ export async function handleGenerateServiceRequestEditToken(req: Request, res: R
     if (!id) {
       return res.status(400).json({ error: 'id is required' });
     }
+    const channel = resolveChannelFromRequest(req);
     const { wa_user_id } = req.body as { wa_user_id?: string };
+    const channelIdentifier = resolveChannelIdentifier(req, channel) || req.body?.channel_identifier;
 
-    if (!wa_user_id) {
+    if (channel === 'WHATSAPP' && !wa_user_id) {
       return res.status(400).json({ error: 'wa_user_id is required' });
+    }
+
+    if (channel === 'WEBCHAT' && !channelIdentifier) {
+      return res.status(400).json({ error: 'session_id/channel_identifier is required' });
     }
 
     const request = await prisma.serviceRequest.findFirst({
@@ -367,16 +430,16 @@ export async function handleGenerateServiceRequestEditToken(req: Request, res: R
       return res.status(404).json({ error: 'NOT_FOUND', message: 'Permohonan layanan tidak ditemukan' });
     }
 
-    if (!sameCitizenWa(request.wa_user_id, wa_user_id)) {
+    if (!isSameRequester(request, { channel, wa_user_id, channel_identifier: channelIdentifier })) {
       return res.status(403).json({ error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk mengubah layanan ini' });
     }
 
-    if (['selesai', 'ditolak', 'dibatalkan'].includes(request.status)) {
-      return res.status(400).json({ error: 'LOCKED', message: 'Permohonan sudah selesai/ditolak/dibatalkan' });
+    if (!['OPEN', 'PROCESS'].includes(request.status)) {
+      return res.status(400).json({ error: 'LOCKED', message: 'Permohonan sudah selesai/dibatalkan/ditolak sehingga tidak bisa diubah' });
     }
 
     const editToken = crypto.randomBytes(24).toString('hex');
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
 
     const updated = await prisma.serviceRequest.update({
       where: { id: request.id },
@@ -407,6 +470,14 @@ export async function handleGetServiceRequestByToken(req: Request, res: Response
       return res.status(400).json({ error: 'token is required' });
     }
 
+    const channel = resolveChannelFromRequest(req);
+    const channelIdentifier = resolveChannelIdentifier(req, channel);
+    const wa_user_id = channel === 'WHATSAPP' ? normalizeTo628(String(channelIdentifier || '')) : undefined;
+
+    if (!channelIdentifier) {
+      return res.status(400).json({ error: 'IDENTITY_REQUIRED', message: 'wa atau session_id wajib diisi' });
+    }
+
     const request = await prisma.serviceRequest.findFirst({
       where: {
         edit_token: token,
@@ -425,6 +496,14 @@ export async function handleGetServiceRequestByToken(req: Request, res: Response
 
     if (!request) {
       return res.status(404).json({ error: 'TOKEN_INVALID', message: 'Token edit tidak valid atau sudah kedaluwarsa' });
+    }
+
+    if (!isSameRequester(request, { channel, wa_user_id, channel_identifier: channelIdentifier })) {
+      return res.status(403).json({ error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk mengubah layanan ini' });
+    }
+
+    if (!['OPEN', 'PROCESS'].includes(request.status)) {
+      return res.status(400).json({ error: 'LOCKED', message: 'Permohonan sudah selesai/dibatalkan/ditolak sehingga tidak bisa diubah' });
     }
 
     return res.json({ data: request });
@@ -450,6 +529,14 @@ export async function handleUpdateServiceRequestByToken(req: Request, res: Respo
       return res.status(400).json({ error: 'edit_token is required' });
     }
 
+    const channel = resolveChannelFromRequest(req);
+    const channelIdentifier = resolveChannelIdentifier(req, channel);
+    const wa_user_id = channel === 'WHATSAPP' ? normalizeTo628(String(channelIdentifier || '')) : undefined;
+
+    if (!channelIdentifier) {
+      return res.status(400).json({ error: 'IDENTITY_REQUIRED', message: 'wa atau session_id wajib diisi' });
+    }
+
     const request = await prisma.serviceRequest.findFirst({
       where: {
         OR: [{ id }, { request_number: id }],
@@ -464,8 +551,12 @@ export async function handleUpdateServiceRequestByToken(req: Request, res: Respo
       return res.status(404).json({ error: 'TOKEN_INVALID', message: 'Token edit tidak valid atau sudah kedaluwarsa' });
     }
 
-    if (['selesai', 'ditolak', 'dibatalkan'].includes(request.status)) {
-      return res.status(400).json({ error: 'LOCKED', message: 'Permohonan sudah selesai/ditolak/dibatalkan' });
+    if (!isSameRequester(request, { channel, wa_user_id, channel_identifier: channelIdentifier })) {
+      return res.status(403).json({ error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk mengubah layanan ini' });
+    }
+
+    if (!['OPEN', 'PROCESS'].includes(request.status)) {
+      return res.status(400).json({ error: 'LOCKED', message: 'Permohonan sudah selesai/dibatalkan/ditolak sehingga tidak bisa diubah' });
     }
 
     const updated = await prisma.serviceRequest.update({
@@ -496,10 +587,20 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
     if (!id) {
       return res.status(400).json({ error: 'id is required' });
     }
+    const channel = resolveChannelFromRequest(req);
     const { wa_user_id, cancel_reason } = req.body as { wa_user_id?: string; cancel_reason?: string };
+    const channelIdentifier = resolveChannelIdentifier(req, channel) || req.body?.channel_identifier;
 
-    if (!wa_user_id) {
+    if (!cancel_reason || String(cancel_reason).trim() === '') {
+      return res.status(400).json({ error: 'cancel_reason wajib diisi' });
+    }
+
+    if (channel === 'WHATSAPP' && !wa_user_id) {
       return res.status(400).json({ error: 'wa_user_id is required' });
+    }
+
+    if (channel === 'WEBCHAT' && !channelIdentifier) {
+      return res.status(400).json({ error: 'session_id/channel_identifier is required' });
     }
 
     const existing = await prisma.serviceRequest.findFirst({
@@ -513,19 +614,20 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
       return res.status(404).json({ error: 'Request not found' });
     }
 
-    if (!sameCitizenWa(existing.wa_user_id, wa_user_id)) {
+    if (!isSameRequester(existing, { channel, wa_user_id, channel_identifier: channelIdentifier })) {
       return res.status(403).json({ error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk membatalkan layanan ini' });
     }
 
-    if (['selesai', 'ditolak', 'dibatalkan'].includes(existing.status)) {
-      return res.status(400).json({ error: 'LOCKED', message: 'Permohonan sudah selesai/ditolak/dibatalkan' });
+    if (!['OPEN', 'PROCESS'].includes(existing.status)) {
+      return res.status(400).json({ error: 'LOCKED', message: 'Permohonan sudah selesai/dibatalkan/ditolak sehingga tidak bisa dibatalkan' });
     }
 
+    const cancelNote = `Dibatalkan oleh masyarakat: ${String(cancel_reason).trim()}`;
     const updated = await prisma.serviceRequest.update({
       where: { id: existing.id },
       data: {
-        status: 'dibatalkan',
-        admin_notes: cancel_reason ?? existing.admin_notes ?? undefined,
+        status: 'CANCELED',
+        admin_notes: cancelNote,
       },
     });
 
@@ -538,12 +640,7 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
 
 export async function handleDeleteServiceRequest(req: Request, res: Response) {
   try {
-    const id = getParam(req, 'id');
-    if (!id) {
-      return res.status(400).json({ error: 'id is required' });
-    }
-    await prisma.serviceRequest.delete({ where: { id } });
-    return res.json({ status: 'success' });
+    return res.status(405).json({ error: 'METHOD_NOT_ALLOWED', message: 'Hapus layanan tidak diizinkan. Gunakan pembatalan (cancel).' });
   } catch (error: any) {
     logger.error('Delete service request error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
@@ -553,12 +650,23 @@ export async function handleDeleteServiceRequest(req: Request, res: Response) {
 export async function handleGetServiceHistory(req: Request, res: Response) {
   try {
     const wa_user_id_raw = getParam(req, 'wa_user_id');
-    if (!wa_user_id_raw) {
+    const channel = resolveChannelFromRequest(req);
+    const channelIdentifier = resolveChannelIdentifier(req, channel) || getQuery(req, 'channel_identifier');
+
+    if (channel === 'WHATSAPP' && !wa_user_id_raw) {
       return res.status(400).json({ error: 'wa_user_id is required' });
     }
-    const wa_user_id = normalizeTo628(wa_user_id_raw);
+
+    if (channel === 'WEBCHAT' && !channelIdentifier) {
+      return res.status(400).json({ error: 'session_id/channel_identifier is required' });
+    }
+
+    const wa_user_id = wa_user_id_raw ? normalizeTo628(wa_user_id_raw) : null;
     const data = await prisma.serviceRequest.findMany({
-      where: { wa_user_id },
+      where: {
+        ...(wa_user_id ? { wa_user_id } : {}),
+        ...(channelIdentifier ? { channel, channel_identifier: String(channelIdentifier) } : {}),
+      },
       include: { service: true },
       orderBy: { created_at: 'desc' }
     });

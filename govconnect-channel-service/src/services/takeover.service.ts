@@ -8,7 +8,9 @@ function resolveVillageId(villageId?: string): string {
 export interface TakeoverSession {
   id: string;
   village_id: string;
-  wa_user_id: string;
+  wa_user_id?: string | null;
+  channel: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier: string;
   admin_id: string;
   admin_name: string | null;
   started_at: Date;
@@ -19,7 +21,9 @@ export interface TakeoverSession {
 export interface ConversationSummary {
   id: string;
   village_id: string;
-  wa_user_id: string;
+  wa_user_id?: string | null;
+  channel: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier: string;
   user_name: string | null;
   last_message: string | null;
   last_message_at: Date;
@@ -34,21 +38,23 @@ export interface ConversationSummary {
  * Check if a user is currently in takeover mode
  */
 export async function isUserInTakeover(
-  wa_user_id: string,
-  village_id?: string
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<boolean> {
   try {
     const resolvedVillageId = resolveVillageId(village_id);
     const session = await prisma.takeoverSession.findFirst({
       where: {
         village_id: resolvedVillageId,
-        wa_user_id,
+        channel,
+        channel_identifier,
         ended_at: null, // Active session
       },
     });
     return !!session;
   } catch (error: any) {
-    logger.error('Failed to check takeover status', { error: error.message, wa_user_id });
+    logger.error('Failed to check takeover status', { error: error.message, channel, channel_identifier });
     return false;
   }
 }
@@ -57,21 +63,23 @@ export async function isUserInTakeover(
  * Get active takeover session for a user
  */
 export async function getActiveTakeover(
-  wa_user_id: string,
-  village_id?: string
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<TakeoverSession | null> {
   try {
     const resolvedVillageId = resolveVillageId(village_id);
     const session = await prisma.takeoverSession.findFirst({
       where: {
         village_id: resolvedVillageId,
-        wa_user_id,
+        channel,
+        channel_identifier,
         ended_at: null,
       },
     });
     return session;
   } catch (error: any) {
-    logger.error('Failed to get takeover session', { error: error.message, wa_user_id });
+    logger.error('Failed to get takeover session', { error: error.message, channel, channel_identifier });
     return null;
   }
 }
@@ -80,20 +88,23 @@ export async function getActiveTakeover(
  * Start takeover for a user
  */
 export async function startTakeover(
-  wa_user_id: string,
+  channel_identifier: string,
   admin_id: string,
   admin_name?: string,
   reason?: string,
-  village_id?: string
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<TakeoverSession> {
   const resolvedVillageId = resolveVillageId(village_id);
   // End any existing takeover first
-  await endTakeover(wa_user_id, resolvedVillageId);
+  await endTakeover(channel_identifier, resolvedVillageId, channel);
 
   const session = await prisma.takeoverSession.create({
     data: {
       village_id: resolvedVillageId,
-      wa_user_id,
+      wa_user_id: channel === 'WHATSAPP' ? channel_identifier : null,
+      channel,
+      channel_identifier,
       admin_id,
       admin_name,
       reason,
@@ -103,33 +114,41 @@ export async function startTakeover(
   // Update conversation to mark as takeover
   await prisma.conversation.upsert({
     where: {
-      village_id_wa_user_id: {
+      village_id_channel_channel_identifier: {
         village_id: resolvedVillageId,
-        wa_user_id,
+        channel,
+        channel_identifier,
       },
     },
     update: { is_takeover: true },
     create: {
       village_id: resolvedVillageId,
-      wa_user_id,
+      wa_user_id: channel === 'WHATSAPP' ? channel_identifier : null,
+      channel,
+      channel_identifier,
       is_takeover: true,
     },
   });
 
-  logger.info('Takeover started', { wa_user_id, admin_id, session_id: session.id });
+  logger.info('Takeover started', { channel, channel_identifier, admin_id, session_id: session.id });
   return session;
 }
 
 /**
  * End takeover for a user
  */
-export async function endTakeover(wa_user_id: string, village_id?: string): Promise<boolean> {
+export async function endTakeover(
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<boolean> {
   try {
     const resolvedVillageId = resolveVillageId(village_id);
     const result = await prisma.takeoverSession.updateMany({
       where: {
         village_id: resolvedVillageId,
-        wa_user_id,
+        channel,
+        channel_identifier,
         ended_at: null,
       },
       data: {
@@ -141,20 +160,21 @@ export async function endTakeover(wa_user_id: string, village_id?: string): Prom
       // Update conversation to mark as not takeover
       await prisma.conversation.update({
         where: {
-          village_id_wa_user_id: {
+          village_id_channel_channel_identifier: {
             village_id: resolvedVillageId,
-            wa_user_id,
+            channel,
+            channel_identifier,
           },
         },
         data: { is_takeover: false },
       });
 
-      logger.info('Takeover ended', { wa_user_id, sessions_ended: result.count });
+      logger.info('Takeover ended', { channel, channel_identifier, sessions_ended: result.count });
       return true;
     }
     return false;
   } catch (error: any) {
-    logger.error('Failed to end takeover', { error: error.message, wa_user_id });
+    logger.error('Failed to end takeover', { error: error.message, channel, channel_identifier });
     return false;
   }
 }
@@ -180,19 +200,21 @@ export async function getActiveTakeovers(): Promise<TakeoverSession[]> {
  *                         - 'reset' to reset unread count to 0 (when AI/admin replies)
  */
 export async function updateConversation(
-  wa_user_id: string,
+  channel_identifier: string,
   last_message: string,
   user_name?: string,
   incrementUnread: boolean | 'reset' = true,
-  village_id?: string
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
     const resolvedVillageId = resolveVillageId(village_id);
     const existingConv = await prisma.conversation.findUnique({
       where: {
-        village_id_wa_user_id: {
+        village_id_channel_channel_identifier: {
           village_id: resolvedVillageId,
-          wa_user_id,
+          channel,
+          channel_identifier,
         },
       },
     });
@@ -212,9 +234,10 @@ export async function updateConversation(
 
     await prisma.conversation.upsert({
       where: {
-        village_id_wa_user_id: {
+        village_id_channel_channel_identifier: {
           village_id: resolvedVillageId,
-          wa_user_id,
+          channel,
+          channel_identifier,
         },
       },
       update: {
@@ -225,43 +248,50 @@ export async function updateConversation(
       },
       create: {
         village_id: resolvedVillageId,
-        wa_user_id,
+        wa_user_id: channel === 'WHATSAPP' ? channel_identifier : null,
+        channel,
+        channel_identifier,
         user_name,
         last_message: last_message.substring(0, 500),
         unread_count: incrementUnread === true ? 1 : 0,
       },
     });
   } catch (error: any) {
-    logger.error('Failed to update conversation', { error: error.message, wa_user_id });
+    logger.error('Failed to update conversation', { error: error.message, channel, channel_identifier });
   }
 }
 
 /**
  * Mark conversation as read (reset unread count)
  */
-export async function markConversationAsRead(wa_user_id: string, village_id?: string): Promise<void> {
+export async function markConversationAsRead(
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<void> {
   try {
     const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
 
     if (resolvedVillageId) {
       await prisma.conversation.update({
         where: {
-          village_id_wa_user_id: {
+          village_id_channel_channel_identifier: {
             village_id: resolvedVillageId,
-            wa_user_id,
+            channel,
+            channel_identifier,
           },
         },
         data: { unread_count: 0 },
       });
     } else {
       await prisma.conversation.updateMany({
-        where: { wa_user_id },
+        where: { channel, channel_identifier },
         data: { unread_count: 0 },
       });
     }
   } catch (error: any) {
     // Conversation might not exist
-    logger.debug('Could not mark conversation as read', { wa_user_id });
+    logger.debug('Could not mark conversation as read', { channel, channel_identifier });
   }
 }
 
@@ -296,22 +326,27 @@ export async function getConversations(
 /**
  * Get conversation by wa_user_id
  */
-export async function getConversation(wa_user_id: string, village_id?: string): Promise<ConversationSummary | null> {
+export async function getConversation(
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<ConversationSummary | null> {
   const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
 
   if (resolvedVillageId) {
     return prisma.conversation.findUnique({
       where: {
-        village_id_wa_user_id: {
+        village_id_channel_channel_identifier: {
           village_id: resolvedVillageId,
-          wa_user_id,
+          channel,
+          channel_identifier,
         },
       },
     });
   }
 
   return prisma.conversation.findFirst({
-    where: { wa_user_id },
+    where: { channel, channel_identifier },
     orderBy: { last_message_at: 'desc' },
   });
 }
@@ -319,10 +354,14 @@ export async function getConversation(wa_user_id: string, village_id?: string): 
 /**
  * Delete conversation and all related data for a user
  */
-export async function deleteConversationHistory(wa_user_id: string, village_id?: string): Promise<void> {
+export async function deleteConversationHistory(
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<void> {
   try {
     const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
-    const where: any = { wa_user_id };
+    const where: any = { channel, channel_identifier };
     if (resolvedVillageId) {
       where.village_id = resolvedVillageId;
     }
@@ -333,16 +372,16 @@ export async function deleteConversationHistory(wa_user_id: string, village_id?:
 
     // Delete all takeover sessions for this user using raw query
     if (resolvedVillageId) {
-      await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE village_id = ${resolvedVillageId} AND wa_user_id = ${wa_user_id}`;
-      await prisma.$executeRaw`DELETE FROM conversations WHERE village_id = ${resolvedVillageId} AND wa_user_id = ${wa_user_id}`;
+      await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE village_id = ${resolvedVillageId} AND channel = ${channel} AND channel_identifier = ${channel_identifier}`;
+      await prisma.$executeRaw`DELETE FROM conversations WHERE village_id = ${resolvedVillageId} AND channel = ${channel} AND channel_identifier = ${channel_identifier}`;
     } else {
-      await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE wa_user_id = ${wa_user_id}`;
-      await prisma.$executeRaw`DELETE FROM conversations WHERE wa_user_id = ${wa_user_id}`;
+      await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE channel = ${channel} AND channel_identifier = ${channel_identifier}`;
+      await prisma.$executeRaw`DELETE FROM conversations WHERE channel = ${channel} AND channel_identifier = ${channel_identifier}`;
     }
 
-    logger.info('Deleted conversation history', { wa_user_id });
+    logger.info('Deleted conversation history', { channel, channel_identifier });
   } catch (error: any) {
-    logger.error('Failed to delete conversation history', { error: error.message, wa_user_id });
+    logger.error('Failed to delete conversation history', { error: error.message, channel, channel_identifier });
     throw error;
   }
 }
@@ -351,17 +390,19 @@ export async function deleteConversationHistory(wa_user_id: string, village_id?:
  * Set AI processing status to "processing"
  */
 export async function setAIProcessing(
-  wa_user_id: string,
+  channel_identifier: string,
   message_id: string,
-  village_id?: string
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
     const resolvedVillageId = resolveVillageId(village_id);
     await prisma.conversation.upsert({
       where: {
-        village_id_wa_user_id: {
+        village_id_channel_channel_identifier: {
           village_id: resolvedVillageId,
-          wa_user_id,
+          channel,
+          channel_identifier,
         },
       },
       update: {
@@ -371,28 +412,35 @@ export async function setAIProcessing(
       },
       create: {
         village_id: resolvedVillageId,
-        wa_user_id,
+        wa_user_id: channel === 'WHATSAPP' ? channel_identifier : null,
+        channel,
+        channel_identifier,
         ai_status: 'processing',
         pending_message_id: message_id,
       },
     });
-    logger.info('AI processing started', { wa_user_id, message_id });
+    logger.info('AI processing started', { channel, channel_identifier, message_id });
   } catch (error: any) {
-    logger.error('Failed to set AI processing status', { error: error.message, wa_user_id });
+    logger.error('Failed to set AI processing status', { error: error.message, channel, channel_identifier });
   }
 }
 
 /**
  * Clear AI processing status (success)
  */
-export async function clearAIStatus(wa_user_id: string, village_id?: string): Promise<void> {
+export async function clearAIStatus(
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<void> {
   try {
     const resolvedVillageId = resolveVillageId(village_id);
     await prisma.conversation.update({
       where: {
-        village_id_wa_user_id: {
+        village_id_channel_channel_identifier: {
           village_id: resolvedVillageId,
-          wa_user_id,
+          channel,
+          channel_identifier,
         },
       },
       data: {
@@ -401,9 +449,9 @@ export async function clearAIStatus(wa_user_id: string, village_id?: string): Pr
         pending_message_id: null,
       },
     });
-    logger.info('AI status cleared', { wa_user_id });
+    logger.info('AI status cleared', { channel, channel_identifier });
   } catch (error: any) {
-    logger.debug('Could not clear AI status', { wa_user_id });
+    logger.debug('Could not clear AI status', { channel, channel_identifier });
   }
 }
 
@@ -411,18 +459,20 @@ export async function clearAIStatus(wa_user_id: string, village_id?: string): Pr
  * Set AI error status (failed)
  */
 export async function setAIError(
-  wa_user_id: string,
+  channel_identifier: string,
   error_message: string,
   message_id?: string,
-  village_id?: string
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
     const resolvedVillageId = resolveVillageId(village_id);
     await prisma.conversation.update({
       where: {
-        village_id_wa_user_id: {
+        village_id_channel_channel_identifier: {
           village_id: resolvedVillageId,
-          wa_user_id,
+          channel,
+          channel_identifier,
         },
       },
       data: {
@@ -431,23 +481,27 @@ export async function setAIError(
         pending_message_id: message_id || undefined,
       },
     });
-    logger.info('AI error status set', { wa_user_id, error_message });
+    logger.info('AI error status set', { channel, channel_identifier, error_message });
   } catch (error: any) {
-    logger.error('Failed to set AI error status', { error: error.message, wa_user_id });
+    logger.error('Failed to set AI error status', { error: error.message, channel, channel_identifier });
   }
 }
 
 /**
  * Get pending message for retry
  */
-export async function getPendingMessage(wa_user_id: string): Promise<{ message_id: string; message_text: string } | null> {
+export async function getPendingMessage(
+  channel_identifier: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<{ message_id: string; message_text: string } | null> {
   try {
     const village_id = resolveVillageId(undefined);
     const conversation = await prisma.conversation.findUnique({
       where: {
-        village_id_wa_user_id: {
+        village_id_channel_channel_identifier: {
           village_id,
-          wa_user_id,
+          channel,
+          channel_identifier,
         },
       },
     });
@@ -459,7 +513,8 @@ export async function getPendingMessage(wa_user_id: string): Promise<{ message_i
     const message = await prisma.message.findFirst({
       where: {
         village_id,
-        wa_user_id,
+        channel,
+        channel_identifier,
         message_id: conversation.pending_message_id,
       },
     });

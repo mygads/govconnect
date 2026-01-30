@@ -40,7 +40,8 @@ GovConnect adalah platform layanan desa/kelurahan berbasis WhatsApp dan web yang
     - Select/radio/date/number
 - **Mode layanan**: online, ambil di kantor, atau keduanya.
 - Public form: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`.
-- WA user otomatis terisi lewat query `?user=628xxx`.
+- WA user otomatis terisi lewat query `?wa=628xxx`.
+- Webchat otomatis terisi lewat query `?session=web_xxx`.
 - Pengisian layanan **hanya via form web**; edit data via link bertoken.
 
 ### 6) Pengaduan / Pelaporan
@@ -53,6 +54,7 @@ GovConnect adalah platform layanan desa/kelurahan berbasis WhatsApp dan web yang
 ### 7) Status & Riwayat
 - Warga dapat cek **status layanan** dan **riwayat** via WhatsApp.
 - Untuk layanan berbasis form, warga mendapat **nomor layanan** setelah submit.
+- Status seragam: **OPEN**, **PROCESS**, **DONE**, **CANCELED**, **REJECT**.
 
 ### 8) Super Admin
 - Memantau semua desa, melihat analytics global, dan setting sistem.

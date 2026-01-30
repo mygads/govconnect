@@ -35,18 +35,20 @@ interface Notification {
 interface RealtimeStats {
   complaints: {
     total: number
-    baru: number
-    proses: number
-    selesai: number
-    ditolak: number
+    open: number
+    process: number
+    done: number
+    canceled: number
+    reject: number
     urgent: number
   }
   services?: {
     total: number
-    baru: number
-    proses: number
-    selesai: number
-    ditolak: number
+    open: number
+    process: number
+    done: number
+    canceled: number
+    reject: number
   }
   todayCount: number
   lastHourCount: number
@@ -108,7 +110,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       // Filter urgent complaints
       const urgent = allComplaints.filter(c => {
         const urgentFlag = typeof c.is_urgent === 'boolean' ? c.is_urgent : isUrgentCategory(c.kategori)
-        return urgentFlag && c.status === 'baru'
+        return urgentFlag && (c.status === 'OPEN' || c.status === 'baru')
       })
       
       // Get recent (last 10)

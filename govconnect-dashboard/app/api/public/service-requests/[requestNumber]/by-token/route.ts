@@ -10,10 +10,12 @@ export async function PATCH(
   try {
     const { requestNumber } = await context.params;
     const body = await request.json();
-    const { edit_token, citizen_data, requirement_data } = body as {
+    const { edit_token, citizen_data, requirement_data, wa_user_id, session_id } = body as {
       edit_token?: string;
       citizen_data?: Record<string, any>;
       requirement_data?: Record<string, any>;
+      wa_user_id?: string;
+      session_id?: string;
     };
 
     if (!edit_token) {
@@ -33,6 +35,8 @@ export async function PATCH(
         },
         body: JSON.stringify({
           edit_token,
+          ...(wa_user_id ? { wa_user_id } : {}),
+          ...(session_id ? { session_id } : {}),
           citizen_data_json: citizen_data || {},
           requirement_data_json: requirement_data || {},
         }),

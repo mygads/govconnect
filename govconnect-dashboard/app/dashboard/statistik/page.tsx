@@ -14,18 +14,20 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend,
 interface Statistics {
   complaints: {
     total: number
-    baru: number
-    proses: number
-    selesai: number
-    ditolak: number
+    open: number
+    process: number
+    done: number
+    canceled: number
+    reject: number
     by_kategori?: Record<string, number>
   }
   services: {
     total: number
-    baru: number
-    proses: number
-    selesai: number
-    ditolak: number
+    open: number
+    process: number
+    done: number
+    canceled: number
+    reject: number
   }
 }
 
@@ -92,13 +94,13 @@ export default function StatistikPage() {
 
   // Complaint Status Distribution
   const complaintStatusData = {
-    labels: ["Baru", "Proses", "Selesai", "Ditolak"],
+    labels: ["Baru", "Proses", "Selesai", "Dibatalkan", "Ditolak"],
     datasets: [
       {
         label: "Jumlah Laporan",
-        data: [stats.complaints.baru, stats.complaints.proses, stats.complaints.selesai, stats.complaints.ditolak],
-        backgroundColor: ["rgba(234, 179, 8, 0.6)", "rgba(249, 115, 22, 0.6)", "rgba(34, 197, 94, 0.6)", "rgba(239, 68, 68, 0.6)"],
-        borderColor: ["rgb(234, 179, 8)", "rgb(249, 115, 22)", "rgb(34, 197, 94)", "rgb(239, 68, 68)"],
+        data: [stats.complaints.open, stats.complaints.process, stats.complaints.done, stats.complaints.canceled, stats.complaints.reject],
+        backgroundColor: ["rgba(234, 179, 8, 0.6)", "rgba(249, 115, 22, 0.6)", "rgba(34, 197, 94, 0.6)", "rgba(148, 163, 184, 0.6)", "rgba(239, 68, 68, 0.6)"],
+        borderColor: ["rgb(234, 179, 8)", "rgb(249, 115, 22)", "rgb(34, 197, 94)", "rgb(148, 163, 184)", "rgb(239, 68, 68)"],
         borderWidth: 2,
       },
     ],
@@ -106,13 +108,13 @@ export default function StatistikPage() {
 
   // Service Request Status Distribution
   const serviceStatusData = {
-    labels: ["Baru", "Proses", "Selesai", "Ditolak"],
+    labels: ["Baru", "Proses", "Selesai", "Dibatalkan", "Ditolak"],
     datasets: [
       {
         label: "Jumlah Permohonan",
-        data: [stats.services.baru, stats.services.proses, stats.services.selesai, stats.services.ditolak],
-        backgroundColor: ["rgba(234, 179, 8, 0.6)", "rgba(249, 115, 22, 0.6)", "rgba(34, 197, 94, 0.6)", "rgba(239, 68, 68, 0.6)"],
-        borderColor: ["rgb(234, 179, 8)", "rgb(249, 115, 22)", "rgb(34, 197, 94)", "rgb(239, 68, 68)"],
+        data: [stats.services.open, stats.services.process, stats.services.done, stats.services.canceled, stats.services.reject],
+        backgroundColor: ["rgba(234, 179, 8, 0.6)", "rgba(249, 115, 22, 0.6)", "rgba(34, 197, 94, 0.6)", "rgba(148, 163, 184, 0.6)", "rgba(239, 68, 68, 0.6)"],
+        borderColor: ["rgb(234, 179, 8)", "rgb(249, 115, 22)", "rgb(34, 197, 94)", "rgb(148, 163, 184)", "rgb(239, 68, 68)"],
         borderWidth: 2,
       },
     ],

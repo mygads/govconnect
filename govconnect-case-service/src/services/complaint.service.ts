@@ -6,7 +6,9 @@ import logger from '../utils/logger';
 import { invalidateStatsCache } from './query-batcher.service';
 
 export interface CreateComplaintData {
-  wa_user_id: string;
+  wa_user_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier?: string;
   kategori: string;
   deskripsi: string;
   alamat?: string;
@@ -25,12 +27,16 @@ export interface UpdateComplaintStatusData {
 }
 
 export interface CancelComplaintData {
-  wa_user_id: string;
+  wa_user_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier?: string;
   cancel_reason?: string;
 }
 
 export interface UpdateComplaintByUserData {
-  wa_user_id: string;
+  wa_user_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier?: string;
   alamat?: string;
   deskripsi?: string;
   rt_rw?: string;
@@ -48,11 +54,24 @@ export interface ComplaintFilters {
   kategori?: string;
   rt_rw?: string;
   wa_user_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier?: string;
   village_id?: string;
   category_id?: string;
   type_id?: string;
   limit?: number;
   offset?: number;
+}
+
+function isSameRequester(complaint: { channel: 'WHATSAPP' | 'WEBCHAT'; wa_user_id: string | null; channel_identifier: string | null }, params: {
+  channel: 'WHATSAPP' | 'WEBCHAT';
+  wa_user_id?: string;
+  channel_identifier?: string;
+}): boolean {
+  if (params.channel === 'WEBCHAT') {
+    return complaint.channel === 'WEBCHAT' && !!params.channel_identifier && complaint.channel_identifier === params.channel_identifier;
+  }
+  return !!params.wa_user_id && complaint.wa_user_id === params.wa_user_id;
 }
 
 /**
@@ -62,11 +81,17 @@ export async function createComplaint(data: CreateComplaintData) {
   const complaint_id = await generateComplaintId();
 
   const isUrgent = data.is_urgent ?? isUrgentCategory(data.kategori);
+  const channel = data.channel || 'WHATSAPP';
+  const channelIdentifier = channel === 'WEBCHAT'
+    ? data.channel_identifier
+    : data.wa_user_id;
   
   const complaint = await prisma.complaint.create({
     data: {
       complaint_id,
-      wa_user_id: data.wa_user_id,
+      wa_user_id: data.wa_user_id || null,
+      channel,
+      channel_identifier: channelIdentifier || null,
       kategori: data.kategori,
       category_id: data.category_id,
       type_id: data.type_id,
@@ -77,7 +102,7 @@ export async function createComplaint(data: CreateComplaintData) {
       is_urgent: isUrgent,
       require_address: data.require_address ?? false,
       village_id: data.village_id,
-      status: 'baru',
+      status: 'OPEN',
     },
   });
   
@@ -95,6 +120,8 @@ export async function createComplaint(data: CreateComplaintData) {
       alamat: complaint.alamat,
       rt_rw: complaint.rt_rw,
       wa_user_id: data.wa_user_id,
+      channel,
+      channel_identifier: channelIdentifier || null,
       created_at: complaint.created_at,
     });
     
@@ -145,7 +172,10 @@ export async function getComplaintById(id: string) {
  * Get complaint by ID with ownership validation
  * Only returns complaint if the user is the owner
  */
-export async function getComplaintByIdWithOwnership(id: string, wa_user_id: string): Promise<{
+export async function getComplaintByIdWithOwnership(
+  id: string,
+  params: { wa_user_id?: string; channel?: 'WHATSAPP' | 'WEBCHAT'; channel_identifier?: string }
+): Promise<{
   success: boolean;
   error?: 'NOT_FOUND' | 'NOT_OWNER';
   message?: string;
@@ -162,11 +192,12 @@ export async function getComplaintByIdWithOwnership(id: string, wa_user_id: stri
   }
   
   // Validate ownership
-  if (complaint.wa_user_id !== wa_user_id) {
+  const channel = params.channel || 'WHATSAPP';
+  if (!isSameRequester(complaint, { channel, wa_user_id: params.wa_user_id, channel_identifier: params.channel_identifier })) {
     logger.warn('Get complaint rejected: not owner', {
       complaint_id: id,
       owner: complaint.wa_user_id,
-      requester: wa_user_id,
+      requester: params.wa_user_id || params.channel_identifier,
     });
     return {
       success: false,
@@ -185,13 +216,17 @@ export async function getComplaintByIdWithOwnership(id: string, wa_user_id: stri
  * Get complaints list with filters and pagination
  */
 export async function getComplaintsList(filters: ComplaintFilters) {
-  const { status, kategori, rt_rw, wa_user_id, village_id, category_id, type_id, limit = 20, offset = 0 } = filters;
+  const { status, kategori, rt_rw, wa_user_id, channel, channel_identifier, village_id, category_id, type_id, limit = 20, offset = 0 } = filters;
   
   const where: any = {};
   if (status) where.status = status;
   if (kategori) where.kategori = kategori;
   if (rt_rw) where.rt_rw = rt_rw;
   if (wa_user_id) where.wa_user_id = wa_user_id;
+  if (channel_identifier && channel) {
+    where.channel = channel;
+    where.channel_identifier = channel_identifier;
+  }
   if (village_id) where.village_id = village_id;
   if (category_id) where.category_id = category_id;
   if (type_id) where.type_id = type_id;
@@ -319,11 +354,12 @@ export async function cancelComplaint(
     }
     
     // Validate ownership - only the creator can cancel
-    if (complaint.wa_user_id !== data.wa_user_id) {
+    const channel = data.channel || 'WHATSAPP';
+    if (!isSameRequester(complaint, { channel, wa_user_id: data.wa_user_id, channel_identifier: data.channel_identifier })) {
       logger.warn('Cancel complaint rejected: not owner', {
         complaint_id: id,
         owner: complaint.wa_user_id,
-        requester: data.wa_user_id,
+        requester: data.wa_user_id || data.channel_identifier,
       });
       return {
         success: false,
@@ -333,7 +369,7 @@ export async function cancelComplaint(
     }
     
     // Check if complaint is already completed or cancelled
-    if (complaint.status === 'selesai') {
+    if (complaint.status === 'DONE') {
       return {
         success: false,
         error: 'ALREADY_COMPLETED',
@@ -341,22 +377,38 @@ export async function cancelComplaint(
       };
     }
     
-    if (complaint.status === 'dibatalkan') {
+    if (complaint.status === 'CANCELED') {
       return {
         success: false,
         error: 'ALREADY_COMPLETED',
         message: 'Laporan sudah dibatalkan sebelumnya',
       };
     }
+
+    if (complaint.status === 'REJECT') {
+      return {
+        success: false,
+        error: 'ALREADY_COMPLETED',
+        message: 'Laporan sudah ditolak dan tidak dapat dibatalkan',
+      };
+    }
     
     // Update complaint status to cancelled
-    const cancelReason = data.cancel_reason || 'Dibatalkan oleh pelapor';
+    const cancelReason = data.cancel_reason?.trim();
+    if (!cancelReason) {
+      return {
+        success: false,
+        error: 'INTERNAL_ERROR',
+        message: 'Alasan pembatalan wajib diisi',
+      };
+    }
+    const cancelNote = `Dibatalkan oleh masyarakat: ${cancelReason}`;
     
     const updatedComplaint = await prisma.complaint.update({
       where: { id: complaint.id },
       data: {
-        status: 'dibatalkan',
-        admin_notes: `[DIBATALKAN] ${cancelReason}`,
+        status: 'CANCELED',
+        admin_notes: cancelNote,
       },
     });
     
@@ -364,20 +416,20 @@ export async function cancelComplaint(
     await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED, {
       wa_user_id: updatedComplaint.wa_user_id,
       complaint_id: updatedComplaint.complaint_id,
-      status: 'dibatalkan',
-      admin_notes: cancelReason,
+      status: 'CANCELED',
+      admin_notes: cancelNote,
     });
     
     logger.info('Complaint cancelled by user', {
       complaint_id: updatedComplaint.complaint_id,
       wa_user_id: data.wa_user_id,
-      cancel_reason: cancelReason,
+      cancel_reason: cancelNote,
     });
     
     return {
       success: true,
       complaint_id: updatedComplaint.complaint_id,
-      message: cancelReason,
+      message: cancelNote,
     };
   } catch (error: any) {
     logger.error('Failed to cancel complaint', {
@@ -394,7 +446,7 @@ export async function cancelComplaint(
 
 /**
  * Update complaint by user (owner validation)
- * User can only update address/description/rt_rw while status is not selesai/ditolak
+ * User can only update address/description/rt_rw while status is not DONE/CANCELED
  */
 export async function updateComplaintByUser(
   id: string,
@@ -411,12 +463,13 @@ export async function updateComplaintByUser(
       return { success: false, error: 'NOT_FOUND', message: 'Laporan tidak ditemukan' };
     }
 
-    if (complaint.wa_user_id !== data.wa_user_id) {
+    const channel = data.channel || 'WHATSAPP';
+    if (!isSameRequester(complaint, { channel, wa_user_id: data.wa_user_id, channel_identifier: data.channel_identifier })) {
       return { success: false, error: 'NOT_OWNER', message: 'Anda tidak memiliki akses untuk mengubah laporan ini' };
     }
 
-    if (['selesai', 'ditolak'].includes(complaint.status)) {
-      return { success: false, error: 'LOCKED', message: 'Laporan sudah selesai/ditolak dan tidak bisa diubah' };
+    if (['DONE', 'CANCELED', 'REJECT'].includes(complaint.status)) {
+      return { success: false, error: 'LOCKED', message: 'Laporan sudah selesai/dibatalkan/ditolak dan tidak bisa diubah' };
     }
 
     const updated = await prisma.complaint.update({
@@ -430,7 +483,7 @@ export async function updateComplaintByUser(
 
     return { success: true, data: updated };
   } catch (error: any) {
-    logger.error('Update complaint by user failed', { error: error.message, id, wa_user_id: data.wa_user_id });
+    logger.error('Update complaint by user failed', { error: error.message, id, wa_user_id: data.wa_user_id, channel_identifier: data.channel_identifier });
     return { success: false, error: 'NOT_FOUND', message: 'Terjadi kesalahan saat memperbarui laporan' };
   }
 }

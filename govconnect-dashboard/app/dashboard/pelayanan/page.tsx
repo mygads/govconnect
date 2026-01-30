@@ -24,11 +24,11 @@ interface ServiceRequest {
 
 const statusOptions = [
   { value: "all", label: "Semua" },
-  { value: "baru", label: "Baru" },
-  { value: "proses", label: "Proses" },
-  { value: "selesai", label: "Selesai" },
-  { value: "ditolak", label: "Ditolak" },
-  { value: "dibatalkan", label: "Dibatalkan" },
+  { value: "OPEN", label: "Baru" },
+  { value: "PROCESS", label: "Proses" },
+  { value: "DONE", label: "Selesai" },
+  { value: "CANCELED", label: "Dibatalkan" },
+  { value: "REJECT", label: "Ditolak" },
 ]
 
 export default function ServiceRequestsPage() {
@@ -75,11 +75,16 @@ export default function ServiceRequestsPage() {
 
   const getStatusBadge = (status: string) => {
     const map: Record<string, string> = {
+      OPEN: "bg-blue-100 text-blue-700",
+      PROCESS: "bg-yellow-100 text-yellow-700",
+      DONE: "bg-green-100 text-green-700",
+      CANCELED: "bg-gray-100 text-gray-700",
+      REJECT: "bg-red-100 text-red-700",
       baru: "bg-blue-100 text-blue-700",
       proses: "bg-yellow-100 text-yellow-700",
       selesai: "bg-green-100 text-green-700",
-      ditolak: "bg-red-100 text-red-700",
       dibatalkan: "bg-gray-100 text-gray-700",
+      ditolak: "bg-red-100 text-red-700",
     }
     return map[status] || "bg-gray-100 text-gray-700"
   }
@@ -124,7 +129,7 @@ export default function ServiceRequestsPage() {
         <CardHeader>
           <CardTitle>Filter & Pencarian</CardTitle>
           <div className="flex flex-wrap gap-3 mt-4">
-            <div className="relative flex-1 min-w-[240px]">
+            <div className="relative flex-1 min-w-60">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 value={search}

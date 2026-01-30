@@ -21,6 +21,13 @@ function resolveVillageId(req: Request): string | undefined {
   return queryVillageId || headerVillageId;
 }
 
+function resolveChannel(req: Request, identifier?: string): 'WHATSAPP' | 'WEBCHAT' {
+  const queryChannel = (getQuery(req, 'channel') || req.body?.channel) as string | undefined;
+  if (queryChannel && queryChannel.toUpperCase() === 'WEBCHAT') return 'WEBCHAT';
+  if (identifier && identifier.startsWith('web_')) return 'WEBCHAT';
+  return 'WHATSAPP';
+}
+
 /**
  * Start takeover for a user
  * POST /internal/takeover/:wa_user_id
@@ -30,13 +37,14 @@ export async function handleStartTakeover(req: Request, res: Response): Promise<
     const wa_user_id = getParam(req, 'wa_user_id');
     const { admin_id, admin_name, reason } = req.body;
     const villageId = resolveVillageId(req);
+    const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id || !admin_id) {
       res.status(400).json({ error: 'wa_user_id and admin_id are required' });
       return;
     }
 
-    const session = await startTakeover(wa_user_id, admin_id, admin_name, reason, villageId);
+    const session = await startTakeover(wa_user_id, admin_id, admin_name, reason, villageId, channel);
 
     res.json({
       success: true,
@@ -57,13 +65,14 @@ export async function handleEndTakeover(req: Request, res: Response): Promise<vo
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
     const villageId = resolveVillageId(req);
+    const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
       return;
     }
 
-    const ended = await endTakeover(wa_user_id, villageId);
+    const ended = await endTakeover(wa_user_id, villageId, channel);
 
     res.json({
       success: true,
@@ -103,13 +112,14 @@ export async function handleCheckTakeover(req: Request, res: Response): Promise<
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
     const villageId = resolveVillageId(req);
+    const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
       return;
     }
 
-    const session = await getActiveTakeover(wa_user_id, villageId);
+    const session = await getActiveTakeover(wa_user_id, villageId, channel);
 
     res.json({
       success: true,
@@ -163,13 +173,14 @@ export async function handleGetConversation(req: Request, res: Response): Promis
     const limitRaw = getQuery(req, 'limit');
     const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
     const villageId = resolveVillageId(req);
+    const channel = resolveChannel(req, wa_user_id);
 
-    const conversation = await getConversation(wa_user_id, villageId);
-    const messages = await getMessageHistory(wa_user_id, limit, villageId);
-    const takeoverSession = await getActiveTakeover(wa_user_id, villageId);
+    const conversation = await getConversation(wa_user_id, villageId, channel);
+    const messages = await getMessageHistory(wa_user_id, limit, villageId, channel);
+    const takeoverSession = await getActiveTakeover(wa_user_id, villageId, channel);
 
     // Mark as read when admin opens conversation
-    await markConversationAsRead(wa_user_id, villageId);
+    await markConversationAsRead(wa_user_id, villageId, channel);
 
     res.json({
       success: true,
@@ -199,6 +210,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     const wa_user_id = getParam(req, 'wa_user_id');
     const { message, admin_id, admin_name } = req.body;
     const villageId = resolveVillageId(req);
+    const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
@@ -211,10 +223,8 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     }
 
     // Check if takeover is active (optional - can still send without takeover)
-    const isTakeover = await isUserInTakeover(wa_user_id, villageId);
-
-    // Check if this is a webchat user (starts with web_)
-    const isWebchatUser = wa_user_id.startsWith('web_');
+    const isTakeover = await isUserInTakeover(wa_user_id, villageId, channel);
+    const isWebchatUser = channel === 'WEBCHAT';
 
     if (isWebchatUser) {
       // For webchat users, just save to database
@@ -222,14 +232,16 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       const messageId = `admin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
       await saveOutgoingMessage({
-        wa_user_id,
+        wa_user_id: channel === 'WHATSAPP' ? wa_user_id : undefined,
+        channel,
+        channel_identifier: wa_user_id,
         message_id: messageId,
         message_text: message,
         source: 'ADMIN',
       });
 
       // Update conversation summary and reset unread count (admin has responded)
-      await updateConversation(wa_user_id, message, undefined, 'reset', villageId);
+      await updateConversation(wa_user_id, message, undefined, 'reset', villageId, channel);
 
       logger.info('Admin sent webchat message', {
         wa_user_id,
@@ -258,13 +270,15 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
         await saveOutgoingMessage({
           village_id: villageId,
           wa_user_id,
+          channel,
+          channel_identifier: wa_user_id,
           message_id: messageId,
           message_text: message,
           source: 'ADMIN',
         });
 
         // Update conversation summary and reset unread count (admin has responded)
-        await updateConversation(wa_user_id, message, undefined, 'reset', villageId);
+        await updateConversation(wa_user_id, message, undefined, 'reset', villageId, channel);
 
         logger.info('Admin sent WhatsApp message', {
           wa_user_id,
@@ -306,8 +320,9 @@ export async function handleMarkAsRead(req: Request, res: Response): Promise<voi
       return;
     }
     const villageId = resolveVillageId(req);
+    const channel = resolveChannel(req, wa_user_id);
 
-    await markConversationAsRead(wa_user_id, villageId);
+    await markConversationAsRead(wa_user_id, villageId, channel);
 
     res.json({
       success: true,
@@ -327,6 +342,7 @@ export async function handleDeleteConversation(req: Request, res: Response): Pro
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
     const villageId = resolveVillageId(req);
+    const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
@@ -336,7 +352,7 @@ export async function handleDeleteConversation(req: Request, res: Response): Pro
     // Import prisma for direct database operations
     const { deleteConversationHistory } = await import('../services/takeover.service');
 
-    await deleteConversationHistory(wa_user_id, villageId);
+    await deleteConversationHistory(wa_user_id, villageId, channel);
 
     logger.info('Conversation deleted', { wa_user_id });
 
@@ -357,6 +373,7 @@ export async function handleDeleteConversation(req: Request, res: Response): Pro
 export async function handleRetryAI(req: Request, res: Response): Promise<void> {
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
+    const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
@@ -368,7 +385,7 @@ export async function handleRetryAI(req: Request, res: Response): Promise<void> 
     const { rabbitmqConfig } = await import('../config/rabbitmq');
 
     // Get the pending message that failed
-    const pendingMessage = await getPendingMessage(wa_user_id);
+    const pendingMessage = await getPendingMessage(wa_user_id, channel);
 
     if (!pendingMessage) {
       res.status(404).json({ error: 'No pending message found for retry' });
@@ -376,7 +393,7 @@ export async function handleRetryAI(req: Request, res: Response): Promise<void> 
     }
 
     // Set AI processing status again
-    await setAIProcessing(wa_user_id, pendingMessage.message_id);
+    await setAIProcessing(wa_user_id, pendingMessage.message_id, undefined, channel);
 
     // Re-publish the message to AI service queue
     await publishEvent(rabbitmqConfig.ROUTING_KEYS.MESSAGE_RECEIVED, {
@@ -384,6 +401,7 @@ export async function handleRetryAI(req: Request, res: Response): Promise<void> 
       message: pendingMessage.message_text,
       message_id: pendingMessage.message_id,
       is_retry: true,
+      channel: channel.toLowerCase(),
     });
 
     logger.info('AI retry requested', { wa_user_id, message_id: pendingMessage.message_id });

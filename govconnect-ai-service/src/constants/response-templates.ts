@@ -17,32 +17,32 @@ import { IntentType } from './intent-patterns';
 // ==================== GREETING RESPONSES ====================
 
 export const GREETING_RESPONSES = [
-  'Halo Kak! 👋 Saya Gana dari Kelurahan. Ada yang bisa dibantu hari ini?\n\n📋 Lapor masalah\n📝 Ajukan layanan\n📍 Info kelurahan',
-  'Hai Kak! 👋 Selamat datang di layanan Kelurahan. Mau lapor masalah, ajukan layanan, atau tanya info?',
-  'Halo! 👋 Saya siap bantu Kakak. Silakan sampaikan keperluannya ya!',
+  'Halo, selamat datang di layanan GovConnect.\nSebelumnya boleh kami tahu ini dengan siapa Pak/Bu?',
+  'Selamat datang di layanan GovConnect.\nBoleh kami tahu nama Bapak/Ibu terlebih dahulu?',
+  'Halo, selamat datang.\nMohon informasikan nama Bapak/Ibu agar kami bisa membantu dengan tepat.',
 ];
 
 // ==================== THANKS RESPONSES ====================
 
 export const THANKS_RESPONSES = [
-  'Sama-sama Kak! 😊 Senang bisa membantu. Kalau ada yang lain, langsung chat aja ya!',
-  'Terima kasih kembali Kak! 🙏 Jangan sungkan kalau butuh bantuan lagi.',
-  'Siap Kak! Semoga harinya menyenangkan ya! 😊',
+  'Sama-sama Pak/Bu. Senang bisa membantu. Jika ada yang lain, silakan sampaikan.',
+  'Terima kasih kembali Pak/Bu. Jangan sungkan jika butuh bantuan lagi.',
+  'Baik Pak/Bu. Semoga harinya menyenangkan.',
 ];
 
 // ==================== CONFIRMATION RESPONSES ====================
 
 export const CONFIRMATION_RESPONSES = [
-  'Baik Kak, ada yang lain yang bisa dibantu?',
-  'Siap Kak! Kalau ada pertanyaan lain, langsung tanya aja ya.',
-  'Oke Kak! 👍',
+  'Baik Pak/Bu, ada hal lain yang bisa kami bantu?',
+  'Siap Pak/Bu. Jika ada pertanyaan lain, silakan disampaikan.',
+  'Baik Pak/Bu.',
 ];
 
 // ==================== REJECTION RESPONSES ====================
 
 export const REJECTION_RESPONSES = [
-  'Baik Kak, tidak masalah. Ada yang lain yang bisa saya bantu?',
-  'Oke Kak, dibatalkan ya. Mau dibantu yang lain?',
+  'Baik Pak/Bu, tidak masalah. Ada hal lain yang bisa kami bantu?',
+  'Baik Pak/Bu, pembatalan dibatalkan. Mau dibantu yang lain?',
 ];
 
 // ==================== FALLBACK TEMPLATES BY INTENT ====================
@@ -51,85 +51,72 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   'GREETING': GREETING_RESPONSES,
   
   'CREATE_COMPLAINT': [
-    'Baik Kak, saya bantu catat laporan. Boleh sebutkan lokasinya di mana?',
-    'Saya catat ya Kak. Masalahnya di lokasi mana tepatnya?',
-    'Oke Kak, saya bantu proses laporan. Bisa sebutkan alamat lengkapnya?',
+    'Baik Pak/Bu, mohon sebutkan lokasi laporan secara jelas.',
+    'Baik Pak/Bu, masalahnya di lokasi mana tepatnya?',
+    'Baik Pak/Bu, mohon sebutkan alamat lengkapnya.',
   ],
   
   'CREATE_SERVICE_REQUEST': [
-    'Baik Kak, layanan apa yang ingin diajukan?',
-    'Oke Kak, mau ajukan layanan apa?',
-    'Baik, untuk pengajuan layanan, mohon sebutkan nama layanan yang dibutuhkan ya Kak.',
+    'Baik Pak/Bu, layanan apa yang ingin diajukan?',
+    'Baik Pak/Bu, mohon sebutkan nama layanan yang dibutuhkan.',
+    'Untuk pengajuan layanan, mohon sebutkan nama layanan yang diinginkan.',
   ],
   
   'CHECK_STATUS': [
-    'Untuk cek status, boleh sebutkan nomor laporan atau layanan ya Kak? (contoh: LAP-20251201-001 atau LAY-20251201-001)',
-    'Baik Kak, mau cek status yang mana? Sebutkan nomornya ya (LAP-xxx atau LAY-xxx)',
-    'Oke, saya bantu cek. Nomor laporan atau layanan berapa Kak?',
+    'Untuk cek status, mohon sebutkan nomor laporan atau layanan (contoh: LAP-20251201-001 atau LAY-20251201-001).',
+    'Baik Pak/Bu, mohon sebutkan nomor yang ingin dicek (LAP-xxx atau LAY-xxx).',
+    'Baik Pak/Bu, nomor laporan atau layanan berapa?',
   ],
   
   'CANCEL_COMPLAINT': [
-    'Untuk membatalkan laporan, boleh sebutkan nomornya Kak? (contoh: LAP-20251201-001)',
-    'Baik Kak, mau batalkan laporan yang mana? Sebutkan nomornya ya.',
+    'Untuk membatalkan laporan, mohon sebutkan nomornya (contoh: LAP-20251201-001).',
+    'Baik Pak/Bu, laporan mana yang ingin dibatalkan? Sebutkan nomornya ya.',
   ],
   
   'HISTORY': [
-    'Mohon tunggu sebentar ya Kak, saya cek riwayat laporan dan layanan Kakak...',
-    'Baik Kak, saya lihat dulu riwayatnya ya...',
+    'Mohon tunggu sebentar, kami cek riwayat laporan dan layanan Bapak/Ibu...',
+    'Baik Pak/Bu, kami cek riwayatnya ya...',
   ],
   
   'KNOWLEDGE_QUERY': [
-    'Untuk informasi tersebut, Kakak bisa:\n\n📞 Hubungi: (022) 123-4567\n🕐 Jam kerja: Senin-Jumat 08:00-15:00\n📍 Datang langsung ke kantor kelurahan',
-    'Maaf Kak, saya belum punya info lengkap tentang itu. Silakan hubungi kantor kelurahan langsung ya di jam kerja.',
+    'Mohon maaf Pak/Bu, informasi tersebut belum tersedia.\nSilakan datang langsung ke kantor desa untuk bantuan lebih lanjut.',
+    'Mohon maaf Pak/Bu, informasi terkait hal tersebut belum tersedia.\nSilakan datang ke kantor desa pada jam kerja.',
   ],
   
   'THANKS': THANKS_RESPONSES,
   
   'CONFIRMATION': [
-    'Baik Kak, saya proses ya. Mohon tunggu sebentar...',
-    'Oke Kak, sedang saya proses...',
+    'Baik Pak/Bu, kami proses ya. Mohon tunggu sebentar...',
+    'Baik Pak/Bu, sedang kami proses...',
   ],
   
   'REJECTION': REJECTION_RESPONSES,
   
   'QUESTION': [
-    'Halo! Saya Gana dari Kelurahan. Ada yang bisa saya bantu hari ini?',
-    'Hai Kak! Mau lapor masalah, ajukan layanan, atau tanya info?',
+    'Halo, selamat datang di layanan GovConnect. Ada yang bisa kami bantu hari ini?',
+    'Selamat datang Pak/Bu. Mau lapor masalah, ajukan layanan, atau tanya info?',
   ],
   
   'UNKNOWN': [
-    'Maaf Kak, bisa dijelaskan lebih detail? Saya siap bantu untuk:\n\n📋 Lapor masalah (jalan rusak, lampu mati, dll)\n📝 Ajukan layanan (surat keterangan, pengantar, dll)\n📍 Info kelurahan',
-    'Hmm, saya kurang paham Kak. Kakak mau:\n\n1️⃣ Lapor masalah?\n2️⃣ Urus surat?\n3️⃣ Cek status?\n\nSilakan pilih atau jelaskan lebih detail ya.',
-    'Maaf Kak, coba jelaskan lagi ya. Saya bisa bantu:\n\n• Laporan keluhan/aduan\n• Ajukan layanan\n• Informasi kelurahan',
+    'Mohon maaf Pak/Bu, bisa dijelaskan lebih detail? Kami siap bantu untuk:\n\n• Lapor masalah (jalan rusak, lampu mati, dll)\n• Ajukan layanan (surat keterangan, pengantar, dll)\n• Info kelurahan',
+    'Mohon maaf Pak/Bu, kami kurang paham. Bapak/Ibu ingin:\n\n1) Lapor masalah\n2) Urus surat/layanan\n3) Cek status\n\nSilakan pilih atau jelaskan lebih detail.',
+    'Mohon maaf Pak/Bu, silakan jelaskan lagi. Kami bisa bantu:\n\n• Laporan keluhan/aduan\n• Ajukan layanan\n• Informasi kelurahan',
   ],
   
   'ERROR': [
-    'Mohon maaf Kak, ada kendala teknis 🙏 Coba ulangi pesan Kakak ya.',
-    'Maaf Kak, sistem sedang sibuk. Silakan coba lagi dalam beberapa saat.',
-    'Waduh, ada gangguan teknis nih Kak. Coba kirim ulang pesannya ya 🙏',
+    'Mohon maaf Pak/Bu, ada kendala teknis. Silakan ulangi pesan Anda.',
+    'Mohon maaf Pak/Bu, sistem sedang sibuk. Silakan coba lagi dalam beberapa saat.',
+    'Mohon maaf Pak/Bu, terjadi gangguan teknis. Silakan kirim ulang pesannya.',
   ],
 };
 
 // ==================== KNOWLEDGE TEMPLATES ====================
 
-export const JAM_BUKA_RESPONSE = `📍 *Jam Operasional Kelurahan*
+export const JAM_BUKA_RESPONSE = `Mohon maaf Pak/Bu, informasi jam operasional belum tersedia.
+Silakan datang langsung ke kantor desa untuk informasi lebih lanjut.`;
 
-🕐 Senin - Jumat: 08.00 - 15.00 WIB
-🕐 Sabtu: 08.00 - 12.00 WIB
-🚫 Minggu & Hari Libur: Tutup
-⏸️ Istirahat: 12.00 - 13.00 WIB
-
-💡 Waktu terbaik: pagi jam 08.00-10.00 WIB ya Kak!`;
-
-export const LOKASI_RESPONSE = `📍 *Lokasi Kantor Kelurahan*
-
-🏢 Alamat: Jl. Raya Kelurahan No. 1
-📞 Telepon: (022) 123-4567
-📱 WhatsApp: 0812-3456-7890
-
-🗺️ Patokan: Sebelah Masjid Al-Ikhlas
-
-💡 Parkir tersedia di halaman depan kantor.`;
+export const LOKASI_RESPONSE = `Mohon maaf Pak/Bu, informasi alamat kantor belum tersedia.
+Silakan datang langsung ke kantor desa untuk informasi lebih lanjut.`;
 
 export const LAYANAN_RESPONSE = `📋 *Layanan yang Tersedia*
 
@@ -174,25 +161,25 @@ export const BIAYA_RESPONSE = `💰 *Informasi Biaya*
 export const MISSING_FIELD_PROMPTS: Record<string, string[]> = {
   // Complaint fields
   'kategori': [
-    'Jenis masalah apa yang ingin dilaporkan Kak? (jalan rusak, lampu mati, sampah, dll)',
-    'Masalahnya tentang apa Kak? Jalan rusak, lampu mati, atau yang lain?',
+    'Jenis masalah apa yang ingin dilaporkan Pak/Bu? (jalan rusak, lampu mati, sampah, dll)',
+    'Masalahnya tentang apa Pak/Bu? Jalan rusak, lampu mati, atau yang lain?',
   ],
   'alamat': [
-    'Di mana lokasi masalahnya Kak? Sebutkan alamat atau patokan terdekat.',
-    'Lokasinya di mana Kak? Bisa sebutkan alamat lengkapnya?',
+    'Di mana lokasi masalahnya Pak/Bu? Sebutkan alamat atau patokan terdekat.',
+    'Lokasinya di mana Pak/Bu? Bisa sebutkan alamat lengkapnya?',
   ],
   'deskripsi': [
-    'Bisa jelaskan lebih detail masalahnya Kak?',
-    'Kondisinya seperti apa Kak? Ceritakan lebih detail.',
+    'Bisa jelaskan lebih detail masalahnya Pak/Bu?',
+    'Kondisinya seperti apa Pak/Bu? Ceritakan lebih detail.',
   ],
   
   // Service request fields
   'service_slug': [
-    'Layanan apa yang ingin Kakak ajukan?',
-    'Mau urus layanan apa Kak? (contoh: surat domisili, surat pengantar, dll)',
+    'Layanan apa yang ingin Bapak/Ibu ajukan?',
+    'Mau urus layanan apa Pak/Bu? (contoh: surat domisili, surat pengantar, dll)',
   ],
   'service_id': [
-    'Layanan yang dimaksud apa ya Kak? Mohon sebutkan nama layanannya.',
+    'Layanan yang dimaksud apa ya Pak/Bu? Mohon sebutkan nama layanannya.',
     'Boleh sebutkan nama layanan yang ingin diajukan?',
   ],
 };
@@ -201,16 +188,16 @@ export const MISSING_FIELD_PROMPTS: Record<string, string[]> = {
 
 export const ERROR_TEMPLATES: Record<string, string[]> = {
   'TIMEOUT': [
-    'Maaf Kak, prosesnya agak lama nih. Coba kirim ulang pesannya ya 🙏',
-    'Waduh, timeout Kak. Silakan coba lagi dalam beberapa saat.',
+    'Mohon maaf Pak/Bu, prosesnya agak lama. Silakan kirim ulang pesannya.',
+    'Mohon maaf Pak/Bu, terjadi timeout. Silakan coba lagi dalam beberapa saat.',
   ],
   'RATE_LIMIT': [
-    'Maaf Kak, sistem sedang sibuk. Coba lagi dalam 1-2 menit ya.',
-    'Banyak yang chat nih Kak, tunggu sebentar ya lalu coba lagi.',
+    'Mohon maaf Pak/Bu, sistem sedang sibuk. Coba lagi dalam 1-2 menit.',
+    'Mohon maaf Pak/Bu, sistem sedang padat. Silakan coba lagi sebentar.',
   ],
   'SERVICE_DOWN': [
-    'Mohon maaf Kak, layanan sedang maintenance. Silakan coba lagi nanti 🙏',
-    'Sistem sedang dalam perbaikan Kak. Coba lagi dalam beberapa saat ya.',
+    'Mohon maaf Pak/Bu, layanan sedang maintenance. Silakan coba lagi nanti.',
+    'Mohon maaf Pak/Bu, sistem sedang dalam perbaikan. Coba lagi dalam beberapa saat.',
   ],
   'DEFAULT': FALLBACK_TEMPLATES['ERROR'],
 };

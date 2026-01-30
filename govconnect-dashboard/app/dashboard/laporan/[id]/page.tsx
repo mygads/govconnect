@@ -339,10 +339,11 @@ export default function LaporanDetailPage() {
                     <SelectValue placeholder="Pilih status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="baru">Baru</SelectItem>
-                    <SelectItem value="proses">Proses</SelectItem>
-                    <SelectItem value="selesai">Selesai</SelectItem>
-                    <SelectItem value="ditolak">Ditolak</SelectItem>
+                    <SelectItem value="OPEN">Baru</SelectItem>
+                    <SelectItem value="PROCESS">Proses</SelectItem>
+                    <SelectItem value="DONE">Selesai</SelectItem>
+                    <SelectItem value="CANCELED">Dibatalkan</SelectItem>
+                    <SelectItem value="REJECT">Ditolak</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

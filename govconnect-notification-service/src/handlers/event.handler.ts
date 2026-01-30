@@ -84,10 +84,9 @@ async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
     status: event.status
   });
 
-  // Only send notification for completed status
-  // Skip notifications for: proses, pending, dibatalkan (by admin)
-  if (event.status !== 'selesai') {
-    logger.info('Skipping notification - only notify on completion', {
+  // Kirim notifikasi hanya untuk status final
+  if (!['DONE', 'CANCELED', 'REJECT'].includes(event.status)) {
+    logger.info('Skipping notification - only notify on final status', {
       status: event.status,
       id: event.complaint_id || event.request_number
     });

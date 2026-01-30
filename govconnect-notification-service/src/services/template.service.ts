@@ -48,10 +48,8 @@ function buildNaturalStatusMessage(
 ): string {
   const type = isComplaint ? 'Laporan' : 'Layanan';
   
-  // Only 'selesai' will be sent as notification (other statuses are skipped)
-  // But keep other cases for internal use / future changes
   switch (status) {
-    case 'selesai':
+    case 'DONE':
       let selesaiMsg = `✅ *${type} Selesai*\n\n*${id}* telah selesai ditangani.`;
       if (adminNotes) {
         selesaiMsg += `\n\n📝 _${adminNotes}_`;
@@ -59,32 +57,20 @@ function buildNaturalStatusMessage(
       selesaiMsg += `\n\nTerima kasih telah menggunakan layanan kami.`;
       return selesaiMsg;
     
-    case 'baru':
+    case 'OPEN':
       return `📥 *${type} Diterima*\n\n*${id}* sudah kami terima.`;
     
-    case 'pending':
-      let pendingMsg = `⏳ *${type} Pending*\n\n*${id}* sedang diverifikasi.`;
-      if (adminNotes) {
-        pendingMsg += `\n\n📝 _${adminNotes}_`;
-      }
-      return pendingMsg;
-    
-    case 'proses':
+    case 'PROCESS':
       let prosesMsg = `🔄 *${type} Diproses*\n\n*${id}* sedang ditangani.`;
       if (adminNotes) {
         prosesMsg += `\n\n📝 _${adminNotes}_`;
       }
       return prosesMsg;
     
-    case 'ditolak':
-      let ditolakMsg = `❌ *${type} Ditolak*\n\n*${id}* tidak dapat diproses.`;
-      if (adminNotes) {
-        ditolakMsg += `\n\n📝 Alasan: _${adminNotes}_`;
-      }
-      return ditolakMsg;
-    
-    case 'dibatalkan':
-      return `🔴 *${type} Dibatalkan*\n\n*${id}* telah dibatalkan.`;
+    case 'CANCELED':
+      return `🔴 *${type} Dibatalkan*\n\n*${id}* telah dibatalkan.${adminNotes ? `\n\n📝 Keterangan: ${adminNotes}` : ''}`;
+    case 'REJECT':
+      return `❌ *${type} Ditolak*\n\n*${id}* tidak dapat diproses.${adminNotes ? `\n\n📝 Alasan penolakan: ${adminNotes}` : ''}`;
     
     default:
       return `📢 *Update ${type}*\n\n*${id}*: ${status}`;

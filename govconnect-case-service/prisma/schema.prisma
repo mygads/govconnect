@@ -7,10 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum ChannelType {
+  WHATSAPP
+  WEBCHAT
+}
+
 model Complaint {
   id           String   @id @default(cuid())
   complaint_id String   @unique
-  wa_user_id   String
+  wa_user_id   String?
+  channel      ChannelType @default(WHATSAPP)
+  channel_identifier String?
   kategori     String   // nama kategori/jenis laporan
   category_id  String?
   type_id      String?
@@ -21,7 +28,7 @@ model Complaint {
   is_urgent    Boolean  @default(false)
   require_address Boolean @default(false)
   village_id   String?
-  status       String   @default("baru") // baru, proses, selesai, ditolak
+  status       String   @default("OPEN") // OPEN, PROCESS, DONE, CANCELED, REJECT
   admin_notes  String?  @db.Text
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
@@ -31,6 +38,7 @@ model Complaint {
   updates      ComplaintUpdate[]
   
   @@index([wa_user_id])
+  @@index([channel, channel_identifier])
   @@index([status])
   @@index([kategori])
   @@index([category_id])
@@ -157,10 +165,12 @@ model ServiceRequest {
   id                    String   @id @default(cuid())
   request_number        String   @unique
   service_id            String
-  wa_user_id            String
+  wa_user_id            String?
+  channel               ChannelType @default(WHATSAPP)
+  channel_identifier    String?
   citizen_data_json     Json
   requirement_data_json Json
-  status                String   @default("baru") // baru|proses|selesai|ditolak|dibatalkan
+  status                String   @default("OPEN") // OPEN|PROCESS|DONE|CANCELED|REJECT
   admin_notes           String?  @db.Text
   
   // Hasil dari admin (file dan deskripsi)
@@ -177,6 +187,7 @@ model ServiceRequest {
   service               ServiceItem @relation(fields: [service_id], references: [id])
 
   @@index([wa_user_id])
+  @@index([channel, channel_identifier])
   @@index([service_id])
   @@index([status])
   @@index([created_at])

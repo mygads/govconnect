@@ -23,7 +23,6 @@ import {
   User, 
   CheckCircle2, 
   Clock,
-  XCircle,
   AlertCircle,
   MapPin,
   CreditCard,
@@ -35,7 +34,8 @@ import {
   Loader2,
   Upload,
   Download,
-  FileCheck
+  FileCheck,
+  XCircle
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Separator } from "@/components/ui/separator"
@@ -67,6 +67,41 @@ const statusConfig: Record<string, {
   icon: React.ElementType
   description: string
 }> = {
+  OPEN: { 
+    label: "Baru", 
+    color: "text-blue-700 dark:text-blue-400", 
+    bgColor: "bg-blue-100 dark:bg-blue-900/30",
+    icon: Inbox,
+    description: "Permohonan baru masuk"
+  },
+  PROCESS: { 
+    label: "Proses", 
+    color: "text-amber-700 dark:text-amber-400", 
+    bgColor: "bg-amber-100 dark:bg-amber-900/30",
+    icon: Clock,
+    description: "Sedang dalam proses verifikasi"
+  },
+  DONE: { 
+    label: "Selesai", 
+    color: "text-green-700 dark:text-green-400", 
+    bgColor: "bg-green-100 dark:bg-green-900/30",
+    icon: CheckCircle2,
+    description: "Permohonan telah selesai"
+  },
+  CANCELED: { 
+    label: "Dibatalkan", 
+    color: "text-gray-700 dark:text-gray-400", 
+    bgColor: "bg-gray-100 dark:bg-gray-800",
+    icon: AlertCircle,
+    description: "Permohonan dibatalkan"
+  },
+  REJECT: { 
+    label: "Ditolak", 
+    color: "text-red-700 dark:text-red-400", 
+    bgColor: "bg-red-100 dark:bg-red-900/30",
+    icon: AlertCircle,
+    description: "Permohonan ditolak"
+  },
   baru: { 
     label: "Baru", 
     color: "text-blue-700 dark:text-blue-400", 
@@ -88,13 +123,6 @@ const statusConfig: Record<string, {
     icon: CheckCircle2,
     description: "Permohonan telah selesai"
   },
-  ditolak: { 
-    label: "Ditolak", 
-    color: "text-red-700 dark:text-red-400", 
-    bgColor: "bg-red-100 dark:bg-red-900/30",
-    icon: XCircle,
-    description: "Permohonan ditolak"
-  },
   dibatalkan: { 
     label: "Dibatalkan", 
     color: "text-gray-700 dark:text-gray-400", 
@@ -102,14 +130,21 @@ const statusConfig: Record<string, {
     icon: AlertCircle,
     description: "Permohonan dibatalkan"
   },
+  ditolak: { 
+    label: "Ditolak", 
+    color: "text-red-700 dark:text-red-400", 
+    bgColor: "bg-red-100 dark:bg-red-900/30",
+    icon: AlertCircle,
+    description: "Permohonan ditolak"
+  },
 }
 
 const statusOptions = [
-  { value: "baru", label: "Baru" },
-  { value: "proses", label: "Proses" },
-  { value: "selesai", label: "Selesai" },
-  { value: "ditolak", label: "Ditolak" },
-  { value: "dibatalkan", label: "Dibatalkan" },
+  { value: "OPEN", label: "Baru" },
+  { value: "PROCESS", label: "Proses" },
+  { value: "DONE", label: "Selesai" },
+  { value: "CANCELED", label: "Dibatalkan" },
+  { value: "REJECT", label: "Ditolak" },
 ]
 
 const citizenFieldLabels: Record<string, { label: string; icon: React.ElementType }> = {
@@ -157,7 +192,7 @@ export default function ServiceRequestDetailPage() {
       const data = await response.json()
       const payload = data.data || data
       setRequest(payload)
-      setStatus(payload.status || "baru")
+      setStatus(payload.status || "OPEN")
       setAdminNotes(payload.admin_notes || "")
       setResultDescription(payload.result_description || "")
       setResultFileUrl(payload.result_file_url || "")
@@ -249,7 +284,7 @@ export default function ServiceRequestDetailPage() {
   }
 
   const getStatusBadge = (statusKey: string) => {
-    const config = statusConfig[statusKey] || statusConfig.baru
+    const config = statusConfig[statusKey] || statusConfig.OPEN
     const Icon = config.icon
     return (
       <Badge className={`${config.bgColor} ${config.color} border-0 gap-1.5 px-3 py-1`}>
@@ -305,7 +340,7 @@ export default function ServiceRequestDetailPage() {
     )
   }
 
-  const currentStatusConfig = statusConfig[request.status] || statusConfig.baru
+  const currentStatusConfig = statusConfig[request.status] || statusConfig.OPEN
   const StatusIcon = currentStatusConfig.icon
 
   return (
@@ -365,10 +400,10 @@ export default function ServiceRequestDetailPage() {
                     const Icon = fieldConfig.icon
                     return (
                       <div key={key} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                        <Icon className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                        <Icon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                         <div className="min-w-0">
                           <p className="text-xs text-muted-foreground">{fieldConfig.label}</p>
-                          <p className="font-medium break-words">{String(value)}</p>
+                          <p className="font-medium wrap-break-word">{String(value)}</p>
                         </div>
                       </div>
                     )
@@ -377,7 +412,7 @@ export default function ServiceRequestDetailPage() {
                   <p className="text-muted-foreground col-span-2">Tidak ada data pemohon</p>
                 )}
                 <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 dark:bg-green-950/20">
-                  <Phone className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                  <Phone className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
                   <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">WhatsApp</p>
                     <p className="font-medium text-green-700 dark:text-green-400">{request.wa_user_id}</p>
@@ -405,7 +440,7 @@ export default function ServiceRequestDetailPage() {
                   {Object.entries(request.requirement_data_json).map(([key, value]) => (
                     <div key={key} className="p-3 rounded-lg border bg-muted/30">
                       <p className="text-xs text-muted-foreground mb-1">{key}</p>
-                      <p className="font-medium break-words">{String(value)}</p>
+                      <p className="font-medium wrap-break-word">{String(value)}</p>
                     </div>
                   ))}
                 </div>
@@ -506,7 +541,7 @@ export default function ServiceRequestDetailPage() {
                 
                 {resultFileUrl ? (
                   <div className="flex items-center gap-2 p-3 rounded-lg border bg-green-50 dark:bg-green-900/20">
-                    <FileText className="h-5 w-5 text-green-600 flex-shrink-0" />
+                    <FileText className="h-5 w-5 text-green-600 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-sm truncate">{resultFileName || "File hasil"}</p>
                       <a 

@@ -19,7 +19,8 @@ Dokumen ini menggantikan konsep lama dan fokus pada **layanan administrasi** den
 
 ### 3) Form Publik
 - URL: `govconnect.my.id/form/{slug-desa}/{slug-layanan}`
-- Query `?user=628xxx` untuk auto-fill nomor WA.
+- Query `?wa=628xxx` untuk auto-fill nomor WA.
+- Query `?session=web_xxx` untuk auto-fill webchat.
 - Setelah submit, warga mendapat **nomor layanan**.
 - **Catatan**: pengisian data layanan hanya melalui form publik (bukan via WA).
 
@@ -66,7 +67,7 @@ Dokumen ini menggantikan konsep lama dan fokus pada **layanan administrasi** den
 ### ServiceRequest
 - `id`, `request_number`, `service_id`, `wa_user_id`
 - `citizen_data_json`, `requirement_data_json`
-- `status` (baru|proses|selesai|ditolak|dibatalkan)
+- `status` (OPEN|PROCESS|DONE|CANCELED|REJECT)
 - `created_at`, `updated_at`
 
 ---

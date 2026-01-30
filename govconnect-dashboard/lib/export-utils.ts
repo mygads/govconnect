@@ -157,7 +157,7 @@ export function exportToPDF(complaints: Complaint[], options: ExportOptions = {}
   
   const stats = getComplaintStats(complaints);
   doc.text(`Total Laporan: ${stats.total}`, 14, finalY + 5);
-  doc.text(`Baru: ${stats.baru} | Proses: ${stats.proses} | Selesai: ${stats.selesai} | Ditolak: ${stats.ditolak}`, 14, finalY + 10);
+  doc.text(`Baru: ${stats.open} | Proses: ${stats.process} | Selesai: ${stats.done} | Dibatalkan: ${stats.canceled} | Ditolak: ${stats.reject}`, 14, finalY + 10);
 
   // Generate filename with date
   const dateStr = format(new Date(), 'yyyy-MM-dd');
@@ -238,10 +238,11 @@ export function generateReceiptHTML(complaint: Complaint): string {
           font-weight: bold;
           font-size: 14px;
         }
-        .status-baru { background: #fef3c7; color: #92400e; }
-        .status-proses { background: #dbeafe; color: #1e40af; }
-        .status-selesai { background: #d1fae5; color: #065f46; }
-        .status-ditolak { background: #fee2e2; color: #991b1b; }
+        .status-open { background: #fef3c7; color: #92400e; }
+        .status-process { background: #dbeafe; color: #1e40af; }
+        .status-done { background: #d1fae5; color: #065f46; }
+        .status-canceled { background: #e5e7eb; color: #374151; }
+        .status-reject { background: #fee2e2; color: #991b1b; }
         .footer {
           margin-top: 30px;
           padding-top: 20px;
@@ -295,7 +296,7 @@ export function generateReceiptHTML(complaint: Complaint): string {
           <div class="info-item">
             <label>Status</label>
             <div class="value">
-              <span class="status-badge status-${complaint.status}">${formatStatusText(complaint.status)}</span>
+              <span class="status-badge status-${String(complaint.status || '').toLowerCase()}">${formatStatusText(complaint.status)}</span>
             </div>
           </div>
         </div>
@@ -445,15 +446,16 @@ export function exportReportToPDF(report: ReportData) {
   
   const statsCol1 = [
     `Total Laporan: ${report.stats.total}`,
-    `Laporan Baru: ${report.stats.baru}`,
+    `Laporan Baru: ${report.stats.open}`,
   ];
   const statsCol2 = [
-    `Dalam Proses: ${report.stats.proses}`,
-    `Selesai: ${report.stats.selesai}`,
+    `Dalam Proses: ${report.stats.process}`,
+    `Selesai: ${report.stats.done}`,
   ];
   const statsCol3 = [
-    `Ditolak: ${report.stats.ditolak}`,
-    `Tingkat Penyelesaian: ${report.stats.total > 0 ? Math.round((report.stats.selesai / report.stats.total) * 100) : 0}%`,
+    `Dibatalkan: ${report.stats.canceled}`,
+    `Ditolak: ${report.stats.reject}`,
+    `Tingkat Penyelesaian: ${report.stats.total > 0 ? Math.round((report.stats.done / report.stats.total) * 100) : 0}%`,
   ];
 
   statsCol1.forEach((text, i) => {
@@ -547,20 +549,27 @@ function formatDateIndo(dateStr: string): string {
 
 function formatStatusText(status: string): string {
   const statusMap: Record<string, string> = {
+    open: 'Baru',
+    process: 'Dalam Proses',
+    done: 'Selesai',
+    canceled: 'Dibatalkan',
+    reject: 'Ditolak',
     baru: 'Baru',
     proses: 'Dalam Proses',
     selesai: 'Selesai',
+    dibatalkan: 'Dibatalkan',
     ditolak: 'Ditolak',
   };
-  return statusMap[status] || status;
+  return statusMap[status.toLowerCase()] || status;
 }
 
 function getComplaintStats(complaints: Complaint[]) {
   return {
     total: complaints.length,
-    baru: complaints.filter(c => c.status === 'baru').length,
-    proses: complaints.filter(c => c.status === 'proses').length,
-    selesai: complaints.filter(c => c.status === 'selesai').length,
-    ditolak: complaints.filter(c => c.status === 'ditolak').length,
+    open: complaints.filter(c => ['OPEN', 'baru'].includes(c.status)).length,
+    process: complaints.filter(c => ['PROCESS', 'proses'].includes(c.status)).length,
+    done: complaints.filter(c => ['DONE', 'selesai'].includes(c.status)).length,
+    canceled: complaints.filter(c => ['CANCELED', 'dibatalkan'].includes(c.status)).length,
+    reject: complaints.filter(c => ['REJECT', 'ditolak'].includes(c.status)).length,
   };
 }

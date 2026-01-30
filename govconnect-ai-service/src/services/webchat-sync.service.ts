@@ -30,13 +30,15 @@ export async function saveWebchatMessage(data: {
       `${CHANNEL_SERVICE_URL}/internal/messages`,
       {
         village_id: data.village_id,
-        wa_user_id: data.session_id,
+        wa_user_id: undefined,
+        channel: 'WEBCHAT',
+        channel_identifier: data.session_id,
         message_id: messageId,
         message_text: data.message,
         direction: data.direction,
         source: data.source || (data.direction === 'IN' ? 'USER' : 'AI'),
         metadata: {
-          channel: 'webchat',
+          channel: 'WEBCHAT',
           timestamp: new Date().toISOString(),
         },
       },
@@ -112,6 +114,7 @@ export async function checkWebchatTakeover(
       {
         params: {
           ...(village_id ? { village_id } : {}),
+          channel: 'WEBCHAT',
         },
         headers: {
           'x-internal-api-key': INTERNAL_API_KEY,
@@ -168,7 +171,8 @@ export async function getAdminMessages(
       `${CHANNEL_SERVICE_URL}/internal/messages`,
       {
         params: {
-          wa_user_id: session_id,
+          channel_identifier: session_id,
+          channel: 'WEBCHAT',
           limit: 20, // Increase limit to get more messages
           ...(village_id ? { village_id } : {}),
         },

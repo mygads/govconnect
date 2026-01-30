@@ -162,7 +162,7 @@ Get complaint by ID
     "deskripsi": "Jalan berlubang",
     "alamat": "Jl. Melati No. 21",
     "rt_rw": "RT 03 RW 05",
-    "status": "baru",
+    "status": "OPEN",
     "admin_notes": null,
     "created_at": "2025-01-24T10:00:00Z",
     "updated_at": "2025-01-24T10:00:00Z"
@@ -176,7 +176,7 @@ Update complaint status
 **Request**:
 ```json
 {
-  "status": "proses",
+  "status": "PROCESS",
   "admin_notes": "Tim sudah ditugaskan ke lokasi"
 }
 ```
@@ -187,7 +187,7 @@ Update complaint status
   "status": "success",
   "data": {
     "complaint_id": "LAP-20250124-001",
-    "status": "proses",
+    "status": "PROCESS",
     "admin_notes": "Tim sudah ditugaskan ke lokasi"
   }
 }
@@ -201,10 +201,11 @@ Get complaint statistics
 {
   "data": {
     "byStatus": [
-      { "status": "baru", "count": 45 },
-      { "status": "proses", "count": 30 },
-      { "status": "selesai", "count": 120 },
-      { "status": "ditolak", "count": 5 }
+      { "status": "OPEN", "count": 45 },
+      { "status": "PROCESS", "count": 30 },
+      { "status": "DONE", "count": 120 },
+      { "status": "CANCELED", "count": 5 },
+      { "status": "REJECT", "count": 2 }
     ],
     "byKategori": [
       { "kategori": "jalan_rusak", "count": 80 },
@@ -253,7 +254,7 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
   "status": "success",
   "data": {
     "request_number": "LAY-20250124-001",
-    "status": "baru"
+    "status": "OPEN"
   }
 }
 ```
@@ -262,7 +263,7 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 Get service requests list
 
 **Query Params**:
-- `status`: baru | proses | selesai | ditolak | dibatalkan
+- `status`: OPEN | PROCESS | DONE | CANCELED | REJECT
 - `service_id`: service UUID
 - `wa_user_id`: 628xxx
 - `request_number`: LAY-YYYYMMDD-XXX

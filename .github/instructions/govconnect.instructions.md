@@ -89,12 +89,12 @@ Instruksi ini wajib diikuti saat bekerja dengan project GovConnect. Baca keselur
 - Setiap service memiliki database PostgreSQL sendiri
 - **DILARANG** direct database access antar service
 - Komunikasi antar service: REST API atau RabbitMQ event
-- Service 2 (AI) adalah STATELESS - tidak punya database
+- Service 2 (AI) adalah STATELESS - tidak punya database dan tidak menyimpan sesi di memori persisten
 
 ### 2. MESSAGE FLOW PATTERN
 - **Inbound**: WA → Service 1 → Event → Service 2 → LLM → Service 3
 - **Outbound**: Service 5 → Service 1 → WA
-- **History**: Semua chat history HANYA di Service 1
+- **History**: Semua chat history HANYA di Service 1 (gunakan `channel` + `channel_identifier`)
 
 ### 3. FIFO 30 MESSAGES
 Service 1 wajib maintain maksimal 30 pesan per user:

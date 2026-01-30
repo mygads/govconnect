@@ -10,6 +10,7 @@ Dokumen ini menambahkan mapping terbaru sesuai perubahan fitur desa/kelurahan. B
 - **Synchronous**: REST API antar service
 - **Asynchronous**: RabbitMQ event
 - **Docker**: tiap service containerized
+- **Status seragam**: OPEN, PROCESS, DONE, CANCELED, REJECT
 
 ---
 

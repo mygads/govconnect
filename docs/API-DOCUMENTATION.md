@@ -378,7 +378,7 @@ X-Internal-API-Key: <api-key>
     "complaint_id": "LP-20251222-001",
     "kategori": "jalan_rusak",
     "deskripsi": "Jalan berlubang di depan kantor kelurahan",
-    "status": "baru",
+    "status": "OPEN",
     "created_at": "2025-12-22T15:00:00.000Z"
   }
 }
@@ -387,10 +387,12 @@ X-Internal-API-Key: <api-key>
 #### GET /laporan
 Get complaints list.
 
+**Status valid:** `OPEN`, `PROCESS`, `DONE`, `CANCELED`, `REJECT`. Status `DONE`/`CANCELED`/`REJECT` wajib menyertakan `admin_notes` saat update.
+
 **Query Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| status | string | Filter by status (baru, proses, selesai, ditolak) |
+| status | string | Filter by status (OPEN, PROCESS, DONE, CANCELED, REJECT) |
 | kategori | string | Filter by category |
 | wa_user_id | string | Filter by user |
 | limit | number | Limit results (default: 20) |
@@ -418,10 +420,11 @@ Get complaint statistics.
 {
   "totalLaporan": 100,
   "laporan": {
-    "baru": 30,
-    "proses": 50,
-    "selesai": 15,
-    "ditolak": 5,
+    "open": 30,
+    "process": 50,
+    "done": 15,
+    "canceled": 3,
+    "reject": 2,
     "hariIni": 10
   }
 }
@@ -448,7 +451,7 @@ Update complaint status.
 **Request Body:**
 ```json
 {
-  "status": "proses",
+  "status": "PROCESS",
   "admin_notes": "Sedang ditindaklanjuti"
 }
 ```
@@ -472,6 +475,8 @@ X-Internal-API-Key: <api-key>
 ---
 
 ### Service Catalog & Permohonan Layanan
+
+**Status valid:** `OPEN`, `PROCESS`, `DONE`, `CANCELED`, `REJECT`. Status `DONE`/`CANCELED`/`REJECT` wajib menyertakan `admin_notes`.
 
 #### GET /service-categories
 Get all service categories (optional filter by `village_id`).
@@ -547,7 +552,7 @@ Update service request status.
 **Request Body:**
 ```json
 {
-  "status": "proses",
+  "status": "PROCESS",
   "admin_notes": "Sedang diverifikasi"
 }
 ```
@@ -556,7 +561,7 @@ Update service request status.
 Cancel service request (ownership required).
 
 #### DELETE /service-requests/:id
-Delete service request.
+Tidak diizinkan (gunakan update status ke CANCELED/REJECT).
 
 #### GET /service-requests/history/:wa_user_id
 Get user service request history.

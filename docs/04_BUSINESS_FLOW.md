@@ -21,7 +21,7 @@ Dokumen ini menjelaskan alur utama sesuai fitur terbaru: knowledge base terpadu,
 3. AI query Case Service untuk syarat + deskripsi layanan.
 4. AI jawab syarat + tanya "mau diproses sekarang?".
 5. Jika iya, AI kirim link form:
-  govconnect.my.id/form/{slug-desa}/{slug-layanan}?user=628xxx
+  govconnect.my.id/form/{slug-desa}/{slug-layanan}?wa=628xxx
 ```
 
 ### C) Submit Form Layanan (Web)
@@ -45,7 +45,7 @@ Dokumen ini menjelaskan alur utama sesuai fitur terbaru: knowledge base terpadu,
 ```
 1. Warga WA: "Batalkan layanan LAY-..."
 2. AI minta konfirmasi pembatalan.
-3. Jika setuju, Case Service ubah status ke dibatalkan.
+3. Jika setuju, Case Service ubah status ke CANCELED (alasan wajib).
 4. AI mengonfirmasi pembatalan.
 ```
 
@@ -90,7 +90,7 @@ Dokumen ini menjelaskan alur utama sesuai fitur terbaru: knowledge base terpadu,
 ```
 1. Warga WA: "Ubah laporan LAP-..." atau "Batalkan laporan LAP-..."
 2. AI validasi kepemilikan dan status.
-3. Case Service update data atau ubah status dibatalkan.
+3. Case Service update data atau ubah status CANCELED (alasan wajib).
 4. AI mengonfirmasi.
 ```
 

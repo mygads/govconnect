@@ -3,7 +3,9 @@ import logger from '../utils/logger';
 
 export interface PendingMessageData {
   village_id?: string;
-  wa_user_id: string;
+  wa_user_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier: string;
   message_id: string;
   message_text: string;
 }
@@ -11,7 +13,9 @@ export interface PendingMessageData {
 export interface PendingMessage {
   id: string;
   village_id: string;
-  wa_user_id: string;
+  wa_user_id?: string | null;
+  channel: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier: string;
   message_id: string;
   message_text: string;
   status: string;
@@ -31,10 +35,13 @@ function resolveVillageId(villageId?: string): string {
 export async function addPendingMessage(data: PendingMessageData): Promise<PendingMessage> {
   try {
     const villageId = resolveVillageId(data.village_id);
+    const channel = data.channel || 'WHATSAPP';
     const pending = await prisma.pendingMessage.create({
       data: {
         village_id: villageId,
-        wa_user_id: data.wa_user_id,
+        wa_user_id: data.wa_user_id || null,
+        channel,
+        channel_identifier: data.channel_identifier,
         message_id: data.message_id,
         message_text: data.message_text,
         status: 'pending',
@@ -42,7 +49,8 @@ export async function addPendingMessage(data: PendingMessageData): Promise<Pendi
     });
     
     logger.info('📥 Message added to pending queue', {
-      wa_user_id: data.wa_user_id,
+      channel,
+      channel_identifier: data.channel_identifier,
       message_id: data.message_id,
     });
     
@@ -64,13 +72,15 @@ export async function addPendingMessage(data: PendingMessageData): Promise<Pendi
  * Get all pending messages for a user (for batching)
  */
 export async function getPendingMessagesForUser(
-  wa_user_id: string,
-  village_id?: string
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<PendingMessage[]> {
   return prisma.pendingMessage.findMany({
     where: {
       village_id: resolveVillageId(village_id),
-      wa_user_id,
+      channel,
+      channel_identifier,
       status: 'pending',
     },
     orderBy: {

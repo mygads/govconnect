@@ -9,11 +9,11 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{case_service_url}}/service-requests?status=baru&limit=20",
+              "raw": "{{case_service_url}}/service-requests?status=OPEN&limit=20",
               "host": ["{{case_service_url}}"],
               "path": ["service-requests"],
               "query": [
-                { "key": "status", "value": "baru" },
+                { "key": "status", "value": "OPEN" },
                 { "key": "limit", "value": "20" }
               ]
             }
@@ -44,7 +44,7 @@
             "method": "PATCH",
             "url": "{{case_service_url}}/service-requests/{{service_request_id}}/status",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"proses\",\n  \"admin_notes\": \"Sedang diproses\"\n}" }
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"PROCESS\",\n  \"admin_notes\": \"Sedang diproses\"\n}" }
           }
         },
         {
@@ -58,10 +58,6 @@
             ],
             "body": { "mode": "raw", "raw": "{\n  \"wa_user_id\": \"{{wa_user_id}}\",\n  \"cancel_reason\": \"Berhalangan\"\n}" }
           }
-        },
-        {
-          "name": "Delete Service Request",
-          "request": { "method": "DELETE", "url": "{{case_service_url}}/service-requests/{{service_request_id}}" }
         },
         {
           "name": "Get User History",

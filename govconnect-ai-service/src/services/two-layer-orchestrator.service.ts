@@ -392,7 +392,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
           reply_text: '',
         };
 
-        const reply = await handleServiceRequestCreation(wa_user_id, llmLike);
+        const reply = await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike);
         await stopTyping(wa_user_id, village_id);
         await publishAIReply({
           village_id,
@@ -593,7 +593,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     // Step 1.4: Deterministic history command
     // Avoid L2 responding with meta-instructions like "ketik riwayat" when the user already did.
     if (/^(riwayat|history)$/i.test(sanitizedMessage.trim())) {
-      const reply = await handleHistory(wa_user_id);
+      const reply = await handleHistory(wa_user_id, 'whatsapp');
       await stopTyping(wa_user_id, village_id);
       await publishAIReply({
         village_id,
@@ -626,7 +626,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
         needs_knowledge: false,
       };
 
-      const reply = await handleStatusCheck(wa_user_id, llmLike);
+      const reply = await handleStatusCheck(wa_user_id, 'whatsapp', llmLike);
       await stopTyping(wa_user_id, village_id);
       await publishAIReply({
         village_id,
@@ -647,7 +647,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     // Step 1.6: Deterministic "detail terakhir/terbaru" (no ticket provided)
     const wantsDetailLatest = wantsDetail && /\b(terakhir|terbaru|paling\s*baru)\b/i.test(sanitizedMessage);
     if (wantsDetailLatest && !ticketInText) {
-      const history = await getUserHistory(wa_user_id);
+      const history = await getUserHistory({ wa_user_id, channel: 'WHATSAPP' });
       if (!history?.combined?.length) {
         const reply = `📋 *Riwayat Anda*\n\nBelum ada laporan atau layanan.\nKetik pesan untuk memulai.`;
         await stopTyping(wa_user_id, village_id);
@@ -706,7 +706,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
         needs_knowledge: false,
       };
 
-      const reply = await handleStatusCheck(wa_user_id, llmLike);
+      const reply = await handleStatusCheck(wa_user_id, 'whatsapp', llmLike);
       await stopTyping(wa_user_id, village_id);
       await publishAIReply({
         village_id,
@@ -739,7 +739,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
         needs_knowledge: false,
       };
 
-      const reply = await handleStatusCheck(wa_user_id, llmLike);
+      const reply = await handleStatusCheck(wa_user_id, 'whatsapp', llmLike);
       await stopTyping(wa_user_id, village_id);
       await publishAIReply({
         village_id,
@@ -773,7 +773,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
         needs_knowledge: false,
       };
 
-      const reply = await handleStatusCheck(wa_user_id, llmLike);
+      const reply = await handleStatusCheck(wa_user_id, 'whatsapp', llmLike);
       await stopTyping(wa_user_id, village_id);
       await publishAIReply({
         village_id,
@@ -1117,25 +1117,25 @@ async function handleAction(
     
     switch (action) {
       case 'CREATE_COMPLAINT':
-        return await handleComplaintCreation(wa_user_id, mockLlmResponse, message, mediaUrl);
+        return await handleComplaintCreation(wa_user_id, 'whatsapp', mockLlmResponse, message, mediaUrl);
       
       case 'SERVICE_INFO':
         return await handleServiceInfo(wa_user_id, mockLlmResponse);
       
       case 'CREATE_SERVICE_REQUEST':
-        return await handleServiceRequestCreation(wa_user_id, mockLlmResponse);
+        return await handleServiceRequestCreation(wa_user_id, 'whatsapp', mockLlmResponse);
 
       case 'UPDATE_COMPLAINT':
-        return await handleComplaintUpdate(wa_user_id, mockLlmResponse);
+        return await handleComplaintUpdate(wa_user_id, 'whatsapp', mockLlmResponse);
       
       case 'CHECK_STATUS':
-        return await handleStatusCheck(wa_user_id, mockLlmResponse);
+        return await handleStatusCheck(wa_user_id, 'whatsapp', mockLlmResponse);
       
       case 'CANCEL_COMPLAINT':
-        return await handleCancellation(wa_user_id, mockLlmResponse);
+        return await handleCancellation(wa_user_id, 'whatsapp', mockLlmResponse);
       
       case 'HISTORY':
-        return await handleHistory(wa_user_id);
+        return await handleHistory(wa_user_id, 'whatsapp');
       
       case 'KNOWLEDGE_QUERY':
         return await handleKnowledgeQuery(wa_user_id, message, mockLlmResponse);

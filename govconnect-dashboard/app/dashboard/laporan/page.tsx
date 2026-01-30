@@ -147,30 +147,37 @@ export default function LaporanListPage() {
                 Semua
               </Button>
               <Button
-                variant={statusFilter === "baru" ? "default" : "outline"}
+                variant={statusFilter === "OPEN" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("baru")}
+                onClick={() => setStatusFilter("OPEN")}
               >
                 Baru
               </Button>
               <Button
-                variant={statusFilter === "proses" ? "default" : "outline"}
+                variant={statusFilter === "PROCESS" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("proses")}
+                onClick={() => setStatusFilter("PROCESS")}
               >
                 Proses
               </Button>
               <Button
-                variant={statusFilter === "selesai" ? "default" : "outline"}
+                variant={statusFilter === "DONE" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("selesai")}
+                onClick={() => setStatusFilter("DONE")}
               >
                 Selesai
               </Button>
               <Button
-                variant={statusFilter === "ditolak" ? "default" : "outline"}
+                variant={statusFilter === "CANCELED" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("ditolak")}
+                onClick={() => setStatusFilter("CANCELED")}
+              >
+                Dibatalkan
+              </Button>
+              <Button
+                variant={statusFilter === "REJECT" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setStatusFilter("REJECT")}
               >
                 Ditolak
               </Button>

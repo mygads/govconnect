@@ -20,7 +20,7 @@ router.post(
   internalAuth,
   [
     // Accept WhatsApp phone (628xxx) or webchat session (web_xxx)
-    body('wa_user_id').matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+    body('wa_user_id').optional().matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
     body('kategori')
       .isIn([
         'jalan_rusak',
@@ -62,7 +62,7 @@ router.post(
   internalAuth,
   [
     // Accept WhatsApp phone (628xxx) or webchat session (web_xxx)
-    body('wa_user_id').matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+    body('wa_user_id').optional().matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
   ],
   validate,
   handleCheckComplaintStatus
@@ -72,7 +72,7 @@ router.patch(
   '/:id/status',
   [
     body('status')
-      .isIn(['baru', 'proses', 'selesai', 'ditolak'])
+      .isIn(['OPEN', 'PROCESS', 'DONE', 'CANCELED', 'REJECT'])
       .withMessage('Invalid status'),
     body('admin_notes').optional().isString(),
   ],
@@ -85,8 +85,8 @@ router.post(
   internalAuth,
   [
     // Accept WhatsApp phone (628xxx) or webchat session (web_xxx)
-    body('wa_user_id').matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
-    body('cancel_reason').optional().isString(),
+    body('wa_user_id').optional().matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+    body('cancel_reason').isString().notEmpty().withMessage('cancel_reason wajib diisi'),
   ],
   validate,
   handleCancelComplaint
@@ -96,7 +96,7 @@ router.patch(
   '/:id/update',
   internalAuth,
   [
-    body('wa_user_id').matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+    body('wa_user_id').optional().matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
     body('alamat').optional().isString(),
     body('deskripsi').optional().isString(),
     body('rt_rw').optional().isString(),

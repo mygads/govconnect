@@ -228,6 +228,8 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     await saveIncomingMessage({
       village_id: villageId,
       wa_user_id: waUserId,
+      channel: 'WHATSAPP',
+      channel_identifier: waUserId,
       message_id: messageId,
       message_text: message,
       timestamp: timestamp,
@@ -235,7 +237,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
     // Update conversation for live chat
     const pushName = payload.event?.Info.PushName || undefined;
-    await updateConversation(waUserId, message, pushName, true, villageId);
+    await updateConversation(waUserId, message, pushName, true, villageId, 'WHATSAPP');
 
     // Wait for media processing to complete
     await mediaPromise;
@@ -254,7 +256,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // ============================================
     // STEP 3: CHECK TAKEOVER STATUS
     // ============================================
-    const inTakeover = await isUserInTakeover(waUserId, villageId);
+    const inTakeover = await isUserInTakeover(waUserId, villageId, 'WHATSAPP');
     
     if (inTakeover) {
       // User is being handled by admin - don't process with AI
@@ -276,12 +278,14 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     await addPendingMessage({
       village_id: villageId,
       wa_user_id: waUserId,
+      channel: 'WHATSAPP',
+      channel_identifier: waUserId,
       message_id: messageId,
       message_text: message,
     });
 
     // Set AI status to queued
-    await setAIProcessing(waUserId, messageId, villageId);
+    await setAIProcessing(waUserId, messageId, villageId, 'WHATSAPP');
 
     // Add to message batcher
     // The batcher will wait for more messages before sending to AI

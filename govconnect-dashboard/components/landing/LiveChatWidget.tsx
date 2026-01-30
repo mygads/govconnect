@@ -340,11 +340,11 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     <Image
-                      src={"/favicon.ico"}
+                      src={"/logo.png"}
                       alt="GovConnect"
                       width={32}
                       height={32}
-                      className="rounded-lg bg-white/10 p-1"
+                      className=""
                     />
                     <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 border-2 border-white rounded-full" />
                   </div>

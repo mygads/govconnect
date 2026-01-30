@@ -296,25 +296,25 @@ async function handleWebchatAction(
 
     switch (action) {
       case 'CREATE_COMPLAINT':
-        return await handleComplaintCreation(userId, mockLlmResponse, message);
+        return await handleComplaintCreation(userId, 'webchat', mockLlmResponse, message);
 
       case 'SERVICE_INFO':
         return await handleServiceInfo(userId, mockLlmResponse);
 
       case 'CREATE_SERVICE_REQUEST':
-        return await handleServiceRequestCreation(userId, mockLlmResponse);
+        return await handleServiceRequestCreation(userId, 'webchat', mockLlmResponse);
 
       case 'UPDATE_COMPLAINT':
-        return await handleComplaintUpdate(userId, mockLlmResponse);
+        return await handleComplaintUpdate(userId, 'webchat', mockLlmResponse);
 
       case 'CHECK_STATUS':
-        return await handleStatusCheck(userId, mockLlmResponse);
+        return await handleStatusCheck(userId, 'webchat', mockLlmResponse);
 
       case 'CANCEL_COMPLAINT':
-        return await handleCancellation(userId, mockLlmResponse);
+        return await handleCancellation(userId, 'webchat', mockLlmResponse);
 
       case 'HISTORY':
-        return await handleHistory(userId);
+        return await handleHistory(userId, 'webchat');
 
       case 'KNOWLEDGE_QUERY':
         return await handleKnowledgeQuery(userId, message, mockLlmResponse);

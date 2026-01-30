@@ -10,31 +10,35 @@ router.get('/overview', async (req: Request, res: Response) => {
     // Get complaint statistics
     const [
       totalLaporan,
-      laporanBaru,
-      laporanProses,
-      laporanSelesai,
-      laporanDitolak,
+      laporanOpen,
+      laporanProcess,
+      laporanDone,
+      laporanCanceled,
+      laporanReject,
     ] = await Promise.all([
       prisma.complaint.count(),
-      prisma.complaint.count({ where: { status: 'baru' } }),
-      prisma.complaint.count({ where: { status: 'proses' } }),
-      prisma.complaint.count({ where: { status: 'selesai' } }),
-      prisma.complaint.count({ where: { status: 'ditolak' } }),
+      prisma.complaint.count({ where: { status: 'OPEN' } }),
+      prisma.complaint.count({ where: { status: 'PROCESS' } }),
+      prisma.complaint.count({ where: { status: 'DONE' } }),
+      prisma.complaint.count({ where: { status: 'CANCELED' } }),
+      prisma.complaint.count({ where: { status: 'REJECT' } }),
     ])
 
     // Get service request statistics
     const [
       totalLayanan,
-      layananBaru,
-      layananProses,
-      layananSelesai,
-      layananDitolak,
+      layananOpen,
+      layananProcess,
+      layananDone,
+      layananCanceled,
+      layananReject,
     ] = await Promise.all([
       prisma.serviceRequest.count(),
-      prisma.serviceRequest.count({ where: { status: 'baru' } }),
-      prisma.serviceRequest.count({ where: { status: 'proses' } }),
-      prisma.serviceRequest.count({ where: { status: 'selesai' } }),
-      prisma.serviceRequest.count({ where: { status: 'ditolak' } }),
+      prisma.serviceRequest.count({ where: { status: 'OPEN' } }),
+      prisma.serviceRequest.count({ where: { status: 'PROCESS' } }),
+      prisma.serviceRequest.count({ where: { status: 'DONE' } }),
+      prisma.serviceRequest.count({ where: { status: 'CANCELED' } }),
+      prisma.serviceRequest.count({ where: { status: 'REJECT' } }),
     ])
 
     // Get recent activity counts
@@ -62,17 +66,19 @@ router.get('/overview', async (req: Request, res: Response) => {
       totalLaporan,
       totalLayanan,
       laporan: {
-        baru: laporanBaru,
-        proses: laporanProses,
-        selesai: laporanSelesai,
-        ditolak: laporanDitolak,
+        open: laporanOpen,
+        process: laporanProcess,
+        done: laporanDone,
+        canceled: laporanCanceled,
+        reject: laporanReject,
         hariIni: laporanHariIni,
       },
       layanan: {
-        baru: layananBaru,
-        proses: layananProses,
-        selesai: layananSelesai,
-        ditolak: layananDitolak,
+        open: layananOpen,
+        process: layananProcess,
+        done: layananDone,
+        canceled: layananCanceled,
+        reject: layananReject,
         hariIni: layananHariIni,
       },
     }

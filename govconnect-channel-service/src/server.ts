@@ -1,6 +1,6 @@
 import { createApp } from './app';
 import { config } from './config/env';
-import { connectRabbitMQ, disconnectRabbitMQ, startConsumingAIReply, startConsumingAIError, startConsumingMessageStatus } from './services/rabbitmq.service';
+import { connectRabbitMQ, disconnectRabbitMQ, startConsumingAIReply, startConsumingAIError, startConsumingMessageStatus, isRabbitMQConnected } from './services/rabbitmq.service';
 import { loadSettingsFromDatabase } from './services/wa.service';
 import { cleanupOldMessages } from './services/pending-message.service';
 import { flushAllBatches } from './services/message-batcher.service';
@@ -14,18 +14,6 @@ async function startServer() {
   try {
     // Load settings from database
     await loadSettingsFromDatabase();
-
-    // Connect to RabbitMQ
-    await connectRabbitMQ();
-
-    // Start consuming AI reply events
-    await startConsumingAIReply();
-
-    // Start consuming AI error events
-    await startConsumingAIError();
-
-    // Start consuming message status events
-    await startConsumingMessageStatus();
 
     // Start periodic cleanup of old pending messages
     setInterval(async () => {
@@ -47,12 +35,34 @@ async function startServer() {
       });
     });
 
+    // RabbitMQ init in background (do not block HTTP server)
+    const startRabbitMQConsumers = async () => {
+      try {
+        await connectRabbitMQ();
+        await startConsumingAIReply();
+        await startConsumingAIError();
+        await startConsumingMessageStatus();
+        logger.info('✅ RabbitMQ consumers started');
+      } catch (error: any) {
+        logger.warn('RabbitMQ init failed, will retry', { error: error.message });
+      }
+    };
+
+    void startRabbitMQConsumers();
+    const rabbitRetryInterval = setInterval(() => {
+      if (!isRabbitMQConnected()) {
+        void startRabbitMQConsumers();
+      }
+    }, 15000);
+
     // Graceful shutdown
     const shutdown = async (signal: string) => {
       logger.info(`${signal} received, shutting down gracefully...`);
 
       server.close(async () => {
         logger.info('HTTP server closed');
+
+        clearInterval(rabbitRetryInterval);
 
         // Flush all pending message batches before shutdown
         await flushAllBatches();

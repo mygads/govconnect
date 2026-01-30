@@ -93,7 +93,7 @@ export async function getBatchedDashboardStats(): Promise<BatchedStats> {
         where: { created_at: { gte: today } },
       }),
       prisma.serviceRequest.count({
-        where: { status: 'baru' },
+        where: { status: 'OPEN' },
       }),
     ]);
 

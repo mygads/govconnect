@@ -122,10 +122,11 @@ components:
     ComplaintStatus:
       type: string
       enum:
-        - baru
-        - proses
-        - selesai
-        - ditolak
+        - OPEN
+        - PROCESS
+        - DONE
+        - CANCELED
+        - REJECT
 
     CreateComplaintRequest:
       type: object
@@ -193,13 +194,15 @@ components:
         laporan:
           type: object
           properties:
-            baru:
+            open:
               type: integer
-            proses:
+            process:
               type: integer
-            selesai:
+            done:
               type: integer
-            ditolak:
+            canceled:
+              type: integer
+            reject:
               type: integer
             hariIni:
               type: integer
@@ -220,7 +223,7 @@ components:
           type: string
         status:
           type: string
-          example: "baru"
+          example: "OPEN"
         citizen_data_json:
           type: object
         requirement_data_json:

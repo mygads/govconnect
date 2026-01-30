@@ -14,6 +14,10 @@ let channel: any = null;
 let isReconnecting = false;
 let reconnectAttempts = 0;
 
+export function isRabbitMQConnected(): boolean {
+  return Boolean(connection && channel);
+}
+
 // Reconnection configuration with exponential backoff
 const RECONNECT_CONFIG = {
   BASE_DELAY_MS: 1000,       // Initial delay: 1 second
@@ -371,8 +375,8 @@ export async function startConsumingAIReply(): Promise<void> {
           }
 
           // Update conversation summary with AI response and reset unread count (AI handled it)
-          await updateConversation(payload.wa_user_id, replyText, undefined, 'reset', payload.village_id);
-          await clearAIStatus(payload.wa_user_id, payload.village_id);
+          await updateConversation(payload.wa_user_id, replyText, undefined, 'reset', payload.village_id, 'WHATSAPP');
+          await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
           
           // Mark messages as completed - handle both single and batched messages
           const messageIdsToComplete: string[] = [];
@@ -477,7 +481,7 @@ export async function startConsumingAIError(): Promise<void> {
         });
 
         // Set AI error status in conversation
-        await setAIError(payload.wa_user_id, payload.error_message, payload.message_id, payload.village_id);
+        await setAIError(payload.wa_user_id, payload.error_message, payload.message_id, payload.village_id, 'WHATSAPP');
 
         // Mark batched messages as failed for retry
         if (payload.batched_message_ids && payload.batched_message_ids.length > 0) {
@@ -570,7 +574,7 @@ export async function startConsumingMessageStatus(): Promise<void> {
           case 'completed':
             await markMessagesAsCompleted(payload.message_ids);
             // Clear AI processing status when completed
-            await clearAIStatus(payload.wa_user_id, payload.village_id);
+            await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
             logger.info('✅ Messages completed and removed from pending queue', {
               count: payload.message_ids.length,
               messageIds: payload.message_ids,
@@ -585,7 +589,8 @@ export async function startConsumingMessageStatus(): Promise<void> {
               payload.wa_user_id,
               payload.error_message || 'Unknown error',
               payload.message_ids[0],
-              payload.village_id
+              payload.village_id,
+              'WHATSAPP'
             );
             break;
           case 'processing':

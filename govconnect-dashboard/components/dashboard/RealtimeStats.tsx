@@ -111,8 +111,8 @@ export function RealtimeStatsGrid() {
         />
         
         <StatCard
-          title="Menunggu Proses"
-          value={stats?.complaints.baru || 0}
+          title="Laporan Baru"
+          value={stats?.complaints.open || 0}
           icon={<Clock className="h-4 w-4" />}
           iconClassName="bg-yellow-100 text-yellow-600 dark:bg-yellow-900 dark:text-yellow-300"
           trend="neutral"
@@ -122,7 +122,7 @@ export function RealtimeStatsGrid() {
         
         <StatCard
           title="Dalam Proses"
-          value={stats?.complaints.proses || 0}
+          value={stats?.complaints.process || 0}
           icon={<Loader2 className="h-4 w-4" />}
           iconClassName="bg-purple-100 text-purple-600 dark:bg-purple-900 dark:text-purple-300"
           loading={loading}
@@ -130,9 +130,17 @@ export function RealtimeStatsGrid() {
         
         <StatCard
           title="Selesai"
-          value={stats?.complaints.selesai || 0}
+          value={stats?.complaints.done || 0}
           icon={<CheckCircle2 className="h-4 w-4" />}
           iconClassName="bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-300"
+          loading={loading}
+        />
+
+        <StatCard
+          title="Ditolak"
+          value={stats?.complaints.reject || 0}
+          icon={<XCircle className="h-4 w-4" />}
+          iconClassName="bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-300"
           loading={loading}
         />
       </div>
@@ -164,7 +172,7 @@ export function RealtimeStatsGrid() {
       )}
 
       {/* Service Requests Stats */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <StatCard
           title="Total Permohonan Layanan"
           value={stats?.services?.total || 0}
@@ -175,7 +183,7 @@ export function RealtimeStatsGrid() {
         
         <StatCard
           title="Layanan Baru"
-          value={stats?.services?.baru || 0}
+          value={stats?.services?.open || 0}
           icon={<Clock className="h-4 w-4" />}
           iconClassName="bg-orange-100 text-orange-600 dark:bg-orange-900 dark:text-orange-300"
           loading={loading}
@@ -183,9 +191,17 @@ export function RealtimeStatsGrid() {
         
         <StatCard
           title="Layanan Selesai"
-          value={stats?.services?.selesai || 0}
+          value={stats?.services?.done || 0}
           icon={<CheckCircle2 className="h-4 w-4" />}
           iconClassName="bg-emerald-100 text-emerald-600 dark:bg-emerald-900 dark:text-emerald-300"
+          loading={loading}
+        />
+
+        <StatCard
+          title="Layanan Ditolak"
+          value={stats?.services?.reject || 0}
+          icon={<XCircle className="h-4 w-4" />}
+          iconClassName="bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-300"
           loading={loading}
         />
       </div>
@@ -198,6 +214,26 @@ export function RecentComplaintsCard() {
 
   const getStatusBadge = (status: string) => {
     const statusMap: Record<string, { label: string; className: string }> = {
+      OPEN: {
+        label: 'Baru',
+        className: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+      },
+      PROCESS: {
+        label: 'Proses',
+        className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
+      },
+      DONE: {
+        label: 'Selesai',
+        className: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+      },
+      CANCELED: {
+        label: 'Dibatalkan',
+        className: 'bg-gray-100 text-gray-700 dark:bg-gray-900 dark:text-gray-300'
+      },
+      REJECT: {
+        label: 'Ditolak',
+        className: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+      },
       baru: { 
         label: 'Baru', 
         className: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' 
@@ -213,6 +249,10 @@ export function RecentComplaintsCard() {
       ditolak: { 
         label: 'Ditolak', 
         className: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' 
+      },
+      dibatalkan: {
+        label: 'Dibatalkan',
+        className: 'bg-gray-100 text-gray-700 dark:bg-gray-900 dark:text-gray-300'
       },
     }
     const config = statusMap[status] || statusMap.baru

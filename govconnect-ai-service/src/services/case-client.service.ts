@@ -13,7 +13,9 @@ function normalizeTo628(input: string): string {
 }
 
 interface ComplaintData {
-  wa_user_id: string;
+  wa_user_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier?: string;
   kategori: string;
   deskripsi: string;
   village_id?: string;
@@ -41,9 +43,12 @@ interface ComplaintResponse {
  * Only WhatsApp message sending is skipped (handled in rabbitmq.service.ts).
  */
 export async function createComplaint(data: ComplaintData): Promise<string | null> {
-  const normalizedWaUserId = normalizeTo628(data.wa_user_id);
+  const channel = data.channel || 'WHATSAPP';
+  const normalizedWaUserId = data.wa_user_id ? normalizeTo628(data.wa_user_id) : '';
   logger.info('Creating complaint in Case Service', {
-    wa_user_id: normalizedWaUserId,
+    wa_user_id: normalizedWaUserId || data.wa_user_id,
+    channel,
+    channel_identifier: data.channel_identifier,
     kategori: data.kategori,
     testingMode: config.testingMode,
   });
@@ -54,7 +59,9 @@ export async function createComplaint(data: ComplaintData): Promise<string | nul
       url,
       {
         ...data,
-        wa_user_id: normalizedWaUserId || data.wa_user_id,
+        wa_user_id: channel === 'WHATSAPP' ? (normalizedWaUserId || data.wa_user_id) : undefined,
+        channel,
+        channel_identifier: data.channel_identifier,
       },
       {
         headers: {
@@ -69,6 +76,8 @@ export async function createComplaint(data: ComplaintData): Promise<string | nul
     if (resilientHttp.isFallbackResponse(response)) {
       logger.error('❌ Case Service unavailable (circuit breaker open)', {
         wa_user_id: data.wa_user_id,
+        channel,
+        channel_identifier: data.channel_identifier,
       });
       return null;
     }
@@ -78,6 +87,8 @@ export async function createComplaint(data: ComplaintData): Promise<string | nul
     if (config.testingMode) {
       logger.info('🧪 TESTING MODE: Complaint created in database', {
         wa_user_id: data.wa_user_id,
+        channel,
+        channel_identifier: data.channel_identifier,
         complaint_id: complaintId,
         kategori: data.kategori,
         alamat: data.alamat,
@@ -85,6 +96,8 @@ export async function createComplaint(data: ComplaintData): Promise<string | nul
     } else {
       logger.info('✅ Complaint created successfully', {
         wa_user_id: data.wa_user_id,
+        channel,
+        channel_identifier: data.channel_identifier,
         complaint_id: complaintId,
       });
     }
@@ -93,6 +106,8 @@ export async function createComplaint(data: ComplaintData): Promise<string | nul
   } catch (error: any) {
     logger.error('❌ Failed to create complaint', {
       wa_user_id: data.wa_user_id,
+      channel,
+      channel_identifier: data.channel_identifier,
       error: error.message,
       status: error.response?.status,
       data: error.response?.data,
@@ -250,18 +265,25 @@ export async function getComplaintStatus(complaintId: string): Promise<Complaint
  */
 export async function getComplaintStatusWithOwnership(
   complaintId: string,
-  wa_user_id: string
+  params: { wa_user_id?: string; channel?: 'WHATSAPP' | 'WEBCHAT'; channel_identifier?: string }
 ): Promise<{ success: boolean; error?: string; message?: string; data?: ComplaintStatusResponse['data'] }> {
+  const channel = params.channel || 'WHATSAPP';
   logger.info('Fetching complaint status with ownership check', {
     complaint_id: complaintId,
-    wa_user_id,
+    wa_user_id: params.wa_user_id,
+    channel,
+    channel_identifier: params.channel_identifier,
   });
   
   try {
     const url = `${config.caseServiceUrl}/laporan/${complaintId}/check`;
     const response = await axios.post(
       url,
-      { wa_user_id },
+      {
+        wa_user_id: channel === 'WHATSAPP' ? params.wa_user_id : undefined,
+        channel,
+        channel_identifier: params.channel_identifier,
+      },
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,
@@ -307,12 +329,15 @@ export async function getComplaintStatusWithOwnership(
  */
 export async function getServiceRequestStatusWithOwnership(
   requestNumber: string,
-  wa_user_id: string
+  params: { wa_user_id?: string; channel?: 'WHATSAPP' | 'WEBCHAT'; channel_identifier?: string }
 ): Promise<{ success: boolean; error?: string; message?: string; data?: any }> {
-  const normalizedWaUserId = normalizeTo628(wa_user_id) || wa_user_id;
+  const channel = params.channel || 'WHATSAPP';
+  const normalizedWaUserId = params.wa_user_id ? (normalizeTo628(params.wa_user_id) || params.wa_user_id) : '';
   logger.info('Fetching service request status with ownership check', {
     request_number: requestNumber,
     wa_user_id: normalizedWaUserId,
+    channel,
+    channel_identifier: params.channel_identifier,
   });
 
   try {
@@ -320,7 +345,10 @@ export async function getServiceRequestStatusWithOwnership(
     const response = await axios.get(
       url,
       {
-        params: { request_number: requestNumber, wa_user_id: normalizedWaUserId },
+        params: {
+          request_number: requestNumber,
+          ...(channel === 'WHATSAPP' ? { wa_user_id: normalizedWaUserId } : { channel, channel_identifier: params.channel_identifier }),
+        },
         headers: {
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
@@ -352,13 +380,16 @@ export async function getServiceRequestStatusWithOwnership(
  */
 export async function cancelComplaint(
   complaintId: string,
-  wa_user_id: string,
+  params: { wa_user_id?: string; channel?: 'WHATSAPP' | 'WEBCHAT'; channel_identifier?: string },
   cancel_reason?: string
 ): Promise<CancelResult> {
-  const normalizedWaUserId = normalizeTo628(wa_user_id) || wa_user_id;
+  const channel = params.channel || 'WHATSAPP';
+  const normalizedWaUserId = params.wa_user_id ? (normalizeTo628(params.wa_user_id) || params.wa_user_id) : '';
   logger.info('Cancelling complaint in Case Service', {
     complaint_id: complaintId,
     wa_user_id: normalizedWaUserId,
+    channel,
+    channel_identifier: params.channel_identifier,
   });
   
   try {
@@ -366,7 +397,9 @@ export async function cancelComplaint(
     const response = await axios.post<CancelResponse>(
       url,
       {
-        wa_user_id: normalizedWaUserId,
+        wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
+        channel,
+        channel_identifier: params.channel_identifier,
         cancel_reason,
       },
       {
@@ -412,20 +445,28 @@ export async function cancelComplaint(
  */
 export async function cancelServiceRequest(
   requestNumber: string,
-  wa_user_id: string,
+  params: { wa_user_id?: string; channel?: 'WHATSAPP' | 'WEBCHAT'; channel_identifier?: string },
   cancel_reason?: string
 ): Promise<CancelResult> {
-  const normalizedWaUserId = normalizeTo628(wa_user_id) || wa_user_id;
+  const channel = params.channel || 'WHATSAPP';
+  const normalizedWaUserId = params.wa_user_id ? (normalizeTo628(params.wa_user_id) || params.wa_user_id) : '';
   logger.info('Cancelling service request in Case Service', {
     request_number: requestNumber,
     wa_user_id: normalizedWaUserId,
+    channel,
+    channel_identifier: params.channel_identifier,
   });
 
   try {
     const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/cancel`;
     const response = await axios.post<CancelResponse>(
       url,
-      { wa_user_id: normalizedWaUserId, cancel_reason },
+      {
+        wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
+        channel,
+        channel_identifier: params.channel_identifier,
+        cancel_reason,
+      },
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,
@@ -471,19 +512,26 @@ export async function cancelServiceRequest(
  */
 export async function requestServiceRequestEditToken(
   requestNumber: string,
-  wa_user_id: string
+  params: { wa_user_id?: string; channel?: 'WHATSAPP' | 'WEBCHAT'; channel_identifier?: string }
 ): Promise<EditTokenResult> {
-  const normalizedWaUserId = normalizeTo628(wa_user_id) || wa_user_id;
+  const channel = params.channel || 'WHATSAPP';
+  const normalizedWaUserId = params.wa_user_id ? (normalizeTo628(params.wa_user_id) || params.wa_user_id) : '';
   logger.info('Requesting service request edit token', {
     request_number: requestNumber,
     wa_user_id: normalizedWaUserId,
+    channel,
+    channel_identifier: params.channel_identifier,
   });
 
   try {
     const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/edit-token`;
     const response = await axios.post(
       url,
-      { wa_user_id: normalizedWaUserId },
+      {
+        wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
+        channel,
+        channel_identifier: params.channel_identifier,
+      },
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,
@@ -530,19 +578,27 @@ export async function requestServiceRequestEditToken(
  */
 export async function updateComplaintByUser(
   complaintId: string,
-  wa_user_id: string,
+  params: { wa_user_id?: string; channel?: 'WHATSAPP' | 'WEBCHAT'; channel_identifier?: string },
   data: { alamat?: string; deskripsi?: string; rt_rw?: string }
 ): Promise<UpdateComplaintResult> {
+  const channel = params.channel || 'WHATSAPP';
   logger.info('Updating complaint by user', {
     complaint_id: complaintId,
-    wa_user_id,
+    wa_user_id: params.wa_user_id,
+    channel,
+    channel_identifier: params.channel_identifier,
   });
 
   try {
     const url = `${config.caseServiceUrl}/laporan/${complaintId}/update`;
     const response = await axios.patch(
       url,
-      { wa_user_id, ...data },
+      {
+        wa_user_id: channel === 'WHATSAPP' ? params.wa_user_id : undefined,
+        channel,
+        channel_identifier: params.channel_identifier,
+        ...data,
+      },
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,
@@ -632,16 +688,24 @@ export async function getServiceRequirements(serviceId: string): Promise<Service
 /**
  * Get user's complaint and service request history
  */
-export async function getUserHistory(wa_user_id: string): Promise<UserHistoryResponse['data'] | null> {
+export async function getUserHistory(params: { wa_user_id?: string; channel?: 'WHATSAPP' | 'WEBCHAT'; channel_identifier?: string }): Promise<UserHistoryResponse['data'] | null> {
+  const channel = params.channel || 'WHATSAPP';
+  const identifier = channel === 'WEBCHAT' ? params.channel_identifier : params.wa_user_id;
   logger.info('Fetching user history from Case Service', {
-    wa_user_id,
+    wa_user_id: params.wa_user_id,
+    channel,
+    channel_identifier: params.channel_identifier,
   });
   
   try {
-    const url = `${config.caseServiceUrl}/user/${wa_user_id}/history`;
+    const url = `${config.caseServiceUrl}/user/${encodeURIComponent(identifier || '')}/history`;
     const response = await axios.get<UserHistoryResponse>(
       url,
       {
+        params: {
+          channel,
+          ...(channel === 'WEBCHAT' ? { session_id: params.channel_identifier } : {}),
+        },
         headers: {
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
@@ -651,14 +715,18 @@ export async function getUserHistory(wa_user_id: string): Promise<UserHistoryRes
     );
     
     logger.info('✅ User history fetched successfully', {
-      wa_user_id,
+      wa_user_id: params.wa_user_id,
+      channel,
+      channel_identifier: params.channel_identifier,
       total: response.data.data.total,
     });
     
     return response.data.data;
   } catch (error: any) {
     logger.error('❌ Failed to fetch user history', {
-      wa_user_id,
+      wa_user_id: params.wa_user_id,
+      channel,
+      channel_identifier: params.channel_identifier,
       error: error.message,
       status: error.response?.status,
     });
