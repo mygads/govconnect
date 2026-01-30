@@ -48,6 +48,7 @@ import { getEnhancedContext, updateContext, recordDataCollected, recordCompleted
 import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
 import { linkUserToPhone, recordChannelActivity, updateSharedData, getCrossChannelContextForLLM } from './cross-channel-context.service';
 import { normalizeText } from './text-normalizer.service';
+import { classifyConfirmation } from './confirmation-classifier.service';
 import {
   appendAntiHallucinationInstruction,
   hasKnowledgeInPrompt,
@@ -386,7 +387,15 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
       timeout: 5000,
     });
 
-    const services = Array.isArray(response.data?.data) ? response.data.data : [];
+    let services = Array.isArray(response.data?.data) ? response.data.data : [];
+    if (!services.length && villageId) {
+      const fallbackResponse = await axios.get(`${config.caseServiceUrl}/services`, {
+        params: { village_id: villageId },
+        headers: { 'x-internal-api-key': config.internalApiKey },
+        timeout: 5000,
+      });
+      services = Array.isArray(fallbackResponse.data?.data) ? fallbackResponse.data.data : [];
+    }
     if (!services.length) return null;
 
     const queryKey = normalizeLookupKey(trimmedQuery);
@@ -402,6 +411,8 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
       nikah: ['kawin', 'pernikahan'],
       pengantar: ['antar', 'surat pengantar'],
       kehilangan: ['hilang', 'kehilangan', 'rusak', 'penggantian'],
+      perbaikan: ['perubahan', 'koreksi', 'pembetulan'],
+      nama: ['data', 'identitas'],
     };
 
     const buildSynonymSet = (text: string): Set<string> => {
@@ -476,6 +487,14 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
         if (qPattern.test(queryKey) && sPattern.test(combined)) {
           score += 10;
         }
+      }
+
+      // Domain-specific boosts: perbaikan nama KK → Surat Beda Nama
+      if (/\bnama\b/i.test(queryKey) && /\bkk\b/i.test(queryKey)) {
+        if (/beda\s+nama|surat\s+beda\s+nama/i.test(combined)) score += 35;
+      }
+      if (/\bbeda\b/i.test(queryKey) && /\bnama\b/i.test(queryKey)) {
+        if (/beda\s+nama/i.test(combined)) score += 25;
       }
 
       return score;
@@ -850,8 +869,7 @@ function isValidCitizenWaNumber(value: string): boolean {
 }
 
 function getPublicFormBaseUrl(): string {
-  return (process.env.PUBLIC_FORM_BASE_URL
-    || process.env.PUBLIC_BASE_URL
+  return (process.env.PUBLIC_BASE_URL
     || 'https://govconnect.my.id'
   ).replace(/\/$/, '');
 }
@@ -930,23 +948,46 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     const axios = (await import('axios')).default;
     
     // Query service details from case-service
-    let serviceUrl = '';
-    
-    if (service_id) {
-      serviceUrl = `${config.caseServiceUrl}/services/${service_id}`;
-    } else if (service_slug) {
-      serviceUrl = `${config.caseServiceUrl}/services/by-slug?village_id=${villageId}&slug=${service_slug}`;
+    const fetchService = async (slug?: string, id?: string) => {
+      let serviceUrl = '';
+
+      if (id) {
+        serviceUrl = `${config.caseServiceUrl}/services/${id}`;
+      } else if (slug) {
+        serviceUrl = `${config.caseServiceUrl}/services/by-slug?village_id=${villageId}&slug=${slug}`;
+      }
+
+      if (!serviceUrl) return null;
+
+      try {
+        const response = await axios.get(serviceUrl, {
+          headers: { 'x-internal-api-key': config.internalApiKey },
+          timeout: 5000,
+        });
+
+        return response.data?.data || null;
+      } catch (error: any) {
+        if (error.response?.status === 404) return null;
+        throw error;
+      }
+    };
+
+    let service = await fetchService(service_slug, service_id);
+
+    if (!service && rawMessage) {
+      const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
+      if (resolved?.slug) {
+        service_slug = resolved.slug;
+        service = await fetchService(resolved.slug, undefined);
+      }
     }
     
-    const response = await axios.get(serviceUrl, {
-      headers: { 'x-internal-api-key': config.internalApiKey },
-      timeout: 5000,
-    });
-    
-    const service = response.data?.data;
-    
     if (!service) {
-      return llmResponse.reply_text || 'Mohon maaf Pak/Bu, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.';
+      return { replyText: llmResponse.reply_text || 'Mohon maaf Pak/Bu, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.' };
+    }
+
+    if (service.is_active === false) {
+      return { replyText: `Mohon maaf Pak/Bu, layanan ${service.name} saat ini belum tersedia.` };
     }
     
     // Build requirements list
@@ -1021,6 +1062,10 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
     const service = response.data?.data;
     if (!service) {
       return 'Mohon maaf Pak/Bu, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.';
+    }
+
+    if (service.is_active === false) {
+      return `Mohon maaf Pak/Bu, layanan ${service.name} saat ini belum tersedia.`;
     }
 
     const isOnline = service.mode === 'online' || service.mode === 'both';
@@ -1426,6 +1471,23 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
     const profile = await getVillageProfileSummary(villageId);
     const officeName = profile?.name || 'kantor desa/kelurahan';
 
+    const normalizePhoneNumber = (value: string): string => {
+      const digits = (value || '').replace(/\D/g, '');
+      if (!digits) return '';
+      if (digits.startsWith('0')) return `62${digits.slice(1)}`;
+      if (digits.startsWith('62')) return digits;
+      return digits;
+    };
+
+    const extractPhoneNumbers = (text: string): string[] => {
+      if (!text) return [];
+      const matches = text.match(/(\+?62|0)\s*\d[\d\s-]{7,14}\d/g) || [];
+      const normalized = matches
+        .map(raw => normalizePhoneNumber(raw))
+        .filter(Boolean);
+      return Array.from(new Set(normalized));
+    };
+
     // Deterministic (no-LLM) answers for profile/office info to prevent hallucination.
     // If the data isn't in DB, we explicitly say it's unavailable.
     const isAskingAddress = /(alamat|lokasi|maps|google\s*maps)/i.test(normalizedQuery);
@@ -1515,7 +1577,21 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
         contacts = await getImportantContacts(villageId || '');
       }
 
-      if (!contacts || contacts.length === 0) {
+      const dbPhoneSet = new Set(
+        (contacts || [])
+          .map(c => normalizePhoneNumber(c.phone || ''))
+          .filter(Boolean)
+      );
+
+      let kbPhoneCandidates: string[] = [];
+      if (villageId) {
+        const knowledgeResult = await searchKnowledge(message, categories, villageId);
+        kbPhoneCandidates = extractPhoneNumbers(knowledgeResult?.context || '');
+      }
+
+      const kbUnique = kbPhoneCandidates.filter(phone => !dbPhoneSet.has(phone));
+
+      if ((!contacts || contacts.length === 0) && kbUnique.length === 0) {
         return `Mohon maaf Pak/Bu, informasi kontak untuk ${officeName} belum tersedia.`;
       }
 
@@ -1534,11 +1610,23 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
         .sort((a, b) => b.score - a.score);
 
       const top = scored.slice(0, 3).map(s => s.c);
-      const lines: string[] = [`Kontak ${officeName}:`];
+      const hasDbContacts = top.length > 0;
+      const lines: string[] = [hasDbContacts ? `Kontak ${officeName}:` : `Nomor penting ${officeName}:`];
+
       for (const c of top) {
         const extra = c.description ? ` — ${c.description}` : '';
         lines.push(`- ${c.name}: ${c.phone}${extra}`);
       }
+
+      if (kbUnique.length > 0) {
+        if (hasDbContacts) {
+          lines.push('\nNomor tambahan (KB):');
+        }
+        for (const phone of kbUnique.slice(0, 3)) {
+          lines.push(`- ${phone}`);
+        }
+      }
+
       return lines.join('\n');
     }
 
@@ -1560,6 +1648,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
         if (!services.length) return null;
 
         const scoreService = (service: any): number => {
+          if (service?.is_active === false) return 0;
           const name = String(service?.name || '').toLowerCase();
           const desc = String(service?.description || '').toLowerCase();
           const slug = String(service?.slug || '').toLowerCase();
@@ -2360,8 +2449,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 2.2: Check pending online service form offer
     const pendingOffer = pendingServiceFormOffer.get(userId);
     if (pendingOffer) {
-      const wantsFormLink = /\b(link|tautan|formulir|form|online)\b/i.test(message);
-      if (isConfirmationResponse(message) || wantsFormLink) {
+      const wantsFormLink = /\b(link|tautan|formulir|form|online)(nya)?\b/i.test(message);
+      const confirmationResult = await classifyConfirmation(message);
+      const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
+      const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
+
+      if (isLikelyConfirm || isConfirmationResponse(message) || wantsFormLink) {
         clearPendingServiceFormOffer(userId);
         const llmLike = {
           intent: 'CREATE_SERVICE_REQUEST',
@@ -2381,7 +2474,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         };
       }
 
-      if (isNegativeConfirmation(message)) {
+      if (isLikelyReject || isNegativeConfirmation(message)) {
         clearPendingServiceFormOffer(userId);
         return {
           success: true,

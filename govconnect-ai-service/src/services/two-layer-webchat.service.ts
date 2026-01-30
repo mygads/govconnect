@@ -30,7 +30,11 @@ import {
   handleComplaintUpdate,
   handleHistory,
   handleKnowledgeQuery,
+  getPendingServiceFormOffer,
+  clearPendingServiceFormOffer,
+  isConfirmationResponse,
 } from './ai-orchestrator.service';
+import { classifyConfirmation } from './confirmation-classifier.service';
 
 interface TwoLayerWebchatParams {
   userId: string;
@@ -69,6 +73,80 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
 
     // Full LLM mode: always use 2-Layer architecture for webchat
 
+    // Step 2.1: Pending online service form offer (2-step flow)
+    const pendingOffer = getPendingServiceFormOffer(userId);
+    if (pendingOffer) {
+      const trimmed = sanitizedMessage.trim();
+      const wantsFormLink = /\b(link|tautan|formulir|form|online)(nya)?\b/i.test(trimmed);
+      const isNegative = /^(tidak|ga|gak|nggak|belum|nanti|skip|batal)\b/i.test(trimmed);
+      const confirmationResult = await classifyConfirmation(trimmed);
+      const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
+      const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
+
+      if (isLikelyConfirm || isConfirmationResponse(trimmed) || wantsFormLink) {
+        clearPendingServiceFormOffer(userId);
+        const llmLike = {
+          intent: 'CREATE_SERVICE_REQUEST',
+          fields: {
+            service_slug: pendingOffer.service_slug,
+            ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
+          },
+          reply_text: '',
+        };
+
+        const reply = await handleServiceRequestCreation(userId, 'webchat', llmLike);
+        return {
+          success: true,
+          response: reply,
+          intent: 'CREATE_SERVICE_REQUEST',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      if (isLikelyReject || isNegative) {
+        clearPendingServiceFormOffer(userId);
+        return {
+          success: true,
+          response: 'Baik Kak, siap. Kalau Kakak mau proses nanti, kabari saya ya. 😊',
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+
+      return {
+        success: true,
+        response: 'Mau saya kirim link formulirnya sekarang? Balas *iya* atau *tidak* ya Kak.',
+        intent: 'QUESTION',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
+
+    // Step 2.2: Deterministic office/contact info (avoid L2 hallucination)
+    const officeInfoPattern = /(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|hari\s*kerja|kontak|hubungi|telepon|telp|call\s*center|hotline|\bnomor\b)/i;
+    const trackingPattern = /(\b(LAP|LAY)-\d{8}-\d{3}\b)/i;
+    if (officeInfoPattern.test(sanitizedMessage) && !trackingPattern.test(sanitizedMessage)) {
+      const llmLike = {
+        intent: 'KNOWLEDGE_QUERY',
+        fields: {
+          ...(village_id ? { village_id } : {}),
+        },
+        reply_text: '',
+        guidance_text: '',
+        needs_knowledge: true,
+      };
+
+      const deterministic = await handleKnowledgeQuery(userId, sanitizedMessage, llmLike);
+      return {
+        success: true,
+        response: deterministic,
+        intent: 'KNOWLEDGE_QUERY',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: true,
+        },
+      };
+    }
+
     // Step 3: Sentiment analysis
     const sentiment = analyzeSentiment(sanitizedMessage, userId);
 
@@ -104,6 +182,37 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
       intent: enhancedLayer1.intent,
       confidence: enhancedLayer1.confidence,
     });
+
+    const infoInquiryPattern = /(\?|\b(syarat|persyaratan|berkas|dokumen|info|informasi|biaya|lama|alur|panduan|cara|prosedur|gimana|bagaimana)\b)/i;
+    const serviceKeywordPattern = /\b(kk|kartu\s+keluarga|ktp|akta|surat|izin|domisili|usaha|nikah|beda\s+nama|pindah|kia)\b/i;
+    const wantsInquiry = infoInquiryPattern.test(sanitizedMessage) || serviceKeywordPattern.test(sanitizedMessage);
+
+    if (wantsInquiry && enhancedLayer1.intent === 'CREATE_SERVICE_REQUEST') {
+      const mockLlmResponse = {
+        intent: 'SERVICE_INFO',
+        fields: {
+          ...enhancedLayer1.extracted_data,
+          ...(village_id ? { village_id } : {}),
+          _original_message: sanitizedMessage,
+        },
+        reply_text: '',
+        guidance_text: '',
+        needs_knowledge: false,
+      };
+
+      const serviceInfoResult = normalizeServiceHandlerOutput(await handleServiceInfo(userId, mockLlmResponse));
+      return {
+        success: true,
+        response: serviceInfoResult.replyText,
+        guidanceText: serviceInfoResult.guidanceText || undefined,
+        intent: 'SERVICE_INFO',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          model: 'two-layer',
+          hasKnowledge: false,
+        },
+      };
+    }
 
     // Step 8: Layer 2 - Response Generation
     logger.info('💬 Layer 2 - Response Generation', { userId });
@@ -144,9 +253,29 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
     let finalResponse = layer2Output.reply_text;
     let guidanceText = layer2Output.guidance_text || '';
 
-    if (layer2Output.next_action && enhancedLayer1.confidence >= 0.7) {
+    const applyVerbPattern = /\b(ajukan|daftar|buat|bikin|mohon|minta|proses|kirim|ajukan|submit)\b/i;
+    const serviceNounPattern = /\b(layanan|surat|izin|permohonan|pelayanan)\b/i;
+    const wantsFormPattern = /\b(link|tautan|formulir|form|online)\b/i;
+
+    const looksLikeInquiry = infoInquiryPattern.test(sanitizedMessage);
+    const explicitApplyRequest = (applyVerbPattern.test(sanitizedMessage) || wantsFormPattern.test(sanitizedMessage)) && serviceNounPattern.test(sanitizedMessage);
+
+    if (looksLikeInquiry && !explicitApplyRequest) {
+      if (layer2Output.next_action === 'CREATE_SERVICE_REQUEST') {
+        layer2Output.next_action = 'SERVICE_INFO';
+      } else if (enhancedLayer1.intent === 'CREATE_SERVICE_REQUEST') {
+        layer2Output.next_action = 'SERVICE_INFO';
+      }
+    }
+
+    const shouldHandleAction = !!layer2Output.next_action
+      && (enhancedLayer1.confidence >= 0.7 || layer2Output.next_action === 'SERVICE_INFO');
+
+    if (shouldHandleAction) {
+      const nextAction = layer2Output.next_action as string;
+
       finalResponse = await handleWebchatAction(
-        layer2Output.next_action,
+        nextAction,
         enhancedLayer1,
         layer2Output,
         userId,
@@ -154,7 +283,7 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
         village_id
       );
 
-      if (layer2Output.next_action === 'CREATE_SERVICE_REQUEST') {
+      if (nextAction === 'CREATE_SERVICE_REQUEST') {
         guidanceText = '';
       }
     } else if (enhancedLayer1.intent === 'SERVICE_INFO') {

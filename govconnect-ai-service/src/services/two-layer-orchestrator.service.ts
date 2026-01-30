@@ -29,6 +29,7 @@ import {
   logAntiHallucinationEvent,
   needsAntiHallucinationRetry,
 } from './anti-hallucination.service';
+import { classifyConfirmation } from './confirmation-classifier.service';
 
 import { getUserHistory } from './case-client.service';
 
@@ -389,9 +390,14 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     // Step 1.1: Pending online service form offer (2-step flow)
     const pendingOffer = getPendingServiceFormOffer(wa_user_id);
     if (pendingOffer) {
-      const isNegative = /^(tidak|ga|gak|nggak|belum|nanti|skip|batal)\b/i.test(sanitizedMessage.trim());
+      const trimmed = sanitizedMessage.trim();
+      const wantsFormLink = /\b(link|tautan|formulir|form|online)(nya)?\b/i.test(trimmed);
+      const isNegative = /^(tidak|ga|gak|nggak|belum|nanti|skip|batal)\b/i.test(trimmed);
+      const confirmationResult = await classifyConfirmation(trimmed);
+      const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
+      const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
 
-      if (isConfirmationResponse(sanitizedMessage)) {
+      if (isLikelyConfirm || isConfirmationResponse(sanitizedMessage) || wantsFormLink) {
         clearPendingServiceFormOffer(wa_user_id);
         const llmLike = {
           intent: 'CREATE_SERVICE_REQUEST',
@@ -420,7 +426,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
         return;
       }
 
-      if (isNegative) {
+      if (isLikelyReject || isNegative) {
         clearPendingServiceFormOffer(wa_user_id);
         await stopTyping(wa_user_id, village_id);
         await publishAIReply({
@@ -843,6 +849,42 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     
     // Step 4: Data validation and enhancement
     const enhancedLayer1Output = await enhanceLayer1Output(layer1Output, wa_user_id);
+
+    const infoInquiryPattern = /(\?|\b(syarat|persyaratan|berkas|dokumen|info|informasi|biaya|lama|alur|panduan|cara|prosedur|gimana|bagaimana)\b)/i;
+    const serviceKeywordPattern = /\b(kk|kartu\s+keluarga|ktp|akta|surat|izin|domisili|usaha|nikah|beda\s+nama|pindah|kia)\b/i;
+    const wantsInquiry = infoInquiryPattern.test(sanitizedMessage) || serviceKeywordPattern.test(sanitizedMessage);
+
+    if (wantsInquiry && enhancedLayer1Output.intent === 'CREATE_SERVICE_REQUEST') {
+      const mockLlmResponse = {
+        intent: 'SERVICE_INFO',
+        fields: {
+          ...enhancedLayer1Output.extracted_data,
+          village_id: resolvedVillageId,
+          _original_message: sanitizedMessage,
+        },
+        reply_text: '',
+        guidance_text: '',
+        needs_knowledge: false,
+      };
+
+      const deterministic = normalizeServiceHandlerOutput(await handleServiceInfo(wa_user_id, mockLlmResponse));
+      await stopTyping(wa_user_id, village_id);
+      await publishAIReply({
+        village_id,
+        wa_user_id,
+        reply_text: validateResponse(deterministic.replyText),
+        guidance_text: deterministic.guidanceText ? validateResponse(deterministic.guidanceText) : undefined,
+        message_id: is_batched ? undefined : message_id,
+        batched_message_ids: is_batched ? batched_message_ids : undefined,
+      });
+      await publishMessageStatus({
+        village_id,
+        wa_user_id,
+        message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
+        status: 'completed',
+      });
+      return;
+    }
     
     // Step 5: LAYER 2 - Response Generation
     logger.info('💬 Starting Layer 2 - Response Generation', { wa_user_id });
@@ -924,9 +966,29 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
     // Step 7: Handle actions based on intent
     let finalReplyText = ensuredLayer2Output.reply_text;
     let guidanceText = ensuredLayer2Output.guidance_text || '';
+
+    const applyVerbPattern = /\b(ajukan|daftar|buat|bikin|mohon|minta|proses|kirim|ajukan|submit)\b/i;
+    const serviceNounPattern = /\b(layanan|surat|izin|permohonan|pelayanan)\b/i;
+    const wantsFormPattern = /\b(link|tautan|formulir|form|online)\b/i;
+
+    const looksLikeInquiry = infoInquiryPattern.test(sanitizedMessage);
+    const explicitApplyRequest = (applyVerbPattern.test(sanitizedMessage) || wantsFormPattern.test(sanitizedMessage)) && serviceNounPattern.test(sanitizedMessage);
+
+    if (looksLikeInquiry && !explicitApplyRequest) {
+      if (ensuredLayer2Output.next_action === 'CREATE_SERVICE_REQUEST') {
+        ensuredLayer2Output.next_action = 'SERVICE_INFO';
+      } else if (enhancedLayer1Output.intent === 'CREATE_SERVICE_REQUEST') {
+        ensuredLayer2Output.next_action = 'SERVICE_INFO';
+      }
+    }
     
-    if (ensuredLayer2Output.next_action && enhancedLayer1Output.confidence >= 0.7) {
-      if (ensuredLayer2Output.next_action === 'SERVICE_INFO') {
+    const shouldHandleAction = !!ensuredLayer2Output.next_action
+      && (enhancedLayer1Output.confidence >= 0.7 || ensuredLayer2Output.next_action === 'SERVICE_INFO');
+
+    if (shouldHandleAction) {
+      const nextAction = ensuredLayer2Output.next_action as string;
+
+      if (nextAction === 'SERVICE_INFO') {
         const mockLlmResponse = {
           intent: enhancedLayer1Output.intent,
           fields: {
@@ -944,7 +1006,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
         guidanceText = serviceInfoResult.guidanceText || '';
       } else {
         finalReplyText = await handleAction(
-          ensuredLayer2Output.next_action,
+          nextAction,
           enhancedLayer1Output,
           ensuredLayer2Output,
           village_id,
@@ -953,7 +1015,7 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
           media_public_url || media_url
         );
 
-        if (ensuredLayer2Output.next_action === 'CREATE_SERVICE_REQUEST') {
+        if (nextAction === 'CREATE_SERVICE_REQUEST') {
           guidanceText = '';
         }
       }
