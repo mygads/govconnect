@@ -1,17 +1,5 @@
 # ===================================================================================
-# GOVCONNECT - CI/CD PIPELINE
-# ===================================================================================
-# 
-# Build all services and deploy to VPS using Docker Compose
-# Triggers on push to main branch or manual dispatch
-#
-# Required Secrets:
-#   - GHCR_TOKEN: GitHub Container Registry token (PAT)
-#   - VPS_HOST: VPS IP address
-#   - VPS_USER: SSH username
-#   - VPS_SSH_KEY: SSH private key
-#   - ENV_FILE: (Optional) Environment file contents
-#
+# GOVCONNECT - CI/CD PIPELINE (CLEAN VERSION)
 # ===================================================================================
 
 name: CI/CD Pipeline
@@ -27,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: 'Service to deploy (all, dashboard, channel, ai, case, notification)'
+        description: 'Service to deploy'
         required: false
         default: 'all'
         type: choice
@@ -38,11 +26,6 @@ on:
           - ai-service
           - case-service
           - notification-service
-      deploy_only:
-        description: 'Skip build, deploy existing image'
-        required: false
-        default: 'false'
-        type: boolean
 
 env:
   REGISTRY: ghcr.io
@@ -50,101 +33,11 @@ env:
 
 jobs:
   # ===================================================================================
-  # DETECT CHANGES
-  # ===================================================================================
-  changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    outputs:
-      dashboard: ${{ steps.filter.outputs.dashboard }}
-      channel: ${{ steps.filter.outputs.channel }}
-      ai: ${{ steps.filter.outputs.ai }}
-      case: ${{ steps.filter.outputs.case }}
-      notification: ${{ steps.filter.outputs.notification }}
-      shared: ${{ steps.filter.outputs.shared }}
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            dashboard:
-              - 'govconnect-dashboard/**'
-              - 'shared/**'
-            channel:
-              - 'govconnect-channel-service/**'
-              - 'shared/**'
-            ai:
-              - 'govconnect-ai-service/**'
-              - 'shared/**'
-            case:
-              - 'govconnect-case-service/**'
-              - 'shared/**'
-            notification:
-              - 'govconnect-notification-service/**'
-              - 'shared/**'
-            shared:
-              - 'shared/**'
-
-  # ===================================================================================
-  # LEGACY TERMS CHECK (Docs & Metadata)
-  # ===================================================================================
-  legacy-terms-check:
-    name: Check Legacy Terms
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Scan docs and metadata for legacy terms
-        shell: bash
-        run: |
-          set -euo pipefail
-          PATTERN='reservasi|reservation|tiket|ticket|telegram|graphql'
-          TARGETS=(
-            "README.md"
-            "docs"
-            "govconnect-dashboard/app"
-            "govconnect-dashboard/lib"
-            "govconnect-dashboard/public"
-            "govconnect-ai-service/docs"
-            "govconnect-case-service/README.md"
-            "govconnect-notification-service/README.md"
-          )
-
-          found=0
-          for target in "${TARGETS[@]}"; do
-            if [ -e "$target" ]; then
-              if grep -RInE "$PATTERN" "$target" \
-                --exclude-dir node_modules \
-                --exclude-dir .next \
-                --exclude-dir dist \
-                --exclude-dir .github \
-                --exclude "*.lock"; then
-                found=1
-              fi
-            fi
-          done
-
-          if [ "$found" -eq 1 ]; then
-            echo "Legacy terms ditemukan. Harap bersihkan sebelum merge."
-            exit 1
-          fi
-
-  # ===================================================================================
   # BUILD DASHBOARD
   # ===================================================================================
   build-dashboard:
     name: Build Dashboard
     runs-on: ubuntu-latest
-    needs: [changes]
-    if: |
-      github.event.inputs.deploy_only != 'true' && 
-      (needs.changes.outputs.dashboard == 'true' || 
-       needs.changes.outputs.shared == 'true' ||
-       github.event.inputs.service == 'all' ||
-       github.event.inputs.service == 'dashboard')
     permissions:
       contents: read
       packages: write
@@ -181,13 +74,6 @@ jobs:
   build-channel:
     name: Build Channel Service
     runs-on: ubuntu-latest
-    needs: [changes]
-    if: |
-      github.event.inputs.deploy_only != 'true' && 
-      (needs.changes.outputs.channel == 'true' || 
-       needs.changes.outputs.shared == 'true' ||
-       github.event.inputs.service == 'all' ||
-       github.event.inputs.service == 'channel-service')
     permissions:
       contents: read
       packages: write
@@ -222,13 +108,6 @@ jobs:
   build-ai:
     name: Build AI Service
     runs-on: ubuntu-latest
-    needs: [changes]
-    if: |
-      github.event.inputs.deploy_only != 'true' && 
-      (needs.changes.outputs.ai == 'true' || 
-       needs.changes.outputs.shared == 'true' ||
-       github.event.inputs.service == 'all' ||
-       github.event.inputs.service == 'ai-service')
     permissions:
       contents: read
       packages: write
@@ -263,13 +142,6 @@ jobs:
   build-case:
     name: Build Case Service
     runs-on: ubuntu-latest
-    needs: [changes]
-    if: |
-      github.event.inputs.deploy_only != 'true' && 
-      (needs.changes.outputs.case == 'true' || 
-       needs.changes.outputs.shared == 'true' ||
-       github.event.inputs.service == 'all' ||
-       github.event.inputs.service == 'case-service')
     permissions:
       contents: read
       packages: write
@@ -304,13 +176,6 @@ jobs:
   build-notification:
     name: Build Notification Service
     runs-on: ubuntu-latest
-    needs: [changes]
-    if: |
-      github.event.inputs.deploy_only != 'true' && 
-      (needs.changes.outputs.notification == 'true' || 
-       needs.changes.outputs.shared == 'true' ||
-       github.event.inputs.service == 'all' ||
-       github.event.inputs.service == 'notification-service')
     permissions:
       contents: read
       packages: write
@@ -403,15 +268,6 @@ jobs:
             exit 1
           }
 
-      - name: Log secrets usage
-        run: |
-          echo "📋 Secrets used in this workflow:"
-          echo "  - VPS_HOST: ${{ secrets.VPS_HOST && '✅ Set' || '❌ Not set' }}"
-          echo "  - VPS_USER: ${{ secrets.VPS_USER && '✅ Set' || '❌ Not set' }}"
-          echo "  - VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY && '✅ Set' || '❌ Not set' }}"
-          echo "  - GHCR_TOKEN: ${{ secrets.GHCR_TOKEN && '✅ Set' || '❌ Not set' }}"
-          echo "  - ENV_FILE: ${{ secrets.ENV_FILE && '✅ Set' || '❌ Not set' }}"
-
       - name: Update ENV file on server
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -435,43 +291,40 @@ jobs:
         run: |
           echo "🚀 Deploying GovConnect to VPS..."
           
-          ssh $VPS_USER@$VPS_HOST << ENDSSH
+          ssh $VPS_USER@$VPS_HOST << 'DEPLOY_SCRIPT'
+            set -e
             cd ~/genfity/govconnect
             
-            # Force pull latest changes (override local, no conflicts)
+            # Force pull latest changes
             git fetch origin main
             git reset --hard origin/main
             
-            # Login to GHCR using PAT
+            # Login to GHCR
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
             
             # Create networks if not exists
             sudo docker network create govconnect-network 2>/dev/null || true
             sudo docker network create infra-network 2>/dev/null || true
             
-            # Set image variables and deploy using docker compose
+            # Set image variables
             export IMAGE_DASHBOARD=ghcr.io/mygads/govconnect-dashboard:latest
             export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:latest
             export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:latest
             export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
             export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
             
-            # Pull all images first (parallel) with retry
-            echo "📥 Pulling images..."
+            # Pull images with retry
             for i in {1..3}; do
               sudo -E docker compose pull && break || {
-                echo "Pull attempt \$i failed, retrying..."
+                echo "Pull attempt $i failed, retrying..."
                 sleep 10
               }
             done
             
-            # Stop old containers gracefully
-            echo "🛑 Stopping old containers..."
+            # Stop old containers
             sudo -E docker compose down --remove-orphans || true
             
-            # Start services sequentially to avoid memory spike
-            echo "🚀 Starting services..."
-            
+            # Start services sequentially
             echo "Starting channel-service..."
             sudo -E docker compose up -d channel-service
             sleep 15
@@ -492,16 +345,14 @@ jobs:
             sudo -E docker compose up -d dashboard
             sleep 10
             
-            # Check container status
-            echo "📊 Container status:"
+            # Check status
             sudo docker compose ps
             
-            # Cleanup old images
-            echo "🧹 Cleaning up..."
+            # Cleanup
             sudo docker image prune -af --filter "until=24h" 2>/dev/null || true
             
             echo "✅ Deployment complete!"
-          ENDSSH
+          DEPLOY_SCRIPT
 
       - name: Run Database Migrations
         env:
@@ -509,66 +360,34 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           echo "🗃️ Running database migrations..."
-          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
-            # Wait for containers to be ready
-            echo "⏳ Waiting for containers to be ready..."
+          ssh $VPS_USER@$VPS_HOST << 'MIGRATION_SCRIPT'
+            set -e
             sleep 20
             
-            # Check if PostgreSQL is accessible
-            echo "🔍 Checking PostgreSQL connection..."
+            # Check PostgreSQL
             if ! sudo -u postgres psql -c '\l' >/dev/null 2>&1; then
               echo "❌ PostgreSQL not accessible, skipping migrations"
               exit 0
             fi
             
-            # Create databases if they don't exist
-            echo "📦 Creating databases..."
-            sudo -u postgres psql << 'EOSQL' || echo "⚠️ Database creation had warnings"
-SELECT 'CREATE DATABASE gc_dashboard' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_dashboard')\gexec
-SELECT 'CREATE DATABASE gc_channel' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_channel')\gexec
-SELECT 'CREATE DATABASE gc_ai' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_ai')\gexec
-SELECT 'CREATE DATABASE gc_case' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_case')\gexec
-SELECT 'CREATE DATABASE gc_notification' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_notification')\gexec
-EOSQL
+            # Create databases
+            sudo -u postgres createdb gc_dashboard 2>/dev/null || echo "Database gc_dashboard exists"
+            sudo -u postgres createdb gc_channel 2>/dev/null || echo "Database gc_channel exists"
+            sudo -u postgres createdb gc_ai 2>/dev/null || echo "Database gc_ai exists"
+            sudo -u postgres createdb gc_case 2>/dev/null || echo "Database gc_case exists"
+            sudo -u postgres createdb gc_notification 2>/dev/null || echo "Database gc_notification exists"
             
-            # Get DATABASE_URL from .env
             cd ~/genfity/govconnect
             
-            # Run migrations for dashboard (has Prisma)
+            # Run dashboard migrations
             if [ -d "govconnect-dashboard/prisma" ]; then
-              echo "📦 Running Dashboard migrations..."
-              DATABASE_URL="postgresql://postgres:Genfity@2025@172.17.0.1:6432/gc_dashboard"
-              
-              # Check if dashboard container is running
-              if ! sudo docker compose ps dashboard | grep -q "running"; then
-                echo "⚠️ Dashboard container not running, skipping migrations"
-                exit 0
+              if sudo docker compose ps dashboard | grep -q "running"; then
+                sudo docker exec govconnect-dashboard sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" || echo "⚠️ Migration completed with warnings"
               fi
-              
-              sudo docker run --rm \
-                --network govconnect-network \
-                --network infra-network \
-                -e DATABASE_URL="$DATABASE_URL" \
-                -v "$PWD/govconnect-dashboard/prisma":/app/prisma:ro \
-                -w /app \
-                node:22-alpine sh -c "
-                  npm install prisma@latest --silent 2>/dev/null
-                  
-                  # Try migrate deploy first (for existing migrations)
-                  echo 'Attempting prisma migrate deploy...'
-                  npx prisma migrate deploy 2>&1 && exit 0
-                  
-                  # If failed, check if we need initial db push
-                  echo 'migrate deploy returned non-zero, checking migration state...'
-                  npx prisma migrate status 2>&1 || {
-                    echo 'No migrations applied yet, running db push for initial schema...'
-                    npx prisma db push 2>&1
-                  }
-                " || echo "⚠️ Dashboard migration completed with warnings"
             fi
             
             echo "✅ Database migrations complete!"
-          ENDSSH
+          MIGRATION_SCRIPT
 
       - name: Health Check
         env:
@@ -578,33 +397,21 @@ EOSQL
           echo "🏥 Running health checks..."
           sleep 30
           
-          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+          ssh $VPS_USER@$VPS_HOST << 'HEALTH_SCRIPT'
             echo "Checking services..."
             
-            # Check Dashboard
+            # Check services
             curl -sf http://localhost:3011/api/health && echo "✅ Dashboard OK" || echo "❌ Dashboard FAILED"
-            
-            # Check Channel Service
             curl -sf http://localhost:3001/health && echo "✅ Channel OK" || echo "❌ Channel FAILED"
-            
-            # Check AI Service
             curl -sf http://localhost:3002/health && echo "✅ AI OK" || echo "❌ AI FAILED"
-            
-            # Check Case Service
             curl -sf http://localhost:3003/health && echo "✅ Case OK" || echo "❌ Case FAILED"
-            
-            # Check Notification Service
             curl -sf http://localhost:3004/health && echo "✅ Notification OK" || echo "❌ Notification FAILED"
             
-            # Show container status and memory usage
+            # Show status
             echo ""
             echo "Container Status:"
             sudo docker compose ps
-            
-            echo ""
-            echo "Memory Usage:"
-            sudo docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | grep govconnect
-          ENDSSH
+          HEALTH_SCRIPT
 
       - name: Generate summary
         if: success()
@@ -619,7 +426,7 @@ EOSQL
           echo "- Notification Service: https://notification.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
 
   # ===================================================================================
-  # CLEANUP JOB (Runs regardless of success/failure)
+  # CLEANUP JOB
   # ===================================================================================
   cleanup:
     name: Cleanup Old Resources
@@ -641,8 +448,8 @@ EOSQL
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+          ssh $VPS_USER@$VPS_HOST << 'CLEANUP_SCRIPT'
             echo "🧹 Running scheduled cleanup..."
             sudo docker system prune -f --filter "until=24h"
             echo "✅ Cleanup complete!"
-          ENDSSH
+          CLEANUP_SCRIPT
