@@ -1,24 +1,25 @@
 # Dependencies
 node_modules
-package-lock.json
-yarn.lock
-
-# Build output
-dist
-*.tsbuildinfo
-
-# Logs
-logs
-*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Environment
+# Production builds
+dist
+build
+
+# Environment files
 .env
 .env.local
-.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Git
+.git
+.gitignore
+.gitattributes
 
 # IDE
 .vscode
@@ -31,23 +32,75 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Temp
-tmp
-temp
-*.tmp
+# Logs
+logs
+*.log
 
-# Documentation (not needed in image)
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# Temporary folders
+tmp/
+temp/
+
+# Documentation
 README.md
+docs/
 *.md
 
-# Git
-.git
-.gitignore
+# Test files
+test/
+tests/
+__tests__/
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
 
-# Always include build-critical files
-!package.json
-!pnpm-lock.yaml
-!pnpm-workspace.yaml
-!tsconfig.json
-!src/**
-!prisma/**
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# AI Service specific
+scripts/
+knowledge/
+evaluations/
+
+# Prisma
+prisma/migrations/
+!prisma/schema.prisma

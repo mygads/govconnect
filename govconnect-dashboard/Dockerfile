@@ -30,7 +30,12 @@ COPY . .
 
 # Generate Prisma Client
 ENV DATABASE_URL="postgresql://postgres:postgres@localhost:5432/dummy?schema=dashboard"
-RUN echo "Running prisma generate..." && pnpm prisma generate || echo "⚠️  prisma generate failed during build; continuing"
+RUN echo "Running prisma generate..." && \
+    pnpm prisma generate 2>&1 || { \
+      echo "⚠️ prisma generate failed, trying alternative approach..."; \
+      npm install prisma@latest @prisma/client@latest --silent; \
+      npx prisma generate 2>&1 || echo "⚠️ prisma generate failed during build; continuing"; \
+    }
 
 # Build Next.js app
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -93,11 +98,21 @@ ENV HOSTNAME="0.0.0.0"
 
 # Create entrypoint script with auto-migration
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'set -e' >> /app/entrypoint.sh && \
     echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
-    echo 'if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
-    echo '  node node_modules/prisma/build/index.js migrate deploy || echo "⚠️  Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
+    echo '  if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
+    echo '    echo "📦 Running migrate deploy..."' >> /app/entrypoint.sh && \
+    echo '    node node_modules/prisma/build/index.js migrate deploy 2>&1 || {' >> /app/entrypoint.sh && \
+    echo '      echo "⚠️ Migration failed, trying db push..."' >> /app/entrypoint.sh && \
+    echo '      node node_modules/prisma/build/index.js db push --accept-data-loss 2>&1 || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '    }' >> /app/entrypoint.sh && \
+    echo '  else' >> /app/entrypoint.sh && \
+    echo '    echo "📦 No migrations found, running db push..."' >> /app/entrypoint.sh && \
+    echo '    node node_modules/prisma/build/index.js db push --accept-data-loss 2>&1 || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '  fi' >> /app/entrypoint.sh && \
     echo 'else' >> /app/entrypoint.sh && \
-    echo '  node node_modules/prisma/build/index.js db push --accept-data-loss || echo "⚠️  DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '  echo "⚠️ DATABASE_URL not set, skipping migrations"' >> /app/entrypoint.sh && \
     echo 'fi' >> /app/entrypoint.sh && \
     echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
     echo 'echo "🚀 Starting Dashboard..."' >> /app/entrypoint.sh && \
@@ -106,3 +121,7 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
 
 # Start with entrypoint
 CMD ["/app/entrypoint.sh"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
