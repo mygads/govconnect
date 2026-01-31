@@ -852,9 +852,42 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
 
     const infoInquiryPattern = /(\?|\b(syarat|persyaratan|berkas|dokumen|info|informasi|biaya|lama|alur|panduan|cara|prosedur|gimana|bagaimana)\b)/i;
     const serviceKeywordPattern = /\b(kk|kartu\s+keluarga|ktp|akta|surat|izin|domisili|usaha|nikah|beda\s+nama|pindah|kia)\b/i;
-    const wantsInquiry = infoInquiryPattern.test(sanitizedMessage) || serviceKeywordPattern.test(sanitizedMessage);
+    const wantsFormPattern = /\b(link|tautan|formulir|form|online)\b/i;
+    const isServiceInquiry = infoInquiryPattern.test(sanitizedMessage) && serviceKeywordPattern.test(sanitizedMessage);
+    const isFormRequest = wantsFormPattern.test(sanitizedMessage) && serviceKeywordPattern.test(sanitizedMessage);
 
-    if (wantsInquiry && enhancedLayer1Output.intent === 'CREATE_SERVICE_REQUEST') {
+    if (isFormRequest) {
+      const mockLlmResponse = {
+        intent: 'CREATE_SERVICE_REQUEST',
+        fields: {
+          ...enhancedLayer1Output.extracted_data,
+          village_id: resolvedVillageId,
+          _original_message: sanitizedMessage,
+        },
+        reply_text: '',
+        guidance_text: '',
+        needs_knowledge: false,
+      };
+
+      const reply = await handleServiceRequestCreation(wa_user_id, 'whatsapp', mockLlmResponse);
+      await stopTyping(wa_user_id, village_id);
+      await publishAIReply({
+        village_id,
+        wa_user_id,
+        reply_text: validateResponse(reply),
+        message_id: is_batched ? undefined : message_id,
+        batched_message_ids: is_batched ? batched_message_ids : undefined,
+      });
+      await publishMessageStatus({
+        village_id,
+        wa_user_id,
+        message_ids: is_batched && batched_message_ids ? batched_message_ids : [message_id],
+        status: 'completed',
+      });
+      return;
+    }
+
+    if (isServiceInquiry) {
       const mockLlmResponse = {
         intent: 'SERVICE_INFO',
         fields: {
@@ -969,7 +1002,6 @@ export async function processTwoLayerMessage(event: MessageReceivedEvent): Promi
 
     const applyVerbPattern = /\b(ajukan|daftar|buat|bikin|mohon|minta|proses|kirim|ajukan|submit)\b/i;
     const serviceNounPattern = /\b(layanan|surat|izin|permohonan|pelayanan)\b/i;
-    const wantsFormPattern = /\b(link|tautan|formulir|form|online)\b/i;
 
     const looksLikeInquiry = infoInquiryPattern.test(sanitizedMessage);
     const explicitApplyRequest = (applyVerbPattern.test(sanitizedMessage) || wantsFormPattern.test(sanitizedMessage)) && serviceNounPattern.test(sanitizedMessage);

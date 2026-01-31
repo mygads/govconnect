@@ -185,9 +185,33 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
 
     const infoInquiryPattern = /(\?|\b(syarat|persyaratan|berkas|dokumen|info|informasi|biaya|lama|alur|panduan|cara|prosedur|gimana|bagaimana)\b)/i;
     const serviceKeywordPattern = /\b(kk|kartu\s+keluarga|ktp|akta|surat|izin|domisili|usaha|nikah|beda\s+nama|pindah|kia)\b/i;
-    const wantsInquiry = infoInquiryPattern.test(sanitizedMessage) || serviceKeywordPattern.test(sanitizedMessage);
+    const wantsFormPattern = /\b(link|tautan|formulir|form|online)\b/i;
+    const isServiceInquiry = infoInquiryPattern.test(sanitizedMessage) && serviceKeywordPattern.test(sanitizedMessage);
+    const isFormRequest = wantsFormPattern.test(sanitizedMessage) && serviceKeywordPattern.test(sanitizedMessage);
 
-    if (wantsInquiry && enhancedLayer1.intent === 'CREATE_SERVICE_REQUEST') {
+    if (isFormRequest) {
+      const mockLlmResponse = {
+        intent: 'CREATE_SERVICE_REQUEST',
+        fields: {
+          ...enhancedLayer1.extracted_data,
+          ...(village_id ? { village_id } : {}),
+          _original_message: sanitizedMessage,
+        },
+        reply_text: '',
+        guidance_text: '',
+        needs_knowledge: false,
+      };
+
+      const reply = await handleServiceRequestCreation(userId, 'webchat', mockLlmResponse);
+      return {
+        success: true,
+        response: reply,
+        intent: 'CREATE_SERVICE_REQUEST',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
+
+    if (isServiceInquiry) {
       const mockLlmResponse = {
         intent: 'SERVICE_INFO',
         fields: {
@@ -255,7 +279,6 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
 
     const applyVerbPattern = /\b(ajukan|daftar|buat|bikin|mohon|minta|proses|kirim|ajukan|submit)\b/i;
     const serviceNounPattern = /\b(layanan|surat|izin|permohonan|pelayanan)\b/i;
-    const wantsFormPattern = /\b(link|tautan|formulir|form|online)\b/i;
 
     const looksLikeInquiry = infoInquiryPattern.test(sanitizedMessage);
     const explicitApplyRequest = (applyVerbPattern.test(sanitizedMessage) || wantsFormPattern.test(sanitizedMessage)) && serviceNounPattern.test(sanitizedMessage);

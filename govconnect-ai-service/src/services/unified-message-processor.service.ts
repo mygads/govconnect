@@ -989,6 +989,8 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     if (service.is_active === false) {
       return { replyText: `Mohon maaf Pak/Bu, layanan ${service.name} saat ini belum tersedia.` };
     }
+
+    const resolvedVillageId = villageId || service.village_id || service.villageId || '';
     
     // Build requirements list
     const requirements = service.requirements || [];
@@ -1006,7 +1008,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     // Check if service is available online
     const isOnline = service.mode === 'online' || service.mode === 'both';
     const baseUrl = getPublicFormBaseUrl();
-    const villageSlug = await resolveVillageSlugForPublicForm(villageId);
+    const villageSlug = await resolveVillageSlugForPublicForm(resolvedVillageId || villageId);
     
     let replyText = `Baik Pak/Bu, untuk pembuatan ${service.name} persyaratannya antara lain:\n\n`;
     let guidanceText = '';
@@ -1021,7 +1023,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
       // Offer first, then send the form link only when the user confirms.
       setPendingServiceFormOffer(userId, {
         service_slug: service.slug,
-        village_id: villageId,
+        village_id: resolvedVillageId || villageId,
         timestamp: Date.now(),
       });
 
@@ -1041,13 +1043,25 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
  * Handle service request creation (send public form link)
  */
 export async function handleServiceRequestCreation(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
-  const { service_slug } = llmResponse.fields || {};
-  
+  let { service_slug } = llmResponse.fields || {};
+  const rawMessage = llmResponse.fields?._original_message || llmResponse.fields?.service_name || llmResponse.fields?.service_query || '';
+  let villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
+
+  if (!service_slug && rawMessage) {
+    const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
+    if (resolved?.slug) {
+      service_slug = resolved.slug;
+      llmResponse.fields = {
+        ...(llmResponse.fields || {}),
+        service_slug: resolved.slug,
+        service_name: resolved.name || llmResponse.fields?.service_name,
+      } as any;
+    }
+  }
+
   if (!service_slug) {
     return llmResponse.reply_text || 'Mohon sebutkan nama layanan yang ingin diajukan ya Pak/Bu.';
   }
-
-  const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
 
   try {
     const { config } = await import('../config/env');
@@ -1066,6 +1080,10 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
 
     if (service.is_active === false) {
       return `Mohon maaf Pak/Bu, layanan ${service.name} saat ini belum tersedia.`;
+    }
+
+    if (!villageId && (service.village_id || service.villageId)) {
+      villageId = service.village_id || service.villageId;
     }
 
     const isOnline = service.mode === 'online' || service.mode === 'both';
@@ -1570,11 +1588,34 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
     if (isAskingContact) {
       const wantsPengaduan = /pengaduan/i.test(normalizedQuery);
       const wantsPelayanan = /pelayanan|layanan/i.test(normalizedQuery);
+      const wantsEmergency = /(pemadam|damkar|kebakaran|polisi|ambulans|ambulan|rs|rumah\s*sakit|pln|listrik|bpbd|bencana)/i.test(normalizedQuery);
+
+      const keywordTargets = [
+        { pattern: /(pemadam|damkar|kebakaran)/i, label: 'pemadam kebakaran' },
+        { pattern: /(polisi)/i, label: 'polisi' },
+        { pattern: /(ambulans|ambulan|rumah\s*sakit|rs)/i, label: 'ambulans' },
+        { pattern: /(pln|listrik)/i, label: 'PLN' },
+        { pattern: /(bpbd|bencana)/i, label: 'BPBD' },
+      ];
+
+      const matchedKeywords = keywordTargets
+        .filter(k => k.pattern.test(normalizedQuery))
+        .map(k => k.label);
 
       const categoryName = wantsPengaduan ? 'Pengaduan' : wantsPelayanan ? 'Pelayanan' : null;
       let contacts = await getImportantContacts(villageId || '', categoryName);
       if ((!contacts || contacts.length === 0) && categoryName) {
         contacts = await getImportantContacts(villageId || '');
+      }
+
+      if (contacts && contacts.length > 0 && matchedKeywords.length > 0) {
+        const keywordRegex = new RegExp(matchedKeywords.map(k => k.replace(/\s+/g, '\\s+')).join('|'), 'i');
+        contacts = contacts.filter(c => {
+          const name = (c.name || '').toLowerCase();
+          const desc = (c.description || '').toLowerCase();
+          const category = (c.category?.name || '').toLowerCase();
+          return keywordRegex.test(name) || keywordRegex.test(desc) || keywordRegex.test(category);
+        });
       }
 
       const dbPhoneSet = new Set(
@@ -1586,13 +1627,21 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       let kbPhoneCandidates: string[] = [];
       if (villageId) {
         const knowledgeResult = await searchKnowledge(message, categories, villageId);
-        kbPhoneCandidates = extractPhoneNumbers(knowledgeResult?.context || '');
+        const kbContext = knowledgeResult?.context || '';
+        if (matchedKeywords.length > 0) {
+          const keywordRegex = new RegExp(matchedKeywords.map(k => k.replace(/\s+/g, '\\s+')).join('|'), 'i');
+          const lines = kbContext.split(/\r?\n/).filter(line => keywordRegex.test(line));
+          kbPhoneCandidates = extractPhoneNumbers(lines.join('\n'));
+        } else {
+          kbPhoneCandidates = extractPhoneNumbers(kbContext);
+        }
       }
 
       const kbUnique = kbPhoneCandidates.filter(phone => !dbPhoneSet.has(phone));
 
       if ((!contacts || contacts.length === 0) && kbUnique.length === 0) {
-        return `Mohon maaf Pak/Bu, informasi kontak untuk ${officeName} belum tersedia.`;
+        const keywordHint = matchedKeywords.length > 0 ? ` untuk ${matchedKeywords.join(' / ')}` : '';
+        return `Mohon maaf Pak/Bu, informasi nomor penting${keywordHint} di ${officeName} belum tersedia.`;
       }
 
       const profileNameLower = (profile?.name || '').toLowerCase();
