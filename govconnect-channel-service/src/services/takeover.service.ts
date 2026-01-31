@@ -528,7 +528,7 @@ export async function getPendingMessage(
       message_text: message.message_text,
     };
   } catch (error: any) {
-    logger.error('Failed to get pending message', { error: error.message, wa_user_id });
+    logger.error('Failed to get pending message', { error: error.message, channel_identifier });
     return null;
   }
 }

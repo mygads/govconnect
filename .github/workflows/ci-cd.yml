@@ -1,5 +1,15 @@
 # ===================================================================================
-# GOVCONNECT - CI/CD PIPELINE (CLEAN VERSION)
+# GOVCONNECT - CI/CD PIPELINE
+# ===================================================================================
+#
+# Build and deploy using docker compose
+# Config deployment ada di docker-compose.yml (single source of truth)
+#
+# Required Secrets:
+#   - GHCR_TOKEN: GitHub Container Registry token
+#   - VPS_HOST, VPS_USER, VPS_SSH_KEY: SSH access
+#   - ENV_FILE: Production .env content
+#
 # ===================================================================================
 
 name: CI/CD Pipeline
@@ -14,18 +24,11 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      service:
-        description: 'Service to deploy'
+      deploy_only:
+        description: 'Skip build, deploy existing images'
         required: false
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - dashboard
-          - channel-service
-          - ai-service
-          - case-service
-          - notification-service
+        default: 'false'
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
@@ -33,17 +36,34 @@ env:
 
 jobs:
   # ===================================================================================
-  # BUILD DASHBOARD
+  # BUILD JOBS
   # ===================================================================================
-  build-dashboard:
-    name: Build Dashboard
+  build:
+    name: Build & Push Images
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.deploy_only != 'true' }}
     permissions:
       contents: read
       packages: write
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: dashboard
+            context: ./govconnect-dashboard
+          - name: channel-service
+            context: ./govconnect-channel-service
+          - name: ai-service
+            context: ./govconnect-ai-service
+          - name: case-service
+            context: ./govconnect-case-service
+          - name: notification-service
+            context: ./govconnect-notification-service
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -55,154 +75,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push ${{ matrix.service.name }}
         uses: docker/build-push-action@v5
         with:
-          context: ./govconnect-dashboard
+          context: ${{ matrix.service.context }}
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-dashboard:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-dashboard:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
           build-args: |
-            NEXT_PUBLIC_APP_URL=https://govconnect.my.id
-
-  # ===================================================================================
-  # BUILD CHANNEL SERVICE
-  # ===================================================================================
-  build-channel:
-    name: Build Channel Service
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: ./govconnect-channel-service
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-channel-service:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-channel-service:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ===================================================================================
-  # BUILD AI SERVICE
-  # ===================================================================================
-  build-ai:
-    name: Build AI Service
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: ./govconnect-ai-service
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ai-service:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ai-service:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ===================================================================================
-  # BUILD CASE SERVICE
-  # ===================================================================================
-  build-case:
-    name: Build Case Service
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: ./govconnect-case-service
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-case-service:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-case-service:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ===================================================================================
-  # BUILD NOTIFICATION SERVICE
-  # ===================================================================================
-  build-notification:
-    name: Build Notification Service
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: ./govconnect-notification-service
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-notification-service:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-notification-service:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            NODE_ENV=production
 
   # ===================================================================================
   # DEPLOY TO VPS
@@ -210,41 +94,16 @@ jobs:
   deploy:
     name: Deploy to VPS
     runs-on: ubuntu-latest
-    needs: [build-dashboard, build-channel, build-ai, build-case, build-notification]
+    needs: [build]
     if: |
       always() && 
-      github.ref == 'refs/heads/main' &&
-      needs.build-dashboard.result == 'success'
+      (needs.build.result == 'success' || github.event.inputs.deploy_only == 'true') &&
+      github.ref == 'refs/heads/main'
     environment: production
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate required secrets
-        run: |
-          echo "🔍 Validating required secrets..."
-          
-          if [ -z "${{ secrets.VPS_HOST }}" ]; then
-            echo "❌ VPS_HOST secret is not set"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.VPS_USER }}" ]; then
-            echo "❌ VPS_USER secret is not set"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.VPS_SSH_KEY }}" ]; then
-            echo "❌ VPS_SSH_KEY secret is not set"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.GHCR_TOKEN }}" ]; then
-            echo "❌ GHCR_TOKEN secret is not set"
-            exit 1
-          fi
-          
-          echo "✅ All required secrets are set"
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup SSH
         run: |
@@ -253,16 +112,14 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Test SSH connection
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
+      - name: Log secrets usage
         run: |
-          echo "🔗 Testing SSH connection..."
-          ssh -o ConnectTimeout=10 $VPS_USER@$VPS_HOST "echo 'SSH connection successful'" || {
-            echo "❌ SSH connection failed"
-            exit 1
-          }
+          echo "📋 Secrets used in this workflow:"
+          echo "  - VPS_HOST: ${{ secrets.VPS_HOST && '✅ Set' || '❌ Not set' }}"
+          echo "  - VPS_USER: ${{ secrets.VPS_USER && '✅ Set' || '❌ Not set' }}"
+          echo "  - VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY && '✅ Set' || '❌ Not set' }}"
+          echo "  - GHCR_TOKEN: ${{ secrets.GHCR_TOKEN && '✅ Set' || '❌ Not set' }}"
+          echo "  - ENV_FILE: ${{ secrets.ENV_FILE && '✅ Set' || '❌ Not set' }}"
 
       - name: Update ENV file on server
         env:
@@ -285,7 +142,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
-          echo "🚀 Deploying GovConnect to VPS..."
+          echo "� Deployging GovConnect to VPS..."
           
           ssh $VPS_USER@$VPS_HOST << ENDSSH
             set -e
@@ -298,29 +155,12 @@ jobs:
             # Login to GHCR using PAT
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
             
-            # Create networks if not exists
-            sudo docker network create govconnect-network 2>/dev/null || true
-            sudo docker network create infra-network 2>/dev/null || true
-            
-            # Set image variables (only for successfully built services)
+            # Set image variables for all services
             export IMAGE_DASHBOARD=ghcr.io/mygads/govconnect-dashboard:latest
-            
-            # Try to set other images if they exist
-            if docker manifest inspect ghcr.io/mygads/govconnect-channel-service:latest >/dev/null 2>&1; then
-              export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:latest
-            fi
-            
-            if docker manifest inspect ghcr.io/mygads/govconnect-ai-service:latest >/dev/null 2>&1; then
-              export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:latest
-            fi
-            
-            if docker manifest inspect ghcr.io/mygads/govconnect-case-service:latest >/dev/null 2>&1; then
-              export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
-            fi
-            
-            if docker manifest inspect ghcr.io/mygads/govconnect-notification-service:latest >/dev/null 2>&1; then
-              export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
-            fi
+            export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:latest
+            export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:latest
+            export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
+            export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
             
             # Pull all images first (parallel) with retry
             echo "📥 Pulling images..."
@@ -335,37 +175,12 @@ jobs:
             echo "🛑 Stopping old containers..."
             sudo -E docker compose down --remove-orphans || true
             
-            # Start services that have images available
-            echo "🚀 Starting available services..."
+            # Start all services
+            echo "🚀 Starting all services..."
+            sudo -E docker compose up -d --force-recreate
             
-            echo "Starting dashboard..."
-            sudo -E docker compose up -d dashboard
-            sleep 10
-            
-            # Start other services if their images are available
-            if [ -n "$IMAGE_CHANNEL" ]; then
-              echo "Starting channel-service..."
-              sudo -E docker compose up -d channel-service
-              sleep 10
-            fi
-            
-            if [ -n "$IMAGE_CASE" ]; then
-              echo "Starting case-service..."
-              sudo -E docker compose up -d case-service
-              sleep 10
-            fi
-            
-            if [ -n "$IMAGE_NOTIFICATION" ]; then
-              echo "Starting notification-service..."
-              sudo -E docker compose up -d notification-service
-              sleep 10
-            fi
-            
-            if [ -n "$IMAGE_AI" ]; then
-              echo "Starting ai-service..."
-              sudo -E docker compose up -d ai-service
-              sleep 10
-            fi
+            # Wait for services to start
+            sleep 30
             
             # Check container status
             echo "📊 Container status:"
@@ -404,22 +219,21 @@ jobs:
             sudo -u postgres createdb gc_case 2>/dev/null || echo "Database gc_case already exists"
             sudo -u postgres createdb gc_notification 2>/dev/null || echo "Database gc_notification already exists"
             
-            # Get DATABASE_URL from .env
             cd ~/genfity/govconnect
             
             # Run migrations for dashboard (has Prisma)
-            if [ -d "govconnect-dashboard/prisma" ]; then
+            if sudo docker compose ps dashboard | grep -q "running"; then
               echo "📦 Running Dashboard migrations..."
-              
-              # Check if dashboard container is running
-              if ! sudo docker compose ps dashboard | grep -q "running"; then
-                echo "⚠️ Dashboard container not running, skipping migrations"
-                exit 0
-              fi
-              
-              # Run migration in a simpler way
-              sudo docker exec govconnect-dashboard sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" || echo "⚠️ Migration completed with warnings"
+              sudo docker compose exec dashboard sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" || echo "⚠️ Dashboard migration completed with warnings"
             fi
+            
+            # Run migrations for other services if they have Prisma
+            for service in channel-service ai-service case-service notification-service; do
+              if sudo docker compose ps \$service | grep -q "running"; then
+                echo "📦 Running \$service migrations..."
+                sudo docker compose exec \$service sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" || echo "⚠️ \$service migration completed with warnings"
+              fi
+            done
             
             echo "✅ Database migrations complete!"
           ENDSSH
@@ -457,10 +271,10 @@ jobs:
             
             echo ""
             echo "Memory Usage:"
-            sudo docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | grep govconnect
+            sudo docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | grep govconnect || true
           ENDSSH
 
-      - name: Generate summary
+      - name: Generate deployment summary
         if: success()
         run: |
           echo "## 🚀 GovConnect Deployment Successful" >> $GITHUB_STEP_SUMMARY
@@ -473,7 +287,7 @@ jobs:
           echo "- Notification Service: https://notification.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
 
   # ===================================================================================
-  # CLEANUP JOB
+  # CLEANUP JOB (Runs regardless of success/failure)
   # ===================================================================================
   cleanup:
     name: Cleanup Old Resources
