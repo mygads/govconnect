@@ -172,6 +172,8 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-dashboard:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_APP_URL=https://govconnect.my.id
 
   # ===================================================================================
   # BUILD CHANNEL SERVICE
@@ -357,12 +359,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate required secrets
+        run: |
+          echo "🔍 Validating required secrets..."
+          
+          if [ -z "${{ secrets.VPS_HOST }}" ]; then
+            echo "❌ VPS_HOST secret is not set"
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.VPS_USER }}" ]; then
+            echo "❌ VPS_USER secret is not set"
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.VPS_SSH_KEY }}" ]; then
+            echo "❌ VPS_SSH_KEY secret is not set"
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.GHCR_TOKEN }}" ]; then
+            echo "❌ GHCR_TOKEN secret is not set"
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are set"
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          echo "🔗 Testing SSH connection..."
+          ssh -o ConnectTimeout=10 $VPS_USER@$VPS_HOST "echo 'SSH connection successful'" || {
+            echo "❌ SSH connection failed"
+            exit 1
+          }
 
       - name: Log secrets usage
         run: |
@@ -417,32 +456,45 @@ jobs:
             export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
             export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
             
-            # Pull all images first (parallel)
-            sudo -E docker compose pull
+            # Pull all images first (parallel) with retry
+            echo "📥 Pulling images..."
+            for i in {1..3}; do
+              sudo -E docker compose pull && break || {
+                echo "Pull attempt \$i failed, retrying..."
+                sleep 10
+              }
+            done
             
             # Stop old containers gracefully
+            echo "🛑 Stopping old containers..."
             sudo -E docker compose down --remove-orphans || true
             
             # Start services sequentially to avoid memory spike
+            echo "🚀 Starting services..."
+            
             echo "Starting channel-service..."
             sudo -E docker compose up -d channel-service
-            sleep 10
+            sleep 15
             
             echo "Starting case-service..."
             sudo -E docker compose up -d case-service
-            sleep 5
+            sleep 10
             
             echo "Starting notification-service..."
             sudo -E docker compose up -d notification-service
-            sleep 5
+            sleep 10
             
             echo "Starting ai-service..."
             sudo -E docker compose up -d ai-service
-            sleep 10
+            sleep 15
             
             echo "Starting dashboard..."
             sudo -E docker compose up -d dashboard
-            sleep 5
+            sleep 10
+            
+            # Check container status
+            echo "📊 Container status:"
+            sudo docker compose ps
             
             # Cleanup old images
             echo "🧹 Cleaning up..."
@@ -459,15 +511,24 @@ jobs:
           echo "🗃️ Running database migrations..."
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             # Wait for containers to be ready
-            sleep 15
+            echo "⏳ Waiting for containers to be ready..."
+            sleep 20
+            
+            # Check if PostgreSQL is accessible
+            echo "🔍 Checking PostgreSQL connection..."
+            if ! sudo -u postgres psql -c '\l' >/dev/null 2>&1; then
+              echo "❌ PostgreSQL not accessible, skipping migrations"
+              exit 0
+            fi
             
             # Create databases if they don't exist
-            sudo -u postgres psql << 'EOSQL'
-CREATE DATABASE IF NOT EXISTS gc_dashboard;
-CREATE DATABASE IF NOT EXISTS gc_channel;
-CREATE DATABASE IF NOT EXISTS gc_ai;
-CREATE DATABASE IF NOT EXISTS gc_case;
-CREATE DATABASE IF NOT EXISTS gc_notification;
+            echo "📦 Creating databases..."
+            sudo -u postgres psql << 'EOSQL' || echo "⚠️ Database creation had warnings"
+SELECT 'CREATE DATABASE gc_dashboard' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_dashboard')\gexec
+SELECT 'CREATE DATABASE gc_channel' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_channel')\gexec
+SELECT 'CREATE DATABASE gc_ai' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_ai')\gexec
+SELECT 'CREATE DATABASE gc_case' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_case')\gexec
+SELECT 'CREATE DATABASE gc_notification' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'gc_notification')\gexec
 EOSQL
             
             # Get DATABASE_URL from .env
@@ -477,6 +538,12 @@ EOSQL
             if [ -d "govconnect-dashboard/prisma" ]; then
               echo "📦 Running Dashboard migrations..."
               DATABASE_URL="postgresql://postgres:Genfity@2025@172.17.0.1:6432/gc_dashboard"
+              
+              # Check if dashboard container is running
+              if ! sudo docker compose ps dashboard | grep -q "running"; then
+                echo "⚠️ Dashboard container not running, skipping migrations"
+                exit 0
+              fi
               
               sudo docker run --rm \
                 --network govconnect-network \
