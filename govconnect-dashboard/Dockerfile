@@ -12,7 +12,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma/
 
-# Install dependencies
+# Install dependencies (including dev dependencies for build)
 RUN pnpm install --frozen-lockfile
 
 # ===============================================

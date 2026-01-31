@@ -12,7 +12,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma/
 
-# Install dependencies
+# Install dependencies (including dev dependencies for build)
 RUN pnpm install --frozen-lockfile
 
 # ===============================================
@@ -57,13 +57,14 @@ COPY package.json pnpm-lock.yaml ./
 # Install production dependencies only
 RUN pnpm install --prod --frozen-lockfile
 
-# Copy prisma schema and generated client
+# Copy prisma schema
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 # Copy built application
 COPY --from=builder /app/dist ./dist
+
+# Install Prisma CLI and generate client
+RUN pnpm add prisma @prisma/client && pnpm prisma generate
 
 # Create uploads directory
 RUN mkdir -p uploads && chown -R channeluser:nodejs /app
