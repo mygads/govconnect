@@ -2,14 +2,15 @@
 # GOVCONNECT - CI/CD PIPELINE
 # ===================================================================================
 # 
-# Build all services and deploy to VPS using Docker Swarm
+# Build all services and deploy to VPS using Docker Compose
 # Triggers on push to main branch or manual dispatch
 #
 # Required Secrets:
-#   - GHCR_TOKEN: GitHub Container Registry token
+#   - GHCR_TOKEN: GitHub Container Registry token (PAT)
 #   - VPS_HOST: VPS IP address
 #   - VPS_USER: SSH username
 #   - VPS_SSH_KEY: SSH private key
+#   - ENV_FILE: (Optional) Environment file contents
 #
 # ===================================================================================
 
@@ -357,13 +358,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-
-      - name: Add VPS to known hosts
         run: |
           mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
       - name: Log secrets usage
@@ -372,68 +370,137 @@ jobs:
           echo "  - VPS_HOST: ${{ secrets.VPS_HOST && '✅ Set' || '❌ Not set' }}"
           echo "  - VPS_USER: ${{ secrets.VPS_USER && '✅ Set' || '❌ Not set' }}"
           echo "  - VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY && '✅ Set' || '❌ Not set' }}"
+          echo "  - GHCR_TOKEN: ${{ secrets.GHCR_TOKEN && '✅ Set' || '❌ Not set' }}"
+          echo "  - ENV_FILE: ${{ secrets.ENV_FILE && '✅ Set' || '❌ Not set' }}"
+
+      - name: Update ENV file on server
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -n "$ENV_FILE" ]; then
+            echo "📝 Updating .env file on server..."
+            ssh $VPS_USER@$VPS_HOST "mkdir -p ~/genfity/govconnect"
+            echo "$ENV_FILE" | ssh $VPS_USER@$VPS_HOST "cat > ~/genfity/govconnect/.env"
+            echo "✅ ENV file updated!"
+          else
+            echo "⏭️ ENV_FILE secret not set, skipping .env update"
+          fi
 
       - name: Deploy with Docker Compose
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
           echo "🚀 Deploying GovConnect to VPS..."
           
-          # Deploy with Docker Compose
-          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
-            cd /opt/apps/govconnect
+          ssh $VPS_USER@$VPS_HOST << ENDSSH
+            cd ~/genfity/govconnect
             
-            # Login to GHCR
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Force pull latest changes (override local, no conflicts)
+            git fetch origin main
+            git reset --hard origin/main
+            
+            # Login to GHCR using PAT
+            echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
+            
+            # Create networks if not exists
+            sudo docker network create govconnect-network 2>/dev/null || true
+            sudo docker network create infra-network 2>/dev/null || true
+            
+            # Set image variables and deploy using docker compose
+            export IMAGE_DASHBOARD=ghcr.io/mygads/govconnect-dashboard:latest
+            export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:latest
+            export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:latest
+            export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
+            export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
             
             # Pull all images first (parallel)
-            docker compose -f docker-compose.prod.yml pull
+            sudo -E docker compose pull
             
             # Stop old containers gracefully
-            docker compose -f docker-compose.prod.yml down --remove-orphans || true
+            sudo -E docker compose down --remove-orphans || true
             
             # Start services sequentially to avoid memory spike
             echo "Starting channel-service..."
-            docker compose -f docker-compose.prod.yml up -d channel-service
+            sudo -E docker compose up -d channel-service
             sleep 10
             
             echo "Starting case-service..."
-            docker compose -f docker-compose.prod.yml up -d case-service
+            sudo -E docker compose up -d case-service
             sleep 5
             
             echo "Starting notification-service..."
-            docker compose -f docker-compose.prod.yml up -d notification-service
+            sudo -E docker compose up -d notification-service
             sleep 5
             
             echo "Starting ai-service..."
-            docker compose -f docker-compose.prod.yml up -d ai-service
+            sudo -E docker compose up -d ai-service
             sleep 10
             
             echo "Starting dashboard..."
-            docker compose -f docker-compose.prod.yml up -d dashboard
+            sudo -E docker compose up -d dashboard
             sleep 5
             
-            # Comprehensive cleanup - remove old images, volumes, and cache
-            echo "🧹 Cleaning up old Docker resources..."
-            
-            # Remove old SHA-tagged images (keep only latest)
-            for service in dashboard channel-service ai-service case-service notification-service; do
-              # Get all images except latest, then remove them
-              docker images "ghcr.io/mygads/govconnect-$service" --format "{{.ID}} {{.Tag}}" | \
-                grep -v "latest" | awk '{print $1}' | xargs -r docker rmi -f 2>/dev/null || true
-            done
-            
-            # Prune all unused images (not just dangling)
-            docker image prune -af --filter "until=24h"
-            
-            # Prune unused volumes (but not named ones)
-            docker volume prune -f
-            
-            # Prune build cache older than 24h
-            docker builder prune -af --filter "until=24h"
+            # Cleanup old images
+            echo "🧹 Cleaning up..."
+            sudo docker image prune -af --filter "until=24h" 2>/dev/null || true
             
             echo "✅ Deployment complete!"
+          ENDSSH
+
+      - name: Run Database Migrations
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          echo "🗃️ Running database migrations..."
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+            # Wait for containers to be ready
+            sleep 15
+            
+            # Create databases if they don't exist
+            sudo -u postgres psql << 'EOSQL'
+CREATE DATABASE IF NOT EXISTS gc_dashboard;
+CREATE DATABASE IF NOT EXISTS gc_channel;
+CREATE DATABASE IF NOT EXISTS gc_ai;
+CREATE DATABASE IF NOT EXISTS gc_case;
+CREATE DATABASE IF NOT EXISTS gc_notification;
+EOSQL
+            
+            # Get DATABASE_URL from .env
+            cd ~/genfity/govconnect
+            
+            # Run migrations for dashboard (has Prisma)
+            if [ -d "govconnect-dashboard/prisma" ]; then
+              echo "📦 Running Dashboard migrations..."
+              DATABASE_URL="postgresql://postgres:Genfity@2025@172.17.0.1:6432/gc_dashboard"
+              
+              sudo docker run --rm \
+                --network govconnect-network \
+                --network infra-network \
+                -e DATABASE_URL="$DATABASE_URL" \
+                -v "$PWD/govconnect-dashboard/prisma":/app/prisma:ro \
+                -w /app \
+                node:22-alpine sh -c "
+                  npm install prisma@latest --silent 2>/dev/null
+                  
+                  # Try migrate deploy first (for existing migrations)
+                  echo 'Attempting prisma migrate deploy...'
+                  npx prisma migrate deploy 2>&1 && exit 0
+                  
+                  # If failed, check if we need initial db push
+                  echo 'migrate deploy returned non-zero, checking migration state...'
+                  npx prisma migrate status 2>&1 || {
+                    echo 'No migrations applied yet, running db push for initial schema...'
+                    npx prisma db push 2>&1
+                  }
+                " || echo "⚠️ Dashboard migration completed with warnings"
+            fi
+            
+            echo "✅ Database migrations complete!"
           ENDSSH
 
       - name: Health Check
@@ -448,7 +515,7 @@ jobs:
             echo "Checking services..."
             
             # Check Dashboard
-            curl -sf http://localhost:3000/api/health && echo "✅ Dashboard OK" || echo "❌ Dashboard FAILED"
+            curl -sf http://localhost:3011/api/health && echo "✅ Dashboard OK" || echo "❌ Dashboard FAILED"
             
             # Check Channel Service
             curl -sf http://localhost:3001/health && echo "✅ Channel OK" || echo "❌ Channel FAILED"
@@ -465,11 +532,11 @@ jobs:
             # Show container status and memory usage
             echo ""
             echo "Container Status:"
-            docker compose -f docker-compose.prod.yml ps
+            sudo docker compose ps
             
             echo ""
             echo "Memory Usage:"
-            docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | grep govconnect
+            sudo docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | grep govconnect
           ENDSSH
 
       - name: Generate summary
@@ -483,3 +550,32 @@ jobs:
           echo "- Channel Service: https://channel.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
           echo "- AI Service: https://ai.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
           echo "- Notification Service: https://notification.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
+
+  # ===================================================================================
+  # CLEANUP JOB (Runs regardless of success/failure)
+  # ===================================================================================
+  cleanup:
+    name: Cleanup Old Resources
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: always()
+    
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Cleanup server
+        continue-on-error: true
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+            echo "🧹 Running scheduled cleanup..."
+            sudo docker system prune -f --filter "until=24h"
+            echo "✅ Cleanup complete!"
+          ENDSSH

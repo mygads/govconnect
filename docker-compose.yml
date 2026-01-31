@@ -1,16 +1,10 @@
 # ===================================================================================
-# GOVCONNECT SERVICES - DOCKER COMPOSE (LOCAL DEVELOPMENT)
+# GOVCONNECT SERVICES - DOCKER COMPOSE
 # ===================================================================================
 # 
-# Builds images locally from source code
-# All values MUST be set in .env file
-#
 # USAGE:
-#   cp .env.example .env   # Edit with your values
-#   docker compose up -d --build
-#
-# NOTE: Service names match Swarm deployment for consistency
-#       Internal URLs use service names: http://channel-service:3001
+#   Local dev:   docker compose up -d --build
+#   Production:  IMAGE_DASHBOARD=ghcr.io/... IMAGE_CHANNEL=ghcr.io/... docker compose up -d --pull always
 #
 # ===================================================================================
 
@@ -19,44 +13,19 @@ services:
   # Service 1: Channel Service (WhatsApp Channel)
   # ===================================================================================
   channel-service:
+    image: ${IMAGE_CHANNEL:-govconnect-channel-service:local}
     build:
       context: ./govconnect-channel-service
       dockerfile: Dockerfile
-    image: govconnect-channel-service:local
+    container_name: govconnect-channel-service
     ports:
-      - "3001:3001"
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      PORT: 3001
-      SERVICE_NAME: channel-service
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_channel
-      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/govconnect
-      RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      GENFITY_APP_API_URL: ${GENFITY_APP_API_URL:-}
-      GENFITY_APP_CUSTOMER_API_KEY: ${GENFITY_APP_CUSTOMER_API_KEY:-}
-      WA_WEBHOOK_VERIFY_TOKEN: ${WA_WEBHOOK_VERIFY_TOKEN}
-      WA_API_URL: ${WA_API_URL}
-      WA_ACCESS_TOKEN: ${WA_ACCESS_TOKEN}
-      WA_DRY_RUN: ${WA_DRY_RUN}
-      CASE_SERVICE_URL: http://case-service:3003
-      NOTIFICATION_SERVICE_URL: http://notification-service:3004
-      MEDIA_STORAGE_PATH: /app/uploads
-      MEDIA_INTERNAL_URL: http://channel-service:3001/uploads
-      MEDIA_PUBLIC_URL: ${MEDIA_PUBLIC_URL}
-      MESSAGE_BATCH_DELAY_MS: ${MESSAGE_BATCH_DELAY_MS}
-      MAX_BATCH_SIZE: ${MAX_BATCH_SIZE}
-      USE_ADAPTIVE_BATCHING: ${USE_ADAPTIVE_BATCHING}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
-      PUBLIC_CHANNEL_BASE_URL: ${PUBLIC_CHANNEL_BASE_URL:-http://localhost:3001}
-      DEFAULT_VILLAGE_ID: ${DEFAULT_VILLAGE_ID}
-      LOG_LEVEL: ${LOG_LEVEL}
-      LOG_DIR: ${LOG_DIR}
+      - "127.0.0.1:3001:3001"
+    env_file:
+      - .env
     volumes:
       - channel-uploads:/app/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - govconnect-network
       - infra-network
@@ -72,50 +41,17 @@ services:
   # Service 2: AI Orchestrator (with Vector Database)
   # ===================================================================================
   ai-service:
+    image: ${IMAGE_AI:-govconnect-ai-service:local}
     build:
       context: ./govconnect-ai-service
       dockerfile: Dockerfile
-    image: govconnect-ai-service:local
+    container_name: govconnect-ai-service
     ports:
-      - "3002:3002"
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      NODE_OPTIONS: ${NODE_OPTIONS:-"--dns-result-order=ipv4first"}
-      HTTP_PROXY: ${HTTP_PROXY}
-      HTTPS_PROXY: ${HTTPS_PROXY}
-      NO_PROXY: ${NO_PROXY}
-      PORT: 3002
-      SERVICE_NAME: ai-service
-      # AI Service has its own database for vector storage
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_ai
-      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/govconnect
-      RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
-      CHANNEL_SERVICE_URL: http://channel-service:3001
-      CASE_SERVICE_URL: http://case-service:3003
-      # Internal URL for dashboard (container network). Use a separate variable name to
-      # avoid accidentally picking up a host-level DASHBOARD_SERVICE_URL (e.g. host.docker.internal)
-      # which may not resolve inside containers.
-      DASHBOARD_SERVICE_URL: ${DASHBOARD_SERVICE_URL_INTERNAL:-http://dashboard:3000}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY}
-      LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK}
-      LLM_TEMPERATURE: ${LLM_TEMPERATURE}
-      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS}
-      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS}
-      MAX_HISTORY_MESSAGES: ${MAX_HISTORY_MESSAGES}
-      LOG_LEVEL: ${LOG_LEVEL}
-      USE_2_LAYER_ARCHITECTURE: ${USE_2_LAYER_ARCHITECTURE}
-      LAYER1_MODELS: ${LAYER1_MODELS}
-      LAYER2_MODELS: ${LAYER2_MODELS}
-      USE_RAG_SEARCH: ${USE_RAG_SEARCH}
-      WEBCHAT_BATCH_DELAY_MS: ${WEBCHAT_BATCH_DELAY_MS}
-      WEBCHAT_MAX_BATCH_SIZE: ${WEBCHAT_MAX_BATCH_SIZE}
-      TESTING_MODE: ${TESTING_MODE}
-      LOG_DIR: ${LOG_DIR}
+      - "127.0.0.1:3002:3002"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - govconnect-network
       - infra-network
@@ -131,24 +67,17 @@ services:
   # Service 3: Case Service (Laporan & Tiket)
   # ===================================================================================
   case-service:
+    image: ${IMAGE_CASE:-govconnect-case-service:local}
     build:
       context: ./govconnect-case-service
       dockerfile: Dockerfile
-    image: govconnect-case-service:local
+    container_name: govconnect-case-service
     ports:
-      - "3003:3003"
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      PORT: 3003
-      SERVICE_NAME: case-service
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_case
-      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/govconnect
-      RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      ID_PREFIX_COMPLAINT: ${ID_PREFIX_COMPLAINT}
-      ID_PREFIX_SERVICE_REQUEST: ${ID_PREFIX_SERVICE_REQUEST}
-      LOG_LEVEL: ${LOG_LEVEL}
-      LOG_DIR: ${LOG_DIR}
+      - "127.0.0.1:3003:3003"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - govconnect-network
       - infra-network
@@ -164,25 +93,17 @@ services:
   # Service 4: Notification Service
   # ===================================================================================
   notification-service:
+    image: ${IMAGE_NOTIFICATION:-govconnect-notification-service:local}
     build:
       context: ./govconnect-notification-service
       dockerfile: Dockerfile
-    image: govconnect-notification-service:local
+    container_name: govconnect-notification-service
     ports:
-      - "3004:3004"
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      PORT: 3004
-      SERVICE_NAME: notification-service
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_notification
-      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/govconnect
-      RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL}
-      CHANNEL_SERVICE_URL: http://channel-service:3001
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      ADMIN_WHATSAPP: ${ADMIN_WHATSAPP}
-      DASHBOARD_URL: ${DASHBOARD_URL}
-      LOG_LEVEL: ${LOG_LEVEL}
-      LOG_DIR: ${LOG_DIR}
+      - "127.0.0.1:3004:3004"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - govconnect-network
       - infra-network
@@ -198,32 +119,17 @@ services:
   # Service 5: Dashboard (Next.js)
   # ===================================================================================
   dashboard:
+    image: ${IMAGE_DASHBOARD:-govconnect-dashboard:local}
     build:
       context: ./govconnect-dashboard
       dockerfile: Dockerfile
-    image: govconnect-dashboard:local
+    container_name: govconnect-dashboard
     ports:
-      - "${DASHBOARD_PORT:-3000}:3000"
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@${POSTGRES_HOST}:${POSTGRES_PORT}/gc_dashboard
-      JWT_SECRET: ${JWT_SECRET}
-      # Direct service URLs (internal communication, bypasses Nginx)
-      CHANNEL_SERVICE_URL: http://channel-service:3001
-      AI_SERVICE_URL: http://ai-service:3002
-      CASE_SERVICE_URL: http://case-service:3003
-      NOTIFICATION_SERVICE_URL: http://notification-service:3004
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      NEXT_PUBLIC_APP_NAME: "GovConnect Dashboard"
-      NEXTAUTH_URL: ${NEXTAUTH_URL}
-      ADMIN_WHATSAPP: ${ADMIN_WHATSAPP}
-      # SEO & Analytics
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
-      NEXT_PUBLIC_GTM_ID: ${NEXT_PUBLIC_GTM_ID}
-      # NEXT_PUBLIC_GA_MEASUREMENT_ID: ${NEXT_PUBLIC_GA_MEASUREMENT_ID}
-      NEXT_PUBLIC_GOOGLE_VERIFICATION: ${NEXT_PUBLIC_GOOGLE_VERIFICATION}
-      # NEXT_PUBLIC_BING_VERIFICATION: ${NEXT_PUBLIC_BING_VERIFICATION}
-      # NEXT_PUBLIC_FB_PIXEL_ID: ${NEXT_PUBLIC_FB_PIXEL_ID}
+      - "127.0.0.1:${DASHBOARD_PORT:-3000}:3000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - govconnect-network
       - infra-network
@@ -238,8 +144,6 @@ services:
 # ===================================================================================
 # NETWORKS
 # ===================================================================================
-# Note: These networks are created as overlay networks by Docker Swarm
-# Docker Compose containers can connect to overlay networks with --attachable flag
 networks:
   govconnect-network:
     external: true
