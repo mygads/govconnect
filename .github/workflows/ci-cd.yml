@@ -214,11 +214,7 @@ jobs:
     if: |
       always() && 
       github.ref == 'refs/heads/main' &&
-      (needs.build-dashboard.result == 'success' || needs.build-dashboard.result == 'skipped') &&
-      (needs.build-channel.result == 'success' || needs.build-channel.result == 'skipped') &&
-      (needs.build-ai.result == 'success' || needs.build-ai.result == 'skipped') &&
-      (needs.build-case.result == 'success' || needs.build-case.result == 'skipped') &&
-      (needs.build-notification.result == 'success' || needs.build-notification.result == 'skipped')
+      needs.build-dashboard.result == 'success'
     environment: production
 
     steps:
@@ -306,12 +302,25 @@ jobs:
             sudo docker network create govconnect-network 2>/dev/null || true
             sudo docker network create infra-network 2>/dev/null || true
             
-            # Set image variables and deploy using docker compose
+            # Set image variables (only for successfully built services)
             export IMAGE_DASHBOARD=ghcr.io/mygads/govconnect-dashboard:latest
-            export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:latest
-            export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:latest
-            export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
-            export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
+            
+            # Try to set other images if they exist
+            if docker manifest inspect ghcr.io/mygads/govconnect-channel-service:latest >/dev/null 2>&1; then
+              export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:latest
+            fi
+            
+            if docker manifest inspect ghcr.io/mygads/govconnect-ai-service:latest >/dev/null 2>&1; then
+              export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:latest
+            fi
+            
+            if docker manifest inspect ghcr.io/mygads/govconnect-case-service:latest >/dev/null 2>&1; then
+              export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
+            fi
+            
+            if docker manifest inspect ghcr.io/mygads/govconnect-notification-service:latest >/dev/null 2>&1; then
+              export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
+            fi
             
             # Pull all images first (parallel) with retry
             echo "📥 Pulling images..."
@@ -326,28 +335,37 @@ jobs:
             echo "🛑 Stopping old containers..."
             sudo -E docker compose down --remove-orphans || true
             
-            # Start services sequentially to avoid memory spike
-            echo "🚀 Starting services..."
-            
-            echo "Starting channel-service..."
-            sudo -E docker compose up -d channel-service
-            sleep 15
-            
-            echo "Starting case-service..."
-            sudo -E docker compose up -d case-service
-            sleep 10
-            
-            echo "Starting notification-service..."
-            sudo -E docker compose up -d notification-service
-            sleep 10
-            
-            echo "Starting ai-service..."
-            sudo -E docker compose up -d ai-service
-            sleep 15
+            # Start services that have images available
+            echo "🚀 Starting available services..."
             
             echo "Starting dashboard..."
             sudo -E docker compose up -d dashboard
             sleep 10
+            
+            # Start other services if their images are available
+            if [ -n "$IMAGE_CHANNEL" ]; then
+              echo "Starting channel-service..."
+              sudo -E docker compose up -d channel-service
+              sleep 10
+            fi
+            
+            if [ -n "$IMAGE_CASE" ]; then
+              echo "Starting case-service..."
+              sudo -E docker compose up -d case-service
+              sleep 10
+            fi
+            
+            if [ -n "$IMAGE_NOTIFICATION" ]; then
+              echo "Starting notification-service..."
+              sudo -E docker compose up -d notification-service
+              sleep 10
+            fi
+            
+            if [ -n "$IMAGE_AI" ]; then
+              echo "Starting ai-service..."
+              sudo -E docker compose up -d ai-service
+              sleep 10
+            fi
             
             # Check container status
             echo "📊 Container status:"

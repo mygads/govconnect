@@ -73,8 +73,8 @@ COPY --from=builder /app/prisma ./prisma
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
-# Install Prisma CLI and generate client
-RUN pnpm add prisma @prisma/client && pnpm prisma generate
+# Generate Prisma client for production
+RUN pnpm prisma generate
 
 # Set proper permissions
 RUN chown -R caseuser:nodejs /app

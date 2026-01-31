@@ -9,7 +9,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 WORKDIR /app
 
 # Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json prisma.config.ts ./
+COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma/
 
 # Install dependencies (including dev dependencies for build)
@@ -28,7 +28,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Generate Prisma Client (provide dummy DATABASE_URL)
+# Generate Prisma Client
 ENV DATABASE_URL="postgresql://postgres:postgres@localhost:5432/dummy?schema=ai"
 RUN pnpm prisma generate
 
@@ -52,7 +52,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
 # Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml ./
 
 # Install production dependencies only
 RUN pnpm install --prod --frozen-lockfile
@@ -63,8 +63,8 @@ COPY --from=builder /app/prisma ./prisma
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
-# Install Prisma CLI and generate client
-RUN pnpm add prisma @prisma/client && pnpm prisma generate
+# Generate Prisma client for production
+RUN pnpm prisma generate
 
 # Create logs directory
 RUN mkdir -p logs && chown -R aiuser:nodejs /app

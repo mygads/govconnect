@@ -63,8 +63,8 @@ COPY --from=builder /app/prisma ./prisma
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
-# Install Prisma CLI and generate client
-RUN pnpm add prisma @prisma/client && pnpm prisma generate
+# Generate Prisma client for production
+RUN pnpm prisma generate
 
 # Create uploads directory
 RUN mkdir -p uploads && chown -R channeluser:nodejs /app
