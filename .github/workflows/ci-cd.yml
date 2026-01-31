@@ -291,40 +291,44 @@ jobs:
         run: |
           echo "🚀 Deploying GovConnect to VPS..."
           
-          ssh $VPS_USER@$VPS_HOST << 'DEPLOY_SCRIPT'
+          ssh $VPS_USER@$VPS_HOST << ENDSSH
             set -e
             cd ~/genfity/govconnect
             
-            # Force pull latest changes
+            # Force pull latest changes (override local, no conflicts)
             git fetch origin main
             git reset --hard origin/main
             
-            # Login to GHCR
+            # Login to GHCR using PAT
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
             
             # Create networks if not exists
             sudo docker network create govconnect-network 2>/dev/null || true
             sudo docker network create infra-network 2>/dev/null || true
             
-            # Set image variables
+            # Set image variables and deploy using docker compose
             export IMAGE_DASHBOARD=ghcr.io/mygads/govconnect-dashboard:latest
             export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:latest
             export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:latest
             export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
             export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
             
-            # Pull images with retry
+            # Pull all images first (parallel) with retry
+            echo "📥 Pulling images..."
             for i in {1..3}; do
               sudo -E docker compose pull && break || {
-                echo "Pull attempt $i failed, retrying..."
+                echo "Pull attempt \$i failed, retrying..."
                 sleep 10
               }
             done
             
-            # Stop old containers
+            # Stop old containers gracefully
+            echo "🛑 Stopping old containers..."
             sudo -E docker compose down --remove-orphans || true
             
-            # Start services sequentially
+            # Start services sequentially to avoid memory spike
+            echo "🚀 Starting services..."
+            
             echo "Starting channel-service..."
             sudo -E docker compose up -d channel-service
             sleep 15
@@ -345,14 +349,16 @@ jobs:
             sudo -E docker compose up -d dashboard
             sleep 10
             
-            # Check status
+            # Check container status
+            echo "📊 Container status:"
             sudo docker compose ps
             
-            # Cleanup
+            # Cleanup old images
+            echo "🧹 Cleaning up..."
             sudo docker image prune -af --filter "until=24h" 2>/dev/null || true
             
             echo "✅ Deployment complete!"
-          DEPLOY_SCRIPT
+          ENDSSH
 
       - name: Run Database Migrations
         env:
@@ -360,34 +366,45 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           echo "🗃️ Running database migrations..."
-          ssh $VPS_USER@$VPS_HOST << 'MIGRATION_SCRIPT'
-            set -e
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+            # Wait for containers to be ready
+            echo "⏳ Waiting for containers to be ready..."
             sleep 20
             
-            # Check PostgreSQL
+            # Check if PostgreSQL is accessible
+            echo "🔍 Checking PostgreSQL connection..."
             if ! sudo -u postgres psql -c '\l' >/dev/null 2>&1; then
               echo "❌ PostgreSQL not accessible, skipping migrations"
               exit 0
             fi
             
-            # Create databases
-            sudo -u postgres createdb gc_dashboard 2>/dev/null || echo "Database gc_dashboard exists"
-            sudo -u postgres createdb gc_channel 2>/dev/null || echo "Database gc_channel exists"
-            sudo -u postgres createdb gc_ai 2>/dev/null || echo "Database gc_ai exists"
-            sudo -u postgres createdb gc_case 2>/dev/null || echo "Database gc_case exists"
-            sudo -u postgres createdb gc_notification 2>/dev/null || echo "Database gc_notification exists"
+            # Create databases if they don't exist
+            echo "📦 Creating databases..."
+            sudo -u postgres createdb gc_dashboard 2>/dev/null || echo "Database gc_dashboard already exists"
+            sudo -u postgres createdb gc_channel 2>/dev/null || echo "Database gc_channel already exists"
+            sudo -u postgres createdb gc_ai 2>/dev/null || echo "Database gc_ai already exists"
+            sudo -u postgres createdb gc_case 2>/dev/null || echo "Database gc_case already exists"
+            sudo -u postgres createdb gc_notification 2>/dev/null || echo "Database gc_notification already exists"
             
+            # Get DATABASE_URL from .env
             cd ~/genfity/govconnect
             
-            # Run dashboard migrations
+            # Run migrations for dashboard (has Prisma)
             if [ -d "govconnect-dashboard/prisma" ]; then
-              if sudo docker compose ps dashboard | grep -q "running"; then
-                sudo docker exec govconnect-dashboard sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" || echo "⚠️ Migration completed with warnings"
+              echo "📦 Running Dashboard migrations..."
+              
+              # Check if dashboard container is running
+              if ! sudo docker compose ps dashboard | grep -q "running"; then
+                echo "⚠️ Dashboard container not running, skipping migrations"
+                exit 0
               fi
+              
+              # Run migration in a simpler way
+              sudo docker exec govconnect-dashboard sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" || echo "⚠️ Migration completed with warnings"
             fi
             
             echo "✅ Database migrations complete!"
-          MIGRATION_SCRIPT
+          ENDSSH
 
       - name: Health Check
         env:
@@ -397,21 +414,33 @@ jobs:
           echo "🏥 Running health checks..."
           sleep 30
           
-          ssh $VPS_USER@$VPS_HOST << 'HEALTH_SCRIPT'
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             echo "Checking services..."
             
-            # Check services
+            # Check Dashboard
             curl -sf http://localhost:3011/api/health && echo "✅ Dashboard OK" || echo "❌ Dashboard FAILED"
+            
+            # Check Channel Service
             curl -sf http://localhost:3001/health && echo "✅ Channel OK" || echo "❌ Channel FAILED"
+            
+            # Check AI Service
             curl -sf http://localhost:3002/health && echo "✅ AI OK" || echo "❌ AI FAILED"
+            
+            # Check Case Service
             curl -sf http://localhost:3003/health && echo "✅ Case OK" || echo "❌ Case FAILED"
+            
+            # Check Notification Service
             curl -sf http://localhost:3004/health && echo "✅ Notification OK" || echo "❌ Notification FAILED"
             
-            # Show status
+            # Show container status and memory usage
             echo ""
             echo "Container Status:"
             sudo docker compose ps
-          HEALTH_SCRIPT
+            
+            echo ""
+            echo "Memory Usage:"
+            sudo docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | grep govconnect
+          ENDSSH
 
       - name: Generate summary
         if: success()
@@ -448,8 +477,8 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          ssh $VPS_USER@$VPS_HOST << 'CLEANUP_SCRIPT'
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             echo "🧹 Running scheduled cleanup..."
             sudo docker system prune -f --filter "until=24h"
             echo "✅ Cleanup complete!"
-          CLEANUP_SCRIPT
+          ENDSSH

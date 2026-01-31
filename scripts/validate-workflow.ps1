@@ -40,10 +40,10 @@ $heredocStarts = 0
 $heredocEnds = 0
 
 foreach ($line in $lines) {
-    if ($line -match "<<.*'.*_SCRIPT'") {
+    if ($line -match "<<.*ENDSSH" -or $line -match "<<.*'ENDSSH'") {
         $heredocStarts++
     }
-    if ($line -match "^\s*[A-Z_]+_SCRIPT\s*$" -and $line -notmatch "<<") {
+    if ($line -match "^\s*ENDSSH\s*$" -and $line -notmatch "<<") {
         $heredocEnds++
     }
 }
