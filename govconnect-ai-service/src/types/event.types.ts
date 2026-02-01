@@ -1,5 +1,11 @@
+export type ChannelType = 'WHATSAPP' | 'WEBCHAT';
+
 export interface MessageReceivedEvent {
   village_id?: string;
+  // Channel-aware fields (preferred)
+  channel?: ChannelType;
+  channel_identifier?: string;
+  // Legacy field (deprecated - use channel_identifier)
   wa_user_id: string;
   message: string;
   message_id: string;
@@ -20,6 +26,10 @@ export interface MessageReceivedEvent {
 
 export interface AIReplyEvent {
   village_id?: string;
+  // Channel-aware fields (preferred)
+  channel?: ChannelType;
+  channel_identifier?: string;
+  // Legacy field (deprecated - use channel_identifier)
   wa_user_id: string;
   reply_text: string;
   guidance_text?: string;  // Optional second bubble for guidance/follow-up
@@ -29,6 +39,10 @@ export interface AIReplyEvent {
 
 export interface AIErrorEvent {
   village_id?: string;
+  // Channel-aware fields (preferred)
+  channel?: ChannelType;
+  channel_identifier?: string;
+  // Legacy field (deprecated - use channel_identifier)
   wa_user_id: string;
   error_message: string;
   pending_message_id?: string;  // Message ID that failed processing
@@ -39,6 +53,10 @@ export interface AIErrorEvent {
 // Event to notify channel service about message status
 export interface MessageStatusEvent {
   village_id?: string;
+  // Channel-aware fields (preferred)
+  channel?: ChannelType;
+  channel_identifier?: string;
+  // Legacy field (deprecated - use channel_identifier)
   wa_user_id: string;
   message_ids: string[];
   status: 'processing' | 'completed' | 'failed';

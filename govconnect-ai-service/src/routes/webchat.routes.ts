@@ -23,6 +23,7 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { processUnifiedMessage, ProcessMessageResult } from '../services/unified-message-processor.service';
 import { processTwoLayerWebchat } from '../services/two-layer-webchat.service';
+import { processWebchatWithNLU } from '../services/nlu-webchat.service';
 import {
   saveWebchatMessage,
   updateWebchatConversation,
@@ -35,12 +36,12 @@ import {
 } from '../services/webchat-batcher.service';
 import { getParam, getQuery } from '../utils/http';
 
-// Full LLM mode: always use 2-Layer architecture
-const USE_2_LAYER_ARCHITECTURE = true;
+// Use NLU processor when enabled, otherwise fall back to 2-Layer
+const USE_NLU_PROCESSOR = process.env.USE_NLU_PROCESSOR === 'true';
 
 logger.info('🏗️ Webchat architecture selected', {
-  architecture: '2-Layer LLM (forced)',
-  note: 'Same architecture as WhatsApp channel',
+  architecture: USE_NLU_PROCESSOR ? 'NLU-based (new)' : '2-Layer LLM',
+  featureFlag: `USE_NLU_PROCESSOR=${USE_NLU_PROCESSOR}`,
 });
 
 const DEFAULT_VILLAGE_ID = process.env.DEFAULT_VILLAGE_ID || '';
@@ -75,8 +76,7 @@ async function isWebchatEnabled(villageId?: string): Promise<boolean> {
 
 /**
  * Process webchat message with selected architecture
- * Supports both Single-Layer and 2-Layer architectures
- * Architecture is controlled by USE_2_LAYER_ARCHITECTURE env var (same as WhatsApp)
+ * Architecture is controlled by USE_NLU_PROCESSOR env var (same as WhatsApp)
  */
 async function processWebchatMessage(params: {
   userId: string;
@@ -84,13 +84,13 @@ async function processWebchatMessage(params: {
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   village_id?: string;
 }): Promise<ProcessMessageResult> {
-  if (USE_2_LAYER_ARCHITECTURE) {
-    // Use 2-Layer architecture (same as WhatsApp)
-    logger.debug('Processing webchat with 2-Layer architecture', {
+  if (USE_NLU_PROCESSOR) {
+    // Use NLU-based architecture (smarter, same as WhatsApp)
+    logger.debug('Processing webchat with NLU architecture', {
       userId: params.userId,
     });
     
-    return processTwoLayerWebchat({
+    return processWebchatWithNLU({
       userId: params.userId,
       message: params.message,
       conversationHistory: params.conversationHistory,
@@ -98,13 +98,16 @@ async function processWebchatMessage(params: {
     });
   }
   
-  // Use unified processor (single-layer) for webchat
-  return processUnifiedMessage({
+  // Fallback to 2-Layer architecture
+  logger.debug('Processing webchat with 2-Layer architecture', {
+    userId: params.userId,
+  });
+  
+  return processTwoLayerWebchat({
     userId: params.userId,
     message: params.message,
-    channel: 'webchat',
     conversationHistory: params.conversationHistory,
-    villageId: params.village_id,
+    village_id: params.village_id,
   });
 }
 

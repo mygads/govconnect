@@ -7,15 +7,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum ChannelType {
+  WHATSAPP
+  WEBCHAT
+}
+
 model NotificationLog {
-  id                String   @id @default(cuid())
-  wa_user_id        String
-  message_text      String   @db.Text
-  notification_type String   // "ai_reply" | "complaint_created" | "service_requested" | "status_updated"
-  status            String   // "sent" | "failed"
-  error_msg         String?  @db.Text
-  sent_at           DateTime @default(now())
+  id                 String      @id @default(cuid())
+  channel            ChannelType @default(WHATSAPP)
+  channel_identifier String      // WA: 628xxx | Webchat: session_id
+  wa_user_id         String?     // Legacy, deprecated - use channel_identifier
+  message_text       String      @db.Text
+  notification_type  String      // "ai_reply" | "complaint_created" | "service_requested" | "status_updated"
+  status             String      // "sent" | "failed"
+  error_msg          String?     @db.Text
+  sent_at            DateTime    @default(now())
   
+  @@index([channel, channel_identifier])
   @@index([wa_user_id])
   @@index([status])
   @@index([notification_type])

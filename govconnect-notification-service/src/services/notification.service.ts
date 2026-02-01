@@ -1,10 +1,12 @@
 import prisma from '../config/database';
 import logger from '../utils/logger';
-import { UrgentAlertEvent } from '../types/event.types';
+import { UrgentAlertEvent, ChannelType } from '../types/event.types';
 import { sendWhatsAppMessage } from '../clients/channel-service.client';
 
 interface SendNotificationParams {
-  wa_user_id: string;
+  channel: ChannelType;
+  channel_identifier: string;
+  wa_user_id?: string; // Legacy support
   message: string;
   notificationType: string;
 }
@@ -13,9 +15,43 @@ interface SendNotificationParams {
 const ADMIN_WHATSAPP = process.env.ADMIN_WHATSAPP || '';
 
 export async function sendNotification(params: SendNotificationParams): Promise<void> {
-  const { wa_user_id, message, notificationType } = params;
+  const { channel, channel_identifier, wa_user_id, message, notificationType } = params;
   
-  logger.info('Sending notification', { wa_user_id, notificationType });
+  // Resolve the identifier (backward compatible)
+  const resolvedIdentifier = channel_identifier || wa_user_id || '';
+  const resolvedChannel = channel || 'WHATSAPP';
+  
+  logger.info('Sending notification', { 
+    channel: resolvedChannel, 
+    channel_identifier: resolvedIdentifier, 
+    notificationType 
+  });
+
+  // Skip notification for webchat - they don't receive push notifications
+  if (resolvedChannel === 'WEBCHAT') {
+    logger.info('Skipping notification for WEBCHAT channel - no push notifications', {
+      channel_identifier: resolvedIdentifier,
+      notificationType
+    });
+    
+    // Still log it
+    try {
+      await prisma.notificationLog.create({
+        data: {
+          channel: resolvedChannel,
+          channel_identifier: resolvedIdentifier,
+          wa_user_id: null,
+          message_text: message,
+          notification_type: notificationType,
+          status: 'skipped',
+          error_msg: 'WEBCHAT does not support push notifications'
+        }
+      });
+    } catch (dbError: any) {
+      logger.error('Failed to log notification to database', { error: dbError.message });
+    }
+    return;
+  }
 
   let status = 'failed';
   let errorMsg: string | null = null;
@@ -23,13 +59,14 @@ export async function sendNotification(params: SendNotificationParams): Promise<
   try {
     // Use circuit breaker client (already has retry logic)
     const response = await sendWhatsAppMessage({
-      to: wa_user_id,
+      to: resolvedIdentifier,
       message: message,
     });
 
     status = 'sent';
     logger.info('Notification sent successfully', {
-      wa_user_id,
+      channel: resolvedChannel,
+      channel_identifier: resolvedIdentifier,
       notificationType,
       message_id: response.message_id,
     });
@@ -45,7 +82,8 @@ export async function sendNotification(params: SendNotificationParams): Promise<
     }
 
     logger.error('Notification send failed', {
-      wa_user_id,
+      channel: resolvedChannel,
+      channel_identifier: resolvedIdentifier,
       notificationType,
       error: errorMsg,
     });
@@ -55,7 +93,9 @@ export async function sendNotification(params: SendNotificationParams): Promise<
   try {
     await prisma.notificationLog.create({
       data: {
-        wa_user_id,
+        channel: resolvedChannel,
+        channel_identifier: resolvedIdentifier,
+        wa_user_id: resolvedChannel === 'WHATSAPP' ? resolvedIdentifier : null,
         message_text: message,
         notification_type: notificationType,
         status,
@@ -64,7 +104,8 @@ export async function sendNotification(params: SendNotificationParams): Promise<
     });
   } catch (dbError: any) {
     logger.error('Failed to log notification to database', {
-      wa_user_id,
+      channel: resolvedChannel,
+      channel_identifier: resolvedIdentifier,
       notificationType,
       error: dbError.message
     });
@@ -72,7 +113,8 @@ export async function sendNotification(params: SendNotificationParams): Promise<
 
   if (status === 'failed') {
     logger.error('Notification failed', {
-      wa_user_id,
+      channel: resolvedChannel,
+      channel_identifier: resolvedIdentifier,
       notificationType,
       lastError: errorMsg
     });
@@ -97,7 +139,8 @@ export async function sendAdminUrgentAlert(message: string, event: UrgentAlertEv
 
   // Send to admin
   await sendNotification({
-    wa_user_id: ADMIN_WHATSAPP,
+    channel: 'WHATSAPP',
+    channel_identifier: ADMIN_WHATSAPP,
     message,
     notificationType: 'urgent_alert'
   });
@@ -106,6 +149,8 @@ export async function sendAdminUrgentAlert(message: string, event: UrgentAlertEv
   try {
     await prisma.notificationLog.create({
       data: {
+        channel: 'WHATSAPP',
+        channel_identifier: ADMIN_WHATSAPP,
         wa_user_id: ADMIN_WHATSAPP,
         message_text: `[URGENT ALERT] ${event.complaint_id} - ${event.kategori}`,
         notification_type: 'urgent_alert_admin',

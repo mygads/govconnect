@@ -4,7 +4,12 @@ import logger from './utils/logger';
 import { config } from './config/env';
 import { connectRabbitMQ, startConsuming, disconnectRabbitMQ } from './services/rabbitmq.service';
 import { processTwoLayerMessage } from './services/two-layer-orchestrator.service';
+import { processMessageWithNLU } from './services/nlu-message-processor.service';
 import { initializeOptimizer } from './services/ai-optimizer.service';
+
+// Feature flag to enable NLU-based message processing
+// Set USE_NLU_PROCESSOR=true to use the new NLU-based processor
+const USE_NLU_PROCESSOR = process.env.USE_NLU_PROCESSOR === 'true';
 
 let server: any;
 
@@ -21,13 +26,17 @@ async function startServer() {
     // Connect to RabbitMQ
     await connectRabbitMQ();
     
-    // Full LLM mode: always use 2-Layer Architecture
+    // Full LLM mode: select processor based on feature flag
+    const processorName = USE_NLU_PROCESSOR ? 'processMessageWithNLU (New NLU)' : 'processTwoLayerMessage (2-Layer)';
+    const processor = USE_NLU_PROCESSOR ? processMessageWithNLU : processTwoLayerMessage;
+    
     logger.info('🏗️ Architecture selected', {
-      architecture: '2-Layer LLM (forced)',
-      processor: 'processTwoLayerMessage',
+      architecture: USE_NLU_PROCESSOR ? 'NLU-based (new)' : '2-Layer LLM',
+      processor: processorName,
+      featureFlag: 'USE_NLU_PROCESSOR=' + (USE_NLU_PROCESSOR ? 'true' : 'false'),
     });
     
-    await startConsuming(processTwoLayerMessage);
+    await startConsuming(processor);
     
     // Start Express server (for health checks)
     server = app.listen(config.port, () => {

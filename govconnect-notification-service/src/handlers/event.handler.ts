@@ -14,6 +14,29 @@ import {
   UrgentAlertEvent
 } from '../types/event.types';
 
+// Helper to resolve channel from event (backward compatible)
+function resolveChannel(event: any): { channel: 'WHATSAPP' | 'WEBCHAT'; channel_identifier: string } {
+  // Prefer new channel fields
+  if (event.channel && event.channel_identifier) {
+    return {
+      channel: event.channel,
+      channel_identifier: event.channel_identifier
+    };
+  }
+  // Legacy fallback: use wa_user_id as WhatsApp identifier
+  if (event.wa_user_id) {
+    return {
+      channel: 'WHATSAPP',
+      channel_identifier: event.wa_user_id
+    };
+  }
+  // Default
+  return {
+    channel: 'WHATSAPP',
+    channel_identifier: ''
+  };
+}
+
 export async function handleEvent(routingKey: string, data: any): Promise<void> {
   switch (routingKey) {
     // NOTE: aiReply is handled by Channel Service directly, not here
@@ -41,8 +64,11 @@ export async function handleEvent(routingKey: string, data: any): Promise<void> 
 }
 
 async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<void> {
+  const { channel, channel_identifier } = resolveChannel(event);
+  
   logger.info('Handling complaint created event', {
-    wa_user_id: event.wa_user_id,
+    channel,
+    channel_identifier,
     complaint_id: event.complaint_id
   });
 
@@ -52,15 +78,19 @@ async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<voi
   });
 
   await sendNotification({
-    wa_user_id: event.wa_user_id,
+    channel,
+    channel_identifier,
     message,
     notificationType: 'complaint_created'
   });
 }
 
 async function handleServiceRequested(event: ServiceRequestedEvent): Promise<void> {
+  const { channel, channel_identifier } = resolveChannel(event);
+  
   logger.info('Handling service requested event', {
-    wa_user_id: event.wa_user_id,
+    channel,
+    channel_identifier,
     request_number: event.request_number
   });
 
@@ -70,15 +100,19 @@ async function handleServiceRequested(event: ServiceRequestedEvent): Promise<voi
   });
 
   await sendNotification({
-    wa_user_id: event.wa_user_id,
+    channel,
+    channel_identifier,
     message,
     notificationType: 'service_requested'
   });
 }
 
 async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
+  const { channel, channel_identifier } = resolveChannel(event);
+  
   logger.info('Handling status updated event', {
-    wa_user_id: event.wa_user_id,
+    channel,
+    channel_identifier,
     complaint_id: event.complaint_id,
     request_number: event.request_number,
     status: event.status
@@ -101,7 +135,8 @@ async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
   });
 
   await sendNotification({
-    wa_user_id: event.wa_user_id,
+    channel,
+    channel_identifier,
     message,
     notificationType: 'status_updated'
   });
