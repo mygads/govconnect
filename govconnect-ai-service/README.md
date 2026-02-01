@@ -2,7 +2,7 @@
 
 <!-- CI/CD Trigger: 2026-02-01-v2 - Force rebuild -->
 
-## 🎯 Overview
+## 🎯 OverviewS
 
 AI Orchestrator Service adalah **stateless service** yang bertanggung jawab untuk:
 - Consume event `whatsapp.message.received` dari RabbitMQ

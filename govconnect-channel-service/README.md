@@ -2,7 +2,7 @@
 
 <!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix -->
 
-## Overview
+## OverviewS
 
 Channel Service handles communication channels for the GovConnect platform, including:
 - WhatsApp message handling
