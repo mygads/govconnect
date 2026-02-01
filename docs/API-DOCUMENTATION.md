@@ -7,6 +7,7 @@ Dokumen ini menambahkan **API v2** sesuai perubahan fitur. Bagian lama tetap ada
 ## API v2 (Redesain)
 
 ### Prinsip
+
 - Semua request internal memakai header `X-Internal-API-Key`.
 - AI model **tidak** diubah dari dashboard (hanya via ENV).
 - Bahasa UI dan respons admin: **Bahasa Indonesia**.
@@ -16,12 +17,15 @@ Dokumen ini menambahkan **API v2** sesuai perubahan fitur. Bagian lama tetap ada
 ## Auth & User
 
 ### POST /api/auth/register
+
 Register desa/kelurahan (pilihan **terkunci** 1 level).
 
 ### POST /api/auth/login
+
 Login admin desa.
 
 ### POST /api/auth/logout
+
 Logout admin.
 
 ---
@@ -29,6 +33,7 @@ Logout admin.
 ## Dashboard (Admin)
 
 ### Desa & Profil
+
 ```
 GET  /api/villages/me
 PUT  /api/villages/me
@@ -38,6 +43,7 @@ PUT  /api/village-profile
 ```
 
 ### Knowledge Base
+
 ```
 GET  /api/knowledge/categories
 POST /api/knowledge/categories
@@ -48,6 +54,7 @@ DELETE /api/knowledge/documents/:id
 ```
 
 ### Nomor Penting
+
 ```
 GET  /api/important-contacts/categories
 POST /api/important-contacts/categories
@@ -56,17 +63,22 @@ POST /api/important-contacts
 ```
 
 ### Channel Connect
+
 ```
 GET  /api/channel-settings
 PUT  /api/channel-settings
 ```
+
 Payload mencakup: `wa_number`, `wa_token`, `webhook_url` (read-only), `enabled_wa`, `enabled_webchat`.
 
 ### Testing Knowledge
+
 ```
 POST /api/testing-knowledge
 ```
+
 Request body (JSON):
+
 ```
 {
   "query": "jam buka kantor kelurahan?",
@@ -78,7 +90,9 @@ Request body (JSON):
   "min_score": 0.6
 }
 ```
+
 Response:
+
 ```
 {
   "data": [
@@ -99,11 +113,13 @@ Response:
 ---
 
 ## Public Form (Warga)
+
 ```
 GET  /form/:villageSlug/:serviceSlug
 GET  /api/public/services/by-slug?village_slug=...&service_slug=...
 POST /api/public/service-requests
 ```
+
 `POST /api/public/service-requests` menerima data warga + file persyaratan.
 
 ---
@@ -111,6 +127,7 @@ POST /api/public/service-requests
 ## Case Service (Layanan & Pengaduan)
 
 ### Layanan
+
 ```
 GET  /services/categories
 POST /services/categories
@@ -126,6 +143,7 @@ DELETE /services/requirements/:id
 ```
 
 ### Permohonan Layanan
+
 ```
 GET  /service-requests
 POST /service-requests
@@ -139,6 +157,7 @@ GET  /service-requests/history/:wa_user_id
 ```
 
 ### Pengaduan
+
 ```
 GET  /complaints/categories
 POST /complaints/categories
@@ -162,6 +181,7 @@ POST /complaints/:id/updates
 ---
 
 ## Channel Service (WhatsApp)
+
 ```
 POST /webhook/whatsapp
 GET  /webhook/whatsapp
@@ -174,6 +194,7 @@ PUT  /internal/channel-accounts/:village_id
 ---
 
 ## AI Orchestrator
+
 ```
 POST /internal/process-message
 POST /api/webchat
@@ -181,11 +202,14 @@ POST /internal/knowledge/search
 ```
 
 ### Internal Knowledge (Dashboard)
+
 ```
 GET  /api/internal/knowledge?query=...&category_id=...&village_id=...&limit=5
 POST /api/internal/knowledge
 ```
+
 Body POST (JSON):
+
 ```
 {
   "query": "alamat kantor",
@@ -197,30 +221,28 @@ Body POST (JSON):
 ```
 
 ### Internal Nomor Penting (Dashboard)
+
 ```
-GET /api/internal/important-contacts?village_id=...&category_name=...&category_id=...
+GET /api/internal/important-contacts?village_id=...&category=...
 ```
+
 Response (JSON):
+
 ```
-{
-  "data": [
-    {
-      "id": "ic_123",
-      "name": "Damkar",
-      "phone": "113",
-      "description": "Pemadam kebakaran",
-      "category": {
-        "id": "cat_123",
-        "name": "Darurat"
-      }
-    }
-  ]
-}
+[
+  {
+    "name": "Damkar",
+    "phone": "113",
+    "description": "Pemadam kebakaran",
+    "category_name": "Kebakaran"
+  }
+]
 ```
 
 ---
 
 ## Notification Service
+
 ```
 POST /internal/notifications
 GET  /internal/notifications
@@ -229,6 +251,7 @@ GET  /internal/notifications
 ---
 
 ## Super Admin
+
 ```
 GET /api/superadmin/villages
 GET /api/superadmin/analytics
@@ -244,6 +267,7 @@ GET /api/superadmin/system-settings
 Complete API reference for all GovConnect microservices.
 
 ## Table of Contents
+
 - [Overview](#overview)
 - [Authentication](#authentication)
 - [Base URLs](#base-urls)
@@ -259,31 +283,36 @@ Complete API reference for all GovConnect microservices.
 
 GovConnect is a microservices-based government service platform with the following services:
 
-| Service | Port | Description |
-|---------|------|-------------|
-| Dashboard | 3000 | Admin dashboard (Next.js) |
-| Channel Service | 3001 | WhatsApp channel & messaging |
-| AI Service | 3002 | AI orchestrator & NLU |
-| Case Service | 3003 | Complaints & service requests |
-| Notification Service | 3004 | Notifications (event-driven) |
+| Service              | Port | Description                   |
+| -------------------- | ---- | ----------------------------- |
+| Dashboard            | 3000 | Admin dashboard (Next.js)     |
+| Channel Service      | 3001 | WhatsApp channel & messaging  |
+| AI Service           | 3002 | AI orchestrator & NLU         |
+| Case Service         | 3003 | Complaints & service requests |
+| Notification Service | 3004 | Notifications (event-driven)  |
 
 ---
 
 ## Authentication
 
 ### Internal API Key (Service-to-Service)
+
 ```
 Header: X-Internal-API-Key: <your-api-key>
 ```
+
 Used for internal communication between services.
 
 ### JWT Token (Dashboard)
+
 ```
 Header: Authorization: Bearer <token>
 ```
+
 Used for dashboard admin authentication.
 
 ### Public APIs
+
 Endpoint publik untuk form tersedia tanpa autentikasi.
 
 ---
@@ -319,9 +348,11 @@ Base URL: `https://case.govconnect.my.id`
 ### Health Endpoints
 
 #### GET /health
+
 Check service health.
 
 **Response:**
+
 ```json
 {
   "status": "ok",
@@ -331,6 +362,7 @@ Check service health.
 ```
 
 #### GET /metrics
+
 Prometheus metrics endpoint.
 
 ---
@@ -338,15 +370,18 @@ Prometheus metrics endpoint.
 ### Complaints (Laporan)
 
 #### POST /laporan/create
+
 Create a new complaint.
 
 **Headers:**
+
 ```
 Content-Type: application/json
 X-Internal-API-Key: <api-key>
 ```
 
 **Request Body:**
+
 ```json
 {
   "wa_user_id": "6281234567890",
@@ -359,6 +394,7 @@ X-Internal-API-Key: <api-key>
 ```
 
 **Valid Categories:**
+
 - `jalan_rusak` - Jalan Rusak
 - `lampu_mati` - Lampu Mati
 - `sampah` - Sampah
@@ -370,6 +406,7 @@ X-Internal-API-Key: <api-key>
 - `lainnya` - Lainnya
 
 **Response (201):**
+
 ```json
 {
   "status": "success",
@@ -385,6 +422,7 @@ X-Internal-API-Key: <api-key>
 ```
 
 #### GET /laporan
+
 Get complaints list.
 
 **Query Parameters:**
@@ -397,6 +435,7 @@ Get complaints list.
 | offset | number | Offset for pagination |
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -408,12 +447,15 @@ Get complaints list.
 ```
 
 #### GET /laporan/:id
+
 Get complaint by ID.
 
 #### GET /laporan/statistics
+
 Get complaint statistics.
 
 **Response:**
+
 ```json
 {
   "totalLaporan": 100,
@@ -428,14 +470,17 @@ Get complaint statistics.
 ```
 
 #### POST /laporan/:id/check
+
 Check complaint status with ownership validation.
 
 **Headers:**
+
 ```
 X-Internal-API-Key: <api-key>
 ```
 
 **Request Body:**
+
 ```json
 {
   "wa_user_id": "6281234567890"
@@ -443,9 +488,11 @@ X-Internal-API-Key: <api-key>
 ```
 
 #### PATCH /laporan/:id/status
+
 Update complaint status.
 
 **Request Body:**
+
 ```json
 {
   "status": "proses",
@@ -454,14 +501,17 @@ Update complaint status.
 ```
 
 #### POST /laporan/:id/cancel
+
 Cancel complaint.
 
 **Headers:**
+
 ```
 X-Internal-API-Key: <api-key>
 ```
 
 **Request Body:**
+
 ```json
 {
   "wa_user_id": "6281234567890",
@@ -474,39 +524,51 @@ X-Internal-API-Key: <api-key>
 ### Service Catalog & Permohonan Layanan
 
 #### GET /service-categories
+
 Get all service categories (optional filter by `village_id`).
 
 #### POST /service-categories
+
 Create service category.
 
 #### GET /services
+
 Get all services (optional filter by `village_id`, `category_id`).
 
 #### GET /services/:id
+
 Get service by ID.
 
 #### GET /services/by-slug?village_id=...&slug=...
+
 Get service by village slug for public form.
 
 #### POST /services
+
 Create service item.
 
 #### PATCH /services/:id
+
 Update service item.
 
 #### GET /services/:id/requirements
+
 Get requirements by service.
 
 #### POST /services/:id/requirements
+
 Create requirement.
 
 #### PATCH /requirements/:id
+
 Update requirement.
 
 #### DELETE /requirements/:id
+
 Delete requirement.
 
 #### GET /service-requests
+
 Get service requests list.
 
 **Query Parameters:**
@@ -519,9 +581,11 @@ Get service requests list.
 | village_id | string | Filter by village |
 
 #### POST /service-requests
+
 Create service request (public form & AI).
 
 **Request Body:**
+
 ```json
 {
   "service_id": "svc-123",
@@ -539,12 +603,15 @@ Create service request (public form & AI).
 ```
 
 #### GET /service-requests/:id
+
 Get service request by ID.
 
 #### PATCH /service-requests/:id/status
+
 Update service request status.
 
 **Request Body:**
+
 ```json
 {
   "status": "proses",
@@ -553,12 +620,15 @@ Update service request status.
 ```
 
 #### POST /service-requests/:id/cancel
+
 Cancel service request (ownership required).
 
 #### DELETE /service-requests/:id
+
 Delete service request.
 
 #### GET /service-requests/history/:wa_user_id
+
 Get user service request history.
 
 ---
@@ -566,6 +636,7 @@ Get user service request history.
 ### Statistics
 
 #### GET /statistics/overview
+
 Get overview statistics.
 
 ---
@@ -573,14 +644,14 @@ Get overview statistics.
 ### User History
 
 #### GET /user/:wa_user_id/history
+
 Get user history (complaints + service requests).
 
 **Headers:**
+
 ```
 X-Internal-API-Key: <api-key>
 ```
-
-
 
 ---
 
@@ -591,12 +662,15 @@ Base URL: `https://channel.govconnect.my.id`
 ### Health Endpoints
 
 #### GET /health
+
 Service health check.
 
 #### GET /health/db
+
 Database connectivity.
 
 #### GET /health/rabbitmq
+
 RabbitMQ connectivity.
 
 ---
@@ -604,6 +678,7 @@ RabbitMQ connectivity.
 ### Webhook Routes
 
 #### GET /webhook/whatsapp
+
 Verify WhatsApp webhook.
 
 **Query Parameters:**
@@ -614,6 +689,7 @@ Verify WhatsApp webhook.
 | hub.challenge | string | Challenge to return |
 
 #### POST /webhook/whatsapp
+
 Handle WhatsApp webhook events.
 
 **Request Body:** WhatsApp webhook payload (varies by event type)
@@ -625,6 +701,7 @@ Handle WhatsApp webhook events.
 All internal routes require `X-Internal-API-Key` header.
 
 #### GET /internal/messages
+
 Get messages for a user.
 
 **Query Parameters:**
@@ -635,9 +712,11 @@ Get messages for a user.
 | offset | number | Offset |
 
 #### POST /internal/messages
+
 Store AI reply in database.
 
 **Request Body:**
+
 ```json
 {
   "wa_user_id": "6281234567890",
@@ -648,9 +727,11 @@ Store AI reply in database.
 ```
 
 #### POST /internal/send
+
 Send message to WhatsApp.
 
 **Request Body:**
+
 ```json
 {
   "wa_user_id": "6281234567890",
@@ -660,9 +741,11 @@ Send message to WhatsApp.
 ```
 
 #### POST /internal/typing
+
 Set typing indicator.
 
 **Request Body:**
+
 ```json
 {
   "wa_user_id": "6281234567890"
@@ -670,9 +753,11 @@ Set typing indicator.
 ```
 
 #### POST /internal/messages/read
+
 Mark messages as read.
 
 **Request Body:**
+
 ```json
 {
   "wa_user_id": "6281234567890",
@@ -687,9 +772,11 @@ Mark messages as read.
 Semua endpoint session berada di Channel Service dan membutuhkan header `X-Internal-API-Key`.
 
 #### POST /internal/whatsapp/session
+
 Buat session WhatsApp baru (auto-save token di DB internal).
 
 Body:
+
 ```json
 {
   "village_id": "uuid-village",
@@ -698,21 +785,27 @@ Body:
 ```
 
 #### DELETE /internal/whatsapp/session?village_id=...
+
 Hapus session dan token dari DB (logout dilakukan sebelum delete).
 
 #### GET /internal/whatsapp/status?village_id=...
+
 Ambil status session (connected/loggedIn/jid) + nomor WA tersimpan.
 
 #### POST /internal/whatsapp/connect?village_id=...
+
 Konek session untuk menghasilkan QR (jika belum login).
 
 #### GET /internal/whatsapp/qr?village_id=...
+
 Ambil QR code untuk login.
 
 #### POST /internal/whatsapp/disconnect?village_id=...
+
 Putuskan koneksi session (token tetap tersimpan).
 
 #### POST /internal/whatsapp/logout?village_id=...
+
 Logout session (perlu scan QR lagi untuk login ulang).
 
 ---
@@ -720,9 +813,11 @@ Logout session (perlu scan QR lagi untuk login ulang).
 ### Live Chat & Takeover
 
 #### POST /internal/takeover/:wa_user_id
+
 Start admin takeover.
 
 **Request Body:**
+
 ```json
 {
   "admin_id": "admin-uuid",
@@ -731,12 +826,15 @@ Start admin takeover.
 ```
 
 #### DELETE /internal/takeover/:wa_user_id
+
 End admin takeover.
 
 #### GET /internal/takeover
+
 Get all active takeovers.
 
 **Response:**
+
 ```json
 {
   "data": [
@@ -751,9 +849,11 @@ Get all active takeovers.
 ```
 
 #### GET /internal/takeover/:wa_user_id/status
+
 Check takeover status.
 
 #### GET /internal/conversations
+
 Get all conversations.
 
 **Query Parameters:**
@@ -763,12 +863,15 @@ Get all conversations.
 | offset | number | Offset |
 
 #### GET /internal/conversations/:wa_user_id
+
 Get specific conversation.
 
 #### POST /internal/conversations/:wa_user_id/send
+
 Admin send message.
 
 **Request Body:**
+
 ```json
 {
   "message": "Hello from admin",
@@ -777,12 +880,15 @@ Admin send message.
 ```
 
 #### POST /internal/conversations/:wa_user_id/read
+
 Mark conversation as read.
 
 #### POST /internal/conversations/:wa_user_id/retry
+
 Retry AI processing.
 
 #### DELETE /internal/conversations/:wa_user_id
+
 Delete conversation.
 
 ---
@@ -794,12 +900,15 @@ Base URL: `https://ai.govconnect.my.id`
 ### Health Endpoints
 
 #### GET /health
+
 Service health check.
 
 #### GET /health/rabbitmq
+
 RabbitMQ status with retry queue info.
 
 #### GET /health/services
+
 Downstream services health.
 
 ---
@@ -807,9 +916,11 @@ Downstream services health.
 ### Web Chat API
 
 #### POST /api/webchat
+
 Process webchat message.
 
 **Request Body:**
+
 ```json
 {
   "session_id": "web_form_1234567890",
@@ -819,6 +930,7 @@ Process webchat message.
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -829,15 +941,19 @@ Process webchat message.
 ```
 
 #### GET /api/webchat/:session_id
+
 Get session history.
 
 #### DELETE /api/webchat/:session_id
+
 Clear session.
 
 #### GET /api/webchat/stats
+
 Get session statistics.
 
 #### GET /api/webchat/:session_id/poll
+
 Poll for admin messages (long polling).
 
 **Query Parameters:**
@@ -852,9 +968,11 @@ Poll for admin messages (long polling).
 All routes require `X-Internal-API-Key` header.
 
 #### POST /api/knowledge
+
 Add knowledge with embedding.
 
 **Request Body:**
+
 ```json
 {
   "id": "kb-001",
@@ -867,18 +985,23 @@ Add knowledge with embedding.
 ```
 
 #### PUT /api/knowledge/:id
+
 Update knowledge (re-embed).
 
 #### DELETE /api/knowledge/:id
+
 Delete knowledge vector.
 
 #### GET /api/knowledge/:id
+
 Get knowledge vector.
 
 #### POST /api/knowledge/search
+
 Vector search.
 
 **Request Body:**
+
 ```json
 {
   "query": "cara membuat KTP",
@@ -889,6 +1012,7 @@ Vector search.
 ```
 
 #### GET /api/knowledge/stats
+
 Get vector DB statistics.
 
 ---
@@ -896,6 +1020,7 @@ Get vector DB statistics.
 ### Document Upload API
 
 #### POST /api/upload/document
+
 Upload and process document.
 
 **Content-Type:** `multipart/form-data`
@@ -909,6 +1034,7 @@ Upload and process document.
 **Max Size:** 10MB
 
 #### DELETE /api/upload/document/:documentId
+
 Delete document vectors.
 
 ---
@@ -916,9 +1042,11 @@ Delete document vectors.
 ### Processing Status API
 
 #### GET /api/status/summary
+
 Get processing summary.
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -931,14 +1059,17 @@ Get processing summary.
 ```
 
 #### GET /api/status/active
+
 Get all active processing statuses.
 
 #### GET /api/status/stream/:userId
+
 SSE stream for real-time updates.
 
 **Response:** Server-Sent Events stream
 
 #### GET /api/status/:userId
+
 Get user processing status.
 
 ---
@@ -946,24 +1077,31 @@ Get user processing status.
 ### Analytics & Statistics
 
 #### GET /stats/models
+
 Get all model statistics.
 
 #### GET /stats/analytics
+
 Get AI analytics summary.
 
 #### GET /stats/analytics/intents
+
 Get intent distribution.
 
 #### GET /stats/analytics/tokens
+
 Get token usage breakdown.
 
 #### GET /stats/dashboard
+
 Comprehensive dashboard stats.
 
 #### POST /stats/analyze-complexity
+
 Analyze message complexity.
 
 **Request Body:**
+
 ```json
 {
   "message": "Saya ingin membuat laporan jalan rusak di RT 01 RW 02"
@@ -975,18 +1113,23 @@ Analyze message complexity.
 ### Rate Limiting
 
 #### GET /rate-limit
+
 Get rate limit stats.
 
 #### GET /rate-limit/check/:wa_user_id
+
 Check user rate limit.
 
 #### GET /rate-limit/blacklist
+
 Get blacklist.
 
 #### POST /rate-limit/blacklist
+
 Add to blacklist.
 
 **Request Body:**
+
 ```json
 {
   "wa_user_id": "6281234567890",
@@ -996,6 +1139,7 @@ Add to blacklist.
 ```
 
 #### DELETE /rate-limit/blacklist/:wa_user_id
+
 Remove from blacklist.
 
 ---
@@ -1003,20 +1147,20 @@ Remove from blacklist.
 ### Failed Messages
 
 #### GET /admin/failed-messages
+
 Get all failed messages.
 
 #### POST /admin/failed-messages/:messageId/retry
+
 Retry specific message.
 
 #### POST /admin/failed-messages/retry-all
+
 Retry all failed messages.
 
 #### DELETE /admin/failed-messages
+
 Clear failed messages.
-
-
-
-
 
 ## Error Handling
 
@@ -1032,17 +1176,17 @@ Clear failed messages.
 
 ### HTTP Status Codes
 
-| Code | Description |
-|------|-------------|
-| 200 | Success |
-| 201 | Created |
-| 400 | Bad Request / Validation Error |
-| 401 | Unauthorized |
-| 403 | Forbidden (Invalid API Key) |
-| 404 | Not Found |
-| 409 | Conflict (Duplicate) |
-| 500 | Internal Server Error |
-| 503 | Service Unavailable |
+| Code | Description                    |
+| ---- | ------------------------------ |
+| 200  | Success                        |
+| 201  | Created                        |
+| 400  | Bad Request / Validation Error |
+| 401  | Unauthorized                   |
+| 403  | Forbidden (Invalid API Key)    |
+| 404  | Not Found                      |
+| 409  | Conflict (Duplicate)           |
+| 500  | Internal Server Error          |
+| 503  | Service Unavailable            |
 
 ### Validation Errors
 
@@ -1064,11 +1208,11 @@ Clear failed messages.
 
 ### Configuration
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| MAX_REPORTS_PER_DAY | 5 | Max complaints per user per day |
-| COOLDOWN_SECONDS | 30 | Cooldown between requests |
-| AUTO_BLACKLIST_VIOLATIONS | 10 | Violations before auto-blacklist |
+| Setting                   | Default | Description                      |
+| ------------------------- | ------- | -------------------------------- |
+| MAX_REPORTS_PER_DAY       | 5       | Max complaints per user per day  |
+| COOLDOWN_SECONDS          | 30      | Cooldown between requests        |
+| AUTO_BLACKLIST_VIOLATIONS | 10      | Violations before auto-blacklist |
 
 ### Rate Limit Response
 
@@ -1091,11 +1235,13 @@ Clear failed messages.
 **Endpoint:** `GET /api/status/stream/:userId`
 
 **Event Types:**
+
 - `status` - Processing status update
 - `complete` - Processing complete
 - `error` - Processing error
 
 **Example Event:**
+
 ```
 event: status
 data: {"stage":"processing","message":"Menganalisis pesan...","progress":50}
@@ -1106,4 +1252,3 @@ data: {"stage":"processing","message":"Menganalisis pesan...","progress":50}
 ## Postman Collection
 
 Import the Postman collection from: `govconnect/docs/GovConnect-API.postman_collection.json`
-

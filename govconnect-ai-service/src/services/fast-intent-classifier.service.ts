@@ -27,6 +27,11 @@ import {
   CANCEL_SERVICE_PATTERNS,
   HISTORY_PATTERNS,
   KNOWLEDGE_QUERY_PATTERNS,
+  EMERGENCY_SECURITY_PATTERNS,
+  EMERGENCY_HEALTH_PATTERNS,
+  EMERGENCY_FIRE_PATTERNS,
+  EMERGENCY_POLICE_PATTERNS,
+  IMPORTANT_CONTACT_PATTERNS,
   COMPLAINT_CATEGORY_PATTERNS,
   SERVICE_CODE_PATTERNS,
   matchesAnyPattern,
@@ -160,6 +165,77 @@ export function fastClassifyIntent(message: string): FastClassifyResult | null {
     }
   }
   
+  // 2.5 Check EMERGENCY INTENTS (High Priority)
+  // Security
+  for (const pattern of EMERGENCY_SECURITY_PATTERNS) {
+    if (pattern.test(lowerMessage)) {
+      return {
+        intent: 'EMERGENCY_SECURITY',
+        confidence: 0.99,
+        extractedFields: {},
+        skipLLM: true,
+        reason: 'Emergency Security pattern matched',
+      };
+    }
+  }
+
+  // Health
+  for (const pattern of EMERGENCY_HEALTH_PATTERNS) {
+    if (pattern.test(lowerMessage)) {
+      return {
+        intent: 'EMERGENCY_HEALTH',
+        confidence: 0.99,
+        extractedFields: {},
+        skipLLM: true,
+        reason: 'Emergency Health pattern matched',
+      };
+    }
+  }
+
+  // Fire
+  for (const pattern of EMERGENCY_FIRE_PATTERNS) {
+    if (pattern.test(lowerMessage)) {
+      return {
+        intent: 'EMERGENCY_FIRE',
+        confidence: 0.99,
+        extractedFields: {},
+        skipLLM: true,
+        reason: 'Emergency Fire pattern matched',
+      };
+    }
+  }
+
+  // Police
+  for (const pattern of EMERGENCY_POLICE_PATTERNS) {
+    if (pattern.test(lowerMessage)) {
+      return {
+        intent: 'EMERGENCY_POLICE',
+        confidence: 0.99,
+        extractedFields: {},
+        skipLLM: true,
+        reason: 'Emergency Police pattern matched',
+      };
+    }
+  }
+
+  // 2.6 Check IMPORTANT_CONTACT
+  for (const pattern of IMPORTANT_CONTACT_PATTERNS) {
+    if (pattern.test(lowerMessage)) {
+      // Priority Logic: If user also mentions service-related keywords, let LLM handle it
+      // to avoid breaking the conversation flow.
+      const hasServiceKeywords = matchesAnyPattern(lowerMessage, SERVICE_INFO_PATTERNS) || 
+                                 matchesAnyPattern(lowerMessage, CREATE_SERVICE_REQUEST_PATTERNS);
+      
+      return {
+        intent: 'IMPORTANT_CONTACT',
+        confidence: 0.95,
+        extractedFields: {},
+        skipLLM: !hasServiceKeywords, // Only skip if it's purely a contact request
+        reason: hasServiceKeywords ? 'Important contact with service keywords, delegating to LLM' : 'Important contact pattern matched',
+      };
+    }
+  }
+
   // 3. Check CHECK_STATUS (with ID extraction)
   const ids = extractIds(cleanMessage);
   if (ids.complaintId || ids.requestNumber) {

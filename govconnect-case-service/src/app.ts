@@ -8,6 +8,7 @@ import healthRoutes from './routes/health.routes';
 import userRoutes from './routes/user.routes';
 import serviceCatalogRoutes from './routes/service-catalog.routes';
 import complaintMetaRoutes from './routes/complaint-meta.routes';
+import internalServiceRoutes from './routes/internal-service.routes';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.middleware';
 import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
@@ -50,6 +51,7 @@ app.use('/health', healthRoutes);
 app.use('/laporan', complaintRoutes);
 app.use('/', serviceCatalogRoutes);
 app.use('/', complaintMetaRoutes);
+app.use('/', internalServiceRoutes);
 app.use('/statistics', statisticsRoutes);
 app.use('/user', userRoutes);
 

@@ -53,6 +53,18 @@ const QUICK_RESPONSES: Record<string, { response: string; guidance?: string }> =
   'REJECTION': {
     response: 'Baik Kak, tidak masalah. Ada yang lain yang bisa saya bantu?',
   },
+  'EMERGENCY_SECURITY': {
+    response: 'Hubungi Danpos PA Asmar dengan nomor +62 853-9963-9869 dan link https://wa.me/6285399639869',
+  },
+  'EMERGENCY_HEALTH': {
+    response: 'Hubungi Puskesmas Solo A. Aswin PKM dengan nomor +62 853-6373-2235 dan link https://wa.me/6285363732235',
+  },
+  'EMERGENCY_FIRE': {
+    response: 'Hubungi DAMKAR Sektor Bola 001 dengan nomor +62 821-9280-0935 dan link https://wa.me/6282192800935',
+  },
+  'EMERGENCY_POLICE': {
+    response: 'Hubungi Polsek Bola dengan nomor +62 821-8811-8778 dan link https://wa.me/6282188118778',
+  },
 };
 
 // ==================== OPTIMIZATION FUNCTIONS ====================

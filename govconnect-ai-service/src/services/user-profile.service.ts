@@ -350,6 +350,17 @@ export function saveDefaultAddress(wa_user_id: string, alamat: string, rt_rw?: s
   }
 }
 
+/**
+ * Get last known address for auto-fill context
+ */
+export function getLastAddress(wa_user_id: string): string | null {
+  const profile = getProfile(wa_user_id);
+  if (profile.default_address) {
+    return profile.default_address;
+  }
+  return null;
+}
+
 // ==================== CONTEXT HELPERS ====================
 
 /**

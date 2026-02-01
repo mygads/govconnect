@@ -12,6 +12,7 @@ export const LLMResponseSchema = z.object({
     'CANCEL_SERVICE_REQUEST',
     'HISTORY', 
     'KNOWLEDGE_QUERY', 
+    'IMPORTANT_CONTACT',
     'QUESTION', 
     'UNKNOWN'
   ]),

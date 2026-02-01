@@ -1,10 +1,81 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
 
 const prisma = new PrismaClient({
   datasourceUrl: process.env.DATABASE_URL
 })
+
+function slugify(input: string): string {
+  return (input || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)+/g, '')
+}
+
+type SeedServiceDocItem = {
+  name: string
+  description: string | null
+  requirements: string[]
+  slug: string
+}
+
+function extractServicesFromDocument(docText: string): SeedServiceDocItem[] {
+  const lines = (docText || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+
+  const items: SeedServiceDocItem[] = []
+  let currentName: string | null = null
+  let currentRequirements: string[] = []
+
+  const flush = () => {
+    if (!currentName) return
+    const requirements = currentRequirements
+      .flatMap((r) => r.split(',').map((x) => x.trim()))
+      .filter(Boolean)
+      .map((r) => r.replace(/\s{2,}/g, ' '))
+
+    const slug = slugify(currentName)
+    items.push({
+      name: currentName,
+      description: null,
+      requirements,
+      slug,
+    })
+
+    currentName = null
+    currentRequirements = []
+  }
+
+  for (const line of lines) {
+    // Example: "1) Keterangan Domisili"
+    const serviceMatch = line.match(/^\d+\)\s*(.+)$/)
+    if (serviceMatch?.[1]) {
+      flush()
+      currentName = serviceMatch[1].trim()
+      continue
+    }
+
+    // Example: "- KTP, KK, dan alamat lengkap."
+    const reqMatch = line.match(/^-\s*(.+)$/)
+    if (reqMatch?.[1] && currentName) {
+      const raw = reqMatch[1]
+        .replace(/\.$/, '')
+        .replace(/\s+dan\s+/gi, ', ')
+        .trim()
+      currentRequirements.push(raw)
+      continue
+    }
+  }
+
+  flush()
+  return items
+}
 
 async function main() {
   console.log('🌱 Seeding database for GovConnect Dashboard...\n')
@@ -168,13 +239,92 @@ async function main() {
 
     // Basis pengetahuan tidak di-seed jika dokumen sudah tersedia.
 
+    // ==================== SEED LAYANAN (dari dokumen panduan) ====================
+    // Catatan arsitektur: Service Catalog utama berada di Case Service.
+    // Dashboard menyimpan referensi/metadata (knowledge_base) agar bisa dipakai untuk RAG dan admin view.
+    try {
+      const docPath = path.resolve(
+        __dirname,
+        '../../docs/seed/desa-sangreseng-ade/documents/Panduan-Layanan-Administrasi-Desa-Sanreseng-Ade.txt'
+      )
+      if (fs.existsSync(docPath)) {
+        const docText = fs.readFileSync(docPath, 'utf8')
+        const servicesFromDoc = extractServicesFromDocument(docText)
+
+        for (const s of servicesFromDoc) {
+          const existing = await prisma.knowledge_base.findFirst({
+            where: {
+              village_id: village.id,
+              category: 'layanan',
+              title: s.name,
+            },
+          })
+
+          const contentJson = JSON.stringify(
+            {
+              name: s.name,
+              slug: s.slug,
+              description: s.description,
+              requirements: s.requirements,
+            },
+            null,
+            2
+          )
+
+          const keywords = Array.from(
+            new Set([
+              'layanan',
+              'administrasi',
+              s.slug,
+              ...s.name.toLowerCase().split(/\s+/).filter(Boolean),
+              ...s.requirements.flatMap((r) => r.toLowerCase().split(/\s+/).filter(Boolean)),
+            ])
+          ).slice(0, 40)
+
+          if (existing) {
+            await prisma.knowledge_base.update({
+              where: { id: existing.id },
+              data: {
+                content: contentJson,
+                keywords,
+                is_active: true,
+                priority: 10,
+              },
+            })
+          } else {
+            await prisma.knowledge_base.create({
+              data: {
+                title: s.name,
+                content: contentJson,
+                category: 'layanan',
+                village_id: village.id,
+                keywords,
+                is_active: true,
+                priority: 10,
+                admin_id: null,
+              },
+            })
+          }
+        }
+
+        console.log(`✅ Seed layanan (knowledge_base) dari dokumen: ${servicesFromDoc.length} item`)
+      } else {
+        console.log('ℹ️ Dokumen panduan layanan tidak ditemukan, skip seeding layanan dari dokumen')
+      }
+    } catch (error: any) {
+      console.log('⚠️ Gagal seed layanan dari dokumen (dashboard), lanjutkan proses seed lain')
+      console.log(`   Reason: ${error?.message || error}`)
+    }
+
     type ImportantContact = { name: string; phone: string; description: string }
 
     const importantCategories = [
       'Pelayanan',
       'Pengaduan',
       'Keamanan',
+      'Polisi',
       'Kesehatan',
+      'Kebakaran',
       'Pemadam',
     ] as const
 
@@ -200,11 +350,16 @@ async function main() {
         { name: 'Admin Desa Sanreseng Ade', phone: '+62 819-3088-1342', description: 'Admin pengaduan desa' },
       ],
       Keamanan: [
-        { name: 'Polsek Bola', phone: '+62 821-8811-8778', description: 'Layanan keamanan Polsek' },
-        { name: 'Danpos Bola', phone: '+62 853-9963-9869', description: 'Layanan keamanan Danpos' },
+        { name: 'Danpos PA Asmar', phone: '6285399639869', description: 'Kontak keamanan (Danpos)' },
+      ],
+      Polisi: [
+        { name: 'Polsek Bola', phone: '6282188118778', description: 'Kontak kepolisian (Polsek)' },
       ],
       Kesehatan: [
-        { name: 'Puskesmas Solo', phone: '+62 853-6373-2235', description: 'Layanan kesehatan puskesmas' },
+        { name: 'Puskesmas Solo A. Aswin PKM', phone: '6285363732235', description: 'Kontak kesehatan (Puskesmas)' },
+      ],
+      Kebakaran: [
+        { name: 'DAMKAR Sektor Bola 001', phone: '6282192800935', description: 'Kontak pemadam kebakaran (Damkar)' },
       ],
       Pemadam: [
         { name: 'DAMKAR Sektor Bola', phone: '+62 821-9280-0935', description: 'Pemadam kebakaran sektor bola' },

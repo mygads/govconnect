@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "kb:import:pdf": "tsx scripts/import-knowledge-pdf.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

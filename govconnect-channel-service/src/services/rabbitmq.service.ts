@@ -93,7 +93,7 @@ async function handleReconnect(): Promise<void> {
     await sleep(delay);
     
     try {
-      await connectRabbitMQ();
+      await connectRabbitMQ({ logFailure: false });
       
       // Reconnect successful - restart consumers
       await startConsumingAIReply();
@@ -124,7 +124,7 @@ async function handleReconnect(): Promise<void> {
 /**
  * Connect to RabbitMQ with auto-reconnect capability
  */
-export async function connectRabbitMQ(): Promise<void> {
+export async function connectRabbitMQ(options?: { logFailure?: boolean }): Promise<void> {
   try {
     await ensureRabbitMqVhost(config.RABBITMQ_URL);
     // Close existing connections if any
@@ -179,8 +179,35 @@ export async function connectRabbitMQ(): Promise<void> {
     });
     
   } catch (error: any) {
-    logger.error('❌ RabbitMQ connection failed', { error: error.message });
+    if (options?.logFailure !== false) {
+      logger.error('❌ RabbitMQ connection failed', { error: error.message });
+    }
     throw error;
+  }
+}
+
+/**
+ * Connect to RabbitMQ on startup with retry/backoff.
+ * This prevents the service from crashing if RabbitMQ isn't ready yet.
+ */
+export async function connectRabbitMQWithRetry(): Promise<void> {
+  let attempt = 0;
+
+  // Infinite attempts by default (keeps container alive until infra is ready)
+  while (true) {
+    attempt++;
+    try {
+      await connectRabbitMQ({ logFailure: false });
+      return;
+    } catch (error: any) {
+      const delay = calculateReconnectDelay(attempt);
+      logger.warn('RabbitMQ not ready yet, will retry connection', {
+        attempt,
+        delayMs: delay,
+        error: error?.message,
+      });
+      await sleep(delay);
+    }
   }
 }
 

@@ -3,6 +3,8 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { SYSTEM_PROMPT_WITH_KNOWLEDGE, getFullSystemPrompt } from '../prompts/system-prompt';
 import { RAGContext } from '../types/embedding.types';
+import { inferCategories, retrieveContext } from './rag.service';
+import { getRealTimeContext, getVillageProfileSummary } from './knowledge.service';
 
 interface Message {
   id: string;
@@ -24,19 +26,52 @@ interface MessageHistoryResponse {
 export async function buildContext(
   wa_user_id: string, 
   currentMessage: string, 
-  ragContext?: RAGContext | string
+  ragContext?: RAGContext | string,
+  villageId?: string
 ) {
   logger.info('Building context for LLM', { wa_user_id });
 
   try {
-    // Fetch message history from Channel Service
-    const messages = await fetchMessageHistory(wa_user_id, config.maxHistoryMessages);
-    
-    // Format conversation history
+    const effectiveVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
+
+    const inferredCategories = inferCategories(currentMessage);
+
+    const historyPromise = fetchMessageHistory(wa_user_id, config.maxHistoryMessages);
+
+    const ragPromise: Promise<RAGContext | string | null> = (async () => {
+      if (ragContext) return ragContext;
+      try {
+        return await retrieveContext(currentMessage, {
+          topK: 5,
+          minScore: 0.55,
+          categories: inferredCategories.length > 0 ? inferredCategories : undefined,
+          sourceTypes: ['knowledge', 'document'],
+          villageId: effectiveVillageId,
+        });
+      } catch {
+        return null;
+      }
+    })();
+
+    const livePromise = getRealTimeContext(currentMessage, effectiveVillageId, wa_user_id);
+    const villageProfilePromise = getVillageProfileSummary(effectiveVillageId);
+
+    const [messages, ragResult, liveContext, villageProfile] = await Promise.all([
+      historyPromise,
+      ragPromise,
+      livePromise,
+      villageProfilePromise,
+    ]);
+
     const conversationHistory = formatConversationHistory(messages);
-    
-    // Build knowledge section with confidence-aware instructions
-    const knowledgeSection = buildKnowledgeSection(ragContext);
+
+    const SYSTEM_CONTEXT = buildSystemContext({
+      rag: ragResult,
+      liveContext,
+      villageProfile,
+    });
+
+    const knowledgeSection = SYSTEM_CONTEXT ? `\n\nSYSTEM_CONTEXT\n${SYSTEM_CONTEXT}` : '';
     
     // Calculate current date and tomorrow for prompt
     const today = new Date();
@@ -63,8 +98,8 @@ export async function buildContext(
       wa_user_id,
       messageCount: messages.length,
       promptLength: systemPrompt.length,
-      hasKnowledge: !!ragContext,
-      knowledgeConfidence: typeof ragContext === 'object' ? ragContext?.confidence?.level : 'N/A',
+      hasKnowledge: !!SYSTEM_CONTEXT,
+      knowledgeConfidence: typeof ragResult === 'object' && ragResult ? (ragResult as any)?.confidence?.level : 'N/A',
     });
     
     return {
@@ -88,6 +123,57 @@ export async function buildContext(
       messageCount: 0,
     };
   }
+}
+
+function buildSystemContext(input: {
+  rag: RAGContext | string | null;
+  liveContext: string;
+  villageProfile: { name?: string | null; short_name?: string | null; address?: string | null; gmaps_url?: string | null } | null;
+}): string {
+  const sections: string[] = [];
+
+  if (input.villageProfile && (input.villageProfile.name || input.villageProfile.address || input.villageProfile.gmaps_url)) {
+    const profileLines = [
+      input.villageProfile.name ? `Nama Desa/Kelurahan: ${input.villageProfile.name}` : null,
+      input.villageProfile.short_name ? `Nama Singkat: ${input.villageProfile.short_name}` : null,
+      input.villageProfile.address ? `Alamat: ${input.villageProfile.address}` : null,
+      input.villageProfile.gmaps_url ? `Google Maps: ${input.villageProfile.gmaps_url}` : null,
+    ].filter(Boolean).join('\n');
+
+    if (profileLines) {
+      sections.push(`--- VILLAGE PROFILE (LIVE) ---\n${profileLines}`);
+    }
+  }
+
+  if (input.liveContext && input.liveContext.trim()) {
+    sections.push(`--- LIVE DATABASE INFO ---\n${input.liveContext.trim()}`);
+  }
+
+  const docsSection = buildDocsSection(input.rag);
+  if (docsSection) {
+    sections.push(docsSection);
+  }
+
+  return sections.join('\n\n');
+}
+
+function buildDocsSection(rag: RAGContext | string | null): string {
+  if (!rag) return '';
+
+  if (typeof rag === 'string') {
+    const content = rag.trim();
+    if (!content) return '';
+    return `--- KNOWLEDGE BASE (DOCS) ---\n${content}`;
+  }
+
+  if (rag.totalResults === 0 || !rag.contextString) return '';
+
+  const confidence = rag.confidence;
+  const confidenceLine = confidence
+    ? `\n[CONFIDENCE: ${confidence.level.toUpperCase()} - ${confidence.reason}]`
+    : '';
+
+  return `--- KNOWLEDGE BASE (DOCS) ---\n${rag.contextString}${confidenceLine}`;
 }
 
 /**

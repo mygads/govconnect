@@ -15,5 +15,9 @@
     "types": ["node"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/manual-test-*.ts"
+  ]
 }

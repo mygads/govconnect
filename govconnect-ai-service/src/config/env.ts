@@ -8,6 +8,7 @@ interface Config {
   channelServiceUrl: string;
   caseServiceUrl: string;
   dashboardServiceUrl: string;
+  dashboardPublicUrl: string;
   internalApiKey: string;
   llmTemperature: number;
   llmMaxTokens: number;
@@ -46,6 +47,7 @@ function validateEnv(): Config {
     channelServiceUrl: process.env.CHANNEL_SERVICE_URL!,
     caseServiceUrl: process.env.CASE_SERVICE_URL!,
     dashboardServiceUrl: process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:3000',
+    dashboardPublicUrl: process.env.DASHBOARD_PUBLIC_URL || 'http://localhost:3000',
     internalApiKey: process.env.INTERNAL_API_KEY!,
     llmTemperature: parseFloat(process.env.LLM_TEMPERATURE || '0.3'),
     llmMaxTokens: parseInt(process.env.LLM_MAX_TOKENS || '1000', 10),

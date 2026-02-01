@@ -22,39 +22,40 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams
     const villageId = searchParams.get('village_id')
-    const categoryId = searchParams.get('category_id')
-    const categoryName = searchParams.get('category_name')
+    const category = searchParams.get('category')
 
     if (!villageId) {
       return NextResponse.json({ error: 'village_id is required' }, { status: 400 })
     }
 
-    let resolvedCategoryId = categoryId
-
-    if (!resolvedCategoryId && categoryName) {
-      const category = await db.important_contact_categories.findFirst({
-        where: {
-          village_id: villageId,
-          name: { equals: categoryName, mode: 'insensitive' },
-        },
-        select: { id: true },
-      })
-
-      resolvedCategoryId = category?.id || null
-    }
+    const categoryParam = (category || '').trim()
 
     const contacts = await db.important_contacts.findMany({
       where: {
         category: {
           village_id: villageId,
-          ...(resolvedCategoryId ? { id: resolvedCategoryId } : {}),
+          ...(categoryParam
+            ? {
+                name: {
+                  equals: categoryParam,
+                  mode: 'insensitive',
+                },
+              }
+            : {}),
         },
       },
       include: { category: true },
       orderBy: { created_at: 'asc' },
     })
 
-    return NextResponse.json({ data: contacts })
+    const result = (contacts || []).map((c: any) => ({
+      name: c.name,
+      phone: c.phone,
+      description: c.description ?? null,
+      category_name: c.category?.name ?? null,
+    }))
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Error fetching important contacts:', error)
     return NextResponse.json(

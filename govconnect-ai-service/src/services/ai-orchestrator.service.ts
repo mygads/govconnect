@@ -31,6 +31,7 @@ export {
   handleCancellation,
   handleHistory,
   handleKnowledgeQuery,
+  handleImportantContacts,
   validateResponse,
   isVagueAddress,
   isConfirmationResponse,

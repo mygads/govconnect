@@ -38,6 +38,7 @@ Case Service mengelola **Laporan Warga** dan **Permohonan Layanan** dalam sistem
       { name: 'Laporan', description: 'Complaint/report management' },
       { name: 'Permohonan Layanan', description: 'Service request management' },
       { name: 'Layanan', description: 'Government services management' },
+      { name: 'Internal', description: 'Internal endpoints (AI/Orchestrator)' },
       { name: 'Statistics', description: 'Dashboard statistics' },
       { name: 'User', description: 'User history' },
       { name: 'Health', description: 'Health checks' },
@@ -128,6 +129,85 @@ Case Service mengelola **Laporan Warga** dan **Permohonan Layanan** dalam sistem
           summary: 'Get service by ID',
           parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }],
           responses: { '200': { description: 'Service detail' }, '404': { description: 'Not found' } },
+        },
+      },
+
+      '/internal/services/search': {
+        get: {
+          tags: ['Internal'],
+          summary: 'Search services for AI (compact LLM context)',
+          description: 'Internal-only endpoint for AI Orchestrator to search services by keyword and village',
+          security: [{ InternalApiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'village_id', required: true, schema: { type: 'string' } },
+            { in: 'query', name: 'q', required: true, schema: { type: 'string' }, description: 'Keyword for name/description search' },
+          ],
+          responses: {
+            '200': {
+              description: 'Compact service search results',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            service_name: { type: 'string' },
+                            requirements: { type: 'array', items: { type: 'string' } },
+                            cost: { type: 'number', nullable: true },
+                            estimated_duration: { type: 'number', nullable: true, description: 'Minutes' },
+                            is_active: { type: 'boolean' },
+                          },
+                          required: ['service_name', 'requirements', 'cost', 'estimated_duration', 'is_active'],
+                        },
+                      },
+                    },
+                    required: ['data'],
+                  },
+                },
+              },
+            },
+            '400': { description: 'Validation error' },
+            '403': { description: 'Forbidden' },
+          },
+        },
+      },
+
+      '/internal/service-requests/status': {
+        get: {
+          tags: ['Internal'],
+          summary: 'Check service request status (ownership validation by phone)',
+          description: 'Internal-only endpoint for AI Orchestrator to check status of a service request by request_code + phone_number',
+          security: [{ InternalApiKey: [] }],
+          parameters: [
+            { in: 'query', name: 'request_code', required: true, schema: { type: 'string' } },
+            { in: 'query', name: 'phone_number', required: true, schema: { type: 'string' }, description: 'WA number to validate ownership (accepts 08/8/62 prefixes)' },
+          ],
+          responses: {
+            '200': {
+              description: 'Compact request status',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      status: { type: 'string', enum: ['PENDING', 'DONE', 'REJECTED'] },
+                      current_step: { type: 'string', description: 'Raw DB status (baru|proses|selesai|ditolak|dibatalkan)' },
+                      last_updated: { type: 'string', format: 'date-time' },
+                      notes: { type: 'string', nullable: true },
+                    },
+                    required: ['status', 'current_step', 'last_updated', 'notes'],
+                  },
+                },
+              },
+            },
+            '400': { description: 'Validation error' },
+            '403': { description: 'Forbidden (NOT_OWNER / invalid API key)' },
+            '404': { description: 'Not found' },
+          },
         },
       },
       '/service-requests': {

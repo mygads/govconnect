@@ -1,6 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
+import { checkRequestStatus, searchServices } from '../clients/case-service.client';
 import {
   retrieveContext,
   inferCategories,
@@ -27,6 +28,37 @@ interface VillageProfileSummary {
   short_name?: string | null;
   address?: string | null;
   gmaps_url?: string | null;
+}
+
+type VillageListItem = { id: string; name: string; slug: string };
+const villageSlugCache = new Map<string, string>();
+
+export async function resolveVillageSlug(villageId?: string): Promise<string | null> {
+  if (!villageId) return null;
+  const cached = villageSlugCache.get(villageId);
+  if (cached) return cached;
+
+  try {
+    const resp = await axios.get<{ success?: boolean; data?: VillageListItem[] }>(
+      `${config.dashboardServiceUrl}/api/public/webchat/villages`,
+      { timeout: 5000 }
+    );
+
+    const list = Array.isArray(resp.data?.data) ? resp.data.data : [];
+    const found = list.find((v) => v?.id === villageId);
+    if (found?.slug) {
+      villageSlugCache.set(villageId, found.slug);
+      return found.slug;
+    }
+
+    return null;
+  } catch (error: any) {
+    logger.warn('Failed to resolve village slug (graceful fallback)', {
+      error: error?.message,
+      villageId,
+    });
+    return null;
+  }
 }
 
 // Feature flag for RAG-based search
@@ -75,6 +107,129 @@ export async function searchKnowledge(query: string, categories?: string[], vill
       context: '',
     };
   }
+}
+
+function shouldFetchServiceContext(userQuery: string): boolean {
+  const q = (userQuery || '').toLowerCase();
+  // Heuristic keywords: user likely asking about layanan (syarat/biaya/cara buat)
+  const triggers = [
+    'syarat',
+    'persyaratan',
+    'berkas',
+    'dokumen',
+    'lampiran',
+    'biaya',
+    'tarif',
+    'gratis',
+    'bayar',
+    'bikin',
+    'buat',
+    'mengurus',
+    'urus',
+    'pengajuan',
+    'surat',
+  ];
+
+  return triggers.some((kw) => q.includes(kw));
+}
+
+function extractRequestCode(userQuery: string): string | null {
+  const q = userQuery || '';
+  const reqMatch = q.match(/REQ-\d+/i);
+  if (reqMatch?.[0]) return reqMatch[0].toUpperCase();
+
+  // Extra tolerance for current system IDs (optional)
+  const layMatch = q.match(/LAY-\d{8}-\d+/i);
+  if (layMatch?.[0]) return layMatch[0].toUpperCase();
+
+  return null;
+}
+
+/**
+ * Get real-time context from Case Service (hybrid context)
+ * - Service info lookup by keyword (if user asks about syarat/biaya/bikin, etc.)
+ * - Request status check (if user includes request code like REQ-123)
+ */
+export async function getRealTimeContext(
+  userQuery: string,
+  villageId?: string,
+  phoneNumber?: string
+): Promise<string> {
+  const parts: string[] = [];
+
+  try {
+    const requestCode = extractRequestCode(userQuery);
+    const wantServiceContext = shouldFetchServiceContext(userQuery);
+
+    if (wantServiceContext && villageId) {
+      const services = await searchServices(userQuery, villageId);
+      if (services.length > 0) {
+        const top = services[0];
+
+        // Public form base URL should point to the public dashboard domain.
+        // Fallback to govconnect.my.id (never localhost) to avoid sending non-clickable/dev links to citizens.
+        const dashboardBaseUrl = (
+          (config.dashboardPublicUrl || '').trim()
+          || (process.env.PUBLIC_FORM_BASE_URL || '').trim()
+          || 'http://govconnect.my.id'
+        ).replace(/\/$/, '');
+        const villageSlug =
+          (await resolveVillageSlug(villageId))
+          || (process.env.DEFAULT_VILLAGE_SLUG || '').trim()
+          || 'desa';
+        const directFormLink = top?.slug
+          ? `${dashboardBaseUrl}/form/${encodeURIComponent(villageSlug)}/${encodeURIComponent(top.slug)}`
+          : null;
+
+        const formatted = services
+          .slice(0, 10)
+          .map((s) => {
+            const duration = s.estimated_duration != null ? `${s.estimated_duration} menit` : '-';
+            const cost = s.cost != null ? `${s.cost}` : '-';
+            const requirements = (s.requirements || []).slice(0, 12).join('; ');
+            return `- ${s.service_name} | slug=${s.slug} | aktif=${s.is_active ? 'ya' : 'tidak'} | estimasi=${duration} | biaya=${cost} | syarat=${requirements || '-'}`;
+          })
+          .join('\n');
+
+        const headerLines = [
+          'KONTEKS REAL-TIME LAYANAN (CASE SERVICE)',
+          directFormLink ? `DIRECT_FORM_LINK: ${directFormLink}` : null,
+        ].filter(Boolean).join('\n');
+
+        parts.push(`${headerLines}\n${formatted}`);
+      }
+    }
+
+    if (requestCode && phoneNumber) {
+      const status = await checkRequestStatus(requestCode, phoneNumber);
+      if (status) {
+        parts.push(
+          [
+            'KONTEKS REAL-TIME STATUS PENGAJUAN (CASE SERVICE)',
+            `request_code: ${requestCode}`,
+            `status: ${status.status}`,
+            `current_step: ${status.current_step}`,
+            `last_updated: ${status.last_updated}`,
+            status.notes ? `notes: ${status.notes}` : 'notes: -',
+          ].join('\n')
+        );
+      } else {
+        parts.push(
+          [
+            'KONTEKS REAL-TIME STATUS PENGAJUAN (CASE SERVICE)',
+            `request_code: ${requestCode}`,
+            'status: NOT_FOUND_OR_UNAVAILABLE',
+          ].join('\n')
+        );
+      }
+    }
+  } catch (error: any) {
+    logger.warn('Failed to build real-time context (graceful ignore)', {
+      error: error?.message,
+    });
+  }
+
+  return parts.length > 0 ? parts.join('\n\n') : '';
 }
 
 /**

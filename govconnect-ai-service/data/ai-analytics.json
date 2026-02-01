@@ -1,0 +1,25 @@
+{
+  "intents": {},
+  "conversationFlow": {
+    "patterns": {},
+    "avgMessagesPerSession": 0,
+    "totalSessions": 0,
+    "totalMessages": 0,
+    "dropOffPoints": {}
+  },
+  "tokenUsage": {
+    "totalInputTokens": 0,
+    "totalOutputTokens": 0,
+    "totalCostUSD": 0,
+    "byModel": {},
+    "byDay": {}
+  },
+  "accuracy": {
+    "totalClassifications": 0,
+    "correctClassifications": 0,
+    "overallAccuracy": 0,
+    "byIntent": {},
+    "confusionMatrix": {}
+  },
+  "lastUpdated": "2026-01-30T15:11:44.116Z"
+}

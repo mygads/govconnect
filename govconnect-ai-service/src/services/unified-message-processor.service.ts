@@ -32,7 +32,7 @@ import {
   requestServiceRequestEditToken,
   HistoryItem,
 } from './case-client.service';
-import { getImportantContacts } from './important-contacts.service';
+import { importantContactsService } from './important-contacts.service';
 import { searchKnowledge, getRAGContext, getKelurahanInfoContext, getVillageProfileSummary } from './knowledge.service';
 import { shouldRetrieveContext, isSpamMessage } from './rag.service';
 import { detectLanguage, getLanguageContext } from './language-detection.service';
@@ -118,6 +118,103 @@ const pendingCancelConfirmation: Map<string, {
   reason?: string;
   timestamp: number;
 }> = new Map();
+
+// ==================== EMERGENCY CATEGORY MAP (DB-EXACT) ====================
+
+type DbEmergencyCategoryName = 'Kebakaran' | 'Polisi' | 'Kesehatan' | 'Keamanan';
+type DbEmergencyFallbackCategoryName = 'Pemadam';
+
+type EmergencyCategoryMapEntry = {
+  keywords: readonly string[];
+  db_category: DbEmergencyCategoryName;
+};
+
+// Keyword -> Dashboard important_contact_categories.name
+// IMPORTANT: db_category MUST match DB values exactly.
+const CATEGORY_MAP: readonly EmergencyCategoryMapEntry[] = [
+  {
+    keywords: ['kebakaran', 'terbakar', 'asap', 'api', 'damkar', 'pemadam', 'fire'],
+    db_category: 'Kebakaran',
+  },
+  {
+    keywords: ['polisi', 'polsek', 'polres', 'kepolisian', 'bhabinkamtibmas', 'maling', 'pencuri', 'pencurian', 'begal', 'rampok', 'kriminal', 'kejahatan'],
+    db_category: 'Polisi',
+  },
+  {
+    keywords: ['dokter', 'sakit', 'bidan', 'puskesmas', 'ambulans', 'ambulance', 'igd', 'ugd', 'medis', 'pingsan', 'melahirkan', 'darurat medis'],
+    db_category: 'Kesehatan',
+  },
+  {
+    keywords: ['keamanan', 'aman', 'satpam', 'security', 'hansip', 'linmas', 'ronda', 'pos jaga', 'danpos'],
+    db_category: 'Keamanan',
+  },
+] as const;
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function keywordMatches(textLower: string, keyword: string): boolean {
+  const kw = (keyword || '').toLowerCase().trim();
+  if (!kw) return false;
+
+  if (kw.includes(' ')) {
+    const pattern = kw
+      .split(/\s+/g)
+      .map(escapeRegExp)
+      .join('\\s+');
+    return new RegExp(`\\b${pattern}\\b`, 'i').test(textLower);
+  }
+
+  return new RegExp(`\\b${escapeRegExp(kw)}\\b`, 'i').test(textLower);
+}
+
+function detectEmergencyCategoryName(message: string): DbEmergencyCategoryName | null {
+  const textLower = (message || '').toLowerCase();
+  if (!textLower.trim()) return null;
+
+  for (const entry of CATEGORY_MAP) {
+    for (const kw of entry.keywords) {
+      // "api" is ambiguous; only treat as fire when other fire signals exist.
+      if (kw.toLowerCase() === 'api') {
+        if (keywordMatches(textLower, 'api') && /(\bkebakaran\b|\bterbakar\b|\basap\b)/i.test(textLower)) {
+          return entry.db_category;
+        }
+        continue;
+      }
+
+      if (keywordMatches(textLower, kw)) return entry.db_category;
+    }
+  }
+
+  return null;
+}
+
+function getEmergencyFallbackCategory(primary: DbEmergencyCategoryName | null): DbEmergencyFallbackCategoryName | null {
+  // Fire-related data sometimes lives under "Pemadam".
+  if (primary === 'Kebakaran') return 'Pemadam';
+  return null;
+}
+
+function isImportantContactRequest(message: string): boolean {
+  const text = (message || '').toLowerCase();
+  if (!text.trim()) return false;
+
+  const hasContactWord = /(\bnomer\b|\bnomor\b|\bno\.?\b|\bkontak\b|\bcontact\b|\bhubungi\b|\bhubungin\b|\btelepon\b|\btelp\b|\btlp\b|\bhp\b|\bwa\b|\bwhatsapp\b|\bhotline\b)/i.test(text);
+  const hasCallWord = /(\bpanggil\b|\bteleponin\b|\bhub\b)/i.test(text);
+  const mentionsRelevantOrg = /(\bdamkar\b|\bpemadam\b|\bkebakaran\b|\bpolisi\b|\bpolsek\b|\bambulans\b|\bambulance\b|\bpuskesmas\b|\bbidan\b|\bdokter\b|\blinmas\b|\bhansip\b|\bsatpam\b|\bsecurity\b|\brt\b|\brw\b)/i.test(
+    text
+  );
+
+  if (hasContactWord || (hasCallWord && mentionsRelevantOrg)) return true;
+
+  // If user sends a very short emergency keyword-only message (e.g. "damkar", "polisi"),
+  // treat it as a contact request.
+  const tokenCount = text.split(/\s+/g).filter(Boolean).length;
+  if (tokenCount <= 4 && detectEmergencyCategoryName(text) !== null) return true;
+
+  return false;
+}
 
 // Complaint types cache (per village)
 const complaintTypeCache: Map<string, { data: any[]; timestamp: number }> = new Map();
@@ -377,6 +474,59 @@ function buildImportantContactsMessage(contacts: Array<{ name: string; phone: st
   return `\n\n📞 *Nomor Penting Terkait*\n${lines.join('\n')}`;
 }
 
+/**
+ * Handle important contacts request (DB-first, no-noise for emergency)
+ */
+export async function handleImportantContacts(
+  userId: string,
+  villageId: string,
+  prefixText: string = '',
+  userMessage: string = ''
+): Promise<string> {
+  const effectiveVillageId = villageId || process.env.DEFAULT_VILLAGE_ID || '';
+  const query = (userMessage || '').trim();
+  if (!effectiveVillageId) {
+    return prefixText || 'Maaf Kak, saya belum bisa menentukan desa/kelurahan untuk mengambil data nomor penting.';
+  }
+
+  // If user mentions an emergency category keyword, fetch only that category (no-noise).
+  const emergencyCategory = detectEmergencyCategoryName(query);
+  let contacts = emergencyCategory
+    ? await importantContactsService.getContacts(effectiveVillageId, emergencyCategory)
+    : [];
+
+  if (contacts.length === 0 && emergencyCategory) {
+    const fallbackCategory = getEmergencyFallbackCategory(emergencyCategory);
+    if (fallbackCategory) {
+      contacts = await importantContactsService.getContacts(effectiveVillageId, fallbackCategory);
+    }
+  }
+
+  // Non-emergency: DB-first hybrid search (DB filter, then KB extraction)
+  if (!emergencyCategory) {
+    const searchResult = await importantContactsService.findContactAndFallback(query, effectiveVillageId);
+    contacts = searchResult.data;
+  }
+
+  if (!contacts.length) {
+    const msg = 'Maaf Kak, belum ada data nomor penting yang cocok untuk pertanyaan ini di wilayah tersebut.';
+    return prefixText ? `${prefixText}\n\n${msg}` : msg;
+  }
+
+  const lines = contacts.slice(0, 8).map((c) => {
+    const desc = c.description ? ` (${c.description})` : '';
+    const wa = c.wa_link ? `\n  💬 Chat: ${c.wa_link}` : '';
+    return `• *${c.name}*: ${c.phone}${desc}${wa}`;
+  });
+
+  const header = emergencyCategory
+    ? '🚨 *Kontak Darurat (Spesifik)*'
+    : '📞 *Nomor Penting*';
+
+  const body = `${header}\n\n${lines.join('\n\n')}`;
+  return prefixText ? `${prefixText}\n\n${body}` : body;
+}
+
 // ==================== ACTION HANDLERS ====================
 
 /**
@@ -514,11 +664,7 @@ export async function handleComplaintCreation(
     
     let importantContactsMessage = '';
     if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
-      const contacts = await getImportantContacts(
-        villageId,
-        complaintTypeConfig.important_contact_category,
-        undefined
-      );
+      const contacts = await importantContactsService.getContacts(villageId, complaintTypeConfig.important_contact_category);
       importantContactsMessage = buildImportantContactsMessage(contacts);
     }
 
@@ -1429,6 +1575,23 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 5: Sentiment analysis
     const sentiment = analyzeSentiment(sanitizedMessage, userId);
     const sentimentContext = getSentimentContext(sentiment);
+
+    // Step 5.1: Emergency/Important Contacts Interceptor (DB-first)
+    // Only intercept when user is explicitly asking for a contact/number.
+    if (isImportantContactRequest(sanitizedMessage)) {
+      const response = await handleImportantContacts(userId, resolvedVillageId || '', '', sanitizedMessage);
+      return {
+        success: true,
+        response,
+        intent: 'IMPORTANT_CONTACT',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+          language: languageDetection.primary,
+          sentiment: sentiment.level,
+        },
+      };
+    }
     
     // Step 5.5: User Profile & Context Enhancement
     // Learn from message (extract NIK, phone, detect style)

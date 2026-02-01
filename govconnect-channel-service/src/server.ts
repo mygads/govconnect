@@ -1,6 +1,6 @@
 import { createApp } from './app';
 import { config } from './config/env';
-import { connectRabbitMQ, disconnectRabbitMQ, startConsumingAIReply, startConsumingAIError, startConsumingMessageStatus } from './services/rabbitmq.service';
+import { connectRabbitMQWithRetry, disconnectRabbitMQ, startConsumingAIReply, startConsumingAIError, startConsumingMessageStatus } from './services/rabbitmq.service';
 import { loadSettingsFromDatabase } from './services/wa.service';
 import { cleanupOldMessages } from './services/pending-message.service';
 import { flushAllBatches } from './services/message-batcher.service';
@@ -16,7 +16,7 @@ async function startServer() {
     await loadSettingsFromDatabase();
 
     // Connect to RabbitMQ
-    await connectRabbitMQ();
+    await connectRabbitMQWithRetry();
 
     // Start consuming AI reply events
     await startConsumingAIReply();

@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
+import logger from '../utils/logger';
 import { 
   startTakeover, 
   endTakeover, 
   getActiveTakeovers,
   getActiveTakeover,
-  isUserInTakeover,
   getConversations,
   getConversation,
   markConversationAsRead,
@@ -214,5 +214,123 @@ export async function handleRetryAI(req: Request, res: Response): Promise<void> 
   } catch (error: any) {
     logger.error('Failed to retry AI', { error: error.message });
     res.status(500).json({ error: 'Failed to retry AI processing' });
+  }
+}
+
+/**
+ * Get all conversations for live chat list
+ * GET /internal/conversations?status=all|takeover|bot&limit=50
+ */
+export async function handleGetConversations(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = resolveVillageId(req);
+    const statusRaw = typeof req.query.status === 'string' ? req.query.status : 'all';
+    const filter = statusRaw === 'takeover' ? 'takeover' : statusRaw === 'bot' ? 'bot' : 'all';
+
+    const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined;
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, limitRaw as number)) : 50;
+
+    const conversations = await getConversations(filter, limit, villageId);
+    res.json({ success: true, data: conversations });
+  } catch (error: any) {
+    logger.error('Failed to get conversations', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to get conversations' });
+  }
+}
+
+/**
+ * Get conversation details + message history
+ * GET /internal/conversations/:wa_user_id
+ */
+export async function handleGetConversation(req: Request, res: Response): Promise<void> {
+  try {
+    const { wa_user_id } = req.params;
+    if (!wa_user_id) {
+      res.status(400).json({ success: false, error: 'wa_user_id is required' });
+      return;
+    }
+
+    const villageId = resolveVillageId(req);
+
+    const conversation = await getConversation(wa_user_id, villageId);
+    const messages = await getMessageHistory(wa_user_id, 30, villageId);
+
+    res.json({
+      success: true,
+      data: {
+        conversation,
+        messages,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Failed to get conversation', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to get conversation' });
+  }
+}
+
+/**
+ * Admin send message to a user (WhatsApp) or session_id (Webchat)
+ * POST /internal/conversations/:wa_user_id/send
+ */
+export async function handleAdminSendMessage(req: Request, res: Response): Promise<void> {
+  try {
+    const { wa_user_id } = req.params;
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    const villageId = resolveVillageId(req);
+
+    if (!wa_user_id) {
+      res.status(400).json({ success: false, error: 'wa_user_id is required' });
+      return;
+    }
+
+    if (!message) {
+      res.status(400).json({ success: false, error: 'message is required' });
+      return;
+    }
+
+    const isWebchat = wa_user_id.startsWith('web_');
+    const fallbackMessageId = `admin_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    if (isWebchat) {
+      await saveOutgoingMessage({
+        village_id: villageId,
+        wa_user_id,
+        message_id: fallbackMessageId,
+        message_text: message,
+        timestamp: new Date(),
+        source: 'ADMIN',
+      });
+
+      await updateConversation(wa_user_id, message, undefined, 'reset', villageId);
+
+      res.json({
+        success: true,
+        data: { message_id: fallbackMessageId },
+      });
+      return;
+    }
+
+    const sendResult = await sendTextMessage(wa_user_id, message, villageId);
+    const messageId = sendResult.message_id || fallbackMessageId;
+
+    await saveOutgoingMessage({
+      village_id: villageId,
+      wa_user_id,
+      message_id: messageId,
+      message_text: message,
+      timestamp: new Date(),
+      source: 'ADMIN',
+    });
+
+    await updateConversation(wa_user_id, message, undefined, 'reset', villageId);
+
+    res.json({
+      success: sendResult.success,
+      data: { message_id: messageId },
+      ...(sendResult.success ? {} : { error: sendResult.error || 'Failed to send message' }),
+    });
+  } catch (error: any) {
+    logger.error('Failed to send admin message', { error: error.message });
+    res.status(500).json({ success: false, error: 'Failed to send message' });
   }
 }

@@ -29,6 +29,7 @@ import {
   handleComplaintUpdate,
   handleHistory,
   handleKnowledgeQuery,
+  handleImportantContacts,
 } from './ai-orchestrator.service';
 
 interface TwoLayerWebchatParams {
@@ -131,6 +132,24 @@ export async function processTwoLayerWebchat(params: TwoLayerWebchatParams): Pro
     if (!layer2Output) {
       logger.warn('⚠️ Layer 2 failed, using fallback', { userId });
       layer2Output = generateFallbackResponse(enhancedLayer1);
+    }
+
+    // If Layer 2 doesn't provide next_action, fall back to Layer 1 intent for SAFE intents.
+    // This prevents generic replies like "Maaf, saya kurang memahami..." when we actually
+    // have a strong intent (e.g., IMPORTANT_CONTACT, SERVICE_INFO) but LLM output is incomplete.
+    const SAFE_ACTION_FALLBACK_INTENTS = new Set([
+      'IMPORTANT_CONTACT',
+      'SERVICE_INFO',
+      'CHECK_STATUS',
+      'HISTORY',
+      'KNOWLEDGE_QUERY',
+    ]);
+    if ((!layer2Output.next_action || layer2Output.next_action.trim() === '') && SAFE_ACTION_FALLBACK_INTENTS.has(enhancedLayer1.intent)) {
+      layer2Output.next_action = enhancedLayer1.intent;
+      logger.info('🧭 Layer 2 missing next_action, using Layer 1 intent', {
+        userId,
+        intent: enhancedLayer1.intent,
+      });
     }
 
     // Step 9: Handle actions if needed
@@ -278,6 +297,21 @@ async function handleWebchatAction(
 
       case 'KNOWLEDGE_QUERY':
         return await handleKnowledgeQuery(userId, message, mockLlmResponse);
+
+      case 'IMPORTANT_CONTACT':
+        {
+          const replyText = layer2Output.reply_text || '';
+          const lower = replyText.toLowerCase();
+          const looksLikeMisunderstanding =
+            lower.includes('kurang memahami') ||
+            lower.includes('bisa dijelaskan lagi');
+
+          const prefix = looksLikeMisunderstanding
+            ? 'Berikut nomor penting yang bisa dihubungi:'
+            : replyText;
+
+          return await handleImportantContacts(userId, village_id || '', prefix, message);
+        }
 
       default:
         return layer2Output.reply_text;

@@ -24,6 +24,70 @@ import { useLiveChat } from "@/hooks/use-live-chat";
 import { ChatMessage } from "@/lib/live-chat-types";
 import Image from "next/image";
 
+function linkifyText(text: string): Array<string | { href: string; label: string }> {
+  const input = text || "";
+  if (!input) return [""];
+
+  // Matches:
+  // - http(s) URLs
+  // - tel: links
+  // - www. URLs (will be normalized to https://)
+  const pattern = /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|tel:\+?[0-9][0-9+\-().\s]*|www\.[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/gi;
+
+  const parts: Array<string | { href: string; label: string }> = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  // eslint-disable-next-line no-cond-assign
+  while ((match = pattern.exec(input)) !== null) {
+    const start = match.index;
+    const raw = match[0];
+    if (start > lastIndex) {
+      parts.push(input.slice(lastIndex, start));
+    }
+
+    // Strip common trailing punctuation from href, but keep it visible in label.
+    const trailingPunct = raw.match(/[).,!?:;]+$/)?.[0] || "";
+    const core = trailingPunct ? raw.slice(0, -trailingPunct.length) : raw;
+
+    const href = core.toLowerCase().startsWith("www.") ? `https://${core}` : core;
+    const label = raw;
+    parts.push({ href, label });
+
+    lastIndex = start + raw.length;
+  }
+
+  if (lastIndex < input.length) {
+    parts.push(input.slice(lastIndex));
+  }
+
+  return parts;
+}
+
+function MessageContent({ text }: { text: string }) {
+  const parts = linkifyText(text);
+
+  return (
+    <>
+      {parts.map((part, idx) => {
+        if (typeof part === "string") return <span key={idx}>{part}</span>;
+
+        return (
+          <a
+            key={idx}
+            href={part.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-700 underline underline-offset-2 break-all"
+          >
+            {part.label}
+          </a>
+        );
+      })}
+    </>
+  );
+}
+
 // Message status icon component
 function MessageStatus({ status }: { status: ChatMessage["status"] }) {
   switch (status) {
@@ -118,7 +182,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
           }`}
         >
           <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
-            {message.content}
+            <MessageContent text={message.content} />
           </p>
         </div>
         
@@ -209,8 +273,11 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
 
     fetch('/api/public/webchat/villages')
       .then(async (res) => {
-        if (!res.ok) return { success: false, data: [] };
-        return res.json();
+        const json = await res.json().catch(() => null);
+        if (!res.ok || json?.success === false) {
+          throw new Error(json?.error || 'Gagal memuat daftar desa');
+        }
+        return json;
       })
       .then((json) => {
         const data = Array.isArray(json?.data) ? json.data : [];

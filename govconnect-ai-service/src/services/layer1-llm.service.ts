@@ -15,6 +15,7 @@ import logger from '../utils/logger';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import { modelStatsService } from './model-stats.service';
+import { fastClassifyIntent } from './fast-intent-classifier.service';
 
 // Layer 1 uses the smallest, cheapest models first.
 // Override via ENV (comma-separated): LAYER1_MODELS=gemini-2.0-flash-lite,gemini-2.5-flash-lite
@@ -59,7 +60,7 @@ export interface Layer1Input {
 }
 
 export interface Layer1Output {
-  intent: 'CREATE_COMPLAINT' | 'UPDATE_COMPLAINT' | 'SERVICE_INFO' | 'CREATE_SERVICE_REQUEST' | 'UPDATE_SERVICE_REQUEST' | 'CHECK_STATUS' | 'CANCEL_COMPLAINT' | 'CANCEL_SERVICE_REQUEST' | 'HISTORY' | 'KNOWLEDGE_QUERY' | 'QUESTION' | 'UNKNOWN';
+  intent: 'CREATE_COMPLAINT' | 'UPDATE_COMPLAINT' | 'SERVICE_INFO' | 'CREATE_SERVICE_REQUEST' | 'UPDATE_SERVICE_REQUEST' | 'CHECK_STATUS' | 'CANCEL_COMPLAINT' | 'CANCEL_SERVICE_REQUEST' | 'HISTORY' | 'KNOWLEDGE_QUERY' | 'IMPORTANT_CONTACT' | 'QUESTION' | 'UNKNOWN';
   normalized_message: string;
   extracted_data: {
     nama_lengkap?: string;
@@ -75,6 +76,7 @@ export interface Layer1Output {
     complaint_id?: string;
     request_number?: string;
     knowledge_category?: string;
+    village_id?: string;
   };
   confidence: number;
   needs_clarification: string[];
@@ -109,6 +111,7 @@ INTENT TYPES:
 - CANCEL_SERVICE_REQUEST: cancel service request
 - HISTORY: view history
 - KNOWLEDGE_QUERY: ask info (hours, requirements, address)
+- IMPORTANT_CONTACT: ask important phone numbers/contacts (fire, police, ambulance, RT/RW)
 - QUESTION: greeting, thanks, general questions
 - UNKNOWN: unclear
 
@@ -145,6 +148,85 @@ CRITICAL: Fill extracted_data with ALL available data from pre-extraction and hi
 
 Analyze and return JSON:`;
 
+function isQuotaOrRateLimitError(errorMessage: string | undefined): boolean {
+  const msg = (errorMessage || '').toLowerCase();
+  return (
+    msg.includes('429') ||
+    msg.includes('too many requests') ||
+    msg.includes('quota exceeded') ||
+    msg.includes('rate limit') ||
+    msg.includes('exceeded your current quota')
+  );
+}
+
+function mapFastIntentToLayer1Intent(intent: string | undefined): Layer1Output['intent'] {
+  const raw = (intent || '').toUpperCase();
+
+  // Fast classifier sometimes returns conversational intents.
+  if (raw === 'GREETING' || raw === 'THANKS' || raw === 'CONFIRMATION' || raw === 'REJECTION') {
+    return 'QUESTION';
+  }
+
+  // Emergency intents should still route to important contacts in the orchestrator.
+  if (raw === 'EMERGENCY_FIRE' || raw === 'EMERGENCY_HEALTH' || raw === 'EMERGENCY_POLICE' || raw === 'EMERGENCY_SECURITY') {
+    return 'IMPORTANT_CONTACT';
+  }
+
+  // If it already matches known intents, use it.
+  const known = new Set<Layer1Output['intent']>([
+    'CREATE_COMPLAINT',
+    'UPDATE_COMPLAINT',
+    'SERVICE_INFO',
+    'CREATE_SERVICE_REQUEST',
+    'UPDATE_SERVICE_REQUEST',
+    'CHECK_STATUS',
+    'CANCEL_COMPLAINT',
+    'CANCEL_SERVICE_REQUEST',
+    'HISTORY',
+    'KNOWLEDGE_QUERY',
+    'IMPORTANT_CONTACT',
+    'QUESTION',
+    'UNKNOWN',
+  ]);
+
+  if (known.has(raw as Layer1Output['intent'])) {
+    return raw as Layer1Output['intent'];
+  }
+
+  return 'UNKNOWN';
+}
+
+function buildFallbackLayer1Output(input: Layer1Input, lastErrorMessage?: string): Layer1Output {
+  const normalizedMessage = (input.message || '').trim();
+
+  const fast = fastClassifyIntent(normalizedMessage);
+  const mappedIntent = mapFastIntentToLayer1Intent(fast?.intent);
+
+  // Prefer extracted fields from fast classifier, then pre-extracted entities.
+  const pre = (input.pre_extracted_data && typeof input.pre_extracted_data === 'object')
+    ? input.pre_extracted_data
+    : {};
+
+  const extracted_data: Layer1Output['extracted_data'] = {
+    ...normalizeExtractedData(pre),
+    ...normalizeExtractedData(fast?.extractedFields || {}),
+  };
+
+  // Keep a safe confidence so downstream doesn't blindly execute actions.
+  // Exception: fast classifier with high confidence can drive deterministic handlers (e.g., IMPORTANT_CONTACT).
+  const baseConfidence = typeof fast?.confidence === 'number' ? fast.confidence : 0.55;
+  const cappedConfidence = Math.max(0.5, Math.min(0.85, baseConfidence));
+
+  return {
+    intent: mappedIntent,
+    normalized_message: normalizedMessage,
+    extracted_data,
+    confidence: cappedConfidence,
+    needs_clarification: [],
+    processing_notes: `fallback-local-classifier (${fast?.reason || 'LLM unavailable'}; quota=${isQuotaOrRateLimitError(lastErrorMessage)})`,
+  };
+}
+
 /**
  * Call Layer 1 LLM for intent understanding and data extraction
  */
@@ -166,6 +248,8 @@ export async function callLayer1LLM(input: Layer1Input): Promise<Layer1Output | 
     .replace('{user_message}', input.message)
     .replace('{conversation_history}', input.conversation_history || 'No history')
     .replace('{pre_extracted_data}', preExtractedStr);
+
+  let lastErrorMessage: string | undefined;
 
   // Try models in priority order (cheapest first)
   for (let i = 0; i < LAYER1_MODEL_PRIORITY.length; i++) {
@@ -242,6 +326,8 @@ export async function callLayer1LLM(input: Layer1Input): Promise<Layer1Output | 
       
     } catch (error: any) {
       const durationMs = Date.now() - startTime;
+
+      lastErrorMessage = error?.message;
       
       // Record failure in model stats
       modelStatsService.recordFailure(model, error.message, durationMs);
@@ -252,14 +338,27 @@ export async function callLayer1LLM(input: Layer1Input): Promise<Layer1Output | 
         attempt: i + 1,
         error: error.message,
       });
+
+      // If provider indicates quota/rate limiting, don't spam retries across models.
+      // Immediately degrade to local classifier so the user still gets a response.
+      if (isQuotaOrRateLimitError(lastErrorMessage)) {
+        logger.warn('⚠️ Layer 1 quota/rate-limit detected, falling back locally', {
+          wa_user_id: input.wa_user_id,
+          model,
+        });
+        return buildFallbackLayer1Output(input, lastErrorMessage);
+      }
       
       // If this is the last model, return null
       if (i === LAYER1_MODEL_PRIORITY.length - 1) {
-        logger.error('🚨 All Layer 1 models failed', {
+        logger.warn('🚨 All Layer 1 models failed, using local fallback', {
           wa_user_id: input.wa_user_id,
           totalAttempts: LAYER1_MODEL_PRIORITY.length,
+          lastError: lastErrorMessage,
         });
-        return null;
+
+        // Do not hard-fail: keep webchat/WA flows usable even when provider quota is exhausted.
+        return buildFallbackLayer1Output(input, lastErrorMessage);
       }
       
       // Continue to next model
@@ -267,7 +366,8 @@ export async function callLayer1LLM(input: Layer1Input): Promise<Layer1Output | 
     }
   }
 
-  return null;
+  // Defensive fallback (should never hit because loop returns on last model)
+  return buildFallbackLayer1Output(input, lastErrorMessage);
 }
 
 /**

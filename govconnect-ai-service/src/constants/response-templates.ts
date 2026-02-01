@@ -80,7 +80,7 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   
   'KNOWLEDGE_QUERY': [
     'Untuk informasi tersebut, Kakak bisa:\n\n📞 Hubungi: (022) 123-4567\n🕐 Jam kerja: Senin-Jumat 08:00-15:00\n📍 Datang langsung ke kantor kelurahan',
-    'Maaf Kak, saya belum punya info lengkap tentang itu. Silakan hubungi kantor kelurahan langsung ya di jam kerja.',
+    'Biar saya bantu cek yang tepat ya Kak. Informasi yang Kakak cari ini tentang *apa*? (contoh: jam buka, alamat kantor, syarat layanan tertentu, atau kontak RT/RW)\n\nKalau perlu cepat, Kakak juga bisa hubungi kantor kelurahan di jam kerja ya.',
   ],
   
   'THANKS': THANKS_RESPONSES,
@@ -98,9 +98,9 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   ],
   
   'UNKNOWN': [
-    'Maaf Kak, bisa dijelaskan lebih detail? Saya siap bantu untuk:\n\n📋 Lapor masalah (jalan rusak, lampu mati, dll)\n📝 Ajukan layanan (surat keterangan, pengantar, dll)\n📍 Info kelurahan',
-    'Hmm, saya kurang paham Kak. Kakak mau:\n\n1️⃣ Lapor masalah?\n2️⃣ Urus surat?\n3️⃣ Cek status?\n\nSilakan pilih atau jelaskan lebih detail ya.',
-    'Maaf Kak, coba jelaskan lagi ya. Saya bisa bantu:\n\n• Laporan keluhan/aduan\n• Ajukan layanan\n• Informasi kelurahan',
+    'Biar saya bantu dengan tepat ya Kak. Ini terkait apa?\n\n1️⃣ Lapor masalah (jalan rusak, lampu mati, sampah, banjir, dll)\n2️⃣ Urus layanan surat (SKTM, SKU, Domisili, Pengantar KTP/KK, dll)\n3️⃣ Cek status (kirim nomor LAP-... atau LAY-...)\n4️⃣ Info kelurahan (alamat, jam buka, kontak)\n\nKakak pilih nomor atau tulis singkat kebutuhan Kakak ya.',
+    'Boleh sebutkan topiknya ya Kak? Contoh: "syarat SKTM", "lapor lampu mati", "cek status LAP-20260122-001", atau "jam buka kelurahan".',
+    'Agar cepat saya proses, mohon kirim salah satu ini ya Kak:\n- Jika *lapor masalah*: jenis masalah + lokasi/patokan\n- Jika *urus layanan*: nama layanan yang dibutuhkan\n- Jika *cek status*: nomor LAP-... atau LAY-...\n- Jika *info kelurahan*: yang ingin ditanyakan (alamat/jam/kontak)',
   ],
   
   'ERROR': [

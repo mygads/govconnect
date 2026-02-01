@@ -28,6 +28,11 @@ export type IntentType =
   | 'HISTORY'
   | 'KNOWLEDGE_QUERY'
   | 'QUESTION'
+  | 'EMERGENCY_SECURITY'
+  | 'EMERGENCY_HEALTH'
+  | 'EMERGENCY_FIRE'
+  | 'EMERGENCY_POLICE'
+  | 'IMPORTANT_CONTACT'
   | 'UNKNOWN';
 
 // ==================== GREETING PATTERNS ====================
@@ -134,7 +139,7 @@ export const CANCEL_SERVICE_PATTERNS = [
 
 export const HISTORY_PATTERNS = [
   /\b(riwayat|history|daftar)\s+(laporan|layanan|permohonan|saya)\b/i,
-  /\b(laporan|layanan)\s+(saya|ku|gue|gw)\b/i,
+  /\b(lihat|cek|mana)\s+(laporan|layanan)\s+(saya|ku|gue|gw)\b/i,
   /\b(lihat|cek)\s+(semua\s+)?(laporan|layanan)\b/i,
 ];
 
@@ -167,6 +172,41 @@ export const KNOWLEDGE_QUERY_PATTERNS = [
   /\bapa\s*saja\s*(layanan|surat)\b/i,
   /\bjenis\s*(layanan|surat)\b/i,
   /\bbisa\s*(urus|buat)\s*apa\b/i,
+];
+
+// ==================== EMERGENCY PATTERNS ====================
+
+export const EMERGENCY_SECURITY_PATTERNS = [
+  /\b(satpam|security|ronda|pos\s+jaga|hansip|linmas|keamanan)\b/i,
+  /\b(lapor|butuh)\s+(keamanan|satpam|hansip)\b/i,
+  /\b(ada)\s+(maling|pencuri|orang\s+mencurigakan)\b/i,
+];
+
+export const EMERGENCY_HEALTH_PATTERNS = [
+  /\b(puskesmas|dokter|sakit|ambulans|ambulance|ugd|igd|gawat\s+darurat|medis|bidan)\b/i,
+  /\b(butuh|panggil)\s+(ambulans|dokter|medis)\b/i,
+  /\b(ada\s+yang)\s+(sakit|pingsan|sekarat|melahirkan)\b/i,
+];
+
+export const EMERGENCY_FIRE_PATTERNS = [
+  /\b(kebakaran|damkar|pemadam|api|terbakar)\b/i,
+  /\b(rumah|gedung|hutan)\s+(terbakar|kebakaran)\b/i,
+  /\b(panggil|telepon)\s+(damkar|pemadam)\b/i,
+];
+
+export const EMERGENCY_POLICE_PATTERNS = [
+  /\b(polisi|polsek|polres|kepolisian|kriminal|kejahatan|rampok|begal)\b/i,
+  /\b(lapor|panggil)\s+(polisi)\b/i,
+  /\b(kantor)\s+(polisi)\b/i,
+];
+
+// ==================== IMPORTANT CONTACT PATTERNS ====================
+
+export const IMPORTANT_CONTACT_PATTERNS = [
+  /\b(nomor|nomer|kontak|contact|hubungi|telepon|wa|whatsapp)\s+(penting|darurat|kelurahan|desa|rt|rw|kepala|ketua|petugas)\b/i,
+  /\b(minta|bagi|ada|tanya|tahu)\s+(nomor|nomer|kontak|wa|whatsapp|telp|hp)\s+(rt|rw|petugas|admin|lurah|kades|kantor|kelurahan)\b/i,
+  /\b(hubungi|kontak|wa)\s+(siapa|pak\s+rt|bu\s+rt|pak\s+rw|bu\s+rw|lurah|kades)\b/i,
+  /\b(nomor|nomer|wa|kontak)\s+(pak|bu)?\s*(rt|rw|lurah|kades|kepala)\b/i,
 ];
 
 // ==================== KNOWLEDGE SUB-CATEGORY PATTERNS ====================
@@ -239,17 +279,61 @@ export const COMPLAINT_CATEGORY_PATTERNS: Record<string, RegExp[]> = {
 // ==================== SERVICE CODE PATTERNS ====================
 
 export const SERVICE_CODE_PATTERNS: Record<string, RegExp[]> = {
-  'SKD': [/\b(skd|domisili|keterangan\s+domisili)\b/i],
-  'SKTM': [/\b(sktm|tidak\s+mampu|keterangan\s+tidak\s+mampu)\b/i],
-  'SKU': [/\b(sku|usaha|keterangan\s+usaha)\b/i],
-  'SKBM': [/\b(skbm|belum\s+menikah|belum\s+nikah)\b/i],
-  'SPKTP': [/\b(spktp|pengantar\s+ktp|ktp\s+baru|perpanjang\s+ktp)\b/i],
-  'SPKK': [/\b(spkk|pengantar\s+kk|kartu\s+keluarga)\b/i],
-  'SPSKCK': [/\b(spskck|pengantar\s+skck|skck)\b/i],
-  'SPAKTA': [/\b(spakta|pengantar\s+akta|akta\s+kelahiran|akta\s+kematian)\b/i],
-  'IKR': [/\b(ikr|izin\s+keramaian|acara)\b/i],
-  'SKK': [/\b(skk|keterangan\s+kematian)\b/i],
-  'SPP': [/\b(spp|pengantar\s+pindah|pindah\s+domisili)\b/i],
+  'SKD': [
+    /\b(skd|domisili|keterangan\s+domisili)\b/i,
+    /\b(surat)\s+(domisili|tinggal|tempat\s+tinggal)\b/i,
+    /\b(pindah)\s+(datang|masuk)\b/i
+  ],
+  'SKTM': [
+    /\b(sktm|tidak\s+mampu|keterangan\s+tidak\s+mampu)\b/i,
+    /\b(surat)\s+(miskin|kurang\s+mampu|ekonomi\s+lemah)\b/i,
+    /\b(kip|kis|beasiswa)\b/i
+  ],
+  'SKU': [
+    /\b(sku|usaha|keterangan\s+usaha)\b/i,
+    /\b(surat)\s+(usaha|dagang|bisnis|warung|toko)\b/i,
+    /\b(izin)\s+(usaha|umkm)\b/i
+  ],
+  'SKBM': [
+    /\b(skbm|belum\s+menikah|belum\s+nikah)\b/i,
+    /\b(surat)\s+(bujang|gadis|jomblo|single|sendiri)\b/i,
+    /\b(keterangan)\s+(status)\s+(perkawinan|nikah)\b/i
+  ],
+  'SPKTP': [
+    /\b(spktp|pengantar\s+ktp|ktp\s+baru|perpanjang\s+ktp)\b/i,
+    /\b(bikin|buat|urus|ganti|hilang)\s+(ktp|e-ktp|ektp)\b/i,
+    /\b(rekam)\s+(ktp|e-ktp)\b/i
+  ],
+  'SPKK': [
+    /\b(spkk|pengantar\s+kk|kartu\s+keluarga)\b/i,
+    /\b(bikin|buat|urus|ganti|hilang|pecah|tambah)\s+(kk|kartu\s+keluarga)\b/i,
+    /\b(anggota)\s+(keluarga|baru)\b/i
+  ],
+  'SPSKCK': [
+    /\b(spskck|pengantar\s+skck|skck)\b/i,
+    /\b(catatan)\s+(kepolisian|polisi|kriminal)\b/i,
+    /\b(surat)\s+(kelakuan\s+baik)\b/i
+  ],
+  'SPAKTA': [
+    /\b(spakta|pengantar\s+akta|akta\s+kelahiran|akta\s+kematian)\b/i,
+    /\b(akta)\s+(lahir|mati|kawin|cerai)\b/i,
+    /\b(surat)\s+(lahir|mati|kematian|kelahiran)\b/i
+  ],
+  'IKR': [
+    /\b(ikr|izin\s+keramaian|acara)\b/i,
+    /\b(surat)\s+(izin|rame|pesta|hajatan)\b/i,
+    /\b(gelar|bikin)\s+(acara|kegiatan)\b/i
+  ],
+  'SKK': [
+    /\b(skk|keterangan\s+kematian)\b/i,
+    /\b(surat)\s+(kematian|meninggal|wafat)\b/i,
+    /\b(lapor)\s+(meninggal|kematian)\b/i
+  ],
+  'SPP': [
+    /\b(spp|pengantar\s+pindah|pindah\s+domisili)\b/i,
+    /\b(surat)\s+(pindah|keluar|pergi|rantau)\b/i,
+    /\b(pindah)\s+(ke|dari)\s+(kota|kabupaten|provinsi)\b/i
+  ],
 };
 
 // ==================== HELPER FUNCTIONS ====================
@@ -293,6 +377,15 @@ export function detectIntentFromPatterns(message: string): IntentType | null {
     if (matchesAnyPattern(lowerMessage, THANKS_PATTERNS)) return 'THANKS';
   }
   
+  // Emergency checks (Highest Priority)
+  if (matchesAnyPattern(lowerMessage, EMERGENCY_SECURITY_PATTERNS)) return 'EMERGENCY_SECURITY';
+  if (matchesAnyPattern(lowerMessage, EMERGENCY_HEALTH_PATTERNS)) return 'EMERGENCY_HEALTH';
+  if (matchesAnyPattern(lowerMessage, EMERGENCY_FIRE_PATTERNS)) return 'EMERGENCY_FIRE';
+  if (matchesAnyPattern(lowerMessage, EMERGENCY_POLICE_PATTERNS)) return 'EMERGENCY_POLICE';
+  
+  // Important contacts
+  if (matchesAnyPattern(lowerMessage, IMPORTANT_CONTACT_PATTERNS)) return 'IMPORTANT_CONTACT';
+
   // Check for IDs first (high confidence)
   if (/\bLAP-\d{8}-\d{3}\b/i.test(message) || /\bLAY-\d{8}-\d{3}\b/i.test(message)) {
     return 'CHECK_STATUS';
@@ -328,6 +421,10 @@ export default {
   KNOWLEDGE_QUERY_PATTERNS,
   COMPLAINT_CATEGORY_PATTERNS,
   SERVICE_CODE_PATTERNS,
+  EMERGENCY_SECURITY_PATTERNS,
+  EMERGENCY_HEALTH_PATTERNS,
+  EMERGENCY_FIRE_PATTERNS,
+  EMERGENCY_POLICE_PATTERNS,
   matchesAnyPattern,
   findMatchingCategory,
   detectIntentFromPatterns,
