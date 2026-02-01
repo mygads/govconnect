@@ -179,6 +179,25 @@ Tugasmu adalah MEMAHAMI maksud pengguna dari pesan mereka dan mengembalikan outp
   * "pemadam/damkar/kebakaran" → Pemadam
   * "pelayanan/layanan" → Pelayanan
   * "pengaduan/aduan" → Pengaduan
+
+## PENTING untuk CREATE_COMPLAINT
+- Kategori complaint HARUS dari daftar berikut (gunakan PERSIS seperti ini):
+  * "jalan_rusak" - untuk laporan jalan rusak/berlubang
+  * "lampu_mati" - untuk laporan lampu jalan mati
+  * "sampah" - untuk laporan sampah menumpuk/berserakan
+  * "drainase" - untuk laporan selokan/saluran air tersumbat
+  * "pohon_tumbang" - untuk laporan pohon tumbang/roboh
+  * "fasilitas_rusak" - untuk laporan fasilitas umum rusak
+  * "banjir" - untuk laporan banjir
+  * "tindakan_kriminal" - untuk laporan tindak kriminal/kejahatan
+  * "lainnya" - untuk laporan yang tidak masuk kategori di atas
+- Untuk KEBAKARAN, gunakan kategori "lainnya" dan jelaskan di deskripsi
+- ISI extracted_data.complaint_category dengan salah satu nilai di atas
+- ISI extracted_data.complaint_description dengan detail laporan LENGKAP (MINIMAL 15 KARAKTER!)
+  * JANGAN hanya isi kata pendek seperti "kebakaran" atau "banjir"  
+  * Buat deskripsi lengkap seperti: "Laporan kebakaran di lokasi tersebut"
+  * Gabungkan informasi: jenis masalah + lokasi + detail tambahan dari pesan user
+- ISI extracted_data.alamat jika user menyebutkan lokasi
   
 ## PENTING untuk ASK_KNOWLEDGE
 - Baca dengan teliti Knowledge Base Context

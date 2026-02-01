@@ -40,9 +40,11 @@ const fallback = (
   config: AxiosRequestConfig
 ): FallbackResponse => {
   logger.warn('Circuit breaker fallback triggered', {
-    url: config.url,
-    method: config.method,
-    error: error.message,
+    url: config?.url,
+    method: config?.method,
+    errorName: error?.name,
+    errorMessage: error?.message,
+    errorStack: error?.stack?.split('\n').slice(0, 3).join(' | '),
   });
 
   return {
@@ -60,8 +62,30 @@ const fallback = (
 const httpRequest = async (
   config: AxiosRequestConfig
 ): Promise<AxiosResponse> => {
-  const response = await axios(config);
-  return response;
+  logger.debug('Circuit breaker httpRequest called', {
+    url: config.url,
+    method: config.method,
+    headers: config.headers,
+    dataKeys: config.data ? Object.keys(config.data) : [],
+  });
+  
+  try {
+    const response = await axios(config);
+    logger.debug('Circuit breaker httpRequest success', {
+      url: config.url,
+      status: response.status,
+    });
+    return response;
+  } catch (error: any) {
+    logger.error('Circuit breaker httpRequest error', {
+      url: config.url,
+      errorName: error.name,
+      errorMessage: error.message,
+      responseStatus: error.response?.status,
+      responseData: error.response?.data,
+    });
+    throw error;
+  }
 };
 
 // Create circuit breaker instance

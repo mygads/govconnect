@@ -614,6 +614,23 @@ export async function handleComplaintCreation(
     deskripsi = kategoriMap[kategori] || `Laporan ${String(kategori).replace(/_/g, ' ')}`;
   }
   
+  // Ensure deskripsi is at least 10 characters (Case Service requirement)
+  if (deskripsi && deskripsi.length < 10) {
+    // Enrich short description with category and address info
+    const kategoriLabel = String(kategori || 'masalah').replace(/_/g, ' ');
+    if (alamat) {
+      deskripsi = `Laporan ${kategoriLabel} di ${alamat}`;
+    } else {
+      deskripsi = `Laporan ${kategoriLabel} - ${deskripsi}`;
+    }
+    logger.info('Description enriched to meet minimum length', { 
+      userId, 
+      originalLength: (llmResponse.fields?.deskripsi || '').length,
+      newLength: deskripsi.length,
+      deskripsi,
+    });
+  }
+  
   // Check if we have enough information
   if (!kategori || (requireAddress && !alamat)) {
     logger.info('Incomplete complaint data, asking for more info', {
@@ -1047,6 +1064,7 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
   const rawMessage = llmResponse.fields?._original_message || llmResponse.fields?.service_name || llmResponse.fields?.service_query || '';
   let villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
 
+  // If no service_slug, try to resolve from raw message
   if (!service_slug && rawMessage) {
     const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
     if (resolved?.slug) {
@@ -1067,13 +1085,31 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
     const { config } = await import('../config/env');
     const axios = (await import('axios')).default;
 
-    const response = await axios.get(`${config.caseServiceUrl}/services/by-slug`, {
+    let response = await axios.get(`${config.caseServiceUrl}/services/by-slug`, {
       params: { village_id: villageId, slug: service_slug },
       headers: { 'x-internal-api-key': config.internalApiKey },
       timeout: 5000,
-    });
+    }).catch(() => null);
 
-    const service = response.data?.data;
+    let service = response?.data?.data;
+
+    // If service not found with exact slug, try search with the slug as query
+    if (!service) {
+      logger.info('Service not found by slug, trying search', { service_slug, villageId });
+      const searchQuery = service_slug.replace(/-/g, ' '); // Convert slug to search query
+      const resolved = await resolveServiceSlugFromSearch(searchQuery, villageId);
+      if (resolved?.slug) {
+        service_slug = resolved.slug;
+        // Try again with resolved slug
+        response = await axios.get(`${config.caseServiceUrl}/services/by-slug`, {
+          params: { village_id: villageId, slug: service_slug },
+          headers: { 'x-internal-api-key': config.internalApiKey },
+          timeout: 5000,
+        }).catch(() => null);
+        service = response?.data?.data;
+      }
+    }
+
     if (!service) {
       return 'Mohon maaf Pak/Bu, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.';
     }
