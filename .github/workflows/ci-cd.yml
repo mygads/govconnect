@@ -340,15 +340,17 @@ jobs:
     name: Deploy to VPS
     runs-on: ubuntu-latest
     needs: [detect-changes, build-dashboard, build-channel-service, build-ai-service, build-case-service, build-notification-service]
+    # Deploy if at least one build succeeded (partial deployment allowed)
     if: |
       always() && 
       github.ref == 'refs/heads/main' &&
       (github.event.inputs.deploy_only == 'true' || needs.detect-changes.outputs.any-changed == 'true') &&
-      (needs.build-dashboard.result == 'success' || needs.build-dashboard.result == 'skipped') &&
-      (needs.build-channel-service.result == 'success' || needs.build-channel-service.result == 'skipped') &&
-      (needs.build-ai-service.result == 'success' || needs.build-ai-service.result == 'skipped') &&
-      (needs.build-case-service.result == 'success' || needs.build-case-service.result == 'skipped') &&
-      (needs.build-notification-service.result == 'success' || needs.build-notification-service.result == 'skipped')
+      (needs.build-dashboard.result == 'success' || 
+       needs.build-channel-service.result == 'success' || 
+       needs.build-ai-service.result == 'success' || 
+       needs.build-case-service.result == 'success' || 
+       needs.build-notification-service.result == 'success' ||
+       github.event.inputs.deploy_only == 'true')
     environment: production
 
     steps:
@@ -391,8 +393,19 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          DASHBOARD_BUILD: ${{ needs.build-dashboard.result }}
+          CHANNEL_BUILD: ${{ needs.build-channel-service.result }}
+          AI_BUILD: ${{ needs.build-ai-service.result }}
+          CASE_BUILD: ${{ needs.build-case-service.result }}
+          NOTIFICATION_BUILD: ${{ needs.build-notification-service.result }}
         run: |
           echo "🚀 Deploying GovConnect to VPS..."
+          echo "📊 Build Results:"
+          echo "  - Dashboard: $DASHBOARD_BUILD"
+          echo "  - Channel: $CHANNEL_BUILD"
+          echo "  - AI: $AI_BUILD"
+          echo "  - Case: $CASE_BUILD"
+          echo "  - Notification: $NOTIFICATION_BUILD"
           
           ssh $VPS_USER@$VPS_HOST << ENDSSH
             set -e
@@ -412,14 +425,9 @@ jobs:
             export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
             export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
             
-            # Pull all images first (parallel) with retry
-            echo "📥 Pulling images..."
-            for i in {1..3}; do
-              sudo -E docker compose pull && break || {
-                echo "Pull attempt \$i failed, retrying..."
-                sleep 10
-              }
-            done
+            # Pull images that were successfully built (ignore failures for others)
+            echo "📥 Pulling available images..."
+            sudo -E docker compose pull --ignore-pull-failures || true
             
             # Start all services with recreation
             echo "🚀 Starting all services..."

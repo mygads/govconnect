@@ -3,6 +3,9 @@
 # ===============================================
 FROM node:22-alpine AS deps
 
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
@@ -19,6 +22,9 @@ RUN pnpm install --frozen-lockfile
 # STAGE 2: Builder
 # ===============================================
 FROM node:22-alpine AS builder
+
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
 
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
