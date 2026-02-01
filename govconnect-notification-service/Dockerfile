@@ -67,14 +67,13 @@ COPY package.json pnpm-lock.yaml ./
 # Install production dependencies only
 RUN pnpm install --prod --frozen-lockfile
 
-# Copy prisma schema
+# Copy prisma schema and generated client from builder
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/.pnpm/@prisma+client* ./node_modules/.pnpm/
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
-
-# Generate Prisma client for production
-RUN pnpm prisma generate
 
 # Create logs directory
 RUN mkdir -p logs && chown -R notificationuser:nodejs /app

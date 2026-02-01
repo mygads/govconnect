@@ -407,9 +407,34 @@ jobs:
           echo "  - Case: $CASE_BUILD"
           echo "  - Notification: $NOTIFICATION_BUILD"
           
-          ssh $VPS_USER@$VPS_HOST << ENDSSH
+          # Build list of services to recreate (only those that were built successfully)
+          SERVICES_TO_RECREATE=""
+          if [ "$DASHBOARD_BUILD" == "success" ]; then
+            SERVICES_TO_RECREATE="$SERVICES_TO_RECREATE dashboard"
+          fi
+          if [ "$CHANNEL_BUILD" == "success" ]; then
+            SERVICES_TO_RECREATE="$SERVICES_TO_RECREATE channel-service"
+          fi
+          if [ "$AI_BUILD" == "success" ]; then
+            SERVICES_TO_RECREATE="$SERVICES_TO_RECREATE ai-service"
+          fi
+          if [ "$CASE_BUILD" == "success" ]; then
+            SERVICES_TO_RECREATE="$SERVICES_TO_RECREATE case-service"
+          fi
+          if [ "$NOTIFICATION_BUILD" == "success" ]; then
+            SERVICES_TO_RECREATE="$SERVICES_TO_RECREATE notification-service"
+          fi
+          
+          echo "📦 Services to recreate: $SERVICES_TO_RECREATE"
+          
+          # Export for SSH
+          export SERVICES_TO_RECREATE
+          
+          ssh $VPS_USER@$VPS_HOST "bash -s" << EOF
             set -e
             cd ~/genfity/govconnect
+            
+            SERVICES_TO_PULL="$SERVICES_TO_RECREATE"
             
             # Force pull latest changes (override local, no conflicts)
             git fetch origin main
@@ -425,23 +450,28 @@ jobs:
             export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
             export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
             
-            # Pull images that were successfully built (ignore failures for others)
-            echo "📥 Pulling available images..."
-            sudo -E docker compose pull --ignore-pull-failures || true
-            
-            # Start all services with recreation
-            echo "🚀 Starting all services..."
-            sudo -E docker compose up -d --force-recreate
+            # Pull only images that were built successfully
+            if [ -n "\$SERVICES_TO_PULL" ]; then
+              echo "📥 Pulling images for: \$SERVICES_TO_PULL"
+              sudo -E docker compose pull \$SERVICES_TO_PULL || true
+              
+              echo "🚀 Recreating services: \$SERVICES_TO_PULL"
+              sudo -E docker compose up -d --no-deps --force-recreate \$SERVICES_TO_PULL
+            else
+              echo "⚠️ No services to recreate, running all services"
+              sudo -E docker compose pull --ignore-pull-failures || true
+              sudo -E docker compose up -d
+            fi
             
             # Wait for services to start
-            sleep 30
+            sleep 15
             
             # Check container status
             echo "📊 Container status:"
             sudo docker compose ps
             
             echo "✅ Deployment complete!"
-          ENDSSH
+          EOF
 
       - name: Run Database Migrations
         env:
