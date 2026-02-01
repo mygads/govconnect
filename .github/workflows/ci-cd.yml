@@ -2,13 +2,13 @@
 # GOVCONNECT - CI/CD PIPELINE
 # ===================================================================================
 #
-# Build and deploy using docker compose
-# Config deployment ada di docker-compose.yml (single source of truth)
+# Smart build: Only builds services that have changes
+# Uses change detection to determine which services need rebuilding
 #
 # Required Secrets:
-#   - GHCR_TOKEN: GitHub Container Registry token
+#   - GHCR_TOKEN: GitHub Container Registry token (PAT with read:packages)
 #   - VPS_HOST, VPS_USER, VPS_SSH_KEY: SSH access
-#   - ENV_FILE: Production .env content
+#   - ENV_FILE: Production .env content (optional)
 #
 # ===================================================================================
 
@@ -17,15 +17,17 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
       deploy_only:
         description: 'Skip build, deploy existing images'
+        required: false
+        default: 'false'
+        type: boolean
+      force_build_all:
+        description: 'Force build all services'
         required: false
         default: 'false'
         type: boolean
@@ -36,31 +38,130 @@ env:
 
 jobs:
   # ===================================================================================
-  # BUILD JOBS
+  # DETECT CHANGES - Determine which services need to be built
   # ===================================================================================
-  build:
-    name: Build & Push Images
+  detect-changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.deploy_only != 'true' }}
+    outputs:
+      dashboard: ${{ steps.changes.outputs.dashboard }}
+      channel-service: ${{ steps.changes.outputs.channel-service }}
+      ai-service: ${{ steps.changes.outputs.ai-service }}
+      case-service: ${{ steps.changes.outputs.case-service }}
+      notification-service: ${{ steps.changes.outputs.notification-service }}
+      any-changed: ${{ steps.changes.outputs.any-changed }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes
+        id: changes
+        run: |
+          # Get the base commit for comparison
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BASE_SHA=${{ github.event.pull_request.base.sha }}
+          else
+            BASE_SHA=${{ github.event.before }}
+            # Handle initial commit or force push
+            if [ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]; then
+              BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+            fi
+          fi
+
+          # Force build all if requested or if we can't determine base
+          if [ "${{ github.event.inputs.force_build_all }}" == "true" ] || [ -z "$BASE_SHA" ]; then
+            echo "Force building all services"
+            echo "dashboard=true" >> $GITHUB_OUTPUT
+            echo "channel-service=true" >> $GITHUB_OUTPUT
+            echo "ai-service=true" >> $GITHUB_OUTPUT
+            echo "case-service=true" >> $GITHUB_OUTPUT
+            echo "notification-service=true" >> $GITHUB_OUTPUT
+            echo "any-changed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Comparing $BASE_SHA to HEAD"
+
+          # Check each service for changes
+          check_changes() {
+            local service=$1
+            local path=$2
+            if git diff --name-only $BASE_SHA HEAD | grep -q "^$path/"; then
+              echo "true"
+            else
+              echo "false"
+            fi
+          }
+
+          # Also check shared folder and root docker-compose for all services
+          SHARED_CHANGED=$(git diff --name-only $BASE_SHA HEAD | grep -q "^shared/" && echo "true" || echo "false")
+          COMPOSE_CHANGED=$(git diff --name-only $BASE_SHA HEAD | grep -q "^docker-compose.yml" && echo "true" || echo "false")
+
+          # Dashboard
+          DASHBOARD=$(check_changes "dashboard" "govconnect-dashboard")
+          if [ "$SHARED_CHANGED" == "true" ] || [ "$COMPOSE_CHANGED" == "true" ]; then DASHBOARD="true"; fi
+          echo "dashboard=$DASHBOARD" >> $GITHUB_OUTPUT
+          echo "Dashboard changed: $DASHBOARD"
+
+          # Channel Service
+          CHANNEL=$(check_changes "channel-service" "govconnect-channel-service")
+          if [ "$SHARED_CHANGED" == "true" ] || [ "$COMPOSE_CHANGED" == "true" ]; then CHANNEL="true"; fi
+          echo "channel-service=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "Channel Service changed: $CHANNEL"
+
+          # AI Service
+          AI=$(check_changes "ai-service" "govconnect-ai-service")
+          if [ "$SHARED_CHANGED" == "true" ] || [ "$COMPOSE_CHANGED" == "true" ]; then AI="true"; fi
+          echo "ai-service=$AI" >> $GITHUB_OUTPUT
+          echo "AI Service changed: $AI"
+
+          # Case Service
+          CASE=$(check_changes "case-service" "govconnect-case-service")
+          if [ "$SHARED_CHANGED" == "true" ] || [ "$COMPOSE_CHANGED" == "true" ]; then CASE="true"; fi
+          echo "case-service=$CASE" >> $GITHUB_OUTPUT
+          echo "Case Service changed: $CASE"
+
+          # Notification Service
+          NOTIFICATION=$(check_changes "notification-service" "govconnect-notification-service")
+          if [ "$SHARED_CHANGED" == "true" ] || [ "$COMPOSE_CHANGED" == "true" ]; then NOTIFICATION="true"; fi
+          echo "notification-service=$NOTIFICATION" >> $GITHUB_OUTPUT
+          echo "Notification Service changed: $NOTIFICATION"
+
+          # Check if any service changed
+          if [ "$DASHBOARD" == "true" ] || [ "$CHANNEL" == "true" ] || [ "$AI" == "true" ] || [ "$CASE" == "true" ] || [ "$NOTIFICATION" == "true" ]; then
+            echo "any-changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "any-changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate change summary
+        run: |
+          echo "## 🔍 Change Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Changed |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Dashboard | ${{ steps.changes.outputs.dashboard }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Channel Service | ${{ steps.changes.outputs.channel-service }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| AI Service | ${{ steps.changes.outputs.ai-service }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Case Service | ${{ steps.changes.outputs.case-service }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Notification Service | ${{ steps.changes.outputs.notification-service }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ===================================================================================
+  # BUILD JOBS - Only build services that have changes
+  # ===================================================================================
+  build-dashboard:
+    name: Build Dashboard
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.dashboard == 'true' }}
     permissions:
       contents: read
       packages: write
     
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - name: dashboard
-            context: ./govconnect-dashboard
-          - name: channel-service
-            context: ./govconnect-channel-service
-          - name: ai-service
-            context: ./govconnect-ai-service
-          - name: case-service
-            context: ./govconnect-case-service
-          - name: notification-service
-            context: ./govconnect-notification-service
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -75,16 +176,160 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push ${{ matrix.service.name }}
+      - name: Build and push Dashboard
         uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.service.context }}
+          context: ./govconnect-dashboard
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}:${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.service.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-dashboard:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-dashboard:${{ github.sha }}
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard
+          build-args: |
+            NODE_ENV=production
+
+  build-channel-service:
+    name: Build Channel Service
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.channel-service == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Channel Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./govconnect-channel-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-channel-service:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-channel-service:${{ github.sha }}
+          cache-from: type=gha,scope=channel-service
+          cache-to: type=gha,mode=max,scope=channel-service
+          build-args: |
+            NODE_ENV=production
+
+  build-ai-service:
+    name: Build AI Service
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.ai-service == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push AI Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./govconnect-ai-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ai-service:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ai-service:${{ github.sha }}
+          cache-from: type=gha,scope=ai-service
+          cache-to: type=gha,mode=max,scope=ai-service
+          build-args: |
+            NODE_ENV=production
+
+  build-case-service:
+    name: Build Case Service
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.case-service == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Case Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./govconnect-case-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-case-service:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-case-service:${{ github.sha }}
+          cache-from: type=gha,scope=case-service
+          cache-to: type=gha,mode=max,scope=case-service
+          build-args: |
+            NODE_ENV=production
+
+  build-notification-service:
+    name: Build Notification Service
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.notification-service == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Notification Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./govconnect-notification-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-notification-service:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-notification-service:${{ github.sha }}
+          cache-from: type=gha,scope=notification-service
+          cache-to: type=gha,mode=max,scope=notification-service
           build-args: |
             NODE_ENV=production
 
@@ -94,11 +339,16 @@ jobs:
   deploy:
     name: Deploy to VPS
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [detect-changes, build-dashboard, build-channel-service, build-ai-service, build-case-service, build-notification-service]
     if: |
       always() && 
-      (needs.build.result == 'success' || github.event.inputs.deploy_only == 'true') &&
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/main' &&
+      (github.event.inputs.deploy_only == 'true' || needs.detect-changes.outputs.any-changed == 'true') &&
+      (needs.build-dashboard.result == 'success' || needs.build-dashboard.result == 'skipped') &&
+      (needs.build-channel-service.result == 'success' || needs.build-channel-service.result == 'skipped') &&
+      (needs.build-ai-service.result == 'success' || needs.build-ai-service.result == 'skipped') &&
+      (needs.build-case-service.result == 'success' || needs.build-case-service.result == 'skipped') &&
+      (needs.build-notification-service.result == 'success' || needs.build-notification-service.result == 'skipped')
     environment: production
 
     steps:
@@ -142,7 +392,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
-          echo "� Deployging GovConnect to VPS..."
+          echo "🚀 Deploying GovConnect to VPS..."
           
           ssh $VPS_USER@$VPS_HOST << ENDSSH
             set -e
@@ -171,11 +421,7 @@ jobs:
               }
             done
             
-            # Stop old containers gracefully
-            echo "🛑 Stopping old containers..."
-            sudo -E docker compose down --remove-orphans || true
-            
-            # Start all services
+            # Start all services with recreation
             echo "🚀 Starting all services..."
             sudo -E docker compose up -d --force-recreate
             
@@ -185,10 +431,6 @@ jobs:
             # Check container status
             echo "📊 Container status:"
             sudo docker compose ps
-            
-            # Cleanup old images
-            echo "🧹 Cleaning up..."
-            sudo docker image prune -af --filter "until=24h" 2>/dev/null || true
             
             echo "✅ Deployment complete!"
           ENDSSH
@@ -224,14 +466,14 @@ jobs:
             # Run migrations for dashboard (has Prisma)
             if sudo docker compose ps dashboard | grep -q "running"; then
               echo "📦 Running Dashboard migrations..."
-              sudo docker compose exec dashboard sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" || echo "⚠️ Dashboard migration completed with warnings"
+              sudo docker compose exec -T dashboard sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" 2>&1 || echo "⚠️ Dashboard migration completed with warnings"
             fi
             
             # Run migrations for other services if they have Prisma
             for service in channel-service ai-service case-service notification-service; do
-              if sudo docker compose ps \$service | grep -q "running"; then
-                echo "📦 Running \$service migrations..."
-                sudo docker compose exec \$service sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" || echo "⚠️ \$service migration completed with warnings"
+              if sudo docker compose ps $service | grep -q "running"; then
+                echo "📦 Running $service migrations..."
+                sudo docker compose exec -T $service sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" 2>&1 || echo "⚠️ $service migration completed with warnings"
               fi
             done
             
@@ -250,19 +492,19 @@ jobs:
             echo "Checking services..."
             
             # Check Dashboard
-            curl -sf http://localhost:3011/api/health && echo "✅ Dashboard OK" || echo "❌ Dashboard FAILED"
+            curl -sf http://localhost:3011/api/health && echo " ✅ Dashboard OK" || echo " ❌ Dashboard FAILED"
             
             # Check Channel Service
-            curl -sf http://localhost:3001/health && echo "✅ Channel OK" || echo "❌ Channel FAILED"
+            curl -sf http://localhost:3001/health && echo " ✅ Channel OK" || echo " ❌ Channel FAILED"
             
             # Check AI Service
-            curl -sf http://localhost:3002/health && echo "✅ AI OK" || echo "❌ AI FAILED"
+            curl -sf http://localhost:3002/health && echo " ✅ AI OK" || echo " ❌ AI FAILED"
             
             # Check Case Service
-            curl -sf http://localhost:3003/health && echo "✅ Case OK" || echo "❌ Case FAILED"
+            curl -sf http://localhost:3003/health && echo " ✅ Case OK" || echo " ❌ Case FAILED"
             
             # Check Notification Service
-            curl -sf http://localhost:3004/health && echo "✅ Notification OK" || echo "❌ Notification FAILED"
+            curl -sf http://localhost:3004/health && echo " ✅ Notification OK" || echo " ❌ Notification FAILED"
             
             # Show container status and memory usage
             echo ""
@@ -281,19 +523,19 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Services Deployed:**" >> $GITHUB_STEP_SUMMARY
           echo "- Dashboard: https://govconnect.my.id" >> $GITHUB_STEP_SUMMARY
-          echo "- Case Service: https://case.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
           echo "- Channel Service: https://channel.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
           echo "- AI Service: https://ai.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
+          echo "- Case Service: https://case.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
           echo "- Notification Service: https://notification.govconnect.my.id" >> $GITHUB_STEP_SUMMARY
 
   # ===================================================================================
-  # CLEANUP JOB (Runs regardless of success/failure)
+  # CLEANUP JOB
   # ===================================================================================
   cleanup:
     name: Cleanup Old Resources
     runs-on: ubuntu-latest
     needs: [deploy]
-    if: always()
+    if: always() && needs.deploy.result == 'success'
     
     steps:
       - name: Setup SSH
@@ -312,5 +554,6 @@ jobs:
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             echo "🧹 Running scheduled cleanup..."
             sudo docker system prune -f --filter "until=24h"
+            sudo docker image prune -af --filter "until=48h"
             echo "✅ Cleanup complete!"
           ENDSSH
