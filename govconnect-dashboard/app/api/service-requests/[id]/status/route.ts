@@ -30,7 +30,13 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       return NextResponse.json({ error: 'status is required' }, { status: 400 })
     }
 
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/service-requests/${id}/status`), {
+    // Build URL with village_id for multi-tenancy validation
+    const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}/status`))
+    if (session.admin.village_id) {
+      url.searchParams.set('village_id', session.admin.village_id)
+    }
+
+    const response = await apiFetch(url.toString(), {
       method: 'PATCH',
       headers: getHeaders(),
       body: JSON.stringify({ 

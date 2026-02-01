@@ -108,11 +108,12 @@ export const caseService = {
   /**
    * Get laporan list
    */
-  async getLaporan(params?: { status?: string; limit?: string; offset?: string }) {
+  async getLaporan(params?: { status?: string; limit?: string; offset?: string; village_id?: string }) {
     const url = new URL(buildUrl(ServicePath.CASE, '/laporan'));
     if (params?.status) url.searchParams.set('status', params.status);
     if (params?.limit) url.searchParams.set('limit', params.limit);
     if (params?.offset) url.searchParams.set('offset', params.offset);
+    if (params?.village_id) url.searchParams.set('village_id', params.village_id);
     
     return apiFetch(url.toString(), {
       headers: getHeaders(),
@@ -122,8 +123,12 @@ export const caseService = {
   /**
    * Get laporan by ID
    */
-  async getLaporanById(id: string) {
-    return apiFetch(buildUrl(ServicePath.CASE, `/laporan/${id}`), {
+  async getLaporanById(id: string, village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, `/laporan/${id}`));
+    if (village_id) {
+      url.searchParams.set('village_id', village_id);
+    }
+    return apiFetch(url.toString(), {
       headers: getHeaders(),
     });
   },
@@ -131,8 +136,12 @@ export const caseService = {
   /**
    * Update laporan status
    */
-  async updateLaporanStatus(id: string, data: { status: string; notes?: string }) {
-    return apiFetch(buildUrl(ServicePath.CASE, `/laporan/${id}/status`), {
+  async updateLaporanStatus(id: string, data: { status: string; notes?: string }, village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, `/laporan/${id}/status`));
+    if (village_id) {
+      url.searchParams.set('village_id', village_id);
+    }
+    return apiFetch(url.toString(), {
       method: 'PATCH',
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -177,8 +186,11 @@ export const caseService = {
   /**
    * Get statistics overview
    */
-  async getOverview() {
-    return apiFetch(buildUrl(ServicePath.CASE, '/statistics/overview'), {
+  async getOverview(params?: { village_id?: string }) {
+    const url = new URL(buildUrl(ServicePath.CASE, '/statistics/overview'));
+    if (params?.village_id) url.searchParams.set('village_id', params.village_id);
+    
+    return apiFetch(url.toString(), {
       headers: getHeaders(),
       timeout: 25000,
     });
@@ -187,8 +199,12 @@ export const caseService = {
   /**
    * Get statistics trends
    */
-  async getTrends(period: string = 'week') {
-    return apiFetch(buildUrl(ServicePath.CASE, `/statistics/trends?period=${period}`), {
+  async getTrends(period: string = 'week', village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, '/statistics/trends'));
+    url.searchParams.set('period', period);
+    if (village_id) url.searchParams.set('village_id', village_id);
+    
+    return apiFetch(url.toString(), {
       headers: getHeaders(),
     });
   },

@@ -420,6 +420,19 @@ export async function handleUpdateServiceRequestStatus(req: Request, res: Respon
     if (!id) {
       return res.status(400).json({ error: 'id is required' });
     }
+    
+    // Validate village_id for multi-tenancy security
+    const village_id = getQuery(req, 'village_id') || undefined;
+    if (village_id) {
+      const request = await prisma.serviceRequest.findFirst({
+        where: { OR: [{ id }, { request_number: id }] },
+        include: { service: true },
+      });
+      if (request && request.service?.village_id !== village_id) {
+        return res.status(404).json({ error: 'Service request not found' });
+      }
+    }
+    
     const { status, admin_notes, result_file_url, result_file_name, result_description } = req.body;
     const normalizedStatus = (status || '').toString().toUpperCase();
 

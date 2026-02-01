@@ -147,7 +147,7 @@ export async function handleGetComplaints(req: Request, res: Response) {
 
 /**
  * GET /laporan/:id
- * Get complaint by ID (for admin/dashboard - no ownership check)
+ * Get complaint by ID (for admin/dashboard - validates village_id for multi-tenancy)
  */
 export async function handleGetComplaintById(req: Request, res: Response) {
   try {
@@ -155,7 +155,10 @@ export async function handleGetComplaintById(req: Request, res: Response) {
     if (!id) {
       return res.status(400).json({ error: 'id is required' });
     }
-    const complaint = await getComplaintById(id);
+    
+    // Get village_id from query param for multi-tenancy validation
+    const village_id = getQuery(req, 'village_id') || undefined;
+    const complaint = await getComplaintById(id, village_id);
     
     if (!complaint) {
       return res.status(404).json({ error: 'Complaint not found' });
@@ -215,7 +218,7 @@ export async function handleCheckComplaintStatus(req: Request, res: Response) {
 
 /**
  * PATCH /laporan/:id/status
- * Update complaint status (from Dashboard)
+ * Update complaint status (from Dashboard - validates village_id for multi-tenancy)
  */
 export async function handleUpdateComplaintStatus(req: Request, res: Response) {
   try {
@@ -223,6 +226,16 @@ export async function handleUpdateComplaintStatus(req: Request, res: Response) {
     if (!id) {
       return res.status(400).json({ error: 'id is required' });
     }
+    
+    // Validate village_id for multi-tenancy security
+    const village_id = getQuery(req, 'village_id') || undefined;
+    if (village_id) {
+      const complaint = await getComplaintById(id);
+      if (complaint && complaint.village_id !== village_id) {
+        return res.status(404).json({ error: 'Complaint not found' });
+      }
+    }
+    
     const { status, admin_notes } = req.body;
     const normalizedStatus = (status || '').toString().toUpperCase();
 

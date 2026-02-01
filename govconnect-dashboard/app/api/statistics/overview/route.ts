@@ -1,23 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { caseService } from '@/lib/api-client'
 
 export async function GET(request: NextRequest) {
   try {
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    const token = request.cookies.get('token')?.value || authHeader?.replace('Bearer ', '')
-    if (!token) {
+    // Get admin session with village_id
+    const session = await getAdminSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
+
+    // Get village_id from session (required for village_admin, optional for superadmin)
+    const villageId = resolveVillageId(request, session)
 
     // Try to forward request to case service
     try {
-      const response = await caseService.getOverview()
+      const response = await caseService.getOverview({ 
+        village_id: villageId || undefined 
+      })
 
       if (response.ok) {
         const data = await response.json()

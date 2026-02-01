@@ -141,8 +141,9 @@ export async function createComplaint(data: CreateComplaintData) {
 
 /**
  * Get complaint by ID (supports both database id and complaint_id)
+ * If village_id is provided, validates that the complaint belongs to that village
  */
-export async function getComplaintById(id: string) {
+export async function getComplaintById(id: string, village_id?: string) {
   // Try to find by complaint_id first (e.g., LAP-20251201-001)
   let complaint = await prisma.complaint.findUnique({
     where: { complaint_id: id },
@@ -163,6 +164,11 @@ export async function getComplaintById(id: string) {
         type: true,
       },
     });
+  }
+  
+  // Validate village_id if provided (multi-tenancy security)
+  if (complaint && village_id && complaint.village_id !== village_id) {
+    return null; // Return null if complaint doesn't belong to the admin's village
   }
   
   return complaint;

@@ -13,6 +13,7 @@ import { sanitizeUserInput } from './context-builder.service';
 import { applyTypoCorrections } from './text-normalizer.service';
 import { getImportantContacts, ImportantContact } from './important-contacts.service';
 import { ProcessMessageResult } from './unified-message-processor.service';
+import { getProfile, updateProfile } from './user-profile.service';
 import { 
   handleComplaintCreation,
   handleServiceInfo,
@@ -24,6 +25,68 @@ import {
 } from './unified-message-processor.service';
 import axios from 'axios';
 import { config } from '../config/env';
+
+// ==================== PENDING NAME REQUEST ====================
+// Store pending intents when waiting for user's name
+interface PendingNameRequest {
+  intent: string;
+  nluOutput: NLUOutput;
+  context: ProcessingContext;
+  timestamp: number;
+}
+
+const pendingNameRequests = new Map<string, PendingNameRequest>();
+const NAME_REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// Cleanup old pending requests periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, pending] of pendingNameRequests.entries()) {
+    if (now - pending.timestamp > NAME_REQUEST_TIMEOUT_MS) {
+      pendingNameRequests.delete(userId);
+      logger.debug('Cleaned up expired pending name request', { userId });
+    }
+  }
+}, 60000); // Check every minute
+
+// Intents that require user name before proceeding
+const INTENTS_REQUIRING_NAME = ['CREATE_COMPLAINT', 'CREATE_SERVICE_REQUEST'];
+
+/**
+ * Check if user needs to provide name before proceeding with intent
+ */
+function needsNameForIntent(userId: string, intent: string): boolean {
+  if (!INTENTS_REQUIRING_NAME.includes(intent)) {
+    return false;
+  }
+  
+  const profile = getProfile(userId);
+  return !profile.nama_lengkap;
+}
+
+/**
+ * Try to extract name from user message (simple patterns)
+ */
+function extractNameFromMessage(message: string): string | null {
+  const patterns = [
+    /^(?:nama\s+(?:saya|aku|gue|gw)\s+(?:adalah\s+)?)?([A-Za-z][A-Za-z\s]{1,29})$/i,
+    /^([A-Za-z][A-Za-z\s]{1,29})$/i, // Just a name
+  ];
+  
+  const cleanMessage = message.trim();
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim();
+      // Validate it's a reasonable name (not common words)
+      const commonWords = ['ya', 'tidak', 'oke', 'ok', 'baik', 'siap', 'halo', 'hai', 'hi', 'iya', 'enggak', 'gak'];
+      if (!commonWords.includes(name.toLowerCase()) && name.length >= 2) {
+        return name;
+      }
+    }
+  }
+  return null;
+}
 
 interface WebchatNLUInput {
   userId: string;
@@ -62,6 +125,54 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
     // Step 1: Sanitize and preprocess
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = applyTypoCorrections(sanitizedMessage);
+
+    // Step 1.5: Check if we're waiting for user's name
+    const pendingRequest = pendingNameRequests.get(userId);
+    if (pendingRequest) {
+      // Try to extract name from this message
+      const extractedName = extractNameFromMessage(sanitizedMessage) || 
+        pendingRequest.nluOutput.extracted_data?.nama_lengkap;
+      
+      if (extractedName) {
+        // Save the name to profile
+        updateProfile(userId, { nama_lengkap: extractedName });
+        logger.info('✅ User name saved from pending request', { userId, nama: extractedName });
+        
+        // Remove pending request
+        pendingNameRequests.delete(userId);
+        
+        // Update context with name
+        if (pendingRequest.nluOutput.extracted_data) {
+          pendingRequest.nluOutput.extracted_data.nama_lengkap = extractedName;
+        }
+        
+        // Now proceed with the original intent
+        const response = await handleNLUIntent(pendingRequest.nluOutput, pendingRequest.context);
+        
+        return {
+          success: true,
+          response: `Terima kasih, ${extractedName}.\n\n${response}`,
+          intent: pendingRequest.intent,
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            model: 'nlu',
+            hasKnowledge: !!pendingRequest.context.rag_context,
+          },
+        };
+      } else {
+        // User didn't provide a valid name, ask again
+        return {
+          success: true,
+          response: 'Mohon maaf, saya tidak menangkap nama Anda. Boleh disebutkan nama lengkap Anda?',
+          intent: 'ASK_NAME',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            model: 'pending-name',
+            hasKnowledge: false,
+          },
+        };
+      }
+    }
 
     // Step 2: Quick intent check (no LLM needed for simple patterns)
     const quickResult = quickIntentCheck(sanitizedMessage);
@@ -124,6 +235,41 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
       intent: nluOutput.intent,
       confidence: nluOutput.confidence,
     });
+
+    // Step 4.5: Check if intent requires name and user hasn't provided one
+    // First check if NLU extracted a name from current message
+    if (nluOutput.extracted_data?.nama_lengkap) {
+      updateProfile(userId, { nama_lengkap: nluOutput.extracted_data.nama_lengkap });
+      logger.info('✅ User name extracted from NLU', { userId, nama: nluOutput.extracted_data.nama_lengkap });
+    }
+    
+    // Now check if we need name for this intent
+    if (needsNameForIntent(userId, nluOutput.intent)) {
+      // Store pending request and ask for name
+      pendingNameRequests.set(userId, {
+        intent: nluOutput.intent,
+        nluOutput,
+        context,
+        timestamp: Date.now(),
+      });
+      
+      logger.info('📝 Name required for intent, asking user', { 
+        userId, 
+        intent: nluOutput.intent,
+      });
+      
+      const intentLabel = nluOutput.intent === 'CREATE_COMPLAINT' ? 'pengaduan' : 'pengajuan layanan';
+      return {
+        success: true,
+        response: `Sebelum melanjutkan ${intentLabel}, boleh saya tahu nama lengkap Bapak/Ibu?`,
+        intent: 'ASK_NAME',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          model: 'nlu',
+          hasKnowledge: !!context.rag_context,
+        },
+      };
+    }
 
     // Step 5: Handle based on NLU intent
     const response = await handleNLUIntent(nluOutput, context);
