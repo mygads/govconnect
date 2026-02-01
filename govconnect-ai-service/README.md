@@ -1,5 +1,7 @@
 # GovConnect AI Orchestrator Service
 
+<!-- CI/CD Trigger: 2026-02-01-v2 - Force rebuild -->
+
 ## 🎯 Overview
 
 AI Orchestrator Service adalah **stateless service** yang bertanggung jawab untuk:

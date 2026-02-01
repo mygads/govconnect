@@ -1,5 +1,7 @@
 # GovConnect Channel Service
 
+<!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix -->
+
 ## Overview
 
 Channel Service handles communication channels for the GovConnect platform, including:

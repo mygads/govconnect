@@ -69,8 +69,21 @@ RUN pnpm install --prod --frozen-lockfile
 
 # Copy prisma schema and generated client from builder
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.pnpm/@prisma+client* ./node_modules/.pnpm/
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Copy entire .pnpm directory for Prisma dependencies
+COPY --from=builder /app/node_modules/.pnpm ./node_modules/.pnpm
+
+# Ensure Prisma client is resolvable (pnpm symlink layout)
+RUN set -e; \
+    mkdir -p node_modules/@prisma; \
+    for pkg_dir in node_modules/.pnpm/@prisma+client@*; do \
+        [ -d "$pkg_dir/node_modules/@prisma" ] || continue; \
+        for pkg_path in "$pkg_dir"/node_modules/@prisma/*; do \
+            name="$(basename "$pkg_path")"; \
+            [ -e "node_modules/@prisma/$name" ] || ln -sf "../.pnpm/$(basename "$pkg_dir")/node_modules/@prisma/$name" "node_modules/@prisma/$name"; \
+        done; \
+    done
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist

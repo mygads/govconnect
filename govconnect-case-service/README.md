@@ -1,5 +1,7 @@
 # GovConnect Case Service
 
+<!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix -->
+
 Service 3: REST API untuk manajemen laporan (complaints) dan permohonan layanan (service requests).
 
 ## 📋 Overview
