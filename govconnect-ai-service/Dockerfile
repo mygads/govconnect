@@ -79,20 +79,20 @@ USER aiuser
 
 EXPOSE 3002
 
-# Create entrypoint script with auto-migration
+# Create entrypoint script with auto-migration (pin Prisma CLI to match @prisma/client version)
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'set -e' >> /app/entrypoint.sh && \
     echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
     echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
     echo '  if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
     echo '    echo "📦 Running migrate deploy..."' >> /app/entrypoint.sh && \
-    echo '    npx prisma migrate deploy 2>&1 || {' >> /app/entrypoint.sh && \
+    echo '    npx prisma@6.19.0 migrate deploy 2>&1 || {' >> /app/entrypoint.sh && \
     echo '      echo "⚠️ Migration failed, trying db push..."' >> /app/entrypoint.sh && \
-    echo '      npx prisma db push --skip-generate --accept-data-loss 2>&1 || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '      npx prisma@6.19.0 db push --skip-generate --accept-data-loss 2>&1 || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
     echo '    }' >> /app/entrypoint.sh && \
     echo '  else' >> /app/entrypoint.sh && \
     echo '    echo "📦 No migrations found, running db push..."' >> /app/entrypoint.sh && \
-    echo '    npx prisma db push --skip-generate --accept-data-loss 2>&1 || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '    npx prisma@6.19.0 db push --skip-generate --accept-data-loss 2>&1 || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
     echo '  fi' >> /app/entrypoint.sh && \
     echo 'else' >> /app/entrypoint.sh && \
     echo '  echo "⚠️ DATABASE_URL not set, skipping migrations"' >> /app/entrypoint.sh && \
