@@ -370,13 +370,36 @@ export async function deleteConversationHistory(
       where,
     });
 
-    // Delete all takeover sessions for this user using raw query
+    // Delete all takeover sessions and conversations for this user
+    // Use Prisma methods instead of raw queries to avoid enum type casting issues
     if (resolvedVillageId) {
-      await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE village_id = ${resolvedVillageId} AND channel = ${channel} AND channel_identifier = ${channel_identifier}`;
-      await prisma.$executeRaw`DELETE FROM conversations WHERE village_id = ${resolvedVillageId} AND channel = ${channel} AND channel_identifier = ${channel_identifier}`;
+      await prisma.takeoverSession.deleteMany({
+        where: {
+          village_id: resolvedVillageId,
+          channel,
+          channel_identifier,
+        },
+      });
+      await prisma.conversation.deleteMany({
+        where: {
+          village_id: resolvedVillageId,
+          channel,
+          channel_identifier,
+        },
+      });
     } else {
-      await prisma.$executeRaw`DELETE FROM takeover_sessions WHERE channel = ${channel} AND channel_identifier = ${channel_identifier}`;
-      await prisma.$executeRaw`DELETE FROM conversations WHERE channel = ${channel} AND channel_identifier = ${channel_identifier}`;
+      await prisma.takeoverSession.deleteMany({
+        where: {
+          channel,
+          channel_identifier,
+        },
+      });
+      await prisma.conversation.deleteMany({
+        where: {
+          channel,
+          channel_identifier,
+        },
+      });
     }
 
     logger.info('Deleted conversation history', { channel, channel_identifier });
