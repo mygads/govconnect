@@ -22,6 +22,8 @@ services:
       - "127.0.0.1:3001:3001"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL_CHANNEL}
     volumes:
       - channel-uploads:/app/uploads
     extra_hosts:
@@ -50,6 +52,8 @@ services:
       - "127.0.0.1:3002:3002"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL_AI}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -76,6 +80,8 @@ services:
       - "127.0.0.1:3003:3003"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL_CASE}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -102,6 +108,8 @@ services:
       - "127.0.0.1:3004:3004"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL_NOTIFICATION}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -128,6 +136,8 @@ services:
       - "127.0.0.1:${DASHBOARD_PORT:-3000}:3000"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL_DASHBOARD}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
