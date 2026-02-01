@@ -1591,16 +1591,16 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       const wantsEmergency = /(pemadam|damkar|kebakaran|polisi|ambulans|ambulan|rs|rumah\s*sakit|pln|listrik|bpbd|bencana)/i.test(normalizedQuery);
 
       const keywordTargets = [
-        { pattern: /(pemadam|damkar|kebakaran)/i, label: 'pemadam kebakaran' },
-        { pattern: /(polisi)/i, label: 'polisi' },
-        { pattern: /(ambulans|ambulan|rumah\s*sakit|rs)/i, label: 'ambulans' },
-        { pattern: /(pln|listrik)/i, label: 'PLN' },
-        { pattern: /(bpbd|bencana)/i, label: 'BPBD' },
+        { pattern: /(pemadam|damkar|kebakaran)/i, searchLabel: 'pemadam|kebakaran|damkar', displayLabel: 'pemadam kebakaran' },
+        { pattern: /(polisi)/i, searchLabel: 'polisi', displayLabel: 'polisi' },
+        { pattern: /(ambulans|ambulan|rumah\s*sakit|rs)/i, searchLabel: 'ambulan|ambulans|rs|rumah sakit', displayLabel: 'ambulan' },
+        { pattern: /(pln|listrik)/i, searchLabel: 'pln|listrik', displayLabel: 'PLN' },
+        { pattern: /(bpbd|bencana)/i, searchLabel: 'bpbd|bencana', displayLabel: 'BPBD' },
       ];
 
-      const matchedKeywords = keywordTargets
-        .filter(k => k.pattern.test(normalizedQuery))
-        .map(k => k.label);
+      const matchedTargets = keywordTargets.filter(k => k.pattern.test(normalizedQuery));
+      const matchedSearchLabels = matchedTargets.map(k => k.searchLabel);
+      const matchedDisplayLabels = matchedTargets.map(k => k.displayLabel);
 
       const categoryName = wantsPengaduan ? 'Pengaduan' : wantsPelayanan ? 'Pelayanan' : null;
       let contacts = await getImportantContacts(villageId || '', categoryName);
@@ -1608,8 +1608,9 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
         contacts = await getImportantContacts(villageId || '');
       }
 
-      if (contacts && contacts.length > 0 && matchedKeywords.length > 0) {
-        const keywordRegex = new RegExp(matchedKeywords.map(k => k.replace(/\s+/g, '\\s+')).join('|'), 'i');
+
+      if (contacts && contacts.length > 0 && matchedSearchLabels.length > 0) {
+        const keywordRegex = new RegExp(matchedSearchLabels.map(k => k.replace(/\s+/g, '\\s+')).join('|'), 'i');
         contacts = contacts.filter(c => {
           const name = (c.name || '').toLowerCase();
           const desc = (c.description || '').toLowerCase();
@@ -1628,8 +1629,8 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       if (villageId) {
         const knowledgeResult = await searchKnowledge(message, categories, villageId);
         const kbContext = knowledgeResult?.context || '';
-        if (matchedKeywords.length > 0) {
-          const keywordRegex = new RegExp(matchedKeywords.map(k => k.replace(/\s+/g, '\\s+')).join('|'), 'i');
+        if (matchedSearchLabels.length > 0) {
+          const keywordRegex = new RegExp(matchedSearchLabels.map(k => k.replace(/\s+/g, '\\s+')).join('|'), 'i');
           const lines = kbContext.split(/\r?\n/).filter(line => keywordRegex.test(line));
           kbPhoneCandidates = extractPhoneNumbers(lines.join('\n'));
         } else {
@@ -1640,7 +1641,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       const kbUnique = kbPhoneCandidates.filter(phone => !dbPhoneSet.has(phone));
 
       if ((!contacts || contacts.length === 0) && kbUnique.length === 0) {
-        const keywordHint = matchedKeywords.length > 0 ? ` untuk ${matchedKeywords.join(' / ')}` : '';
+        const keywordHint = matchedDisplayLabels.length > 0 ? ` untuk ${matchedDisplayLabels.join(' / ')}` : '';
         return `Mohon maaf Pak/Bu, informasi nomor penting${keywordHint} di ${officeName} belum tersedia.`;
       }
 
