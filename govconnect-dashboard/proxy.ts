@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server'
 import { verifyToken } from './lib/auth'
 import { isRouteAllowed, type AdminRole } from './lib/rbac'
 
-const PUBLIC_PATHS = ['/login', '/register', '/form', '/api/public']
+const PUBLIC_PATHS = ['/login', '/register', '/form', '/api/public', '/api/webchat']
 const AUTH_API_PATHS = ['/api/auth']
 // Internal API paths that use x-internal-api-key instead of JWT
 const INTERNAL_API_PATHS = ['/api/internal']
