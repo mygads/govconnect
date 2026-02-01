@@ -94,6 +94,7 @@ export const validateSendMessage = [
 /**
  * Validate get messages query
  * Accepts both Indonesian phone numbers (628xxx) and webchat session IDs (web_xxx)
+ * Supports both wa_user_id and channel_identifier query params
  */
 export const validateGetMessages = [
   query('village_id')
@@ -101,8 +102,10 @@ export const validateGetMessages = [
     .isString()
     .isLength({ min: 1, max: 100 }),
   query('wa_user_id')
+    .optional()
     .isString()
     .custom((value) => {
+      if (!value) return true;
       // Accept Indonesian phone number format
       if (/^628\d{8,12}$/.test(value)) {
         return true;
@@ -113,6 +116,34 @@ export const validateGetMessages = [
       }
       throw new Error('wa_user_id must be valid Indonesian phone number or webchat session ID');
     }),
+  query('channel_identifier')
+    .optional()
+    .isString()
+    .custom((value) => {
+      if (!value) return true;
+      // Accept Indonesian phone number format
+      if (/^628\d{8,12}$/.test(value)) {
+        return true;
+      }
+      // Accept webchat session ID format (web_xxx)
+      if (/^web_[a-z0-9_]+$/i.test(value)) {
+        return true;
+      }
+      throw new Error('channel_identifier must be valid Indonesian phone number or webchat session ID');
+    }),
+  // Custom validation: at least one of wa_user_id or channel_identifier must be provided
+  (req: any, res: any, next: any) => {
+    const waUserId = req.query?.wa_user_id;
+    const channelIdentifier = req.query?.channel_identifier;
+    if (!waUserId && !channelIdentifier) {
+      return res.status(400).json({
+        error: 'Either wa_user_id or channel_identifier query parameter is required',
+        messages: [],
+        total: 0,
+      });
+    }
+    next();
+  },
   query('limit')
     .optional()
     .isInt({ min: 1, max: 100 })

@@ -62,6 +62,7 @@ export interface NLUOutput {
     | 'UPDATE_DATA'        // Update data (alamat, nama, dll)
     | 'HISTORY'            // Lihat riwayat
     | 'CONFIRMATION'       // Ya/tidak/oke response
+    | 'ASK_ABOUT_CONVERSATION' // Pertanyaan tentang percakapan sebelumnya
     | 'UNKNOWN';           // Tidak jelas
 
   confidence: number; // 0.0 - 1.0
@@ -159,11 +160,16 @@ Tugasmu adalah MEMAHAMI maksud pengguna dari pesan mereka dan mengembalikan outp
 10. **HISTORY** - Lihat riwayat
 
 ### Lainnya:
-11. **GREETING** - Salam, halo
+11. **GREETING** - Salam, halo, perkenalan diri
+    - JIKA user memperkenalkan diri (misal: "halo saya yoga", "saya budi"), EKSTRAK NAMA ke extracted_data.nama_lengkap
 12. **THANKS** - Terima kasih
 13. **CONFIRMATION** - Ya/tidak
 14. **UPDATE_DATA** - Update data
-15. **UNKNOWN** - Tidak jelas
+15. **ASK_ABOUT_CONVERSATION** - Pertanyaan tentang percakapan sebelumnya
+    - Contoh: "siapa saya?", "apa yang saya tanyakan tadi?", "tadi saya bilang apa?"
+    - WAJIB jawab dari Riwayat Percakapan jika ada
+    - Isi suggested_answer dengan jawaban dari riwayat
+16. **UNKNOWN** - Tidak jelas
 
 ## PENTING untuk ASK_CONTACT
 - Cocokkan kata kunci pengguna dengan kategori yang tersedia
@@ -233,15 +239,23 @@ function buildNLUPrompt(input: NLUInput): string {
 const NLU_OUTPUT_FORMAT = `
 OUTPUT JSON FORMAT:
 {
-  "intent": "GREETING|THANKS|ASK_CONTACT|ASK_ADDRESS|ASK_HOURS|ASK_SERVICE_INFO|CREATE_SERVICE_REQUEST|CREATE_COMPLAINT|CHECK_STATUS|ASK_KNOWLEDGE|CANCEL|UPDATE_DATA|HISTORY|CONFIRMATION|UNKNOWN",
+  "intent": "GREETING|THANKS|ASK_CONTACT|ASK_ADDRESS|ASK_HOURS|ASK_SERVICE_INFO|CREATE_SERVICE_REQUEST|CREATE_COMPLAINT|CHECK_STATUS|ASK_KNOWLEDGE|CANCEL|UPDATE_DATA|HISTORY|CONFIRMATION|ASK_ABOUT_CONVERSATION|UNKNOWN",
   "confidence": 0.0-1.0,
   "contact_request": { "category_keyword": "...", "category_match": "...", "is_emergency": true/false } // only if ASK_CONTACT
   "service_request": { "service_keyword": "...", "service_slug_match": "..." } // only if service-related
-  "knowledge_request": { "question_summary": "...", "answer_found_in_context": true/false, "suggested_answer": "..." } // only if ASK_KNOWLEDGE
+  "knowledge_request": { "question_summary": "...", "answer_found_in_context": true/false, "suggested_answer": "..." } // if ASK_KNOWLEDGE or ASK_ABOUT_CONVERSATION
   "extracted_data": { "nama_lengkap": "...", "nik": "...", "alamat": "...", "no_hp": "...", "tracking_number": "...", "complaint_category": "...", "complaint_description": "..." }
   "confirmation": { "is_positive": true/false } // only if CONFIRMATION
   "reasoning": "Brief explanation"
 }
+
+PENTING untuk GREETING dengan perkenalan:
+- Jika user menyebutkan nama (misal "halo saya yoga", "nama saya budi"), tetap intent=GREETING tapi ISI extracted_data.nama_lengkap
+
+PENTING untuk ASK_ABOUT_CONVERSATION:
+- Jika user tanya tentang percakapan sebelumnya (misal "siapa saya?", "tadi saya tanya apa?")
+- WAJIB baca Riwayat Percakapan dan jawab dari sana
+- Isi knowledge_request.suggested_answer dengan jawaban yang relevan
 `;
 
 /**

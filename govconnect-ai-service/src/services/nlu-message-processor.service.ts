@@ -361,13 +361,36 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
     intent: nlu.intent,
     confidence: nlu.confidence,
     village_id,
+    extractedName: nlu.extracted_data?.nama_lengkap,
   });
 
   switch (nlu.intent) {
-    case 'GREETING':
+    case 'GREETING': {
+      // Check if user introduced themselves
+      const userName = nlu.extracted_data?.nama_lengkap;
+      if (userName) {
+        return `Halo, Kak ${userName}! 👋 Selamat datang di layanan ${villageName}. Ada yang bisa saya bantu?`;
+      }
+      return 'Halo, Kak! 👋 Ada yang bisa saya bantu hari ini?';
+    }
+
     case 'THANKS':
+      return 'Sama-sama, Kak! Senang bisa membantu. Jika ada pertanyaan lain, jangan ragu untuk bertanya 😊';
+
     case 'CONFIRMATION':
-      return handleQuickIntent(nlu, { village_id, wa_user_id, message, message_id: context.message_id });
+      if (nlu.confirmation?.is_positive) {
+        return 'Baik, siap Kak! Ada yang bisa saya bantu selanjutnya?';
+      }
+      return 'Baik Kak, tidak masalah. Ada hal lain yang bisa saya bantu?';
+
+    case 'ASK_ABOUT_CONVERSATION': {
+      // Answer questions about previous conversation from history
+      if (nlu.knowledge_request?.suggested_answer) {
+        return nlu.knowledge_request.suggested_answer;
+      }
+      // Fallback if NLU didn't provide answer
+      return 'Mohon maaf Kak, saya tidak dapat mengingat detail percakapan sebelumnya. Bisakah Kakak mengulangi pertanyaan atau informasi yang dimaksud?';
+    }
 
     case 'ASK_CONTACT': {
       // Ensure category_match is set
