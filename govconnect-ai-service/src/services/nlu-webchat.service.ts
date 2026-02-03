@@ -575,8 +575,12 @@ async function handleWebchatMicroNLU(
       return 'Sama-sama! Senang bisa membantu.\n\nJika ada yang perlu ditanyakan lagi, silakan hubungi saya kapan saja.';
     }
     
-    case 'CONFIRMATION': {
+    case 'CONFIRMATION_YES': {
       return 'Baik. Ada yang lain yang bisa saya bantu?';
+    }
+    
+    case 'CONFIRMATION_NO': {
+      return 'Baik. Jika ada yang lain yang bisa saya bantu, silakan tanyakan.';
     }
     
     case 'ASK_CONTACT': {
@@ -625,11 +629,27 @@ async function handleWebchatMicroNLU(
     }
     
     case 'CHECK_STATUS': {
-      const trackingMatch = message.match(/LA[PY]-\d{5,}/i);
-      if (trackingMatch) {
-        return await handleStatusCheck(user_id, 'webchat', trackingMatch[0]);
+      const trackingNumber = micro.extracted_data?.tracking_number || message.match(/LA[PY]-\d{5,}/i)?.[0];
+      if (trackingNumber) {
+        return await handleStatusCheck(user_id, 'webchat', trackingNumber);
       }
       return 'Silakan berikan nomor tracking (contoh: LAP-12345 atau LAY-12345) untuk cek status.';
+    }
+    
+    case 'CHECK_COMPLAINT_STATUS': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      if (trackingNumber) {
+        return await handleStatusCheck(user_id, 'webchat', trackingNumber);
+      }
+      return 'Untuk cek status pengaduan, mohon berikan nomor laporan.\n\nContoh: LAP-20260203-001';
+    }
+    
+    case 'CHECK_SERVICE_STATUS': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      if (trackingNumber) {
+        return await handleStatusCheck(user_id, 'webchat', trackingNumber);
+      }
+      return 'Untuk cek status layanan, mohon berikan nomor permohonan.\n\nContoh: LAY-20260203-001';
     }
     
     case 'HISTORY': {
@@ -638,6 +658,82 @@ async function handleWebchatMicroNLU(
     
     case 'CANCEL': {
       return await handleCancellation(user_id, 'webchat', message);
+    }
+    
+    case 'CANCEL_COMPLAINT': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      if (trackingNumber) {
+        return await handleCancellation(user_id, 'webchat', `batalkan ${trackingNumber}`);
+      }
+      return 'Untuk membatalkan pengaduan, mohon berikan nomor laporan.\n\nContoh: LAP-20260203-001';
+    }
+    
+    case 'CANCEL_SERVICE': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      if (trackingNumber) {
+        return await handleCancellation(user_id, 'webchat', `batalkan ${trackingNumber}`);
+      }
+      return 'Untuk membatalkan layanan, mohon berikan nomor permohonan.\n\nContoh: LAY-20260203-001';
+    }
+    
+    // ==================== ASK SERVICE LIST ====================
+    case 'ASK_SERVICE_LIST': {
+      try {
+        const axios = (await import('axios')).default;
+        const { config } = await import('../config/env');
+        const serviceResp = await axios.get(`${config.caseServiceUrl}/services`, {
+          params: { village_id },
+          headers: { 'x-internal-api-key': config.internalApiKey },
+          timeout: 5000,
+        }).catch(() => null);
+        
+        if (serviceResp?.data?.data && serviceResp.data.data.length > 0) {
+          const services = serviceResp.data.data;
+          const serviceList = services
+            .filter((s: any) => s.is_active !== false)
+            .map((s: any) => `• ${s.name}${s.mode === 'online' ? ' (Online)' : ''}`)
+            .join('\n');
+          
+          return `Berikut layanan yang tersedia:\n\n${serviceList}\n\nUntuk info lebih lanjut, tanyakan "syarat [nama layanan]".`;
+        }
+        return 'Mohon maaf, data layanan belum tersedia.';
+      } catch {
+        return null;
+      }
+    }
+    
+    // ==================== ASK COMPLAINT CATEGORY ====================
+    case 'ASK_COMPLAINT_CATEGORY': {
+      const complaintTypes = await getComplaintTypes(village_id);
+      
+      if (complaintTypes.length > 0) {
+        const categoryMap = new Map<string, string[]>();
+        complaintTypes.forEach((type: any) => {
+          const categoryName = type.category?.name || 'Lainnya';
+          if (!categoryMap.has(categoryName)) {
+            categoryMap.set(categoryName, []);
+          }
+          categoryMap.get(categoryName)!.push(type.name);
+        });
+        
+        let categoryList = '';
+        categoryMap.forEach((types, category) => {
+          categoryList += `📁 ${category}\n`;
+          types.forEach(t => {
+            categoryList += `   • ${t}\n`;
+          });
+        });
+        
+        return `Kategori pengaduan yang tersedia:\n\n${categoryList}`;
+      }
+      
+      return 'Kategori pengaduan meliputi: Infrastruktur, Bencana, Keamanan, Kesehatan, dan Lainnya.';
+    }
+    
+    // ==================== ASK SERVICE INFO ====================
+    case 'ASK_SERVICE_INFO': {
+      // Need full NLU with RAG for service info
+      return null;
     }
     
     // ==================== PROVIDE NAME (Webchat) ====================
@@ -697,42 +793,25 @@ async function handleWebchatMicroNLU(
       return 'Mohon maaf, format nomor tidak valid. Silakan masukkan nomor WhatsApp/HP yang benar (contoh: 08123456789).';
     }
     
-    // ==================== CONTINUE FLOW (Webchat) ====================
-    case 'CONTINUE_FLOW': {
-      // Check if we have pending request
-      const pending = pendingNameRequests.get(user_id);
-      if (pending) {
-        // Try to extract name or phone from message
-        const extractedName = micro.extracted_data?.nama || extractNameFromMessage(message);
-        const extractedPhone = micro.extracted_data?.no_hp || extractPhoneFromMessage(message);
-        
-        const profile = getProfile(user_id);
-        
-        if (extractedName && !profile.nama_lengkap) {
-          updateProfile(user_id, { nama_lengkap: extractedName });
-          await updateConversationUserProfile(user_id, { user_name: extractedName }, village_id, 'WEBCHAT');
-          logger.info('✅ Webchat: Name captured via CONTINUE_FLOW', { user_id, nama: extractedName });
-          
-          // Webchat still needs phone
-          if (!profile.no_hp) {
-            return `Terima kasih, ${extractedName}! Untuk melengkapi laporan, boleh saya minta nomor WhatsApp/HP yang bisa dihubungi?`;
-          }
-        }
-        
-        if (extractedPhone && !profile.no_hp) {
-          updateProfile(user_id, { no_hp: extractedPhone });
-          logger.info('✅ Webchat: Phone captured via CONTINUE_FLOW', { user_id, phone: extractedPhone });
-          
-          // Now check if complete
-          const updatedProfile = getProfile(user_id);
-          if (updatedProfile.nama_lengkap && updatedProfile.no_hp) {
-            pendingNameRequests.delete(user_id);
-            return null; // Continue to full NLU
-          }
-        }
+    // ==================== PROVIDE ADDRESS (Webchat) ====================
+    case 'PROVIDE_ADDRESS': {
+      const extractedAddress = micro.extracted_data?.alamat;
+      if (extractedAddress) {
+        logger.info('✅ Webchat: Address received', { user_id, alamat: extractedAddress });
+        // Continue to full NLU for processing
+        return null;
       }
-      // Need full NLU
-      return null;
+      return 'Mohon maaf, saya tidak bisa menangkap lokasi dengan jelas. Bisa disebutkan ulang alamat/lokasinya?';
+    }
+    
+    // ==================== PROVIDE TRACKING (Webchat) ====================
+    case 'PROVIDE_TRACKING': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      if (trackingNumber) {
+        // Continue to full NLU for status check
+        return null;
+      }
+      return 'Mohon berikan nomor tracking (contoh: LAP-20260203-001 atau LAY-12345).';
     }
     
     case 'UNCLEAR': {

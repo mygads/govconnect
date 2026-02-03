@@ -25,20 +25,29 @@ import { modelStatsService } from './model-stats.service';
 export interface MicroNLUResult {
   // What does user want?
   action: 
-    | 'GREETING'           // Salam biasa
-    | 'THANKS'             // Terima kasih
-    | 'CONFIRMATION'       // Ya/tidak/oke
-    | 'ASK_CONTACT'        // Minta nomor kontak/telepon
-    | 'ASK_INFO'           // Tanya informasi umum
-    | 'CREATE_COMPLAINT'   // Mau lapor masalah
-    | 'CREATE_SERVICE'     // Mau buat layanan
-    | 'CHECK_STATUS'       // Cek status
-    | 'CANCEL'             // Batalkan
-    | 'HISTORY'            // Lihat riwayat
-    | 'CONTINUE_FLOW'      // Lanjutkan proses (kasih data alamat, dll)
-    | 'PROVIDE_NAME'       // User memberikan nama
-    | 'PROVIDE_PHONE'      // User memberikan nomor HP
-    | 'UNCLEAR';           // Tidak jelas - perlu tanya balik
+    | 'GREETING'               // Salam biasa
+    | 'THANKS'                 // Terima kasih
+    | 'CONFIRMATION_YES'       // Ya/setuju/oke/mau
+    | 'CONFIRMATION_NO'        // Tidak/batal/jangan
+    | 'ASK_CONTACT'            // Minta nomor kontak/telepon
+    | 'ASK_INFO'               // Tanya informasi umum
+    | 'ASK_SERVICE_LIST'       // Tanya daftar layanan tersedia
+    | 'ASK_COMPLAINT_CATEGORY' // Tanya kategori pengaduan
+    | 'ASK_SERVICE_INFO'       // Tanya info/syarat layanan tertentu
+    | 'CREATE_COMPLAINT'       // Mau lapor masalah
+    | 'CHECK_COMPLAINT_STATUS' // Cek status pengaduan
+    | 'CANCEL_COMPLAINT'       // Batalkan pengaduan
+    | 'CREATE_SERVICE'         // Mau buat layanan
+    | 'CHECK_SERVICE_STATUS'   // Cek status layanan
+    | 'CANCEL_SERVICE'         // Batalkan layanan
+    | 'CHECK_STATUS'           // Cek status (generic)
+    | 'CANCEL'                 // Batalkan (generic)
+    | 'HISTORY'                // Lihat riwayat
+    | 'PROVIDE_NAME'           // User memberikan nama
+    | 'PROVIDE_PHONE'          // User memberikan nomor HP
+    | 'PROVIDE_ADDRESS'        // User memberikan alamat/lokasi
+    | 'PROVIDE_TRACKING'       // User memberikan nomor tracking
+    | 'UNCLEAR';               // Tidak jelas - perlu tanya balik
   
   // Is this urgent/emergency?
   is_emergency: boolean;
@@ -46,12 +55,14 @@ export interface MicroNLUResult {
   // Topic/category being discussed
   topic?: string;  // e.g., "damkar", "puskesmas", "kebakaran", "jalan rusak"
   
-  // Extracted data (if any)
+  // Extracted data (if any) - LLM must extract all relevant data
   extracted_data?: {
     nama?: string;
     alamat?: string;
     no_hp?: string;
     tracking_number?: string;
+    service_type?: string;
+    complaint_type?: string;
   };
   
   // For clarification - pertanyaan untuk ditanyakan ke user
@@ -66,53 +77,95 @@ export interface MicroNLUResult {
 
 // ==================== MICRO PROMPT ====================
 
-const MICRO_PROMPT = `Kamu AI CERDAS asisten desa. Pahami MAKSUD user secara natural.
+const MICRO_PROMPT = `Kamu AI CERDAS asisten desa/kelurahan. Pahami MAKSUD user secara natural dan EKSTRAK semua data.
 
 PESAN USER: "{message}"
 
 RIWAYAT CHAT TERAKHIR:
 {history}
 
-## ACTIONS (pilih yang paling tepat):
-- GREETING: salam/halo/hai/assalamualaikum
-- THANKS: terima kasih/makasih/thanks
-- CONFIRMATION: ya/tidak/oke/setuju/baik/siap
-- ASK_CONTACT: minta nomor/kontak/telepon seseorang/instansi
-- ASK_INFO: tanya informasi umum (jam buka, alamat, syarat, biaya, prosedur)
-- CREATE_COMPLAINT: mau LAPOR/ADUKAN masalah/kejadian/kerusakan
-- CREATE_SERVICE: mau BUAT/AJUKAN layanan administrasi (KTP, surat, dll)
-- CHECK_STATUS: cek status pengaduan/layanan (cari LAP-/LAY-)
-- CANCEL: batalkan pengajuan
-- HISTORY: lihat riwayat/histori
-- CONTINUE_FLOW: melanjutkan percakapan sebelumnya (kasih data: nama, alamat, dll)
-- PROVIDE_NAME: user memberikan nama lengkapnya
-- PROVIDE_PHONE: user memberikan nomor HP/WhatsApp
-- UNCLEAR: BENAR-BENAR tidak paham (gunakan ini untuk tanya balik)
+## SUMBER DATA YANG TERSEDIA:
+1. **Knowledge Base (RAG)** - Informasi umum desa (jam buka, prosedur, sejarah, dll)
+2. **Database Layanan** - Layanan tersedia, syarat-syarat, status aktif/tidak, mode online/offline
+3. **Database Pengaduan** - Kategori & jenis pengaduan, apakah butuh alamat, urgent, kirim nomor penting
+4. **Nomor Penting** - Kontak darurat (Damkar, Ambulan, Polisi, Puskesmas, dll)
+5. **Profil Desa** - Nama, alamat kantor, jam operasional, kontak resmi
 
-## CARA MEMAHAMI:
-1. Baca RIWAYAT CHAT untuk paham konteks percakapan
-2. Jika sebelumnya AI tanya nama → user jawab nama → PROVIDE_NAME
-3. Jika sebelumnya AI tanya HP → user jawab nomor → PROVIDE_PHONE
-4. Jika sebelumnya CREATE_COMPLAINT dan user kasih alamat → CONTINUE_FLOW
-5. Situasi DARURAT (kebakaran, kecelakaan, sakit parah) → is_emergency=true
+## ACTIONS (pilih SATU yang paling tepat):
+### Sapaan & Respon Dasar
+- GREETING: salam (halo, hai, assalamualaikum, selamat pagi/siang/sore/malam)
+- THANKS: terima kasih, makasih, thanks
+- CONFIRMATION_YES: setuju/ya/iya/ok/oke/mau/boleh/siap/benar/betul/bersedia
+- CONFIRMATION_NO: tidak/nggak/ga/batal/jangan/tidak mau/cancel/tidak jadi
+
+### Permintaan Informasi
+- ASK_CONTACT: minta nomor kontak/telepon (damkar, puskesmas, RT, ambulan, polisi, dll)
+- ASK_INFO: tanya info umum (jam buka, alamat kantor, syarat layanan, biaya, prosedur, visi misi)
+- ASK_SERVICE_LIST: tanya daftar layanan apa saja yang tersedia
+- ASK_COMPLAINT_CATEGORY: tanya kategori pengaduan apa saja yang bisa dilaporkan
+
+### Pengaduan/Laporan
+- CREATE_COMPLAINT: mau LAPOR/ADUKAN masalah (jalan rusak, lampu mati, banjir, sampah, dll)
+- CHECK_COMPLAINT_STATUS: cek status laporan/pengaduan (LAP-xxx)
+- CANCEL_COMPLAINT: batalkan laporan/pengaduan
+
+### Layanan Administrasi
+- ASK_SERVICE_INFO: tanya INFO/SYARAT layanan tertentu (syarat KTP, biaya akta, dll)
+- CREATE_SERVICE: mau BUAT/AJUKAN layanan (KTP, akta, surat keterangan, dll)
+- CHECK_SERVICE_STATUS: cek status permohonan layanan (LAY-xxx)
+- CANCEL_SERVICE: batalkan permohonan layanan
+
+### Riwayat & Status
+- HISTORY: lihat semua riwayat pengaduan & layanan saya
+- CHECK_STATUS: cek status (bisa pengaduan atau layanan)
+
+### User Memberikan Data
+- PROVIDE_NAME: user memberikan NAMA lengkapnya
+- PROVIDE_PHONE: user memberikan NOMOR HP/WhatsApp
+- PROVIDE_ADDRESS: user memberikan ALAMAT/LOKASI kejadian
+- PROVIDE_TRACKING: user memberikan nomor tracking (LAP-xxx atau LAY-xxx)
+
+### Tidak Paham
+- UNCLEAR: tidak paham maksud user (WAJIB tulis clarification_question!)
+
+## EXTRACTED_DATA - WAJIB diisi jika ada dalam pesan:
+- nama: nama lengkap orang
+- no_hp: nomor HP/WhatsApp (08xxx, +62xxx)
+- alamat: lokasi/alamat (jalan, RT/RW, patokan)
+- tracking_number: nomor laporan/layanan (LAP-xxx, LAY-xxx)
+- service_type: jenis layanan (KTP, akta kelahiran, surat pindah, SKTM, dll)
+- complaint_type: jenis pengaduan (jalan rusak, banjir, lampu mati, sampah, dll)
+
+## CARA MEMAHAMI - BACA RIWAYAT CHAT!
+1. AI tanya "nama lengkap?" → user jawab → PROVIDE_NAME
+2. AI tanya "nomor HP?" → user jawab → PROVIDE_PHONE  
+3. AI tanya "lokasi kejadian?" → user jawab → PROVIDE_ADDRESS
+4. AI tanya "ya/tidak?" → user jawab → CONFIRMATION_YES/NO
+5. Ada LAP-xxx/LAY-xxx → extract ke tracking_number
+6. Darurat (kebakaran, kecelakaan, banjir, sakit parah) → is_emergency=true
 
 ## CONTOH PEMAHAMAN:
-- "rumah saya terbakar minta nomor pemadam" → ASK_CONTACT, topic=damkar, is_emergency=true
-- "saya mau lapor ada kebakaran di RT 5" → CREATE_COMPLAINT, topic=kebakaran
-- "ada nomor puskesmas?" → ASK_CONTACT, topic=puskesmas
-- "Budi Santoso" (setelah AI tanya nama) → PROVIDE_NAME, extracted_data.nama="Budi Santoso"
-- "081234567890" (setelah AI tanya HP) → PROVIDE_PHONE, extracted_data.no_hp="081234567890"
-- "jalan rusak depan SD" → CREATE_COMPLAINT, topic=infrastruktur
-- "mau bikin KTP" → CREATE_SERVICE, topic=ktp
-- Jika TIDAK YAKIN → UNCLEAR + tulis clarification_question
+- "halo" → GREETING
+- "ada nomor damkar?" → ASK_CONTACT, topic="damkar"
+- "jam buka kantor?" → ASK_INFO, topic="jam buka"
+- "layanan apa saja?" → ASK_SERVICE_LIST
+- "syarat bikin KTP apa?" → ASK_SERVICE_INFO, service_type="KTP"
+- "mau bikin KTP" → CREATE_SERVICE, service_type="KTP"
+- "ada jalan rusak di depan SD" → CREATE_COMPLAINT, complaint_type="jalan rusak", alamat="depan SD"
+- "rumah saya kebakaran!" → ASK_CONTACT, topic="damkar", is_emergency=true
+- "cek LAP-20260203-001" → CHECK_STATUS, tracking_number="LAP-20260203-001"
+- "cek laporan terakhir saya" → CHECK_STATUS (tanpa tracking_number - sistem akan cari)
+- "status pengaduan saya gimana?" → CHECK_STATUS (tanpa tracking_number - sistem akan cari)
+- Riwayat: "AI: nama lengkap?" User: "Budi Santoso" → PROVIDE_NAME, nama="Budi Santoso"
+- Tidak paham → UNCLEAR, clarification_question="Maaf, bisa diperjelas maksudnya?"
 
 ## LARANGAN:
-- JANGAN menebak jika tidak yakin
-- JANGAN abaikan RIWAYAT CHAT
-- Jika ambigu → gunakan UNCLEAR dan tulis pertanyaan klarifikasi
+- JANGAN menebak jika tidak yakin → gunakan UNCLEAR
+- JANGAN abaikan riwayat chat
+- JANGAN buat data palsu
 
 OUTPUT JSON SAJA (tanpa markdown/code block):
-{"action":"..","is_emergency":false,"topic":"..","extracted_data":{"nama":"","no_hp":"","alamat":""},"clarification_question":"","reasoning":"alasan singkat","confidence":0.0-1.0}`;
+{"action":"..","is_emergency":false,"topic":"..","extracted_data":{"nama":"","no_hp":"","alamat":"","tracking_number":"","service_type":"","complaint_type":""},"clarification_question":"","reasoning":"alasan singkat","confidence":0.0-1.0}`;
 
 // ==================== IMPLEMENTATION ====================
 
@@ -223,17 +276,41 @@ export async function callMicroNLU(
  */
 export function mapMicroToIntent(micro: MicroNLUResult): string {
   switch (micro.action) {
+    // Basic responses
     case 'GREETING': return 'GREETING';
     case 'THANKS': return 'THANKS';
-    case 'CONFIRMATION': return 'CONFIRMATION';
-    case 'ASK_CONTACT': return 'ASK_INFO'; // Handled by ASK_INFO with topic=kontak
+    case 'CONFIRMATION_YES': return 'CONFIRMATION_YES';
+    case 'CONFIRMATION_NO': return 'CONFIRMATION_NO';
+    
+    // Information requests
+    case 'ASK_CONTACT': return 'ASK_CONTACT';
     case 'ASK_INFO': return 'ASK_INFO';
+    case 'ASK_SERVICE_LIST': return 'ASK_SERVICE_LIST';
+    case 'ASK_COMPLAINT_CATEGORY': return 'ASK_COMPLAINT_CATEGORY';
+    case 'ASK_SERVICE_INFO': return 'ASK_SERVICE_INFO';
+    
+    // Complaint actions
     case 'CREATE_COMPLAINT': return 'CREATE_COMPLAINT';
+    case 'CHECK_COMPLAINT_STATUS': return 'CHECK_COMPLAINT_STATUS';
+    case 'CANCEL_COMPLAINT': return 'CANCEL_COMPLAINT';
+    
+    // Service actions
     case 'CREATE_SERVICE': return 'CREATE_SERVICE';
+    case 'CHECK_SERVICE_STATUS': return 'CHECK_SERVICE_STATUS';
+    case 'CANCEL_SERVICE': return 'CANCEL_SERVICE';
+    
+    // Generic status/cancel (backward compatibility)
     case 'CHECK_STATUS': return 'CHECK_STATUS';
     case 'CANCEL': return 'CANCEL';
     case 'HISTORY': return 'HISTORY';
-    case 'CONTINUE_FLOW': return 'CONTINUE_FLOW';
+    
+    // User providing data
+    case 'PROVIDE_NAME': return 'PROVIDE_NAME';
+    case 'PROVIDE_PHONE': return 'PROVIDE_PHONE';
+    case 'PROVIDE_ADDRESS': return 'PROVIDE_ADDRESS';
+    case 'PROVIDE_TRACKING': return 'CHECK_STATUS';
+    
+    // Unclear
     case 'UNCLEAR': return 'CLARIFY_NEEDED';
     default: return 'UNKNOWN';
   }

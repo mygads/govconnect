@@ -41,6 +41,10 @@ import {
   handleCancellation,
   handleHistory,
   handleKnowledgeQuery,
+  setPendingAddressRequest,
+  resolveComplaintTypeConfig,
+  getPendingServiceFormOffer,
+  clearPendingServiceFormOffer,
 } from './unified-message-processor.service';
 import { getImportantContacts, ImportantContact } from './important-contacts.service';
 
@@ -57,6 +61,30 @@ interface PendingNameRequest {
 
 const pendingNameRequests = new Map<string, PendingNameRequest>();
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// ==================== PENDING COMPLAINT FLOW (for Micro NLU) ====================
+// Store pending complaint data when waiting for user's name via Micro NLU
+interface PendingComplaintFlow {
+  kategori: string;
+  topic: string;
+  message: string;
+  villageId: string;
+  isEmergency: boolean;
+  timestamp: number;
+}
+
+const pendingComplaintFlows = new Map<string, PendingComplaintFlow>();
+
+// Cleanup old pending complaint flows periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, pending] of pendingComplaintFlows.entries()) {
+    if (now - pending.timestamp > REQUEST_TIMEOUT_MS) {
+      pendingComplaintFlows.delete(userId);
+      logger.debug('Cleaned up expired pending complaint flow', { userId });
+    }
+  }
+}, 60000);
 
 // Cleanup old pending requests periodically
 setInterval(() => {
@@ -84,32 +112,6 @@ function needsNameForIntent(wa_user_id: string, intent: string): boolean {
   return !profile.nama_lengkap;
 }
 
-/**
- * Try to extract name from user message (simple patterns)
- */
-function extractNameFromMessage(message: string): string | null {
-  const patterns = [
-    /^(?:nama\s+(?:saya|aku|gue|gw)\s+(?:adalah\s+)?)?([A-Za-z][A-Za-z\s]{1,29})$/i,
-    /^([A-Za-z][A-Za-z\s]{1,29})$/i, // Just a name
-  ];
-  
-  const cleanMessage = message.trim();
-  for (const pattern of patterns) {
-    const match = cleanMessage.match(pattern);
-    if (match && match[1]) {
-      const candidateName = match[1].trim();
-      // Basic validation
-      if (candidateName.length >= 2 &&
-          candidateName.length <= 30 &&
-          !candidateName.toLowerCase().includes('http') &&
-          !/\d/.test(candidateName)) {
-        return candidateName;
-      }
-    }
-  }
-  return null;
-}
-
 interface ProcessingContext {
   village_id: string;
   wa_user_id: string;
@@ -125,55 +127,32 @@ interface ProcessingContext {
   available_complaint_categories?: Array<{ category: string; types: string[] }>;
 }
 
-// ==================== LAZY RAG OPTIMIZATION ====================
-// Patterns that DON'T need RAG (greetings, simple commands)
-const SIMPLE_PATTERNS = [
-  /^(hai|halo|hi|hello|hey|pagi|siang|sore|malam|selamat\s+(pagi|siang|sore|malam))$/i,
-  /^(iya|ya|ok|oke|okay|siap|baik|terima\s*kasih|makasih|thanks|thank\s*you)$/i,
-  /^(tidak|nggak|gak|ga|no|nope|cancel|batal)$/i,
-  /^(status|cek\s*status|lihat\s*status)$/i,
-  /^(history|riwayat|histori)$/i,
-  /^[0-9]+$/,  // Just numbers
-];
-
-// Patterns that ALWAYS need RAG (knowledge queries)
-const RAG_NEEDED_PATTERNS = [
-  /syarat|persyaratan|ketentuan|prosedur|cara|gimana|bagaimana/i,
-  /jam\s*(buka|operasi|kerja|layanan)|buka\s*jam|tutup\s*jam/i,
-  /alamat|lokasi|dimana|tempat/i,
-  /biaya|tarif|harga|bayar|gratis/i,
-  /berapa|kapan|siapa|apa\s+itu/i,
-  /info|informasi|penjelasan|jelaskan/i,
-];
+// ==================== LLM-BASED PROCESSING ====================
+// This AI Agent uses LLM for ALL understanding - no pattern matching
+// If unsure, it will ask the user for clarification
 
 /**
- * Determine if message needs RAG context
- * Returns false for simple messages (saves ~200ms)
+ * Simple heuristic to determine if message likely needs RAG context
+ * This is NOT pattern matching for intent - just optimization to skip RAG for very short/simple messages
+ * The actual understanding is always done by LLM
  */
 function shouldFetchRAG(message: string): boolean {
-  const cleanMessage = message.trim().toLowerCase();
+  const cleanMessage = message.trim();
   
-  // Short simple messages don't need RAG
-  if (cleanMessage.length < 10) {
-    for (const pattern of SIMPLE_PATTERNS) {
-      if (pattern.test(cleanMessage)) {
-        return false;
-      }
-    }
+  // Very short messages (< 5 chars) probably don't need RAG
+  if (cleanMessage.length < 5) {
+    return false;
   }
   
-  // Patterns that definitely need RAG
-  for (const pattern of RAG_NEEDED_PATTERNS) {
-    if (pattern.test(cleanMessage)) {
-      return true;
-    }
+  // Messages with question marks likely need info
+  if (cleanMessage.includes('?')) {
+    return true;
   }
   
-  // Default: fetch RAG for messages > 15 chars or containing question words
-  return cleanMessage.length > 15 || /\?/.test(cleanMessage);
+  // Longer messages (> 15 chars) likely need context
+  return cleanMessage.length > 15;
 }
 
-// Response from handleNLUIntent - can include contacts for WA vCard
 interface NLUIntentResponse {
   text: string;
   contacts?: Array<{
@@ -284,6 +263,18 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       }
     }
 
+    // Step 3.5: Inject pending flow context into conversation history for Micro NLU
+    // This helps Micro NLU understand that we're waiting for specific data
+    const pendingComplaint = pendingComplaintFlows.get(wa_user_id);
+    if (pendingComplaint) {
+      // Add context that AI previously asked for name
+      conversationHistory += `\nAI: Baik Kak, saya akan bantu buat laporan ${pendingComplaint.kategori}. Untuk melanjutkan, boleh saya tahu nama lengkap Kakak?`;
+      logger.info('📝 Injected pending complaint context for Micro NLU', {
+        wa_user_id,
+        kategori: pendingComplaint.kategori,
+      });
+    }
+
     // Step 4: Call Micro NLU - LLM-based intent detection (replaces pattern matching)
     // This is a small LLM call (~200 tokens) that understands user intent naturally
     // userId is passed for rate limiting (max 10 LLM calls per minute per user)
@@ -296,7 +287,34 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
         topic: microResult.topic,
         is_emergency: microResult.is_emergency,
         confidence: microResult.confidence,
+        extracted_data: microResult.extracted_data,
       });
+      
+      // If confidence is low and action is UNCLEAR, ask for clarification immediately
+      if (microResult.action === 'UNCLEAR' || (microResult.confidence < 0.6 && !microResult.is_emergency)) {
+        const clarificationQuestion = microResult.clarification_question || 
+          'Maaf Kak, saya kurang paham maksudnya. Bisa diperjelas?\n\nSaya bisa membantu:\n• Informasi layanan desa\n• Pengaduan/laporan masalah\n• Nomor kontak penting';
+        
+        logger.info('❓ Low confidence or UNCLEAR - asking for clarification', {
+          wa_user_id,
+          confidence: microResult.confidence,
+          action: microResult.action,
+        });
+        
+        await stopTyping(wa_user_id, resolvedVillageId);
+        await publishAIReply({
+          village_id: resolvedVillageId,
+          wa_user_id,
+          reply_text: clarificationQuestion,
+          message_id: is_batched ? undefined : message_id,
+          batched_message_ids: is_batched ? batched_message_ids : undefined,
+        });
+        
+        const durationMs = Date.now() - startTime;
+        logger.info('✅ Message processed - asked for clarification', { wa_user_id, durationMs });
+        await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
+        return;
+      }
       
       // Handle based on Micro NLU result
       const microResponse = await handleMicroNLUResult(microResult, {
@@ -410,8 +428,8 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
     const pendingNameRequest = pendingNameRequests.get(wa_user_id);
     if (pendingNameRequest) {
       // User might be providing their name now
-      const extractedName = extractNameFromMessage(sanitizedMessage) ||
-        nluOutput.extracted_data?.nama_lengkap;
+      // Use LLM extraction only - no pattern matching
+      const extractedName = nluOutput.extracted_data?.nama_lengkap;
       
       if (extractedName) {
         // Got the name, save it and continue with original intent
@@ -620,15 +638,48 @@ async function handleMicroNLUResult(
       };
     }
     
-    case 'CONFIRMATION': {
-      // Check pending requests
-      const pending = pendingNameRequests.get(wa_user_id);
-      if (pending) {
-        // User confirmed something - need full NLU to understand context
-        return null;
+    // ==================== CONFIRMATION (LLM-detected) ====================
+    
+    case 'CONFIRMATION_YES': {
+      // User confirmed YES - check what they're confirming
+      const pendingServiceOffer = getPendingServiceFormOffer(wa_user_id);
+      if (pendingServiceOffer) {
+        clearPendingServiceFormOffer(wa_user_id);
+        
+        // Send the form link
+        const llmLike = {
+          intent: 'CREATE_SERVICE_REQUEST',
+          fields: { 
+            service_slug: pendingServiceOffer.service_slug, 
+            village_id: pendingServiceOffer.village_id,
+          },
+        };
+        return { text: await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike) };
       }
+      
+      // No pending offer - generic response
       return {
         text: 'Baik, Kak. Ada yang lain yang bisa saya bantu?',
+      };
+    }
+    
+    case 'CONFIRMATION_NO': {
+      // User said NO - check what they're declining
+      const pendingServiceOffer = getPendingServiceFormOffer(wa_user_id);
+      if (pendingServiceOffer) {
+        clearPendingServiceFormOffer(wa_user_id);
+        return { text: 'Baik Kak, tidak masalah. Jika ada yang lain yang bisa saya bantu, silakan tanyakan.' };
+      }
+      
+      // Check if declining a pending complaint
+      const pendingComplaint = pendingComplaintFlows.get(wa_user_id);
+      if (pendingComplaint) {
+        pendingComplaintFlows.delete(wa_user_id);
+        return { text: 'Baik Kak, pengaduan dibatalkan. Jika ada yang lain yang bisa saya bantu, silakan tanyakan.' };
+      }
+      
+      return {
+        text: 'Baik, Kak. Jika ada yang lain yang bisa saya bantu, silakan tanyakan.',
       };
     }
     
@@ -730,6 +781,16 @@ async function handleMicroNLUResult(
         );
         
         if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+          // Store pending complaint flow for when user provides name
+          pendingComplaintFlows.set(wa_user_id, {
+            kategori: matchedType || matchedCategory || topic,
+            topic,
+            message,
+            villageId: village_id,
+            isEmergency: true,
+            timestamp: Date.now(),
+          });
+          
           return {
             text: `🚨 Saya paham ini darurat! Berikut nomor yang bisa dihubungi:\n\nUntuk membuat laporan resmi, silakan berikan:\n• Nama lengkap\n• Lokasi kejadian`,
             contacts: contactResult.contacts.map(c => ({
@@ -748,6 +809,22 @@ async function handleMicroNLUResult(
         // Store pending for name request
         const profile = getProfile(wa_user_id);
         if (!profile.nama_lengkap) {
+          // Store pending complaint flow so we can continue after getting name
+          pendingComplaintFlows.set(wa_user_id, {
+            kategori: matchedType || matchedCategory,
+            topic,
+            message,
+            villageId: village_id,
+            isEmergency: micro.is_emergency || false,
+            timestamp: Date.now(),
+          });
+          
+          logger.info('📝 Stored pending complaint flow, waiting for name', {
+            wa_user_id,
+            kategori: matchedType || matchedCategory,
+            topic,
+          });
+          
           // Need name first
           return {
             text: `Baik Kak, saya akan bantu buat laporan ${matchedType || matchedCategory}.\n\nUntuk melanjutkan, boleh saya tahu nama lengkap Kakak?`,
@@ -758,7 +835,16 @@ async function handleMicroNLUResult(
         return null; // Let full NLU handle
       }
       
-      // No category match - ask for clarification
+      // No category match - ask for clarification (still store basic flow)
+      pendingComplaintFlows.set(wa_user_id, {
+        kategori: topic || 'lainnya',
+        topic: topic || '',
+        message,
+        villageId: village_id,
+        isEmergency: micro.is_emergency || false,
+        timestamp: Date.now(),
+      });
+      
       return {
         text: `Saya paham Kakak ingin membuat laporan. Bisa diperjelas terkait masalah apa?\n\nContoh kategori:\n• Infrastruktur (jalan rusak, lampu mati)\n• Bencana (kebakaran, banjir)\n• Keamanan (pencurian, keributan)\n• Medis (kecelakaan, warga sakit)`,
       };
@@ -767,21 +853,183 @@ async function handleMicroNLUResult(
     // ==================== SERVICE CREATION ====================
     
     case 'CREATE_SERVICE': {
-      // Need full NLU for service creation
-      return null;
+      // User explicitly wants to create/submit service - Micro NLU sudah deteksi
+      // Let full NLU handle with handleServiceRequestCreation
+      // But first, check if service exists and show requirements + form link together
+      const serviceType = micro.extracted_data?.service_type || micro.topic || '';
+      
+      if (!serviceType) {
+        return {
+          text: 'Baik Kak, layanan apa yang ingin Kakak ajukan?\n\nContoh: KTP, Akta Kelahiran, Surat Keterangan, dll.',
+        };
+      }
+      
+      logger.info('📝 User wants to create service (detected by Micro NLU)', { wa_user_id, serviceType });
+      return null; // Let full NLU handle - will show requirements + offer form
     }
     
-    // ==================== STATUS CHECK ====================
+    case 'ASK_SERVICE_INFO': {
+      // User wants to know requirements/info first - Micro NLU sudah deteksi
+      const serviceType = micro.extracted_data?.service_type || micro.topic || '';
+      
+      if (!serviceType) {
+        return {
+          text: 'Baik Kak, layanan apa yang ingin Kakak tanyakan syaratnya?\n\nContoh: KTP, Akta Kelahiran, Surat Keterangan, dll.',
+        };
+      }
+      
+      // Show requirements first, then ask if they want to proceed
+      logger.info('📋 Showing service requirements (detected by Micro NLU)', { wa_user_id, serviceType });
+      
+      // Resolve service slug
+      const axios = (await import('axios')).default;
+      const { config } = await import('../config/env');
+      
+      // Search for service
+      const searchResp = await axios.get(`${config.caseServiceUrl}/services`, {
+        params: { village_id, q: serviceType },
+        headers: { 'x-internal-api-key': config.internalApiKey },
+        timeout: 5000,
+      }).catch(() => null);
+      
+      const services = searchResp?.data?.data || [];
+      const matchedService = services.find((s: any) => 
+        s.name?.toLowerCase().includes(serviceType.toLowerCase()) ||
+        s.slug?.toLowerCase().includes(serviceType.toLowerCase()) ||
+        serviceType.toLowerCase().includes(s.name?.toLowerCase() || '')
+      );
+      
+      if (matchedService) {
+        // Use handleServiceInfo to show requirements
+        const llmLike = {
+          fields: {
+            service_slug: matchedService.slug,
+            village_id,
+            _original_message: message,
+          },
+        };
+        
+        const result = await handleServiceInfo(wa_user_id, llmLike);
+        
+        // handleServiceInfo returns string | { replyText, guidanceText }
+        if (typeof result === 'string') {
+          return { text: result };
+        }
+        
+        let response = result.replyText || '';
+        if (result.guidanceText) {
+          response += `\n\n${result.guidanceText}`;
+        }
+        
+        return { text: response };
+      }
+      
+      // Service not found
+      return {
+        text: `Mohon maaf Kak, layanan "${serviceType}" tidak ditemukan.\n\nSilakan tanyakan layanan lain atau ketik "layanan apa saja" untuk melihat daftar layanan tersedia.`,
+      };
+    }
     
-    case 'CHECK_STATUS': {
-      // Extract tracking number
-      const trackingMatch = message.match(/LA[PY]-\d{5,}/i);
-      if (trackingMatch) {
-        const result = await handleStatusCheck(wa_user_id, 'whatsapp', trackingMatch[0]);
+    // ==================== STATUS CHECK (using LLM extracted data) ====================
+    
+    case 'CHECK_STATUS':
+    case 'CHECK_COMPLAINT_STATUS':
+    case 'CHECK_SERVICE_STATUS':
+    case 'PROVIDE_TRACKING': {
+      // Get tracking number from LLM extraction
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      
+      if (trackingNumber) {
+        const normalizedTracking = trackingNumber.toUpperCase();
+        const isComplaint = normalizedTracking.startsWith('LAP-');
+        
+        const llmLike = {
+          intent: 'CHECK_STATUS',
+          fields: isComplaint 
+            ? { complaint_id: normalizedTracking }
+            : { request_number: normalizedTracking },
+        };
+        
+        const result = await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message);
         return { text: result };
       }
+      
+      // No tracking number - try to get user's recent complaints/services
+      // User might say "cek laporan terakhir saya" without specifying number
+      const history = await getUserHistory({ wa_user_id, channel: 'WHATSAPP' });
+      
+      if (history?.combined && history.combined.length > 0) {
+        // Find the most recent complaint or service
+        const recentComplaints = history.combined.filter((h: any) => h.type === 'Laporan').slice(0, 3);
+        const recentServices = history.combined.filter((h: any) => h.type === 'Layanan').slice(0, 3);
+        
+        // Determine what user is asking about based on action
+        if (micro.action === 'CHECK_COMPLAINT_STATUS' && recentComplaints.length > 0) {
+          // User specifically wants complaint status
+          if (recentComplaints.length === 1) {
+            const llmLike = {
+              intent: 'CHECK_STATUS',
+              fields: { complaint_id: recentComplaints[0].id },
+            };
+            return { text: await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message) };
+          }
+          // Multiple complaints - show list
+          const list = recentComplaints.map((c: any) => `• ${c.id}: ${c.description?.substring(0, 30) || 'Laporan'}...`).join('\n');
+          return {
+            text: `Kakak punya beberapa laporan:\n\n${list}\n\nMau cek yang mana? Sebutkan nomornya.`,
+          };
+        }
+        
+        if (micro.action === 'CHECK_SERVICE_STATUS' && recentServices.length > 0) {
+          // User specifically wants service status
+          if (recentServices.length === 1) {
+            const llmLike = {
+              intent: 'CHECK_STATUS',
+              fields: { request_number: recentServices[0].id },
+            };
+            return { text: await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message) };
+          }
+          // Multiple services - show list
+          const list = recentServices.map((s: any) => `• ${s.id}: ${s.description?.substring(0, 30) || 'Layanan'}...`).join('\n');
+          return {
+            text: `Kakak punya beberapa permohonan layanan:\n\n${list}\n\nMau cek yang mana? Sebutkan nomornya.`,
+          };
+        }
+        
+        // Generic CHECK_STATUS - show all recent
+        if (recentComplaints.length === 1 && recentServices.length === 0) {
+          const llmLike = {
+            intent: 'CHECK_STATUS',
+            fields: { complaint_id: recentComplaints[0].id },
+          };
+          return { text: await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message) };
+        }
+        
+        if (recentServices.length === 1 && recentComplaints.length === 0) {
+          const llmLike = {
+            intent: 'CHECK_STATUS',
+            fields: { request_number: recentServices[0].id },
+          };
+          return { text: await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message) };
+        }
+        
+        // Show combined list
+        let list = '';
+        if (recentComplaints.length > 0) {
+          list += '*Laporan:*\n' + recentComplaints.map((c: any) => `• ${c.id}`).join('\n') + '\n\n';
+        }
+        if (recentServices.length > 0) {
+          list += '*Layanan:*\n' + recentServices.map((s: any) => `• ${s.id}`).join('\n');
+        }
+        
+        return {
+          text: `Kakak punya beberapa pengajuan:\n\n${list}\n\nMau cek yang mana? Sebutkan nomornya.`,
+        };
+      }
+      
+      // No history - ask for tracking number
       return {
-        text: 'Silakan berikan nomor tracking (contoh: LAP-12345 atau LAY-12345) untuk cek status.',
+        text: 'Mohon berikan nomor tracking pengaduan atau layanan Kakak.\n\nContoh format:\n• LAP-20260203-001 (untuk laporan)\n• LAY-20260203-001 (untuk layanan)',
       };
     }
     
@@ -792,18 +1040,73 @@ async function handleMicroNLUResult(
       return { text: result };
     }
     
-    // ==================== CANCEL ====================
+    // ==================== CANCEL (using LLM extracted data) ====================
     
     case 'CANCEL': {
-      const result = await handleCancellation(wa_user_id, 'whatsapp', message);
-      return { text: result };
+      // Get tracking number from LLM extraction
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      
+      if (trackingNumber) {
+        const llmLike = {
+          intent: 'CANCEL',
+          fields: { complaint_id: trackingNumber.toUpperCase(), cancel_reason: 'Dibatalkan oleh pengguna' },
+        };
+        const result = await handleCancellation(wa_user_id, 'whatsapp', llmLike);
+        return { text: result };
+      }
+      
+      // No tracking number - ask user
+      return {
+        text: 'Untuk membatalkan pengaduan atau layanan, mohon berikan nomor tracking-nya.\n\nContoh: LAP-20260203-001',
+      };
+    }
+    
+    // ==================== PROVIDE ADDRESS (new) ====================
+    
+    case 'PROVIDE_ADDRESS': {
+      const extractedAddress = micro.extracted_data?.alamat;
+      
+      if (extractedAddress) {
+        logger.info('✅ Address received via PROVIDE_ADDRESS', { wa_user_id, alamat: extractedAddress });
+        
+        // Check if there's a pending complaint that needs address
+        const pendingComplaint = pendingComplaintFlows.get(wa_user_id);
+        if (pendingComplaint) {
+          pendingComplaintFlows.delete(wa_user_id);
+          
+          // Create complaint with the address
+          const llmLike = {
+            intent: 'CREATE_COMPLAINT',
+            fields: {
+              village_id: pendingComplaint.villageId,
+              kategori: pendingComplaint.kategori,
+              deskripsi: pendingComplaint.message || `Laporan ${pendingComplaint.kategori}`,
+              alamat: extractedAddress,
+              is_emergency: pendingComplaint.isEmergency,
+            },
+          };
+          
+          const result = await handleComplaintCreation(wa_user_id, 'whatsapp', llmLike, pendingComplaint.message);
+          return { text: result };
+        }
+        
+        // No pending flow - just acknowledge
+        return {
+          text: `Lokasi "${extractedAddress}" sudah dicatat. Ada yang bisa saya bantu, Kak?`,
+        };
+      }
+      
+      // LLM didn't extract address properly - ask again
+      return {
+        text: 'Mohon maaf, saya tidak bisa menangkap lokasi dengan jelas. Bisa disebutkan ulang alamat/lokasinya?',
+      };
     }
     
     // ==================== PROVIDE NAME ====================
     
     case 'PROVIDE_NAME': {
-      // User memberikan nama - simpan dan lanjutkan flow
-      const extractedName = micro.extracted_data?.nama || message.trim();
+      // User memberikan nama - LLM sudah extract
+      const extractedName = micro.extracted_data?.nama;
       
       if (extractedName && extractedName.length >= 2 && extractedName.length <= 50) {
         // Simpan nama
@@ -812,7 +1115,60 @@ async function handleMicroNLUResult(
         
         logger.info('✅ Name saved via PROVIDE_NAME', { wa_user_id, nama: extractedName });
         
-        // Check if there's a pending request
+        // Check if there's a pending complaint flow from Micro NLU
+        const pendingComplaint = pendingComplaintFlows.get(wa_user_id);
+        if (pendingComplaint) {
+          pendingComplaintFlows.delete(wa_user_id);
+          
+          logger.info('📝 Continuing pending complaint flow after name received', {
+            wa_user_id,
+            kategori: pendingComplaint.kategori,
+            topic: pendingComplaint.topic,
+          });
+          
+          // Get complaint type config to determine if address is required
+          const complaintTypeConfig = await resolveComplaintTypeConfig(
+            pendingComplaint.kategori,
+            pendingComplaint.villageId
+          );
+          const requireAddress = complaintTypeConfig?.require_address ?? true;
+          
+          // Store as pending address request so flow can continue when user provides address
+          setPendingAddressRequest(wa_user_id, {
+            kategori: pendingComplaint.kategori,
+            deskripsi: pendingComplaint.message || `Laporan ${pendingComplaint.kategori}`,
+            village_id: pendingComplaint.villageId,
+            timestamp: Date.now(),
+          });
+          
+          logger.info('✅ Stored pending address request for complaint continuation', {
+            wa_user_id,
+            kategori: pendingComplaint.kategori,
+          });
+          
+          if (requireAddress) {
+            // Ask for location
+            const kategoriLabel = pendingComplaint.kategori.replace(/_/g, ' ');
+            return {
+              text: `Terima kasih, ${extractedName}! Untuk melanjutkan laporan ${kategoriLabel}, mohon berikan lokasi kejadian.`,
+            };
+          } else {
+            // Address not required, proceed directly with complaint creation
+            const llmLike = {
+              intent: 'CREATE_COMPLAINT',
+              fields: {
+                village_id: pendingComplaint.villageId,
+                kategori: pendingComplaint.kategori,
+                deskripsi: pendingComplaint.message || `Laporan ${pendingComplaint.kategori}`,
+                is_emergency: pendingComplaint.isEmergency,
+              },
+            };
+            const result = await handleComplaintCreation(wa_user_id, 'whatsapp', llmLike, pendingComplaint.message);
+            return { text: `Terima kasih, ${extractedName}!\n\n${result}` };
+          }
+        }
+        
+        // Check if there's a pending request (from full NLU)
         const pending = pendingNameRequests.get(wa_user_id);
         if (pending) {
           pendingNameRequests.delete(wa_user_id);
@@ -834,11 +1190,11 @@ async function handleMicroNLUResult(
       };
     }
     
-    // ==================== PROVIDE PHONE ====================
+    // ==================== PROVIDE PHONE (LLM extracted) ====================
     
     case 'PROVIDE_PHONE': {
-      // User memberikan nomor HP - simpan
-      const extractedPhone = micro.extracted_data?.no_hp || extractPhoneFromMessage(message);
+      // User memberikan nomor HP - LLM sudah extract
+      const extractedPhone = micro.extracted_data?.no_hp;
       
       if (extractedPhone) {
         // Simpan nomor HP
@@ -851,39 +1207,10 @@ async function handleMicroNLUResult(
         };
       }
       
+      // LLM tidak bisa extract nomor - tanya ulang
       return {
-        text: 'Mohon maaf, format nomor tidak valid. Silakan masukkan nomor WhatsApp/HP yang benar (contoh: 08123456789).',
+        text: 'Mohon maaf, saya tidak bisa menangkap nomor dengan benar. Bisa disebutkan ulang nomor WhatsApp/HP Kakak? (contoh: 08123456789)',
       };
-    }
-    
-    // ==================== CONTINUE FLOW ====================
-    
-    case 'CONTINUE_FLOW': {
-      // Check if we have pending request
-      const pending = pendingNameRequests.get(wa_user_id);
-      if (pending) {
-        // Try to extract name from message or micro data
-        const extractedName = micro.extracted_data?.nama || extractNameFromMessage(message);
-        if (extractedName) {
-          updateProfile(wa_user_id, { nama_lengkap: extractedName });
-          await updateConversationUserProfile(wa_user_id, { user_name: extractedName }, village_id, 'WHATSAPP');
-          pendingNameRequests.delete(wa_user_id);
-          
-          logger.info('✅ Name captured via CONTINUE_FLOW', { wa_user_id, nama: extractedName });
-          
-          // Continue with original intent - need full NLU
-          return null;
-        }
-        
-        // Maybe they gave address instead?
-        const extractedAddress = micro.extracted_data?.alamat;
-        if (extractedAddress) {
-          // Continue with full NLU
-          return null;
-        }
-      }
-      // Need full NLU to understand the flow
-      return null;
     }
     
     // ==================== ASK INFO (general) ====================
@@ -893,10 +1220,163 @@ async function handleMicroNLUResult(
       return null;
     }
     
+    // ==================== ASK SERVICE LIST ====================
+    
+    case 'ASK_SERVICE_LIST': {
+      // User wants to know available services
+      try {
+        const axios = (await import('axios')).default;
+        const { config } = await import('../config/env');
+        const serviceResp = await axios.get(`${config.caseServiceUrl}/services`, {
+          params: { village_id },
+          headers: { 'x-internal-api-key': config.internalApiKey },
+          timeout: 5000,
+        }).catch(() => null);
+        
+        if (serviceResp?.data?.data && serviceResp.data.data.length > 0) {
+          const services = serviceResp.data.data;
+          const serviceList = services
+            .filter((s: any) => s.is_active !== false)
+            .map((s: any) => `• ${s.name}${s.mode === 'online' ? ' (Online)' : ''}`)
+            .join('\n');
+          
+          return {
+            text: `Berikut layanan yang tersedia:\n\n${serviceList}\n\nUntuk info lebih lanjut tentang layanan tertentu, silakan tanya "syarat [nama layanan]".`,
+          };
+        }
+        
+        return {
+          text: 'Mohon maaf, data layanan belum tersedia. Silakan hubungi kantor desa untuk informasi lebih lanjut.',
+        };
+      } catch {
+        return null; // Let full NLU handle
+      }
+    }
+    
+    // ==================== ASK COMPLAINT CATEGORY ====================
+    
+    case 'ASK_COMPLAINT_CATEGORY': {
+      // User wants to know complaint categories
+      const complaintTypes = await getComplaintTypes(village_id);
+      
+      if (complaintTypes.length > 0) {
+        // Group by category
+        const categoryMap = new Map<string, string[]>();
+        complaintTypes.forEach((type: any) => {
+          const categoryName = type.category?.name || 'Lainnya';
+          if (!categoryMap.has(categoryName)) {
+            categoryMap.set(categoryName, []);
+          }
+          categoryMap.get(categoryName)!.push(type.name);
+        });
+        
+        let categoryList = '';
+        categoryMap.forEach((types, category) => {
+          categoryList += `📁 *${category}*\n`;
+          types.forEach(t => {
+            categoryList += `   • ${t}\n`;
+          });
+        });
+        
+        return {
+          text: `Berikut kategori pengaduan yang tersedia:\n\n${categoryList}\nUntuk membuat laporan, katakan misalnya "saya mau lapor jalan rusak".`,
+        };
+      }
+      
+      return {
+        text: 'Kategori pengaduan meliputi:\n• Infrastruktur (jalan rusak, lampu mati)\n• Bencana (kebakaran, banjir)\n• Keamanan\n• Kesehatan\n• Lainnya\n\nSilakan sampaikan keluhan Kakak.',
+      };
+    }
+    
+    // ==================== ASK SERVICE INFO ====================
+    
+    case 'ASK_SERVICE_INFO': {
+      // User wants info about specific service - need full NLU with RAG
+      return null;
+    }
+    
+    // ==================== CHECK COMPLAINT STATUS ====================
+    
+    case 'CHECK_COMPLAINT_STATUS': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      
+      if (trackingNumber) {
+        const llmLike = {
+          intent: 'CHECK_STATUS',
+          fields: { complaint_id: trackingNumber.toUpperCase() },
+        };
+        const result = await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message);
+        return { text: result };
+      }
+      
+      return {
+        text: 'Untuk cek status pengaduan, mohon berikan nomor laporan Kakak.\n\nContoh: LAP-20260203-001',
+      };
+    }
+    
+    // ==================== CHECK SERVICE STATUS ====================
+    
+    case 'CHECK_SERVICE_STATUS': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      
+      if (trackingNumber) {
+        const llmLike = {
+          intent: 'CHECK_STATUS',
+          fields: { request_number: trackingNumber.toUpperCase() },
+        };
+        const result = await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message);
+        return { text: result };
+      }
+      
+      return {
+        text: 'Untuk cek status layanan, mohon berikan nomor permohonan Kakak.\n\nContoh: LAY-20260203-001',
+      };
+    }
+    
+    // ==================== CANCEL COMPLAINT ====================
+    
+    case 'CANCEL_COMPLAINT': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      
+      if (trackingNumber) {
+        const llmLike = {
+          intent: 'CANCEL',
+          fields: { complaint_id: trackingNumber.toUpperCase(), cancel_reason: 'Dibatalkan oleh pengguna' },
+        };
+        const result = await handleCancellation(wa_user_id, 'whatsapp', llmLike);
+        return { text: result };
+      }
+      
+      return {
+        text: 'Untuk membatalkan pengaduan, mohon berikan nomor laporan.\n\nContoh: LAP-20260203-001',
+      };
+    }
+    
+    // ==================== CANCEL SERVICE ====================
+    
+    case 'CANCEL_SERVICE': {
+      const trackingNumber = micro.extracted_data?.tracking_number;
+      
+      if (trackingNumber) {
+        const llmLike = {
+          intent: 'CANCEL',
+          fields: { request_number: trackingNumber.toUpperCase(), cancel_reason: 'Dibatalkan oleh pengguna' },
+        };
+        const result = await handleCancellation(wa_user_id, 'whatsapp', llmLike);
+        return { text: result };
+      }
+      
+      return {
+        text: 'Untuk membatalkan layanan, mohon berikan nomor permohonan.\n\nContoh: LAY-20260203-001',
+      };
+    }
+    
     // ==================== UNCLEAR ====================
     
     case 'UNCLEAR': {
       // AI tidak paham - tanya balik dengan pertanyaan klarifikasi
+      // This is handled earlier in processMessage with low confidence check
+      // but we keep this as fallback
       if (micro.clarification_question) {
         return { text: micro.clarification_question };
       }
@@ -909,32 +1389,6 @@ async function handleMicroNLUResult(
       // Unknown action - let full NLU handle
       return null;
   }
-}
-
-/**
- * Extract phone number from message
- */
-function extractPhoneFromMessage(message: string): string | null {
-  // Match Indonesian phone formats
-  const patterns = [
-    /(?:0|\+?62)\s?8\d{2}[\s-]?\d{4}[\s-]?\d{2,4}/,
-    /08\d{8,11}/,
-  ];
-  
-  for (const pattern of patterns) {
-    const match = message.match(pattern);
-    if (match) {
-      // Normalize: remove spaces/dashes, ensure starts with 08 or +62
-      let phone = match[0].replace(/[\s-]/g, '');
-      if (phone.startsWith('+62')) {
-        phone = '0' + phone.substring(3);
-      } else if (phone.startsWith('62')) {
-        phone = '0' + phone.substring(2);
-      }
-      return phone;
-    }
-  }
-  return null;
 }
 
 /**
@@ -1130,22 +1584,23 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
 
     // NEW: Unified ASK_INFO handles all information queries
     case 'ASK_INFO': {
-      // Check for emergency request first
-      const isEmergency = /darurat|urgent|segera|cepat|kebakaran|kecelakaan|tolong|emergency/i.test(message);
-      
       // Topic: kontak - ALWAYS try to get vCards first (even if NLU provided suggested_answer)
       // vCards are better UX on WhatsApp than text-based phone numbers
       const topic = infoRequest?.topic || '';
       const keywords = infoRequest?.keywords || [];
-      const isContactQuery = topic === 'kontak' || 
-        keywords.some((k: string) => /nomor|kontak|telepon|hubungi|damkar|puskesmas|polisi|ambulan/i.test(k)) ||
-        /nomor|kontak|telepon|hubungi|damkar|puskesmas|polisi|ambulan/i.test(message);
+      
+      // NLU sudah menentukan apakah ini contact query berdasarkan topic
+      const isContactQuery = topic === 'kontak';
+      
+      // NLU juga sudah extract is_emergency dari complaint_request jika ada
+      // Untuk ASK_INFO, kita cek dari keywords yang diberikan NLU
+      const isEmergency = nlu.complaint_request?.is_emergency || false;
       
       if (isContactQuery) {
-        const categoryKeyword = keywords[0] || message;
+        const categoryKeyword = keywords[0] || topic;
         const categoryMatch = mapKeywordToCategory(categoryKeyword);
         
-        logger.info('📇 Processing contact query', {
+        logger.info('📇 Processing contact query (from NLU)', {
           categoryKeyword,
           categoryMatch,
           isEmergency,
@@ -1251,6 +1706,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
     }
 
     // NEW: CREATE_SERVICE with database check
+    // FIXED: Show requirements first before asking to create
     case 'CREATE_SERVICE': {
       const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
       const existsInDb = nlu.service_request?.exists_in_database;
@@ -1263,11 +1719,23 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
         return { text: 'Layanan apa yang ingin Kakak ajukan? Silakan sebutkan jenis layanannya.' };
       }
       
+      // Use handleServiceInfo to show requirements first, then ask for confirmation
+      // This ensures user sees requirements before getting link
       const llmLike = {
-        intent: 'CREATE_SERVICE_REQUEST',
+        intent: 'SERVICE_INFO',
         fields: { service_slug: serviceSlug, village_id, ...nlu.extracted_data },
       };
-      return { text: await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike) };
+      const result = await handleServiceInfo(wa_user_id, llmLike);
+      
+      // handleServiceInfo returns { replyText, guidanceText } or string
+      // Combine them into a single response
+      if (typeof result === 'string') {
+        return { text: result };
+      }
+      if (result.guidanceText) {
+        return { text: `${result.replyText}${result.guidanceText}` };
+      }
+      return { text: result.replyText };
     }
 
     // UPDATED: CREATE_COMPLAINT with better handling and emergency support
@@ -1276,7 +1744,9 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       const kategori = complaintRequest?.category_match || (nlu as any).extracted_data?.complaint_category || 'lainnya';
       const deskripsi = complaintRequest?.description || (nlu as any).extracted_data?.complaint_description;
       const lokasi = complaintRequest?.location || nlu.extracted_data?.alamat;
-      const isEmergency = complaintRequest?.is_emergency || /darurat|kebakaran|kecelakaan|urgent|segera|tolong|emergency/i.test(message);
+      
+      // NLU sudah deteksi is_emergency - tidak pakai pattern matching
+      const isEmergency = complaintRequest?.is_emergency || false;
       
       const llmLike = {
         intent: 'CREATE_COMPLAINT',
@@ -1309,26 +1779,25 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
           if (configContacts) contactsToSend = configContacts;
         }
         
-        // For emergency, also check for Damkar/Pemadam/RS/Ambulan contacts
+        // For emergency, also check for relevant emergency contacts based on NLU-detected kategori
         if (isEmergency && contactsToSend.length === 0) {
-          // Try to get emergency contacts based on keywords in message
-          const emergencyCategories = ['Damkar', 'Pemadam', 'Ambulan', 'Rumah Sakit', 'Polisi', 'Keamanan'];
-          for (const cat of emergencyCategories) {
-            if (message.toLowerCase().includes(cat.toLowerCase().substring(0, 4)) || 
-                kategori.toLowerCase().includes(cat.toLowerCase().substring(0, 4))) {
-              const emergencyContacts = await getImportantContacts(village_id, cat, undefined);
-              if (emergencyContacts && emergencyContacts.length > 0) {
-                contactsToSend = emergencyContacts;
-                break;
-              }
-            }
+          // Map kategori to emergency contact category - NLU sudah deteksi kategori
+          const kategoriLower = kategori.toLowerCase();
+          let emergencyCategory = '';
+          
+          if (kategoriLower.includes('kebakaran') || kategoriLower.includes('api')) {
+            emergencyCategory = 'Damkar';
+          } else if (kategoriLower.includes('kecelakaan') || kategoriLower.includes('sakit') || kategoriLower.includes('medis')) {
+            emergencyCategory = 'Ambulan';
+          } else if (kategoriLower.includes('keamanan') || kategoriLower.includes('kriminal')) {
+            emergencyCategory = 'Polisi';
           }
           
-          // If still no contacts for emergency, try Damkar for fire-related
-          if (contactsToSend.length === 0 && /api|bakar|kebakaran|asap/i.test(message)) {
-            const damkarContacts = await getImportantContacts(village_id, 'Damkar', undefined) ||
-                                   await getImportantContacts(village_id, 'Pemadam', undefined);
-            if (damkarContacts) contactsToSend = damkarContacts;
+          if (emergencyCategory) {
+            const emergencyContacts = await getImportantContacts(village_id, emergencyCategory, undefined);
+            if (emergencyContacts && emergencyContacts.length > 0) {
+              contactsToSend = emergencyContacts;
+            }
           }
         }
       } catch (error: any) {

@@ -547,6 +547,18 @@ async function getCachedComplaintTypes(villageId?: string): Promise<any[]> {
   return data;
 }
 
+/**
+ * Resolve complaint type configuration from database
+ * Improved matching with fuzzy search and synonym support
+ * 
+ * Matching priority:
+ * 1. Exact match on type name (case-insensitive)
+ * 2. Partial match on type name (contains)
+ * 3. Exact match on category name
+ * 4. Partial match on category name (contains)
+ * 5. Keyword/synonym matching
+ * 6. Return first type from matched category if category matches
+ */
 export async function resolveComplaintTypeConfig(kategori?: string, villageId?: string) {
   if (!kategori || !villageId) return null;
 
@@ -554,15 +566,100 @@ export async function resolveComplaintTypeConfig(kategori?: string, villageId?: 
   if (!types.length) return null;
 
   const target = normalizeLookupKey(kategori);
+  const targetLower = target.toLowerCase();
 
-  const directMatch = types.find(type => normalizeLookupKey(type?.name || '') === target);
-  if (directMatch) return directMatch;
+  // 1. Exact match on type name
+  const exactTypeMatch = types.find(type => 
+    normalizeLookupKey(type?.name || '').toLowerCase() === targetLower
+  );
+  if (exactTypeMatch) {
+    logger.debug('resolveComplaintTypeConfig: Exact type match', { kategori, matchedType: exactTypeMatch.name });
+    return exactTypeMatch;
+  }
 
-  const categoryMatches = types.filter(type => normalizeLookupKey(type?.category?.name || '') === target);
-  if (categoryMatches.length === 1) {
+  // 2. Partial match on type name (target contains type name or vice versa)
+  const partialTypeMatch = types.find(type => {
+    const typeName = normalizeLookupKey(type?.name || '').toLowerCase();
+    return typeName.includes(targetLower) || targetLower.includes(typeName);
+  });
+  if (partialTypeMatch) {
+    logger.debug('resolveComplaintTypeConfig: Partial type match', { kategori, matchedType: partialTypeMatch.name });
+    return partialTypeMatch;
+  }
+
+  // 3. Exact match on category name
+  const exactCategoryMatch = types.find(type => 
+    normalizeLookupKey(type?.category?.name || '').toLowerCase() === targetLower
+  );
+  if (exactCategoryMatch) {
+    logger.debug('resolveComplaintTypeConfig: Exact category match', { kategori, matchedCategory: exactCategoryMatch.category?.name });
+    return exactCategoryMatch;
+  }
+
+  // 4. Partial match on category name
+  const partialCategoryMatch = types.find(type => {
+    const categoryName = normalizeLookupKey(type?.category?.name || '').toLowerCase();
+    return categoryName.includes(targetLower) || targetLower.includes(categoryName);
+  });
+  if (partialCategoryMatch) {
+    logger.debug('resolveComplaintTypeConfig: Partial category match', { kategori, matchedCategory: partialCategoryMatch.category?.name });
+    return partialCategoryMatch;
+  }
+
+  // 5. Keyword/synonym matching - common Indonesian complaint terms
+  const synonymMap: Record<string, string[]> = {
+    'banjir': ['genangan', 'air', 'banjir', 'menggenangi', 'terendam', 'kebanjiran'],
+    'kebakaran': ['api', 'terbakar', 'kebakaran', 'asap', 'hangus'],
+    'jalan rusak': ['jalan', 'lubang', 'berlubang', 'rusak', 'aspal', 'retak', 'jalanan'],
+    'lampu mati': ['lampu', 'penerangan', 'gelap', 'mati', 'padam', 'listrik'],
+    'sampah': ['sampah', 'menumpuk', 'limbah', 'kotor', 'bau', 'jorok'],
+    'pohon tumbang': ['pohon', 'tumbang', 'roboh', 'dahan', 'ranting'],
+    'drainase': ['selokan', 'got', 'saluran', 'tersumbat', 'mampet', 'drainase', 'gorong'],
+    'fasilitas rusak': ['fasilitas', 'umum', 'rusak', 'taman', 'bangku'],
+    'bencana': ['bencana', 'alam', 'longsor', 'gempa', 'angin'],
+    'lingkungan': ['lingkungan', 'pencemaran', 'polusi', 'udara'],
+  };
+
+  // Try to find a type that matches via synonyms
+  for (const type of types) {
+    const typeName = normalizeLookupKey(type?.name || '').toLowerCase();
+    const categoryName = normalizeLookupKey(type?.category?.name || '').toLowerCase();
+    
+    // Check if any synonym group matches
+    for (const [key, synonyms] of Object.entries(synonymMap)) {
+      const keyLower = key.toLowerCase();
+      // If target matches any synonym AND type/category matches the key
+      const targetMatchesSynonym = synonyms.some(syn => targetLower.includes(syn) || syn.includes(targetLower));
+      const typeMatchesKey = typeName.includes(keyLower) || keyLower.includes(typeName) ||
+                             categoryName.includes(keyLower) || keyLower.includes(categoryName);
+      
+      if (targetMatchesSynonym && typeMatchesKey) {
+        logger.debug('resolveComplaintTypeConfig: Synonym match', { 
+          kategori, 
+          synonymKey: key, 
+          matchedType: type.name,
+          matchedCategory: type.category?.name 
+        });
+        return type;
+      }
+    }
+  }
+
+  // 6. If target matches a category with multiple types, return the first one
+  const categoryMatches = types.filter(type => {
+    const categoryName = normalizeLookupKey(type?.category?.name || '').toLowerCase();
+    return categoryName.includes(targetLower) || targetLower.includes(categoryName);
+  });
+  if (categoryMatches.length > 0) {
+    logger.debug('resolveComplaintTypeConfig: First type from category', { 
+      kategori, 
+      matchedCategory: categoryMatches[0].category?.name,
+      matchedType: categoryMatches[0].name 
+    });
     return categoryMatches[0];
   }
 
+  logger.debug('resolveComplaintTypeConfig: No match found', { kategori, villageId });
   return null;
 }
 
