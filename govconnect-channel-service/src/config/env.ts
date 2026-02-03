@@ -11,7 +11,6 @@ interface EnvConfig {
   GENFITY_APP_API_URL: string;
   GENFITY_APP_CUSTOMER_API_KEY: string;
   WA_API_URL: string;
-  WA_ACCESS_TOKEN: string;
   WA_WEBHOOK_VERIFY_TOKEN: string; // Optional - if empty, webhook verification is disabled
   LOG_LEVEL: string;
   LOG_DIR: string;
@@ -49,8 +48,6 @@ function validateEnv(): EnvConfig {
     GENFITY_APP_CUSTOMER_API_KEY: process.env.GENFITY_APP_CUSTOMER_API_KEY || '',
     // WA_API_URL: WhatsApp provider base URL (includes /wa prefix)
     WA_API_URL: process.env.WA_API_URL || 'https://wa-api.genfity.com/wa',
-    // WA_ACCESS_TOKEN: Session token from genfity-wa
-    WA_ACCESS_TOKEN: process.env.WA_ACCESS_TOKEN || '',
     // WA_WEBHOOK_VERIFY_TOKEN: Optional - if empty, accepts any webhook without verification
     WA_WEBHOOK_VERIFY_TOKEN: process.env.WA_WEBHOOK_VERIFY_TOKEN || '',
     LOG_LEVEL: process.env.LOG_LEVEL || 'info',

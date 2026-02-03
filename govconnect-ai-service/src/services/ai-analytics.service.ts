@@ -5,7 +5,7 @@
  * - Intent classification accuracy
  * - Token usage and cost estimation
  * - Conversation flow patterns
- * - Response quality metrics
+ * - Response quality metricss
  */
 
 import fs from 'fs';

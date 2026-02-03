@@ -90,10 +90,14 @@ export async function handleGetComplaintTypes(req: Request, res: Response) {
   try {
     const category_id = getQuery(req, 'category_id');
     const village_id = getQuery(req, 'village_id');
+    const is_urgent = getQuery(req, 'is_urgent');
+    
     const data = await prisma.complaintType.findMany({
       where: {
         ...(category_id ? { category_id } : {}),
         ...(village_id ? { category: { village_id } } : {}),
+        ...(is_urgent === 'true' ? { is_urgent: true } : {}),
+        ...(is_urgent === 'false' ? { is_urgent: false } : {}),
       },
       include: { category: true },
       orderBy: { created_at: 'asc' },

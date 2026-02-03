@@ -1,49 +1,19 @@
 // Notification Settings Types and Utilities
+// NOTE: urgentCategories is now determined by ComplaintType.is_urgent in database
 
 export interface NotificationSettings {
   enabled: boolean;
   urgentNotifications: boolean;
-  adminWhatsApp: string;
   soundEnabled: boolean;
-  urgentCategories: string[];
-}
-
-export type UrgentCategory = {
-  id: string;
-  label: string;
-  description: string;
-  priority: 'critical' | 'high' | 'medium';
+  urgentCategories: string[]; // Loaded from database, not hardcoded
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   enabled: true,
   urgentNotifications: true,
-  adminWhatsApp: '',
   soundEnabled: true,
-  urgentCategories: ['bencana', 'kebakaran', 'kecelakaan', 'kriminal', 'infrastruktur_kritis'],
+  urgentCategories: [], // Will be loaded from database via API
 };
-
-// Urgent categories definition
-export const URGENT_CATEGORIES: UrgentCategory[] = [
-  { id: 'bencana', label: 'Bencana Alam', description: 'Banjir, longsor, gempa, dll', priority: 'critical' },
-  { id: 'kebakaran', label: 'Kebakaran', description: 'Kebakaran gedung, lahan, dll', priority: 'critical' },
-  { id: 'kecelakaan', label: 'Kecelakaan', description: 'Kecelakaan lalu lintas berat', priority: 'high' },
-  { id: 'kriminal', label: 'Kriminal', description: 'Tindak kriminal berbahaya', priority: 'high' },
-  { id: 'infrastruktur_kritis', label: 'Infrastruktur Kritis', description: 'Jembatan rusak, jalan amblas', priority: 'medium' },
-];
-
-// Check if a category is urgent
-export function isUrgentCategory(kategori: string): boolean {
-  const urgentKeywords = [
-    'bencana', 'kebakaran', 'kecelakaan', 'kriminal', 
-    'darurat', 'urgent', 'emergency', 'bahaya',
-    'longsor', 'banjir', 'gempa', 'tsunami',
-    'jembatan_rusak', 'jalan_amblas', 'pohon_tumbang_besar',
-  ];
-  
-  const lowerKategori = kategori.toLowerCase();
-  return urgentKeywords.some(keyword => lowerKategori.includes(keyword));
-}
 
 // Get notification settings from localStorage
 export function getNotificationSettings(): NotificationSettings {

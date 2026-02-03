@@ -22,7 +22,8 @@ import {
 } from './adaptive-batcher.service';
 
 // Configuration
-const DEFAULT_BATCH_DELAY_MS = parseInt(process.env.MESSAGE_BATCH_DELAY_MS || '3000', 10); // 3 seconds default
+// BATCH_DELAY_MS: Unified delay for both WhatsApp and Webchat batching
+const DEFAULT_BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || process.env.MESSAGE_BATCH_DELAY_MS || '3000', 10); // 3 seconds default
 const MAX_BATCH_SIZE = parseInt(process.env.MAX_BATCH_SIZE || '10', 10); // Max messages per batch
 const USE_ADAPTIVE_BATCHING = process.env.USE_ADAPTIVE_BATCHING !== 'false'; // Enable by default
 const PUBLISH_RETRY_DELAY_MS = parseInt(process.env.MESSAGE_BATCH_PUBLISH_RETRY_DELAY_MS || '5000', 10);

@@ -1,7 +1,7 @@
 import prisma from '../config/database';
 import { generateComplaintId } from '../utils/id-generator';
 import { publishEvent } from './rabbitmq.service';
-import { RABBITMQ_CONFIG, isUrgentCategory } from '../config/rabbitmq';
+import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import logger from '../utils/logger';
 import { invalidateStatsCache } from './query-batcher.service';
 
@@ -80,7 +80,9 @@ function isSameRequester(complaint: { channel: 'WHATSAPP' | 'WEBCHAT'; wa_user_i
 export async function createComplaint(data: CreateComplaintData) {
   const complaint_id = await generateComplaintId();
 
-  const isUrgent = data.is_urgent ?? isUrgentCategory(data.kategori);
+  // is_urgent should be passed from AI Service based on ComplaintType.is_urgent in database
+  // Default to false if not provided (caller should always provide this from DB config)
+  const isUrgent = data.is_urgent ?? false;
   const channel = data.channel || 'WHATSAPP';
   const channelIdentifier = channel === 'WEBCHAT'
     ? data.channel_identifier

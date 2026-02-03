@@ -2,21 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { verifyToken } from '@/lib/auth'
 
-// In production, this would be stored in database
-// For now, we store in environment variable via API
+// Notification settings - urgentCategories now comes from database (ComplaintType.is_urgent)
 let adminSettings = {
   enabled: true,
-  adminWhatsApp: process.env.ADMIN_WHATSAPP || '',
   soundEnabled: true,
-  urgentCategories: [
-    'bencana',
-    'bencana_alam',
-    'kebakaran',
-    'kecelakaan',
-    'keamanan',
-    'kriminalitas',
-    'kesehatan_darurat'
-  ]
 }
 
 async function getSession(request: NextRequest) {
@@ -36,6 +25,28 @@ async function getSession(request: NextRequest) {
   return session
 }
 
+// Get urgent complaint types from Case Service API
+async function getUrgentTypesFromDB(): Promise<string[]> {
+  try {
+    // Call Case Service API to get urgent types
+    const caseServiceUrl = process.env.CASE_SERVICE_URL || 'http://case-service:3003'
+    const res = await fetch(`${caseServiceUrl}/api/complaints/types?is_urgent=true`, {
+      headers: {
+        'x-api-key': process.env.INTERNAL_API_KEY || '',
+      },
+      cache: 'no-store',
+    })
+    if (res.ok) {
+      const data = await res.json()
+      const types = data.data || data || []
+      return types.map((t: { name: string }) => t.name)
+    }
+    return []
+  } catch {
+    return []
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession(request)
@@ -43,9 +54,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Fetch urgent categories from database
+    const urgentCategories = await getUrgentTypesFromDB()
+
     return NextResponse.json({
       success: true,
-      data: adminSettings
+      data: {
+        ...adminSettings,
+        urgentCategories, // From database, not hardcoded
+      }
     })
   } catch (error: any) {
     return NextResponse.json(

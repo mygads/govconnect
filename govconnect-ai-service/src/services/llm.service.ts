@@ -69,37 +69,33 @@ function calculateBackoffDelay(attempt: number, baseDelay: number = BASE_RETRY_D
 }
 
 /**
+ * Parse FULL_NLU_MODELS from environment variable
+ */
+function parseModelListEnv(envValue: string | undefined, fallback: string[]): string[] {
+  const raw = (envValue || '').trim();
+  if (!raw) return fallback;
+
+  const models = raw.split(',').map((m) => m.trim()).filter(Boolean);
+  const unique: string[] = [];
+  for (const model of models) {
+    if (!unique.includes(model)) unique.push(model);
+  }
+  return unique.length > 0 ? unique : fallback;
+}
+
+/**
  * Get dynamically sorted model priority based on:
- * 1. ENV (primary model first, then fallback)
+ * 1. ENV (FULL_NLU_MODELS - comma-separated list)
  * 2. Success rates from model stats
  */
 async function getModelPriority(): Promise<string[]> {
   try {
     // NOTE: Model selection must NOT be configurable from Dashboard UI.
-    // Configure via ENV only.
-    const primaryModel = (process.env.LLM_MODEL_PRIMARY || 'gemini-2.0-flash').trim();
-    const fallbackModel = (process.env.LLM_MODEL_FALLBACK || 'gemini-2.0-flash-lite').trim();
+    // Configure via ENV only (FULL_NLU_MODELS).
+    const envModels = parseModelListEnv(process.env.FULL_NLU_MODELS, AVAILABLE_MODELS);
     
-    // Build priority list: primary first, then fallback, then others
-    const priorityModels: string[] = [];
-    
-    // Add primary if it's in available models
-    if (AVAILABLE_MODELS.includes(primaryModel)) {
-      priorityModels.push(primaryModel);
-    } else {
-      logger.warn('⚠️ Primary model from ENV is not in AVAILABLE_MODELS, ignoring', {
-        primaryModel,
-      });
-    }
-    
-    // Add fallback if different from primary and in available models
-    if (fallbackModel !== primaryModel && AVAILABLE_MODELS.includes(fallbackModel)) {
-      priorityModels.push(fallbackModel);
-    } else if (fallbackModel !== primaryModel) {
-      logger.warn('⚠️ Fallback model from ENV is not in AVAILABLE_MODELS, ignoring', {
-        fallbackModel,
-      });
-    }
+    // Filter to only models we support
+    const priorityModels = envModels.filter(m => AVAILABLE_MODELS.includes(m));
     
     // Add remaining models sorted by success rate
     const remainingModels = AVAILABLE_MODELS.filter(m => !priorityModels.includes(m));
@@ -108,8 +104,7 @@ async function getModelPriority(): Promise<string[]> {
     const finalPriority = [...priorityModels, ...sortedRemaining];
     
     logger.debug('📊 Model priority calculated', {
-      primary: primaryModel,
-      fallback: fallbackModel,
+      envModels,
       priority: finalPriority,
     });
     

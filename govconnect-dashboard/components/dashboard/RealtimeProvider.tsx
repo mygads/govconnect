@@ -4,7 +4,6 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { laporan, statistics } from '@/lib/frontend-api'
 import { 
   getNotificationSettings, 
-  isUrgentCategory, 
   playNotificationSound,
   showBrowserNotification,
   requestNotificationPermission,
@@ -107,10 +106,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       const complaintsData = await laporan.getAll()
       const allComplaints: Complaint[] = complaintsData.data || []
       
-      // Filter urgent complaints
+      // Filter urgent complaints - is_urgent is set from database via ComplaintType.is_urgent
       const urgent = allComplaints.filter(c => {
-        const urgentFlag = typeof c.is_urgent === 'boolean' ? c.is_urgent : isUrgentCategory(c.kategori)
-        return urgentFlag && (c.status === 'OPEN' || c.status === 'baru')
+        return c.is_urgent === true && (c.status === 'OPEN' || c.status === 'baru')
       })
       
       // Get recent (last 10)
@@ -137,10 +135,8 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
         
         allComplaints.forEach(complaint => {
           if (!previousComplaintsRef.current.has(complaint.id)) {
-            // New complaint detected
-            const isUrgent = typeof complaint.is_urgent === 'boolean'
-              ? complaint.is_urgent
-              : isUrgentCategory(complaint.kategori)
+            // New complaint detected - is_urgent from database
+            const isUrgent = complaint.is_urgent === true
             
             // Create notification
             const notification: Notification = {
@@ -183,9 +179,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
           .slice(0, 10)
         
         const initialNotifications: Notification[] = recentActivity.map(complaint => {
-          const isUrgent = typeof complaint.is_urgent === 'boolean'
-            ? complaint.is_urgent
-            : isUrgentCategory(complaint.kategori)
+          const isUrgent = complaint.is_urgent === true
           return {
             id: `notif-${complaint.id}`,
             type: isUrgent ? 'urgent' : 'new_complaint',

@@ -15,9 +15,9 @@
 
 import logger from '../utils/logger';
 
-// Configuration - same as Channel Service
-const BATCH_DELAY_MS = parseInt(process.env.WEBCHAT_BATCH_DELAY_MS || '3000', 10); // 3 seconds
-const MAX_BATCH_SIZE = parseInt(process.env.WEBCHAT_MAX_BATCH_SIZE || '10', 10); // Max messages per batch
+// Configuration - unified with Channel Service (BATCH_DELAY_MS)
+const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || process.env.WEBCHAT_BATCH_DELAY_MS || '3000', 10); // 3 seconds
+const MAX_BATCH_SIZE = parseInt(process.env.MAX_BATCH_SIZE || '10', 10); // Max messages per batch
 
 interface BatchedMessage {
   message: string;

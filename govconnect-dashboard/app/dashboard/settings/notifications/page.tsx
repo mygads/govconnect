@@ -5,34 +5,38 @@ import {
   Bell, 
   Volume2, 
   VolumeX, 
-  Phone, 
   AlertTriangle,
   Save,
   TestTube,
   CheckCircle2,
   Loader2,
   Sparkles,
-  MessageSquare,
+  Info,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/hooks/use-toast'
 import { 
   getNotificationSettings, 
   saveNotificationSettings, 
-  URGENT_CATEGORIES,
   playNotificationSound,
   showBrowserNotification,
   requestNotificationPermission,
   NotificationSettings 
 } from '@/lib/notification-settings'
 
+// Urgent types from database
+interface UrgentType {
+  id: string
+  name: string
+  category_name?: string
+}
+
 export default function NotificationSettingsPage() {
   const [settings, setSettings] = useState<NotificationSettings>(getNotificationSettings())
+  const [urgentTypes, setUrgentTypes] = useState<UrgentType[]>([])
   const [saving, setSaving] = useState(false)
   const [hasPermission, setHasPermission] = useState(false)
   const { toast } = useToast()
@@ -41,7 +45,21 @@ export default function NotificationSettingsPage() {
     if ('Notification' in window) {
       setHasPermission(Notification.permission === 'granted')
     }
+    // Fetch urgent types from database
+    fetchUrgentTypes()
   }, [])
+
+  const fetchUrgentTypes = async () => {
+    try {
+      const res = await fetch('/api/complaints/types?is_urgent=true')
+      if (res.ok) {
+        const data = await res.json()
+        setUrgentTypes(data.data || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch urgent types:', error)
+    }
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -73,15 +91,6 @@ export default function NotificationSettingsPage() {
   const handleTestUrgent = () => {
     playNotificationSound('urgent')
     showBrowserNotification('🚨 Test Notifikasi Darurat', 'Ini adalah test notifikasi darurat', { urgent: true })
-  }
-
-  const toggleCategory = (categoryId: string) => {
-    setSettings(prev => ({
-      ...prev,
-      urgentCategories: prev.urgentCategories.includes(categoryId)
-        ? prev.urgentCategories.filter(id => id !== categoryId)
-        : [...prev.urgentCategories, categoryId]
-    }))
   }
 
   return (
@@ -201,66 +210,39 @@ export default function NotificationSettingsPage() {
           </CardContent>
         </Card>
 
-        {/* WhatsApp Admin Card */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MessageSquare className="h-5 w-5 text-green-500" />
-              Notifikasi WhatsApp Admin
-            </CardTitle>
-            <CardDescription>
-              Nomor WhatsApp untuk menerima notifikasi laporan darurat
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="adminWhatsApp">Nomor WhatsApp Admin</Label>
-              <Input
-                id="adminWhatsApp"
-                type="tel"
-                placeholder="628123456789"
-                value={settings.adminWhatsApp}
-                onChange={(e) => setSettings({ ...settings, adminWhatsApp: e.target.value })}
-                disabled={!settings.enabled}
-                className="max-w-md"
-              />
-              <p className="text-xs text-muted-foreground">
-                Format: kode negara + nomor (tanpa + atau spasi). Contoh: 628123456789
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Urgent Categories Card */}
+        {/* Urgent Categories Card - Read-only from database */}
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-red-500" />
-              Kategori Darurat
+              Kategori Darurat (dari Database)
             </CardTitle>
             <CardDescription>
-              Pilih kategori yang dianggap sebagai laporan darurat dan memerlukan penanganan segera
+              Jenis pengaduan yang ditandai sebagai darurat di database. Ubah di menu Kategori Pengaduan.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {URGENT_CATEGORIES.map((category) => (
-                <div 
-                  key={category.id} 
-                  className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors"
-                >
-                  <Checkbox
-                    id={category.id}
-                    checked={settings.urgentCategories.includes(category.id)}
-                    onCheckedChange={() => toggleCategory(category.id)}
-                    disabled={!settings.enabled}
-                  />
-                  <Label htmlFor={category.id} className="text-sm cursor-pointer flex-1">
-                    {category.label}
-                  </Label>
-                </div>
-              ))}
-            </div>
+            {urgentTypes.length > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {urgentTypes.map((type) => (
+                  <div 
+                    key={type.id} 
+                    className="flex items-center gap-3 p-3 rounded-lg border bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900"
+                  >
+                    <AlertTriangle className="h-4 w-4 text-red-500" />
+                    <span className="text-sm font-medium">{type.name}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Info className="h-4 w-4" />
+                <span className="text-sm">Tidak ada jenis pengaduan yang ditandai sebagai darurat.</span>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-4">
+              Untuk mengubah kategori darurat, edit jenis pengaduan di menu &quot;Kategori Pengaduan&quot; dan centang opsi &quot;Darurat&quot;.
+            </p>
           </CardContent>
         </Card>
       </div>

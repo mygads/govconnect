@@ -121,7 +121,9 @@ async function resolveAccessToken(villageId?: string): Promise<ResolvedAccessTok
 
   const account = await getDefaultChannelAccount(resolvedVillageId);
   if (account?.wa_token) return { token: account.wa_token, source: 'channel_account', village_id: resolvedVillageId };
-  return { token: config.WA_ACCESS_TOKEN, source: 'default', village_id: resolvedVillageId };
+  
+  // No fallback to env token - tokens must be in database
+  throw new Error(`No WA token found for village ${resolvedVillageId || 'default'}. Please create a session first.`);
 }
 
 // Exported for other modules that must call WA provider via session token (e.g., media download).
@@ -224,9 +226,10 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
  * Get available webhook events
  * API: GET {WA_API_URL}/webhook/events?active=true
  */
-export async function getWebhookEvents(): Promise<string[]> {
+export async function getWebhookEvents(villageId?: string): Promise<string[]> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    const resolved = await resolveAccessToken(villageId).catch(() => null);
+    if (!resolved) {
       return ['Message'];
     }
 
@@ -234,7 +237,7 @@ export async function getWebhookEvents(): Promise<string[]> {
     
     const response = await axios.get(url, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token: resolved.token,
       },
       timeout: 10000,
     });
@@ -251,9 +254,10 @@ export async function getWebhookEvents(): Promise<string[]> {
  * Get current webhook configuration
  * API: GET {WA_API_URL}/webhook
  */
-export async function getWebhookConfig(): Promise<{ subscribe: string[]; webhook: string }> {
+export async function getWebhookConfig(villageId?: string): Promise<{ subscribe: string[]; webhook: string }> {
   try {
-    if (!config.WA_ACCESS_TOKEN) {
+    const resolved = await resolveAccessToken(villageId).catch(() => null);
+    if (!resolved) {
       return { subscribe: ['Message'], webhook: '' };
     }
 
@@ -261,7 +265,7 @@ export async function getWebhookConfig(): Promise<{ subscribe: string[]; webhook
     
     const response = await axios.get(url, {
       headers: {
-        token: config.WA_ACCESS_TOKEN,
+        token: resolved.token,
       },
       timeout: 10000,
     });
