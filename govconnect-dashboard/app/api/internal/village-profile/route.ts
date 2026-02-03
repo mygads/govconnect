@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
       data: {
         id: villageId,
         name: profile?.name || village?.name || null,
-        short_name: profile?.short_name || village?.slug || null,
+        short_name: village?.slug || profile?.short_name || null, // Prioritize village.slug for form URLs
         address: profile?.address || null,
         gmaps_url: profile?.gmaps_url || null,
         operating_hours: profile?.operating_hours || null,

@@ -23,6 +23,7 @@ import { sanitizeUserInput } from './context-builder.service';
 import { applyTypoCorrections } from './text-normalizer.service';
 import { getKelurahanInfoContext } from './knowledge.service';
 import { getUserHistory, getComplaintTypes } from './case-client.service';
+import { getProfile, updateProfile } from './user-profile.service';
 
 // Import handlers from unified-message-processor (existing handlers)
 import { 
@@ -37,6 +38,70 @@ import {
 import { getImportantContacts, ImportantContact } from './important-contacts.service';
 
 const HISTORY_LIMIT = 30; // FIFO 30 messages
+
+// ==================== PENDING NAME REQUEST (for WA layanan & pengaduan) ====================
+// Store pending intents when waiting for user's name
+interface PendingNameRequest {
+  intent: string;
+  nluOutput: NLUOutput;
+  context: ProcessingContext;
+  timestamp: number;
+}
+
+const pendingNameRequests = new Map<string, PendingNameRequest>();
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// Cleanup old pending requests periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, pending] of pendingNameRequests.entries()) {
+    if (now - pending.timestamp > REQUEST_TIMEOUT_MS) {
+      pendingNameRequests.delete(userId);
+      logger.debug('Cleaned up expired pending name request (WA)', { userId });
+    }
+  }
+}, 60000); // Check every minute
+
+// Intents that require user name before proceeding
+const INTENTS_REQUIRING_NAME = ['CREATE_COMPLAINT', 'CREATE_SERVICE_REQUEST'];
+
+/**
+ * Check if user needs to provide name before proceeding with intent (WA)
+ */
+function needsNameForIntent(wa_user_id: string, intent: string): boolean {
+  if (!INTENTS_REQUIRING_NAME.includes(intent)) {
+    return false;
+  }
+  
+  const profile = getProfile(wa_user_id);
+  return !profile.nama_lengkap;
+}
+
+/**
+ * Try to extract name from user message (simple patterns)
+ */
+function extractNameFromMessage(message: string): string | null {
+  const patterns = [
+    /^(?:nama\s+(?:saya|aku|gue|gw)\s+(?:adalah\s+)?)?([A-Za-z][A-Za-z\s]{1,29})$/i,
+    /^([A-Za-z][A-Za-z\s]{1,29})$/i, // Just a name
+  ];
+  
+  const cleanMessage = message.trim();
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+    if (match && match[1]) {
+      const candidateName = match[1].trim();
+      // Basic validation
+      if (candidateName.length >= 2 &&
+          candidateName.length <= 30 &&
+          !candidateName.toLowerCase().includes('http') &&
+          !/\d/.test(candidateName)) {
+        return candidateName;
+      }
+    }
+  }
+  return null;
+}
 
 interface ProcessingContext {
   village_id: string;
@@ -189,6 +254,104 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       intent: nluOutput.intent,
       confidence: nluOutput.confidence,
     });
+
+    // Step 4.5: Check if there's a pending name request (user was asked for name before)
+    const pendingNameRequest = pendingNameRequests.get(wa_user_id);
+    if (pendingNameRequest) {
+      // User might be providing their name now
+      const extractedName = extractNameFromMessage(sanitizedMessage) ||
+        nluOutput.extracted_data?.nama_lengkap;
+      
+      if (extractedName) {
+        // Got the name, save it and continue with original intent
+        updateProfile(wa_user_id, { nama_lengkap: extractedName });
+        pendingNameRequests.delete(wa_user_id);
+        
+        logger.info('✅ Name captured from pending request (WA)', { wa_user_id, nama: extractedName });
+        
+        // Update the extracted data in the pending NLU output
+        if (pendingNameRequest.nluOutput.extracted_data) {
+          pendingNameRequest.nluOutput.extracted_data.nama_lengkap = extractedName;
+        }
+        
+        // Continue with the original intent
+        const response = await handleNLUIntent(pendingNameRequest.nluOutput, pendingNameRequest.context);
+        
+        await stopTyping(wa_user_id, resolvedVillageId);
+        await publishAIReply({
+          village_id: resolvedVillageId,
+          wa_user_id,
+          reply_text: response,
+          message_id: is_batched ? undefined : message_id,
+          batched_message_ids: is_batched ? batched_message_ids : undefined,
+        });
+        
+        const durationMs = Date.now() - startTime;
+        logger.info('✅ Message processed with NLU (after name capture)', {
+          wa_user_id,
+          intent: pendingNameRequest.intent,
+          durationMs,
+        });
+        await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
+        return;
+      }
+      // Name not detected - ask again politely
+      // But only if the new intent is not something else entirely
+      if (!['CREATE_COMPLAINT', 'CREATE_SERVICE_REQUEST', 'GREETING', 'THANKS', 'CONFIRMATION'].includes(nluOutput.intent)) {
+        // User changed topic, clear pending and process new intent
+        pendingNameRequests.delete(wa_user_id);
+      } else if (nluOutput.intent !== pendingNameRequest.intent) {
+        // User might be trying different intent - clear and re-check
+        pendingNameRequests.delete(wa_user_id);
+      } else {
+        // Still no name - ask again
+        await stopTyping(wa_user_id, resolvedVillageId);
+        await publishAIReply({
+          village_id: resolvedVillageId,
+          wa_user_id,
+          reply_text: 'Mohon maaf Kak, saya belum mendapatkan nama Kakak. Boleh sebutkan nama lengkap Kakak?',
+          message_id: is_batched ? undefined : message_id,
+          batched_message_ids: is_batched ? batched_message_ids : undefined,
+        });
+        await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
+        return;
+      }
+    }
+
+    // Step 4.6: Check if this intent requires name and user hasn't provided it
+    // First check if NLU extracted a name from current message
+    if (nluOutput.extracted_data?.nama_lengkap) {
+      updateProfile(wa_user_id, { nama_lengkap: nluOutput.extracted_data.nama_lengkap });
+      logger.info('✅ User name extracted from NLU (WA)', { wa_user_id, nama: nluOutput.extracted_data.nama_lengkap });
+    }
+    
+    // Now check if we need name for this intent
+    if (needsNameForIntent(wa_user_id, nluOutput.intent)) {
+      // Store pending request and ask for name
+      pendingNameRequests.set(wa_user_id, {
+        intent: nluOutput.intent,
+        nluOutput,
+        context,
+        timestamp: Date.now(),
+      });
+      
+      logger.info('📝 Name required for intent (WA), asking user', { 
+        wa_user_id, 
+        intent: nluOutput.intent,
+      });
+      
+      const intentLabel = nluOutput.intent === 'CREATE_COMPLAINT' ? 'pengaduan' : 'pengajuan layanan';
+      await stopTyping(wa_user_id, resolvedVillageId);
+      await publishAIReply({
+        village_id: resolvedVillageId,
+        wa_user_id,
+        reply_text: `Sebelum melanjutkan ${intentLabel}, boleh saya tahu nama lengkap Kakak?`,
+        message_id: is_batched ? undefined : message_id,
+        batched_message_ids: is_batched ? batched_message_ids : undefined,
+      });
+      await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
+      return;
+    }
 
     // Step 5: Handle based on NLU intent
     const response = await handleNLUIntent(nluOutput, context);
@@ -420,7 +583,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
         nlu.contact_request.category_match = mapKeywordToCategory(nlu.contact_request.category_keyword) || undefined;
       }
       
-      const contactResult = await handleContactQuery(nlu, village_id, villageName);
+      const contactResult = await handleContactQuery(nlu, village_id, villageName, 'whatsapp');
       return contactResult.response;
     }
 

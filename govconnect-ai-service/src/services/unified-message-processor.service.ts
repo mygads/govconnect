@@ -550,12 +550,40 @@ async function resolveComplaintTypeConfig(kategori?: string, villageId?: string)
   return null;
 }
 
-function buildImportantContactsMessage(contacts: Array<{ name: string; phone: string; description?: string | null }>): string {
+/**
+ * Format URL for clickable link in webchat
+ * WhatsApp handles links natively, webchat needs HTML anchor
+ */
+function formatClickableLink(url: string, channel: ChannelType, label?: string): string {
+  if (channel === 'webchat') {
+    const displayLabel = label || url;
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${displayLabel}</a>`;
+  }
+  return url;
+}
+
+/**
+ * Format phone number for clickable link
+ * WhatsApp: wa.me link, Webchat: tel: link
+ */
+function formatClickablePhone(phone: string, channel: ChannelType): string {
+  // Normalize phone to 62xxx format for wa.me
+  const normalizedPhone = phone.replace(/^0/, '62').replace(/[^\d]/g, '');
+  
+  if (channel === 'webchat') {
+    return `<a href="tel:${phone}" target="_blank">${phone}</a>`;
+  }
+  // For WhatsApp, just return the number - WA handles it natively
+  return phone;
+}
+
+function buildImportantContactsMessage(contacts: Array<{ name: string; phone: string; description?: string | null }>, channel: ChannelType = 'whatsapp'): string {
   if (!contacts.length) return '';
 
   const lines = contacts.map(contact => {
     const desc = contact.description ? ` (${contact.description})` : '';
-    return `• ${contact.name}: ${contact.phone}${desc}`;
+    const phoneFormatted = formatClickablePhone(contact.phone, channel);
+    return `• ${contact.name}: ${phoneFormatted}${desc}`;
   });
 
   return `\n\n📞 *Nomor Penting Terkait*\n${lines.join('\n')}`;
@@ -738,7 +766,7 @@ export async function handleComplaintCreation(
         complaintTypeConfig.important_contact_category,
         undefined
       );
-      importantContactsMessage = buildImportantContactsMessage(contacts);
+      importantContactsMessage = buildImportantContactsMessage(contacts, channel);
     }
 
     if (isEmergency) {
@@ -1131,7 +1159,8 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
     const villageSlug = await resolveVillageSlugForPublicForm(villageId);
     const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug || service_slug, userId, channel === 'webchat' ? 'webchat' : 'whatsapp');
 
-    return `Baik Pak/Bu, silakan mengisi permohonan melalui link berikut:\n${formUrl}\n\nSetelah dikirim, Bapak/Ibu akan mendapatkan nomor layanan.`;
+    const clickableUrl = formatClickableLink(formUrl, channel, 'Link Formulir Layanan');
+    return `Baik Pak/Bu, silakan mengisi permohonan melalui link berikut:\n${clickableUrl}\n\nSetelah dikirim, Bapak/Ibu akan mendapatkan nomor layanan.`;
   } catch (error: any) {
     logger.error('Failed to validate service before sending form link', { error: error.message, service_slug, villageId });
     return llmResponse.reply_text || 'Mohon maaf Pak/Bu, saya belum bisa menyiapkan link formulirnya sekarang. Coba lagi sebentar ya.';
@@ -1172,7 +1201,8 @@ export async function handleServiceRequestEditLink(userId: string, channel: Chan
     channel === 'webchat' ? 'webchat' : 'whatsapp'
   );
 
-  return `Baik Pak/Bu, perubahan data layanan hanya dapat dilakukan melalui website.\n\nSilakan lakukan pembaruan melalui link berikut:\n${editUrl}\n\nLink ini hanya berlaku satu kali.`;
+  const clickableEditUrl = formatClickableLink(editUrl, channel, 'Link Edit Permohonan');
+  return `Baik Pak/Bu, perubahan data layanan hanya dapat dilakukan melalui website.\n\nSilakan lakukan pembaruan melalui link berikut:\n${clickableEditUrl}\n\nLink ini hanya berlaku satu kali.`;
 }
 
 /**

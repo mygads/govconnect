@@ -10,9 +10,11 @@ function isValidWaNumber(value: string) {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { service_id, wa_user_id, citizen_data, requirement_data } = body as {
+        const { service_id, wa_user_id, channel, channel_identifier, citizen_data, requirement_data } = body as {
             service_id?: string;
             wa_user_id?: string;
+            channel?: "WHATSAPP" | "WEBCHAT";
+            channel_identifier?: string;
             citizen_data?: Record<string, any>;
             requirement_data?: Record<string, any>;
         };
@@ -52,6 +54,8 @@ export async function POST(request: NextRequest) {
             body: JSON.stringify({
                 service_id,
                 wa_user_id,
+                channel: channel || "WHATSAPP",
+                channel_identifier: channel_identifier || undefined,
                 citizen_data_json: citizen_data || {},
                 requirement_data_json: requirement_data || {},
             }),

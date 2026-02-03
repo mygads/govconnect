@@ -36,21 +36,42 @@ interface PendingNameRequest {
 }
 
 const pendingNameRequests = new Map<string, PendingNameRequest>();
-const NAME_REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// ==================== PENDING PHONE REQUEST (for webchat complaints) ====================
+// Store pending intents when waiting for user's phone number
+interface PendingPhoneRequest {
+  intent: string;
+  nluOutput: NLUOutput;
+  context: ProcessingContext;
+  timestamp: number;
+}
+
+const pendingPhoneRequests = new Map<string, PendingPhoneRequest>();
+
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 // Cleanup old pending requests periodically
 setInterval(() => {
   const now = Date.now();
   for (const [userId, pending] of pendingNameRequests.entries()) {
-    if (now - pending.timestamp > NAME_REQUEST_TIMEOUT_MS) {
+    if (now - pending.timestamp > REQUEST_TIMEOUT_MS) {
       pendingNameRequests.delete(userId);
       logger.debug('Cleaned up expired pending name request', { userId });
+    }
+  }
+  for (const [userId, pending] of pendingPhoneRequests.entries()) {
+    if (now - pending.timestamp > REQUEST_TIMEOUT_MS) {
+      pendingPhoneRequests.delete(userId);
+      logger.debug('Cleaned up expired pending phone request', { userId });
     }
   }
 }, 60000); // Check every minute
 
 // Intents that require user name before proceeding
 const INTENTS_REQUIRING_NAME = ['CREATE_COMPLAINT', 'CREATE_SERVICE_REQUEST'];
+
+// Intents that require phone number for webchat (pengaduan only - layanan uses form)
+const INTENTS_REQUIRING_PHONE_WEBCHAT = ['CREATE_COMPLAINT'];
 
 /**
  * Check if user needs to provide name before proceeding with intent
@@ -62,6 +83,46 @@ function needsNameForIntent(userId: string, intent: string): boolean {
   
   const profile = getProfile(userId);
   return !profile.nama_lengkap;
+}
+
+/**
+ * Check if user needs to provide phone for webchat complaint
+ * Note: Layanan tidak perlu karena user akan mengisi via form
+ */
+function needsPhoneForWebchatIntent(userId: string, intent: string): boolean {
+  if (!INTENTS_REQUIRING_PHONE_WEBCHAT.includes(intent)) {
+    return false;
+  }
+  
+  const profile = getProfile(userId);
+  return !profile.no_hp;
+}
+
+/**
+ * Try to extract phone number from message
+ */
+function extractPhoneFromMessage(message: string): string | null {
+  // Indonesian phone patterns: 08xx, +62xx, 62xx
+  const patterns = [
+    /(?:^\+?62|^0)8\d{8,11}$/,  // Full match
+    /(?:\+?62|0)(8\d{8,11})/,   // Extract from text
+  ];
+  
+  const cleanMessage = message.replace(/[\s\-\.]/g, '').trim();
+  
+  for (const pattern of patterns) {
+    const match = cleanMessage.match(pattern);
+    if (match) {
+      let phone = match[1] || match[0];
+      // Normalize to 08xx format
+      phone = phone.replace(/^\+?62/, '0');
+      if (phone.startsWith('8')) phone = '0' + phone;
+      if (/^08\d{8,11}$/.test(phone)) {
+        return phone;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -127,36 +188,60 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
     sanitizedMessage = applyTypoCorrections(sanitizedMessage);
 
     // Step 1.5: Check if we're waiting for user's name
-    const pendingRequest = pendingNameRequests.get(userId);
-    if (pendingRequest) {
+    const pendingNameRequest = pendingNameRequests.get(userId);
+    if (pendingNameRequest) {
       // Try to extract name from this message
       const extractedName = extractNameFromMessage(sanitizedMessage) || 
-        pendingRequest.nluOutput.extracted_data?.nama_lengkap;
+        pendingNameRequest.nluOutput.extracted_data?.nama_lengkap;
       
       if (extractedName) {
         // Save the name to profile
         updateProfile(userId, { nama_lengkap: extractedName });
         logger.info('✅ User name saved from pending request', { userId, nama: extractedName });
         
-        // Remove pending request
+        // Remove pending name request
         pendingNameRequests.delete(userId);
         
         // Update context with name
-        if (pendingRequest.nluOutput.extracted_data) {
-          pendingRequest.nluOutput.extracted_data.nama_lengkap = extractedName;
+        if (pendingNameRequest.nluOutput.extracted_data) {
+          pendingNameRequest.nluOutput.extracted_data.nama_lengkap = extractedName;
+        }
+        
+        // For webchat complaints, also need phone number
+        if (pendingNameRequest.intent === 'CREATE_COMPLAINT' && needsPhoneForWebchatIntent(userId, 'CREATE_COMPLAINT')) {
+          // Store pending phone request
+          pendingPhoneRequests.set(userId, {
+            intent: pendingNameRequest.intent,
+            nluOutput: pendingNameRequest.nluOutput,
+            context: pendingNameRequest.context,
+            timestamp: Date.now(),
+          });
+          
+          logger.info('📱 Phone required for webchat complaint, asking user', { userId });
+          
+          return {
+            success: true,
+            response: `Terima kasih, ${extractedName}.\n\nUntuk pengaduan via webchat, mohon cantumkan nomor WhatsApp/telepon yang bisa dihubungi agar petugas dapat menindaklanjuti laporan Anda.`,
+            intent: 'ASK_PHONE',
+            metadata: {
+              processingTimeMs: Date.now() - startTime,
+              model: 'nlu',
+              hasKnowledge: !!pendingNameRequest.context.rag_context,
+            },
+          };
         }
         
         // Now proceed with the original intent
-        const response = await handleNLUIntent(pendingRequest.nluOutput, pendingRequest.context);
+        const response = await handleNLUIntent(pendingNameRequest.nluOutput, pendingNameRequest.context);
         
         return {
           success: true,
           response: `Terima kasih, ${extractedName}.\n\n${response}`,
-          intent: pendingRequest.intent,
+          intent: pendingNameRequest.intent,
           metadata: {
             processingTimeMs: Date.now() - startTime,
             model: 'nlu',
-            hasKnowledge: !!pendingRequest.context.rag_context,
+            hasKnowledge: !!pendingNameRequest.context.rag_context,
           },
         };
       } else {
@@ -168,6 +253,56 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
           metadata: {
             processingTimeMs: Date.now() - startTime,
             model: 'pending-name',
+            hasKnowledge: false,
+          },
+        };
+      }
+    }
+
+    // Step 1.6: Check if we're waiting for user's phone (webchat complaint only)
+    const pendingPhoneRequest = pendingPhoneRequests.get(userId);
+    if (pendingPhoneRequest) {
+      // Try to extract phone from this message
+      const extractedPhone = extractPhoneFromMessage(sanitizedMessage);
+      
+      if (extractedPhone) {
+        // Save the phone to profile
+        updateProfile(userId, { no_hp: extractedPhone });
+        logger.info('✅ User phone saved from pending request', { userId, phone: extractedPhone });
+        
+        // Remove pending phone request
+        pendingPhoneRequests.delete(userId);
+        
+        // Update context with phone
+        if (pendingPhoneRequest.nluOutput.extracted_data) {
+          pendingPhoneRequest.nluOutput.extracted_data.no_hp = extractedPhone;
+        }
+        
+        // Now proceed with the original intent (complaint creation)
+        const response = await handleNLUIntent(pendingPhoneRequest.nluOutput, pendingPhoneRequest.context);
+        
+        const profile = getProfile(userId);
+        const userName = profile.nama_lengkap || 'Bapak/Ibu';
+        
+        return {
+          success: true,
+          response: `Terima kasih ${userName}, nomor ${extractedPhone} sudah kami catat.\n\n${response}`,
+          intent: pendingPhoneRequest.intent,
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            model: 'nlu',
+            hasKnowledge: !!pendingPhoneRequest.context.rag_context,
+          },
+        };
+      } else {
+        // User didn't provide a valid phone, ask again
+        return {
+          success: true,
+          response: 'Mohon maaf, format nomor telepon tidak valid. Silakan masukkan nomor WhatsApp/HP Anda (contoh: 08123456789).',
+          intent: 'ASK_PHONE',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            model: 'pending-phone',
             hasKnowledge: false,
           },
         };
@@ -263,6 +398,37 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
         success: true,
         response: `Sebelum melanjutkan ${intentLabel}, boleh saya tahu nama lengkap Bapak/Ibu?`,
         intent: 'ASK_NAME',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          model: 'nlu',
+          hasKnowledge: !!context.rag_context,
+        },
+      };
+    }
+
+    // Step 4.6: Check if webchat complaint needs phone number
+    // Note: Layanan tidak perlu karena user akan mengisi form online
+    if (needsPhoneForWebchatIntent(userId, nluOutput.intent)) {
+      // Store pending phone request
+      pendingPhoneRequests.set(userId, {
+        intent: nluOutput.intent,
+        nluOutput,
+        context,
+        timestamp: Date.now(),
+      });
+      
+      const profile = getProfile(userId);
+      const userName = profile.nama_lengkap || 'Bapak/Ibu';
+      
+      logger.info('📱 Phone required for webchat complaint, asking user', { 
+        userId, 
+        intent: nluOutput.intent,
+      });
+      
+      return {
+        success: true,
+        response: `Baik ${userName}, untuk pengaduan via webchat mohon cantumkan nomor WhatsApp/telepon yang bisa dihubungi agar petugas dapat menindaklanjuti laporan Anda.`,
+        intent: 'ASK_PHONE',
         metadata: {
           processingTimeMs: Date.now() - startTime,
           model: 'nlu',
@@ -462,7 +628,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
         nlu.contact_request.category_match = mapKeywordToCategory(nlu.contact_request.category_keyword) || undefined;
       }
       
-      const contactResult = await handleContactQuery(nlu, village_id, villageName);
+      const contactResult = await handleContactQuery(nlu, village_id, villageName, 'webchat');
       return contactResult.response;
     }
 

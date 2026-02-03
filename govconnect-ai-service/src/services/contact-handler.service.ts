@@ -9,6 +9,7 @@ import logger from '../utils/logger';
 import { NLUOutput } from './nlu-llm.service';
 import { getImportantContacts, ImportantContact } from './important-contacts.service';
 import { searchKnowledge } from './knowledge.service';
+import { ChannelType } from './unified-message-processor.service';
 
 export interface ContactHandlerResult {
   found: boolean;
@@ -22,12 +23,25 @@ export interface ContactHandlerResult {
 }
 
 /**
+ * Format phone number as clickable for webchat
+ */
+function formatPhoneClickable(phone: string, channel: ChannelType): string {
+  if (channel !== 'webchat') {
+    return phone;
+  }
+  // Clean up phone for tel: link
+  const cleanPhone = phone.replace(/[\s-]/g, '');
+  return `<a href="tel:${cleanPhone}" target="_blank" style="color: #2563eb; text-decoration: underline;">${phone}</a>`;
+}
+
+/**
  * Handle contact query based on NLU output
  */
 export async function handleContactQuery(
   nluOutput: NLUOutput,
   villageId: string,
   villageName: string,
+  channel: ChannelType = 'whatsapp',
 ): Promise<ContactHandlerResult> {
   const contactRequest = nluOutput.contact_request;
   
@@ -106,7 +120,8 @@ export async function handleContactQuery(
 
     for (const c of sorted.slice(0, 5)) {
       const desc = c.description ? ` — ${c.description}` : '';
-      lines.push(`📞 ${c.name}: ${c.phone}${desc}`);
+      const phoneDisplay = formatPhoneClickable(c.phone || '', channel);
+      lines.push(`📞 ${c.name}: ${phoneDisplay}${desc}`);
       resultContacts.push({
         name: c.name || '',
         phone: c.phone || '',
@@ -125,7 +140,8 @@ export async function handleContactQuery(
     }
     
     for (const phone of kbContacts.slice(0, 3)) {
-      lines.push(`📞 ${phone}`);
+      const phoneDisplay = formatPhoneClickable(phone, channel);
+      lines.push(`📞 ${phoneDisplay}`);
     }
   }
 

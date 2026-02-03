@@ -96,11 +96,18 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
     }
 
     const waUserPrefill = useMemo(() => {
-        const waUserRaw = searchParams.get("user") || "";
+        // Support both ?wa= (from WhatsApp) and ?user= (legacy) for WA number prefill
+        const waUserRaw = searchParams.get("wa") || searchParams.get("user") || "";
         return normalizeTo628(waUserRaw);
     }, [searchParams]);
 
+    // Get session ID for webchat channel tracking
+    const sessionId = useMemo(() => {
+        return searchParams.get("session") || "";
+    }, [searchParams]);
+
     const isWaPrefilled = !!waUserPrefill;
+    const isWebchatSession = !!sessionId;
 
     useEffect(() => {
         if (waUserPrefill) {
@@ -264,12 +271,17 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                 ? `0${citizenData.wa_user_id.slice(2)}`
                 : citizenData.wa_user_id;
             
+            // Determine channel based on how user accessed the form
+            const channel = sessionId ? "WEBCHAT" : "WHATSAPP";
+            
             const response = await fetch("/api/public/service-requests", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     service_id: service.id,
                     wa_user_id: citizenData.wa_user_id,
+                    channel,
+                    channel_identifier: sessionId || undefined, // For webchat tracking
                     citizen_data: {
                         nama_lengkap: citizenData.nama_lengkap,
                         nik: citizenData.nik,
