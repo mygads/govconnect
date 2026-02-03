@@ -17,6 +17,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { useToast } from "@/hooks/use-toast"
 import { 
   Wifi, 
@@ -27,7 +37,8 @@ import {
   CheckCircle, 
   XCircle,
   Smartphone,
-  X
+  X,
+  AlertTriangle
 } from "lucide-react"
 
 interface ChannelSettings {
@@ -61,6 +72,12 @@ interface VillageItem {
   slug?: string
 }
 
+interface DuplicateInfo {
+  existingVillageId: string
+  existingVillageName: string
+  waNumber: string
+}
+
 export default function ChannelSettingsPage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -83,6 +100,11 @@ export default function ChannelSettingsPage() {
   const [qrCode, setQrCode] = useState<string>("")
   const [qrLoading, setQrLoading] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
+  
+  // Duplicate WA number dialog states
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false)
+  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null)
+  const [isResolvingDuplicate, setIsResolvingDuplicate] = useState(false)
   
   // Polling refs
   const statusPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -252,6 +274,98 @@ export default function ChannelSettingsPage() {
     }
   }, [])
 
+  // Check for duplicate WA number
+  const checkDuplicateWaNumber = useCallback(async (waNumber: string): Promise<DuplicateInfo | null> => {
+    try {
+      const response = await fetch(withVillage(`/api/whatsapp/check-duplicate?wa_number=${encodeURIComponent(waNumber)}`), {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      
+      if (!response.ok) return null
+      
+      const data = await response.json()
+      if (data?.data?.isDuplicate) {
+        return {
+          existingVillageId: data.data.existingVillageId,
+          existingVillageName: data.data.existingVillageName || data.data.existingVillageId,
+          waNumber,
+        }
+      }
+      return null
+    } catch (error) {
+      console.error("Error checking duplicate WA number:", error)
+      return null
+    }
+  }, [withVillage])
+
+  // Handle disconnect from current account (delete session)
+  const handleDisconnectCurrentAccount = async () => {
+    try {
+      setIsResolvingDuplicate(true)
+      await handleDeleteSession()
+      setShowDuplicateDialog(false)
+      setDuplicateInfo(null)
+      toast({
+        title: "Session Dihapus",
+        description: "Session WhatsApp dari akun ini telah dihapus. Silakan gunakan nomor lain.",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Gagal",
+        description: error.message || "Gagal menghapus session",
+        variant: "destructive",
+      })
+    } finally {
+      setIsResolvingDuplicate(false)
+    }
+  }
+
+  // Handle force disconnect from other account
+  const handleForceDisconnectOther = async () => {
+    if (!duplicateInfo) return
+    
+    try {
+      setIsResolvingDuplicate(true)
+      const response = await fetch(withVillage("/api/whatsapp/force-disconnect"), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ target_village_id: duplicateInfo.existingVillageId }),
+      })
+
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Gagal memutuskan session dari akun lain")
+      }
+
+      setShowDuplicateDialog(false)
+      setDuplicateInfo(null)
+      toast({
+        title: "Berhasil",
+        description: "Session WhatsApp dari akun lain berhasil diputuskan. Nomor ini sekarang terhubung ke akun Anda.",
+      })
+      
+      // Refresh status
+      await fetchSessionStatus()
+    } catch (error: any) {
+      toast({
+        title: "Gagal",
+        description: error.message || "Gagal memutuskan session dari akun lain",
+        variant: "destructive",
+      })
+    } finally {
+      setIsResolvingDuplicate(false)
+    }
+  }
+
   // Start polling for QR dialog
   const startQrPolling = useCallback(() => {
     stopPolling()
@@ -259,13 +373,22 @@ export default function ChannelSettingsPage() {
     // Status polling every 1 second
     statusPollingRef.current = setInterval(async () => {
       const status = await fetchSessionStatus()
-      if (status?.loggedIn) {
-        console.log("[QR_DIALOG] Session logged in, stopping polling")
+      if (status?.loggedIn && status?.wa_number) {
+        console.log("[QR_DIALOG] Session logged in, checking for duplicates")
         stopPolling()
-        toast({
-          title: "WhatsApp Terhubung!",
-          description: "Session WhatsApp berhasil terautentikasi.",
-        })
+        
+        // Check for duplicate WA number
+        const duplicate = await checkDuplicateWaNumber(status.wa_number)
+        if (duplicate) {
+          console.log("[QR_DIALOG] Duplicate WA number found:", duplicate)
+          setDuplicateInfo(duplicate)
+          setShowDuplicateDialog(true)
+        } else {
+          toast({
+            title: "WhatsApp Terhubung!",
+            description: "Session WhatsApp berhasil terautentikasi.",
+          })
+        }
       }
     }, 1000)
 
@@ -273,7 +396,7 @@ export default function ChannelSettingsPage() {
     qrPollingRef.current = setInterval(async () => {
       await fetchQRCode()
     }, 2000)
-  }, [fetchSessionStatus, fetchQRCode, stopPolling, toast])
+  }, [fetchSessionStatus, fetchQRCode, stopPolling, toast, checkDuplicateWaNumber])
 
   // Handle close QR dialog
   const handleCloseQrDialog = useCallback(() => {
@@ -826,6 +949,55 @@ export default function ChannelSettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Duplicate WA Number Alert Dialog */}
+      <AlertDialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="h-5 w-5" />
+              Nomor WhatsApp Sudah Terdaftar
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p>
+                Nomor WhatsApp <span className="font-mono font-semibold">+{duplicateInfo?.waNumber}</span> sudah terhubung ke akun desa lain:
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="font-medium text-amber-800">{duplicateInfo?.existingVillageName}</p>
+              </div>
+              <p className="text-sm">
+                Satu nomor WhatsApp hanya dapat digunakan oleh satu akun. Pilih salah satu opsi berikut:
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel 
+              onClick={handleDisconnectCurrentAccount}
+              disabled={isResolvingDuplicate}
+              className="w-full sm:w-auto"
+            >
+              {isResolvingDuplicate ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Hapus dari Akun Ini
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleForceDisconnectOther}
+              disabled={isResolvingDuplicate}
+              className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700"
+            >
+              {isResolvingDuplicate ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <CheckCircle className="h-4 w-4 mr-2" />
+              )}
+              Hapus dari Akun Lain & Gunakan di Sini
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -113,7 +113,7 @@ export function GovConnectSidebar() {
       title: "Channel",
       items: [
         {
-          title: "Koneksi WhatsApp",
+          title: "Pengaturan Channel",
           url: "/dashboard/channel-settings",
           icon: Smartphone,
         },

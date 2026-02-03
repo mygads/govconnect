@@ -435,3 +435,125 @@ export async function deleteSession(req: Request, res: Response): Promise<void> 
     });
   }
 }
+
+/**
+ * Check for duplicate WhatsApp number
+ * GET /internal/whatsapp/check-duplicate
+ * Returns the village that already has this WA number connected (if any)
+ */
+export async function checkDuplicateWaNumber(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = resolveVillageId(req);
+    if (!villageId) {
+      res.status(400).json({ success: false, error: 'village_id diperlukan' });
+      return;
+    }
+
+    const waNumber = getQuery(req, 'wa_number');
+    if (!waNumber) {
+      res.status(400).json({ success: false, error: 'wa_number diperlukan' });
+      return;
+    }
+
+    // Find any other village that has this WA number connected (excluding current village)
+    const existingSession = await prisma.wa_sessions.findFirst({
+      where: {
+        wa_number: waNumber,
+        village_id: { not: villageId },
+        status: 'connected',
+      },
+    });
+
+    if (existingSession) {
+      // Try to get village name from govconnect database
+      let villageName = existingSession.village_id;
+      try {
+        // Fetch village info from dashboard's prisma or via a lookup
+        const channelAccount = await prisma.channel_accounts.findUnique({
+          where: { village_id: existingSession.village_id },
+        });
+        if (channelAccount) {
+          villageName = existingSession.village_id; // Use village_id as name placeholder
+        }
+      } catch {
+        // Keep using village_id as name
+      }
+
+      res.json({
+        success: true,
+        data: {
+          isDuplicate: true,
+          existingVillageId: existingSession.village_id,
+          existingVillageName: villageName,
+        },
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        isDuplicate: false,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Check duplicate WA number error', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to check duplicate',
+    });
+  }
+}
+
+/**
+ * Force disconnect a WhatsApp session from another village
+ * POST /internal/whatsapp/force-disconnect
+ * Disconnects the WA session from another village so current village can use it
+ */
+export async function forceDisconnectOtherVillage(req: Request, res: Response): Promise<void> {
+  try {
+    const currentVillageId = resolveVillageId(req);
+    if (!currentVillageId) {
+      res.status(400).json({ success: false, error: 'village_id diperlukan' });
+      return;
+    }
+
+    const targetVillageId = req.body?.target_village_id;
+    if (!targetVillageId || typeof targetVillageId !== 'string') {
+      res.status(400).json({ success: false, error: 'target_village_id diperlukan' });
+      return;
+    }
+
+    // Get the target village's session
+    const targetSession = await getStoredSession(targetVillageId);
+    if (!targetSession) {
+      res.status(404).json({ success: false, error: 'Target village session tidak ditemukan' });
+      return;
+    }
+
+    // Disconnect and delete the target village's session
+    try {
+      await disconnectSession(targetSession.wa_token);
+    } catch {
+      // Ignore disconnect errors - session might already be disconnected
+    }
+
+    await deleteSessionForVillage(targetVillageId);
+
+    logger.info('Force disconnected WA session from other village', {
+      currentVillageId,
+      targetVillageId,
+    });
+
+    res.json({
+      success: true,
+      data: { message: 'Session dari desa lain berhasil diputuskan' },
+    });
+  } catch (error: any) {
+    logger.error('Force disconnect error', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to force disconnect',
+    });
+  }
+}

@@ -24,6 +24,8 @@ import {
   updateSettings,
   createSession,
   deleteSession,
+  checkDuplicateWaNumber,
+  forceDisconnectOtherVillage,
 } from '../controllers/whatsapp.controller';
 import {
   handleGetChannelAccount,
@@ -61,6 +63,8 @@ router.get('/whatsapp/settings', getSettings);
 router.patch('/whatsapp/settings', updateSettings);
 router.post('/whatsapp/session', createSession);
 router.delete('/whatsapp/session', deleteSession);
+router.get('/whatsapp/check-duplicate', checkDuplicateWaNumber);
+router.post('/whatsapp/force-disconnect', forceDisconnectOtherVillage);
 
 // Live Chat & Takeover Routes
 router.post('/takeover/:wa_user_id', handleStartTakeover);
