@@ -72,8 +72,10 @@ temp/
 # Local config overrides
 config.local.*
 
-# Uploads
-uploads/
+# Uploads (media files, not API routes)
+/uploads/
+*/uploads/
+!**/app/api/**/uploads/
 media/
 
 # Documentation builds
