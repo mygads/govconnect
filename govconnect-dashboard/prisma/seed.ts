@@ -24,7 +24,7 @@ async function main() {
     console.log(`   Username: ${username}`)
     console.log('   (Password unchanged)\n')
   } else {
-    const passwordFromEnv = process.env.SUPERADMIN_PASSWORD?.trim()
+    const passwordFromEnv = (process.env.SUPERADMIN_PASSWORD?.trim() || '1234abcd')
     const generatedPassword = crypto.randomBytes(12).toString('base64url')
     const plainPassword = passwordFromEnv && passwordFromEnv.length > 0 ? passwordFromEnv : generatedPassword
 

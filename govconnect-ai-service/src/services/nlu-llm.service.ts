@@ -39,6 +39,7 @@ export interface NLUInput {
   };
   available_services?: Array<{ name: string; slug: string }>;
   available_contact_categories?: string[]; // e.g., ['Pelayanan', 'Pengaduan', 'Keamanan', 'Kesehatan', 'Pemadam']
+  available_complaint_categories?: Array<{ category: string; types: string[] }>; // Kategori & jenis pengaduan dari database
 }
 
 /**
@@ -180,24 +181,32 @@ Tugasmu adalah MEMAHAMI maksud pengguna dari pesan mereka dan mengembalikan outp
   * "pelayanan/layanan" → Pelayanan
   * "pengaduan/aduan" → Pengaduan
 
-## PENTING untuk CREATE_COMPLAINT
-- Kategori complaint HARUS dari daftar berikut (gunakan PERSIS seperti ini):
-  * "jalan_rusak" - untuk laporan jalan rusak/berlubang
-  * "lampu_mati" - untuk laporan lampu jalan mati
-  * "sampah" - untuk laporan sampah menumpuk/berserakan
-  * "drainase" - untuk laporan selokan/saluran air tersumbat
-  * "pohon_tumbang" - untuk laporan pohon tumbang/roboh
-  * "fasilitas_rusak" - untuk laporan fasilitas umum rusak
-  * "banjir" - untuk laporan banjir
-  * "tindakan_kriminal" - untuk laporan tindak kriminal/kejahatan
-  * "lainnya" - untuk laporan yang tidak masuk kategori di atas
-- Untuk KEBAKARAN, gunakan kategori "lainnya" dan jelaskan di deskripsi
-- ISI extracted_data.complaint_category dengan salah satu nilai di atas
+## PENTING untuk CREATE_COMPLAINT (PENGADUAN/LAPORAN)
+### ATURAN WAJIB:
+1. **Pengaduan HANYA via WhatsApp chat** - JANGAN pernah kirim link form untuk pengaduan
+2. **JANGAN minta nomor telepon** - Nomor WA user sudah otomatis tercatat dari chat
+3. **Field yang diminta untuk pengaduan:**
+   - Masalah/jenis laporan (wajib)
+   - Deskripsi (wajib, minimal 15 karakter)
+   - Lokasi/alamat (opsional, tanyakan jika relevan sesuai knowledge base)
+
+### Kategori Pengaduan:
+- GUNAKAN kategori dari daftar "Kategori Pengaduan Tersedia" di bawah jika ada
+- Jika kategori dari user TIDAK ADA di daftar tersebut, gunakan "lainnya"
+- Jika daftar kategori kosong, SEMUA pengaduan masuk ke "lainnya"
+
+### Pengisian Data:
+- ISI extracted_data.complaint_category dengan kategori yang cocok atau "lainnya"
 - ISI extracted_data.complaint_description dengan detail laporan LENGKAP (MINIMAL 15 KARAKTER!)
   * JANGAN hanya isi kata pendek seperti "kebakaran" atau "banjir"  
   * Buat deskripsi lengkap seperti: "Laporan kebakaran di lokasi tersebut"
   * Gabungkan informasi: jenis masalah + lokasi + detail tambahan dari pesan user
-- ISI extracted_data.alamat jika user menyebutkan lokasi
+- ISI extracted_data.alamat HANYA jika user menyebutkan lokasi
+
+### LARANGAN:
+- JANGAN mengarang field yang tidak diminta (seperti nomor telepon)
+- JANGAN kirim link apapun untuk pengaduan
+- JANGAN minta data yang tidak relevan
   
 ## PENTING untuk ASK_KNOWLEDGE
 - Baca dengan teliti Knowledge Base Context
@@ -237,6 +246,18 @@ function buildNLUPrompt(input: NLUInput): string {
       .map(s => `- ${s.name} (${s.slug})`)
       .join('\n');
     parts.push(`\n## Layanan Tersedia\n${serviceList}`);
+  }
+
+  if (input.available_complaint_categories?.length) {
+    const categoryList = input.available_complaint_categories
+      .map(c => {
+        const types = c.types.length > 0 ? `: ${c.types.join(', ')}` : '';
+        return `- ${c.category}${types}`;
+      })
+      .join('\n');
+    parts.push(`\n## Kategori Pengaduan Tersedia\n${categoryList}\n\nJika laporan user tidak cocok dengan kategori di atas, gunakan "lainnya".`);
+  } else {
+    parts.push(`\n## Kategori Pengaduan Tersedia\nBelum ada kategori yang dikonfigurasi. SEMUA pengaduan masuk ke kategori "lainnya".`);
   }
 
   if (input.user_profile && Object.keys(input.user_profile).length > 0) {

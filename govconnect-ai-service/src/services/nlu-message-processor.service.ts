@@ -22,7 +22,7 @@ import { searchKnowledge } from './knowledge.service';
 import { sanitizeUserInput } from './context-builder.service';
 import { applyTypoCorrections } from './text-normalizer.service';
 import { getKelurahanInfoContext } from './knowledge.service';
-import { getUserHistory } from './case-client.service';
+import { getUserHistory, getComplaintTypes } from './case-client.service';
 
 // Import handlers from unified-message-processor (existing handlers)
 import { 
@@ -50,6 +50,7 @@ interface ProcessingContext {
   village_profile?: any;
   available_contact_categories?: string[];
   available_services?: Array<{ name: string; slug: string }>;
+  available_complaint_categories?: Array<{ category: string; types: string[] }>;
 }
 
 /**
@@ -163,6 +164,7 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       conversation_history: context.conversation_history,
       available_contact_categories: context.available_contact_categories,
       available_services: context.available_services,
+      available_complaint_categories: context.available_complaint_categories,
     };
 
     const nluOutput = await callNLU(nluInput);
@@ -232,6 +234,7 @@ async function collectContext(params: Partial<ProcessingContext>): Promise<Proce
   let villageProfile: any = null;
   let contactCategories: string[] = [];
   let services: Array<{ name: string; slug: string }> = [];
+  let complaintCategories: Array<{ category: string; types: string[] }> = [];
 
   if (village_id) {
     try {
@@ -259,6 +262,24 @@ async function collectContext(params: Partial<ProcessingContext>): Promise<Proce
         services = serviceResp.data.data.map((s: any) => ({
           name: s.name || '',
           slug: s.slug || '',
+        }));
+      }
+
+      // Get available complaint categories from case-service
+      const complaintTypes = await getComplaintTypes(village_id);
+      if (complaintTypes.length > 0) {
+        // Group types by category
+        const categoryMap = new Map<string, string[]>();
+        complaintTypes.forEach((type: any) => {
+          const categoryName = type.category?.name || 'Lainnya';
+          if (!categoryMap.has(categoryName)) {
+            categoryMap.set(categoryName, []);
+          }
+          categoryMap.get(categoryName)!.push(type.name);
+        });
+        complaintCategories = Array.from(categoryMap.entries()).map(([category, types]) => ({
+          category,
+          types,
         }));
       }
     } catch (error: any) {
@@ -310,6 +331,7 @@ async function collectContext(params: Partial<ProcessingContext>): Promise<Proce
     village_profile: villageProfile,
     available_contact_categories: contactCategories,
     available_services: services,
+    available_complaint_categories: complaintCategories,
   };
 }
 
