@@ -531,7 +531,7 @@ async function getCachedComplaintTypes(villageId?: string): Promise<any[]> {
   return data;
 }
 
-async function resolveComplaintTypeConfig(kategori?: string, villageId?: string) {
+export async function resolveComplaintTypeConfig(kategori?: string, villageId?: string) {
   if (!kategori || !villageId) return null;
 
   const types = await getCachedComplaintTypes(villageId);

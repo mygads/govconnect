@@ -937,6 +937,167 @@ export async function sendTextMessage(
 }
 
 /**
+ * Send contact/vCard message via genfity-wa API
+ * 
+ * API Endpoint: POST {WA_API_URL}/chat/send/contact
+ * Headers: token: <session_token>
+ * Body: { "Phone": "628xxx", "Name": "Contact Name", "Vcard": "BEGIN:VCARD\n..." }
+ */
+export async function sendContactMessage(
+  to: string,
+  contact: {
+    name: string;
+    phone: string;
+    organization?: string;
+    title?: string;
+  },
+  villageId?: string
+): Promise<{ success: boolean; message_id?: string; error?: string }> {
+  try {
+    const account = await getDefaultChannelAccount(villageId);
+    if (account && account.enabled_wa === false) {
+      logger.info('WhatsApp channel disabled, contact not sent', { to });
+      return {
+        success: false,
+        error: 'WhatsApp channel disabled',
+      };
+    }
+
+    const resolved = await resolveAccessToken(villageId);
+    const accessToken = resolved.token;
+    if (!accessToken) {
+      logger.warn('WhatsApp token not configured, contact not sent');
+      return {
+        success: false,
+        error: 'WhatsApp not configured',
+      };
+    }
+
+    // Normalize phone numbers
+    const normalizedTo = normalizePhoneNumber(to);
+    const normalizedContactPhone = normalizePhoneNumber(contact.phone);
+    
+    // Format contact phone for vCard (add + prefix for international format)
+    const vcardPhone = normalizedContactPhone.startsWith('62') 
+      ? `+${normalizedContactPhone}` 
+      : normalizedContactPhone;
+
+    // Build vCard string
+    const vcard = buildVCard({
+      name: contact.name,
+      phone: vcardPhone,
+      organization: contact.organization,
+      title: contact.title,
+    });
+
+    // Dry-run mode
+    if ((process.env.WA_DRY_RUN || '').toLowerCase() === 'true') {
+      const fakeMessageId = `dryrun_contact_${Date.now()}`;
+      logger.info('WA_DRY_RUN: Skipping WhatsApp contact send', {
+        village_id: resolved.village_id,
+        to: normalizedTo,
+        contact_name: contact.name,
+        message_id: fakeMessageId,
+      });
+      return { success: true, message_id: fakeMessageId };
+    }
+
+    const url = `${config.WA_API_URL}/chat/send/contact`;
+
+    logger.debug('Sending WhatsApp contact', { url, to: normalizedTo, contact_name: contact.name });
+
+    const response = await axios.post(
+      url,
+      {
+        Phone: normalizedTo,
+        Name: contact.name,
+        Vcard: vcard,
+      },
+      {
+        headers: {
+          token: accessToken,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+
+    const responseData = response.data.data || response.data;
+    const messageId = responseData.Id || responseData.id;
+    const isSuccess = response.data.success === true || response.data.code === 200 || responseData.Details === 'Sent';
+
+    if (!isSuccess) {
+      logger.warn('WhatsApp API returned non-success for contact', { 
+        to: normalizedTo,
+        contact_name: contact.name,
+        response: response.data
+      });
+      return {
+        success: false,
+        error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+      };
+    }
+
+    logger.info('WhatsApp contact sent', { 
+      to: normalizedTo, 
+      contact_name: contact.name,
+      message_id: messageId,
+    });
+
+    return {
+      success: true,
+      message_id: messageId,
+    };
+  } catch (error: any) {
+    logger.error('Failed to send WhatsApp contact', {
+      to,
+      contact_name: contact.name,
+      error: error.message,
+      response: error.response?.data,
+    });
+
+    return {
+      success: false,
+      error: error.response?.data?.message || error.response?.data?.Message || error.message,
+    };
+  }
+}
+
+/**
+ * Build vCard string for WhatsApp contact
+ */
+function buildVCard(contact: {
+  name: string;
+  phone: string;
+  organization?: string;
+  title?: string;
+}): string {
+  const nameParts = contact.name.split(' ');
+  const lastName = nameParts.length > 1 ? nameParts[0] : '';
+  const firstName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : contact.name;
+  
+  const lines = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    `N:${lastName};${firstName};;;`,
+    `FN:${contact.name}`,
+  ];
+  
+  if (contact.organization) {
+    lines.push(`ORG:${contact.organization};`);
+  }
+  
+  if (contact.title) {
+    lines.push(`TITLE:${contact.title}`);
+  }
+  
+  lines.push(`TEL;type=CELL;type=pref:${contact.phone}`);
+  lines.push('END:VCARD');
+  
+  return lines.join('\n');
+}
+
+/**
  * Normalize phone number to standard format
  * - Remove non-digit characters
  * - Ensure starts with country code (62 for Indonesia)

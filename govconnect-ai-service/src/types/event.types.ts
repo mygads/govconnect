@@ -35,6 +35,13 @@ export interface AIReplyEvent {
   guidance_text?: string;  // Optional second bubble for guidance/follow-up
   message_id?: string;     // Single message ID that was answered
   batched_message_ids?: string[];  // Message IDs that were answered in this reply (for batched)
+  // Contacts to send as separate vCard messages (WhatsApp only)
+  contacts?: Array<{
+    name: string;
+    phone: string;
+    organization?: string;  // e.g., "Pemadam Kebakaran", "Puskesmas"
+    title?: string;         // e.g., "Hotline Darurat", "Nomor Layanan"
+  }>;
 }
 
 export interface AIErrorEvent {

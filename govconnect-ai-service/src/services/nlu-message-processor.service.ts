@@ -118,6 +118,17 @@ interface ProcessingContext {
   available_complaint_categories?: Array<{ category: string; types: string[] }>;
 }
 
+// Response from handleNLUIntent - can include contacts for WA vCard
+interface NLUIntentResponse {
+  text: string;
+  contacts?: Array<{
+    name: string;
+    phone: string;
+    organization?: string;
+    title?: string;
+  }>;
+}
+
 /**
  * Process message using NLU-based approach
  */
@@ -281,7 +292,8 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
         await publishAIReply({
           village_id: resolvedVillageId,
           wa_user_id,
-          reply_text: response,
+          reply_text: response.text,
+          contacts: response.contacts,
           message_id: is_batched ? undefined : message_id,
           batched_message_ids: is_batched ? batched_message_ids : undefined,
         });
@@ -360,7 +372,8 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
     await publishAIReply({
       village_id: resolvedVillageId,
       wa_user_id,
-      reply_text: response,
+      reply_text: response.text,
+      contacts: response.contacts,
       message_id: is_batched ? undefined : message_id,
       batched_message_ids: is_batched ? batched_message_ids : undefined,
     });
@@ -370,6 +383,7 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       wa_user_id,
       intent: nluOutput.intent,
       durationMs,
+      contactsCount: response.contacts?.length,
     });
 
   } catch (error: any) {
@@ -538,7 +552,7 @@ async function handleQuickIntent(
 /**
  * Handle NLU intent with full context
  */
-async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Promise<string> {
+async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Promise<NLUIntentResponse> {
   const { village_id, wa_user_id, message, village_profile } = context;
   const villageName = village_profile?.name || 'Desa';
 
@@ -554,27 +568,27 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       // Check if user introduced themselves
       const userName = nlu.extracted_data?.nama_lengkap;
       if (userName) {
-        return `Halo, Kak ${userName}! 👋 Selamat datang di layanan ${villageName}. Ada yang bisa saya bantu?`;
+        return { text: `Halo, Kak ${userName}! 👋 Selamat datang di layanan ${villageName}. Ada yang bisa saya bantu?` };
       }
-      return 'Halo, Kak! 👋 Ada yang bisa saya bantu hari ini?';
+      return { text: 'Halo, Kak! 👋 Ada yang bisa saya bantu hari ini?' };
     }
 
     case 'THANKS':
-      return 'Sama-sama, Kak! Senang bisa membantu. Jika ada pertanyaan lain, jangan ragu untuk bertanya 😊';
+      return { text: 'Sama-sama, Kak! Senang bisa membantu. Jika ada pertanyaan lain, jangan ragu untuk bertanya 😊' };
 
     case 'CONFIRMATION':
       if (nlu.confirmation?.is_positive) {
-        return 'Baik, siap Kak! Ada yang bisa saya bantu selanjutnya?';
+        return { text: 'Baik, siap Kak! Ada yang bisa saya bantu selanjutnya?' };
       }
-      return 'Baik Kak, tidak masalah. Ada hal lain yang bisa saya bantu?';
+      return { text: 'Baik Kak, tidak masalah. Ada hal lain yang bisa saya bantu?' };
 
     case 'ASK_ABOUT_CONVERSATION': {
       // Answer questions about previous conversation from history
       if (nlu.knowledge_request?.suggested_answer) {
-        return nlu.knowledge_request.suggested_answer;
+        return { text: nlu.knowledge_request.suggested_answer };
       }
       // Fallback if NLU didn't provide answer
-      return 'Mohon maaf Kak, saya tidak dapat mengingat detail percakapan sebelumnya. Bisakah Kakak mengulangi pertanyaan atau informasi yang dimaksud?';
+      return { text: 'Mohon maaf Kak, saya tidak dapat mengingat detail percakapan sebelumnya. Bisakah Kakak mengulangi pertanyaan atau informasi yang dimaksud?' };
     }
 
     case 'ASK_CONTACT': {
@@ -584,23 +598,38 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       }
       
       const contactResult = await handleContactQuery(nlu, village_id, villageName, 'whatsapp');
-      return contactResult.response;
+      
+      // For WA: return contacts separately as vCard messages
+      if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+        const categoryLabel = nlu.contact_request?.category_match || nlu.contact_request?.category_keyword || 'Penting';
+        return {
+          text: `Berikut adalah nomor ${categoryLabel} di ${villageName}:`,
+          contacts: contactResult.contacts.map(c => ({
+            name: c.name,
+            phone: c.phone,
+            organization: c.category || villageName,
+            title: c.description,
+          })),
+        };
+      }
+      
+      return { text: contactResult.response };
     }
 
     case 'ASK_ADDRESS': {
       if (!village_profile?.address && !village_profile?.gmaps_url) {
-        return 'Mohon maaf Kak, informasi alamat kantor belum tersedia.';
+        return { text: 'Mohon maaf Kak, informasi alamat kantor belum tersedia.' };
       }
       if (village_profile?.address && village_profile?.gmaps_url) {
-        return `Kantor ${villageName} beralamat di ${village_profile.address}.\nLokasi Google Maps:\n${village_profile.gmaps_url}`;
+        return { text: `Kantor ${villageName} beralamat di ${village_profile.address}.\nLokasi Google Maps:\n${village_profile.gmaps_url}` };
       }
-      return `Alamat Kantor ${villageName}: ${village_profile?.address || village_profile?.gmaps_url}`;
+      return { text: `Alamat Kantor ${villageName}: ${village_profile?.address || village_profile?.gmaps_url}` };
     }
 
     case 'ASK_HOURS': {
       const hours = village_profile?.operating_hours;
       if (!hours) {
-        return 'Mohon maaf Kak, informasi jam operasional belum tersedia.';
+        return { text: 'Mohon maaf Kak, informasi jam operasional belum tersedia.' };
       }
       const lines = ['Jam operasional:'];
       for (const [day, schedule] of Object.entries(hours as Record<string, any>)) {
@@ -611,32 +640,32 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
           lines.push(`${dayLabel}: Tutup`);
         }
       }
-      return lines.join('\n');
+      return { text: lines.join('\n') };
     }
 
     case 'ASK_SERVICE_INFO': {
       const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
       if (!serviceSlug) {
-        return 'Layanan apa yang ingin Kakak ketahui? Silakan sebutkan nama layanannya.';
+        return { text: 'Layanan apa yang ingin Kakak ketahui? Silakan sebutkan nama layanannya.' };
       }
       const llmLike = {
         intent: 'SERVICE_INFO',
         fields: { service_slug: serviceSlug, village_id },
       };
       const result = await handleServiceInfo(wa_user_id, llmLike);
-      return typeof result === 'string' ? result : result.replyText;
+      return { text: typeof result === 'string' ? result : result.replyText };
     }
 
     case 'CREATE_SERVICE_REQUEST': {
       const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
       if (!serviceSlug) {
-        return 'Layanan apa yang ingin Kakak ajukan? Silakan sebutkan jenis layanannya.';
+        return { text: 'Layanan apa yang ingin Kakak ajukan? Silakan sebutkan jenis layanannya.' };
       }
       const llmLike = {
         intent: 'CREATE_SERVICE_REQUEST',
         fields: { service_slug: serviceSlug, village_id, ...nlu.extracted_data },
       };
-      return await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike);
+      return { text: await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike) };
     }
 
     case 'CREATE_COMPLAINT': {
@@ -649,26 +678,59 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
           ...nlu.extracted_data,
         },
       };
-      return await handleComplaintCreation(wa_user_id, 'whatsapp', llmLike, message);
+      const complaintResult = await handleComplaintCreation(wa_user_id, 'whatsapp', llmLike, message);
+      
+      // For WA: also fetch important contacts related to complaint category for vCard
+      const kategori = nlu.extracted_data?.complaint_category;
+      if (kategori) {
+        try {
+          const { resolveComplaintTypeConfig } = await import('./unified-message-processor.service');
+          const complaintTypeConfig = await resolveComplaintTypeConfig(kategori, village_id);
+          
+          if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
+            const importantContacts = await getImportantContacts(
+              village_id,
+              complaintTypeConfig.important_contact_category,
+              undefined
+            );
+            
+            if (importantContacts && importantContacts.length > 0) {
+              return {
+                text: complaintResult,
+                contacts: importantContacts.slice(0, 5).map((c: ImportantContact) => ({
+                  name: c.name || '',
+                  phone: c.phone || '',
+                  organization: c.category?.name || 'Kontak Penting',
+                  title: c.description || undefined,
+                })),
+              };
+            }
+          }
+        } catch (error: any) {
+          logger.warn('Failed to fetch important contacts for complaint', { error: error.message });
+        }
+      }
+      
+      return { text: complaintResult };
     }
 
     case 'CHECK_STATUS': {
       const trackingNumber = nlu.extracted_data?.tracking_number;
       if (!trackingNumber) {
-        return 'Silakan berikan nomor tracking (format: LAP-XXXXXXXX-XXX atau LAY-XXXXXXXX-XXX).';
+        return { text: 'Silakan berikan nomor tracking (format: LAP-XXXXXXXX-XXX atau LAY-XXXXXXXX-XXX).' };
       }
       const llmLike = { intent: 'CHECK_STATUS', fields: { tracking_number: trackingNumber } };
-      return await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message);
+      return { text: await handleStatusCheck(wa_user_id, 'whatsapp', llmLike, message) };
     }
 
     case 'CANCEL': {
       const trackingNumber = nlu.extracted_data?.tracking_number;
       const llmLike = { intent: 'CANCEL', fields: { tracking_number: trackingNumber } };
-      return await handleCancellation(wa_user_id, 'whatsapp', llmLike);
+      return { text: await handleCancellation(wa_user_id, 'whatsapp', llmLike) };
     }
 
     case 'HISTORY': {
-      return await handleHistory(wa_user_id, 'whatsapp');
+      return { text: await handleHistory(wa_user_id, 'whatsapp') };
     }
 
     case 'ASK_KNOWLEDGE': {
@@ -679,7 +741,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
           questionSummary: nlu.knowledge_request.question_summary,
           answerLength: answer.length,
         });
-        return answer;
+        return { text: answer };
       }
 
       // If we have RAG context but NLU didn't find answer, use knowledge handler
@@ -695,31 +757,31 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
           };
           const result = await handleKnowledgeQuery(wa_user_id, message, llmLike);
           if (result && typeof result === 'string' && result.length > 20) {
-            return result;
+            return { text: result };
           }
         } catch (error: any) {
           logger.warn('Knowledge handler failed', { error: error.message });
         }
         
         // Fallback: return context summary
-        return `Berdasarkan informasi yang tersedia:\n\n${context.rag_context.slice(0, 800)}\n\nJika ada pertanyaan lebih spesifik, silakan tanyakan kembali.`;
+        return { text: `Berdasarkan informasi yang tersedia:\n\n${context.rag_context.slice(0, 800)}\n\nJika ada pertanyaan lebih spesifik, silakan tanyakan kembali.` };
       }
 
       // No context found - be honest about it
-      return 'Mohon maaf Kak, saya tidak menemukan informasi yang Kakak cari dalam database kami. Coba tanyakan dengan cara berbeda atau hubungi kantor desa langsung.';
+      return { text: 'Mohon maaf Kak, saya tidak menemukan informasi yang Kakak cari dalam database kami. Coba tanyakan dengan cara berbeda atau hubungi kantor desa langsung.' };
     }
 
     case 'UNKNOWN':
     default: {
       // For unknown intents, give a helpful response
-      return 'Mohon maaf Kak, saya kurang mengerti maksud Kakak. Berikut hal yang bisa saya bantu:\n\n' +
+      return { text: 'Mohon maaf Kak, saya kurang mengerti maksud Kakak. Berikut hal yang bisa saya bantu:\n\n' +
         '📋 Informasi layanan (syarat KTP, KK, dll)\n' +
         '📝 Pengajuan layanan online\n' +
         '📢 Pengaduan warga\n' +
         '📞 Nomor penting\n' +
         '🕐 Jam operasional\n' +
         '📍 Alamat kantor\n\n' +
-        'Silakan sampaikan kebutuhan Kakak.';
+        'Silakan sampaikan kebutuhan Kakak.' };
     }
   }
 }

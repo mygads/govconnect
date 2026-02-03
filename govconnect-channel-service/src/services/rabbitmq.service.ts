@@ -3,7 +3,7 @@ import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { rabbitmqConfig } from '../config/rabbitmq';
-import { sendTextMessage } from './wa.service';
+import { sendTextMessage, sendContactMessage } from './wa.service';
 // NOTE: saveOutgoingMessage removed - AI Service now handles database storage via storeAIReplyInDatabase()
 // This prevents duplicate messages in live chat dashboard
 import { updateConversation, clearAIStatus, setAIError } from './takeover.service';
@@ -271,6 +271,13 @@ interface AIReplyEvent {
   complaint_id?: string;
   message_id?: string;     // Single message ID that was answered
   batched_message_ids?: string[];  // Message IDs that were answered
+  // Contacts to send as separate vCard messages (WhatsApp only)
+  contacts?: Array<{
+    name: string;
+    phone: string;
+    organization?: string;  // e.g., "Pemadam Kebakaran", "Puskesmas"
+    title?: string;         // e.g., "Hotline Darurat", "Nomor Layanan"
+  }>;
 }
 
 /**
@@ -371,6 +378,44 @@ export async function startConsumingAIReply(): Promise<void> {
                 wa_user_id: payload.wa_user_id,
                 error: guidanceResult.error,
               });
+            }
+          }
+
+          // Send contacts as separate vCard messages (WhatsApp only)
+          if (payload.contacts && payload.contacts.length > 0) {
+            logger.info('📇 Sending contacts as vCard messages', {
+              wa_user_id: payload.wa_user_id,
+              contact_count: payload.contacts.length,
+            });
+            
+            for (const contact of payload.contacts) {
+              // Small delay between contacts to ensure proper ordering
+              await new Promise(resolve => setTimeout(resolve, 300));
+              
+              const contactResult = await sendContactMessage(
+                payload.wa_user_id,
+                {
+                  name: contact.name,
+                  phone: contact.phone,
+                  organization: contact.organization,
+                  title: contact.title,
+                },
+                payload.village_id
+              );
+              
+              if (contactResult.success) {
+                logger.info('✅ Contact vCard sent successfully', {
+                  wa_user_id: payload.wa_user_id,
+                  contact_name: contact.name,
+                  message_id: contactResult.message_id,
+                });
+              } else {
+                logger.warn('⚠️ Failed to send contact vCard', {
+                  wa_user_id: payload.wa_user_id,
+                  contact_name: contact.name,
+                  error: contactResult.error,
+                });
+              }
             }
           }
 
