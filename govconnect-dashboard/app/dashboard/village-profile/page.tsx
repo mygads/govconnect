@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
-import { MapPin, Save, Building2, Clock } from "lucide-react"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { MapPin, Save, Building2, Clock, AlertTriangle, RefreshCw, CheckCircle } from "lucide-react"
 
 const DAYS = [
   { key: "senin", label: "Senin" },
@@ -26,10 +27,19 @@ type DayHours = {
 
 type OperatingHours = Record<string, DayHours>
 
+interface EmbeddingStatus {
+  knowledge_id: string
+  last_edited_at: string | null
+  last_embedded_at: string | null
+  needs_reembed: boolean
+}
+
 export default function VillageProfilePage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [reembedding, setReembedding] = useState(false)
+  const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null)
 
   const [form, setForm] = useState({
     name: "",
@@ -60,6 +70,9 @@ export default function VillageProfilePage() {
               short_name: profile.short_name || "",
             })
             setOperatingHours(profile.operating_hours || {})
+          }
+          if (data?.embedding_status) {
+            setEmbeddingStatus(data.embedding_status)
           }
         }
       } catch (error) {
@@ -103,9 +116,20 @@ export default function VillageProfilePage() {
         throw new Error(error.error || "Gagal menyimpan profil desa")
       }
 
+      // Refresh embedding status after save
+      const refreshResponse = await fetch("/api/village-profile", {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (refreshResponse.ok) {
+        const data = await refreshResponse.json()
+        if (data?.embedding_status) {
+          setEmbeddingStatus(data.embedding_status)
+        }
+      }
+
       toast({
         title: "Profil Desa Tersimpan",
-        description: "Informasi profil desa berhasil diperbarui.",
+        description: "Informasi profil desa berhasil diperbarui. Data akan di-embed otomatis ke knowledge base.",
       })
     } catch (error: any) {
       toast({
@@ -115,6 +139,48 @@ export default function VillageProfilePage() {
       })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleReembed = async () => {
+    if (!embeddingStatus?.knowledge_id) return
+    
+    setReembedding(true)
+    try {
+      const response = await fetch(`/api/knowledge/${embeddingStatus.knowledge_id}/embed`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error("Gagal melakukan re-embed")
+      }
+
+      // Refresh embedding status
+      const refreshResponse = await fetch("/api/village-profile", {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (refreshResponse.ok) {
+        const data = await refreshResponse.json()
+        if (data?.embedding_status) {
+          setEmbeddingStatus(data.embedding_status)
+        }
+      }
+
+      toast({
+        title: "Re-embed Berhasil",
+        description: "Data profil desa berhasil di-embed ulang ke knowledge base.",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Gagal",
+        description: error.message || "Gagal melakukan re-embed",
+        variant: "destructive",
+      })
+    } finally {
+      setReembedding(false)
     }
   }
 
@@ -133,6 +199,48 @@ export default function VillageProfilePage() {
         <h1 className="text-3xl font-bold text-foreground">Profil Desa</h1>
         <p className="text-muted-foreground mt-2">Kelola informasi profil desa untuk basis pengetahuan dan form publik.</p>
       </div>
+
+      {/* Alert untuk status embedding */}
+      {embeddingStatus && embeddingStatus.needs_reembed && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Perhatian: Data Perlu Di-embed Ulang</AlertTitle>
+          <AlertDescription className="mt-2">
+            <p>Profil desa telah diubah sejak terakhir kali di-embed ke knowledge base AI.</p>
+            <div className="mt-2 text-sm space-y-1">
+              {embeddingStatus.last_edited_at && (
+                <p><strong>Terakhir diedit:</strong> {new Date(embeddingStatus.last_edited_at).toLocaleString("id-ID")}</p>
+              )}
+              {embeddingStatus.last_embedded_at && (
+                <p><strong>Terakhir di-embed:</strong> {new Date(embeddingStatus.last_embedded_at).toLocaleString("id-ID")}</p>
+              )}
+            </div>
+            <p className="mt-2 text-sm">
+              AI chatbot mungkin memberikan informasi yang tidak akurat. Silakan klik tombol "Re-embed ke AI" untuk memperbarui knowledge base.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={handleReembed}
+              disabled={reembedding}
+            >
+              {reembedding ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Memproses...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Re-embed ke AI
+                </>
+              )}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <form onSubmit={handleSave} className="space-y-6">
         <Card>
@@ -165,12 +273,11 @@ export default function VillageProfilePage() {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="address">Alamat Lengkap</Label>
+              <Label htmlFor="address">Alamat Kantor</Label>
               <Input
                 id="address"
                 value={form.address}
                 onChange={(e) => setForm((prev) => ({ ...prev, address: e.target.value }))}
-                placeholder="Jl. Raya Melati No. 10"
                 required
               />
             </div>
@@ -190,9 +297,11 @@ export default function VillageProfilePage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />
-              Jam Operasional
+              Jam Operasional Kantor
             </CardTitle>
-            <CardDescription>Gunakan format 24 jam (contoh 08:00 - 15:00).</CardDescription>
+            <CardDescription>
+              Gunakan format 24 jam (contoh 08:00 - 15:00). Isi <strong>-</strong> jika hari tersebut libur. Kosongkan jika belum ada data.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {DAYS.map((day) => (
@@ -203,14 +312,12 @@ export default function VillageProfilePage() {
                   <Input
                     value={operatingHours[day.key]?.open || ""}
                     onChange={(e) => updateHours(day.key, "open", e.target.value)}
-                    placeholder="08:00"
                   />
                 </div>
                 <div className="flex items-center gap-2">
                   <Input
                     value={operatingHours[day.key]?.close || ""}
                     onChange={(e) => updateHours(day.key, "close", e.target.value)}
-                    placeholder="15:00"
                   />
                 </div>
               </div>

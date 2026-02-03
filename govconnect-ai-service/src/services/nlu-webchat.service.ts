@@ -471,21 +471,33 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
         return 'Mohon maaf, informasi alamat kantor belum tersedia.';
       }
       if (village_profile?.address && village_profile?.gmaps_url) {
-        return `Kantor ${villageName} beralamat di ${village_profile.address}.\nLokasi Google Maps:\n${village_profile.gmaps_url}`;
+        return `Alamat Kantor ${villageName}: ${village_profile.address}\n\nLokasi Google Maps:\n${village_profile.gmaps_url}`;
       }
       return `Alamat Kantor ${villageName}: ${village_profile?.address || village_profile?.gmaps_url}`;
     }
 
     case 'ASK_HOURS': {
       const hours = village_profile?.operating_hours;
-      if (!hours) {
-        return 'Mohon maaf, informasi jam operasional belum tersedia.';
+      if (!hours || Object.keys(hours).length === 0) {
+        return 'Mohon maaf, informasi jam operasional kantor belum tersedia.';
       }
-      const lines = ['Jam operasional:'];
-      for (const [day, schedule] of Object.entries(hours as Record<string, any>)) {
-        const dayLabel = day.charAt(0).toUpperCase() + day.slice(1);
-        if (schedule?.open && schedule?.close) {
+      const dayOrder = ['senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'minggu'];
+      const dayLabels: Record<string, string> = {
+        senin: 'Senin', selasa: 'Selasa', rabu: 'Rabu', kamis: 'Kamis',
+        jumat: 'Jumat', sabtu: 'Sabtu', minggu: 'Minggu'
+      };
+      const lines = ['Jam operasional kantor:'];
+      for (const day of dayOrder) {
+        const schedule = (hours as Record<string, any>)[day];
+        const dayLabel = dayLabels[day] || day.charAt(0).toUpperCase() + day.slice(1);
+        // Check if it's a holiday (marked with '-')
+        if (schedule?.open === '-' || schedule?.close === '-') {
+          lines.push(`${dayLabel}: Libur`);
+        } else if (schedule?.open && schedule?.close) {
           lines.push(`${dayLabel}: ${schedule.open}–${schedule.close}`);
+        } else if (!schedule?.open && !schedule?.close) {
+          // Empty/null means no data yet, skip or mark as belum diatur
+          lines.push(`${dayLabel}: Belum diatur`);
         } else {
           lines.push(`${dayLabel}: Tutup`);
         }

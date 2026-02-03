@@ -1,8 +1,12 @@
 import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { processUnifiedMessage } from '../services/unified-message-processor.service';
+import { processWebchatWithNLU } from '../services/nlu-webchat.service';
+import { processTwoLayerWebchat } from '../services/two-layer-webchat.service';
 import { firstHeader } from '../utils/http';
+
+// Use same processor as webchat for consistency
+const USE_NLU_PROCESSOR = process.env.USE_NLU_PROCESSOR === 'true';
 
 const router = Router();
 
@@ -18,7 +22,8 @@ function verifyInternalKey(req: Request, res: Response, next: Function) {
 
 /**
  * POST /api/testing/chat
- * Testing AI response without saving chat history
+ * Testing AI response using the same NLU processor as webchat
+ * This ensures consistency between testing and actual webchat experience
  */
 router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
   try {
@@ -37,14 +42,30 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
       ? user_id
       : `test_admin_${Date.now()}`;
 
-    const testingMessage = `INSTRUKSI MODE UJI ADMIN: Jawab informatif dan relevan berdasarkan basis pengetahuan/nomor penting/profil desa. Jangan membuat link layanan kecuali diminta eksplisit untuk mengajukan layanan.\n\nPERTANYAAN: ${message}`;
-
-    const result = await processUnifiedMessage({
+    logger.info('🧪 Testing chat request', {
       userId,
-      villageId: resolvedVillageId,
-      message: testingMessage,
-      channel: 'other',
+      village_id: resolvedVillageId,
+      messageLength: message.length,
+      processor: USE_NLU_PROCESSOR ? 'NLU' : '2-Layer',
     });
+
+    // Use same processor as webchat for consistent results
+    let result;
+    if (USE_NLU_PROCESSOR) {
+      result = await processWebchatWithNLU({
+        userId,
+        message,
+        village_id: resolvedVillageId,
+        conversationHistory: [],
+      });
+    } else {
+      result = await processTwoLayerWebchat({
+        userId,
+        message,
+        village_id: resolvedVillageId,
+        conversationHistory: [],
+      });
+    }
 
     return res.json({
       success: result.success,

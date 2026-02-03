@@ -4,7 +4,10 @@ import { comparePassword, generateToken } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
   try {
-    const { username, password } = await request.json()
+    const body = await request.json()
+    // Trim whitespace from username (not password)
+    const username = (body.username || '').trim()
+    const password = body.password
 
     if (!username || !password) {
       return NextResponse.json(

@@ -60,14 +60,14 @@ export async function handleUpsertChannelAccount(req: Request, res: Response) {
         wa_number: typeof wa_number === 'string' ? wa_number : '',
         wa_token: existing?.wa_token || '',
         webhook_url: webhookUrl,
-        enabled_wa: enabled_wa ?? true,
-        enabled_webchat: enabled_webchat ?? true,
+        enabled_wa: enabled_wa ?? false,
+        enabled_webchat: enabled_webchat ?? false,
       },
       update: {
         wa_number: typeof wa_number === 'string' ? wa_number : (existing?.wa_number || ''),
         webhook_url: webhookUrl,
-        enabled_wa: enabled_wa ?? true,
-        enabled_webchat: enabled_webchat ?? true,
+        enabled_wa: enabled_wa ?? existing?.enabled_wa ?? false,
+        enabled_webchat: enabled_webchat ?? existing?.enabled_webchat ?? false,
       },
     });
 
@@ -92,6 +92,7 @@ export async function handleListChannelAccounts(req: Request, res: Response) {
         village_id: true,
         enabled_webchat: true,
         enabled_wa: true,
+        wa_number: true,
       },
       orderBy: {
         village_id: 'asc',

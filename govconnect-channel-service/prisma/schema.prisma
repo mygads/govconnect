@@ -85,8 +85,8 @@ model channel_accounts {
   wa_number      String
   wa_token       String
   webhook_url    String
-  enabled_wa     Boolean  @default(true)
-  enabled_webchat Boolean @default(true)
+  enabled_wa     Boolean  @default(false)
+  enabled_webchat Boolean @default(false)
   created_at     DateTime @default(now())
   updated_at     DateTime @updatedAt
 

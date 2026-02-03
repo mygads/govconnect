@@ -75,7 +75,7 @@ export default function ChannelSettingsPage() {
     wa_number: "",
     webhook_url: "",
     enabled_wa: false,
-    enabled_webchat: true,
+    enabled_webchat: false,
   })
 
   // QR Dialog states
@@ -298,7 +298,7 @@ export default function ChannelSettingsPage() {
             wa_number: data.data?.wa_number || "",
             webhook_url: data.data?.webhook_url || "",
             enabled_wa: Boolean(data.data?.enabled_wa),
-            enabled_webchat: Boolean(data.data?.enabled_webchat ?? true),
+            enabled_webchat: Boolean(data.data?.enabled_webchat ?? false),
           })
         }
       } catch (error) {

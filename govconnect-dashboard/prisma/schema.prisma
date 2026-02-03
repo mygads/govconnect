@@ -111,18 +111,20 @@ model ai_golden_set_items {
 // Dashboard only stores metadata for admin management
 
 model knowledge_base {
-  id          String   @id @default(cuid())
-  title       String
-  content     String   @db.Text
-  category    String   // "informasi_umum" | "layanan" | "prosedur" | "jadwal" | "kontak" | "faq"
-  category_id String?
-  village_id  String?
-  keywords    String[] // Array of keywords for better search
-  is_active   Boolean  @default(true)
-  priority    Int      @default(0) // Higher priority = shown first
-  admin_id    String?  // Who created/updated this
-  updated_at  DateTime @updatedAt
-  created_at  DateTime @default(now())
+  id               String    @id @default(cuid())
+  title            String
+  content          String    @db.Text
+  category         String    // "informasi_umum" | "layanan" | "prosedur" | "jadwal" | "kontak" | "faq"
+  category_id      String?
+  village_id       String?
+  keywords         String[]  // Array of keywords for better search
+  is_active        Boolean   @default(true)
+  priority         Int       @default(0) // Higher priority = shown first
+  admin_id         String?   // Who created/updated this
+  last_edited_at   DateTime? // When content was last edited
+  last_embedded_at DateTime? // When embedding was last generated
+  updated_at       DateTime  @updatedAt
+  created_at       DateTime  @default(now())
 
   category_ref knowledge_categories? @relation(fields: [category_id], references: [id])
   village      villages? @relation(fields: [village_id], references: [id])

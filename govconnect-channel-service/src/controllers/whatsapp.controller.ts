@@ -32,6 +32,11 @@ async function syncChannelAccountNumber(villageId: string, waNumber?: string | n
     .replace(/\/$/, '');
   const webhook = webhookUrl ? `${webhookUrl}/webhook` : '';
 
+  // Check if account exists to preserve existing enabled_* settings
+  const existing = await prisma.channel_accounts.findUnique({
+    where: { village_id: villageId },
+  });
+
   await prisma.channel_accounts.upsert({
     where: { village_id: villageId },
     create: {
@@ -39,12 +44,15 @@ async function syncChannelAccountNumber(villageId: string, waNumber?: string | n
       wa_number: waNumber,
       wa_token: '',
       webhook_url: webhook,
-      enabled_wa: true,
-      enabled_webchat: true,
+      enabled_wa: false,
+      enabled_webchat: false,
     },
     update: {
       wa_number: waNumber,
       webhook_url: webhook,
+      // Preserve existing enabled settings
+      enabled_wa: existing?.enabled_wa ?? false,
+      enabled_webchat: existing?.enabled_webchat ?? false,
     },
   });
 }

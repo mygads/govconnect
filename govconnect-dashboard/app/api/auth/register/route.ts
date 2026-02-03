@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { hashPassword, generateToken } from '@/lib/auth'
+import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
 
 const DEFAULT_KB_CATEGORIES = [
   'Profil Desa',
@@ -14,11 +15,25 @@ const DEFAULT_KB_CATEGORIES = [
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { username, password, name, village_name, village_slug, short_name } = body
+    // Trim whitespace from all string inputs
+    const username = (body.username || '').trim()
+    const password = body.password // Don't trim password
+    const name = (body.name || '').trim()
+    const village_name = (body.village_name || '').trim()
+    const village_slug = (body.village_slug || '').trim().toLowerCase().replace(/\s+/g, '-')
+    const short_name = (body.short_name || '').trim()
 
     if (!username || !password || !name || !village_name || !village_slug) {
       return NextResponse.json(
         { error: 'Username, password, name, village_name, village_slug wajib diisi' },
+        { status: 400 }
+      )
+    }
+
+    // Validate no spaces in username
+    if (/\s/.test(username)) {
+      return NextResponse.json(
+        { error: 'Username tidak boleh mengandung spasi' },
         { status: 400 }
       )
     }
@@ -55,6 +70,22 @@ export async function POST(request: NextRequest) {
       })),
       skipDuplicates: true,
     })
+
+    // Create channel_account with webchat and WA disabled by default
+    try {
+      await apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/channel-accounts/${village.id}`), {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          wa_number: '',
+          enabled_wa: false,
+          enabled_webchat: false,
+        }),
+      })
+    } catch (channelError) {
+      console.warn('Failed to create channel account (non-fatal):', channelError)
+      // Non-fatal - village can still be created without channel account
+    }
 
     const password_hash = await hashPassword(password)
     const admin = await prisma.admin_users.create({
