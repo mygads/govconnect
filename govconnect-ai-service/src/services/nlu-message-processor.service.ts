@@ -17,7 +17,7 @@ import { callNLU, quickIntentCheck, NLUInput, NLUOutput } from './nlu-llm.servic
 import { handleContactQuery, mapKeywordToCategory } from './contact-handler.service';
 import { publishAIReply, publishMessageStatus } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
-import { startTyping, stopTyping, isUserInTakeover, markMessagesAsRead } from './channel-client.service';
+import { startTyping, stopTyping, isUserInTakeover, markMessagesAsRead, updateConversationUserProfile } from './channel-client.service';
 import { searchKnowledge } from './knowledge.service';
 import { sanitizeUserInput } from './context-builder.service';
 import { applyTypoCorrections } from './text-normalizer.service';
@@ -276,6 +276,8 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       if (extractedName) {
         // Got the name, save it and continue with original intent
         updateProfile(wa_user_id, { nama_lengkap: extractedName });
+        // Also update conversation profile in channel-service
+        await updateConversationUserProfile(wa_user_id, { user_name: extractedName }, resolvedVillageId, 'WHATSAPP');
         pendingNameRequests.delete(wa_user_id);
         
         logger.info('✅ Name captured from pending request (WA)', { wa_user_id, nama: extractedName });
@@ -334,6 +336,8 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
     // First check if NLU extracted a name from current message
     if (nluOutput.extracted_data?.nama_lengkap) {
       updateProfile(wa_user_id, { nama_lengkap: nluOutput.extracted_data.nama_lengkap });
+      // Also update conversation profile in channel-service
+      await updateConversationUserProfile(wa_user_id, { user_name: nluOutput.extracted_data.nama_lengkap }, resolvedVillageId, 'WHATSAPP');
       logger.info('✅ User name extracted from NLU (WA)', { wa_user_id, nama: nluOutput.extracted_data.nama_lengkap });
     }
     

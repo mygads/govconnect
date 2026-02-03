@@ -91,6 +91,9 @@ CREATE INDEX IF NOT EXISTS idx_conversations_village_id ON conversations(village
 CREATE INDEX IF NOT EXISTS idx_conversations_is_takeover ON conversations(is_takeover);
 CREATE INDEX IF NOT EXISTS idx_conversations_last_message_at ON conversations(last_message_at);
 
+-- Add user_phone column for webchat users
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS user_phone TEXT;
+
 -- Pending messages queue (batching/retry)
 CREATE TABLE IF NOT EXISTS pending_messages (
   id TEXT PRIMARY KEY,

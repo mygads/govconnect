@@ -25,6 +25,7 @@ export interface ConversationSummary {
   channel: 'WHATSAPP' | 'WEBCHAT';
   channel_identifier: string;
   user_name: string | null;
+  user_phone: string | null;  // Collected phone number (for webchat)
   last_message: string | null;
   last_message_at: Date;
   unread_count: number;
@@ -292,6 +293,45 @@ export async function markConversationAsRead(
   } catch (error: any) {
     // Conversation might not exist
     logger.debug('Could not mark conversation as read', { channel, channel_identifier });
+  }
+}
+
+/**
+ * Update user profile in conversation (name and/or phone)
+ * Called by AI service when user provides their name or phone during conversation
+ */
+export async function updateConversationUserProfile(
+  channel_identifier: string,
+  updates: { user_name?: string; user_phone?: string },
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<void> {
+  try {
+    const resolvedVillageId = resolveVillageId(village_id);
+    
+    const updateData: { user_name?: string; user_phone?: string } = {};
+    if (updates.user_name) updateData.user_name = updates.user_name;
+    if (updates.user_phone) updateData.user_phone = updates.user_phone;
+    
+    if (Object.keys(updateData).length === 0) return;
+
+    await prisma.conversation.updateMany({
+      where: {
+        village_id: resolvedVillageId,
+        channel,
+        channel_identifier,
+      },
+      data: updateData,
+    });
+    
+    logger.info('Updated conversation user profile', {
+      channel,
+      channel_identifier,
+      village_id: resolvedVillageId,
+      updates: updateData,
+    });
+  } catch (error: any) {
+    logger.error('Failed to update conversation user profile', { error: error.message, channel, channel_identifier });
   }
 }
 

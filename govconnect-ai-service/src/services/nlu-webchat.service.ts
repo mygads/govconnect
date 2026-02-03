@@ -14,6 +14,7 @@ import { applyTypoCorrections } from './text-normalizer.service';
 import { getImportantContacts, ImportantContact } from './important-contacts.service';
 import { ProcessMessageResult } from './unified-message-processor.service';
 import { getProfile, updateProfile } from './user-profile.service';
+import { updateConversationUserProfile } from './channel-client.service';
 import { 
   handleComplaintCreation,
   handleServiceInfo,
@@ -197,6 +198,8 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
       if (extractedName) {
         // Save the name to profile
         updateProfile(userId, { nama_lengkap: extractedName });
+        // Also update conversation profile in channel-service
+        await updateConversationUserProfile(userId, { user_name: extractedName }, resolvedVillageId, 'WEBCHAT');
         logger.info('✅ User name saved from pending request', { userId, nama: extractedName });
         
         // Remove pending name request
@@ -268,6 +271,8 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
       if (extractedPhone) {
         // Save the phone to profile
         updateProfile(userId, { no_hp: extractedPhone });
+        // Also update conversation profile in channel-service
+        await updateConversationUserProfile(userId, { user_phone: extractedPhone }, resolvedVillageId, 'WEBCHAT');
         logger.info('✅ User phone saved from pending request', { userId, phone: extractedPhone });
         
         // Remove pending phone request
@@ -375,6 +380,8 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
     // First check if NLU extracted a name from current message
     if (nluOutput.extracted_data?.nama_lengkap) {
       updateProfile(userId, { nama_lengkap: nluOutput.extracted_data.nama_lengkap });
+      // Also update conversation profile in channel-service
+      await updateConversationUserProfile(userId, { user_name: nluOutput.extracted_data.nama_lengkap }, resolvedVillageId, 'WEBCHAT');
       logger.info('✅ User name extracted from NLU', { userId, nama: nluOutput.extracted_data.nama_lengkap });
     }
     

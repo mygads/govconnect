@@ -46,6 +46,7 @@ interface Conversation {
   channel: "WHATSAPP" | "WEBCHAT"
   channel_identifier: string
   user_name: string | null
+  user_phone: string | null  // Collected phone number (for webchat)
   last_message: string | null
   last_message_at: string
   unread_count: number
@@ -643,6 +644,32 @@ export default function LiveChatPage() {
     return phone ? phone.slice(-2) : "??"
   }
 
+  // Get display name for conversation (prioritize collected name over session ID)
+  const getDisplayName = (conv: Conversation) => {
+    // For webchat: use collected name if available, otherwise use session ID
+    // For WA: use collected name > WA push name > phone number
+    if (conv.user_name) {
+      return conv.user_name
+    }
+    // If no name, show channel identifier (phone for WA, session ID for webchat)
+    return getConversationKey(conv)
+  }
+
+  // Format phone number for display (add leading +)
+  const formatPhoneDisplay = (phone: string | null) => {
+    if (!phone) return null
+    // Remove non-digits
+    const cleaned = phone.replace(/\D/g, '')
+    // Format with +
+    if (cleaned.startsWith('62')) {
+      return `+${cleaned}`
+    }
+    if (cleaned.startsWith('08')) {
+      return `+62${cleaned.substring(1)}`
+    }
+    return cleaned
+  }
+
   // Check if message contains image URL
   const isImageUrl = (text: string) => {
     return /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(text) ||
@@ -789,9 +816,17 @@ export default function LiveChatPage() {
                       </Avatar>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <p className="font-medium text-sm truncate">
-                            {conv.user_name || getConversationKey(conv)}
-                          </p>
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <p className="font-medium text-sm truncate">
+                              {getDisplayName(conv)}
+                            </p>
+                            {/* Show phone number for webchat users if available */}
+                            {isWebchatConversation(conv) && conv.user_phone && (
+                              <span className="text-xs text-muted-foreground shrink-0">
+                                {formatPhoneDisplay(conv.user_phone)}
+                              </span>
+                            )}
+                          </div>
                           <span className="text-xs text-muted-foreground shrink-0 ml-2">
                             {formatTime(conv.last_message_at)}
                           </span>
@@ -892,8 +927,14 @@ export default function LiveChatPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="font-medium text-sm">
-                        {selectedConversation.user_name || getConversationKey(selectedConversation)}
+                        {getDisplayName(selectedConversation)}
                       </p>
+                      {/* Show phone for webchat users */}
+                      {isWebchatConversation(selectedConversation) && selectedConversation.user_phone && (
+                        <span className="text-xs text-muted-foreground">
+                          {formatPhoneDisplay(selectedConversation.user_phone)}
+                        </span>
+                      )}
                       {isWebchatConversation(selectedConversation) && (
                         <Badge variant="outline" className="text-purple-600 border-purple-300 text-xs py-0">
                           Webchat
@@ -901,7 +942,10 @@ export default function LiveChatPage() {
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {getConversationKey(selectedConversation)}
+                      {isWebchatConversation(selectedConversation) 
+                        ? `Session: ${selectedConversation.channel_identifier.substring(4, 16)}...`
+                        : getConversationKey(selectedConversation)
+                      }
                     </p>
                   </div>
                 </div>

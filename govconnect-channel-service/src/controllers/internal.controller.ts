@@ -5,7 +5,7 @@ import {
   saveOutgoingMessage,
   logSentMessage,
 } from '../services/message.service';
-import { updateConversation } from '../services/takeover.service';
+import { updateConversation, updateConversationUserProfile } from '../services/takeover.service';
 import { sendTextMessage, sendTypingIndicator, markMessageAsRead } from '../services/wa.service';
 import logger from '../utils/logger';
 import { getQuery } from '../utils/http';
@@ -263,6 +263,60 @@ export async function markMessagesRead(req: Request, res: Response): Promise<voi
     });
   } catch (error: any) {
     logger.error('Mark messages read error', { error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * Update user profile in conversation
+ * PATCH /internal/conversations/user-profile
+ * Body: { channel_identifier: "xxx", channel: "WEBCHAT", user_name?: "John", user_phone?: "628xxx", village_id?: "xxx" }
+ * 
+ * Called by AI service when user provides their name or phone during conversation
+ */
+export async function updateUserProfile(req: Request, res: Response): Promise<void> {
+  try {
+    const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
+    const { 
+      channel_identifier, 
+      channel = 'WHATSAPP', 
+      user_name, 
+      user_phone,
+      village_id: bodyVillageId 
+    } = req.body;
+    
+    const village_id = bodyVillageId || headerVillageId;
+    
+    if (!channel_identifier) {
+      res.status(400).json({ error: 'channel_identifier is required' });
+      return;
+    }
+    
+    if (!user_name && !user_phone) {
+      res.status(400).json({ error: 'At least one of user_name or user_phone is required' });
+      return;
+    }
+    
+    await updateConversationUserProfile(
+      channel_identifier,
+      { user_name, user_phone },
+      village_id,
+      channel.toUpperCase() as 'WHATSAPP' | 'WEBCHAT'
+    );
+    
+    logger.info('User profile updated', { 
+      channel,
+      channel_identifier, 
+      user_name,
+      user_phone: user_phone ? '***' : undefined,
+    });
+    
+    res.json({ 
+      status: 'ok',
+      updated: { user_name, user_phone: user_phone ? true : false },
+    });
+  } catch (error: any) {
+    logger.error('Update user profile error', { error: error.message });
     res.status(500).json({ error: 'Internal server error' });
   }
 }

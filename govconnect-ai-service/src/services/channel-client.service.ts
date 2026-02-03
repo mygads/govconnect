@@ -168,3 +168,65 @@ export async function isUserInTakeover(wa_user_id: string, village_id?: string):
     return false;
   }
 }
+
+/**
+ * Update user profile in conversation
+ * Called when user provides their name or phone during conversation
+ */
+export async function updateConversationUserProfile(
+  channel_identifier: string,
+  updates: { user_name?: string; user_phone?: string },
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<boolean> {
+  // Skip in testing mode
+  if (config.testingMode) {
+    logger.debug('TESTING MODE: Skipping user profile update', {
+      channel,
+      channel_identifier,
+      updates,
+    });
+    return true;
+  }
+
+  try {
+    const url = `${config.channelServiceUrl}/internal/conversations/user-profile`;
+    
+    await axios.patch(
+      url,
+      {
+        village_id,
+        channel_identifier,
+        channel,
+        user_name: updates.user_name,
+        user_phone: updates.user_phone,
+      },
+      {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+          'Content-Type': 'application/json',
+        },
+        timeout: 5000,
+      }
+    );
+    
+    logger.info('Conversation user profile updated', {
+      channel,
+      channel_identifier,
+      updates: {
+        user_name: updates.user_name,
+        user_phone: updates.user_phone ? '***' : undefined,
+      },
+    });
+    
+    return true;
+  } catch (error: any) {
+    logger.warn('Failed to update conversation user profile', {
+      channel,
+      channel_identifier,
+      error: error.message,
+    });
+    // Don't throw - profile update is non-critical
+    return false;
+  }
+}

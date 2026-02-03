@@ -121,7 +121,8 @@ model Conversation {
   wa_user_id           String?
   channel              ChannelType @default(WHATSAPP)
   channel_identifier   String
-  user_name            String?  // WhatsApp push name
+  user_name            String?  // Collected name or WhatsApp push name
+  user_phone           String?  // Collected phone number (for webchat)
   last_message         String?  @db.Text
   last_message_at      DateTime @default(now())
   unread_count         Int      @default(0)

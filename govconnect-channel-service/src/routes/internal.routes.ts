@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
-import { getMessages, sendMessage, setTyping, markMessagesRead, storeMessage } from '../controllers/internal.controller';
+import { getMessages, sendMessage, setTyping, markMessagesRead, storeMessage, updateUserProfile } from '../controllers/internal.controller';
 import {
   handleStartTakeover,
   handleEndTakeover,
@@ -51,6 +51,7 @@ router.post('/messages', storeMessage);  // Store AI reply in database
 router.post('/send', validateSendMessage, sendMessage);
 router.post('/typing', setTyping);
 router.post('/messages/read', markMessagesRead);
+router.patch('/conversations/user-profile', updateUserProfile);  // Update user name/phone from AI
 
 // WhatsApp Session Management Routes
 router.get('/whatsapp/status', getStatus);

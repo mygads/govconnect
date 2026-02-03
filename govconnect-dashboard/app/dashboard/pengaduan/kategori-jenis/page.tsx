@@ -575,7 +575,7 @@ export default function ComplaintMetaPage() {
               <div className="divide-y">
                 {Object.entries(typesByCategory).map(([catName, catTypes]) => (
                   <div key={catName}>
-                    <div className="px-4 py-2 bg-muted/30 sticky top-0 z-10">
+                    <div className="px-4 py-2 bg-white sticky top-0 z-10">
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         {catName}
                       </span>
