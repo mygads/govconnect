@@ -3,14 +3,22 @@ import bcrypt from 'bcryptjs'
 import { NextRequest } from 'next/server'
 import prisma from '@/lib/prisma'
 
-// JWT_SECRET must be set in environment - no insecure fallback
-const jwtSecretValue = process.env.JWT_SECRET
-if (!jwtSecretValue && process.env.NODE_ENV === 'production') {
-  throw new Error('JWT_SECRET environment variable is required in production')
+// Lazy initialization to avoid build-time errors
+// JWT_SECRET is checked at runtime when first used, not at build time
+let _jwtSecret: Uint8Array | null = null
+
+function getJwtSecret(): Uint8Array {
+  if (_jwtSecret) return _jwtSecret
+  
+  const jwtSecretValue = process.env.JWT_SECRET
+  if (!jwtSecretValue && process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET environment variable is required in production')
+  }
+  _jwtSecret = new TextEncoder().encode(
+    jwtSecretValue || 'dev-only-secret-do-not-use-in-production'
+  )
+  return _jwtSecret
 }
-const JWT_SECRET = new TextEncoder().encode(
-  jwtSecretValue || 'dev-only-secret-do-not-use-in-production'
-)
 
 export interface JWTPayload {
   adminId: string
@@ -34,12 +42,12 @@ export async function generateToken(payload: JWTPayload): Promise<string> {
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('24h')
-    .sign(JWT_SECRET)
+    .sign(getJwtSecret())
 }
 
 export async function verifyToken(token: string): Promise<JWTPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET)
+    const { payload } = await jwtVerify(token, getJwtSecret())
     return payload as unknown as JWTPayload
   } catch (error) {
     return null

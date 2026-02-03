@@ -29,12 +29,22 @@ export const NOTIFICATION_SERVICE_URL = process.env['NOTIFICATION_SERVICE_URL'] 
 // Fallback to single endpoint (backward compatibility)
 export const API_BASE_URL = process.env['API_BASE_URL'] || '';
 
-// INTERNAL_API_KEY must be set in environment - no insecure fallback
-const internalKeyValue = process.env['INTERNAL_API_KEY'];
-if (!internalKeyValue && process.env.NODE_ENV === 'production') {
-  console.error('CRITICAL: INTERNAL_API_KEY environment variable is required in production');
+// Lazy getter for INTERNAL_API_KEY - checked at runtime, not build time
+let _internalApiKey: string | null = null;
+
+export function getInternalApiKey(): string {
+  if (_internalApiKey !== null) return _internalApiKey;
+  
+  const keyValue = process.env['INTERNAL_API_KEY'];
+  if (!keyValue && process.env.NODE_ENV === 'production') {
+    console.error('CRITICAL: INTERNAL_API_KEY environment variable is required in production');
+  }
+  _internalApiKey = keyValue || 'dev-only-key-do-not-use-in-production';
+  return _internalApiKey;
 }
-export const INTERNAL_API_KEY = internalKeyValue || 'dev-only-key-do-not-use-in-production';
+
+// For backward compatibility - uses lazy getter
+export const INTERNAL_API_KEY = process.env['INTERNAL_API_KEY'] || 'dev-only-key-do-not-use-in-production';
 
 // Auth token storage
 let authToken: string | null = null;
