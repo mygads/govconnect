@@ -13,7 +13,7 @@
 
 import logger from '../utils/logger';
 import { MessageReceivedEvent } from '../types/event.types';
-import { callNLU, quickIntentCheck, NLUInput, NLUOutput } from './nlu-llm.service';
+import { callNLU, callNLUAdaptive, quickIntentCheck, NLUInput, NLUOutput, incrementCallCount, resetCallCount, getCallCount } from './nlu-llm.service';
 import { handleContactQuery, mapKeywordToCategory } from './contact-handler.service';
 import { publishAIReply, publishMessageStatus } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
@@ -223,6 +223,21 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
     // Step 3: Start typing and collect context
     await startTyping(wa_user_id, resolvedVillageId);
 
+    // Check LLM call limit to prevent infinite loops
+    if (!incrementCallCount(wa_user_id)) {
+      logger.warn('🚫 Max LLM calls reached, using fallback', { wa_user_id });
+      await stopTyping(wa_user_id, resolvedVillageId);
+      await publishAIReply({
+        village_id: resolvedVillageId,
+        wa_user_id,
+        reply_text: 'Mohon maaf Kak, ada kendala teknis. Silakan coba beberapa saat lagi atau hubungi kantor desa langsung.',
+        message_id: is_batched ? undefined : message_id,
+        batched_message_ids: is_batched ? batched_message_ids : undefined,
+      });
+      await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
+      return;
+    }
+
     const context = await collectContext({
       village_id: resolvedVillageId,
       wa_user_id,
@@ -244,7 +259,8 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       available_complaint_categories: context.available_complaint_categories,
     };
 
-    const nluOutput = await callNLU(nluInput);
+    // Use adaptive NLU - tries light mode first, deep mode if needed
+    const nluOutput = await callNLUAdaptive(nluInput);
 
     if (!nluOutput) {
       // NLU failed - fallback to simple response
@@ -265,6 +281,7 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       wa_user_id,
       intent: nluOutput.intent,
       confidence: nluOutput.confidence,
+      callCount: getCallCount(wa_user_id),
     });
 
     // Step 4.5: Check if there's a pending name request (user was asked for name before)
@@ -409,6 +426,8 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
     });
   }
 
+  // Reset call counter after event completes
+  resetCallCount(wa_user_id);
   await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
 }
 
@@ -602,6 +621,9 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
 
     // NEW: Unified ASK_INFO handles all information queries
     case 'ASK_INFO': {
+      // Check for emergency request first
+      const isEmergency = /darurat|urgent|segera|cepat|kebakaran|kecelakaan|tolong|emergency/i.test(message);
+      
       // If NLU already found the answer, return it directly
       if (infoRequest?.answer_found && infoRequest?.suggested_answer) {
         // Check if it's a contact request that should return vCards
@@ -615,14 +637,15 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
             contact_request: {
               category_keyword: categoryKeyword,
               category_match: categoryMatch,
-              is_emergency: /darurat|urgent|segera|cepat/i.test(message),
+              is_emergency: isEmergency,
             },
           };
           
           const contactResult = await handleContactQuery(mockNlu, village_id, villageName, 'whatsapp');
           if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+            const urgentPrefix = isEmergency ? '🚨 ' : '';
             return {
-              text: `Berikut adalah nomor ${categoryMatch || categoryKeyword} di ${villageName}:`,
+              text: `${urgentPrefix}Berikut adalah nomor ${categoryMatch || categoryKeyword} di ${villageName}:`,
               contacts: contactResult.contacts.map(c => ({
                 name: c.name,
                 phone: c.phone,
@@ -641,7 +664,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       const keywords = infoRequest?.keywords || [];
       
       // Topic: kontak - try important contacts database
-      if (topic === 'kontak' || keywords.some((k: string) => /nomor|kontak|telepon|hubungi/i.test(k))) {
+      if (topic === 'kontak' || keywords.some((k: string) => /nomor|kontak|telepon|hubungi|damkar|puskesmas|polisi|ambulan/i.test(k))) {
         const categoryKeyword = keywords[0] || message;
         const categoryMatch = mapKeywordToCategory(categoryKeyword);
         
@@ -650,14 +673,15 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
           contact_request: {
             category_keyword: categoryKeyword,
             category_match: categoryMatch,
-            is_emergency: /darurat|urgent|segera|cepat/i.test(message),
+            is_emergency: isEmergency,
           },
         };
         
         const contactResult = await handleContactQuery(mockNlu, village_id, villageName, 'whatsapp');
         if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+          const urgentPrefix = isEmergency ? '🚨 ' : '';
           return {
-            text: `Berikut adalah nomor ${categoryMatch || categoryKeyword} di ${villageName}:`,
+            text: `${urgentPrefix}Berikut adalah nomor ${categoryMatch || categoryKeyword} di ${villageName}:`,
             contacts: contactResult.contacts.map(c => ({
               name: c.name,
               phone: c.phone,
@@ -747,12 +771,13 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       return { text: await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike) };
     }
 
-    // UPDATED: CREATE_COMPLAINT with better handling
+    // UPDATED: CREATE_COMPLAINT with better handling and emergency support
     case 'CREATE_COMPLAINT': {
       // Use new complaint_request if available, fallback to extracted_data
       const kategori = complaintRequest?.category_match || (nlu as any).extracted_data?.complaint_category || 'lainnya';
       const deskripsi = complaintRequest?.description || (nlu as any).extracted_data?.complaint_description;
       const lokasi = complaintRequest?.location || nlu.extracted_data?.alamat;
+      const isEmergency = complaintRequest?.is_emergency || /darurat|kebakaran|kecelakaan|urgent|segera|tolong|emergency/i.test(message);
       
       const llmLike = {
         intent: 'CREATE_COMPLAINT',
@@ -761,40 +786,67 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
           kategori,
           deskripsi,
           alamat: lokasi,
+          is_emergency: isEmergency,
           ...nlu.extracted_data,
         },
       };
       
       const complaintResult = await handleComplaintCreation(wa_user_id, 'whatsapp', llmLike, message);
       
-      // Send important contacts if configured for this complaint type
-      if (kategori) {
-        try {
-          const { resolveComplaintTypeConfig } = await import('./unified-message-processor.service');
-          const complaintTypeConfig = await resolveComplaintTypeConfig(kategori, village_id);
-          
-          if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
-            const importantContacts = await getImportantContacts(
-              village_id,
-              complaintTypeConfig.important_contact_category,
-              undefined
-            );
-            
-            if (importantContacts && importantContacts.length > 0) {
-              return {
-                text: complaintResult,
-                contacts: importantContacts.slice(0, 5).map((c: ImportantContact) => ({
-                  name: c.name || '',
-                  phone: c.phone || '',
-                  organization: c.category?.name || 'Kontak Penting',
-                  title: c.description || undefined,
-                })),
-              };
+      // For emergency complaints, always try to send relevant contacts
+      // Also send contacts if complaint type config says so
+      let contactsToSend: ImportantContact[] = [];
+      
+      try {
+        const { resolveComplaintTypeConfig } = await import('./unified-message-processor.service');
+        const complaintTypeConfig = await resolveComplaintTypeConfig(kategori, village_id);
+        
+        if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
+          const configContacts = await getImportantContacts(
+            village_id,
+            complaintTypeConfig.important_contact_category,
+            undefined
+          );
+          if (configContacts) contactsToSend = configContacts;
+        }
+        
+        // For emergency, also check for Damkar/Pemadam/RS/Ambulan contacts
+        if (isEmergency && contactsToSend.length === 0) {
+          // Try to get emergency contacts based on keywords in message
+          const emergencyCategories = ['Damkar', 'Pemadam', 'Ambulan', 'Rumah Sakit', 'Polisi', 'Keamanan'];
+          for (const cat of emergencyCategories) {
+            if (message.toLowerCase().includes(cat.toLowerCase().substring(0, 4)) || 
+                kategori.toLowerCase().includes(cat.toLowerCase().substring(0, 4))) {
+              const emergencyContacts = await getImportantContacts(village_id, cat, undefined);
+              if (emergencyContacts && emergencyContacts.length > 0) {
+                contactsToSend = emergencyContacts;
+                break;
+              }
             }
           }
-        } catch (error: any) {
-          logger.warn('Failed to fetch important contacts for complaint', { error: error.message });
+          
+          // If still no contacts for emergency, try Damkar for fire-related
+          if (contactsToSend.length === 0 && /api|bakar|kebakaran|asap/i.test(message)) {
+            const damkarContacts = await getImportantContacts(village_id, 'Damkar', undefined) ||
+                                   await getImportantContacts(village_id, 'Pemadam', undefined);
+            if (damkarContacts) contactsToSend = damkarContacts;
+          }
         }
+      } catch (error: any) {
+        logger.warn('Failed to fetch important contacts for complaint', { error: error.message });
+      }
+      
+      if (contactsToSend.length > 0) {
+        const emergencyPrefix = isEmergency ? '\n\n🚨 Berikut kontak darurat yang bisa dihubungi:' : '';
+        return {
+          text: complaintResult + emergencyPrefix,
+          contacts: contactsToSend.slice(0, 5).map((c: ImportantContact) => ({
+            name: c.name || '',
+            phone: c.phone || '',
+            organization: c.category?.name || 'Kontak Penting',
+            title: c.description || undefined,
+          })),
+        };
       }
       
       return { text: complaintResult };

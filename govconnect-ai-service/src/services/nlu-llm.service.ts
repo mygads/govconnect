@@ -1,19 +1,74 @@
 /**
- * NLU (Natural Language Understanding) LLM Service
+ * NLU (Natural Language Understanding) LLM Service - ADAPTIVE VERSION
  * 
- * Purpose: Detect user intent using LLM with structured output
- * Replaces regex-based intent detection for better accuracy
+ * Multi-Stage Adaptive NLU:
+ * - Stage 1: Quick regex check (0 LLM calls, 0 tokens)
+ * - Stage 2: Light NLU (minimal context, ~500 tokens) - intent + basic info
+ * - Stage 3: Deep NLU (full context, ~2000 tokens) - only if needed
  * 
- * This service:
- * 1. Takes user message + RAG context + conversation history
- * 2. Calls LLM to understand user intent
- * 3. Returns structured output that the system can act on directly
+ * This saves tokens by:
+ * 1. Not sending full context for simple queries
+ * 2. Only fetching RAG when topic requires it
+ * 3. Using conversation history smartly (summarized or recent only)
  */
 
 import logger from '../utils/logger';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import { modelStatsService } from './model-stats.service';
+
+// ==================== CONFIG ====================
+
+// Max LLM calls per event to prevent loops/infinite calls
+const MAX_LLM_CALLS_PER_EVENT = 10;
+const callCounters = new Map<string, { count: number; timestamp: number }>();
+const COUNTER_RESET_MS = 60000; // Reset counter after 1 minute
+
+// Adaptive context limits
+const LIGHT_HISTORY_LIMIT = 5;    // Last 5 messages for light NLU
+const FULL_HISTORY_LIMIT = 15;    // Last 15 messages for deep NLU  
+const LIGHT_RAG_LIMIT = 800;      // 800 chars RAG for light
+const FULL_RAG_LIMIT = 2000;      // 2000 chars RAG for deep
+
+/**
+ * Track LLM call count per user session to prevent infinite loops
+ */
+export function incrementCallCount(userId: string): boolean {
+  const now = Date.now();
+  const existing = callCounters.get(userId);
+  
+  // Reset if expired
+  if (!existing || now - existing.timestamp > COUNTER_RESET_MS) {
+    callCounters.set(userId, { count: 1, timestamp: now });
+    return true;
+  }
+  
+  // Check limit
+  if (existing.count >= MAX_LLM_CALLS_PER_EVENT) {
+    logger.warn('🚫 Max LLM calls reached for user', { userId, count: existing.count });
+    return false;
+  }
+  
+  existing.count++;
+  return true;
+}
+
+/**
+ * Get current call count for user
+ */
+export function getCallCount(userId: string): number {
+  const existing = callCounters.get(userId);
+  if (!existing) return 0;
+  if (Date.now() - existing.timestamp > COUNTER_RESET_MS) return 0;
+  return existing.count;
+}
+
+/**
+ * Reset call counter for user (call after event completes)
+ */
+export function resetCallCount(userId: string): void {
+  callCounters.delete(userId);
+}
 
 // Models for NLU (cheapest/fastest first)
 const NLU_MODEL_PRIORITY = [
@@ -119,7 +174,42 @@ export interface NLUOutput {
 
   // Processing notes
   reasoning: string;            // Brief explanation of the classification
+  
+  // Adaptive flag - does this need deeper analysis?
+  needs_more_context?: boolean; // If true, system will do Stage 2 with full context
 }
+
+// ==================== ADAPTIVE PROMPT MODES ====================
+
+type NLUMode = 'light' | 'deep';
+
+/**
+ * LIGHT System Prompt - Compact version for quick intent detection
+ * ~400 tokens instead of ~1500
+ */
+const NLU_LIGHT_PROMPT = `Kamu AI asisten desa. Tentukan intent user dengan cepat.
+
+INTENTS:
+- GREETING: salam/halo
+- THANKS: terima kasih
+- ASK_INFO: tanya informasi (kontak, alamat, jam, layanan)
+- CREATE_COMPLAINT: lapor masalah/aduan
+- CREATE_SERVICE: buat layanan (KTP, KK, surat)
+- CHECK_STATUS: cek status (LAP-xxx/LAY-xxx)
+- CANCEL: batalkan
+- HISTORY: lihat riwayat
+- CONFIRMATION: ya/tidak
+- CONTINUE_FLOW: lanjutkan proses sebelumnya
+- CLARIFY_NEEDED: ambigu, perlu tanya ulang
+- UNKNOWN: benar-benar tidak jelas
+
+ATURAN:
+1. Baca riwayat chat untuk konteks
+2. Jika user kasih data (nama/alamat) setelah pengaduan/layanan → CONTINUE_FLOW
+3. Jika ambigu → CLARIFY_NEEDED, bukan UNKNOWN
+4. Set needs_more_context=true jika butuh knowledge base/database detail
+
+OUTPUT: JSON dengan intent, confidence, reasoning, needs_more_context`;
 
 /**
  * NLU System Prompt - ADAPTIVE & CONTEXTUAL
@@ -127,30 +217,36 @@ export interface NLUOutput {
  */
 const NLU_SYSTEM_PROMPT = `Kamu adalah AI asisten cerdas untuk layanan pemerintah desa/kelurahan.
 Tugasmu adalah MEMAHAMI maksud pengguna secara natural dan menentukan respons terbaik.
+Berlaku SEPERTI MANUSIA - ramah, cerdas, dan bisa minta klarifikasi jika tidak yakin.
 
 ## PRINSIP UTAMA
 
-1. **PAHAMI KONTEKS** - Baca semua informasi yang diberikan (knowledge base, riwayat chat, data tersedia)
-2. **JAWAB DARI DATA** - Jika pertanyaan bisa dijawab dari context, langsung jawab
+1. **PAHAMI KONTEKS** - Baca semua informasi (knowledge base, riwayat chat, data tersedia)
+2. **JAWAB DARI DATA** - Prioritaskan data dari DATABASE, lalu Knowledge Base, lalu Village Profile
 3. **VERIFIKASI DATABASE** - Cek apakah layanan/kategori ada di database sebelum menawarkan
-4. **ADAPTIVE** - Jika tidak yakin, tanya klarifikasi. Jangan asumsi.
+4. **ADAPTIVE & HUMAN-LIKE** - Jika tidak yakin, TANYA klarifikasi. Jangan asumsi.
 5. **LANJUTKAN FLOW** - Jika user sedang dalam proses (pengaduan/layanan), lanjutkan jangan restart
+6. **KONFIRMASI** - Untuk aksi penting (buat laporan/layanan), konfirmasi dulu sebelum proses
 
 ## CARA KERJA
 
 ### Jika user BERTANYA (informasi, kontak, alamat, jam, dll):
-- Cari jawabannya di Knowledge Base Context
-- Cari di data Village Profile
-- Cari di daftar Kontak/Layanan yang tersedia
-- Jika KETEMU → jawab langsung via info_request.suggested_answer
-- Jika TIDAK KETEMU → bilang tidak ditemukan, tawarkan bantuan lain
+- PRIORITAS DATA (tinggi ke rendah):
+  1. DATABASE (kontak penting, layanan, pengaduan) - paling akurat & updated
+  2. Knowledge Base Context - informasi umum/prosedur
+  3. Village Profile - alamat, jam operasional
+- Jika data REDUNDANT/BERBEDA antara sumber, gunakan dari DATABASE
+- Jika KETEMU → jawab langsung via info_request.suggested_answer dengan data_source yang benar
+- Jika TIDAK KETEMU → jujur bilang tidak ditemukan, tawarkan bantuan lain
 
 ### Jika user mau LAPOR/ADUAN:
-- Cek kategori di "Kategori Pengaduan Tersedia"
-- Jika kategori COCOK → gunakan kategori tersebut
-- Jika TIDAK COCOK → gunakan "lainnya"
-- Kumpulkan: kategori, deskripsi, lokasi (jika relevan)
+- Cek kategori di "Kategori Pengaduan di Database"
+- Jika kategori COCOK → gunakan kategori tersebut, set exists_in_database=true
+- Jika TIDAK COCOK → gunakan "lainnya", set exists_in_database=false
+- Kumpulkan: kategori, deskripsi (MINIMAL 15 karakter), lokasi (jika relevan)
 - JANGAN pernah tawarkan link/formulir untuk pengaduan
+- Untuk DARURAT (kebakaran, kecelakaan, dll): set is_emergency=true
+  → Sistem akan otomatis kirim nomor kontak penting (Damkar, RS, dll)
 
 ### Jika user mau BUAT LAYANAN (KTP, KK, surat, dll):
 - Cek di "Layanan Tersedia" apakah layanan ada
@@ -165,9 +261,19 @@ Tugasmu adalah MEMAHAMI maksud pengguna secara natural dan menentukan respons te
 - Isi flow_context dengan data yang diberikan
 
 ### Jika TIDAK JELAS maksudnya:
+- JANGAN langsung jawab UNKNOWN
 - Gunakan intent = CLARIFY_NEEDED
-- Isi clarification.question dengan pertanyaan klarifikasi
-- Berikan opsi jika memungkinkan
+- Isi clarification.question dengan pertanyaan klarifikasi yang RAMAH
+- Berikan opsi jika memungkinkan (misal: "Apakah Kakak mau tanya info atau mau buat laporan?")
+- Contoh pertanyaan bagus:
+  - "Maaf Kak, bisa diperjelas maksudnya? Apakah tentang layanan atau pengaduan?"
+  - "Kakak mau tanya informasi apa ya? Saya bisa bantu info layanan, kontak, atau jam operasional."
+
+### INGAT: Bersikap seperti CS yang CERDAS & RAMAH
+- Jangan kaku, jangan formal berlebihan
+- Gunakan "Kak" atau "Kakak" 
+- Jika tidak yakin = TANYA, jangan asumsi
+- Jika data tidak ada = JUJUR bilang tidak ditemukan
 
 ## DATA YANG TERSEDIA
 - Knowledge Base Context: Informasi desa, profil, FAQ, prosedur
@@ -189,26 +295,63 @@ Tugasmu adalah MEMAHAMI maksud pengguna secara natural dan menentukan respons te
 ## LARANGAN
 - JANGAN mengarang informasi yang tidak ada di context
 - JANGAN tawarkan layanan yang tidak ada di database
-- JANGAN kirim link/formulir untuk pengaduan
-- JANGAN asumsi maksud user jika ambigu`;
+- JANGAN kirim link/formulir untuk pengaduan (sistem yang handle)
+- JANGAN asumsi maksud user jika ambigu - TANYA klarifikasi
+- JANGAN langsung intent=UNKNOWN, coba CLARIFY_NEEDED dulu
+- JANGAN gunakan bahasa terlalu formal/robot
+
+## CONTOH KEPUTUSAN CERDAS
+
+| User bilang | Keputusan |
+|-------------|----------|
+| "api" | CLARIFY_NEEDED - "Kak, maksudnya api kebakaran atau mau tanya tentang api?" |
+| "rumah saya" | Cek riwayat - mungkin CONTINUE_FLOW dari pengaduan sebelumnya |
+| "nomor damkar" | ASK_INFO topic=kontak, is_emergency mungkin true |
+| "mau buat ktp" | Cek Layanan Tersedia dulu, jika tidak ada → ASK_INFO saja |
+| "jalan rusak depan SD" | CREATE_COMPLAINT, cari kategori infrastruktur/lainnya |`;
 
 /**
  * Build the prompt for NLU - ADAPTIVE VERSION
+ * Mode 'light': Minimal context for quick intent detection (~500 tokens)
+ * Mode 'deep': Full context for complex queries (~2000 tokens)
  */
-function buildNLUPrompt(input: NLUInput): string {
+function buildNLUPrompt(input: NLUInput, mode: NLUMode = 'deep'): string {
   const parts: string[] = [];
 
-  // User message first
+  // User message first - always included
   parts.push(`## Pesan Pengguna\n"${input.message}"`);
 
-  // Conversation history for context
+  // Conversation history - limited based on mode
   if (input.conversation_history) {
-    parts.push(`\n## Riwayat Percakapan\n${input.conversation_history.slice(0, 3000)}`);
+    const historyLimit = mode === 'light' ? LIGHT_HISTORY_LIMIT : FULL_HISTORY_LIMIT;
+    const historyLines = input.conversation_history.split('\n');
+    const recentHistory = historyLines.slice(-historyLimit * 2).join('\n'); // Each turn = 2 lines
+    
+    if (recentHistory.length > 0) {
+      const charLimit = mode === 'light' ? 600 : 2000;
+      parts.push(`\n## Riwayat Percakapan (${historyLimit} terakhir)\n${recentHistory.slice(0, charLimit)}`);
+    }
   }
 
+  // For LIGHT mode - only include essential data lists (no RAG)
+  if (mode === 'light') {
+    // Compact list of available categories for quick matching
+    if (input.available_contact_categories?.length) {
+      parts.push(`\n## Kontak: ${input.available_contact_categories.slice(0, 10).join(', ')}`);
+    }
+    if (input.available_services?.length) {
+      parts.push(`\n## Layanan: ${input.available_services.slice(0, 10).map(s => s.slug).join(', ')}`);
+    }
+    if (input.available_complaint_categories?.length) {
+      parts.push(`\n## Kategori Pengaduan: ${input.available_complaint_categories.slice(0, 8).map(c => c.category).join(', ')}`);
+    }
+    return parts.join('\n');
+  }
+
+  // DEEP mode - full context
   // Knowledge base context
   if (input.rag_context) {
-    parts.push(`\n## Knowledge Base Context\n${input.rag_context.slice(0, 2500)}`);
+    parts.push(`\n## Knowledge Base Context\n${input.rag_context.slice(0, FULL_RAG_LIMIT)}`);
   }
 
   // Available data for verification
@@ -318,9 +461,14 @@ const NLU_OUTPUT_FORMAT = `
 ## PANDUAN PENGISIAN
 
 ### ASK_INFO - Untuk SEMUA pertanyaan informasi:
-- Cari jawaban di Knowledge Base Context
-- Jika ketemu → answer_found=true, isi suggested_answer
-- Jika tidak ketemu → answer_found=false
+- PRIORITAS SUMBER DATA (tinggi ke rendah):
+  1. DATABASE: Kategori Kontak, Layanan Tersedia (paling akurat)
+  2. Knowledge Base Context (informasi umum/prosedur)
+  3. Village Profile (alamat, jam operasional)
+- Jika data REDUNDANT antara sumber, gunakan dari DATABASE
+- Jika ketemu → answer_found=true, isi suggested_answer dengan sumber yang tepat
+- Jika tidak ketemu → answer_found=false, data_source="not_found"
+- Untuk KONTAK: pastikan isi topic="kontak" dan keywords berisi kategori
 
 ### CREATE_SERVICE - Hanya jika layanan ADA di database:
 - Cek di "Layanan Tersedia di Database"
@@ -332,6 +480,7 @@ const NLU_OUTPUT_FORMAT = `
 - Jika kategori cocok → exists_in_database=true
 - Jika tidak cocok → exists_in_database=false, category_match="lainnya"
 - WAJIB isi description minimal 15 karakter!
+- Untuk DARURAT (kebakaran, kecelakaan): is_emergency=true
 
 ### CONTINUE_FLOW - Jika melanjutkan proses:
 - Baca Riwayat Percakapan
@@ -339,21 +488,94 @@ const NLU_OUTPUT_FORMAT = `
 - Isi provided_data dengan data baru dari user
 
 ### CLARIFY_NEEDED - Jika ambigu:
-- Jangan asumsi
-- Buat pertanyaan klarifikasi yang jelas
+- Jangan asumsi, jangan langsung UNKNOWN
+- Buat pertanyaan klarifikasi yang RAMAH
 - Berikan opsi jika memungkinkan
+- Contoh: "Maaf Kak, apakah maksudnya X atau Y?"
 `;
 
 // Model priority for NLU - FAST models first
 
 /**
- * Call NLU LLM to understand user intent
+ * Determine if we should use light or deep NLU based on message complexity
  */
-export async function callNLU(input: NLUInput): Promise<NLUOutput | null> {
+function shouldUseLightNLU(message: string, hasHistory: boolean): boolean {
+  const normalizedMsg = message.toLowerCase().trim();
+  const wordCount = normalizedMsg.split(/\s+/).length;
+  
+  // Light NLU for short messages (< 10 words) without complex queries
+  if (wordCount < 10) {
+    // Patterns that need deep NLU even if short
+    const needsDeep = /bagaimana|gimana|cara|syarat|prosedur|apa\s+(itu|saja)|berapa|biaya/i;
+    if (!needsDeep.test(normalizedMsg)) {
+      return true;
+    }
+  }
+  
+  // Simple intents that can use light NLU
+  const simplePatterns = [
+    /^(halo|hai|hi|salam|selamat)/i,
+    /^(makasih|terima\s*kasih|thanks)/i,
+    /^(ya|iya|oke|ok|tidak|ga|gak|batal)/i,
+    /nomor\s*(hp|telepon|wa|whatsapp|damkar|puskesmas|polisi)/i,
+    /alamat\s*(kantor|desa|kelurahan)/i,
+    /jam\s*(buka|operasional|kerja)/i,
+    /(cek|status)\s*(lap|lay)/i,
+    /riwayat|histori/i,
+  ];
+  
+  for (const pattern of simplePatterns) {
+    if (pattern.test(normalizedMsg)) {
+      return true;
+    }
+  }
+  
+  // If user is continuing a flow (giving data), use light
+  if (hasHistory) {
+    // Patterns suggesting data input
+    const dataPatterns = /^(nama\s*(saya)?|alamat\s*(saya)?|nik\s*(saya)?|no\s*(hp|telp)?\s*(saya)?|jl\.?|jalan)/i;
+    if (dataPatterns.test(normalizedMsg)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Light NLU output format - simplified JSON
+ */
+const NLU_LIGHT_OUTPUT = `
+OUTPUT JSON:
+{
+  "intent": "GREETING|THANKS|ASK_INFO|CREATE_COMPLAINT|CREATE_SERVICE|CHECK_STATUS|CANCEL|HISTORY|CONFIRMATION|CONTINUE_FLOW|CLARIFY_NEEDED|UNKNOWN",
+  "confidence": 0.0-1.0,
+  "needs_more_context": true/false,  // Set true jika butuh RAG/detail database
+  "extracted_data": { "nama_lengkap": "", "alamat": "", "tracking_number": "" },
+  "info_request": { "topic": "kontak|alamat|jam|layanan", "keywords": [] },
+  "complaint_request": { "category_keyword": "", "is_emergency": false },
+  "service_request": { "service_keyword": "" },
+  "flow_context": { "previous_intent": "", "provided_data": {} },
+  "clarification": { "question": "", "options": [] },
+  "reasoning": "Penjelasan singkat"
+}`;
+
+/**
+ * Call NLU LLM with adaptive mode
+ * @param input NLU input data
+ * @param mode 'light' for quick detection, 'deep' for full analysis
+ */
+export async function callNLU(input: NLUInput, mode?: NLUMode): Promise<NLUOutput | null> {
   const startTime = Date.now();
+  
+  // Determine mode if not specified
+  const actualMode = mode || (shouldUseLightNLU(input.message, !!input.conversation_history) ? 'light' : 'deep');
+  
+  const isLightMode = actualMode === 'light';
 
   logger.info('🧠 NLU LLM call started', {
     wa_user_id: input.wa_user_id,
+    mode: actualMode,
     messageLength: input.message.length,
     hasRagContext: !!input.rag_context,
     hasHistory: !!input.conversation_history,
@@ -361,7 +583,12 @@ export async function callNLU(input: NLUInput): Promise<NLUOutput | null> {
     availableServices: input.available_services?.length || 0,
   });
 
-  const userPrompt = buildNLUPrompt(input);
+  const userPrompt = buildNLUPrompt(input, actualMode);
+  const systemPrompt = isLightMode 
+    ? NLU_LIGHT_PROMPT + '\n\n' + NLU_LIGHT_OUTPUT 
+    : NLU_SYSTEM_PROMPT + '\n\n' + NLU_OUTPUT_FORMAT;
+  
+  const maxTokens = isLightMode ? 500 : 1500;
 
   for (let i = 0; i < NLU_MODEL_PRIORITY.length; i++) {
     const model = NLU_MODEL_PRIORITY[i];
@@ -370,6 +597,7 @@ export async function callNLU(input: NLUInput): Promise<NLUOutput | null> {
       logger.info('🔄 NLU attempting model', {
         wa_user_id: input.wa_user_id,
         model,
+        mode: actualMode,
         attempt: i + 1,
       });
 
@@ -378,10 +606,10 @@ export async function callNLU(input: NLUInput): Promise<NLUOutput | null> {
         model,
         generationConfig: {
           temperature: 0.1, // Low for consistent classification
-          maxOutputTokens: 1500,
+          maxOutputTokens: maxTokens,
           responseMimeType: 'application/json',
         },
-        systemInstruction: NLU_SYSTEM_PROMPT + '\n\n' + NLU_OUTPUT_FORMAT,
+        systemInstruction: systemPrompt,
       });
 
       const result = await geminiModel.generateContent(userPrompt);
@@ -412,12 +640,15 @@ export async function callNLU(input: NLUInput): Promise<NLUOutput | null> {
       logger.info('✅ NLU LLM success', {
         wa_user_id: input.wa_user_id,
         model,
+        mode: actualMode,
         intent: parsed.intent,
         confidence: parsed.confidence,
+        needsMoreContext: parsed.needs_more_context,
         hasInfoRequest: !!parsed.info_request,
         hasServiceRequest: !!parsed.service_request,
         hasComplaintRequest: !!parsed.complaint_request,
         durationMs,
+        promptLength: userPrompt.length,
       });
 
       return parsed;
@@ -443,6 +674,40 @@ export async function callNLU(input: NLUInput): Promise<NLUOutput | null> {
   }
 
   return null;
+}
+
+/**
+ * Adaptive NLU with automatic retry in deep mode if needed
+ * This is the main entry point for NLU - handles multi-stage automatically
+ */
+export async function callNLUAdaptive(input: NLUInput): Promise<NLUOutput | null> {
+  // Stage 1: Try light NLU first
+  const lightResult = await callNLU(input, 'light');
+  
+  if (!lightResult) {
+    return null;
+  }
+  
+  // Check if we need deeper analysis
+  if (lightResult.needs_more_context && lightResult.confidence < 0.8) {
+    logger.info('🔄 NLU needs deeper analysis, switching to deep mode', {
+      wa_user_id: input.wa_user_id,
+      lightIntent: lightResult.intent,
+      lightConfidence: lightResult.confidence,
+    });
+    
+    // Stage 2: Deep NLU with full context
+    const deepResult = await callNLU(input, 'deep');
+    if (deepResult) {
+      return deepResult;
+    }
+    
+    // Fallback to light result if deep fails
+    return lightResult;
+  }
+  
+  // Light result is sufficient
+  return lightResult;
 }
 
 /**

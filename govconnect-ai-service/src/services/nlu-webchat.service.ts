@@ -6,7 +6,7 @@
  */
 
 import logger from '../utils/logger';
-import { callNLU, quickIntentCheck, NLUInput, NLUOutput } from './nlu-llm.service';
+import { callNLU, callNLUAdaptive, quickIntentCheck, NLUInput, NLUOutput, incrementCallCount, resetCallCount, getCallCount } from './nlu-llm.service';
 import { handleContactQuery, mapKeywordToCategory } from './contact-handler.service';
 import { searchKnowledge, getKelurahanInfoContext } from './knowledge.service';
 import { sanitizeUserInput } from './context-builder.service';
@@ -355,7 +355,8 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
       available_services: context.available_services,
     };
 
-    const nluOutput = await callNLU(nluInput);
+    // Use adaptive NLU - light mode first, deep mode if needed
+    const nluOutput = await callNLUAdaptive(nluInput);
 
     if (!nluOutput) {
       logger.warn('NLU failed for webchat, using fallback');
@@ -375,6 +376,7 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
       userId,
       intent: nluOutput.intent,
       confidence: nluOutput.confidence,
+      callCount: getCallCount(userId),
     });
 
     // Step 4.5: Check if intent requires name and user hasn't provided one
