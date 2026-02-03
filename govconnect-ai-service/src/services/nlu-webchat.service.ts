@@ -624,26 +624,28 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       }
       return 'Baik, tidak masalah. Ada hal lain yang bisa saya bantu?';
 
-    case 'ASK_ABOUT_CONVERSATION': {
+    case 'ASK_ABOUT_CONVERSATION' as any: {
       // Answer questions about previous conversation from history
-      if (nlu.knowledge_request?.suggested_answer) {
-        return nlu.knowledge_request.suggested_answer;
+      const knowledgeReq = (nlu as any).knowledge_request;
+      if (knowledgeReq?.suggested_answer) {
+        return knowledgeReq.suggested_answer;
       }
       // Fallback if NLU didn't provide answer
       return 'Mohon maaf, saya tidak dapat mengingat detail percakapan sebelumnya. Bisakah Anda mengulangi pertanyaan atau informasi yang dimaksud?';
     }
 
-    case 'ASK_CONTACT': {
-      // Ensure category_match is set
-      if (nlu.contact_request && !nlu.contact_request.category_match && nlu.contact_request.category_keyword) {
-        nlu.contact_request.category_match = mapKeywordToCategory(nlu.contact_request.category_keyword) || undefined;
+    case 'ASK_CONTACT' as any: {
+      // Ensure category_match is set - support both old and new format
+      const contactRequest = (nlu as any).contact_request;
+      if (contactRequest && !contactRequest.category_match && contactRequest.category_keyword) {
+        contactRequest.category_match = mapKeywordToCategory(contactRequest.category_keyword) || undefined;
       }
       
-      const contactResult = await handleContactQuery(nlu, village_id, villageName, 'webchat');
+      const contactResult = await handleContactQuery(nlu as any, village_id, villageName, 'webchat');
       return contactResult.response;
     }
 
-    case 'ASK_ADDRESS': {
+    case 'ASK_ADDRESS' as any: {
       if (!village_profile?.address && !village_profile?.gmaps_url) {
         return 'Mohon maaf, informasi alamat kantor belum tersedia.';
       }
@@ -653,7 +655,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       return `Alamat Kantor ${villageName}: ${village_profile?.address || village_profile?.gmaps_url}`;
     }
 
-    case 'ASK_HOURS': {
+    case 'ASK_HOURS' as any: {
       const hours = village_profile?.operating_hours;
       if (!hours || Object.keys(hours).length === 0) {
         return 'Mohon maaf, informasi jam operasional kantor belum tersedia.';
@@ -682,7 +684,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       return lines.join('\n');
     }
 
-    case 'ASK_SERVICE_INFO': {
+    case 'ASK_SERVICE_INFO' as any: {
       const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
       if (!serviceSlug) {
         return 'Layanan apa yang ingin Anda ketahui? Silakan sebutkan nama layanannya.';
@@ -695,7 +697,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       return typeof result === 'string' ? result : result.replyText;
     }
 
-    case 'CREATE_SERVICE_REQUEST': {
+    case 'CREATE_SERVICE_REQUEST' as any: {
       const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
       if (!serviceSlug) {
         return 'Layanan apa yang ingin Anda ajukan? Silakan sebutkan jenis layanannya.';
@@ -708,12 +710,14 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
     }
 
     case 'CREATE_COMPLAINT': {
+      const complaintReq = nlu.complaint_request;
       const llmLike = {
         intent: 'CREATE_COMPLAINT',
         fields: {
           village_id,
-          kategori: nlu.extracted_data?.complaint_category,
-          deskripsi: nlu.extracted_data?.complaint_description,
+          kategori: complaintReq?.category_match || complaintReq?.category_keyword,
+          deskripsi: complaintReq?.description,
+          lokasi: complaintReq?.location,
           ...nlu.extracted_data,
         },
       };
@@ -739,12 +743,15 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       return await handleHistory(user_id, 'webchat');
     }
 
-    case 'ASK_KNOWLEDGE': {
+    case 'ASK_KNOWLEDGE' as any: {
+      // Support both old knowledge_request and new info_request formats
+      const knowledgeReq = (nlu as any).knowledge_request || nlu.info_request;
+      
       // If NLU found answer in context, use it directly
-      if (nlu.knowledge_request?.answer_found_in_context && nlu.knowledge_request?.suggested_answer) {
-        const answer = nlu.knowledge_request.suggested_answer;
+      if ((knowledgeReq?.answer_found_in_context || knowledgeReq?.answer_found) && knowledgeReq?.suggested_answer) {
+        const answer = knowledgeReq.suggested_answer;
         logger.info('✅ NLU found answer in context', {
-          questionSummary: nlu.knowledge_request.question_summary,
+          questionSummary: knowledgeReq.question_summary || knowledgeReq.topic,
           answerLength: answer.length,
         });
         return answer;
@@ -757,7 +764,7 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
             intent: 'KNOWLEDGE_QUERY',
             fields: {
               village_id,
-              knowledge_category: nlu.knowledge_request?.question_summary,
+              knowledge_category: knowledgeReq?.question_summary || knowledgeReq?.topic,
             },
           };
           const result = await handleKnowledgeQuery(user_id, message, llmLike);

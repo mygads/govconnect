@@ -36,24 +36,29 @@ function formatPhoneClickable(phone: string, channel: ChannelType): string {
 
 /**
  * Handle contact query based on NLU output
+ * Supports both old contact_request format and new info_request format
  */
 export async function handleContactQuery(
-  nluOutput: NLUOutput,
+  nluOutput: any, // Accept any NLU format for backward compatibility
   villageId: string,
   villageName: string,
   channel: ChannelType = 'whatsapp',
 ): Promise<ContactHandlerResult> {
-  const contactRequest = nluOutput.contact_request;
+  // Support both old and new NLU formats
+  const contactRequest = nluOutput.contact_request || nluOutput.info_request;
   
   if (!contactRequest) {
-    logger.warn('handleContactQuery called without contact_request');
+    logger.warn('handleContactQuery called without contact_request or info_request');
     return {
       found: false,
       response: 'Mohon maaf, saya tidak yakin kontak apa yang Kakak butuhkan. Bisa diperjelas?',
     };
   }
 
-  const { category_match, category_keyword, is_emergency } = contactRequest;
+  // Normalize field names (old: category_match/category_keyword, new: topic/keywords)
+  const category_match = contactRequest.category_match || contactRequest.topic;
+  const category_keyword = contactRequest.category_keyword || (contactRequest.keywords && contactRequest.keywords[0]);
+  const is_emergency = contactRequest.is_emergency;
 
   logger.info('🔍 Handling contact query', {
     villageId,

@@ -561,7 +561,7 @@ async function handleQuickIntent(
 }
 
 /**
- * Handle NLU intent with full context
+ * Handle NLU intent with full context - ADAPTIVE VERSION
  */
 async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Promise<NLUIntentResponse> {
   const { village_id, wa_user_id, message, village_profile } = context;
@@ -572,11 +572,18 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
     confidence: nlu.confidence,
     village_id,
     extractedName: nlu.extracted_data?.nama_lengkap,
+    hasInfoRequest: !!(nlu as any).info_request,
+    hasComplaintRequest: !!(nlu as any).complaint_request,
   });
+
+  // Type-safe access to new fields with fallback to old fields
+  const infoRequest = (nlu as any).info_request;
+  const complaintRequest = (nlu as any).complaint_request;
+  const flowContext = (nlu as any).flow_context;
+  const clarification = (nlu as any).clarification;
 
   switch (nlu.intent) {
     case 'GREETING': {
-      // Check if user introduced themselves
       const userName = nlu.extracted_data?.nama_lengkap;
       if (userName) {
         return { text: `Halo, Kak ${userName}! 👋 Selamat datang di layanan ${villageName}. Ada yang bisa saya bantu?` };
@@ -593,85 +600,146 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       }
       return { text: 'Baik Kak, tidak masalah. Ada hal lain yang bisa saya bantu?' };
 
-    case 'ASK_ABOUT_CONVERSATION': {
-      // Answer questions about previous conversation from history
-      if (nlu.knowledge_request?.suggested_answer) {
-        return { text: nlu.knowledge_request.suggested_answer };
-      }
-      // Fallback if NLU didn't provide answer
-      return { text: 'Mohon maaf Kak, saya tidak dapat mengingat detail percakapan sebelumnya. Bisakah Kakak mengulangi pertanyaan atau informasi yang dimaksud?' };
-    }
-
-    case 'ASK_CONTACT': {
-      // Ensure category_match is set
-      if (nlu.contact_request && !nlu.contact_request.category_match && nlu.contact_request.category_keyword) {
-        nlu.contact_request.category_match = mapKeywordToCategory(nlu.contact_request.category_keyword) || undefined;
+    // NEW: Unified ASK_INFO handles all information queries
+    case 'ASK_INFO': {
+      // If NLU already found the answer, return it directly
+      if (infoRequest?.answer_found && infoRequest?.suggested_answer) {
+        // Check if it's a contact request that should return vCards
+        if (infoRequest.topic === 'kontak' && infoRequest.keywords?.length) {
+          const categoryKeyword = infoRequest.keywords[0];
+          const categoryMatch = mapKeywordToCategory(categoryKeyword);
+          
+          // Try to get contacts as vCards
+          const mockNlu = {
+            ...nlu,
+            contact_request: {
+              category_keyword: categoryKeyword,
+              category_match: categoryMatch,
+              is_emergency: /darurat|urgent|segera|cepat/i.test(message),
+            },
+          };
+          
+          const contactResult = await handleContactQuery(mockNlu, village_id, villageName, 'whatsapp');
+          if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+            return {
+              text: `Berikut adalah nomor ${categoryMatch || categoryKeyword} di ${villageName}:`,
+              contacts: contactResult.contacts.map(c => ({
+                name: c.name,
+                phone: c.phone,
+                organization: c.category || villageName,
+                title: c.description,
+              })),
+            };
+          }
+        }
+        
+        return { text: infoRequest.suggested_answer };
       }
       
-      const contactResult = await handleContactQuery(nlu, village_id, villageName, 'whatsapp');
+      // If not found, try different sources based on topic
+      const topic = infoRequest?.topic || '';
+      const keywords = infoRequest?.keywords || [];
       
-      // For WA: return contacts separately as vCard messages
-      if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
-        const categoryLabel = nlu.contact_request?.category_match || nlu.contact_request?.category_keyword || 'Penting';
-        return {
-          text: `Berikut adalah nomor ${categoryLabel} di ${villageName}:`,
-          contacts: contactResult.contacts.map(c => ({
-            name: c.name,
-            phone: c.phone,
-            organization: c.category || villageName,
-            title: c.description,
-          })),
+      // Topic: kontak - try important contacts database
+      if (topic === 'kontak' || keywords.some((k: string) => /nomor|kontak|telepon|hubungi/i.test(k))) {
+        const categoryKeyword = keywords[0] || message;
+        const categoryMatch = mapKeywordToCategory(categoryKeyword);
+        
+        const mockNlu = {
+          ...nlu,
+          contact_request: {
+            category_keyword: categoryKeyword,
+            category_match: categoryMatch,
+            is_emergency: /darurat|urgent|segera|cepat/i.test(message),
+          },
         };
+        
+        const contactResult = await handleContactQuery(mockNlu, village_id, villageName, 'whatsapp');
+        if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+          return {
+            text: `Berikut adalah nomor ${categoryMatch || categoryKeyword} di ${villageName}:`,
+            contacts: contactResult.contacts.map(c => ({
+              name: c.name,
+              phone: c.phone,
+              organization: c.category || villageName,
+              title: c.description,
+            })),
+          };
+        }
+        return { text: contactResult.response };
       }
       
-      return { text: contactResult.response };
-    }
-
-    case 'ASK_ADDRESS': {
-      if (!village_profile?.address && !village_profile?.gmaps_url) {
-        return { text: 'Mohon maaf Kak, informasi alamat kantor belum tersedia.' };
+      // Topic: alamat
+      if (topic === 'alamat' && village_profile?.address) {
+        if (village_profile?.gmaps_url) {
+          return { text: `Kantor ${villageName} beralamat di ${village_profile.address}.\nLokasi Google Maps:\n${village_profile.gmaps_url}` };
+        }
+        return { text: `Alamat Kantor ${villageName}: ${village_profile.address}` };
       }
-      if (village_profile?.address && village_profile?.gmaps_url) {
-        return { text: `Kantor ${villageName} beralamat di ${village_profile.address}.\nLokasi Google Maps:\n${village_profile.gmaps_url}` };
+      
+      // Topic: jam operasional
+      if (topic === 'jam' && village_profile?.operating_hours) {
+        const hours = village_profile.operating_hours;
+        const lines = ['Jam operasional:'];
+        for (const [day, schedule] of Object.entries(hours as Record<string, any>)) {
+          const dayLabel = day.charAt(0).toUpperCase() + day.slice(1);
+          if (schedule?.open && schedule?.close) {
+            lines.push(`${dayLabel}: ${schedule.open}–${schedule.close}`);
+          } else {
+            lines.push(`${dayLabel}: Tutup`);
+          }
+        }
+        return { text: lines.join('\n') };
       }
-      return { text: `Alamat Kantor ${villageName}: ${village_profile?.address || village_profile?.gmaps_url}` };
-    }
-
-    case 'ASK_HOURS': {
-      const hours = village_profile?.operating_hours;
-      if (!hours) {
-        return { text: 'Mohon maaf Kak, informasi jam operasional belum tersedia.' };
-      }
-      const lines = ['Jam operasional:'];
-      for (const [day, schedule] of Object.entries(hours as Record<string, any>)) {
-        const dayLabel = day.charAt(0).toUpperCase() + day.slice(1);
-        if (schedule?.open && schedule?.close) {
-          lines.push(`${dayLabel}: ${schedule.open}–${schedule.close}`);
-        } else {
-          lines.push(`${dayLabel}: Tutup`);
+      
+      // Topic: layanan - list available services or service info
+      if (topic === 'layanan') {
+        const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
+        if (serviceSlug) {
+          const llmLike = { intent: 'SERVICE_INFO', fields: { service_slug: serviceSlug, village_id } };
+          const result = await handleServiceInfo(wa_user_id, llmLike);
+          return { text: typeof result === 'string' ? result : result.replyText };
+        }
+        
+        // List available services
+        if (context.available_services?.length) {
+          const serviceList = context.available_services.slice(0, 10).map(s => `• ${s.name}`).join('\n');
+          return { text: `Layanan yang tersedia di ${villageName}:\n\n${serviceList}\n\nSilakan sebutkan layanan yang ingin Kakak ketahui lebih lanjut.` };
         }
       }
-      return { text: lines.join('\n') };
-    }
-
-    case 'ASK_SERVICE_INFO': {
-      const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
-      if (!serviceSlug) {
-        return { text: 'Layanan apa yang ingin Kakak ketahui? Silakan sebutkan nama layanannya.' };
+      
+      // Fallback: search in RAG context
+      if (context.rag_context) {
+        const llmLike = {
+          intent: 'KNOWLEDGE_QUERY',
+          fields: { village_id, knowledge_category: topic },
+        };
+        try {
+          const result = await handleKnowledgeQuery(wa_user_id, message, llmLike);
+          if (result && typeof result === 'string' && result.length > 20) {
+            return { text: result };
+          }
+        } catch (error: any) {
+          logger.warn('Knowledge handler failed', { error: error.message });
+        }
       }
-      const llmLike = {
-        intent: 'SERVICE_INFO',
-        fields: { service_slug: serviceSlug, village_id },
-      };
-      const result = await handleServiceInfo(wa_user_id, llmLike);
-      return { text: typeof result === 'string' ? result : result.replyText };
+      
+      return { text: 'Mohon maaf Kak, informasi yang dicari belum tersedia. Ada yang lain yang bisa saya bantu?' };
     }
 
-    case 'CREATE_SERVICE_REQUEST': {
+    // NEW: CREATE_SERVICE with database check
+    case 'CREATE_SERVICE': {
       const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
-      if (!serviceSlug) {
+      const existsInDb = nlu.service_request?.exists_in_database;
+      
+      // If service doesn't exist in database, only provide info
+      if (existsInDb === false || !serviceSlug) {
+        if (serviceSlug) {
+          return { text: `Mohon maaf Kak, layanan "${serviceSlug}" belum tersedia di ${villageName}. Silakan hubungi kantor desa langsung untuk informasi lebih lanjut.` };
+        }
         return { text: 'Layanan apa yang ingin Kakak ajukan? Silakan sebutkan jenis layanannya.' };
       }
+      
       const llmLike = {
         intent: 'CREATE_SERVICE_REQUEST',
         fields: { service_slug: serviceSlug, village_id, ...nlu.extracted_data },
@@ -679,20 +747,27 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       return { text: await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike) };
     }
 
+    // UPDATED: CREATE_COMPLAINT with better handling
     case 'CREATE_COMPLAINT': {
+      // Use new complaint_request if available, fallback to extracted_data
+      const kategori = complaintRequest?.category_match || (nlu as any).extracted_data?.complaint_category || 'lainnya';
+      const deskripsi = complaintRequest?.description || (nlu as any).extracted_data?.complaint_description;
+      const lokasi = complaintRequest?.location || nlu.extracted_data?.alamat;
+      
       const llmLike = {
         intent: 'CREATE_COMPLAINT',
         fields: {
           village_id,
-          kategori: nlu.extracted_data?.complaint_category,
-          deskripsi: nlu.extracted_data?.complaint_description,
+          kategori,
+          deskripsi,
+          alamat: lokasi,
           ...nlu.extracted_data,
         },
       };
+      
       const complaintResult = await handleComplaintCreation(wa_user_id, 'whatsapp', llmLike, message);
       
-      // For WA: also fetch important contacts related to complaint category for vCard
-      const kategori = nlu.extracted_data?.complaint_category;
+      // Send important contacts if configured for this complaint type
       if (kategori) {
         try {
           const { resolveComplaintTypeConfig } = await import('./unified-message-processor.service');
@@ -725,6 +800,54 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       return { text: complaintResult };
     }
 
+    // NEW: CONTINUE_FLOW - Resume previous flow
+    case 'CONTINUE_FLOW': {
+      const previousIntent = flowContext?.previous_intent;
+      const providedData = flowContext?.provided_data || {};
+      
+      logger.info('🔄 Continuing flow', { previousIntent, providedData });
+      
+      // Merge provided data into extracted_data
+      const mergedData = { ...nlu.extracted_data, ...providedData };
+      
+      // Resume based on previous intent
+      if (previousIntent === 'CREATE_COMPLAINT') {
+        const llmLike = {
+          intent: 'CREATE_COMPLAINT',
+          fields: {
+            village_id,
+            kategori: mergedData.complaint_category || 'lainnya',
+            deskripsi: mergedData.complaint_description,
+            alamat: mergedData.alamat,
+          },
+        };
+        return { text: await handleComplaintCreation(wa_user_id, 'whatsapp', llmLike, message) };
+      }
+      
+      if (previousIntent === 'CREATE_SERVICE') {
+        const llmLike = {
+          intent: 'CREATE_SERVICE_REQUEST',
+          fields: { village_id, ...mergedData },
+        };
+        return { text: await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike) };
+      }
+      
+      return { text: 'Ada yang bisa saya bantu selanjutnya?' };
+    }
+
+    // NEW: CLARIFY_NEEDED - Ask for clarification
+    case 'CLARIFY_NEEDED': {
+      const question = clarification?.question || 'Mohon maaf, bisa diperjelas maksud Kakak?';
+      const options = clarification?.options;
+      
+      if (options && options.length > 0) {
+        const optionList = options.map((o: string, i: number) => `${i + 1}. ${o}`).join('\n');
+        return { text: `${question}\n\n${optionList}` };
+      }
+      
+      return { text: question };
+    }
+
     case 'CHECK_STATUS': {
       const trackingNumber = nlu.extracted_data?.tracking_number;
       if (!trackingNumber) {
@@ -744,56 +867,74 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       return { text: await handleHistory(wa_user_id, 'whatsapp') };
     }
 
-    case 'ASK_KNOWLEDGE': {
-      // If NLU found answer in context, use it directly
-      if (nlu.knowledge_request?.answer_found_in_context && nlu.knowledge_request?.suggested_answer) {
-        const answer = nlu.knowledge_request.suggested_answer;
-        logger.info('✅ NLU found answer in context', {
-          questionSummary: nlu.knowledge_request.question_summary,
-          answerLength: answer.length,
-        });
-        return { text: answer };
+    // Legacy intents for backward compatibility - coerce to any for old-style NLU responses
+    case 'ASK_CONTACT' as any: {
+      const contactRequest = (nlu as any).contact_request;
+      if (contactRequest && !contactRequest.category_match && contactRequest.category_keyword) {
+        contactRequest.category_match = mapKeywordToCategory(contactRequest.category_keyword) || undefined;
       }
+      const contactResult = await handleContactQuery(nlu as any, village_id, villageName, 'whatsapp');
+      if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+        return {
+          text: `Berikut adalah nomor ${contactRequest?.category_match || contactRequest?.category_keyword || 'Penting'} di ${villageName}:`,
+          contacts: contactResult.contacts.map(c => ({
+            name: c.name, phone: c.phone, organization: c.category || villageName, title: c.description,
+          })),
+        };
+      }
+      return { text: contactResult.response };
+    }
 
-      // If we have RAG context but NLU didn't find answer, use knowledge handler
+    case 'ASK_ADDRESS' as any: {
+      if (!village_profile?.address) return { text: 'Mohon maaf Kak, informasi alamat kantor belum tersedia.' };
+      if (village_profile?.gmaps_url) {
+        return { text: `Kantor ${villageName} beralamat di ${village_profile.address}.\nLokasi Google Maps:\n${village_profile.gmaps_url}` };
+      }
+      return { text: `Alamat Kantor ${villageName}: ${village_profile.address}` };
+    }
+
+    case 'ASK_HOURS' as any: {
+      const hours = village_profile?.operating_hours;
+      if (!hours) return { text: 'Mohon maaf Kak, informasi jam operasional belum tersedia.' };
+      const lines = ['Jam operasional:'];
+      for (const [day, schedule] of Object.entries(hours as Record<string, any>)) {
+        if (schedule?.open && schedule?.close) lines.push(`${day.charAt(0).toUpperCase() + day.slice(1)}: ${schedule.open}–${schedule.close}`);
+      }
+      return { text: lines.join('\n') };
+    }
+
+    case 'ASK_SERVICE_INFO' as any: {
+      const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
+      if (!serviceSlug) return { text: 'Layanan apa yang ingin Kakak ketahui? Silakan sebutkan nama layanannya.' };
+      const llmLike = { intent: 'SERVICE_INFO', fields: { service_slug: serviceSlug, village_id } };
+      const result = await handleServiceInfo(wa_user_id, llmLike);
+      return { text: typeof result === 'string' ? result : result.replyText };
+    }
+
+    case 'CREATE_SERVICE_REQUEST' as any: {
+      const serviceSlug = nlu.service_request?.service_slug_match || nlu.service_request?.service_keyword;
+      if (!serviceSlug) return { text: 'Layanan apa yang ingin Kakak ajukan? Silakan sebutkan jenis layanannya.' };
+      const llmLike = { intent: 'CREATE_SERVICE_REQUEST', fields: { service_slug: serviceSlug, village_id, ...nlu.extracted_data } };
+      return { text: await handleServiceRequestCreation(wa_user_id, 'whatsapp', llmLike) };
+    }
+
+    case 'ASK_KNOWLEDGE' as any:
+    case 'ASK_ABOUT_CONVERSATION' as any: {
+      const knowledgeReq = (nlu as any).knowledge_request;
+      if (knowledgeReq?.suggested_answer) return { text: knowledgeReq.suggested_answer };
       if (context.rag_context) {
+        const llmLike = { intent: 'KNOWLEDGE_QUERY', fields: { village_id } };
         try {
-          // Use existing knowledge query handler from unified processor
-          const llmLike = {
-            intent: 'KNOWLEDGE_QUERY',
-            fields: {
-              village_id,
-              knowledge_category: nlu.knowledge_request?.question_summary,
-            },
-          };
           const result = await handleKnowledgeQuery(wa_user_id, message, llmLike);
-          if (result && typeof result === 'string' && result.length > 20) {
-            return { text: result };
-          }
-        } catch (error: any) {
-          logger.warn('Knowledge handler failed', { error: error.message });
-        }
-        
-        // Fallback: return context summary
-        return { text: `Berdasarkan informasi yang tersedia:\n\n${context.rag_context.slice(0, 800)}\n\nJika ada pertanyaan lebih spesifik, silakan tanyakan kembali.` };
+          if (result && typeof result === 'string' && result.length > 20) return { text: result };
+        } catch { /* ignore */ }
       }
-
-      // No context found - be honest about it
-      return { text: 'Mohon maaf Kak, saya tidak menemukan informasi yang Kakak cari dalam database kami. Coba tanyakan dengan cara berbeda atau hubungi kantor desa langsung.' };
+      return { text: 'Mohon maaf Kak, informasi yang dicari belum tersedia. Ada yang lain yang bisa saya bantu?' };
     }
 
     case 'UNKNOWN':
-    default: {
-      // For unknown intents, give a helpful response
-      return { text: 'Mohon maaf Kak, saya kurang mengerti maksud Kakak. Berikut hal yang bisa saya bantu:\n\n' +
-        '📋 Informasi layanan (syarat KTP, KK, dll)\n' +
-        '📝 Pengajuan layanan online\n' +
-        '📢 Pengaduan warga\n' +
-        '📞 Nomor penting\n' +
-        '🕐 Jam operasional\n' +
-        '📍 Alamat kantor\n\n' +
-        'Silakan sampaikan kebutuhan Kakak.' };
-    }
+    default:
+      return { text: 'Mohon maaf, saya kurang paham maksud Kakak. Bisa dijelaskan lebih detail? Saya bisa bantu untuk:\n• Informasi kontak penting\n• Informasi layanan\n• Membuat pengaduan/laporan\n• Mengurus layanan administrasi' };
   }
 }
 

@@ -47,56 +47,56 @@ export interface NLUInput {
  * System uses this to determine action WITHOUT calling another LLM
  */
 export interface NLUOutput {
-  // Primary intent classification
+  // Primary action type - what does the user want to DO?
   intent: 
     | 'GREETING'           // Salam, halo, hi
     | 'THANKS'             // Terima kasih, makasih
-    | 'ASK_CONTACT'        // Minta nomor penting/kontak
-    | 'ASK_ADDRESS'        // Tanya alamat kantor
-    | 'ASK_HOURS'          // Tanya jam operasional
-    | 'ASK_SERVICE_INFO'   // Tanya syarat/info layanan
-    | 'CREATE_SERVICE_REQUEST' // Mau buat layanan
-    | 'CREATE_COMPLAINT'   // Mau lapor/aduan
+    | 'ASK_INFO'           // Bertanya informasi apapun (kontak, alamat, jam, layanan, pengetahuan umum)
+    | 'CREATE_COMPLAINT'   // Mau lapor/aduan masalah
+    | 'CREATE_SERVICE'     // Mau buat layanan administrasi
     | 'CHECK_STATUS'       // Cek status layanan/aduan
-    | 'ASK_KNOWLEDGE'      // Tanya info dari knowledge base
     | 'CANCEL'             // Batalkan layanan/aduan
-    | 'UPDATE_DATA'        // Update data (alamat, nama, dll)
     | 'HISTORY'            // Lihat riwayat
     | 'CONFIRMATION'       // Ya/tidak/oke response
-    | 'ASK_ABOUT_CONVERSATION' // Pertanyaan tentang percakapan sebelumnya
-    | 'UNKNOWN';           // Tidak jelas
+    | 'CONTINUE_FLOW'      // Melanjutkan flow sebelumnya (misal kasih alamat untuk laporan)
+    | 'CLARIFY_NEEDED'     // Pesan tidak jelas, perlu klarifikasi
+    | 'UNKNOWN';           // Benar-benar tidak jelas
 
   confidence: number; // 0.0 - 1.0
 
-  // Contact-related (if intent === 'ASK_CONTACT')
-  contact_request?: {
-    category_keyword?: string;  // Kata kunci: 'puskesmas', 'polisi', 'damkar', etc.
-    category_match?: string;    // Matched category name: 'Kesehatan', 'Keamanan', 'Pemadam'
-    is_emergency?: boolean;     // Apakah darurat/urgent?
+  // Unified information request (for ASK_INFO)
+  info_request?: {
+    topic: string;              // Topik yang ditanyakan (kontak, alamat, jam, layanan, dll)
+    keywords: string[];         // Kata kunci pencarian
+    answer_found?: boolean;     // Apakah jawaban ditemukan di context?
+    suggested_answer?: string;  // Jawaban dari context (jika ada)
+    data_source?: 'knowledge_base' | 'database' | 'village_profile' | 'not_found';
   };
 
   // Service-related (if intent involves services)
   service_request?: {
     service_keyword?: string;   // Kata kunci: 'ktp', 'kk', 'surat domisili'
     service_slug_match?: string; // Matched slug from available_services
+    exists_in_database?: boolean; // Apakah layanan ada di database?
   };
 
-  // Knowledge query (if intent === 'ASK_KNOWLEDGE')
-  knowledge_request?: {
-    question_summary: string;   // Ringkasan pertanyaan
-    answer_found_in_context?: boolean; // Apakah jawaban ada di RAG context?
-    suggested_answer?: string;  // Jawaban dari context (jika ada)
+  // Complaint-related
+  complaint_request?: {
+    category_keyword?: string;  // Kata kunci kategori
+    category_match?: string;    // Matched category dari database
+    description?: string;       // Deskripsi lengkap masalah
+    location?: string;          // Lokasi jika disebutkan
+    is_emergency?: boolean;     // Apakah darurat?
+    exists_in_database?: boolean; // Apakah kategori ada di database?
   };
 
-  // Data extraction
+  // Data extraction (from user message)
   extracted_data?: {
     nama_lengkap?: string;
     nik?: string;
     alamat?: string;
     no_hp?: string;
     tracking_number?: string;   // LAP-xxx atau LAY-xxx
-    complaint_category?: string; // Kategori aduan: jalan_rusak, lampu_mati, dll
-    complaint_description?: string;
   };
 
   // Confirmation detection (if intent === 'CONFIRMATION')
@@ -104,190 +104,126 @@ export interface NLUOutput {
     is_positive: boolean;       // true = ya/oke/setuju, false = tidak/batal
   };
 
+  // For CONTINUE_FLOW - what flow is being continued
+  flow_context?: {
+    previous_intent: string;    // Intent sebelumnya
+    missing_data: string[];     // Data yang masih kurang
+    provided_data: Record<string, string>; // Data yang baru disediakan
+  };
+
+  // For CLARIFY_NEEDED - what needs clarification
+  clarification?: {
+    question: string;           // Pertanyaan klarifikasi
+    options?: string[];         // Opsi yang bisa dipilih user
+  };
+
   // Processing notes
   reasoning: string;            // Brief explanation of the classification
 }
 
 /**
- * NLU System Prompt - ENHANCED for smarter understanding
+ * NLU System Prompt - ADAPTIVE & CONTEXTUAL
+ * Designed to understand user intent naturally without rigid rules
  */
-const NLU_SYSTEM_PROMPT = `Kamu adalah NLU (Natural Language Understanding) AI yang SANGAT PINTAR untuk layanan pemerintah desa.
-Tugasmu adalah MEMAHAMI maksud pengguna dari pesan mereka dan mengembalikan output terstruktur.
+const NLU_SYSTEM_PROMPT = `Kamu adalah AI asisten cerdas untuk layanan pemerintah desa/kelurahan.
+Tugasmu adalah MEMAHAMI maksud pengguna secara natural dan menentukan respons terbaik.
 
-## ATURAN UTAMA (WAJIB DIPATUHI)
+## PRINSIP UTAMA
 
-1. **DILARANG MENGARANG** - Jika informasi tidak ada di knowledge base context, jawab "tidak ditemukan"
-2. **WAJIB BACA CONTEXT** - Selalu baca dan pahami Knowledge Base Context yang diberikan
-3. **JAWABAN DARI DATA** - Semua jawaban HARUS berdasarkan data yang tersedia, bukan asumsi
+1. **PAHAMI KONTEKS** - Baca semua informasi yang diberikan (knowledge base, riwayat chat, data tersedia)
+2. **JAWAB DARI DATA** - Jika pertanyaan bisa dijawab dari context, langsung jawab
+3. **VERIFIKASI DATABASE** - Cek apakah layanan/kategori ada di database sebelum menawarkan
+4. **ADAPTIVE** - Jika tidak yakin, tanya klarifikasi. Jangan asumsi.
+5. **LANJUTKAN FLOW** - Jika user sedang dalam proses (pengaduan/layanan), lanjutkan jangan restart
 
-## KONTEKS
-- Pesan dari warga melalui WhatsApp ke layanan desa/kelurahan
-- Warga bisa menanyakan informasi, membuat pengaduan, atau mengurus layanan administrasi
+## CARA KERJA
 
-## INPUT YANG DIBERIKAN
-- Pesan pengguna
-- **Konteks Knowledge Base** (PENTING: ini adalah sumber kebenaran untuk menjawab pertanyaan)
-- Riwayat percakapan (30 pesan terakhir)
-- Kategori kontak yang tersedia di desa ini
-- Layanan yang tersedia di desa ini
+### Jika user BERTANYA (informasi, kontak, alamat, jam, dll):
+- Cari jawabannya di Knowledge Base Context
+- Cari di data Village Profile
+- Cari di daftar Kontak/Layanan yang tersedia
+- Jika KETEMU → jawab langsung via info_request.suggested_answer
+- Jika TIDAK KETEMU → bilang tidak ditemukan, tawarkan bantuan lain
 
-## INTENT CLASSIFICATION RULES
+### Jika user mau LAPOR/ADUAN:
+- Cek kategori di "Kategori Pengaduan Tersedia"
+- Jika kategori COCOK → gunakan kategori tersebut
+- Jika TIDAK COCOK → gunakan "lainnya"
+- Kumpulkan: kategori, deskripsi, lokasi (jika relevan)
+- JANGAN pernah tawarkan link/formulir untuk pengaduan
 
-### PRIORITAS KLASIFIKASI (cek dari atas ke bawah):
-1. Jika ada kata "nomor/nomer/kontak/telepon/hubungi" + instansi → **ASK_CONTACT**
-2. Jika user mau lapor/adukan masalah (banjir, kebakaran, jalan rusak) → **CREATE_COMPLAINT**
-3. Jika user mau urus surat/dokumen administrasi → **CREATE_SERVICE_REQUEST**
+### Jika user mau BUAT LAYANAN (KTP, KK, surat, dll):
+- Cek di "Layanan Tersedia" apakah layanan ada
+- Jika ADA → boleh tawarkan pembuatan
+- Jika TIDAK ADA → hanya jawab informasi saja, JANGAN tawarkan buat layanan
+- service_request.exists_in_database = true/false
 
-### PENTING: Bedakan ASK_CONTACT vs CREATE_COMPLAINT vs CREATE_SERVICE_REQUEST
-- **ASK_CONTACT**: User minta NOMOR TELEPON/KONTAK
-  * Contoh: "butuh nomer damkar", "nomor puskesmas", "kontak polisi", "telepon ambulan segera"
-  * Kata kunci: nomor, nomer, kontak, telepon, hubungi
-- **CREATE_COMPLAINT**: User mau LAPOR/ADUAN masalah ke pemerintah
-  * Contoh: "ada kebakaran di rumah saya", "jalan rusak", "lampu mati", "ada tanah longsor"
-  * Kata kunci: lapor, aduan, ada masalah, terjadi, rusak
-- **CREATE_SERVICE_REQUEST**: User mau MENGURUS SURAT/DOKUMEN administrasi
-  * Contoh: "mau buat KTP", "urus surat pindah", "bikin SKCK"
-  * Kata kunci: buat, urus, ajukan, bikin + (surat/dokumen/KTP/KK/dll)
+### Jika user MELANJUTKAN flow (kasih data tambahan):
+- Baca Riwayat Percakapan
+- Pahami konteks sebelumnya
+- Gunakan intent = CONTINUE_FLOW
+- Isi flow_context dengan data yang diberikan
 
-### Untuk Pertanyaan Informasi:
-1. **ASK_CONTACT** - Minta nomor telepon/kontak penting (ambulan, polisi, puskesmas, damkar, dll)
-   - Termasuk: "nomor X", "nomer X", "kontak X", "telepon X", "butuh nomor X", "mau hubungi X"
-   - WAJIB cari di knowledge base context
-   - Jika tidak ada, jawab "tidak ditemukan"
-   
-2. **ASK_ADDRESS** - Tanya alamat kantor desa
-   - Ambil dari village profile jika ada
-   
-3. **ASK_HOURS** - Tanya jam operasional
-   - Ambil dari village profile jika ada
-   
-4. **ASK_SERVICE_INFO** - Tanya syarat/prosedur layanan administrasi
-   - Cari di knowledge base context
-   - Jika tidak ada, set answer_found_in_context = false
-   
-5. **ASK_KNOWLEDGE** - Pertanyaan umum lainnya
-   - WAJIB cari jawabannya di knowledge base context
-   - Jika ketemu, set answer_found_in_context = true DAN isi suggested_answer
-   - Jika tidak ketemu, set answer_found_in_context = false
+### Jika TIDAK JELAS maksudnya:
+- Gunakan intent = CLARIFY_NEEDED
+- Isi clarification.question dengan pertanyaan klarifikasi
+- Berikan opsi jika memungkinkan
 
-### Untuk Aksi:
-6. **CREATE_SERVICE_REQUEST** - Mau buat/urus layanan administrasi (surat, dokumen)
-   - BUKAN untuk minta nomor telepon!
-7. **CREATE_COMPLAINT** - Mau lapor/aduan masalah (bukan minta nomor!)
-8. **CHECK_STATUS** - Cek status layanan/aduan
-9. **CANCEL** - Batalkan layanan/aduan
-10. **HISTORY** - Lihat riwayat
+## DATA YANG TERSEDIA
+- Knowledge Base Context: Informasi desa, profil, FAQ, prosedur
+- Village Profile: Alamat, jam operasional, info desa
+- Kategori Kontak: Daftar kategori kontak penting
+- Layanan Tersedia: Daftar layanan administrasi yang bisa diproses
+- Kategori Pengaduan: Daftar kategori untuk laporan/aduan
+- Riwayat Percakapan: 30 pesan terakhir untuk konteks
 
-### Lainnya:
-11. **GREETING** - Salam, halo, perkenalan diri
-    - JIKA user memperkenalkan diri (misal: "halo saya yoga", "saya budi"), EKSTRAK NAMA ke extracted_data.nama_lengkap
-12. **THANKS** - Terima kasih
-13. **CONFIRMATION** - Ya/tidak
-14. **UPDATE_DATA** - Update data
-15. **ASK_ABOUT_CONVERSATION** - Pertanyaan tentang percakapan sebelumnya
-    - Contoh: "siapa saya?", "apa yang saya tanyakan tadi?", "tadi saya bilang apa?"
-    - WAJIB jawab dari Riwayat Percakapan jika ada
-    - Isi suggested_answer dengan jawaban dari riwayat
-16. **UNKNOWN** - Tidak jelas
+## CONTOH PEMAHAMAN
 
-## PENTING untuk ASK_CONTACT
-- **PENTING**: Jika user menyebut "nomor", "nomer", "kontak", "telepon", "hubungi" + nama instansi/layanan → ASK_CONTACT
-- Contoh ASK_CONTACT:
-  * "butuh nomer damkar segera" → ASK_CONTACT (bukan CREATE_SERVICE_REQUEST!)
-  * "ada nomor puskesmas?" → ASK_CONTACT
-  * "saya butuh nomor polisi" → ASK_CONTACT
-  * "kontak ambulan" → ASK_CONTACT
-- **BUKAN ASK_CONTACT** jika user mau LAPOR/ADUAN kebakaran, banjir, dll → itu CREATE_COMPLAINT
-- Cocokkan kata kunci pengguna dengan kategori yang tersedia
-- PENTING: Gunakan nama kategori yang SESUAI dengan database:
-  * "ambulan/ambulans/rs/rumah sakit/puskesmas/UGD/dokter/bidan" → Puskesmas
-  * "polisi/polres/polsek/kepolisian" → Polisi  
-  * "pemadam/damkar/kebakaran" → Damkar
-  * "babinsa/koramil/tni/linmas/keamanan" → Keamanan
-  * "pelayanan/layanan" → Pelayanan
-  * "pengaduan/aduan" → Pengaduan
-- Jika tidak yakin kategorinya, gunakan kata kunci langsung dari pesan user
-- Set is_emergency = true jika ada kata: "segera", "urgent", "darurat", "cepat", "emergency"
+"ada nomor puskesmas?" → ASK_INFO, cari di kontak/knowledge base
+"mau buat KTP" → Cek dulu di Layanan Tersedia, jika ada → CREATE_SERVICE
+"jalan rusak di depan rumah" → CREATE_COMPLAINT
+"ini alamat saya: Jl Merdeka" → CONTINUE_FLOW (lanjutkan pengaduan/layanan sebelumnya)
+"apa aja layanan di sini?" → ASK_INFO, cari di knowledge base + list layanan
+"cepat butuh damkar segera!" → ASK_INFO (minta kontak), is_emergency = true
 
-## PENTING: GUNAKAN RIWAYAT PERCAKAPAN
-- **WAJIB BACA Riwayat Percakapan** sebelum menentukan intent!
-- Jika user sedang dalam flow pengaduan (CREATE_COMPLAINT) dan memberikan lokasi → LANJUTKAN flow, JANGAN ganti intent
-- Jika user sudah minta nomor kontak sebelumnya dan mengulangi → tetap ASK_CONTACT
-- Pahami KONTEKS dari pesan sebelumnya untuk memberikan respons yang relevan
-
-## PENTING untuk CREATE_COMPLAINT (PENGADUAN/LAPORAN)
-### ATURAN WAJIB - SANGAT PENTING:
-1. **JANGAN PERNAH kirim link apapun untuk pengaduan** - tidak ada link formulir, tidak ada link cek status!
-2. **JANGAN minta nomor telepon** - Nomor WA user sudah otomatis tercatat dari chat
-3. **Pengaduan diproses via WhatsApp chat**, bukan via form online
-4. **Field yang diminta untuk pengaduan:**
-   - Masalah/jenis laporan (wajib)
-   - Deskripsi (wajib, minimal 15 karakter)
-   - Lokasi/alamat (opsional, tanyakan jika relevan sesuai knowledge base)
-
-### DILARANG KERAS untuk pengaduan:
-- ❌ JANGAN bilang "mengisi formulir pengaduan secara online"
-- ❌ JANGAN bilang "[link formulir pengaduan]" atau sejenisnya
-- ❌ JANGAN bilang "[link cek status pengaduan]"
-- ❌ JANGAN mengarang link atau URL apapun
-- ❌ JANGAN menyuruh user ke website
-
-### Kategori Pengaduan:
-- GUNAKAN kategori dari daftar "Kategori Pengaduan Tersedia" di bawah jika ada
-- Jika kategori dari user TIDAK ADA di daftar tersebut, gunakan "lainnya"
-- Jika daftar kategori kosong, SEMUA pengaduan masuk ke "lainnya"
-
-### Pengisian Data:
-- ISI extracted_data.complaint_category dengan kategori yang cocok atau "lainnya"
-- ISI extracted_data.complaint_description dengan detail laporan LENGKAP (MINIMAL 15 KARAKTER!)
-  * JANGAN hanya isi kata pendek seperti "kebakaran" atau "banjir"  
-  * Buat deskripsi lengkap seperti: "Laporan kebakaran di lokasi tersebut"
-  * Gabungkan informasi: jenis masalah + lokasi + detail tambahan dari pesan user
-- ISI extracted_data.alamat HANYA jika user menyebutkan lokasi
-
-### LARANGAN:
-- JANGAN mengarang field yang tidak diminta (seperti nomor telepon)
-- JANGAN kirim link apapun untuk pengaduan
-- JANGAN minta data yang tidak relevan
-  
-## PENTING untuk ASK_KNOWLEDGE
-- Baca dengan teliti Knowledge Base Context
-- Jika pertanyaan user bisa dijawab dari context:
-  * Set answer_found_in_context = true
-  * Isi suggested_answer dengan jawaban LENGKAP dari context
-  * JANGAN singkat jawaban, berikan semua informasi yang relevan
-- Jika tidak ada di context:
-  * Set answer_found_in_context = false
-  * JANGAN mengarang jawaban
-
-Berikan output JSON yang terstruktur.`;
+## LARANGAN
+- JANGAN mengarang informasi yang tidak ada di context
+- JANGAN tawarkan layanan yang tidak ada di database
+- JANGAN kirim link/formulir untuk pengaduan
+- JANGAN asumsi maksud user jika ambigu`;
 
 /**
- * Build the prompt for NLU
+ * Build the prompt for NLU - ADAPTIVE VERSION
  */
 function buildNLUPrompt(input: NLUInput): string {
   const parts: string[] = [];
 
-  parts.push(`## Pesan Pengguna\n${input.message}`);
+  // User message first
+  parts.push(`## Pesan Pengguna\n"${input.message}"`);
 
-  if (input.rag_context) {
-    parts.push(`\n## Konteks Knowledge Base\n${input.rag_context.slice(0, 2000)}`);
-  }
-
+  // Conversation history for context
   if (input.conversation_history) {
-    parts.push(`\n## Riwayat Percakapan (30 pesan terakhir)\n${input.conversation_history.slice(0, 3000)}`);
+    parts.push(`\n## Riwayat Percakapan\n${input.conversation_history.slice(0, 3000)}`);
   }
 
+  // Knowledge base context
+  if (input.rag_context) {
+    parts.push(`\n## Knowledge Base Context\n${input.rag_context.slice(0, 2500)}`);
+  }
+
+  // Available data for verification
   if (input.available_contact_categories?.length) {
     parts.push(`\n## Kategori Kontak Tersedia\n${input.available_contact_categories.join(', ')}`);
   }
 
   if (input.available_services?.length) {
     const serviceList = input.available_services
-      .slice(0, 20)
+      .slice(0, 25)
       .map(s => `- ${s.name} (${s.slug})`)
       .join('\n');
-    parts.push(`\n## Layanan Tersedia\n${serviceList}`);
+    parts.push(`\n## Layanan Tersedia di Database\n${serviceList}\n\n⚠️ Hanya tawarkan layanan yang ada di daftar ini!`);
+  } else {
+    parts.push(`\n## Layanan Tersedia\nTidak ada layanan yang dikonfigurasi. Jangan tawarkan pembuatan layanan.`);
   }
 
   if (input.available_complaint_categories?.length) {
@@ -297,9 +233,9 @@ function buildNLUPrompt(input: NLUInput): string {
         return `- ${c.category}${types}`;
       })
       .join('\n');
-    parts.push(`\n## Kategori Pengaduan Tersedia\n${categoryList}\n\nJika laporan user tidak cocok dengan kategori di atas, gunakan "lainnya".`);
+    parts.push(`\n## Kategori Pengaduan di Database\n${categoryList}\n\n⚠️ Jika tidak cocok, gunakan "lainnya"`);
   } else {
-    parts.push(`\n## Kategori Pengaduan Tersedia\nBelum ada kategori yang dikonfigurasi. SEMUA pengaduan masuk ke kategori "lainnya".`);
+    parts.push(`\n## Kategori Pengaduan\nBelum dikonfigurasi. Semua pengaduan masuk ke "lainnya".`);
   }
 
   if (input.user_profile && Object.keys(input.user_profile).length > 0) {
@@ -308,7 +244,7 @@ function buildNLUPrompt(input: NLUInput): string {
       .map(([k, v]) => `- ${k}: ${v}`)
       .join('\n');
     if (profileStr) {
-      parts.push(`\n## Profil Pengguna\n${profileStr}`);
+      parts.push(`\n## Data User yang Sudah Diketahui\n${profileStr}`);
     }
   }
 
@@ -316,29 +252,99 @@ function buildNLUPrompt(input: NLUInput): string {
 }
 
 /**
- * JSON Schema description for NLU output (used in prompt, not as structured schema)
+ * JSON Schema description for NLU output - SIMPLIFIED & ADAPTIVE
  */
 const NLU_OUTPUT_FORMAT = `
-OUTPUT JSON FORMAT:
+## OUTPUT JSON FORMAT
+
 {
-  "intent": "GREETING|THANKS|ASK_CONTACT|ASK_ADDRESS|ASK_HOURS|ASK_SERVICE_INFO|CREATE_SERVICE_REQUEST|CREATE_COMPLAINT|CHECK_STATUS|ASK_KNOWLEDGE|CANCEL|UPDATE_DATA|HISTORY|CONFIRMATION|ASK_ABOUT_CONVERSATION|UNKNOWN",
+  "intent": "GREETING|THANKS|ASK_INFO|CREATE_COMPLAINT|CREATE_SERVICE|CHECK_STATUS|CANCEL|HISTORY|CONFIRMATION|CONTINUE_FLOW|CLARIFY_NEEDED|UNKNOWN",
   "confidence": 0.0-1.0,
-  "contact_request": { "category_keyword": "...", "category_match": "...", "is_emergency": true/false } // only if ASK_CONTACT
-  "service_request": { "service_keyword": "...", "service_slug_match": "..." } // only if service-related
-  "knowledge_request": { "question_summary": "...", "answer_found_in_context": true/false, "suggested_answer": "..." } // if ASK_KNOWLEDGE or ASK_ABOUT_CONVERSATION
-  "extracted_data": { "nama_lengkap": "...", "nik": "...", "alamat": "...", "no_hp": "...", "tracking_number": "...", "complaint_category": "...", "complaint_description": "..." }
-  "confirmation": { "is_positive": true/false } // only if CONFIRMATION
-  "reasoning": "Brief explanation"
+  
+  // Untuk ASK_INFO (semua pertanyaan informasi)
+  "info_request": {
+    "topic": "kontak|alamat|jam|layanan|pengetahuan_umum|profil_desa",
+    "keywords": ["kata", "kunci", "pencarian"],
+    "answer_found": true/false,
+    "suggested_answer": "Jawaban lengkap dari context jika ditemukan",
+    "data_source": "knowledge_base|database|village_profile|not_found"
+  },
+  
+  // Untuk CREATE_SERVICE
+  "service_request": {
+    "service_keyword": "kata kunci layanan",
+    "service_slug_match": "slug dari daftar layanan jika cocok",
+    "exists_in_database": true/false  // PENTING: cek di daftar Layanan Tersedia!
+  },
+  
+  // Untuk CREATE_COMPLAINT
+  "complaint_request": {
+    "category_keyword": "kata kunci kategori",
+    "category_match": "kategori dari daftar atau 'lainnya'",
+    "description": "deskripsi lengkap masalah (minimal 15 karakter)",
+    "location": "lokasi jika disebutkan",
+    "is_emergency": true/false,
+    "exists_in_database": true/false  // false = gunakan "lainnya"
+  },
+  
+  // Data yang diekstrak dari pesan user
+  "extracted_data": {
+    "nama_lengkap": "nama jika disebutkan",
+    "nik": "NIK jika disebutkan",
+    "alamat": "alamat jika disebutkan",
+    "no_hp": "nomor HP jika disebutkan",
+    "tracking_number": "LAP-xxx atau LAY-xxx jika disebutkan"
+  },
+  
+  // Untuk CONFIRMATION
+  "confirmation": { "is_positive": true/false },
+  
+  // Untuk CONTINUE_FLOW
+  "flow_context": {
+    "previous_intent": "intent sebelumnya dari riwayat",
+    "missing_data": ["data", "yang", "kurang"],
+    "provided_data": { "field": "value" }
+  },
+  
+  // Untuk CLARIFY_NEEDED
+  "clarification": {
+    "question": "Pertanyaan klarifikasi ke user",
+    "options": ["opsi1", "opsi2"]
+  },
+  
+  "reasoning": "Penjelasan singkat mengapa memilih intent ini"
 }
 
-PENTING untuk GREETING dengan perkenalan:
-- Jika user menyebutkan nama (misal "halo saya yoga", "nama saya budi"), tetap intent=GREETING tapi ISI extracted_data.nama_lengkap
+## PANDUAN PENGISIAN
 
-PENTING untuk ASK_ABOUT_CONVERSATION:
-- Jika user tanya tentang percakapan sebelumnya (misal "siapa saya?", "tadi saya tanya apa?")
-- WAJIB baca Riwayat Percakapan dan jawab dari sana
-- Isi knowledge_request.suggested_answer dengan jawaban yang relevan
+### ASK_INFO - Untuk SEMUA pertanyaan informasi:
+- Cari jawaban di Knowledge Base Context
+- Jika ketemu → answer_found=true, isi suggested_answer
+- Jika tidak ketemu → answer_found=false
+
+### CREATE_SERVICE - Hanya jika layanan ADA di database:
+- Cek di "Layanan Tersedia di Database"
+- Jika ADA → exists_in_database=true, boleh proses
+- Jika TIDAK ADA → JANGAN intent ini, gunakan ASK_INFO saja
+
+### CREATE_COMPLAINT - Selalu cek kategori:
+- Cek di "Kategori Pengaduan di Database"
+- Jika kategori cocok → exists_in_database=true
+- Jika tidak cocok → exists_in_database=false, category_match="lainnya"
+- WAJIB isi description minimal 15 karakter!
+
+### CONTINUE_FLOW - Jika melanjutkan proses:
+- Baca Riwayat Percakapan
+- Identifikasi proses yang sedang berjalan
+- Isi provided_data dengan data baru dari user
+
+### CLARIFY_NEEDED - Jika ambigu:
+- Jangan asumsi
+- Buat pertanyaan klarifikasi yang jelas
+- Berikan opsi jika memungkinkan
 `;
+
+// Model priority for NLU - FAST models first
 
 /**
  * Call NLU LLM to understand user intent
@@ -408,9 +414,9 @@ export async function callNLU(input: NLUInput): Promise<NLUOutput | null> {
         model,
         intent: parsed.intent,
         confidence: parsed.confidence,
-        hasContactRequest: !!parsed.contact_request,
+        hasInfoRequest: !!parsed.info_request,
         hasServiceRequest: !!parsed.service_request,
-        hasKnowledgeRequest: !!parsed.knowledge_request,
+        hasComplaintRequest: !!parsed.complaint_request,
         durationMs,
       });
 
