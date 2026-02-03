@@ -42,8 +42,11 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status')
     const category = searchParams.get('category')
     const categoryId = searchParams.get('category_id')
-    const limit = parseInt(searchParams.get('limit') || '50')
-    const offset = parseInt(searchParams.get('offset') || '0')
+    const rawLimit = parseInt(searchParams.get('limit') || '50')
+    const rawOffset = parseInt(searchParams.get('offset') || '0')
+    // Bounds checking to prevent excessive data retrieval
+    const limit = Math.min(Math.max(isNaN(rawLimit) ? 50 : rawLimit, 1), 200)
+    const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0)
 
     const where: any = {}
     if (session.admin.village_id) {

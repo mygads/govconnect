@@ -28,7 +28,13 @@ export const NOTIFICATION_SERVICE_URL = process.env['NOTIFICATION_SERVICE_URL'] 
 
 // Fallback to single endpoint (backward compatibility)
 export const API_BASE_URL = process.env['API_BASE_URL'] || '';
-export const INTERNAL_API_KEY = process.env['INTERNAL_API_KEY'] || 'govconnect-internal-2025-secret';
+
+// INTERNAL_API_KEY must be set in environment - no insecure fallback
+const internalKeyValue = process.env['INTERNAL_API_KEY'];
+if (!internalKeyValue && process.env.NODE_ENV === 'production') {
+  console.error('CRITICAL: INTERNAL_API_KEY environment variable is required in production');
+}
+export const INTERNAL_API_KEY = internalKeyValue || 'dev-only-key-do-not-use-in-production';
 
 // Auth token storage
 let authToken: string | null = null;

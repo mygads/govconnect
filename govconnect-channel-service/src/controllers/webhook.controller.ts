@@ -548,16 +548,22 @@ export function verifyWebhook(req: Request, res: Response): void {
   const challenge = getQuery(req, 'hub.challenge');
 
   const verifyToken = process.env.WA_WEBHOOK_VERIFY_TOKEN;
+  const isProduction = process.env.NODE_ENV === 'production';
 
-  // If no verify token is configured, accept any subscription request
+  // SECURITY: In production, require verify token
   if (!verifyToken || verifyToken === '') {
+    if (isProduction) {
+      logger.error('SECURITY: WA_WEBHOOK_VERIFY_TOKEN not configured in production!');
+      res.status(500).send('Webhook not configured');
+      return;
+    }
+    // Development only: accept without token
     if (mode === 'subscribe' && challenge) {
-      logger.info('Webhook verified (no token required)');
+      logger.warn('Webhook verified WITHOUT token (development mode only)');
       res.send(challenge);
       return;
     }
-    // No challenge but valid request - just accept
-    logger.info('Webhook ping accepted (no token required)');
+    logger.warn('Webhook ping accepted WITHOUT token (development mode only)');
     res.send('OK');
     return;
   }

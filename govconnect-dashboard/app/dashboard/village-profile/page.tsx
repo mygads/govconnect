@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { MapPin, Save, Building2, Clock, AlertTriangle, RefreshCw, CheckCircle } from "lucide-react"
+import { MapPin, Save, Building2, Clock, AlertTriangle, RefreshCw, CheckCircle, AlertCircle, Loader2 } from "lucide-react"
 
 const DAYS = [
   { key: "senin", label: "Senin" },

@@ -36,10 +36,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     // Get the knowledge entry
     const knowledge = await prisma.knowledge_base.findUnique({
-      where: { id },
-      include: {
-        knowledge_categories: true
-      }
+      where: { id }
     })
 
     if (!knowledge) {
@@ -56,9 +53,9 @@ export async function POST(request: NextRequest, { params }: Params) {
       village_id: knowledge.village_id || undefined,
       title: knowledge.title,
       content: knowledge.content,
-      category: knowledge.knowledge_categories?.name || knowledge.category || 'Umum',
+      category: knowledge.category || 'Umum',
       keywords: knowledge.keywords || [],
-      qualityScore: knowledge.quality_score || 0.8
+      qualityScore: 0.8
     })
 
     if (!vectorResult.success) {

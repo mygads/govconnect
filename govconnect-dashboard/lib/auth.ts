@@ -3,8 +3,13 @@ import bcrypt from 'bcryptjs'
 import { NextRequest } from 'next/server'
 import prisma from '@/lib/prisma'
 
+// JWT_SECRET must be set in environment - no insecure fallback
+const jwtSecretValue = process.env.JWT_SECRET
+if (!jwtSecretValue && process.env.NODE_ENV === 'production') {
+  throw new Error('JWT_SECRET environment variable is required in production')
+}
 const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || 'your-secret-key'
+  jwtSecretValue || 'dev-only-secret-do-not-use-in-production'
 )
 
 export interface JWTPayload {

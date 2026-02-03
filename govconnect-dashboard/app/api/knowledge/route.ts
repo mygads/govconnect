@@ -31,8 +31,11 @@ export async function GET(request: NextRequest) {
     const categoryId = searchParams.get('category_id')
     const isActive = searchParams.get('is_active')
     const search = searchParams.get('search')
-    const limit = parseInt(searchParams.get('limit') || '50')
-    const offset = parseInt(searchParams.get('offset') || '0')
+    const rawLimit = parseInt(searchParams.get('limit') || '50')
+    const rawOffset = parseInt(searchParams.get('offset') || '0')
+    // Bounds checking to prevent excessive data retrieval
+    const limit = Math.min(Math.max(isNaN(rawLimit) ? 50 : rawLimit, 1), 200)
+    const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0)
 
     // Build where clause
     const where: any = {}
@@ -90,10 +93,11 @@ export async function GET(request: NextRequest) {
 
           enriched = knowledge.map((item) => {
             const status = statusMap.get(item.id)
+            const lastEmbedded = status?.updated_at
             return {
               ...item,
               embedding_model: status?.embedding_model || null,
-              last_embedded_at: status?.updated_at || null,
+              last_embedded_at: lastEmbedded ? (typeof lastEmbedded === 'string' ? new Date(lastEmbedded) : lastEmbedded) : null,
             }
           })
         }
