@@ -16,6 +16,7 @@ import { ProcessMessageResult } from './unified-message-processor.service';
 import { getProfile, updateProfile } from './user-profile.service';
 import { updateConversationUserProfile } from './channel-client.service';
 import { sanitizeFakeLinks } from './anti-hallucination.service';
+import { getCachedResponse, setCachedResponse, isCacheable } from './response-cache.service';
 import { 
   handleComplaintCreation,
   handleServiceInfo,
@@ -344,6 +345,29 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
       conversationHistory,
     });
 
+    // Step 3.5: Check response cache for FAQ-style queries
+    // This can save entire LLM call for repeated questions
+    const cachedResponse = getCachedResponse(sanitizedMessage);
+    if (cachedResponse) {
+      const cacheAgeSeconds = Math.floor((Date.now() - cachedResponse.timestamp) / 1000);
+      logger.info('💾 Webchat Cache HIT - skipping LLM call', { 
+        userId, 
+        messageLength: sanitizedMessage.length,
+        cacheAge: cacheAgeSeconds,
+      });
+      
+      return {
+        success: true,
+        response: cachedResponse.response,
+        intent: 'CACHED',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          model: 'cache',
+          hasKnowledge: true,
+        },
+      };
+    }
+
     // Step 4: Call NLU LLM
     const nluInput: NLUInput = {
       message: sanitizedMessage,
@@ -452,6 +476,20 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
     
     // Sanitize response to remove any hallucinated fake links
     const response = sanitizeFakeLinks(rawResponse);
+
+    // Step 5.5: Cache response for FAQ-style queries (only if cacheable)
+    if (isCacheable(sanitizedMessage, nluOutput.intent) && response) {
+      setCachedResponse(
+        sanitizedMessage, 
+        response, 
+        nluOutput.intent, 
+        context.rag_context || ''
+      );
+      logger.debug('💾 Webchat response cached', { 
+        intent: nluOutput.intent, 
+        messageLength: sanitizedMessage.length,
+      });
+    }
 
     return {
       success: true,

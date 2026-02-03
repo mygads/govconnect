@@ -15,6 +15,7 @@ import logger from '../utils/logger';
 import { MessageReceivedEvent } from '../types/event.types';
 import { callNLU, callNLUAdaptive, quickIntentCheck, NLUInput, NLUOutput, incrementCallCount, resetCallCount, getCallCount } from './nlu-llm.service';
 import { handleContactQuery, mapKeywordToCategory } from './contact-handler.service';
+import { getCachedResponse, setCachedResponse, isCacheable } from './response-cache.service';
 import { publishAIReply, publishMessageStatus } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { startTyping, stopTyping, isUserInTakeover, markMessagesAsRead, updateConversationUserProfile } from './channel-client.service';
@@ -117,6 +118,54 @@ interface ProcessingContext {
   available_contact_categories?: string[];
   available_services?: Array<{ name: string; slug: string }>;
   available_complaint_categories?: Array<{ category: string; types: string[] }>;
+}
+
+// ==================== LAZY RAG OPTIMIZATION ====================
+// Patterns that DON'T need RAG (greetings, simple commands)
+const SIMPLE_PATTERNS = [
+  /^(hai|halo|hi|hello|hey|pagi|siang|sore|malam|selamat\s+(pagi|siang|sore|malam))$/i,
+  /^(iya|ya|ok|oke|okay|siap|baik|terima\s*kasih|makasih|thanks|thank\s*you)$/i,
+  /^(tidak|nggak|gak|ga|no|nope|cancel|batal)$/i,
+  /^(status|cek\s*status|lihat\s*status)$/i,
+  /^(history|riwayat|histori)$/i,
+  /^[0-9]+$/,  // Just numbers
+];
+
+// Patterns that ALWAYS need RAG (knowledge queries)
+const RAG_NEEDED_PATTERNS = [
+  /syarat|persyaratan|ketentuan|prosedur|cara|gimana|bagaimana/i,
+  /jam\s*(buka|operasi|kerja|layanan)|buka\s*jam|tutup\s*jam/i,
+  /alamat|lokasi|dimana|tempat/i,
+  /biaya|tarif|harga|bayar|gratis/i,
+  /berapa|kapan|siapa|apa\s+itu/i,
+  /info|informasi|penjelasan|jelaskan/i,
+];
+
+/**
+ * Determine if message needs RAG context
+ * Returns false for simple messages (saves ~200ms)
+ */
+function shouldFetchRAG(message: string): boolean {
+  const cleanMessage = message.trim().toLowerCase();
+  
+  // Short simple messages don't need RAG
+  if (cleanMessage.length < 10) {
+    for (const pattern of SIMPLE_PATTERNS) {
+      if (pattern.test(cleanMessage)) {
+        return false;
+      }
+    }
+  }
+  
+  // Patterns that definitely need RAG
+  for (const pattern of RAG_NEEDED_PATTERNS) {
+    if (pattern.test(cleanMessage)) {
+      return true;
+    }
+  }
+  
+  // Default: fetch RAG for messages > 15 chars or containing question words
+  return cleanMessage.length > 15 || /\?/.test(cleanMessage);
 }
 
 // Response from handleNLUIntent - can include contacts for WA vCard
@@ -246,6 +295,32 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       is_batched,
       batched_message_ids,
     });
+
+    // Step 3.5: Check response cache for FAQ-style queries
+    // This can save entire LLM call for repeated questions
+    const cachedResponse = getCachedResponse(sanitizedMessage);
+    if (cachedResponse) {
+      const cacheAgeSeconds = Math.floor((Date.now() - cachedResponse.timestamp) / 1000);
+      logger.info('💾 Cache HIT - skipping LLM call', { 
+        wa_user_id, 
+        messageLength: sanitizedMessage.length,
+        cacheAge: cacheAgeSeconds,
+      });
+      
+      await stopTyping(wa_user_id, resolvedVillageId);
+      await publishAIReply({
+        village_id: resolvedVillageId,
+        wa_user_id,
+        reply_text: cachedResponse.response,
+        message_id: is_batched ? undefined : message_id,
+        batched_message_ids: is_batched ? batched_message_ids : undefined,
+      });
+      
+      const durationMs = Date.now() - startTime;
+      logger.info('✅ Message processed with CACHE', { wa_user_id, durationMs });
+      await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
+      return;
+    }
 
     // Step 4: Call NLU LLM
     const nluInput: NLUInput = {
@@ -396,6 +471,21 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       text: sanitizeFakeLinks(rawResponse.text),
     };
 
+    // Step 5.5: Cache response for FAQ-style queries (only if cacheable)
+    // This saves future LLM calls for similar questions
+    if (isCacheable(sanitizedMessage, nluOutput.intent) && response.text) {
+      setCachedResponse(
+        sanitizedMessage, 
+        response.text, 
+        nluOutput.intent, 
+        context.rag_context || ''
+      );
+      logger.debug('💾 Response cached', { 
+        intent: nluOutput.intent, 
+        messageLength: sanitizedMessage.length,
+      });
+    }
+
     await stopTyping(wa_user_id, resolvedVillageId);
     await publishAIReply({
       village_id: resolvedVillageId,
@@ -494,20 +584,23 @@ async function collectContext(params: Partial<ProcessingContext>): Promise<Proce
     }
   }
 
-  // Get RAG context - ALWAYS collect for better context understanding
-  // NLU will decide what's relevant from the context
+  // LAZY RAG Loading - only fetch if message looks like it needs knowledge base
+  // This saves ~200ms for simple messages
   let ragContext = '';
   if (message) {
-    // Always try to get RAG context, let NLU decide if it's needed
-    // This ensures we have data for ASK_KNOWLEDGE, ASK_CONTACT, etc.
-    const ragResult = await searchKnowledge(message, [], village_id || '');
-    ragContext = ragResult?.context || '';
-    
-    logger.debug('📚 RAG context collected', {
-      messageLength: message.length,
-      ragContextLength: ragContext.length,
-      hasContext: !!ragContext,
-    });
+    const needsRAG = shouldFetchRAG(message);
+    if (needsRAG) {
+      const ragResult = await searchKnowledge(message, [], village_id || '');
+      ragContext = ragResult?.context || '';
+      
+      logger.debug('📚 RAG context collected', {
+        messageLength: message.length,
+        ragContextLength: ragContext.length,
+        hasContext: !!ragContext,
+      });
+    } else {
+      logger.debug('📚 RAG skipped (simple message)', { messageLength: message.length });
+    }
   }
 
   // Get conversation history (FIFO 30)
