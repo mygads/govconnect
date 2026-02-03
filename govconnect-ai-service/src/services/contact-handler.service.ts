@@ -65,15 +65,30 @@ export async function handleContactQuery(
   // Get contacts - filter by category if matched
   let contacts: ImportantContact[] = await getImportantContacts(villageId, category_match || undefined);
 
-  // If no match with category filter, get all and filter manually
-  if ((!contacts || contacts.length === 0) && category_match) {
-    contacts = await getImportantContacts(villageId);
+  // If no match with category filter, get all and try multiple fallback strategies
+  if ((!contacts || contacts.length === 0) && (category_match || category_keyword)) {
+    const allContacts = await getImportantContacts(villageId);
     
-    if (contacts?.length) {
-      // Filter by category name (case-insensitive)
-      contacts = contacts.filter((c: ImportantContact) => 
-        c.category?.name?.toLowerCase() === category_match.toLowerCase()
+    if (allContacts?.length) {
+      const searchTerms = [category_match, category_keyword].filter(Boolean).map(s => s!.toLowerCase());
+      
+      // Strategy 1: Filter by category name (case-insensitive, partial match)
+      contacts = allContacts.filter((c: ImportantContact) => 
+        searchTerms.some(term => 
+          c.category?.name?.toLowerCase().includes(term) ||
+          term.includes(c.category?.name?.toLowerCase() || '')
+        )
       );
+      
+      // Strategy 2: If still no match, search in contact name and description
+      if (contacts.length === 0) {
+        contacts = allContacts.filter((c: ImportantContact) => 
+          searchTerms.some(term => 
+            c.name?.toLowerCase().includes(term) ||
+            c.description?.toLowerCase()?.includes(term)
+          )
+        );
+      }
     }
   }
 
@@ -166,15 +181,30 @@ function normalizePhone(phone: string): string {
 /**
  * Map common Indonesian keywords to contact categories
  * This is used as fallback when LLM doesn't provide category_match
+ * 
+ * NOTE: Category names must match actual database category names exactly (case-insensitive)
+ * Common categories in database: Puskesmas, Damkar, Polisi, Dinas, etc.
  */
 export function mapKeywordToCategory(keyword: string): string | null {
   const normalized = keyword.toLowerCase().trim();
   
+  // Map keywords to actual database category names
+  // Each entry maps to the EXACT category name in database (case-insensitive match is used by API)
   const mappings: Record<string, string[]> = {
-    'Kesehatan': ['ambulan', 'ambulans', 'rs', 'rumah sakit', 'puskesmas', 'dokter', 'klinik', 'kesehatan', 'medis'],
-    'Keamanan': ['polisi', 'polres', 'polsek', 'keamanan', 'babinsa', 'koramil', 'tni', 'linmas'],
-    'Pemadam': ['pemadam', 'damkar', 'kebakaran', 'api', 'fire'],
+    // Health-related contacts - maps to actual category "Puskesmas"
+    'Puskesmas': ['ambulan', 'ambulans', 'rs', 'rumah sakit', 'puskesmas', 'dokter', 'klinik', 'kesehatan', 'medis', 'ugd', 'bidan', 'posyandu'],
+    // Fire department - maps to actual category "Damkar"
+    'Damkar': ['pemadam', 'damkar', 'kebakaran', 'api', 'fire'],
+    // Police/security - maps to actual category "Polisi" or "Keamanan"
+    'Polisi': ['polisi', 'polres', 'polsek', 'kepolisian'],
+    'Keamanan': ['keamanan', 'babinsa', 'koramil', 'tni', 'linmas', 'satpol', 'security'],
+    // Government offices
+    'Dinas': ['dinas', 'kantor', 'kecamatan', 'kelurahan'],
+    // Emergency general
+    'Darurat': ['darurat', 'emergency', 'urgent', '112', '119', '110'],
+    // Complaints
     'Pengaduan': ['pengaduan', 'aduan', 'lapor', 'komplain'],
+    // Services
     'Pelayanan': ['pelayanan', 'layanan', 'service', 'administrasi'],
   };
 
@@ -184,5 +214,7 @@ export function mapKeywordToCategory(keyword: string): string | null {
     }
   }
 
-  return null;
+  // Return the keyword itself as a fallback - let the database do case-insensitive matching
+  // This handles cases like user typing exact category name
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }

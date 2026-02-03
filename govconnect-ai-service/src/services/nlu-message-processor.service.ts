@@ -24,6 +24,7 @@ import { applyTypoCorrections } from './text-normalizer.service';
 import { getKelurahanInfoContext } from './knowledge.service';
 import { getUserHistory, getComplaintTypes } from './case-client.service';
 import { getProfile, updateProfile } from './user-profile.service';
+import { sanitizeFakeLinks } from './anti-hallucination.service';
 
 // Import handlers from unified-message-processor (existing handlers)
 import { 
@@ -370,7 +371,13 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
     }
 
     // Step 5: Handle based on NLU intent
-    const response = await handleNLUIntent(nluOutput, context);
+    const rawResponse = await handleNLUIntent(nluOutput, context);
+    
+    // Sanitize response to remove any hallucinated fake links
+    const response = {
+      ...rawResponse,
+      text: sanitizeFakeLinks(rawResponse.text),
+    };
 
     await stopTyping(wa_user_id, resolvedVillageId);
     await publishAIReply({

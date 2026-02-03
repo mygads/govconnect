@@ -15,6 +15,7 @@ import { getImportantContacts, ImportantContact } from './important-contacts.ser
 import { ProcessMessageResult } from './unified-message-processor.service';
 import { getProfile, updateProfile } from './user-profile.service';
 import { updateConversationUserProfile } from './channel-client.service';
+import { sanitizeFakeLinks } from './anti-hallucination.service';
 import { 
   handleComplaintCreation,
   handleServiceInfo,
@@ -445,7 +446,10 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
     }
 
     // Step 5: Handle based on NLU intent
-    const response = await handleNLUIntent(nluOutput, context);
+    const rawResponse = await handleNLUIntent(nluOutput, context);
+    
+    // Sanitize response to remove any hallucinated fake links
+    const response = sanitizeFakeLinks(rawResponse);
 
     return {
       success: true,
