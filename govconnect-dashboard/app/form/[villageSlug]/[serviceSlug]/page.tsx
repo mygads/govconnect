@@ -229,6 +229,14 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                 body: formData,
             });
 
+            // Handle non-JSON responses gracefully
+            const contentType = response.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+                const text = await response.text();
+                console.error("Upload returned non-JSON:", text.substring(0, 200));
+                throw new Error("Gagal mengunggah file. Server tidak merespons dengan benar.");
+            }
+
             const result = await response.json();
             if (!response.ok) {
                 throw new Error(result?.error || "Gagal mengunggah file");
@@ -237,7 +245,10 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
             updateRequirementField(reqId, result?.data?.url || "");
         } catch (err: any) {
             updateRequirementField(reqId, "");
-            updateFileError(reqId, err.message || "Gagal mengunggah file");
+            const errorMessage = err.message?.includes("JSON")
+                ? "Gagal mengunggah file. Silakan coba lagi."
+                : (err.message || "Gagal mengunggah file");
+            updateFileError(reqId, errorMessage);
         } finally {
             updateFileUploading(reqId, false);
         }

@@ -1,5 +1,6 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import type { Router as ExpressRouter } from 'express';
+import multer from 'multer';
 import { getMessages, sendMessage, setTyping, markMessagesRead, storeMessage, updateUserProfile } from '../controllers/internal.controller';
 import {
   handleStartTakeover,
@@ -85,6 +86,25 @@ router.get('/channel-accounts/:village_id', handleGetChannelAccount);
 router.put('/channel-accounts/:village_id', handleUpsertChannelAccount);
 
 // Media upload (used by Dashboard public form & admin updates)
-router.post('/media/upload', uploadPublicMedia.single('file'), handleUploadMedia);
+// Wrap multer in error handler to return JSON on upload errors
+router.post('/media/upload', (req: Request, res: Response, next: NextFunction): void => {
+  uploadPublicMedia.single('file')(req, res, (err: any) => {
+    if (err) {
+      // Handle multer errors (file size, file type, etc.)
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          res.status(400).json({ success: false, error: 'Ukuran file maksimal 5MB' });
+          return;
+        }
+        res.status(400).json({ success: false, error: `Upload error: ${err.message}` });
+        return;
+      }
+      // Handle custom errors (from fileFilter)
+      res.status(400).json({ success: false, error: err.message || 'Gagal upload file' });
+      return;
+    }
+    next();
+  });
+}, handleUploadMedia);
 
 export default router;
