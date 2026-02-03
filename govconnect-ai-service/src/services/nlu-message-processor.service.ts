@@ -1,19 +1,24 @@
 /**
  * NLU-Based Message Processor
  * 
- * New simplified message processing using LLM NLU
- * Replaces complex regex-based intent detection
+ * Smart message processing using LLM-based intent detection
+ * Uses Micro NLU for fast understanding (no rigid pattern matching)
  * 
  * Flow:
- * 1. Collect context (RAG + history)
- * 2. Call NLU LLM for structured intent detection
- * 3. System handles based on NLU output (no LLM needed for simple cases)
- * 4. Call Layer 2 LLM only for complex responses
+ * 1. Call Micro NLU to understand user intent (always LLM, ~200 tokens)
+ * 2. Based on micro result, route to appropriate handler
+ * 3. For complex queries, call full NLU with context
+ * 
+ * Benefits:
+ * - No rigid keyword matching - understands variations
+ * - "rumah terbakar butuh nomor damkar" → understands contact request
+ * - "saya mau lapor kebakaran" → understands complaint creation
  */
 
 import logger from '../utils/logger';
 import { MessageReceivedEvent } from '../types/event.types';
-import { callNLU, callNLUAdaptive, quickIntentCheck, NLUInput, NLUOutput, incrementCallCount, resetCallCount, getCallCount } from './nlu-llm.service';
+import { callNLU, callNLUAdaptive, NLUInput, NLUOutput, incrementCallCount, resetCallCount, getCallCount } from './nlu-llm.service';
+import { callMicroNLU, MicroNLUResult, isContactRequest, isComplaintRequest } from './micro-nlu.service';
 import { handleContactQuery, mapKeywordToCategory } from './contact-handler.service';
 import { getCachedResponse, setCachedResponse, isCacheable } from './response-cache.service';
 import { publishAIReply, publishMessageStatus } from './rabbitmq.service';
@@ -245,31 +250,7 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = applyTypoCorrections(sanitizedMessage);
 
-    // Step 2: Quick intent check (no LLM needed for simple patterns)
-    const quickResult = quickIntentCheck(sanitizedMessage);
-    if (quickResult && quickResult.confidence && quickResult.confidence >= 0.9) {
-      await startTyping(wa_user_id, resolvedVillageId);
-      
-      const response = await handleQuickIntent(quickResult as NLUOutput, {
-        village_id: resolvedVillageId,
-        wa_user_id,
-        message: sanitizedMessage,
-        message_id,
-      });
-
-      await stopTyping(wa_user_id, resolvedVillageId);
-      await publishAIReply({
-        village_id: resolvedVillageId,
-        wa_user_id,
-        reply_text: response,
-        message_id: is_batched ? undefined : message_id,
-        batched_message_ids: is_batched ? batched_message_ids : undefined,
-      });
-      await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
-      return;
-    }
-
-    // Step 3: Start typing and collect context
+    // Step 2: Start typing immediately - we're going to use LLM
     await startTyping(wa_user_id, resolvedVillageId);
 
     // Check LLM call limit to prevent infinite loops
@@ -287,6 +268,72 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       return;
     }
 
+    // Step 3: Get conversation history first (needed for Micro NLU context)
+    let conversationHistory = '';
+    if (wa_user_id && resolvedVillageId) {
+      try {
+        const historyResult = await getUserHistory({ wa_user_id, channel: 'WHATSAPP' });
+        if (historyResult?.combined && historyResult.combined.length > 0) {
+          conversationHistory = historyResult.combined
+            .slice(-HISTORY_LIMIT)
+            .map((h: any) => `${h.type}: ${h.description || ''}`)
+            .join('\n');
+        }
+      } catch {
+        // Ignore history fetch errors
+      }
+    }
+
+    // Step 4: Call Micro NLU - LLM-based intent detection (replaces pattern matching)
+    // This is a small LLM call (~200 tokens) that understands user intent naturally
+    // userId is passed for rate limiting (max 10 LLM calls per minute per user)
+    const microResult = await callMicroNLU(sanitizedMessage, conversationHistory, wa_user_id);
+    
+    if (microResult) {
+      logger.info('⚡ Micro NLU understood intent', {
+        wa_user_id,
+        action: microResult.action,
+        topic: microResult.topic,
+        is_emergency: microResult.is_emergency,
+        confidence: microResult.confidence,
+      });
+      
+      // Handle based on Micro NLU result
+      const microResponse = await handleMicroNLUResult(microResult, {
+        village_id: resolvedVillageId,
+        wa_user_id,
+        message: sanitizedMessage,
+        message_id,
+        conversation_history: conversationHistory,
+      });
+      
+      if (microResponse) {
+        await stopTyping(wa_user_id, resolvedVillageId);
+        await publishAIReply({
+          village_id: resolvedVillageId,
+          wa_user_id,
+          reply_text: microResponse.text,
+          contacts: microResponse.contacts,
+          message_id: is_batched ? undefined : message_id,
+          batched_message_ids: is_batched ? batched_message_ids : undefined,
+        });
+        
+        const durationMs = Date.now() - startTime;
+        logger.info('✅ Message processed with Micro NLU', {
+          wa_user_id,
+          action: microResult.action,
+          durationMs,
+          contactsCount: microResponse.contacts?.length,
+        });
+        await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
+        return;
+      }
+      // If microResponse is null, fall through to full NLU
+    }
+
+    // Step 5: Fall through to full NLU if Micro NLU didn't handle it
+    logger.info('📊 Falling through to full NLU', { wa_user_id });
+    
     const context = await collectContext({
       village_id: resolvedVillageId,
       wa_user_id,
@@ -296,7 +343,7 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
       batched_message_ids,
     });
 
-    // Step 3.5: Check response cache for FAQ-style queries
+    // Step 5.5: Check response cache for FAQ-style queries
     // This can save entire LLM call for repeated questions
     const cachedResponse = getCachedResponse(sanitizedMessage);
     if (cachedResponse) {
@@ -521,6 +568,375 @@ export async function processMessageWithNLU(event: MessageReceivedEvent): Promis
   await completeProcessing(resolvedVillageId, wa_user_id, messageIdsToRead);
 }
 
+// ==================== MICRO NLU HANDLER ====================
+
+interface MicroContext {
+  village_id: string;
+  wa_user_id: string;
+  message: string;
+  message_id: string;
+  conversation_history?: string;
+}
+
+/**
+ * Handle Micro NLU result - fast path for common intents
+ * Returns null if needs full NLU processing
+ */
+async function handleMicroNLUResult(
+  micro: MicroNLUResult,
+  ctx: MicroContext
+): Promise<NLUIntentResponse | null> {
+  const { village_id, wa_user_id, message } = ctx;
+  
+  // Get village name for responses
+  let villageName = 'Desa';
+  try {
+    const villageInfo = await getKelurahanInfoContext(village_id);
+    // villageInfo is a string context, extract name differently
+    if (typeof villageInfo === 'object' && villageInfo) {
+      villageName = (villageInfo as any).name || (villageInfo as any).village_name || 'Desa';
+    }
+  } catch {}
+
+  switch (micro.action) {
+    // ==================== SIMPLE RESPONSES ====================
+    
+    case 'GREETING': {
+      const hour = new Date().getHours();
+      let greeting = 'Halo';
+      if (hour >= 5 && hour < 12) greeting = 'Selamat pagi';
+      else if (hour >= 12 && hour < 15) greeting = 'Selamat siang';
+      else if (hour >= 15 && hour < 18) greeting = 'Selamat sore';
+      else greeting = 'Selamat malam';
+      
+      return {
+        text: `${greeting}! Ada yang bisa saya bantu, Kak? 😊\n\nSaya bisa membantu:\n• Informasi layanan desa\n• Pengaduan/laporan\n• Nomor kontak penting`,
+      };
+    }
+    
+    case 'THANKS': {
+      return {
+        text: 'Sama-sama, Kak! Senang bisa membantu. 😊\n\nJika ada yang perlu ditanyakan lagi, silakan hubungi saya kapan saja.',
+      };
+    }
+    
+    case 'CONFIRMATION': {
+      // Check pending requests
+      const pending = pendingNameRequests.get(wa_user_id);
+      if (pending) {
+        // User confirmed something - need full NLU to understand context
+        return null;
+      }
+      return {
+        text: 'Baik, Kak. Ada yang lain yang bisa saya bantu?',
+      };
+    }
+    
+    // ==================== CONTACT REQUESTS ====================
+    
+    case 'ASK_CONTACT': {
+      // Use topic from Micro NLU to find the right contact
+      const topic = micro.topic || message;
+      const categoryMatch = mapKeywordToCategory(topic);
+      
+      logger.info('📇 Micro NLU: Contact request', {
+        topic,
+        categoryMatch,
+        is_emergency: micro.is_emergency,
+      });
+      
+      const contactResult = await handleContactQuery(
+        {
+          contact_request: {
+            category_keyword: topic,
+            category_match: categoryMatch,
+            is_emergency: micro.is_emergency,
+          },
+        },
+        village_id,
+        villageName,
+        'whatsapp'
+      );
+      
+      if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+        const urgentPrefix = micro.is_emergency ? '🚨 ' : '';
+        return {
+          text: `${urgentPrefix}Berikut nomor ${categoryMatch || topic} di ${villageName}:`,
+          contacts: contactResult.contacts.map(c => ({
+            name: c.name,
+            phone: c.phone,
+            organization: c.category || villageName,
+            title: c.description,
+          })),
+        };
+      }
+      
+      // No contacts found
+      return {
+        text: `Mohon maaf Kak, nomor ${categoryMatch || topic} di ${villageName} belum tersedia dalam database.\n\nSilakan hubungi kantor ${villageName} langsung untuk informasi lebih lanjut.`,
+      };
+    }
+    
+    // ==================== COMPLAINT CREATION ====================
+    
+    case 'CREATE_COMPLAINT': {
+      // Get complaint categories for matching
+      const complaintTypes = await getComplaintTypes(village_id);
+      const topic = micro.topic || '';
+      
+      logger.info('📝 Micro NLU: Complaint request', {
+        topic,
+        is_emergency: micro.is_emergency,
+        availableCategories: complaintTypes.length,
+      });
+      
+      // Find matching category
+      let matchedCategory = '';
+      let matchedType = '';
+      let sendContact = false;
+      
+      for (const type of complaintTypes) {
+        const typeName = (type.name || '').toLowerCase();
+        const categoryName = (type.category?.name || '').toLowerCase();
+        const typeAny = type as any;
+        
+        if (topic.toLowerCase().includes(typeName) || typeName.includes(topic.toLowerCase())) {
+          matchedCategory = type.category?.name || '';
+          matchedType = type.name || '';
+          sendContact = typeAny.send_contact === true;
+          break;
+        }
+        if (topic.toLowerCase().includes(categoryName) || categoryName.includes(topic.toLowerCase())) {
+          matchedCategory = type.category?.name || '';
+          matchedType = type.name || '';
+          sendContact = typeAny.send_contact === true;
+          break;
+        }
+      }
+      
+      // If emergency complaint with contact flag, send contact first
+      if (micro.is_emergency && sendContact) {
+        const contactResult = await handleContactQuery(
+          {
+            contact_request: {
+              category_keyword: topic,
+              category_match: mapKeywordToCategory(topic),
+              is_emergency: true,
+            },
+          },
+          village_id,
+          villageName,
+          'whatsapp'
+        );
+        
+        if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
+          return {
+            text: `🚨 Saya paham ini darurat! Berikut nomor yang bisa dihubungi:\n\nUntuk membuat laporan resmi, silakan berikan:\n• Nama lengkap\n• Lokasi kejadian`,
+            contacts: contactResult.contacts.map(c => ({
+              name: c.name,
+              phone: c.phone,
+              organization: c.category || villageName,
+              title: c.description,
+            })),
+          };
+        }
+      }
+      
+      // Need full NLU for complaint creation flow
+      // But we can guide the user better
+      if (matchedCategory) {
+        // Store pending for name request
+        const profile = getProfile(wa_user_id);
+        if (!profile.nama_lengkap) {
+          // Need name first
+          return {
+            text: `Baik Kak, saya akan bantu buat laporan ${matchedType || matchedCategory}.\n\nUntuk melanjutkan, boleh saya tahu nama lengkap Kakak?`,
+          };
+        }
+        
+        // Has name, need to continue with full flow
+        return null; // Let full NLU handle
+      }
+      
+      // No category match - ask for clarification
+      return {
+        text: `Saya paham Kakak ingin membuat laporan. Bisa diperjelas terkait masalah apa?\n\nContoh kategori:\n• Infrastruktur (jalan rusak, lampu mati)\n• Bencana (kebakaran, banjir)\n• Keamanan (pencurian, keributan)\n• Medis (kecelakaan, warga sakit)`,
+      };
+    }
+    
+    // ==================== SERVICE CREATION ====================
+    
+    case 'CREATE_SERVICE': {
+      // Need full NLU for service creation
+      return null;
+    }
+    
+    // ==================== STATUS CHECK ====================
+    
+    case 'CHECK_STATUS': {
+      // Extract tracking number
+      const trackingMatch = message.match(/LA[PY]-\d{5,}/i);
+      if (trackingMatch) {
+        const result = await handleStatusCheck(wa_user_id, 'whatsapp', trackingMatch[0]);
+        return { text: result };
+      }
+      return {
+        text: 'Silakan berikan nomor tracking (contoh: LAP-12345 atau LAY-12345) untuk cek status.',
+      };
+    }
+    
+    // ==================== HISTORY ====================
+    
+    case 'HISTORY': {
+      const result = await handleHistory(wa_user_id, 'whatsapp');
+      return { text: result };
+    }
+    
+    // ==================== CANCEL ====================
+    
+    case 'CANCEL': {
+      const result = await handleCancellation(wa_user_id, 'whatsapp', message);
+      return { text: result };
+    }
+    
+    // ==================== PROVIDE NAME ====================
+    
+    case 'PROVIDE_NAME': {
+      // User memberikan nama - simpan dan lanjutkan flow
+      const extractedName = micro.extracted_data?.nama || message.trim();
+      
+      if (extractedName && extractedName.length >= 2 && extractedName.length <= 50) {
+        // Simpan nama
+        updateProfile(wa_user_id, { nama_lengkap: extractedName });
+        await updateConversationUserProfile(wa_user_id, { user_name: extractedName }, village_id, 'WHATSAPP');
+        
+        logger.info('✅ Name saved via PROVIDE_NAME', { wa_user_id, nama: extractedName });
+        
+        // Check if there's a pending request
+        const pending = pendingNameRequests.get(wa_user_id);
+        if (pending) {
+          pendingNameRequests.delete(wa_user_id);
+          // Update extracted data in pending NLU
+          if (pending.nluOutput.extracted_data) {
+            pending.nluOutput.extracted_data.nama_lengkap = extractedName;
+          }
+          // Continue with original intent - need full NLU
+          return null;
+        }
+        
+        return {
+          text: `Terima kasih, ${extractedName}! Ada yang bisa saya bantu?`,
+        };
+      }
+      
+      return {
+        text: 'Mohon maaf, saya tidak bisa menangkap nama dengan benar. Bisa disebutkan ulang nama lengkap Kakak?',
+      };
+    }
+    
+    // ==================== PROVIDE PHONE ====================
+    
+    case 'PROVIDE_PHONE': {
+      // User memberikan nomor HP - simpan
+      const extractedPhone = micro.extracted_data?.no_hp || extractPhoneFromMessage(message);
+      
+      if (extractedPhone) {
+        // Simpan nomor HP
+        updateProfile(wa_user_id, { no_hp: extractedPhone });
+        
+        logger.info('✅ Phone saved via PROVIDE_PHONE', { wa_user_id, phone: extractedPhone });
+        
+        return {
+          text: `Nomor ${extractedPhone} sudah tersimpan. Ada yang bisa saya bantu, Kak?`,
+        };
+      }
+      
+      return {
+        text: 'Mohon maaf, format nomor tidak valid. Silakan masukkan nomor WhatsApp/HP yang benar (contoh: 08123456789).',
+      };
+    }
+    
+    // ==================== CONTINUE FLOW ====================
+    
+    case 'CONTINUE_FLOW': {
+      // Check if we have pending request
+      const pending = pendingNameRequests.get(wa_user_id);
+      if (pending) {
+        // Try to extract name from message or micro data
+        const extractedName = micro.extracted_data?.nama || extractNameFromMessage(message);
+        if (extractedName) {
+          updateProfile(wa_user_id, { nama_lengkap: extractedName });
+          await updateConversationUserProfile(wa_user_id, { user_name: extractedName }, village_id, 'WHATSAPP');
+          pendingNameRequests.delete(wa_user_id);
+          
+          logger.info('✅ Name captured via CONTINUE_FLOW', { wa_user_id, nama: extractedName });
+          
+          // Continue with original intent - need full NLU
+          return null;
+        }
+        
+        // Maybe they gave address instead?
+        const extractedAddress = micro.extracted_data?.alamat;
+        if (extractedAddress) {
+          // Continue with full NLU
+          return null;
+        }
+      }
+      // Need full NLU to understand the flow
+      return null;
+    }
+    
+    // ==================== ASK INFO (general) ====================
+    
+    case 'ASK_INFO': {
+      // Need full NLU for general info queries (need RAG context)
+      return null;
+    }
+    
+    // ==================== UNCLEAR ====================
+    
+    case 'UNCLEAR': {
+      // AI tidak paham - tanya balik dengan pertanyaan klarifikasi
+      if (micro.clarification_question) {
+        return { text: micro.clarification_question };
+      }
+      return {
+        text: 'Maaf Kak, saya kurang paham maksudnya. Bisa diperjelas?\n\nSaya bisa membantu:\n• Informasi layanan desa\n• Pengaduan/laporan masalah\n• Nomor kontak penting (damkar, puskesmas, dll)',
+      };
+    }
+    
+    default:
+      // Unknown action - let full NLU handle
+      return null;
+  }
+}
+
+/**
+ * Extract phone number from message
+ */
+function extractPhoneFromMessage(message: string): string | null {
+  // Match Indonesian phone formats
+  const patterns = [
+    /(?:0|\+?62)\s?8\d{2}[\s-]?\d{4}[\s-]?\d{2,4}/,
+    /08\d{8,11}/,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match) {
+      // Normalize: remove spaces/dashes, ensure starts with 08 or +62
+      let phone = match[0].replace(/[\s-]/g, '');
+      if (phone.startsWith('+62')) {
+        phone = '0' + phone.substring(3);
+      } else if (phone.startsWith('62')) {
+        phone = '0' + phone.substring(2);
+      }
+      return phone;
+    }
+  }
+  return null;
+}
+
 /**
  * Collect context for NLU
  */
@@ -717,49 +1133,24 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
       // Check for emergency request first
       const isEmergency = /darurat|urgent|segera|cepat|kebakaran|kecelakaan|tolong|emergency/i.test(message);
       
-      // If NLU already found the answer, return it directly
-      if (infoRequest?.answer_found && infoRequest?.suggested_answer) {
-        // Check if it's a contact request that should return vCards
-        if (infoRequest.topic === 'kontak' && infoRequest.keywords?.length) {
-          const categoryKeyword = infoRequest.keywords[0];
-          const categoryMatch = mapKeywordToCategory(categoryKeyword);
-          
-          // Try to get contacts as vCards
-          const mockNlu = {
-            ...nlu,
-            contact_request: {
-              category_keyword: categoryKeyword,
-              category_match: categoryMatch,
-              is_emergency: isEmergency,
-            },
-          };
-          
-          const contactResult = await handleContactQuery(mockNlu, village_id, villageName, 'whatsapp');
-          if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
-            const urgentPrefix = isEmergency ? '🚨 ' : '';
-            return {
-              text: `${urgentPrefix}Berikut adalah nomor ${categoryMatch || categoryKeyword} di ${villageName}:`,
-              contacts: contactResult.contacts.map(c => ({
-                name: c.name,
-                phone: c.phone,
-                organization: c.category || villageName,
-                title: c.description,
-              })),
-            };
-          }
-        }
-        
-        return { text: infoRequest.suggested_answer };
-      }
-      
-      // If not found, try different sources based on topic
+      // Topic: kontak - ALWAYS try to get vCards first (even if NLU provided suggested_answer)
+      // vCards are better UX on WhatsApp than text-based phone numbers
       const topic = infoRequest?.topic || '';
       const keywords = infoRequest?.keywords || [];
+      const isContactQuery = topic === 'kontak' || 
+        keywords.some((k: string) => /nomor|kontak|telepon|hubungi|damkar|puskesmas|polisi|ambulan/i.test(k)) ||
+        /nomor|kontak|telepon|hubungi|damkar|puskesmas|polisi|ambulan/i.test(message);
       
-      // Topic: kontak - try important contacts database
-      if (topic === 'kontak' || keywords.some((k: string) => /nomor|kontak|telepon|hubungi|damkar|puskesmas|polisi|ambulan/i.test(k))) {
+      if (isContactQuery) {
         const categoryKeyword = keywords[0] || message;
         const categoryMatch = mapKeywordToCategory(categoryKeyword);
+        
+        logger.info('📇 Processing contact query', {
+          categoryKeyword,
+          categoryMatch,
+          isEmergency,
+          village_id,
+        });
         
         const mockNlu = {
           ...nlu,
@@ -771,8 +1162,18 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
         };
         
         const contactResult = await handleContactQuery(mockNlu, village_id, villageName, 'whatsapp');
+        logger.info('📇 Contact query result', {
+          found: contactResult.found,
+          contactsCount: contactResult.contacts?.length || 0,
+          responsePreview: contactResult.response?.substring(0, 100),
+        });
+        
         if (contactResult.found && contactResult.contacts && contactResult.contacts.length > 0) {
           const urgentPrefix = isEmergency ? '🚨 ' : '';
+          logger.info('📇 Returning contacts as vCards', { 
+            count: contactResult.contacts.length, 
+            category: categoryMatch || categoryKeyword,
+          });
           return {
             text: `${urgentPrefix}Berikut adalah nomor ${categoryMatch || categoryKeyword} di ${villageName}:`,
             contacts: contactResult.contacts.map(c => ({
@@ -783,7 +1184,12 @@ async function handleNLUIntent(nlu: NLUOutput, context: ProcessingContext): Prom
             })),
           };
         }
-        return { text: contactResult.response };
+        // If no contacts in database, fall through to suggested_answer or KB
+      }
+      
+      // If NLU already found the answer (and not a contact query that failed above)
+      if (infoRequest?.answer_found && infoRequest?.suggested_answer) {
+        return { text: infoRequest.suggested_answer };
       }
       
       // Topic: alamat

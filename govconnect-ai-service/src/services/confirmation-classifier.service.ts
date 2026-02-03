@@ -33,7 +33,7 @@ function parseModelListEnv(envValue: string | undefined, fallback: string[]): st
   return unique.length > 0 ? unique : fallback;
 }
 
-const CONFIRMATION_MODEL_PRIORITY = parseModelListEnv(process.env.LAYER1_MODELS, DEFAULT_MODELS);
+const CONFIRMATION_MODEL_PRIORITY = parseModelListEnv(process.env.MICRO_NLU_MODELS, DEFAULT_MODELS);
 const CONFIRMATION_SYSTEM_PROMPT = `Anda adalah classifier konfirmasi untuk layanan publik.
 
 TUGAS:

@@ -2,11 +2,9 @@ import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { processWebchatWithNLU } from '../services/nlu-webchat.service';
-import { processTwoLayerWebchat } from '../services/two-layer-webchat.service';
 import { firstHeader } from '../utils/http';
 
-// Use same processor as webchat for consistency
-const USE_NLU_PROCESSOR = process.env.USE_NLU_PROCESSOR === 'true';
+// NLU-based processor is now the only architecture
 
 const router = Router();
 
@@ -46,26 +44,16 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
       userId,
       village_id: resolvedVillageId,
       messageLength: message.length,
-      processor: USE_NLU_PROCESSOR ? 'NLU' : '2-Layer',
+      processor: 'NLU',
     });
 
-    // Use same processor as webchat for consistent results
-    let result;
-    if (USE_NLU_PROCESSOR) {
-      result = await processWebchatWithNLU({
-        userId,
-        message,
-        village_id: resolvedVillageId,
-        conversationHistory: [],
-      });
-    } else {
-      result = await processTwoLayerWebchat({
-        userId,
-        message,
-        village_id: resolvedVillageId,
-        conversationHistory: [],
-      });
-    }
+    // Use NLU processor for consistent results
+    const result = await processWebchatWithNLU({
+      userId,
+      message,
+      village_id: resolvedVillageId,
+      conversationHistory: [],
+    });
 
     return res.json({
       success: result.success,

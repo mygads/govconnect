@@ -102,10 +102,20 @@ export interface ProcessMessageResult {
 
 // ==================== IN-MEMORY CACHES ====================
 
-// Address confirmation state cache
+// Address confirmation state cache (for VAGUE addresses)
 // Key: userId, Value: { alamat, kategori, deskripsi, timestamp, foto_url }
 const pendingAddressConfirmation: Map<string, {
   alamat: string;
+  kategori: string;
+  deskripsi: string;
+  village_id?: string;
+  timestamp: number;
+  foto_url?: string;
+}> = new Map();
+
+// Pending address request cache (for MISSING required addresses)
+// Key: userId, Value: { kategori, deskripsi, village_id, timestamp, foto_url }
+const pendingAddressRequest: Map<string, {
   kategori: string;
   deskripsi: string;
   village_id?: string;
@@ -166,6 +176,12 @@ setInterval(() => {
     if (now - value.timestamp > expireMs) {
       pendingServiceFormOffer.delete(key);
       logger.debug('Cleaned up expired service form offer', { userId: key });
+    }
+  }
+  for (const [key, value] of pendingAddressRequest.entries()) {
+    if (now - value.timestamp > expireMs) {
+      pendingAddressRequest.delete(key);
+      logger.debug('Cleaned up expired address request', { userId: key });
     }
   }
 }, 60 * 1000);
@@ -673,6 +689,15 @@ export async function handleComplaintCreation(
       return 'Mohon jelaskan jenis masalah yang ingin dilaporkan (contoh: jalan rusak, lampu mati, sampah, dll).';
     }
     if (!alamat) {
+      // Store pending address request so we can continue when user provides address
+      pendingAddressRequest.set(userId, {
+        kategori,
+        deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
+        village_id: villageId,
+        timestamp: Date.now(),
+        foto_url: mediaUrl,
+      });
+      
       const kategoriLabelMap: Record<string, string> = {
         jalan_rusak: 'jalan rusak',
         lampu_mati: 'lampu jalan yang mati',
@@ -684,6 +709,9 @@ export async function handleComplaintCreation(
       };
       const kategoriLabel = kategoriLabelMap[kategori] || kategori.replace(/_/g, ' ');
       const isEmergencyNeedAddress = detectEmergencyComplaint(deskripsi || '', currentMessage, kategori);
+      
+      logger.info('Storing pending address request', { userId, kategori, deskripsi });
+      
       if (isEmergencyNeedAddress) {
         return 'Baik Pak/Bu, mohon segera kirimkan alamat lokasi kejadian.';
       }
@@ -2447,6 +2475,25 @@ export function setPendingServiceFormOffer(userId: string, data: {
   pendingServiceFormOffer.set(userId, data);
 }
 
+// Export helpers for pendingAddressRequest (missing required address)
+export function getPendingAddressRequest(userId: string) {
+  return pendingAddressRequest.get(userId);
+}
+
+export function clearPendingAddressRequest(userId: string) {
+  pendingAddressRequest.delete(userId);
+}
+
+export function setPendingAddressRequest(userId: string, data: {
+  kategori: string;
+  deskripsi: string;
+  village_id?: string;
+  timestamp: number;
+  foto_url?: string;
+}) {
+  pendingAddressRequest.set(userId, data);
+}
+
 /**
  * Process message from any channel
  * This is the SINGLE SOURCE OF TRUTH for message processing
@@ -2664,7 +2711,7 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
       };
     }
     
-    // Step 2: Check pending address confirmation
+    // Step 2: Check pending address confirmation (for vague addresses)
     const pendingConfirm = pendingAddressConfirmation.get(userId);
     if (pendingConfirm) {
       const confirmResult = await handlePendingAddressConfirmation(userId, message, pendingConfirm, channel === 'webchat' ? 'webchat' : 'whatsapp', mediaUrl);
@@ -2672,6 +2719,80 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
         return {
           success: true,
           response: confirmResult,
+          intent: 'CREATE_COMPLAINT',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+    }
+    
+    // Step 2.05: Check pending address request (for missing required addresses)
+    const pendingAddr = pendingAddressRequest.get(userId);
+    if (pendingAddr) {
+      // Try to extract address from user's message
+      const extractedAddr = extractAddressFromMessage(message, userId);
+      if (extractedAddr && extractedAddr.length >= 5) {
+        pendingAddressRequest.delete(userId);
+        
+        // Continue with complaint creation using the new address
+        const llmLike = {
+          fields: {
+            village_id: pendingAddr.village_id,
+            kategori: pendingAddr.kategori,
+            deskripsi: pendingAddr.deskripsi,
+            alamat: extractedAddr,
+          },
+        };
+        
+        logger.info('Continuing complaint with provided address', { 
+          userId, 
+          kategori: pendingAddr.kategori,
+          alamat: extractedAddr,
+        });
+        
+        const complaintResult = await handleComplaintCreation(
+          userId, 
+          channel === 'webchat' ? 'webchat' : 'whatsapp', 
+          llmLike, 
+          message, 
+          pendingAddr.foto_url
+        );
+        
+        return {
+          success: true,
+          response: complaintResult,
+          intent: 'CREATE_COMPLAINT',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      } else if (message.trim().length > 10) {
+        // User might have provided address in free text, use their message as address
+        pendingAddressRequest.delete(userId);
+        
+        const llmLike = {
+          fields: {
+            village_id: pendingAddr.village_id,
+            kategori: pendingAddr.kategori,
+            deskripsi: pendingAddr.deskripsi,
+            alamat: message.trim(),
+          },
+        };
+        
+        logger.info('Using user message as address for complaint', { 
+          userId, 
+          kategori: pendingAddr.kategori,
+          alamat: message.trim(),
+        });
+        
+        const complaintResult = await handleComplaintCreation(
+          userId, 
+          channel === 'webchat' ? 'webchat' : 'whatsapp', 
+          llmLike, 
+          message, 
+          pendingAddr.foto_url
+        );
+        
+        return {
+          success: true,
+          response: complaintResult,
           intent: 'CREATE_COMPLAINT',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
@@ -2740,42 +2861,13 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
 
     const optimization = preProcessMessage(message, userId, historyString, templateContext);
 
-    const forceLlmIntent = process.env.FORCE_LLM_INTENT === 'true';
-
-    // Step 2.55: Deterministic status check fast-path (avoid LLM misclassification)
-    if (
-      !forceLlmIntent &&
-      !pendingConfirm &&
-      optimization.fastIntent?.intent === 'CHECK_STATUS' &&
-      (optimization.fastIntent.extractedFields?.complaint_id || optimization.fastIntent.extractedFields?.request_number)
-    ) {
-      const fastFields = {
-        ...(optimization.fastIntent.extractedFields || {}),
-        ...(resolvedVillageId ? { village_id: resolvedVillageId } : {}),
-      };
-
-      const fastLlmLike = {
-        intent: 'CHECK_STATUS',
-        fields: fastFields,
-        reply_text: '',
-      };
-
-      const responseText = await handleStatusCheck(userId, channel, fastLlmLike, message);
-      return {
-        success: true,
-        response: responseText,
-        intent: 'CHECK_STATUS',
-        fields: fastFields,
-        metadata: {
-          processingTimeMs: Date.now() - startTime,
-          hasKnowledge: false,
-        },
-      };
-    }
+    // NOTE: Fast-path intent classification removed - all intent detection via Micro NLU
+    // The previous fastIntent-based status check is now handled by Micro NLU in Step 6
     
     // Step 2.6: Check if we can use fast path (skip LLM)
+    // Fast path is only for greetings/thanks - everything else goes through NLU
     const shouldBypassFastPath = /(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message);
-    if (!forceLlmIntent && !shouldBypassFastPath && shouldUseFastPath(optimization, !!pendingConfirm)) {
+    if (!shouldBypassFastPath && shouldUseFastPath(optimization, !!pendingConfirm)) {
       const fastResult = buildFastPathResponse(optimization, startTime);
       if (fastResult) {
         logger.info('⚡ [UnifiedProcessor] Using fast path', {
@@ -2814,8 +2906,8 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     }
     const crossChannelContext = getCrossChannelContextForLLM(userId);
     
-    // Record interaction for profile
-    recordInteraction(userId, sentiment.score, optimization?.fastIntent?.intent);
+    // Record interaction for profile (intent will be determined by Micro NLU later)
+    recordInteraction(userId, sentiment.score, undefined);
     
     // Get profile context for LLM
     const profileContext = getProfileContext(userId);
@@ -2864,32 +2956,31 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     }
     
     // Step 6.5: Get knowledge graph context for service-related queries
-    if (optimization?.fastIntent?.intent) {
-      try {
-        const { getGraphContext, findNodeByKeyword } = await import('./knowledge-graph.service');
-        
-        // Try to find relevant service code from message
-        const serviceCodeMatch = sanitizedMessage.match(/\b(SKD|SKTM|SKU|SPKTP|SPKK|SPSKCK|SPAKTA|IKR)\b/i);
-        if (serviceCodeMatch) {
-          graphContext = getGraphContext(serviceCodeMatch[1].toUpperCase());
-        } else {
-          // Try keyword matching
-          const keywords = ['domisili', 'tidak mampu', 'usaha', 'ktp', 'kk', 'skck', 'akta', 'keramaian'];
-          for (const kw of keywords) {
-            if (sanitizedMessage.toLowerCase().includes(kw)) {
-              const node = findNodeByKeyword(kw);
-              if (node) {
-                graphContext = getGraphContext(node.code);
-                break;
-              }
+    // Always check for service code patterns in message
+    try {
+      const { getGraphContext, findNodeByKeyword } = await import('./knowledge-graph.service');
+      
+      // Try to find relevant service code from message
+      const serviceCodeMatch = sanitizedMessage.match(/\b(SKD|SKTM|SKU|SPKTP|SPKK|SPSKCK|SPAKTA|IKR)\b/i);
+      if (serviceCodeMatch) {
+        graphContext = getGraphContext(serviceCodeMatch[1].toUpperCase());
+      } else {
+        // Try keyword matching
+        const keywords = ['domisili', 'tidak mampu', 'usaha', 'ktp', 'kk', 'skck', 'akta', 'keramaian'];
+        for (const kw of keywords) {
+          if (sanitizedMessage.toLowerCase().includes(kw)) {
+            const node = findNodeByKeyword(kw);
+            if (node) {
+              graphContext = getGraphContext(node.code);
+              break;
             }
           }
         }
-      } catch (error: any) {
-        logger.warn('[UnifiedProcessor] Knowledge graph lookup failed', { error: error.message });
       }
+    } catch (error: any) {
+      logger.warn('[UnifiedProcessor] Knowledge graph lookup failed', { error: error.message });
     }
-    
+
     // Step 7: Build context
     let systemPrompt: string;
     let messageCount: number;
@@ -3130,7 +3221,7 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     // Step 10.6: Update conversation context
     updateContext(userId, {
       currentIntent: effectiveLlmResponse.intent,
-      intentConfidence: optimization?.fastIntent?.confidence || 0.8,
+      intentConfidence: 0.8, // Default confidence since Micro NLU handles intent now
       collectedData: effectiveLlmResponse.fields,
       missingFields: effectiveLlmResponse.fields?.missing_info || [],
     });
@@ -3150,7 +3241,6 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
       channel,
       intent: effectiveLlmResponse.intent,
       processingTimeMs,
-      fastClassified: !!optimization?.fastIntent,
     });
     
     return {

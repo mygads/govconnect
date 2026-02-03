@@ -1,24 +1,17 @@
 /**
  * Smart Router Service
  * 
- * Intelligent routing that selects architecture based on message complexity.
- * Simple messages → Single-Layer (faster, cheaper)
- * Complex messages → 2-Layer (more accurate)
- * 
- * Complexity factors:
- * - Message length
- * - Entity count
- * - Intent ambiguity
- * - Conversation context
+ * Analyzes message complexity for monitoring and analytics.
+ * Note: Routing logic is deprecated - all messages now use NLU architecture.
+ * This service is kept for complexity analysis and stats only.
  */
 
 import logger from '../utils/logger';
 import { extractAllEntities } from './entity-extractor.service';
-import INTENT_PATTERNS from '../constants/intent-patterns';
 
 // ==================== TYPES ====================
 
-export type ArchitectureChoice = 'single-layer' | 'two-layer';
+export type ArchitectureChoice = 'nlu'; // Only NLU architecture now
 
 export interface ComplexityAnalysis {
   score: number;           // 0-100
@@ -151,22 +144,8 @@ export function routeMessage(
   conversationHistory?: string,
   forceArchitecture?: ArchitectureChoice
 ): ArchitectureChoice {
-  // Allow forcing architecture (for testing or specific cases)
-  if (forceArchitecture) {
-    return forceArchitecture;
-  }
-
-  // Quick check for simple messages
-  if (isSimpleMessage(message)) {
-    logger.debug('Quick route: simple message detected', {
-      messagePreview: message.substring(0, 30),
-    });
-    return 'single-layer';
-  }
-
-  // Full complexity analysis
-  const analysis = analyzeComplexity(message, conversationHistory);
-  return analysis.recommendedArchitecture;
+  // All messages now use NLU architecture
+  return 'nlu';
 }
 
 // ==================== SCORING FUNCTIONS ====================
@@ -193,18 +172,22 @@ function scoreEntityCount(message: string, history?: string): number {
 }
 
 function scoreIntentAmbiguity(message: string): number {
-  let matchCount = 0;
   const lowerMessage = message.toLowerCase();
-
-  // Count how many intent patterns match
-  for (const [intent, patterns] of Object.entries(INTENT_PATTERNS)) {
-    if (Array.isArray(patterns)) {
-      for (const pattern of patterns) {
-        if (pattern.test(lowerMessage)) {
-          matchCount++;
-          break; // Only count once per intent
-        }
-      }
+  
+  // Count intent-indicating keywords
+  const intentKeywords = [
+    /\b(lapor|pengaduan|keluhan|komplain)\b/i,
+    /\b(mau|ingin|butuh|perlu)\s+(buat|bikin|urus)\b/i,
+    /\b(status|cek|lihat)\b/i,
+    /\b(batal|cancel)\b/i,
+    /\b(info|informasi|tanya|gimana|bagaimana)\b/i,
+    /\b(kontak|nomor|telepon)\b/i,
+  ];
+  
+  let matchCount = 0;
+  for (const pattern of intentKeywords) {
+    if (pattern.test(lowerMessage)) {
+      matchCount++;
     }
   }
 
@@ -270,18 +253,8 @@ function determineArchitecture(
   score: number,
   factors: ComplexityAnalysis['factors']
 ): ArchitectureChoice {
-  // Force 2-layer for transactional messages (accuracy matters more)
-  if (factors.isTransactional) {
-    return 'two-layer';
-  }
-
-  // Force single-layer for very simple messages
-  if (score < 20) {
-    return 'single-layer';
-  }
-
-  // Use threshold for others
-  return score > COMPLEXITY_CONFIG.simpleThreshold ? 'two-layer' : 'single-layer';
+  // All messages now use NLU architecture
+  return 'nlu';
 }
 
 function generateReasoning(
@@ -317,34 +290,25 @@ function generateReasoning(
 // ==================== STATS ====================
 
 let routingStats = {
-  singleLayer: 0,
-  twoLayer: 0,
+  nlu: 0,
   totalRouted: 0,
 };
 
 export function recordRouting(architecture: ArchitectureChoice): void {
   routingStats.totalRouted++;
-  if (architecture === 'single-layer') {
-    routingStats.singleLayer++;
-  } else {
-    routingStats.twoLayer++;
-  }
+  routingStats.nlu++;
 }
 
 export function getRoutingStats() {
   return {
     ...routingStats,
-    singleLayerPercent: routingStats.totalRouted > 0
-      ? ((routingStats.singleLayer / routingStats.totalRouted) * 100).toFixed(1) + '%'
-      : '0%',
-    twoLayerPercent: routingStats.totalRouted > 0
-      ? ((routingStats.twoLayer / routingStats.totalRouted) * 100).toFixed(1) + '%'
-      : '0%',
+    architecture: 'NLU-based with Micro NLU',
+    note: 'Two-layer architecture has been deprecated',
   };
 }
 
 export function resetRoutingStats(): void {
-  routingStats = { singleLayer: 0, twoLayer: 0, totalRouted: 0 };
+  routingStats = { nlu: 0, totalRouted: 0 };
 }
 
 export default {

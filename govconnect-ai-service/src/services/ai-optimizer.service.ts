@@ -12,7 +12,6 @@
  */
 
 import logger from '../utils/logger';
-import { FastClassifyResult, isSimpleConfirmation, isSimpleThanks } from './fast-intent-classifier.service';
 import { getCacheStats } from './response-cache.service';
 import { extractAllEntities, mergeEntities, ExtractionResult } from './entity-extractor.service';
 import { ProcessMessageInput, ProcessMessageResult } from './unified-message-processor.service';
@@ -22,7 +21,7 @@ import { TemplateContext } from './response-templates.service';
 
 export interface OptimizationResult {
   shouldSkipLLM: boolean;
-  fastIntent: FastClassifyResult | null;
+  fastIntent: null; // Deprecated: fast intent classification removed, all intent via Micro NLU
   cachedResponse?: { response: string; guidanceText?: string; intent: string };
   extractedEntities?: ExtractionResult;
   optimizationApplied: string[];
@@ -198,33 +197,8 @@ export function buildFastPathResponse(
     };
   }
   
-  // Return quick response for simple intents
-  if (optimization.fastIntent?.skipLLM) {
-    const quickResponse = getQuickResponse(
-      optimization.fastIntent.intent,
-      optimization.fastIntent.extractedFields
-    );
-    
-    if (quickResponse) {
-      return {
-        success: true,
-        response: quickResponse.response,
-        guidanceText: quickResponse.guidance,
-        intent: optimization.fastIntent.intent,
-        metadata: {
-          processingTimeMs: Date.now() - startTime,
-          hasKnowledge: false,
-        },
-        optimization: {
-          skippedLLM: true,
-          usedCache: false,
-          fastClassified: true,
-          entitiesExtracted: optimization.extractedEntities?.extractedCount || 0,
-          savedTimeMs: 500,
-        },
-      };
-    }
-  }
+  // DEPRECATED: Fast intent classification removed - all intent via Micro NLU
+  // The fastIntent property is always null now
   
   return null;
 }

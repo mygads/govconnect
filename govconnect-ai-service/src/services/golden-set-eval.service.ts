@@ -1,10 +1,6 @@
 import logger from '../utils/logger';
-import { callLayer1LLM, Layer1Output, applyTypoCorrections } from './layer1-llm.service';
-import { callLayer2LLM, generateFallbackResponse, Layer2Output } from './layer2-llm.service';
-import { extractAllEntities } from './entity-extractor.service';
+import { processUnifiedMessage } from './unified-message-processor.service';
 import { sanitizeUserInput } from './context-builder.service';
-import { getKelurahanInfoContext, getRAGContext } from './knowledge.service';
-import { shouldRetrieveContext } from './rag.service';
 
 export type GoldenSetItem = {
   id: string;
@@ -71,41 +67,6 @@ function computeKeywordScore(replyText: string, expectedKeywords?: string[]): { 
   return { match: score >= 0.6, score };
 }
 
-function toSafeLayer1Fallback(message: string): Layer1Output {
-  return {
-    intent: 'UNKNOWN',
-    normalized_message: message,
-    extracted_data: {},
-    confidence: 0.1,
-    needs_clarification: [],
-    processing_notes: [],
-  } as unknown as Layer1Output;
-}
-
-async function buildKnowledgeContext(message: string, villageId?: string): Promise<string> {
-  try {
-    const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
-    const isGreeting = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i.test(message.trim());
-    const looksLikeQuestion = shouldRetrieveContext(message);
-
-    if (isGreeting) {
-      const info = await getKelurahanInfoContext(resolvedVillageId);
-      if (info && info.trim()) {
-        return `KNOWLEDGE BASE YANG TERSEDIA:\n${info}`;
-      }
-    } else if (looksLikeQuestion) {
-      const rag = await getRAGContext(message, undefined, resolvedVillageId);
-      if (rag?.totalResults > 0 && rag.contextString) {
-        return `KNOWLEDGE BASE YANG TERSEDIA:\n${rag.contextString}`;
-      }
-    }
-  } catch (error: any) {
-    logger.warn('Golden set knowledge prefetch failed', { error: error.message });
-  }
-
-  return '';
-}
-
 export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVillageId?: string): Promise<GoldenSetSummary> {
   const runId = `golden-${Date.now()}`;
   const startedAt = new Date().toISOString();
@@ -113,40 +74,26 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
 
   for (const item of items) {
     const startItem = Date.now();
-    const sanitized = applyTypoCorrections(sanitizeUserInput(item.query));
-    const preExtracted = extractAllEntities(sanitized, '');
-    const waUser = `golden_eval_${item.id}`;
+    const sanitized = sanitizeUserInput(item.query);
+    const userId = `golden_eval_${item.id}`;
+    const villageId = item.village_id || defaultVillageId;
 
-    let layer1Output = await callLayer1LLM({
+    // Use unified message processor (same as production)
+    const result = await processUnifiedMessage({
+      userId,
+      channel: 'webchat',
       message: sanitized,
-      wa_user_id: waUser,
-      conversation_history: '',
-      pre_extracted_data: preExtracted.entities,
+      villageId,
     });
 
-    if (!layer1Output) {
-      layer1Output = toSafeLayer1Fallback(sanitized);
-    }
-
-    const knowledgeContext = await buildKnowledgeContext(sanitized, item.village_id || defaultVillageId);
-
-    const layer2Input = {
-      layer1_output: layer1Output,
-      wa_user_id: waUser,
-      conversation_context: knowledgeContext || 'Percakapan baru',
-      user_name: layer1Output.extracted_data?.nama_lengkap,
-    };
-
-    let layer2Output: Layer2Output | null = await callLayer2LLM(layer2Input);
-    if (!layer2Output) {
-      layer2Output = generateFallbackResponse(layer1Output);
-    }
+    const predictedIntent = result.intent || 'UNKNOWN';
+    const replyText = result.response || '';
 
     const intentMatch = item.expected_intent
-      ? layer1Output.intent === item.expected_intent
+      ? predictedIntent === item.expected_intent
       : undefined;
 
-    const keywordScore = computeKeywordScore(layer2Output.reply_text, item.expected_keywords);
+    const keywordScore = computeKeywordScore(replyText, item.expected_keywords);
 
     const scoreParts: number[] = [];
     if (typeof intentMatch === 'boolean') scoreParts.push(intentMatch ? 1 : 0);
@@ -160,8 +107,8 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
       id: item.id,
       query: item.query,
       expected_intent: item.expected_intent,
-      predicted_intent: layer1Output.intent,
-      reply_text: layer2Output.reply_text,
+      predicted_intent: predictedIntent,
+      reply_text: replyText,
       intent_match: intentMatch,
       keyword_match: item.expected_keywords ? keywordScore.match : undefined,
       keyword_score: item.expected_keywords ? keywordScore.score : undefined,

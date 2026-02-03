@@ -741,12 +741,12 @@ app.get('/stats/dashboard', async (req: Request, res: Response) => {
     const modelStats = modelStatsService.getAllStats();
     const analyticsData = aiAnalyticsService.getSummary();
 
-    const architecture = '2-Layer LLM (forced)';
+    const architecture = 'NLU Processor (Micro NLU + Full NLU)';
 
     res.json({
       architecture: {
         current: architecture,
-        envVar: 'USE_2_LAYER_ARCHITECTURE (ignored)',
+        description: 'Micro NLU for intent detection, Full NLU for response generation',
         appliesTo: ['WhatsApp', 'Webchat'],
       },
       performance: {
@@ -808,9 +808,9 @@ app.get('/stats/routing', (req: Request, res: Response) => {
     const stats = getRoutingStats();
 
     res.json({
-      description: 'Smart routing statistics - how messages are routed between architectures',
+      description: 'Message processing statistics',
       stats,
-      architecture: process.env.USE_2_LAYER_ARCHITECTURE === 'true' ? '2-Layer LLM' : 'Single Layer',
+      architecture: 'NLU-based with Micro NLU',
     });
   } catch (error: any) {
     res.status(500).json({

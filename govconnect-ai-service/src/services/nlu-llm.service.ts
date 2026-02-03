@@ -23,6 +23,7 @@ import { modelStatsService } from './model-stats.service';
 const MAX_LLM_CALLS_PER_EVENT = 10;
 const callCounters = new Map<string, { count: number; timestamp: number }>();
 const COUNTER_RESET_MS = 60000; // Reset counter after 1 minute
+const CLEANUP_INTERVAL_MS = 300000; // Cleanup every 5 minutes
 
 // Adaptive context limits
 const LIGHT_HISTORY_LIMIT = 5;    // Last 5 messages for light NLU
@@ -30,10 +31,38 @@ const FULL_HISTORY_LIMIT = 15;    // Last 15 messages for deep NLU
 const LIGHT_RAG_LIMIT = 800;      // 800 chars RAG for light
 const FULL_RAG_LIMIT = 2000;      // 2000 chars RAG for deep
 
+// ==================== MEMORY CLEANUP ====================
+// Periodically clean up old entries to prevent memory leak
+
+let lastCleanup = Date.now();
+
+function cleanupExpiredCounters(): void {
+  const now = Date.now();
+  if (now - lastCleanup < CLEANUP_INTERVAL_MS) return;
+  
+  lastCleanup = now;
+  let cleaned = 0;
+  
+  for (const [userId, data] of callCounters.entries()) {
+    if (now - data.timestamp > COUNTER_RESET_MS) {
+      callCounters.delete(userId);
+      cleaned++;
+    }
+  }
+  
+  if (cleaned > 0) {
+    logger.debug('🧹 Cleaned up expired call counters', { cleaned, remaining: callCounters.size });
+  }
+}
+
 /**
  * Track LLM call count per user session to prevent infinite loops
+ * Works for both full NLU and Micro NLU calls
  */
 export function incrementCallCount(userId: string): boolean {
+  // Run cleanup opportunistically
+  cleanupExpiredCounters();
+  
   const now = Date.now();
   const existing = callCounters.get(userId);
   
@@ -70,12 +99,28 @@ export function resetCallCount(userId: string): void {
   callCounters.delete(userId);
 }
 
-// Models for NLU (cheapest/fastest first)
-const NLU_MODEL_PRIORITY = [
+// ==================== MODEL CONFIGURATION ====================
+
+const DEFAULT_NLU_MODELS = [
   'gemini-2.0-flash-lite',
   'gemini-2.5-flash-lite',
   'gemini-2.0-flash',
 ];
+
+function parseModelListEnv(envValue: string | undefined, fallback: string[]): string[] {
+  const raw = (envValue || '').trim();
+  if (!raw) return fallback;
+
+  const models = raw.split(',').map((m) => m.trim()).filter(Boolean);
+  const unique: string[] = [];
+  for (const model of models) {
+    if (!unique.includes(model)) unique.push(model);
+  }
+  return unique.length > 0 ? unique : fallback;
+}
+
+// Models for Full NLU (can be overridden via FULL_NLU_MODELS env var)
+const NLU_MODEL_PRIORITY = parseModelListEnv(process.env.FULL_NLU_MODELS, DEFAULT_NLU_MODELS);
 
 /**
  * NLU Input - What we send to the LLM
@@ -711,59 +756,12 @@ export async function callNLUAdaptive(input: NLUInput): Promise<NLUOutput | null
 }
 
 /**
- * Quick intent check for simple patterns (no LLM call needed)
- * Used as fallback or for very simple messages
+ * DEPRECATED: quickIntentCheck removed - all intent detection now via Micro NLU
+ * 
+ * Micro NLU provides LLM-based intent classification that:
+ * - Understands natural language variations
+ * - Uses conversation context
+ * - Handles ambiguity gracefully
+ * 
+ * See: micro-nlu.service.ts
  */
-export function quickIntentCheck(message: string): Partial<NLUOutput> | null {
-  const normalized = message.toLowerCase().trim();
-
-  // Greeting
-  if (/^(halo|hai|hi|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|salam)[\s.,!]*$/i.test(normalized)) {
-    return {
-      intent: 'GREETING',
-      confidence: 0.95,
-      reasoning: 'Simple greeting detected',
-    };
-  }
-
-  // Thanks
-  if (/^(makasih|terima\s*kasih|thanks|trims|thank\s*you)[\s.,!]*$/i.test(normalized)) {
-    return {
-      intent: 'THANKS',
-      confidence: 0.95,
-      reasoning: 'Simple thanks detected',
-    };
-  }
-
-  // Simple yes/no
-  if (/^(ya|iya|oke|ok|siap|boleh|mau|setuju)\s*$/i.test(normalized)) {
-    return {
-      intent: 'CONFIRMATION',
-      confidence: 0.9,
-      confirmation: { is_positive: true },
-      reasoning: 'Positive confirmation detected',
-    };
-  }
-
-  if (/^(tidak|ga|gak|nggak|enggak|batal|no|nope)\s*$/i.test(normalized)) {
-    return {
-      intent: 'CONFIRMATION',
-      confidence: 0.9,
-      confirmation: { is_positive: false },
-      reasoning: 'Negative confirmation detected',
-    };
-  }
-
-  // Tracking number check
-  const trackingMatch = normalized.match(/\b(LAP|LAY)-\d{8}-\d{3}\b/i);
-  if (trackingMatch) {
-    return {
-      intent: 'CHECK_STATUS',
-      confidence: 0.85,
-      extracted_data: { tracking_number: trackingMatch[0].toUpperCase() },
-      reasoning: 'Tracking number detected in message',
-    };
-  }
-
-  return null;
-}

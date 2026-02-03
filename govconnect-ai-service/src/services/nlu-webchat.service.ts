@@ -1,12 +1,13 @@
 /**
  * NLU Webchat Service
  * 
- * Webchat processor using NLU-based intent detection
- * Mirrors the WhatsApp NLU processor but adapted for HTTP sync flow
+ * Webchat processor using LLM-based intent detection
+ * Uses Micro NLU for fast understanding (no rigid pattern matching)
  */
 
 import logger from '../utils/logger';
-import { callNLU, callNLUAdaptive, quickIntentCheck, NLUInput, NLUOutput, incrementCallCount, resetCallCount, getCallCount } from './nlu-llm.service';
+import { callNLU, callNLUAdaptive, NLUInput, NLUOutput, incrementCallCount, resetCallCount, getCallCount } from './nlu-llm.service';
+import { callMicroNLU, MicroNLUResult } from './micro-nlu.service';
 import { handleContactQuery, mapKeywordToCategory } from './contact-handler.service';
 import { searchKnowledge, getKelurahanInfoContext } from './knowledge.service';
 import { sanitizeUserInput } from './context-builder.service';
@@ -17,6 +18,7 @@ import { getProfile, updateProfile } from './user-profile.service';
 import { updateConversationUserProfile } from './channel-client.service';
 import { sanitizeFakeLinks } from './anti-hallucination.service';
 import { getCachedResponse, setCachedResponse, isCacheable } from './response-cache.service';
+import { getComplaintTypes } from './case-client.service';
 import { 
   handleComplaintCreation,
   handleServiceInfo,
@@ -316,28 +318,45 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
       }
     }
 
-    // Step 2: Quick intent check (no LLM needed for simple patterns)
-    const quickResult = quickIntentCheck(sanitizedMessage);
-    if (quickResult && quickResult.confidence && quickResult.confidence >= 0.9) {
-      const response = await handleQuickIntent(quickResult as NLUOutput, {
+    // Step 2: Call Micro NLU - LLM-based intent detection
+    // Build conversation history string from array
+    const historyString = conversationHistory 
+      ? conversationHistory.map(h => `${h.role}: ${h.content}`).join('\n')
+      : '';
+    
+    // userId is passed for rate limiting (max 10 LLM calls per minute per user)
+    const microResult = await callMicroNLU(sanitizedMessage, historyString, userId);
+    
+    if (microResult) {
+      logger.info('⚡ Webchat Micro NLU result', {
+        userId,
+        action: microResult.action,
+        topic: microResult.topic,
+        is_emergency: microResult.is_emergency,
+      });
+      
+      const microResponse = await handleWebchatMicroNLU(microResult, {
         village_id: resolvedVillageId,
         user_id: userId,
         message: sanitizedMessage,
       });
-
-      return {
-        success: true,
-        response,
-        intent: quickResult.intent || 'QUICK',
-        metadata: {
-          processingTimeMs: Date.now() - startTime,
-          model: 'quick-pattern',
-          hasKnowledge: false,
-        },
-      };
+      
+      if (microResponse) {
+        return {
+          success: true,
+          response: microResponse,
+          intent: microResult.action,
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            model: 'micro-nlu',
+            hasKnowledge: false,
+          },
+        };
+      }
+      // Fall through to full NLU if microResponse is null
     }
 
-    // Step 3: Collect context
+    // Step 3: Collect context for full NLU
     const context = await collectContext({
       village_id: resolvedVillageId,
       user_id: userId,
@@ -516,6 +535,216 @@ export async function processWebchatWithNLU(params: WebchatNLUInput): Promise<Pr
         hasKnowledge: false,
       },
     };
+  }
+}
+
+// ==================== WEBCHAT MICRO NLU HANDLER ====================
+
+/**
+ * Handle Micro NLU result for webchat - fast path for common intents
+ * Returns null if needs full NLU processing
+ */
+async function handleWebchatMicroNLU(
+  micro: MicroNLUResult,
+  ctx: { village_id: string; user_id: string; message: string }
+): Promise<string | null> {
+  const { village_id, user_id, message } = ctx;
+  
+  // Get village name
+  let villageName = 'Desa';
+  try {
+    const villageInfo = await getKelurahanInfoContext(village_id);
+    if (typeof villageInfo === 'object' && villageInfo) {
+      villageName = (villageInfo as any).name || (villageInfo as any).village_name || 'Desa';
+    }
+  } catch {}
+
+  switch (micro.action) {
+    case 'GREETING': {
+      const hour = new Date().getHours();
+      let greeting = 'Halo';
+      if (hour >= 5 && hour < 12) greeting = 'Selamat pagi';
+      else if (hour >= 12 && hour < 15) greeting = 'Selamat siang';
+      else if (hour >= 15 && hour < 18) greeting = 'Selamat sore';
+      else greeting = 'Selamat malam';
+      
+      return `${greeting}! Ada yang bisa saya bantu?\n\nSaya bisa membantu:\n• Informasi layanan desa\n• Pengaduan/laporan\n• Nomor kontak penting`;
+    }
+    
+    case 'THANKS': {
+      return 'Sama-sama! Senang bisa membantu.\n\nJika ada yang perlu ditanyakan lagi, silakan hubungi saya kapan saja.';
+    }
+    
+    case 'CONFIRMATION': {
+      return 'Baik. Ada yang lain yang bisa saya bantu?';
+    }
+    
+    case 'ASK_CONTACT': {
+      const topic = micro.topic || message;
+      const categoryMatch = mapKeywordToCategory(topic);
+      
+      const contactResult = await handleContactQuery(
+        {
+          contact_request: {
+            category_keyword: topic,
+            category_match: categoryMatch,
+            is_emergency: micro.is_emergency,
+          },
+        },
+        village_id,
+        villageName,
+        'webchat'
+      );
+      
+      if (contactResult.found) {
+        return contactResult.response;
+      }
+      return `Mohon maaf, nomor ${categoryMatch || topic} di ${villageName} belum tersedia.`;
+    }
+    
+    case 'CREATE_COMPLAINT': {
+      // For webchat complaints, need full NLU for proper flow
+      const complaintTypes = await getComplaintTypes(village_id);
+      const topic = micro.topic || '';
+      
+      // Check if matches a category
+      for (const type of complaintTypes) {
+        const typeName = (type.name || '').toLowerCase();
+        if (topic.toLowerCase().includes(typeName) || typeName.includes(topic.toLowerCase())) {
+          // Found matching category
+          const profile = getProfile(user_id);
+          if (!profile.nama_lengkap) {
+            return `Baik, saya akan bantu buat laporan ${type.name}.\n\nUntuk melanjutkan, boleh saya tahu nama lengkap Bapak/Ibu?`;
+          }
+          // Has name, need full flow
+          return null;
+        }
+      }
+      
+      return `Saya paham Anda ingin membuat laporan. Bisa diperjelas terkait masalah apa?\n\nContoh: jalan rusak, lampu mati, kebakaran, dll.`;
+    }
+    
+    case 'CHECK_STATUS': {
+      const trackingMatch = message.match(/LA[PY]-\d{5,}/i);
+      if (trackingMatch) {
+        return await handleStatusCheck(user_id, 'webchat', trackingMatch[0]);
+      }
+      return 'Silakan berikan nomor tracking (contoh: LAP-12345 atau LAY-12345) untuk cek status.';
+    }
+    
+    case 'HISTORY': {
+      return await handleHistory(user_id, 'webchat');
+    }
+    
+    case 'CANCEL': {
+      return await handleCancellation(user_id, 'webchat', message);
+    }
+    
+    // ==================== PROVIDE NAME (Webchat) ====================
+    case 'PROVIDE_NAME': {
+      const extractedName = micro.extracted_data?.nama || extractNameFromMessage(message);
+      
+      if (extractedName && extractedName.length >= 2 && extractedName.length <= 50) {
+        // Simpan nama
+        updateProfile(user_id, { nama_lengkap: extractedName });
+        await updateConversationUserProfile(user_id, { user_name: extractedName }, village_id, 'WEBCHAT');
+        
+        logger.info('✅ Webchat: Name saved via PROVIDE_NAME', { user_id, nama: extractedName });
+        
+        // Check if there's a pending complaint - need phone too!
+        const pending = pendingNameRequests.get(user_id);
+        if (pending) {
+          const profile = getProfile(user_id);
+          if (!profile.no_hp) {
+            // Webchat needs phone for complaint
+            return `Terima kasih, ${extractedName}! Untuk melengkapi laporan, boleh saya minta nomor WhatsApp/HP yang bisa dihubungi?`;
+          }
+          // Has phone, continue
+          pendingNameRequests.delete(user_id);
+          return null; // Continue to full NLU
+        }
+        
+        return `Terima kasih, ${extractedName}! Ada yang bisa saya bantu?`;
+      }
+      
+      return 'Mohon maaf, saya tidak bisa menangkap nama dengan benar. Bisa disebutkan ulang nama lengkap Bapak/Ibu?';
+    }
+    
+    // ==================== PROVIDE PHONE (Webchat) ====================
+    case 'PROVIDE_PHONE': {
+      const extractedPhone = micro.extracted_data?.no_hp || extractPhoneFromMessage(message);
+      
+      if (extractedPhone) {
+        // Simpan nomor HP
+        updateProfile(user_id, { no_hp: extractedPhone });
+        
+        logger.info('✅ Webchat: Phone saved via PROVIDE_PHONE', { user_id, phone: extractedPhone });
+        
+        // Check if there's a pending complaint
+        const pending = pendingNameRequests.get(user_id);
+        if (pending) {
+          const profile = getProfile(user_id);
+          if (profile.nama_lengkap && profile.no_hp) {
+            // Now we have both name and phone - can proceed!
+            pendingNameRequests.delete(user_id);
+            return null; // Continue to full NLU for complaint
+          }
+        }
+        
+        return `Nomor ${extractedPhone} sudah tersimpan. Ada yang bisa saya bantu?`;
+      }
+      
+      return 'Mohon maaf, format nomor tidak valid. Silakan masukkan nomor WhatsApp/HP yang benar (contoh: 08123456789).';
+    }
+    
+    // ==================== CONTINUE FLOW (Webchat) ====================
+    case 'CONTINUE_FLOW': {
+      // Check if we have pending request
+      const pending = pendingNameRequests.get(user_id);
+      if (pending) {
+        // Try to extract name or phone from message
+        const extractedName = micro.extracted_data?.nama || extractNameFromMessage(message);
+        const extractedPhone = micro.extracted_data?.no_hp || extractPhoneFromMessage(message);
+        
+        const profile = getProfile(user_id);
+        
+        if (extractedName && !profile.nama_lengkap) {
+          updateProfile(user_id, { nama_lengkap: extractedName });
+          await updateConversationUserProfile(user_id, { user_name: extractedName }, village_id, 'WEBCHAT');
+          logger.info('✅ Webchat: Name captured via CONTINUE_FLOW', { user_id, nama: extractedName });
+          
+          // Webchat still needs phone
+          if (!profile.no_hp) {
+            return `Terima kasih, ${extractedName}! Untuk melengkapi laporan, boleh saya minta nomor WhatsApp/HP yang bisa dihubungi?`;
+          }
+        }
+        
+        if (extractedPhone && !profile.no_hp) {
+          updateProfile(user_id, { no_hp: extractedPhone });
+          logger.info('✅ Webchat: Phone captured via CONTINUE_FLOW', { user_id, phone: extractedPhone });
+          
+          // Now check if complete
+          const updatedProfile = getProfile(user_id);
+          if (updatedProfile.nama_lengkap && updatedProfile.no_hp) {
+            pendingNameRequests.delete(user_id);
+            return null; // Continue to full NLU
+          }
+        }
+      }
+      // Need full NLU
+      return null;
+    }
+    
+    case 'UNCLEAR': {
+      if (micro.clarification_question) {
+        return micro.clarification_question;
+      }
+      return 'Maaf, saya kurang paham maksudnya. Bisa diperjelas?\n\nSaya bisa membantu informasi layanan, pengaduan, atau nomor kontak penting.';
+    }
+    
+    default:
+      // Need full NLU
+      return null;
   }
 }
 
