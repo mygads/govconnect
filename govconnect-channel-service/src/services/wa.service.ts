@@ -77,10 +77,13 @@ async function createSessionViaGenfityApp(params: { villageId: string; webhook: 
   const customerApiBase = /\/api\/customer-api$/.test(base) ? base : `${base}/api/customer-api`;
   const url = `${customerApiBase}/whatsapp/sessions`;
 
+  // Session name: lowercase slug from villageId
+  const sessionName = params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
   const response = await axios.post(
     url,
     {
-      name: params.villageId,
+      name: sessionName,
       webhook: params.webhook || '',
       events: 'All',
     },
@@ -105,6 +108,44 @@ async function createSessionViaGenfityApp(params: { villageId: string; webhook: 
   }
 
   return { token, sessionId: payload?.data?.sessionId || payload?.data?.id || null };
+}
+
+/**
+ * Delete session from genfity-app via customer-api
+ * Uses session token to identify the session
+ */
+async function deleteSessionFromGenfityApp(sessionToken: string) {
+  if (!config.GENFITY_APP_API_URL || !config.GENFITY_APP_CUSTOMER_API_KEY) {
+    return;
+  }
+
+  const base = config.GENFITY_APP_API_URL.replace(/\/$/, '');
+  const customerApiBase = /\/api\/customer-api$/.test(base) ? base : `${base}/api/customer-api`;
+  
+  // The genfity-app customer-api allows deletion by sessionId, sessionName, or token
+  // We use the token as identifier
+  const url = `${customerApiBase}/whatsapp/sessions/${encodeURIComponent(sessionToken)}`;
+
+  try {
+    const response = await axios.delete(url, {
+      headers: {
+        Authorization: `Bearer ${config.GENFITY_APP_CUSTOMER_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+
+    if (response.data?.success) {
+      logger.info('Session deleted from genfity-app', { token: sessionToken.substring(0, 8) + '...' });
+    }
+  } catch (error: any) {
+    // 404 is ok - session might not exist in genfity-app
+    if (error.response?.status === 404) {
+      logger.debug('Session not found in genfity-app, skipping deletion');
+      return;
+    }
+    throw error;
+  }
 }
 
 type ResolvedAccessToken = {
@@ -431,6 +472,16 @@ export async function deleteSessionForVillage(villageId: string) {
     await logoutSession(session.wa_token);
   } catch (error: any) {
     logger.warn('Logout session before delete failed', { error: error.message });
+  }
+
+  // Delete session from genfity-app if configured
+  if (config.GENFITY_APP_API_URL && config.GENFITY_APP_CUSTOMER_API_KEY) {
+    await deleteSessionFromGenfityApp(session.wa_token).catch((err) => {
+      logger.warn('Failed to delete session from genfity-app', { 
+        village_id: villageId, 
+        error: err.message 
+      });
+    });
   }
 
   await prisma.wa_sessions.delete({
