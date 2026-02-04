@@ -309,12 +309,12 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
               <span className="absolute inset-0 rounded-full bg-secondary/30 animate-ping" />
             </Button>
             
-            {/* Tooltip - Left Side */}
+            {/* Tooltip - Left Side - Hidden on mobile */}
             <motion.div
               initial={{ opacity: 0, x: 10 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 1 }}
-              className="absolute right-full mr-3 top-1/2 -translate-y-1/2 bg-card border border-border shadow-lg rounded-lg px-3 py-2 whitespace-nowrap"
+              className="hidden sm:block absolute right-full mr-3 top-1/2 -translate-y-1/2 bg-card border border-border shadow-lg rounded-lg px-3 py-2 whitespace-nowrap"
             >
               <p className="text-sm font-medium">Chat dengan kami! 💬</p>
               <div className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-card border-r border-t border-border rotate-45" />

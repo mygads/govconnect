@@ -404,7 +404,15 @@ export async function handleGetServiceRequestById(req: Request, res: Response) {
     }
     const data = await prisma.serviceRequest.findUnique({
       where: { id },
-      include: { service: true },
+      include: { 
+        service: {
+          include: {
+            requirements: {
+              orderBy: { order_index: 'asc' }
+            }
+          }
+        }
+      },
     });
     if (!data) return res.status(404).json({ error: 'Request not found' });
     return res.json({ data });

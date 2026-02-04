@@ -1182,6 +1182,19 @@ export default function LayananPage() {
                 </div>
               )}
 
+              {requirementForm.field_type === "file" && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3">
+                  <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">
+                    ⚠️ Catatan: File upload hanya mendukung 1 file per persyaratan
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    Jika membutuhkan lebih dari 1 file, buat persyaratan terpisah. Contoh: &quot;Foto KTP Depan&quot; dan &quot;Foto KTP Belakang&quot;.
+                    <br />
+                    Format yang didukung: PDF, JPG, PNG, DOC, DOCX (maks 5MB)
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label>Help Text (opsional)</Label>
                 <Input

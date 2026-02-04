@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
+import Image from "next/image"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -16,6 +17,12 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { 
   ArrowLeft, 
   FileText, 
@@ -35,10 +42,21 @@ import {
   Upload,
   Download,
   FileCheck,
-  XCircle
+  XCircle,
+  Eye,
+  ImageIcon,
+  File
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Separator } from "@/components/ui/separator"
+
+interface ServiceRequirement {
+  id: string
+  label: string
+  field_type: string
+  is_required: boolean
+  help_text?: string | null
+}
 
 interface ServiceRequest {
   id: string
@@ -57,6 +75,7 @@ interface ServiceRequest {
     id: string
     name: string
     category?: { name: string } | null
+    requirements?: ServiceRequirement[]
   }
 }
 
@@ -178,6 +197,69 @@ export default function ServiceRequestDetailPage() {
   const [resultFileName, setResultFileName] = useState("")
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
+  
+  // Preview modal state
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState("")
+  const [previewTitle, setPreviewTitle] = useState("")
+  const [previewType, setPreviewType] = useState<"image" | "pdf" | "other">("other")
+
+  // Helper to detect file type from URL
+  const getFileType = useCallback((url: string): "image" | "pdf" | "other" => {
+    const lower = url.toLowerCase()
+    if (lower.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i)) return "image"
+    if (lower.match(/\.pdf(\?|$)/i)) return "pdf"
+    return "other"
+  }, [])
+
+  // Helper to get file icon
+  const getFileIcon = useCallback((url: string) => {
+    const type = getFileType(url)
+    if (type === "image") return ImageIcon
+    if (type === "pdf") return FileText
+    return File
+  }, [getFileType])
+
+  // Helper to get requirement label by ID
+  const getRequirementLabel = useCallback((reqId: string): string => {
+    const requirements = request?.service?.requirements || []
+    const req = requirements.find(r => r.id === reqId)
+    return req?.label || reqId
+  }, [request])
+
+  // Helper to get requirement field type
+  const getRequirementFieldType = useCallback((reqId: string): string => {
+    const requirements = request?.service?.requirements || []
+    const req = requirements.find(r => r.id === reqId)
+    return req?.field_type || "text"
+  }, [request])
+
+  // Open preview modal
+  const openPreview = (url: string, title: string) => {
+    setPreviewUrl(url)
+    setPreviewTitle(title)
+    setPreviewType(getFileType(url))
+    setPreviewOpen(true)
+  }
+
+  // Download file
+  const downloadFile = async (url: string, filename?: string) => {
+    try {
+      const response = await fetch(url)
+      const blob = await response.blob()
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = downloadUrl
+      link.download = filename || url.split("/").pop() || "download"
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(downloadUrl)
+    } catch {
+      // Fallback: open in new tab
+      window.open(url, "_blank")
+    }
+  }
 
   const fetchRequest = async (id: string) => {
     try {
@@ -436,13 +518,70 @@ export default function ServiceRequestDetailPage() {
             </CardHeader>
             <CardContent>
               {request.requirement_data_json && Object.keys(request.requirement_data_json).length > 0 ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {Object.entries(request.requirement_data_json).map(([key, value]) => (
-                    <div key={key} className="p-3 rounded-lg border bg-muted/30">
-                      <p className="text-xs text-muted-foreground mb-1">{key}</p>
-                      <p className="font-medium wrap-break-word">{String(value)}</p>
-                    </div>
-                  ))}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {Object.entries(request.requirement_data_json).map(([key, value]) => {
+                    const label = getRequirementLabel(key)
+                    const fieldType = getRequirementFieldType(key)
+                    const valueStr = String(value || "")
+                    const isFileUrl = fieldType === "file" || valueStr.match(/^https?:\/\/.+\.(jpg|jpeg|png|gif|pdf|doc|docx)(\?|$)/i)
+                    
+                    if (isFileUrl && valueStr) {
+                      const FileIcon = getFileIcon(valueStr)
+                      const fileType = getFileType(valueStr)
+                      const fileName = valueStr.split("/").pop()?.split("?")[0] || "File"
+                      
+                      return (
+                        <div key={key} className="p-4 rounded-lg border bg-muted/30">
+                          <p className="text-xs text-muted-foreground mb-2 font-medium">{label}</p>
+                          <div className="flex items-center gap-2 mb-3">
+                            <FileIcon className="h-5 w-5 text-muted-foreground shrink-0" />
+                            <span className="text-sm truncate flex-1" title={fileName}>
+                              {fileName}
+                            </span>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => openPreview(valueStr, label)}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              Lihat
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => downloadFile(valueStr, fileName)}
+                            >
+                              <Download className="h-4 w-4 mr-1" />
+                              Unduh
+                            </Button>
+                          </div>
+                          {fileType === "image" && (
+                            <div className="mt-3 rounded-md overflow-hidden border">
+                              <Image
+                                src={valueStr}
+                                alt={label}
+                                width={200}
+                                height={150}
+                                className="w-full h-auto max-h-32 object-cover"
+                                unoptimized
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    }
+                    
+                    return (
+                      <div key={key} className="p-4 rounded-lg border bg-muted/30">
+                        <p className="text-xs text-muted-foreground mb-1 font-medium">{label}</p>
+                        <p className="font-medium wrap-break-word">{valueStr || "-"}</p>
+                      </div>
+                    )
+                  })}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -608,6 +747,64 @@ export default function ServiceRequestDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* Preview Modal */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {previewType === "image" ? (
+                <ImageIcon className="h-5 w-5" />
+              ) : previewType === "pdf" ? (
+                <FileText className="h-5 w-5" />
+              ) : (
+                <File className="h-5 w-5" />
+              )}
+              {previewTitle}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4">
+            {previewType === "image" ? (
+              <div className="flex justify-center">
+                <Image
+                  src={previewUrl}
+                  alt={previewTitle}
+                  width={800}
+                  height={600}
+                  className="max-w-full h-auto rounded-lg"
+                  unoptimized
+                />
+              </div>
+            ) : previewType === "pdf" ? (
+              <iframe
+                src={previewUrl}
+                className="w-full h-[70vh] rounded-lg border"
+                title={previewTitle}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <File className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-muted-foreground mb-4">
+                  Preview tidak tersedia untuk tipe file ini.
+                </p>
+                <Button onClick={() => downloadFile(previewUrl)}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Unduh File
+                </Button>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setPreviewOpen(false)}>
+              Tutup
+            </Button>
+            <Button onClick={() => downloadFile(previewUrl)}>
+              <Download className="h-4 w-4 mr-2" />
+              Unduh
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
