@@ -68,7 +68,7 @@ function getPublicWhatsAppWebhookUrl(): string {
   return base ? `${base}/webhook` : '';
 }
 
-async function createSessionViaGenfityApp(params: { villageId: string; webhook: string }) {
+async function createSessionViaGenfityApp(params: { villageId: string; villageSlug?: string; webhook: string }) {
   if (!config.GENFITY_APP_API_URL || !config.GENFITY_APP_CUSTOMER_API_KEY) {
     throw new Error('Genfity customer-api config missing (GENFITY_APP_API_URL / GENFITY_APP_CUSTOMER_API_KEY)');
   }
@@ -77,8 +77,8 @@ async function createSessionViaGenfityApp(params: { villageId: string; webhook: 
   const customerApiBase = /\/api\/customer-api$/.test(base) ? base : `${base}/api/customer-api`;
   const url = `${customerApiBase}/whatsapp/sessions`;
 
-  // Session name: lowercase slug from villageId
-  const sessionName = params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  // Session name: use villageSlug if provided, otherwise fallback to villageId
+  const sessionName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
   const response = await axios.post(
     url,
@@ -344,6 +344,7 @@ export async function getStoredSession(villageId: string) {
 export async function createSessionForVillage(params: {
   villageId: string;
   adminId?: string;
+  villageSlug?: string;
 }) {
   const existing = await getSessionByVillageId(params.villageId);
   if (existing) {
@@ -356,7 +357,7 @@ export async function createSessionForVillage(params: {
 
   // Preferred path: create session via genfity-app customer-api so it consumes the admin subscription quota.
   if (config.GENFITY_APP_API_URL && config.GENFITY_APP_CUSTOMER_API_KEY) {
-    const created = await createSessionViaGenfityApp({ villageId: params.villageId, webhook });
+    const created = await createSessionViaGenfityApp({ villageId: params.villageId, villageSlug: params.villageSlug, webhook });
     token = created.token;
     sessionId = created.sessionId;
   } else {

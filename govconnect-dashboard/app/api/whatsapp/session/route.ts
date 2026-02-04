@@ -40,6 +40,12 @@ export async function POST(request: NextRequest) {
   const villageId = resolveVillageId(request, session)
   if (!villageId) return NextResponse.json({ error: 'village_id diperlukan' }, { status: 400 })
 
+  // Get village slug from database
+  const village = await prisma.villages.findUnique({
+    where: { id: villageId },
+    select: { slug: true }
+  })
+
   const response = await fetch(`${CHANNEL_SERVICE_URL}/internal/whatsapp/session`, {
     method: 'POST',
     headers: {
@@ -49,6 +55,7 @@ export async function POST(request: NextRequest) {
     body: JSON.stringify({
       village_id: villageId,
       admin_id: session.admin.id,
+      village_slug: village?.slug,
     })
   })
 

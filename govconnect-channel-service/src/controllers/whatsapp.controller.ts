@@ -151,7 +151,8 @@ export async function createSession(req: Request, res: Response): Promise<void> 
     }
 
     const adminId = typeof req.body?.admin_id === 'string' ? req.body.admin_id : undefined;
-    const result = await createSessionForVillage({ villageId, adminId });
+    const villageSlug = typeof req.body?.village_slug === 'string' ? req.body.village_slug : undefined;
+    const result = await createSessionForVillage({ villageId, adminId, villageSlug });
 
     // Best-effort: sync status immediately so DB is always aligned with WA server.
     // This will typically show disconnected/not logged in until QR is scanned.
