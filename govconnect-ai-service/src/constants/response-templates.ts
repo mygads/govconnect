@@ -14,6 +14,43 @@
 
 import { IntentType } from './intent-patterns';
 
+// ==================== TIME-BASED GREETING ====================
+
+/**
+ * Get current time-based greeting in WIB timezone
+ */
+export function getTimeBasedGreeting(): string {
+  // Get current time in WIB (UTC+7)
+  const now = new Date();
+  const wibOffset = 7 * 60; // WIB is UTC+7
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const wibTime = new Date(utc + (wibOffset * 60000));
+  const hour = wibTime.getHours();
+  
+  if (hour >= 5 && hour < 11) {
+    return 'Selamat pagi';
+  } else if (hour >= 11 && hour < 15) {
+    return 'Selamat siang';
+  } else if (hour >= 15 && hour < 18) {
+    return 'Selamat sore';
+  } else {
+    return 'Selamat malam';
+  }
+}
+
+/**
+ * Get dynamic greeting response based on current time
+ */
+export function getDynamicGreetingResponse(): string {
+  const timeGreeting = getTimeBasedGreeting();
+  const variants = [
+    `${timeGreeting}! Selamat datang di layanan GovConnect.\nBoleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
+    `${timeGreeting}, selamat datang di layanan GovConnect.\nMohon informasikan nama Bapak/Ibu agar kami bisa membantu dengan tepat.`,
+    `${timeGreeting}! Selamat datang di layanan GovConnect.\nSebelum melanjutkan, mohon tuliskan nama Bapak/Ibu.`,
+  ];
+  return variants[Math.floor(Math.random() * variants.length)];
+}
+
 // ==================== GREETING RESPONSES ====================
 
 export const GREETING_RESPONSES = [
@@ -213,8 +250,14 @@ export function getRandomItem<T>(items: T[]): T {
 
 /**
  * Get fallback response by intent
+ * For GREETING intent, uses dynamic time-based greeting
  */
 export function getFallbackByIntent(intent: string): string {
+  // Special handling for GREETING - use dynamic time-based greeting
+  if (intent === 'GREETING') {
+    return getDynamicGreetingResponse();
+  }
+  
   const templates = FALLBACK_TEMPLATES[intent] || FALLBACK_TEMPLATES['UNKNOWN'];
   return getRandomItem(templates);
 }
@@ -255,4 +298,6 @@ export default {
   getFallbackByIntent,
   getMissingFieldPrompt,
   getErrorFallback,
+  getTimeBasedGreeting,
+  getDynamicGreetingResponse,
 };

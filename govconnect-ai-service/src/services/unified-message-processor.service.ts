@@ -3506,18 +3506,34 @@ async function buildContextWithHistory(
     }
   }
   
-  const today = new Date();
-  const tomorrow = new Date(today);
+  // Calculate current date, time, and tomorrow for prompt (in WIB timezone)
+  const now = new Date();
+  const wibOffset = 7 * 60; // WIB is UTC+7
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const wibTime = new Date(utc + (wibOffset * 60000));
+  
+  const currentDate = wibTime.toISOString().split('T')[0]; // YYYY-MM-DD
+  const tomorrow = new Date(wibTime);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const currentDate = today.toISOString().split('T')[0];
-  const tomorrowDate = tomorrow.toISOString().split('T')[0];
+  const tomorrowDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
+  
+  // Get current time info for greeting
+  const currentHour = wibTime.getHours();
+  let timeOfDay = 'malam';
+  if (currentHour >= 5 && currentHour < 11) timeOfDay = 'pagi';
+  else if (currentHour >= 11 && currentHour < 15) timeOfDay = 'siang';
+  else if (currentHour >= 15 && currentHour < 18) timeOfDay = 'sore';
+  
+  const currentTime = wibTime.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
   
   const systemPrompt = getPrompt()
     .replace('{knowledge_context}', knowledgeSection)
     .replace('{history}', conversationHistory || '(Ini adalah percakapan pertama dengan user)')
     .replace('{user_message}', currentMessage)
     .replace(/\{\{current_date\}\}/g, currentDate)
-    .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate);
+    .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate)
+    .replace(/\{\{current_time\}\}/g, currentTime)
+    .replace(/\{\{time_of_day\}\}/g, timeOfDay);
   
   return { systemPrompt, messageCount: history.length };
 }
