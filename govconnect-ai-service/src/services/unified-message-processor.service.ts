@@ -147,6 +147,20 @@ const pendingServiceFormOffer: Map<string, {
   timestamp: number;
 }> = new Map();
 
+// Pending complaint data cache (waiting for name/phone before creating complaint)
+// Key: userId, Value: { complaint data + what we're waiting for }
+const pendingComplaintData: Map<string, {
+  kategori: string;
+  deskripsi: string;
+  alamat?: string;
+  rt_rw?: string;
+  village_id?: string;
+  foto_url?: string;
+  channel: ChannelType;
+  timestamp: number;
+  waitingFor: 'nama' | 'no_hp';  // What data we're waiting for
+}> = new Map();
+
 // Complaint types cache (per village)
 const complaintTypeCache: Map<string, { data: any[]; timestamp: number }> = new Map();
 
@@ -182,6 +196,12 @@ setInterval(() => {
     if (now - value.timestamp > expireMs) {
       pendingAddressRequest.delete(key);
       logger.debug('Cleaned up expired address request', { userId: key });
+    }
+  }
+  for (const [key, value] of pendingComplaintData.entries()) {
+    if (now - value.timestamp > expireMs) {
+      pendingComplaintData.delete(key);
+      logger.debug('Cleaned up expired pending complaint data', { userId: key });
     }
   }
 }, 60 * 1000);
@@ -844,8 +864,57 @@ export async function handleComplaintCreation(
     ? complaintTypeConfig.is_urgent
     : detectEmergencyComplaint(deskripsi || '', currentMessage, kategori);
   
-  // Create complaint in Case Service
+  // ==================== NAME & PHONE VALIDATION ====================
+  // Before creating complaint, we need user's identity:
+  // - WhatsApp: Only need nama_lengkap (phone is already known from WA number)
+  // - Webchat: Need BOTH nama_lengkap AND no_hp (so we can contact them)
+  
   const isWebchatChannel = channel === 'webchat';
+  const userProfile = getProfile(userId);
+  const hasName = !!userProfile.nama_lengkap;
+  const hasPhone = !!userProfile.no_hp;
+  
+  // For webchat: need both name and phone
+  // For WhatsApp: only need name
+  const needsName = !hasName;
+  const needsPhone = isWebchatChannel && !hasPhone;
+  
+  if (needsName || needsPhone) {
+    // Store complaint data temporarily while we collect user info
+    pendingComplaintData.set(userId, {
+      kategori,
+      deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
+      alamat: alamat || undefined,
+      rt_rw: rt_rw || '',
+      village_id: villageId,
+      foto_url: mediaUrl,
+      channel,
+      timestamp: Date.now(),
+      waitingFor: needsName ? 'nama' : 'no_hp',
+    });
+    
+    logger.info('Storing pending complaint, waiting for user info', {
+      userId,
+      channel,
+      needsName,
+      needsPhone,
+      kategori,
+    });
+    
+    const photoNote = mediaUrl ? '\nFoto Anda sudah kami terima.' : '';
+    
+    if (needsName) {
+      return `Baik Pak/Bu, sebelum laporan diproses, boleh kami tahu nama Bapak/Ibu?${photoNote}`;
+    }
+    
+    // needsPhone (webchat only, name already provided)
+    return `Baik Pak/Bu, mohon informasikan nomor telepon yang dapat dihubungi agar petugas bisa menghubungi Bapak/Ibu terkait laporan ini.${photoNote}`;
+  }
+  
+  // ==================== CREATE COMPLAINT ====================
+  // All required data is complete, proceed with creation
+  
+  // Create complaint in Case Service
   const complaintId = await createComplaint({
     wa_user_id: isWebchatChannel ? undefined : userId,
     channel: isWebchatChannel ? 'WEBCHAT' : 'WHATSAPP',
@@ -860,6 +929,9 @@ export async function handleComplaintCreation(
     type_id: complaintTypeConfig?.id,
     is_urgent: isEmergency,
     require_address: requireAddress,
+    // Include user identity
+    reporter_name: userProfile.nama_lengkap,
+    reporter_phone: isWebchatChannel ? userProfile.no_hp : userId, // For WA, userId is the phone
   });
   
   if (complaintId) {
@@ -884,7 +956,11 @@ export async function handleComplaintCreation(
     const hasRtRw = Boolean(rt_rw) || /\brt\b|\brw\b/i.test(alamat || '');
     const withPhotoNote = mediaUrl ? '\nFoto pendukung sudah kami terima.' : '';
     
+    // ==================== IMPORTANT CONTACTS ====================
+    // For emergency complaints, always try to send relevant contacts
     let importantContactsMessage = '';
+    
+    // If complaint type has explicit config for important contacts
     if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
       const contacts = await getImportantContacts(
         villageId,
@@ -892,6 +968,35 @@ export async function handleComplaintCreation(
         undefined
       );
       importantContactsMessage = buildImportantContactsMessage(contacts, channel);
+    } 
+    // Fallback for emergency categories without config - try to find relevant contacts
+    else if (isEmergency) {
+      // Map kategori to likely contact category
+      const emergencyContactMap: Record<string, string> = {
+        'banjir': 'Bencana',
+        'kebakaran': 'Darurat',
+        'pohon_tumbang': 'Bencana',
+        'bencana': 'Bencana',
+        'kecelakaan': 'Darurat',
+      };
+      
+      const fallbackCategory = emergencyContactMap[kategori] || 'Darurat';
+      const contacts = await getImportantContacts(villageId, fallbackCategory, undefined);
+      
+      // If no contacts found with specific category, try generic emergency
+      if (!contacts || contacts.length === 0) {
+        const genericContacts = await getImportantContacts(villageId, undefined, undefined);
+        importantContactsMessage = buildImportantContactsMessage(genericContacts, channel);
+      } else {
+        importantContactsMessage = buildImportantContactsMessage(contacts, channel);
+      }
+      
+      logger.info('Emergency complaint: sending fallback contacts', {
+        userId,
+        kategori,
+        fallbackCategory,
+        hasContacts: !!importantContactsMessage,
+      });
     }
 
     if (isEmergency) {
@@ -2890,6 +2995,133 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
         return {
           success: true,
           response: complaintResult,
+          intent: 'CREATE_COMPLAINT',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+    }
+
+    // Step 2.07: Check pending complaint data (waiting for name/phone)
+    const pendingComplaint = pendingComplaintData.get(userId);
+    if (pendingComplaint) {
+      const userProfile = getProfile(userId);
+      
+      if (pendingComplaint.waitingFor === 'nama') {
+        // Try to extract name from message
+        const extractedName = extractNameFromText(message);
+        if (extractedName) {
+          // Save name to profile
+          updateProfile(userId, { nama_lengkap: extractedName });
+          
+          // Check if webchat still needs phone
+          if (pendingComplaint.channel === 'webchat' && !userProfile.no_hp) {
+            // Update pending to wait for phone
+            pendingComplaintData.set(userId, {
+              ...pendingComplaint,
+              waitingFor: 'no_hp',
+              timestamp: Date.now(),
+            });
+            
+            return {
+              success: true,
+              response: `Terima kasih Pak/Bu ${extractedName}. Mohon informasikan juga nomor telepon yang dapat dihubungi.`,
+              intent: 'CREATE_COMPLAINT',
+              metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+            };
+          }
+          
+          // All data complete, proceed with complaint creation
+          pendingComplaintData.delete(userId);
+          
+          const llmLike = {
+            fields: {
+              village_id: pendingComplaint.village_id,
+              kategori: pendingComplaint.kategori,
+              deskripsi: pendingComplaint.deskripsi,
+              alamat: pendingComplaint.alamat,
+              rt_rw: pendingComplaint.rt_rw,
+            },
+          };
+          
+          logger.info('Continuing complaint after name received', { 
+            userId, 
+            nama: extractedName,
+            kategori: pendingComplaint.kategori,
+          });
+          
+          const complaintResult = await handleComplaintCreation(
+            userId, 
+            pendingComplaint.channel, 
+            llmLike, 
+            message, 
+            pendingComplaint.foto_url
+          );
+          
+          return {
+            success: true,
+            response: complaintResult,
+            intent: 'CREATE_COMPLAINT',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          };
+        }
+        
+        // Could not extract name, ask again
+        return {
+          success: true,
+          response: 'Mohon maaf Pak/Bu, boleh tuliskan nama lengkap Anda untuk melanjutkan laporan?',
+          intent: 'CREATE_COMPLAINT',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+      
+      if (pendingComplaint.waitingFor === 'no_hp') {
+        // Try to extract phone from message
+        const phoneMatch = message.match(/\b(0[87]\d{8,11}|62[87]\d{8,11}|\+62[87]\d{8,11})\b/);
+        if (phoneMatch) {
+          const phone = phoneMatch[1].replace(/^\+/, '');
+          
+          // Save phone to profile
+          updateProfile(userId, { no_hp: phone });
+          
+          // All data complete, proceed with complaint creation
+          pendingComplaintData.delete(userId);
+          
+          const llmLike = {
+            fields: {
+              village_id: pendingComplaint.village_id,
+              kategori: pendingComplaint.kategori,
+              deskripsi: pendingComplaint.deskripsi,
+              alamat: pendingComplaint.alamat,
+              rt_rw: pendingComplaint.rt_rw,
+            },
+          };
+          
+          logger.info('Continuing complaint after phone received', { 
+            userId, 
+            phone,
+            kategori: pendingComplaint.kategori,
+          });
+          
+          const complaintResult = await handleComplaintCreation(
+            userId, 
+            pendingComplaint.channel, 
+            llmLike, 
+            message, 
+            pendingComplaint.foto_url
+          );
+          
+          return {
+            success: true,
+            response: complaintResult,
+            intent: 'CREATE_COMPLAINT',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          };
+        }
+        
+        // Could not extract phone, ask again
+        return {
+          success: true,
+          response: 'Mohon maaf Pak/Bu, format nomor telepon sepertinya kurang tepat. Silakan masukkan nomor HP yang valid (contoh: 081234567890).',
           intent: 'CREATE_COMPLAINT',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };

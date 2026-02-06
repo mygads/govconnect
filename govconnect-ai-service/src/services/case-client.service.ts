@@ -26,6 +26,9 @@ interface ComplaintData {
   type_id?: string;
   is_urgent?: boolean;
   require_address?: boolean;
+  // Reporter identity
+  reporter_name?: string;
+  reporter_phone?: string;
 }
 
 interface ComplaintResponse {
