@@ -10,8 +10,8 @@
  * LIVE CHAT INTEGRATION: Messages are synced to Channel Service database
  * so they appear in Live Chat dashboard and admin can takeover.
  * 
- * ARCHITECTURE: NLU-based (Micro NLU + Full NLU)
- * Two-Layer architecture has been removed for consistency.
+ * ARCHITECTURE: UNIFIED PROCESSOR
+ * Sama persis dengan WhatsApp - full LLM, tidak ada pattern matching.
  */
 
 import { Router, Request, Response } from 'express';
@@ -19,7 +19,6 @@ import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { processUnifiedMessage, ProcessMessageResult } from '../services/unified-message-processor.service';
-import { processWebchatWithNLU } from '../services/nlu-webchat.service';
 import {
   saveWebchatMessage,
   updateWebchatConversation,
@@ -32,8 +31,8 @@ import {
 } from '../services/webchat-batcher.service';
 import { getParam, getQuery } from '../utils/http';
 
-// NLU-based processor is now the only architecture
-logger.info('🏗️ Webchat architecture: NLU-based with Micro NLU');
+// Using same unified processor as WhatsApp for consistency
+logger.info('🏗️ Webchat architecture: Unified Processor (same as WhatsApp)');
 
 const DEFAULT_VILLAGE_ID = process.env.DEFAULT_VILLAGE_ID || '';
 
@@ -66,8 +65,8 @@ async function isWebchatEnabled(villageId?: string): Promise<boolean> {
 }
 
 /**
- * Process webchat message with NLU architecture
- * Same architecture as WhatsApp for consistency
+ * Process webchat message with UNIFIED PROCESSOR
+ * SAMA PERSIS dengan WhatsApp - full LLM, tidak ada pattern matching
  */
 async function processWebchatMessage(params: {
   userId: string;
@@ -75,15 +74,17 @@ async function processWebchatMessage(params: {
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   village_id?: string;
 }): Promise<ProcessMessageResult> {
-  logger.debug('Processing webchat with NLU architecture', {
+  logger.debug('Processing webchat with UNIFIED processor (same as WhatsApp)', {
     userId: params.userId,
   });
   
-  return processWebchatWithNLU({
+  // Use SAME processor as WhatsApp for 100% consistency
+  return processUnifiedMessage({
     userId: params.userId,
     message: params.message,
+    channel: 'webchat',
     conversationHistory: params.conversationHistory,
-    village_id: params.village_id,
+    villageId: params.village_id,
   });
 }
 

@@ -3,10 +3,11 @@ import app from './app';
 import logger from './utils/logger';
 import { config } from './config/env';
 import { connectRabbitMQ, startConsuming, disconnectRabbitMQ } from './services/rabbitmq.service';
-import { processMessageWithNLU } from './services/nlu-message-processor.service';
+import { processMessage } from './services/ai-orchestrator.service';
 import { initializeOptimizer } from './services/ai-optimizer.service';
 
-// NLU-based message processing is now the only architecture (Two-Layer removed)
+// UNIFIED PROCESSOR - same architecture for WhatsApp and Webchat
+// No more pattern matching, full LLM understanding
 
 let server: any;
 
@@ -23,12 +24,12 @@ async function startServer() {
     // Connect to RabbitMQ
     await connectRabbitMQ();
     
-    // Use NLU-based processor (Micro NLU + Full NLU)
-    logger.info('🏗️ Architecture: NLU-based with Micro NLU', {
-      processor: 'processMessageWithNLU',
+    // Use UNIFIED processor (same as webchat - full LLM, no pattern matching)
+    logger.info('🏗️ Architecture: UNIFIED PROCESSOR (same as Webchat)', {
+      processor: 'processMessage → processUnifiedMessage',
     });
     
-    await startConsuming(processMessageWithNLU);
+    await startConsuming(processMessage);
     
     // Start Express server (for health checks)
     server = app.listen(config.port, () => {

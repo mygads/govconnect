@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { processWebchatWithNLU } from '../services/nlu-webchat.service';
+import { processUnifiedMessage } from '../services/unified-message-processor.service';
 import { firstHeader } from '../utils/http';
 
-// NLU-based processor is now the only architecture
+// Using same unified processor as WhatsApp for consistency
 
 const router = Router();
 
@@ -44,14 +44,15 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
       userId,
       village_id: resolvedVillageId,
       messageLength: message.length,
-      processor: 'NLU',
+      processor: 'UNIFIED',
     });
 
-    // Use NLU processor for consistent results
-    const result = await processWebchatWithNLU({
+    // Use SAME unified processor as WhatsApp for consistent results
+    const result = await processUnifiedMessage({
       userId,
       message,
-      village_id: resolvedVillageId,
+      channel: 'webchat',
+      villageId: resolvedVillageId,
       conversationHistory: [],
     });
 
