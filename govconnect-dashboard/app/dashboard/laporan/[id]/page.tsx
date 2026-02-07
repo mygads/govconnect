@@ -289,37 +289,54 @@ export default function LaporanDetailPage() {
                 <p className="text-foreground bg-muted p-4 rounded-md">{complaint.deskripsi}</p>
               </div>
 
-              {complaint.foto_url && (
+              {complaint.foto_url && (() => {
+                // Parse foto_url: single URL string or JSON array of URLs
+                let fotoUrls: string[] = [];
+                try {
+                  if (complaint.foto_url!.startsWith('[')) {
+                    fotoUrls = JSON.parse(complaint.foto_url!);
+                  } else {
+                    fotoUrls = [complaint.foto_url!];
+                  }
+                } catch {
+                  fotoUrls = [complaint.foto_url!];
+                }
+                return (
                 <div className="space-y-2">
                   <Label className="text-muted-foreground flex items-center gap-2">
                     <Image className="h-4 w-4" />
-                    Foto Pengaduan
+                    Foto Pengaduan {fotoUrls.length > 1 && `(${fotoUrls.length} foto)`}
                   </Label>
-                  <div className="relative rounded-lg overflow-hidden border bg-muted">
-                    <img 
-                      src={complaint.foto_url} 
-                      alt="Foto pengaduan"
-                      className="w-full max-h-96 object-contain"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                        (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                      }}
-                    />
-                    <div className="hidden p-4 text-center text-muted-foreground">
-                      <Image className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p>Foto tidak dapat dimuat</p>
-                    </div>
+                  <div className={`grid gap-2 ${fotoUrls.length > 1 ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-1'}`}>
+                    {fotoUrls.map((url, idx) => (
+                      <div key={idx} className="relative rounded-lg overflow-hidden border bg-muted">
+                        <img 
+                          src={url} 
+                          alt={`Foto pengaduan ${fotoUrls.length > 1 ? idx + 1 : ''}`}
+                          className="w-full max-h-96 object-contain"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                            (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                          }}
+                        />
+                        <div className="hidden p-4 text-center text-muted-foreground">
+                          <Image className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <p>Foto tidak dapat dimuat</p>
+                        </div>
+                        <a 
+                          href={url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="absolute bottom-1 right-1 text-xs bg-black/50 text-white px-2 py-1 rounded hover:bg-black/70"
+                        >
+                          Buka
+                        </a>
+                      </div>
+                    ))}
                   </div>
-                  <a 
-                    href={complaint.foto_url} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-500 hover:underline"
-                  >
-                    Buka foto di tab baru
-                  </a>
                 </div>
-              )}
+                );
+              })()}
 
               {complaint.alamat && (
                 <div className="space-y-2">

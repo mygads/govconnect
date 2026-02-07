@@ -1,7 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { SYSTEM_PROMPT_WITH_KNOWLEDGE, getFullSystemPrompt } from '../prompts/system-prompt';
+import { SYSTEM_PROMPT_WITH_KNOWLEDGE, getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '../prompts/system-prompt';
 import { RAGContext } from '../types/embedding.types';
 
 interface Message {
@@ -25,9 +25,10 @@ export async function buildContext(
   wa_user_id: string, 
   currentMessage: string, 
   ragContext?: RAGContext | string,
-  complaintCategoriesText?: string
+  complaintCategoriesText?: string,
+  promptFocus?: PromptFocus
 ) {
-  logger.info('Building context for LLM', { wa_user_id });
+  logger.info('Building context for LLM', { wa_user_id, promptFocus: promptFocus || 'full' });
 
   try {
     // Fetch message history from Channel Service
@@ -62,8 +63,8 @@ export async function buildContext(
     // Default complaint categories fallback
     const categoriesText = complaintCategoriesText || 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
     
-    // Build full prompt using complete system prompt (all parts combined)
-    const systemPrompt = getFullSystemPrompt()
+    // Build full prompt using adaptive system prompt (filters by focus)
+    const systemPrompt = (promptFocus ? getAdaptiveSystemPrompt(promptFocus) : getFullSystemPrompt())
       .replace('{knowledge_context}', knowledgeSection)
       .replace('{history}', conversationHistory)
       .replace('{user_message}', currentMessage)

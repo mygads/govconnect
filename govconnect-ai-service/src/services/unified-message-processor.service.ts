@@ -20,6 +20,7 @@
 
 import logger from '../utils/logger';
 import { buildContext, buildKnowledgeQueryContext, sanitizeUserInput } from './context-builder.service';
+import type { PromptFocus } from '../prompts/system-prompt';
 import { callGemini } from './llm.service';
 import {
   createComplaint,
@@ -162,6 +163,64 @@ const pendingComplaintData: Map<string, {
   waitingFor: 'nama' | 'no_hp';  // What data we're waiting for
 }> = new Map();
 
+// Accumulated photos cache (for multi-photo complaint support, max 5 per user)
+// Key: userId, Value: { urls: string[], timestamp: number }
+const pendingPhotos: Map<string, {
+  urls: string[];
+  timestamp: number;
+}> = new Map();
+
+const MAX_PHOTOS_PER_COMPLAINT = 5;
+
+/**
+ * Add a photo URL to the pending photos cache for a user.
+ * Returns the current count after adding.
+ */
+function addPendingPhoto(userId: string, photoUrl: string): number {
+  const existing = pendingPhotos.get(userId);
+  if (existing) {
+    if (existing.urls.length >= MAX_PHOTOS_PER_COMPLAINT) {
+      return existing.urls.length; // Already at max, don't add
+    }
+    existing.urls.push(photoUrl);
+    existing.timestamp = Date.now();
+    return existing.urls.length;
+  }
+  pendingPhotos.set(userId, { urls: [photoUrl], timestamp: Date.now() });
+  return 1;
+}
+
+/**
+ * Get and clear all pending photos for a user.
+ * Returns a foto_url string: single URL or JSON array string for multiple.
+ */
+function consumePendingPhotos(userId: string, currentMediaUrl?: string): string | undefined {
+  const pending = pendingPhotos.get(userId);
+  const allUrls: string[] = [];
+  
+  if (pending) {
+    allUrls.push(...pending.urls);
+    pendingPhotos.delete(userId);
+  }
+  
+  if (currentMediaUrl && !allUrls.includes(currentMediaUrl)) {
+    allUrls.push(currentMediaUrl);
+  }
+  
+  if (allUrls.length === 0) return undefined;
+  if (allUrls.length === 1) return allUrls[0]; // Single URL (backward compatible)
+  // Enforce max
+  const trimmed = allUrls.slice(0, MAX_PHOTOS_PER_COMPLAINT);
+  return JSON.stringify(trimmed); // JSON array string for multiple photos
+}
+
+/**
+ * Get current pending photo count for a user.
+ */
+function getPendingPhotoCount(userId: string): number {
+  return pendingPhotos.get(userId)?.urls.length || 0;
+}
+
 // Complaint types cache (per village)
 const complaintTypeCache: Map<string, { data: any[]; timestamp: number }> = new Map();
 
@@ -203,6 +262,12 @@ setInterval(() => {
     if (now - value.timestamp > expireMs) {
       pendingComplaintData.delete(key);
       logger.debug('Cleaned up expired pending complaint data', { userId: key });
+    }
+  }
+  for (const [key, value] of pendingPhotos.entries()) {
+    if (now - value.timestamp > expireMs) {
+      pendingPhotos.delete(key);
+      logger.debug('Cleaned up expired pending photos', { userId: key });
     }
   }
 }, 60 * 1000);
@@ -703,12 +768,14 @@ export async function handleComplaintCreation(
     }
     if (!alamat) {
       // Store pending address request so we can continue when user provides address
+      // Accumulate photo if present
+      if (mediaUrl) addPendingPhoto(userId, mediaUrl);
       pendingAddressRequest.set(userId, {
         kategori,
         deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
         village_id: villageId,
         timestamp: Date.now(),
-        foto_url: mediaUrl,
+        foto_url: undefined, // Photos tracked in pendingPhotos cache
       });
       
       const kategoriLabelMap: Record<string, string> = {
@@ -738,17 +805,20 @@ export async function handleComplaintCreation(
   if (alamat && isVagueAddress(alamat)) {
     logger.info('Address is vague, asking for confirmation', { userId, alamat, kategori });
     
+    // Accumulate photo if present
+    if (mediaUrl) addPendingPhoto(userId, mediaUrl);
     pendingAddressConfirmation.set(userId, {
       alamat,
       kategori,
       deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
       village_id: villageId,
       timestamp: Date.now(),
-      foto_url: mediaUrl,
+      foto_url: undefined, // Photos tracked in pendingPhotos cache
     });
     
     const kategoriLabel = kategori.replace(/_/g, ' ');
-    const photoNote = mediaUrl ? '\n\nFoto Anda sudah kami terima.' : '';
+    const pendingPhotoCount = getPendingPhotoCount(userId);
+    const photoNote = pendingPhotoCount > 0 ? `\n\n${pendingPhotoCount} foto sudah kami terima.` : '';
     return `Alamat "${alamat}" sepertinya kurang spesifik untuk laporan ${kategoriLabel}.${photoNote}\n\nApakah Bapak/Ibu ingin menambahkan detail alamat (nomor rumah, RT/RW, nama jalan lengkap) atau balas "YA" untuk tetap menggunakan alamat ini?`;
   }
   
@@ -777,13 +847,15 @@ export async function handleComplaintCreation(
   
   if (needsName || needsPhone) {
     // Store complaint data temporarily while we collect user info
+    // Accumulate photo if present
+    if (mediaUrl) addPendingPhoto(userId, mediaUrl);
     pendingComplaintData.set(userId, {
       kategori,
       deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
       alamat: alamat || undefined,
       rt_rw: rt_rw || '',
       village_id: villageId,
-      foto_url: mediaUrl,
+      foto_url: undefined, // Photos tracked in pendingPhotos cache
       channel,
       timestamp: Date.now(),
       waitingFor: needsName ? 'nama' : 'no_hp',
@@ -797,7 +869,8 @@ export async function handleComplaintCreation(
       kategori,
     });
     
-    const photoNote = mediaUrl ? '\nFoto Anda sudah kami terima.' : '';
+    const pendingPhotoCount = getPendingPhotoCount(userId);
+    const photoNote = pendingPhotoCount > 0 ? `\n${pendingPhotoCount} foto sudah kami terima.` : '';
     
     if (needsName) {
       return `Baik Pak/Bu, sebelum laporan diproses, boleh kami tahu nama Bapak/Ibu?${photoNote}`;
@@ -810,6 +883,9 @@ export async function handleComplaintCreation(
   // ==================== CREATE COMPLAINT ====================
   // All required data is complete, proceed with creation
   
+  // Combine accumulated photos with current mediaUrl
+  const combinedFotoUrl = consumePendingPhotos(userId, mediaUrl);
+  
   // Create complaint in Case Service
   const complaintId = await createComplaint({
     wa_user_id: isWebchatChannel ? undefined : userId,
@@ -820,7 +896,7 @@ export async function handleComplaintCreation(
     village_id: villageId,
     alamat: alamat || undefined,
     rt_rw: rt_rw || '',
-    foto_url: mediaUrl,
+    foto_url: combinedFotoUrl,
     category_id: complaintTypeConfig?.category_id,
     type_id: complaintTypeConfig?.id,
     is_urgent: isEmergency,
@@ -850,7 +926,8 @@ export async function handleComplaintCreation(
     }
     
     const hasRtRw = Boolean(rt_rw) || /\brt\b|\brw\b/i.test(alamat || '');
-    const withPhotoNote = mediaUrl ? '\nFoto pendukung sudah kami terima.' : '';
+    const photoCount = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
+    const withPhotoNote = photoCount > 0 ? `\n${photoCount > 1 ? photoCount + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
     
     // ==================== IMPORTANT CONTACTS ====================
     // For emergency complaints, always try to send relevant contacts
@@ -2651,7 +2728,16 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     const pendingName = pendingNameConfirmation.get(userId);
     if (pendingName) {
-      if (isConfirmationResponse(message)) {
+      // Use micro LLM for name confirmation (fallback to regex if LLM fails)
+      let nameDecision: string;
+      try {
+        const nameResult = await classifyConfirmation(message.trim());
+        nameDecision = nameResult?.decision === 'CONFIRM' ? 'yes' : nameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
+      } catch {
+        nameDecision = isConfirmationResponse(message) ? 'yes' : isNegativeConfirmation(message) ? 'no' : 'uncertain';
+      }
+
+      if (nameDecision === 'yes') {
         pendingNameConfirmation.delete(userId);
         updateProfile(userId, { nama_lengkap: pendingName.name });
         return {
@@ -2662,7 +2748,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         };
       }
 
-      if (isNegativeConfirmation(message)) {
+      if (nameDecision === 'no') {
         pendingNameConfirmation.delete(userId);
         return {
           success: true,
@@ -2672,6 +2758,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         };
       }
 
+      // uncertain → re-ask
       return {
         success: true,
         response: `Baik, apakah benar ini dengan Bapak/Ibu ${pendingName.name}? Balas YA atau BUKAN ya.`,
@@ -2682,7 +2769,16 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     const lastPromptedName = extractNameFromAssistantPrompt(getLastAssistantMessage(resolvedHistory));
     if (lastPromptedName) {
-      if (isConfirmationResponse(message)) {
+      // Use micro LLM for name confirmation via history (fallback to regex)
+      let histNameDecision: string;
+      try {
+        const histNameResult = await classifyConfirmation(message.trim());
+        histNameDecision = histNameResult?.decision === 'CONFIRM' ? 'yes' : histNameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
+      } catch {
+        histNameDecision = isConfirmationResponse(message) ? 'yes' : isNegativeConfirmation(message) ? 'no' : 'uncertain';
+      }
+
+      if (histNameDecision === 'yes') {
         logger.info('🧭 [UnifiedProcessor] Name confirmation via history', {
           userId,
           name: lastPromptedName,
@@ -2697,7 +2793,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         };
       }
 
-      if (isNegativeConfirmation(message)) {
+      if (histNameDecision === 'no') {
         return {
           success: true,
           response: 'Mohon maaf, boleh kami tahu nama yang benar?',
@@ -2705,6 +2801,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
       }
+      // uncertain → fall through to normal processing
     }
 
     // Step 2.2: Check pending online service form offer
@@ -2715,7 +2812,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
       const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
 
-      if (isLikelyConfirm || isConfirmationResponse(message) || wantsFormLink) {
+      if (isLikelyConfirm || wantsFormLink) {
         clearPendingServiceFormOffer(userId);
         const llmLike = {
           intent: 'CREATE_SERVICE_REQUEST',
@@ -2735,7 +2832,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         };
       }
 
-      if (isLikelyReject || isNegativeConfirmation(message)) {
+      if (isLikelyReject) {
         clearPendingServiceFormOffer(userId);
         return {
           success: true,
@@ -2847,12 +2944,15 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
           alamat: extractedAddr,
         });
         
+        // If current message also has a photo, accumulate it
+        if (mediaUrl) addPendingPhoto(userId, mediaUrl);
+        
         const complaintResult = await handleComplaintCreation(
           userId, 
           channel === 'webchat' ? 'webchat' : 'whatsapp', 
           llmLike, 
           message, 
-          pendingAddr.foto_url
+          undefined // Photos tracked in pendingPhotos cache
         );
         
         return {
@@ -2880,12 +2980,15 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
           alamat: message.trim(),
         });
         
+        // If current message also has a photo, accumulate it
+        if (mediaUrl) addPendingPhoto(userId, mediaUrl);
+        
         const complaintResult = await handleComplaintCreation(
           userId, 
           channel === 'webchat' ? 'webchat' : 'whatsapp', 
           llmLike, 
           message, 
-          pendingAddr.foto_url
+          undefined // Photos tracked in pendingPhotos cache
         );
         
         return {
@@ -2950,7 +3053,7 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
             pendingComplaint.channel, 
             llmLike, 
             message, 
-            pendingComplaint.foto_url
+            undefined // Photos tracked in pendingPhotos cache
           );
           
           return {
@@ -3003,7 +3106,7 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
             pendingComplaint.channel, 
             llmLike, 
             message, 
-            pendingComplaint.foto_url
+            undefined // Photos tracked in pendingPhotos cache
           );
           
           return {
@@ -3024,10 +3127,46 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
       }
     }
 
+    // Step 2.08: Photo-only message during active complaint flow
+    // If user sends a photo with no meaningful text while we're collecting complaint data,
+    // accumulate the photo and acknowledge it without disrupting the flow.
+    if (mediaUrl && message.trim().length < 5) {
+      const hasActiveComplaintFlow = pendingAddressRequest.get(userId) || pendingAddressConfirmation.get(userId) || pendingComplaintData.get(userId);
+      if (hasActiveComplaintFlow) {
+        const photoCount = getPendingPhotoCount(userId);
+        if (photoCount >= MAX_PHOTOS_PER_COMPLAINT) {
+          return {
+            success: true,
+            response: `Maaf Pak/Bu, maksimal ${MAX_PHOTOS_PER_COMPLAINT} foto per laporan. Foto sebelumnya sudah kami simpan. Silakan lanjutkan menjawab pertanyaan kami.`,
+            intent: 'CREATE_COMPLAINT',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          };
+        }
+        addPendingPhoto(userId, mediaUrl);
+        const newCount = getPendingPhotoCount(userId);
+        const remaining = MAX_PHOTOS_PER_COMPLAINT - newCount;
+        return {
+          success: true,
+          response: `✅ Foto ke-${newCount} sudah kami terima.${remaining > 0 ? ` Anda masih bisa mengirim ${remaining} foto lagi.` : ' Batas foto sudah tercapai.'} Silakan lanjutkan menjawab pertanyaan sebelumnya ya Pak/Bu.`,
+          intent: 'CREATE_COMPLAINT',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        };
+      }
+    }
+
     // Step 2.1: Check pending cancel confirmation
     const pendingCancel = pendingCancelConfirmation.get(userId);
     if (pendingCancel) {
-      if (isConfirmationResponse(message)) {
+      // Use micro LLM for confirmation classification (fallback to regex if LLM fails)
+      let cancelDecision: string;
+      try {
+        const cancelResult = await classifyConfirmation(message.trim());
+        cancelDecision = cancelResult?.decision === 'CONFIRM' ? 'yes' : cancelResult?.decision === 'REJECT' ? 'no' : 'uncertain';
+      } catch {
+        cancelDecision = isConfirmationResponse(message) ? 'yes' : isNegativeConfirmation(message) ? 'no' : 'uncertain';
+      }
+
+      if (cancelDecision === 'yes') {
         clearPendingCancelConfirmation(userId);
         if (pendingCancel.type === 'laporan') {
           const result = await cancelComplaint(pendingCancel.id, buildChannelParams(channel, userId), pendingCancel.reason);
@@ -3052,16 +3191,17 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
         };
       }
 
-      if (isNegativeConfirmation(message)) {
+      if (cancelDecision === 'no') {
         clearPendingCancelConfirmation(userId);
         return {
           success: true,
-          response: 'Baik Pak/Bu, pembatalan saya batalkan. Ada yang bisa kami bantu lagi?',
+          response: 'Baik Pak/Bu, pembatalan dibatalkan. Ada yang bisa kami bantu lagi?',
           intent: 'QUESTION',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
       }
 
+      // uncertain — ask again
       return {
         success: true,
         response: 'Mohon konfirmasi ya Pak/Bu. Balas "YA" untuk melanjutkan pembatalan, atau "TIDAK" untuk membatalkan.',
@@ -3086,13 +3226,9 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
 
     const optimization = preProcessMessage(message, userId, historyString, templateContext);
 
-    // NOTE: Fast-path intent classification removed - all intent detection via Micro NLU
-    // The previous fastIntent-based status check is now handled by Micro NLU in Step 6
-    
-    // Step 2.6: Check if we can use fast path (skip LLM)
-    // Fast path is only for greetings/thanks - everything else goes through NLU
-    const shouldBypassFastPath = /(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message);
-    if (!shouldBypassFastPath && shouldUseFastPath(optimization, !!pendingConfirm)) {
+    // NOTE: Fast-path intent classification removed - all intent detection via NLU LLM
+    // shouldUseFastPath currently always returns false; kept for potential future cache optimization
+    if (shouldUseFastPath(optimization, !!pendingConfirm)) {
       const fastResult = buildFastPathResponse(optimization, startTime);
       if (fastResult) {
         logger.info('⚡ [UnifiedProcessor] Using fast path', {
@@ -3207,17 +3343,41 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     }
 
     // Step 7: Build context
+    // Determine prompt focus based on conversation state to reduce token usage
+    let promptFocus: PromptFocus = 'full';
+    const fsmState = conversationCtx.fsmState;
+    const currentIntent = conversationCtx.currentIntent;
+    
+    if (fsmState === 'COLLECTING_COMPLAINT_DATA' || fsmState === 'CONFIRMING_COMPLAINT' || fsmState === 'AWAITING_ADDRESS_DETAIL') {
+      promptFocus = 'complaint';
+    } else if (fsmState === 'COLLECTING_SERVICE_REQUEST_DATA' || fsmState === 'CONFIRMING_SERVICE_REQUEST') {
+      promptFocus = 'service';
+    } else if (fsmState === 'CANCELLATION_FLOW') {
+      promptFocus = 'cancel';
+    } else if (fsmState === 'CHECK_STATUS_FLOW') {
+      promptFocus = 'status';
+    } else if (currentIntent === 'KNOWLEDGE_QUERY') {
+      promptFocus = 'knowledge';
+    } else if (currentIntent === 'CREATE_COMPLAINT' || currentIntent === 'UPDATE_COMPLAINT') {
+      promptFocus = 'complaint';
+    } else if (currentIntent === 'SERVICE_INFO' || currentIntent === 'CREATE_SERVICE_REQUEST' || currentIntent === 'UPDATE_SERVICE_REQUEST') {
+      promptFocus = 'service';
+    }
+    // else 'full' — IDLE state with no prior context
+    
+    logger.debug('[UnifiedProcessor] Adaptive prompt focus', { userId, fsmState, currentIntent, promptFocus });
+
     let systemPrompt: string;
     let messageCount: number;
     
     if (channel === 'webchat' && resolvedHistory) {
-      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, resolvedHistory, preloadedRAGContext, resolvedVillageId);
+      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, resolvedHistory, preloadedRAGContext, resolvedVillageId, promptFocus);
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     } else {
       // Build complaint categories text for WhatsApp channel too
       const complaintCategoriesText = await buildComplaintCategoriesText(resolvedVillageId);
-      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText);
+      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText, promptFocus);
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     }
@@ -3347,39 +3507,9 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     let finalReplyText = effectiveLlmResponse.reply_text;
     let guidanceText = effectiveLlmResponse.guidance_text || '';
 
-    // Deterministic override: office profile questions (address/hours/contact) must NEVER
-    // turn into service request links or other hallucinated outputs.
-    const isOfficeInfoQuestion = /(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message);
-    const hasTrackingId = /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(message);
-    const looksLikeInfoQuestion = /(\?|\b(apa|bagaimana|gimana|cara|syarat|format|status|cek\s+status|berkas|dokumen|panduan|sop|alur|notifikasi|checklist)\b)/i.test(message);
-    const looksLikeCreateService = /\b(ajukan|buat|bikin|minta)\b.*\b(surat|izin|layanan)\b/i.test(message);
-    if (isOfficeInfoQuestion) {
-      effectiveLlmResponse.intent = 'KNOWLEDGE_QUERY';
-      finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
-    } else if (looksLikeInfoQuestion && !hasTrackingId && !looksLikeCreateService) {
-      // Ground informational Q&A (format/syarat/status/SOP/panduan/etc) via KB/RAG, even if LLM intent is misclassified.
-      effectiveLlmResponse.intent = 'KNOWLEDGE_QUERY';
-      if (preloadedRAGContext && typeof preloadedRAGContext === 'object' && preloadedRAGContext.contextString) {
-        effectiveLlmResponse.fields = {
-          ...(effectiveLlmResponse.fields || {}),
-          _preloaded_knowledge_context: preloadedRAGContext.contextString,
-        } as any;
-      }
-      finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
-    } else {
-
-    const infoInquiryPattern = /(\?|\b(syarat|persyaratan|berkas|dokumen|info|informasi|biaya|lama|alur|panduan|cara|prosedur)\b)/i;
-    const applyVerbPattern = /\b(ajukan|daftar|buat|bikin|mohon|minta|proses|kirim|ajukan|submit)\b/i;
-    const serviceNounPattern = /\b(layanan|surat|izin|permohonan|pelayanan)\b/i;
-    const wantsFormPattern = /\b(link|tautan|formulir|form|online)\b/i;
-
-    const looksLikeInquiry = infoInquiryPattern.test(message);
-    const explicitApplyRequest = (applyVerbPattern.test(message) || wantsFormPattern.test(message)) && serviceNounPattern.test(message);
-
-    if (effectiveLlmResponse.intent === 'CREATE_SERVICE_REQUEST' && looksLikeInquiry && !explicitApplyRequest) {
-      effectiveLlmResponse.intent = 'SERVICE_INFO';
-    }
-
+    // Service slug resolution: when LLM detected SERVICE_INFO/CREATE_SERVICE_REQUEST
+    // but didn't extract the specific service_slug, try to resolve it from the message
+    // using micro-LLM semantic search (NOT pattern matching)
     if (['SERVICE_INFO', 'CREATE_SERVICE_REQUEST'].includes(effectiveLlmResponse.intent)) {
       const hasServiceRef = !!(effectiveLlmResponse.fields?.service_slug || effectiveLlmResponse.fields?.service_id);
       if (!hasServiceRef) {
@@ -3392,10 +3522,6 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
             service_name: resolved.name || existingServiceName,
           } as any;
         }
-      }
-
-      if (effectiveLlmResponse.intent === 'SERVICE_INFO' && explicitApplyRequest && effectiveLlmResponse.fields?.service_slug) {
-        effectiveLlmResponse.intent = 'CREATE_SERVICE_REQUEST';
       }
     }
     
@@ -3410,11 +3536,7 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
         break;
       
       case 'SERVICE_INFO':
-        // Guard: office profile questions sometimes get misclassified as SERVICE_INFO.
-        // Route them to the grounded knowledge handler to avoid form-link hallucinations.
-        if (/(alamat|lokasi|maps|google\s*maps|jam|operasional|buka|tutup|nomor|kontak|telepon|telp|hubungi)/i.test(message)) {
-          finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
-        } else {
+        {
           const serviceInfoResult = normalizeHandlerResult(await handleServiceInfo(userId, effectiveLlmResponse));
           finalReplyText = serviceInfoResult.replyText;
           if (serviceInfoResult.guidanceText && !guidanceText) {
@@ -3466,7 +3588,6 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
       default:
         // GREETING and other intents - use LLM reply as-is
         break;
-    }
     }
     
     // Step 10: Validate response
@@ -3570,11 +3691,22 @@ async function handlePendingAddressConfirmation(
   channel: 'whatsapp' | 'webchat',
   mediaUrl?: string
 ): Promise<string | null> {
-  // Check if user confirmed
-  if (isConfirmationResponse(message)) {
+  // Use micro LLM for confirmation classification (fallback to regex if LLM fails)
+  let addrDecision: string;
+  try {
+    const addrResult = await classifyConfirmation(message.trim());
+    addrDecision = addrResult?.decision === 'CONFIRM' ? 'yes' : addrResult?.decision === 'REJECT' ? 'no' : 'uncertain';
+  } catch {
+    addrDecision = isConfirmationResponse(message) ? 'yes' : 'uncertain';
+  }
+
+  if (addrDecision === 'yes') {
     logger.info('User confirmed vague address, creating complaint', { userId, alamat: pendingConfirm.alamat });
     
     pendingAddressConfirmation.delete(userId);
+    // If current message also has a photo, accumulate it
+    if (mediaUrl) addPendingPhoto(userId, mediaUrl);
+    const combinedFotoUrl = consumePendingPhotos(userId);
     
     const complaintId = await createComplaint({
       wa_user_id: channel === 'webchat' ? undefined : userId,
@@ -3585,17 +3717,24 @@ async function handlePendingAddressConfirmation(
       village_id: pendingConfirm.village_id,
       alamat: pendingConfirm.alamat,
       rt_rw: '',
-      foto_url: pendingConfirm.foto_url,
+      foto_url: combinedFotoUrl,
     });
     
     if (!complaintId) {
       throw new Error('Failed to create complaint after address confirmation');
     }
     
-    const withPhotoNote = pendingConfirm.foto_url ? '\nFoto pendukung sudah kami terima.' : '';
+    const photoCount = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
+    const withPhotoNote = photoCount > 0 ? `\n${photoCount > 1 ? photoCount + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
     return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${withPhotoNote}`;
   }
   
+  if (addrDecision === 'no') {
+    logger.info('User rejected vague address, asking for specific address', { userId });
+    pendingAddressConfirmation.delete(userId);
+    return 'Baik Pak/Bu, silakan berikan alamat yang lebih spesifik (contoh: Jl. Merdeka No. 5 RT 02/RW 03), atau ketik "batal" jika ingin membatalkan laporan.';
+  }
+
   // Check if user provides more specific address
   const looksLikeAddress = [
     /jalan/i, /jln/i, /jl\./i, /\bno\b/i, /nomor/i, /\brt\b/i, /\brw\b/i, /gang/i, /gg\./i, /komplek/i, /perumahan/i, /blok/i,
@@ -3605,6 +3744,9 @@ async function handlePendingAddressConfirmation(
     logger.info('User provided more specific address', { userId, newAlamat: message });
     
     pendingAddressConfirmation.delete(userId);
+    // If current message also has a photo, accumulate it
+    if (mediaUrl) addPendingPhoto(userId, mediaUrl);
+    const combinedFotoUrl = consumePendingPhotos(userId);
     
     const complaintId = await createComplaint({
       wa_user_id: channel === 'webchat' ? undefined : userId,
@@ -3615,14 +3757,15 @@ async function handlePendingAddressConfirmation(
       village_id: pendingConfirm.village_id,
       alamat: message.trim(),
       rt_rw: '',
-      foto_url: pendingConfirm.foto_url,
+      foto_url: combinedFotoUrl,
     });
     
     if (!complaintId) {
       throw new Error('Failed to create complaint with updated address');
     }
     
-    const withPhotoNote = pendingConfirm.foto_url ? '\nFoto pendukung sudah kami terima.' : '';
+    const photoCount2 = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
+    const withPhotoNote = photoCount2 > 0 ? `\n${photoCount2 > 1 ? photoCount2 + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
     return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${withPhotoNote}`;
   }
   
@@ -3640,12 +3783,15 @@ async function buildContextWithHistory(
   currentMessage: string,
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
   ragContext?: RAGContext | string,
-  villageId?: string
+  villageId?: string,
+  promptFocus?: string
 ): Promise<{ systemPrompt: string; messageCount: number }> {
   const promptModule = await import('../prompts/system-prompt') as any;
-  const getPrompt = typeof promptModule.getFullSystemPrompt === 'function'
-    ? promptModule.getFullSystemPrompt
-    : () => promptModule.SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
+  const getPrompt = promptFocus && typeof promptModule.getAdaptiveSystemPrompt === 'function'
+    ? () => promptModule.getAdaptiveSystemPrompt(promptFocus)
+    : typeof promptModule.getFullSystemPrompt === 'function'
+      ? promptModule.getFullSystemPrompt
+      : () => promptModule.SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
 
   const conversationHistory = history
     .slice(-10)

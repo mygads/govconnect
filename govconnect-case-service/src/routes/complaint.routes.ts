@@ -28,11 +28,34 @@ router.post(
     body('deskripsi').isLength({ min: 10, max: 1000 }).withMessage('Deskripsi 10-1000 chars'),
     body('alamat').optional().isString(),
     body('rt_rw').optional().isString(),
-    // Allow URLs with localhost for development, or any http/https URL
+    // Allow single URL or JSON array of URLs (for multi-photo support, max 5)
     body('foto_url').optional().custom((value) => {
       if (!value) return true;
-      // Accept http:// or https:// URLs (including localhost for dev)
       const urlPattern = /^https?:\/\/.+/i;
+      
+      // Check if it's a JSON array string (multi-photo)
+      if (value.startsWith('[')) {
+        try {
+          const urls = JSON.parse(value);
+          if (!Array.isArray(urls) || urls.length === 0) {
+            throw new Error('foto_url JSON array must not be empty');
+          }
+          if (urls.length > 5) {
+            throw new Error('foto_url supports max 5 photos');
+          }
+          for (const url of urls) {
+            if (typeof url !== 'string' || !urlPattern.test(url)) {
+              throw new Error('Each foto_url in array must be a valid URL');
+            }
+          }
+          return true;
+        } catch (e: any) {
+          if (e.message.includes('foto_url')) throw e;
+          throw new Error('foto_url must be a valid URL or JSON array of URLs');
+        }
+      }
+      
+      // Single URL (backward compatible)
       if (!urlPattern.test(value)) {
         throw new Error('foto_url must be a valid URL');
       }
