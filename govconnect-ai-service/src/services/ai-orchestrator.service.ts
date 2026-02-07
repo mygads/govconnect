@@ -28,7 +28,7 @@ export {
   handleServiceInfo,
   handleServiceRequestCreation,
   handleStatusCheck,
-  handleCancellation,
+  handleCancellationRequest,
   handleHistory,
   handleKnowledgeQuery,
   validateResponse,

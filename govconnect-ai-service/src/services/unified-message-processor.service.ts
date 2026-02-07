@@ -280,6 +280,55 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
+// ==================== SHARED CONSTANTS ====================
+
+/**
+ * Complaint description keywords — used to filter complaint words out of address text.
+ * Shared across isVagueAddress, extractAddressFromMessage, extractAddressFromComplaintMessage.
+ */
+const COMPLAINT_KEYWORD_PATTERN = /menumpuk|tumpukan|berserakan|rusak|berlubang|retak|mati|padam|tidak\s+menyala|tersumbat|banjir|genangan|tumbang|roboh|patah|menghalangi|menutupi|sampah|limbah|kotoran|macet|kendala/gi;
+
+/**
+ * Landmark patterns — used to validate addresses containing well-known place types.
+ * These are universal Indonesian place types that don't change per village.
+ */
+const LANDMARK_PATTERNS: RegExp[] = [
+  /masjid\s+\w+/i, /mushola/i, /gereja\s+\w+/i,
+  /sekolah\s+\w+/i, /sd\s*n?\s*\d*/i, /smp\s*n?\s*\d*/i, /sma\s*n?\s*\d*/i, /smk\s*n?\s*\d*/i,
+  /warung\s+\w+/i, /toko\s+\w+/i, /pasar\s+\w+/i, /kantor\s+\w+/i,
+  /puskesmas/i, /posyandu/i, /lapangan\s+\w*/i, /taman\s+\w+/i,
+  /makam\s+\w*/i, /kuburan/i, /pertigaan/i, /perempatan/i, /bundaran/i,
+  /jembatan\s+\w*/i, /terminal\s+\w*/i, /stasiun\s+\w*/i,
+  /bank\s+\w+/i, /atm\s+\w*/i, /alfamart/i, /indomaret/i, /spbu/i,
+];
+
+/**
+ * Status display maps — shared across complaint and service request formatters.
+ */
+const COMPLAINT_STATUS_MAP: Record<string, { emoji: string; text: string; description: string }> = {
+  'OPEN': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
+  'PROCESS': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
+  'DONE': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
+  'CANCELED': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
+  'REJECT': { emoji: '❌', text: 'REJECT', description: 'Laporan ditolak oleh petugas desa.' },
+  'baru': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
+  'proses': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
+  'selesai': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
+  'dibatalkan': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
+};
+
+const SERVICE_STATUS_MAP: Record<string, { emoji: string; text: string }> = {
+  'OPEN': { emoji: '🆕', text: 'OPEN' },
+  'PROCESS': { emoji: '🔄', text: 'PROCESS' },
+  'DONE': { emoji: '✅', text: 'DONE' },
+  'CANCELED': { emoji: '🔴', text: 'CANCELED' },
+  'REJECT': { emoji: '❌', text: 'REJECT' },
+  'baru': { emoji: '🆕', text: 'OPEN' },
+  'proses': { emoji: '🔄', text: 'PROCESS' },
+  'selesai': { emoji: '✅', text: 'DONE' },
+  'dibatalkan': { emoji: '🔴', text: 'CANCELED' },
+};
+
 // ==================== RESPONSE VALIDATION ====================
 
 /**
@@ -336,32 +385,14 @@ export function isVagueAddress(alamat: string): boolean {
   const cleanAlamat = alamat.toLowerCase().trim();
   
   // If the "address" contains complaint keywords, it's not an address at all!
-  const complaintKeywords = [
-    /menumpuk/i, /tumpukan/i, /berserakan/i,
-    /rusak/i, /berlubang/i, /retak/i,
-    /mati/i, /padam/i, /tidak\s+menyala/i,
-    /tersumbat/i, /banjir/i, /genangan/i,
-    /tumbang/i, /roboh/i, /patah/i,
-    /menghalangi/i, /menutupi/i,
-    /sampah/i, /limbah/i, /kotoran/i,
-  ];
-  
-  if (complaintKeywords.some(pattern => pattern.test(cleanAlamat))) {
+  if (COMPLAINT_KEYWORD_PATTERN.test(cleanAlamat)) {
     return true;
   }
+  // Reset regex lastIndex since we use /g flag
+  COMPLAINT_KEYWORD_PATTERN.lastIndex = 0;
   
   // Check if address contains a LANDMARK - if so, it's VALID!
-  const landmarkPatterns = [
-    /masjid\s+\w+/i, /mushola/i, /gereja\s+\w+/i,
-    /sekolah\s+\w+/i, /sd\s*n?\s*\d*/i, /smp\s*n?\s*\d*/i, /sma\s*n?\s*\d*/i, /smk\s*n?\s*\d*/i,
-    /warung\s+\w+/i, /toko\s+\w+/i, /pasar\s+\w+/i, /kantor\s+\w+/i,
-    /puskesmas/i, /posyandu/i, /lapangan\s+\w*/i, /taman\s+\w+/i,
-    /makam\s+\w*/i, /kuburan/i, /pertigaan/i, /perempatan/i, /bundaran/i,
-    /jembatan\s+\w*/i, /terminal\s+\w*/i, /stasiun\s+\w*/i,
-    /bank\s+\w+/i, /atm\s+\w*/i, /alfamart/i, /indomaret/i, /spbu/i,
-  ];
-  
-  if (landmarkPatterns.some(pattern => pattern.test(cleanAlamat))) {
+  if (LANDMARK_PATTERNS.some(pattern => pattern.test(cleanAlamat))) {
     return false;
   }
   
@@ -449,6 +480,8 @@ export function detectEmergencyComplaint(deskripsi: string, currentMessage: stri
   
   const hasEmergencyKeyword = emergencyKeywords.some(pattern => pattern.test(combinedText));
   
+  // Fallback heuristic for high-priority categories when DB is_urgent is unavailable.
+  // The primary is_urgent check happens via complaintTypeConfig.is_urgent from DB.
   const highPriorityCategories = ['pohon_tumbang', 'banjir', 'fasilitas_rusak'];
   const isHighPriorityCategory = highPriorityCategories.includes(kategori);
   
@@ -564,7 +597,8 @@ async function buildComplaintCategoriesText(villageId?: string): Promise<string>
   try {
     const types = await getCachedComplaintTypes(villageId);
     if (!types || types.length === 0) {
-      return 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
+      logger.warn('No complaint types from DB, using generic fallback');
+      return 'lainnya (kategori pengaduan akan disesuaikan oleh sistem berdasarkan deskripsi)';
     }
 
     // Group by category
@@ -591,7 +625,7 @@ async function buildComplaintCategoriesText(villageId?: string): Promise<string>
     return lines.join('\n');
   } catch (error: any) {
     logger.warn('Failed to build complaint categories text', { error: error.message });
-    return 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
+    return 'lainnya (kategori pengaduan akan disesuaikan oleh sistem berdasarkan deskripsi)';
   }
 }
 
@@ -731,17 +765,10 @@ export async function handleComplaintCreation(
   
   // Fallback: if deskripsi is empty but we have kategori, generate default description
   if (!deskripsi && kategori) {
-    const kategoriMap: Record<string, string> = {
-      'jalan_rusak': 'Laporan jalan rusak',
-      'lampu_mati': 'Laporan lampu jalan mati',
-      'sampah': 'Laporan masalah sampah',
-      'drainase': 'Laporan saluran air tersumbat',
-      'pohon_tumbang': 'Laporan pohon tumbang',
-      'fasilitas_rusak': 'Laporan fasilitas umum rusak',
-      'banjir': 'Laporan banjir',
-      'lainnya': 'Laporan lainnya',
-    };
-    deskripsi = kategoriMap[kategori] || `Laporan ${String(kategori).replace(/_/g, ' ')}`;
+    // Use DB-backed complaint type name if available, otherwise title-case the kategori
+    deskripsi = complaintTypeConfig?.name
+      ? `Laporan ${complaintTypeConfig.name}`
+      : `Laporan ${String(kategori).replace(/_/g, ' ')}`;
   }
   
   // Ensure deskripsi is at least 10 characters (Case Service requirement)
@@ -786,16 +813,9 @@ export async function handleComplaintCreation(
         foto_url: undefined, // Photos tracked in pendingPhotos cache
       });
       
-      const kategoriLabelMap: Record<string, string> = {
-        jalan_rusak: 'jalan rusak',
-        lampu_mati: 'lampu jalan yang mati',
-        sampah: 'penumpukan sampah',
-        drainase: 'selokan/saluran air yang tersumbat',
-        banjir: 'banjir',
-        pohon_tumbang: 'pohon tumbang',
-        fasilitas_rusak: 'fasilitas umum yang rusak',
-      };
-      const kategoriLabel = kategoriLabelMap[kategori] || kategori.replace(/_/g, ' ');
+      // Use DB-backed complaint type name if available
+      const kategoriLabel = complaintTypeConfig?.name?.toLowerCase()
+        || kategori.replace(/_/g, ' ');
       const isEmergencyNeedAddress = detectEmergencyComplaint(deskripsi || '', currentMessage, kategori);
       
       logger.info('Storing pending address request', { userId, kategori, deskripsi });
@@ -962,6 +982,7 @@ export async function handleComplaintCreation(
       };
       
       const fallbackCategory = emergencyContactMap[kategori] || 'Darurat';
+      logger.warn('Emergency contact fallback map used (no config)', { kategori, fallbackCategory });
       const contacts = await getImportantContacts(villageId, fallbackCategory, undefined);
       
       // If no contacts found with specific category, try generic emergency
@@ -1421,15 +1442,15 @@ export async function handleServiceRequestEditLink(userId: string, channel: Chan
  * IMPROVED: More strict validation to avoid false positives
  */
 function extractAddressFromMessage(currentMessage: string, userId: string): string {
-  const complaintKeywords = /menumpuk|tumpukan|rusak|berlubang|mati|padam|tersumbat|banjir|tumbang|roboh|sampah|limbah|genangan|menghalangi/i;
-  
   // Clean message: remove common prefixes like "alamatnya", "alamat saya", etc.
   let cleanedMessage = currentMessage.trim()
     .replace(/^(alamatnya|alamat\s*nya|alamat\s*saya|alamat\s*di|itu\s*alamat|ini\s*alamat)\s*/i, '')
     .replace(/^(di|ke)\s+/i, '')
     .trim();
   
-  const isJustAddress = !complaintKeywords.test(cleanedMessage) && cleanedMessage.length < 100;
+  // Use shared complaint keyword pattern to check if message is complaint, not address
+  const isJustAddress = !COMPLAINT_KEYWORD_PATTERN.test(cleanedMessage) && cleanedMessage.length < 100;
+  COMPLAINT_KEYWORD_PATTERN.lastIndex = 0;
   
   // IMPROVED: Reject ONLY if the entire message is just these words (no address content)
   const pureNonAddressPhrases = /^(itu|ini|ya|iya|yak|yup|oke|ok|siap|sudah|cukup|proses|lanjut|hadeh|aduh|wah|ah|oh|hm|hmm|tolol|bodoh|goblok|bego|tidak|bukan|bener|benar|salah|gimana|bagaimana|apa|kenapa|mengapa|kapan|dimana|siapa|mana|sini|situ|sana|gitu|gini|dong|deh|sih|nih|tuh|lah|kan|kah|pun|juga|jadi|terus|lalu|kemudian|makanya|soalnya|karena|sebab)$/i;
@@ -1455,8 +1476,8 @@ function extractAddressFromMessage(currentMessage: string, userId: string): stri
     
     const informalAddressPatterns = [
       /dekat\s+\w{3,}|depan\s+\w{3,}|belakang\s+\w{3,}|samping\s+\w{3,}/i,
-      /margahayu|cimahi|bandung|jakarta|surabaya|semarang/i,
-      /masjid\s+\w+|mushola\s+\w+|sekolah\s+\w+|kantor\s+\w+|warung\s+\w+|toko\s+\w+/i,
+      // Use shared landmark patterns to detect informal addresses with place references
+      ...LANDMARK_PATTERNS.slice(0, 6), // masjid, mushola, gereja, sekolah, sd/smp/sma/smk
     ];
     
     const looksLikeInformalAddress = informalAddressPatterns.some(pattern => pattern.test(cleanedMessage));
@@ -1483,8 +1504,8 @@ function extractAddressFromMessage(currentMessage: string, userId: string): stri
  */
 function extractAddressFromComplaintMessage(message: string, userId: string): string {
   // Pattern 1: "di depan/dekat/belakang/samping [landmark]"
-  // This catches: "di depan sman 1 margahayu", "di dekat masjid al-ikhlas"
-  const landmarkPatterns = [
+  // This catches: "di depan sman 1", "di dekat masjid al-ikhlas"
+  const extractionLandmarkPatterns = [
     /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+((?:sman?|smpn?|sdn?|smkn?|sd|smp|sma|smk)\s*\d*\s*\w+(?:\s+\w+)?)/i,
     /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(masjid\s+[\w\s]+)/i,
     /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(gereja\s+[\w\s]+)/i,
@@ -1493,10 +1514,9 @@ function extractAddressFromComplaintMessage(message: string, userId: string): st
     /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(terminal\s+[\w\s]+)/i,
     /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(stasiun\s+[\w\s]+)/i,
     /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(puskesmas\s*[\w\s]*)/i,
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+([\w\s]+(?:margahayu|bandung|cimahi|jakarta|surabaya|semarang))/i,
   ];
   
-  for (const pattern of landmarkPatterns) {
+  for (const pattern of extractionLandmarkPatterns) {
     const match = message.match(pattern);
     if (match && match[1]) {
       // Include the preposition (depan/dekat/etc) for context
@@ -1526,23 +1546,20 @@ function extractAddressFromComplaintMessage(message: string, userId: string): st
     }
   }
   
-  // Pattern 3: Generic "di [location]" with city names
-  const cityPatterns = [
-    /(?:di|lokasi)\s+([\w\s]+(?:bandung|jakarta|surabaya|semarang|cimahi|margahayu))/i,
-  ];
+  // Pattern 3: Generic "di [location]" with known place identifiers
+  const genericLocationPattern = /(?:di|lokasi)\s+([\w\s]{5,})/i;
   
-  for (const pattern of cityPatterns) {
-    const match = message.match(pattern);
-    if (match && match[1]) {
-      const alamat = match[1].trim();
-      // Filter out complaint keywords from the extracted address
-      const complaintKeywords = /menumpuk|tumpukan|rusak|berlubang|mati|padam|tersumbat|banjir|tumbang|roboh|sampah|limbah|genangan|menghalangi|macet|kendala/gi;
-      const cleanAlamat = alamat.replace(complaintKeywords, '').trim();
-      
-      if (cleanAlamat.length >= 5 && /[a-zA-Z]/.test(cleanAlamat)) {
-        logger.info('Smart alamat detection: city-based address extracted', { userId, detectedAlamat: cleanAlamat });
-        return cleanAlamat;
-      }
+  const genericMatch = message.match(genericLocationPattern);
+  if (genericMatch && genericMatch[1]) {
+    const alamat = genericMatch[1].trim();
+    // Filter out complaint keywords from the extracted address using shared constant
+    const cleanAlamat = alamat.replace(COMPLAINT_KEYWORD_PATTERN, '').trim();
+    COMPLAINT_KEYWORD_PATTERN.lastIndex = 0;
+    
+    // Only accept if remainder looks like an address (has landmark or location words)
+    if (cleanAlamat.length >= 5 && /[a-zA-Z]/.test(cleanAlamat) && LANDMARK_PATTERNS.some(p => p.test(cleanAlamat))) {
+      logger.info('Smart alamat detection: location-based address extracted', { userId, detectedAlamat: cleanAlamat });
+      return cleanAlamat;
     }
   }
   
@@ -1635,26 +1652,6 @@ export async function handleStatusCheck(userId: string, channel: ChannelType, ll
   return 'Mohon maaf Pak/Bu, ada kendala saat mengecek status. Silakan coba lagi.';
 }
 
-/**
- * Handle cancellation of complaints
- */
-export async function handleCancellation(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
-  const { complaint_id, cancel_reason } = llmResponse.fields;
-  
-  if (!complaint_id) {
-    if (llmResponse.reply_text) return llmResponse.reply_text;
-    return 'Untuk membatalkan laporan, mohon sertakan nomornya ya Pak/Bu (contoh: LAP-20251201-001).';
-  }
-  
-  const result = await cancelComplaint(complaint_id, buildChannelParams(channel, userId), cancel_reason);
-  
-  if (!result.success) {
-    return buildCancelErrorResponse('laporan', complaint_id, result.error, result.message);
-  }
-  
-  return buildCancelSuccessResponse('laporan', complaint_id, result.message);
-}
-
 export async function handleCancellationRequest(
   userId: string,
   type: 'laporan' | 'layanan',
@@ -1679,25 +1676,6 @@ export async function handleCancellationRequest(
 
   const label = type === 'laporan' ? 'laporan' : 'layanan';
   return `Apakah Bapak/Ibu yakin ingin membatalkan ${label} ${targetId}?\nBalas YA untuk konfirmasi.`;
-}
-
-/**
- * Handle cancellation of service requests
- */
-export async function handleServiceRequestCancellation(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
-  const { request_number, cancel_reason } = llmResponse.fields || {};
-
-  if (!request_number) {
-    return llmResponse.reply_text || 'Untuk membatalkan layanan, mohon sertakan nomornya ya Pak/Bu (contoh: LAY-20251201-001).';
-  }
-
-  const result = await cancelServiceRequest(request_number, buildChannelParams(channel, userId), cancel_reason);
-
-  if (!result.success) {
-    return buildCancelErrorResponse('layanan', request_number, result.error, result.message);
-  }
-
-  return buildCancelSuccessResponse('layanan', request_number, result.message);
 }
 
 /**
@@ -2279,19 +2257,7 @@ function buildNaturalStatusResponse(complaint: any): string {
  * Now includes result file and description from admin
  */
 function buildNaturalServiceStatusResponse(serviceRequest: any): string {
-  const statusMap: Record<string, { emoji: string; text: string }> = {
-    'OPEN': { emoji: '🆕', text: 'OPEN' },
-    'PROCESS': { emoji: '🔄', text: 'PROCESS' },
-    'DONE': { emoji: '✅', text: 'DONE' },
-    'CANCELED': { emoji: '🔴', text: 'CANCELED' },
-    'REJECT': { emoji: '❌', text: 'REJECT' },
-    'baru': { emoji: '🆕', text: 'OPEN' },
-    'proses': { emoji: '🔄', text: 'PROCESS' },
-    'selesai': { emoji: '✅', text: 'DONE' },
-    'dibatalkan': { emoji: '🔴', text: 'CANCELED' },
-  };
-
-  const statusInfo = statusMap[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
+  const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
 
   let message = `Baik Pak/Bu, status layanan ${serviceRequest.request_number} saat ini adalah ${statusInfo.text}.`;
 
@@ -2366,18 +2332,7 @@ function buildComplaintDetailResponse(complaint: any): string {
 }
 
 function buildServiceRequestDetailResponse(serviceRequest: any, requirementDefs: ServiceRequirementDefinition[] = []): string {
-  const statusMap: Record<string, { emoji: string; text: string }> = {
-    'OPEN': { emoji: '🆕', text: 'OPEN' },
-    'PROCESS': { emoji: '🔄', text: 'PROCESS' },
-    'DONE': { emoji: '✅', text: 'DONE' },
-    'CANCELED': { emoji: '🔴', text: 'CANCELED' },
-    'REJECT': { emoji: '❌', text: 'REJECT' },
-    'baru': { emoji: '🆕', text: 'OPEN' },
-    'proses': { emoji: '🔄', text: 'PROCESS' },
-    'selesai': { emoji: '✅', text: 'DONE' },
-    'dibatalkan': { emoji: '🔴', text: 'CANCELED' },
-  };
-  const statusInfo = statusMap[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
+  const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
   const createdAt = toSafeDate(serviceRequest.created_at || serviceRequest.createdAt);
   const updatedAt = toSafeDate(serviceRequest.updated_at || serviceRequest.updatedAt);
   const adminNoteSection = buildAdminNoteSection(serviceRequest.status, serviceRequest.admin_notes);
@@ -2484,33 +2439,20 @@ function formatRelativeTime(date: Date): string {
   return `${diffDays} hari yang lalu`;
 }
 
+/**
+ * Format kategori for display. Uses simple title-case transformation
+ * since the kategori value itself comes from DB via LLM matching.
+ */
 function formatKategori(kategori: string): string {
-  const kategoriMap: Record<string, string> = {
-    'jalan_rusak': 'Jalan Rusak',
-    'lampu_mati': 'Lampu Jalan Mati',
-    'sampah': 'Masalah Sampah',
-    'drainase': 'Saluran Air/Drainase',
-    'pohon_tumbang': 'Pohon Tumbang',
-    'fasilitas_rusak': 'Fasilitas Umum Rusak',
-    'banjir': 'Banjir',
-    'lainnya': 'Lainnya',
-  };
-  return kategoriMap[kategori] || kategori.replace(/_/g, ' ');
+  if (!kategori) return 'Lainnya';
+  // Convert snake_case to Title Case
+  return kategori
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
 }
 
 function getStatusInfo(status: string): { emoji: string; text: string; description: string } {
-  const statusMap: Record<string, { emoji: string; text: string; description: string }> = {
-    'OPEN': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
-    'PROCESS': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
-    'DONE': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
-    'CANCELED': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
-    'REJECT': { emoji: '❌', text: 'REJECT', description: 'Laporan ditolak oleh petugas desa.' },
-    'baru': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
-    'proses': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
-    'selesai': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
-    'dibatalkan': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
-  };
-  return statusMap[status] || { emoji: '📋', text: status, description: 'Silakan tunggu update selanjutnya ya!' };
+  return COMPLAINT_STATUS_MAP[status] || { emoji: '📋', text: status, description: 'Silakan tunggu update selanjutnya ya!' };
 }
 
 function buildAdminNoteSection(status: string, adminNotes?: string): string {
@@ -2582,20 +2524,15 @@ function buildHistoryResponse(items: HistoryItem[], total: number): string {
 
 function getStatusLabel(status: string): string {
   const normalized = String(status || '').toUpperCase();
-  const map: Record<string, string> = {
-    OPEN: 'OPEN',
-    PROCESS: 'PROCESS',
-    DONE: 'SELESAI',
-    CANCELED: 'DIBATALKAN',
-    REJECT: 'DITOLAK',
-    BARU: 'OPEN',
-    PENDING: 'OPEN',
-    PROSES: 'PROCESS',
-    SELESAI: 'SELESAI',
-    DIBATALKAN: 'DIBATALKAN',
-    DITOLAK: 'DITOLAK',
+  // Use shared COMPLAINT_STATUS_MAP for consistent status labels
+  const entry = COMPLAINT_STATUS_MAP[status] || COMPLAINT_STATUS_MAP[normalized];
+  if (entry) return entry.text;
+  // Fallback for Indonesian status names
+  const fallback: Record<string, string> = {
+    BARU: 'OPEN', PENDING: 'OPEN', PROSES: 'PROCESS',
+    SELESAI: 'SELESAI', DIBATALKAN: 'DIBATALKAN', DITOLAK: 'DITOLAK',
   };
-  return map[normalized] || normalized || 'UNKNOWN';
+  return fallback[normalized] || normalized || 'UNKNOWN';
 }
 
 
@@ -3947,7 +3884,7 @@ export default {
   handleServiceInfo,
   handleServiceRequestCreation,
   handleStatusCheck,
-  handleCancellation,
+  handleCancellationRequest,
   handleHistory,
   handleKnowledgeQuery,
   validateResponse,
