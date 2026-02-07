@@ -147,52 +147,6 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   ],
 };
 
-// ==================== KNOWLEDGE TEMPLATES ====================
-
-export const JAM_BUKA_RESPONSE = `Mohon maaf Pak/Bu, informasi jam operasional belum tersedia.
-Silakan datang langsung ke kantor desa untuk informasi lebih lanjut.`;
-
-export const LOKASI_RESPONSE = `Mohon maaf Pak/Bu, informasi alamat kantor belum tersedia.
-Silakan datang langsung ke kantor desa untuk informasi lebih lanjut.`;
-
-export const LAYANAN_RESPONSE = `📋 *Layanan yang Tersedia*
-
-📄 *Surat Keterangan:*
-• SKD - Surat Keterangan Domisili
-• SKTM - Surat Keterangan Tidak Mampu
-• SKU - Surat Keterangan Usaha
-
-📝 *Surat Pengantar:*
-• SPKTP - Pengantar KTP
-• SPKK - Pengantar Kartu Keluarga
-• SPSKCK - Pengantar SKCK
-• SPAKTA - Pengantar Akta
-
-🎉 *Izin:*
-• IKR - Izin Keramaian
-
-💡 Ketik nama layanan untuk info lebih lanjut!`;
-
-export const SYARAT_UMUM_RESPONSE = `📋 *Syarat Umum Pengurusan Surat*
-
-Dokumen yang biasanya diperlukan:
-1. KTP asli + fotokopi
-2. Kartu Keluarga (KK) asli + fotokopi
-3. Surat Pengantar RT/RW
-
-💡 Syarat tambahan tergantung jenis surat.
-Ketik nama surat untuk info lengkap (contoh: "syarat SKD")`;
-
-export const BIAYA_RESPONSE = `💰 *Informasi Biaya*
-
-✅ Semua layanan surat di Kelurahan *GRATIS* (tidak dipungut biaya).
-
-⚠️ Jika ada yang meminta bayaran, silakan laporkan ke:
-📞 Hotline: 0800-123-4567
-📧 Email: pengaduan@kelurahan.go.id
-
-💡 Biaya hanya untuk legalisir di Kecamatan/Notaris.`;
-
 // ==================== MISSING FIELD PROMPTS ====================
 
 export const MISSING_FIELD_PROMPTS: Record<string, string[]> = {
@@ -287,11 +241,6 @@ export default {
   CONFIRMATION_RESPONSES,
   REJECTION_RESPONSES,
   FALLBACK_TEMPLATES,
-  JAM_BUKA_RESPONSE,
-  LOKASI_RESPONSE,
-  LAYANAN_RESPONSE,
-  SYARAT_UMUM_RESPONSE,
-  BIAYA_RESPONSE,
   MISSING_FIELD_PROMPTS,
   ERROR_TEMPLATES,
   getRandomItem,

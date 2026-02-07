@@ -1936,13 +1936,11 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
     }
 
     const tryAnswerFromServiceCatalog = async (): Promise<string | null> => {
-      const queryLower = normalizedQuery;
-      const isServiceRelated = /(kartu\s+keluarga|\bkk\b|kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el|pergantian|ganti\s+kk|kk\s+baru|kk\s+hilang|kk\s+rusak|surat\s+keterangan|surat\s+pengantar|izin\s+keramaian|domisili|tidak\s+mampu|usaha|dukcapil)/i.test(queryLower);
-      if (!isServiceRelated) return null;
-
       try {
         const { config } = await import('../config/env');
         const axios = (await import('axios')).default;
+        const { matchServiceSlug } = await import('./micro-llm-matcher.service');
+
         const response = await axios.get(`${config.caseServiceUrl}/services`, {
           params: { village_id: villageId },
           headers: { 'x-internal-api-key': config.internalApiKey },
@@ -1952,41 +1950,28 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
         const services = Array.isArray(response.data?.data) ? response.data.data : [];
         if (!services.length) return null;
 
-        const scoreService = (service: any): number => {
-          if (service?.is_active === false) return 0;
-          const name = String(service?.name || '').toLowerCase();
-          const desc = String(service?.description || '').toLowerCase();
-          const slug = String(service?.slug || '').toLowerCase();
-          let score = 0;
-          if (/(kartu\s+keluarga|\bkk\b)/i.test(queryLower)) {
-            if (/(kartu\s+keluarga|\bkk\b)/i.test(name)) score += 5;
-            if (/(kartu\s+keluarga|\bkk\b)/i.test(desc)) score += 3;
-            if (/(kartu\s+keluarga|\bkk\b)/i.test(slug)) score += 3;
-          }
-          if (/(kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el)/i.test(queryLower)) {
-            if (/(kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el)/i.test(name)) score += 5;
-            if (/(kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el)/i.test(desc)) score += 3;
-            if (/(kartu\s+tanda\s+penduduk|\bktp\b|e-?ktp|ktp-?el)/i.test(slug)) score += 3;
-          }
-          if (/(pergantian|ganti|hilang|rusak|barcode|baru)/i.test(queryLower)) {
-            if (/(pergantian|ganti|hilang|rusak|barcode|baru)/i.test(name)) score += 3;
-            if (/(pergantian|ganti|hilang|rusak|barcode|baru)/i.test(desc)) score += 2;
-            if (/(pergantian|ganti|hilang|rusak|barcode|baru)/i.test(slug)) score += 2;
-          }
-          if (/(surat\s+keterangan\s+usaha|\bsku\b)/i.test(queryLower)) {
-            if (/\bsku\b|surat\s+keterangan\s+usaha/i.test(name)) score += 5;
-            if (/\bsku\b|surat\s+keterangan\s+usaha/i.test(desc)) score += 3;
-          }
-          return score;
-        };
+        // Use micro LLM to match the query to the best service (zero hardcoded keywords)
+        const activeServices = services.filter((s: any) => s.is_active !== false);
+        if (!activeServices.length) return null;
 
-        const ranked = services
-          .map((s: any) => ({ s, score: scoreService(s) }))
-          .filter((x: any) => x.score > 0)
-          .sort((a: any, b: any) => b.score - a.score);
+        const match = await matchServiceSlug(
+          normalizedQuery,
+          activeServices.map((s: any) => ({
+            slug: s.slug || '',
+            name: s.name || '',
+            description: s.description || '',
+          })),
+          { village_id: villageId }
+        );
 
-        const best = ranked[0]?.s;
+        if (!match?.matched_slug || match.confidence < 0.5) return null;
+        const best = activeServices.find((s: any) => s.slug === match.matched_slug);
         if (!best) return null;
+
+        logger.info('[KnowledgeQuery] Micro LLM matched service from catalog', {
+          userId, query: normalizedQuery, matched_slug: match.matched_slug,
+          confidence: match.confidence, reason: match.reason,
+        });
 
         const requirements = best.requirements || [];
         let requirementsList = '';
@@ -2098,18 +2083,43 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       return null;
     };
 
-    const appendServiceOfferIfNeeded = (text: string): string => {
+    const appendServiceOfferIfNeeded = async (text: string): Promise<string> => {
       if (!text) return text;
+      // Already contains an offer
       if (/(ajukan|mengajukan|link|formulir)/i.test(text)) return text;
-      const looksLikeServiceQuery = /(sku|skd|sktm|spktp|spkk|spskck|spakta|ikr|surat\s+keterangan\s+usaha|surat\s+keterangan\s+domisili|surat\s+keterangan\s+tidak\s+mampu|surat\s+pengantar|izin\s+keramaian)/i.test(normalizedQuery);
-      if (!looksLikeServiceQuery) return text;
-      return `${text}\n\nJika Bapak/Ibu ingin mengajukan layanan ini, kami bisa bantu kirimkan link pengajuan.`;
+
+      // Use micro LLM to check if the query is about a specific service
+      try {
+        const { matchServiceSlug } = await import('./micro-llm-matcher.service');
+        const { config } = await import('../config/env');
+        const axios = (await import('axios')).default;
+        const svcResp = await axios.get(`${config.caseServiceUrl}/services`, {
+          params: { village_id: villageId },
+          headers: { 'x-internal-api-key': config.internalApiKey },
+          timeout: 5000,
+        });
+        const services = Array.isArray(svcResp.data?.data) ? svcResp.data.data : [];
+        if (services.length > 0) {
+          const activeServices = services.filter((s: any) => s.is_active !== false);
+          const match = await matchServiceSlug(
+            normalizedQuery,
+            activeServices.map((s: any) => ({ slug: s.slug || '', name: s.name || '', description: s.description || '' })),
+            { village_id: villageId }
+          );
+          if (match?.matched_slug && match.confidence >= 0.5) {
+            return `${text}\n\nJika Bapak/Ibu ingin mengajukan layanan ini, kami bisa bantu kirimkan link pengajuan.`;
+          }
+        }
+      } catch {
+        // Silently skip — the offer is just a nice-to-have
+      }
+      return text;
     };
 
     // Deterministic KB extraction for anchored terms (prevents the second LLM step from omitting key lines).
     const deterministicFromContext = contextString ? tryExtractDeterministicKbAnswer(normalizedQuery, contextString) : null;
     if (deterministicFromContext) {
-      return appendServiceOfferIfNeeded(deterministicFromContext);
+      return await appendServiceOfferIfNeeded(deterministicFromContext);
     }
 
     // If RAG context misses these anchored KB terms, force a keyword-only lookup and retry deterministic extraction.
@@ -2149,7 +2159,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       return 'Maaf, terjadi kendala teknis. Silakan coba lagi dalam beberapa saat.';
     }
     
-    return appendServiceOfferIfNeeded(knowledgeResult2.response.reply_text);
+    return await appendServiceOfferIfNeeded(knowledgeResult2.response.reply_text);
   } catch (error: any) {
     logger.error('Failed to handle knowledge query', { userId, error: error.message });
     return 'Maaf, terjadi kesalahan saat mencari informasi. Mohon coba lagi dalam beberapa saat.';

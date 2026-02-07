@@ -2,12 +2,13 @@
  * Intent Patterns Constants
  * 
  * SINGLE SOURCE OF TRUTH untuk semua intent patterns.
- * Digunakan oleh:
- * - fast-intent-classifier.service.ts
- * - fallback-response.service.ts
- * - response-templates.service.ts
  * 
- * Centralized untuk menghindari duplikasi dan memudahkan maintenance.
+ * PURPOSE: These patterns are ONLY used as:
+ * 1. FALLBACK when LLM completely fails (fallback-response.service.ts)
+ * 2. Safety net for intent detection when no LLM response available
+ * 
+ * The main AI flow uses Gemini LLM for all intent classification.
+ * These patterns do NOT bypass LLM — they are the last resort.
  */
 
 // ==================== INTENT TYPES ====================
@@ -167,43 +168,6 @@ export const KNOWLEDGE_QUERY_PATTERNS = [
   /\bapa\s*saja\s*(layanan|surat)\b/i,
   /\bjenis\s*(layanan|surat)\b/i,
   /\bbisa\s*(urus|buat)\s*apa\b/i,
-];
-
-// ==================== KNOWLEDGE SUB-CATEGORY PATTERNS ====================
-
-export const KNOWLEDGE_JAM_BUKA_PATTERNS = [
-  /jam\s*(buka|operasional|kerja|pelayanan)/i,
-  /buka\s*jam\s*berapa/i,
-  /kapan\s*(buka|tutup)/i,
-  /hari\s*apa\s*(buka|libur)/i,
-];
-
-export const KNOWLEDGE_LOKASI_PATTERNS = [
-  /dimana\s*(kantor|lokasi|alamat)/i,
-  /alamat\s*(kantor|kelurahan)/i,
-  /lokasi\s*(kantor|kelurahan)/i,
-  /kantor\s*(dimana|di\s*mana)/i,
-];
-
-export const KNOWLEDGE_LAYANAN_PATTERNS = [
-  /layanan\s*(apa\s*saja|yang\s*tersedia)/i,
-  /apa\s*saja\s*(layanan|surat)/i,
-  /jenis\s*(layanan|surat)/i,
-  /bisa\s*(urus|buat)\s*apa/i,
-];
-
-export const KNOWLEDGE_SYARAT_PATTERNS = [
-  /syarat\s*(umum|pengurusan)/i,
-  /apa\s*saja\s*syarat/i,
-  /dokumen\s*apa\s*(saja|yang)/i,
-  /perlu\s*bawa\s*apa/i,
-];
-
-export const KNOWLEDGE_BIAYA_PATTERNS = [
-  /biaya|tarif|harga|bayar/i,
-  /berapa\s*(biaya|harga)/i,
-  /gratis\s*(atau|apa)/i,
-  /ada\s*biaya/i,
 ];
 
 // ==================== HELPER FUNCTIONS ====================

@@ -15,7 +15,6 @@ import logger from '../utils/logger';
 import { getCacheStats } from './response-cache.service';
 import { extractAllEntities, mergeEntities, ExtractionResult } from './entity-extractor.service';
 import { ProcessMessageInput, ProcessMessageResult } from './unified-message-processor.service';
-import { TemplateContext } from './response-templates.service';
 
 // ==================== TYPES ====================
 
@@ -63,7 +62,7 @@ export function preProcessMessage(
   message: string,
   userId: string,
   conversationHistory?: string,
-  templateContext?: TemplateContext
+  templateContext?: { villageName?: string | null; villageShortName?: string | null }
 ): OptimizationResult {
   const optimizationApplied: string[] = [];
   // Full LLM mode: no fast intent/template/cache, only entity pre-extraction.
