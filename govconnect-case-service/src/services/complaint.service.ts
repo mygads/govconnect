@@ -389,7 +389,10 @@ export async function updateComplaintStatus(
   
   // Publish event untuk notification service
   await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED, {
+    village_id: complaint.village_id,
     wa_user_id: complaint.wa_user_id,
+    channel: complaint.channel || 'WHATSAPP',
+    channel_identifier: complaint.channel_identifier || complaint.wa_user_id,
     complaint_id: complaint.complaint_id,
     status: complaint.status,
     admin_notes: complaint.admin_notes,
@@ -536,7 +539,10 @@ export async function cancelComplaint(
     
     // Publish event for notification service
     await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED, {
+      village_id: updatedComplaint.village_id,
       wa_user_id: updatedComplaint.wa_user_id,
+      channel: updatedComplaint.channel || 'WHATSAPP',
+      channel_identifier: updatedComplaint.channel_identifier || updatedComplaint.wa_user_id,
       complaint_id: updatedComplaint.complaint_id,
       status: 'CANCELED',
       admin_notes: cancelNote,

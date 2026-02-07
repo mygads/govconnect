@@ -2,13 +2,7 @@
  * Text Normalizer Service
  * 
  * SINGLE SOURCE OF TRUTH untuk normalisasi teks user input.
- * Menggabungkan typo corrections yang sebelumnya tersebar di:
- * - layer1-llm.service.ts (applyTypoCorrections)
- * - unified-message-processor.service.ts (TYPO_CORRECTIONS)
- * 
- * Digunakan oleh:
- * - two-layer-orchestrator.service.ts (WhatsApp 2-Layer)
- * - unified-message-processor.service.ts (Webchat & WhatsApp Single-Layer)
+ * Digunakan oleh unified-message-processor.service.ts
  */
 
 /**

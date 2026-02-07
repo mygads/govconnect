@@ -22,15 +22,20 @@ const channelServiceClient = createHttpClient('channel-service', {
 });
 
 /**
- * Send WhatsApp message
+ * Send WhatsApp message via channel-service
  */
 export async function sendWhatsAppMessage(data: {
-  to: string;
+  village_id?: string;
+  wa_user_id: string;
   message: string;
   mediaUrl?: string;
 }) {
   try {
-    const response = await channelServiceClient.post('/internal/send', data);
+    const response = await channelServiceClient.post('/internal/send', {
+      village_id: data.village_id,
+      wa_user_id: data.wa_user_id,
+      message: data.message,
+    });
     return response.data;
   } catch (error: any) {
     logger.error('[ChannelServiceClient] Failed to send message', { error: error.message });

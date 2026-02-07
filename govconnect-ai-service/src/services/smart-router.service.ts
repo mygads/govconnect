@@ -2,8 +2,7 @@
  * Smart Router Service
  * 
  * Analyzes message complexity for monitoring and analytics.
- * Note: Routing logic is deprecated - all messages now use NLU architecture.
- * This service is kept for complexity analysis and stats only.
+ * All messages use NLU architecture — routing logic has been removed.
  */
 
 import logger from '../utils/logger';
@@ -53,15 +52,6 @@ const COMPLEXITY_CONFIG = {
     veryLong: { max: Infinity, score: 70 },
   },
 };
-
-// Simple patterns that don't need 2-layer
-const SIMPLE_PATTERNS = [
-  /^(halo|hai|hi|hello|hey)[\s!.,]*$/i,
-  /^(selamat\s+(pagi|siang|sore|malam))[\s!.,]*$/i,
-  /^(terima\s*kasih|makasih|thanks|thx)[\s!.,]*$/i,
-  /^(oke|ok|baik|siap|ya)[\s!.,]*$/i,
-  /^(bye|dadah|sampai\s+jumpa)[\s!.,]*$/i,
-];
 
 // Transactional intents that benefit from 2-layer
 const TRANSACTIONAL_INTENTS = [
@@ -115,37 +105,6 @@ export function analyzeComplexity(
     factors,
     reasoning,
   };
-}
-
-/**
- * Quick check if message is simple (for fast path)
- */
-export function isSimpleMessage(message: string): boolean {
-  // Check against simple patterns
-  for (const pattern of SIMPLE_PATTERNS) {
-    if (pattern.test(message.trim())) {
-      return true;
-    }
-  }
-
-  // Very short messages are usually simple
-  if (message.trim().length < 15) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Route message to appropriate architecture
- */
-export function routeMessage(
-  message: string,
-  conversationHistory?: string,
-  forceArchitecture?: ArchitectureChoice
-): ArchitectureChoice {
-  // All messages now use NLU architecture
-  return 'nlu';
 }
 
 // ==================== SCORING FUNCTIONS ====================
@@ -313,8 +272,6 @@ export function resetRoutingStats(): void {
 
 export default {
   analyzeComplexity,
-  isSimpleMessage,
-  routeMessage,
   recordRouting,
   getRoutingStats,
   resetRoutingStats,

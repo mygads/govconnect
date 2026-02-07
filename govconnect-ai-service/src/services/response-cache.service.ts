@@ -354,48 +354,6 @@ export function getTopCachedQueries(limit: number = 10): Array<{ key: string; hi
     .slice(0, limit);
 }
 
-// ==================== PRE-WARM CACHE ====================
-
-/**
- * Pre-warm cache with common responses
- * Call this on service startup
- */
-export function preWarmCache(): void {
-  const commonResponses: Array<{ query: string; response: string; intent: string; guidance?: string }> = [
-    {
-      query: 'jam buka kantor kelurahan',
-      response: 'Kantor kelurahan buka:\n🕐 Senin - Jumat: 08:00 - 15:00\n🕐 Sabtu: 08:00 - 12:00\n🕐 Minggu & Libur: Tutup',
-      intent: 'KNOWLEDGE_QUERY',
-      guidance: 'Ada hal lain yang bisa kami bantu?',
-    },
-    {
-      query: 'biaya surat gratis',
-      response: 'Semua layanan surat keterangan di kelurahan GRATIS ya Kak, tidak dipungut biaya apapun 😊\n\nKalau ada yang minta bayar, itu tidak sesuai prosedur.',
-      intent: 'KNOWLEDGE_QUERY',
-    },
-    {
-      query: 'syarat buat skd',
-      response: '✅ Syarat Surat Keterangan Domisili (SKD):\n\n□ KTP asli + fotokopi 2 lembar\n□ Kartu Keluarga (KK) asli + fotokopi\n□ Surat Pengantar RT/RW (asli)\n□ Pas foto 3x4 (2 lembar)\n\n💰 Biaya: GRATIS\n⏱️ Proses: 1-2 hari kerja',
-      intent: 'KNOWLEDGE_QUERY',
-      guidance: 'Apakah Bapak/Ibu ingin mengajukan layanan ini? Pengajuan layanan WAJIB melalui form online.',
-    },
-    {
-      query: 'syarat buat sktm',
-      response: '✅ Syarat Surat Keterangan Tidak Mampu (SKTM):\n\n□ KTP asli + fotokopi\n□ Kartu Keluarga (KK) asli + fotokopi\n□ Surat Pengantar RT/RW\n□ Surat Keterangan Tidak Mampu dari RT/RW\n\n💰 Biaya: GRATIS\n⏱️ Proses: 1-2 hari kerja',
-      intent: 'KNOWLEDGE_QUERY',
-      guidance: 'Apakah Bapak/Ibu ingin mengajukan layanan ini? Pengajuan layanan WAJIB melalui form online.',
-    },
-  ];
-  
-  for (const item of commonResponses) {
-    setCachedResponse(item.query, item.response, item.intent, item.guidance);
-  }
-  
-  logger.info('[ResponseCache] Pre-warm completed', {
-    cachedCount: commonResponses.length,
-  });
-}
-
 export default {
   getCachedResponse,
   setCachedResponse,
@@ -403,5 +361,4 @@ export default {
   getCacheStats,
   clearCache,
   getTopCachedQueries,
-  preWarmCache,
 };

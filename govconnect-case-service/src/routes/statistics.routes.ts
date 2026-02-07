@@ -7,6 +7,11 @@ const router: Router = Router()
 
 router.get('/overview', async (req: Request, res: Response) => {
   try {
+    const village_id = getQuery(req, 'village_id') || undefined;
+    const complaintWhere = village_id ? { village_id } : {};
+    // ServiceRequest filters through service relation
+    const serviceWhere = village_id ? { service: { village_id } } : {};
+
     // Get complaint statistics
     const [
       totalLaporan,
@@ -16,12 +21,12 @@ router.get('/overview', async (req: Request, res: Response) => {
       laporanCanceled,
       laporanReject,
     ] = await Promise.all([
-      prisma.complaint.count(),
-      prisma.complaint.count({ where: { status: 'OPEN' } }),
-      prisma.complaint.count({ where: { status: 'PROCESS' } }),
-      prisma.complaint.count({ where: { status: 'DONE' } }),
-      prisma.complaint.count({ where: { status: 'CANCELED' } }),
-      prisma.complaint.count({ where: { status: 'REJECT' } }),
+      prisma.complaint.count({ where: { ...complaintWhere } }),
+      prisma.complaint.count({ where: { status: 'OPEN', ...complaintWhere } }),
+      prisma.complaint.count({ where: { status: 'PROCESS', ...complaintWhere } }),
+      prisma.complaint.count({ where: { status: 'DONE', ...complaintWhere } }),
+      prisma.complaint.count({ where: { status: 'CANCELED', ...complaintWhere } }),
+      prisma.complaint.count({ where: { status: 'REJECT', ...complaintWhere } }),
     ])
 
     // Get service request statistics
@@ -33,12 +38,12 @@ router.get('/overview', async (req: Request, res: Response) => {
       layananCanceled,
       layananReject,
     ] = await Promise.all([
-      prisma.serviceRequest.count(),
-      prisma.serviceRequest.count({ where: { status: 'OPEN' } }),
-      prisma.serviceRequest.count({ where: { status: 'PROCESS' } }),
-      prisma.serviceRequest.count({ where: { status: 'DONE' } }),
-      prisma.serviceRequest.count({ where: { status: 'CANCELED' } }),
-      prisma.serviceRequest.count({ where: { status: 'REJECT' } }),
+      prisma.serviceRequest.count({ where: { ...serviceWhere } }),
+      prisma.serviceRequest.count({ where: { status: 'OPEN', ...serviceWhere } }),
+      prisma.serviceRequest.count({ where: { status: 'PROCESS', ...serviceWhere } }),
+      prisma.serviceRequest.count({ where: { status: 'DONE', ...serviceWhere } }),
+      prisma.serviceRequest.count({ where: { status: 'CANCELED', ...serviceWhere } }),
+      prisma.serviceRequest.count({ where: { status: 'REJECT', ...serviceWhere } }),
     ])
 
     // Get recent activity counts
@@ -48,6 +53,7 @@ router.get('/overview', async (req: Request, res: Response) => {
     const [laporanHariIni, layananHariIni] = await Promise.all([
       prisma.complaint.count({
         where: {
+          ...complaintWhere,
           created_at: {
             gte: today,
           },
@@ -55,6 +61,7 @@ router.get('/overview', async (req: Request, res: Response) => {
       }),
       prisma.serviceRequest.count({
         where: {
+          ...serviceWhere,
           created_at: {
             gte: today,
           },
@@ -103,8 +110,10 @@ router.get('/overview', async (req: Request, res: Response) => {
 
 router.get('/by-category', async (req: Request, res: Response) => {
   try {
+    const village_id = getQuery(req, 'village_id') || undefined;
     const complaints = await prisma.complaint.groupBy({
       by: ['kategori'],
+      where: village_id ? { village_id } : undefined,
       _count: {
         kategori: true,
       },
@@ -135,15 +144,21 @@ router.get('/by-category', async (req: Request, res: Response) => {
 
 router.get('/by-status', async (req: Request, res: Response) => {
   try {
+    const village_id = getQuery(req, 'village_id') || undefined;
+    const complaintWhere = village_id ? { village_id } : undefined;
+    const serviceWhere = village_id ? { service: { village_id } } : undefined;
+
     const [complaintsByStatus, servicesByStatus] = await Promise.all([
       prisma.complaint.groupBy({
         by: ['status'],
+        where: complaintWhere,
         _count: {
           status: true,
         },
       }),
       prisma.serviceRequest.groupBy({
         by: ['status'],
+        where: serviceWhere,
         _count: {
           status: true,
         },
@@ -177,19 +192,23 @@ router.get('/by-status', async (req: Request, res: Response) => {
 router.get('/trends', async (req: Request, res: Response) => {
   try {
     const period = getQuery(req, 'period') || 'weekly' // weekly, monthly
+    const village_id = getQuery(req, 'village_id') || undefined;
     const now = new Date()
     
     // Calculate date ranges
     const daysBack = period === 'monthly' ? 365 : 84 // 12 months or 12 weeks
     const startDate = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000)
     
+    const complaintWhere: any = { created_at: { gte: startDate } };
+    const serviceWhere: any = { created_at: { gte: startDate } };
+    if (village_id) {
+      complaintWhere.village_id = village_id;
+      serviceWhere.service = { village_id };
+    }
+
     // Get all complaints in the period
     const complaints = await prisma.complaint.findMany({
-      where: {
-        created_at: {
-          gte: startDate,
-        },
-      },
+      where: complaintWhere,
       select: {
         created_at: true,
         kategori: true,
@@ -202,11 +221,7 @@ router.get('/trends', async (req: Request, res: Response) => {
 
     // Get all service requests in the period
     const services = await prisma.serviceRequest.findMany({
-      where: {
-        created_at: {
-          gte: startDate,
-        },
-      },
+      where: serviceWhere,
       select: {
         created_at: true,
         status: true,

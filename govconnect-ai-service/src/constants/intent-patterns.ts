@@ -180,21 +180,6 @@ export function matchesAnyPattern(message: string, patterns: RegExp[]): boolean 
 }
 
 /**
- * Find matching category from patterns
- */
-export function findMatchingCategory(
-  message: string, 
-  categoryPatterns: Record<string, RegExp[]>
-): string | null {
-  for (const [category, patterns] of Object.entries(categoryPatterns)) {
-    if (matchesAnyPattern(message, patterns)) {
-      return category;
-    }
-  }
-  return null;
-}
-
-/**
  * Detect intent from message using patterns
  */
 export function detectIntentFromPatterns(message: string): IntentType | null {
@@ -245,6 +230,5 @@ export default {
   HISTORY_PATTERNS,
   KNOWLEDGE_QUERY_PATTERNS,
   matchesAnyPattern,
-  findMatchingCategory,
   detectIntentFromPatterns,
 };

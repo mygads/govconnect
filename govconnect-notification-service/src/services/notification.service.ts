@@ -4,6 +4,7 @@ import { UrgentAlertEvent, ChannelType } from '../types/event.types';
 import { sendWhatsAppMessage } from '../clients/channel-service.client';
 
 interface SendNotificationParams {
+  village_id?: string;
   channel: ChannelType;
   channel_identifier: string;
   wa_user_id?: string; // Legacy support
@@ -15,7 +16,7 @@ interface SendNotificationParams {
 const ADMIN_WHATSAPP = process.env.ADMIN_WHATSAPP || '';
 
 export async function sendNotification(params: SendNotificationParams): Promise<void> {
-  const { channel, channel_identifier, wa_user_id, message, notificationType } = params;
+  const { village_id, channel, channel_identifier, wa_user_id, message, notificationType } = params;
   
   // Resolve the identifier (backward compatible)
   const resolvedIdentifier = channel_identifier || wa_user_id || '';
@@ -59,7 +60,8 @@ export async function sendNotification(params: SendNotificationParams): Promise<
   try {
     // Use circuit breaker client (already has retry logic)
     const response = await sendWhatsAppMessage({
-      to: resolvedIdentifier,
+      village_id: village_id,
+      wa_user_id: resolvedIdentifier,
       message: message,
     });
 

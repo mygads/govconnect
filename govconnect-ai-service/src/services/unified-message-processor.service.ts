@@ -44,7 +44,7 @@ import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { recordTokenUsage } from './token-usage.service';
 import { RAGContext } from '../types/embedding.types';
-import { preProcessMessage, postProcessResponse, shouldUseFastPath, buildFastPathResponse } from './ai-optimizer.service';
+import { preProcessMessage } from './ai-optimizer.service';
 import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile } from './user-profile.service';
 import { getEnhancedContext, updateContext, recordDataCollected, recordCompletedAction, getContextForLLM } from './conversation-context.service';
 import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
@@ -3180,21 +3180,6 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     }
 
     const optimization = preProcessMessage(message, userId, historyString, templateContext);
-
-    // NOTE: Fast-path intent classification removed - all intent detection via NLU LLM
-    // shouldUseFastPath currently always returns false; kept for potential future cache optimization
-    if (shouldUseFastPath(optimization, !!pendingConfirm)) {
-      const fastResult = buildFastPathResponse(optimization, startTime);
-      if (fastResult) {
-        logger.info('⚡ [UnifiedProcessor] Using fast path', {
-          userId,
-          intent: fastResult.intent,
-          usedCache: fastResult.optimization?.usedCache,
-          processingTimeMs: fastResult.metadata.processingTimeMs,
-        });
-        return fastResult;
-      }
-    }
     
     // Step 3: Sanitize and correct typos
     let sanitizedMessage = sanitizeUserInput(message);
@@ -3568,11 +3553,6 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
       collectedData: effectiveLlmResponse.fields,
       missingFields: effectiveLlmResponse.fields?.missing_info || [],
     });
-    
-    // Step 10.7: Post-process - Cache response for future use (only for cacheable intents)
-    if (['KNOWLEDGE_QUERY', 'GREETING', 'QUESTION'].includes(effectiveLlmResponse.intent)) {
-      postProcessResponse(message, finalResponse, effectiveLlmResponse.intent, finalGuidance);
-    }
     
     const processingTimeMs = Date.now() - startTime;
     

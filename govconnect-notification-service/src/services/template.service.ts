@@ -77,18 +77,16 @@ function buildNaturalStatusMessage(
   }
 }
 
+/**
+ * Convert snake_case slug to human-readable label
+ * Dynamic — no hardcoded category map needed
+ */
 function formatKategori(kategori: string): string {
-  const map: Record<string, string> = {
-    jalan_rusak: 'Jalan Rusak',
-    lampu_mati: 'Lampu Jalan Mati',
-    sampah: 'Sampah Menumpuk',
-    drainase: 'Saluran Air Tersumbat',
-    pohon_tumbang: 'Pohon Tumbang',
-    fasilitas_rusak: 'Fasilitas Umum Rusak',
-    banjir: 'Banjir',
-    lainnya: 'Lainnya'
-  };
-  return map[kategori] || kategori;
+  if (!kategori) return 'Lainnya';
+  return kategori
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 export function buildUrgentAlertMessage(data: {

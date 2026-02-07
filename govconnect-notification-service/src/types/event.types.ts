@@ -1,6 +1,7 @@
 export type ChannelType = 'WHATSAPP' | 'WEBCHAT';
 
 export interface BaseChannelEvent {
+  village_id?: string;
   channel: ChannelType;
   channel_identifier: string;
   // Legacy support - deprecated

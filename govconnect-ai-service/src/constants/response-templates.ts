@@ -224,7 +224,7 @@ export function getMissingFieldPrompt(field: string): string {
   if (prompts) {
     return getRandomItem(prompts);
   }
-  return `Boleh sebutkan ${field.replace(/_/g, ' ')} Kakak?`;
+  return `Boleh sebutkan ${field.replace(/_/g, ' ')} Bapak/Ibu?`;
 }
 
 /**

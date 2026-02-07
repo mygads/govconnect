@@ -15,10 +15,12 @@ import {
 } from '../types/event.types';
 
 // Helper to resolve channel from event (backward compatible)
-function resolveChannel(event: any): { channel: 'WHATSAPP' | 'WEBCHAT'; channel_identifier: string } {
+function resolveChannel(event: any): { village_id?: string; channel: 'WHATSAPP' | 'WEBCHAT'; channel_identifier: string } {
+  const village_id = event.village_id || undefined;
   // Prefer new channel fields
   if (event.channel && event.channel_identifier) {
     return {
+      village_id,
       channel: event.channel,
       channel_identifier: event.channel_identifier
     };
@@ -26,12 +28,14 @@ function resolveChannel(event: any): { channel: 'WHATSAPP' | 'WEBCHAT'; channel_
   // Legacy fallback: use wa_user_id as WhatsApp identifier
   if (event.wa_user_id) {
     return {
+      village_id,
       channel: 'WHATSAPP',
       channel_identifier: event.wa_user_id
     };
   }
   // Default
   return {
+    village_id,
     channel: 'WHATSAPP',
     channel_identifier: ''
   };
@@ -64,9 +68,10 @@ export async function handleEvent(routingKey: string, data: any): Promise<void> 
 }
 
 async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<void> {
-  const { channel, channel_identifier } = resolveChannel(event);
+  const { village_id, channel, channel_identifier } = resolveChannel(event);
   
   logger.info('Handling complaint created event', {
+    village_id,
     channel,
     channel_identifier,
     complaint_id: event.complaint_id
@@ -78,6 +83,7 @@ async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<voi
   });
 
   await sendNotification({
+    village_id,
     channel,
     channel_identifier,
     message,
@@ -86,9 +92,10 @@ async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<voi
 }
 
 async function handleServiceRequested(event: ServiceRequestedEvent): Promise<void> {
-  const { channel, channel_identifier } = resolveChannel(event);
+  const { village_id, channel, channel_identifier } = resolveChannel(event);
   
   logger.info('Handling service requested event', {
+    village_id,
     channel,
     channel_identifier,
     request_number: event.request_number
@@ -100,6 +107,7 @@ async function handleServiceRequested(event: ServiceRequestedEvent): Promise<voi
   });
 
   await sendNotification({
+    village_id,
     channel,
     channel_identifier,
     message,
@@ -108,9 +116,10 @@ async function handleServiceRequested(event: ServiceRequestedEvent): Promise<voi
 }
 
 async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
-  const { channel, channel_identifier } = resolveChannel(event);
+  const { village_id, channel, channel_identifier } = resolveChannel(event);
   
   logger.info('Handling status updated event', {
+    village_id,
     channel,
     channel_identifier,
     complaint_id: event.complaint_id,
@@ -118,9 +127,9 @@ async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
     status: event.status
   });
 
-  // Kirim notifikasi hanya untuk status final
-  if (!['DONE', 'CANCELED', 'REJECT'].includes(event.status)) {
-    logger.info('Skipping notification - only notify on final status', {
+  // Kirim notifikasi untuk status yang relevan (PROCESS + final statuses)
+  if (!['PROCESS', 'DONE', 'CANCELED', 'REJECT'].includes(event.status)) {
+    logger.info('Skipping notification - only notify on PROCESS and final status', {
       status: event.status,
       id: event.complaint_id || event.request_number
     });
@@ -135,6 +144,7 @@ async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
   });
 
   await sendNotification({
+    village_id,
     channel,
     channel_identifier,
     message,

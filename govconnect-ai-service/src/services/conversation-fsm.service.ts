@@ -390,7 +390,7 @@ export function getNextQuestion(userId: string): string | null {
     'deskripsi': 'Bisa jelaskan lebih detail masalahnya?',
     
     // Service request fields
-    'service_slug': 'Layanan apa yang ingin Kakak ajukan?',
+    'service_slug': 'Layanan apa yang ingin Bapak/Ibu ajukan?',
     'service_id': 'Boleh sebutkan nama layanan yang dimaksud?',
   };
   

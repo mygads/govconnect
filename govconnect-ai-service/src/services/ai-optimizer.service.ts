@@ -43,13 +43,13 @@ export interface OptimizedProcessResult extends ProcessMessageResult {
  */
 const QUICK_RESPONSES: Record<string, { response: string; guidance?: string }> = {
   'THANKS': {
-    response: 'Sama-sama Kak! 😊 Senang bisa membantu. Kalau ada yang perlu dibantu lagi, langsung chat aja ya!',
+    response: 'Sama-sama! 😊 Senang bisa membantu. Kalau ada yang perlu dibantu lagi, langsung chat aja ya!',
   },
   'CONFIRMATION': {
     response: '', // Will be handled by pending state
   },
   'REJECTION': {
-    response: 'Baik Kak, tidak masalah. Ada yang lain yang bisa saya bantu?',
+    response: 'Baik, tidak masalah. Ada yang lain yang bisa saya bantu?',
   },
 };
 
@@ -101,18 +101,6 @@ export function getQuickResponse(
   return null;
 }
 
-/**
- * Post-process and cache response if applicable
- */
-export function postProcessResponse(
-  originalMessage: string,
-  response: string,
-  intent: string,
-  guidanceText?: string
-): void {
-  return;
-}
-
 // ==================== METRICS & MONITORING ====================
 
 /**
@@ -158,57 +146,10 @@ export function enhanceLLMFields(
   return mergeEntities(llmFields, extractedEntities.entities);
 }
 
-/**
- * Determine if we should use fast path (skip full LLM processing)
- */
-export function shouldUseFastPath(
-  optimization: OptimizationResult,
-  hasPendingState: boolean
-): boolean {
-  return false;
-}
-
-/**
- * Build fast path response
- */
-export function buildFastPathResponse(
-  optimization: OptimizationResult,
-  startTime: number
-): OptimizedProcessResult | null {
-  // Return cached response
-  if (optimization.cachedResponse) {
-    return {
-      success: true,
-      response: optimization.cachedResponse.response,
-      guidanceText: optimization.cachedResponse.guidanceText,
-      intent: optimization.cachedResponse.intent,
-      metadata: {
-        processingTimeMs: Date.now() - startTime,
-        hasKnowledge: true,
-      },
-      optimization: {
-        skippedLLM: true,
-        usedCache: true,
-        fastClassified: true,
-        entitiesExtracted: optimization.extractedEntities?.extractedCount || 0,
-        savedTimeMs: 500, // Estimated LLM time saved
-      },
-    };
-  }
-  
-  // DEPRECATED: Fast intent classification removed - all intent via Micro NLU
-  // The fastIntent property is always null now
-  
-  return null;
-}
-
 export default {
   preProcessMessage,
   getQuickResponse,
-  postProcessResponse,
   getOptimizationStats,
   initializeOptimizer,
   enhanceLLMFields,
-  shouldUseFastPath,
-  buildFastPathResponse,
 };

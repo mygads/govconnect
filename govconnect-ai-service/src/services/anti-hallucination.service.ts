@@ -96,7 +96,7 @@ export function needsAntiHallucinationRetry(args: {
 }
 
 export function appendAntiHallucinationInstruction(prompt: string): string {
-  return `${prompt}\n\nKOREKSI WAJIB (ANTI-HALU):\n- Jangan menyebut jam operasional/hari kerja/pukul tertentu jika TIDAK ada di KNOWLEDGE.\n- Jangan menyebut biaya (gratis/berbayar/angka Rp) jika TIDAK ada di KNOWLEDGE.\n- JANGAN PERNAH menyebut link placeholder seperti [link formulir], [link cek status], [website], dll.\n- Jika info tidak tersedia, jawab: \"Untuk jam/biaya, saya belum dapat info pastinya. Bisa saya bantu cekkan atau Kakak bisa konfirmasi ke kantor ya.\"\n`;
+  return `${prompt}\n\nKOREKSI WAJIB (ANTI-HALU):\n- Jangan menyebut jam operasional/hari kerja/pukul tertentu jika TIDAK ada di KNOWLEDGE.\n- Jangan menyebut biaya (gratis/berbayar/angka Rp) jika TIDAK ada di KNOWLEDGE.\n- JANGAN PERNAH menyebut link placeholder seperti [link formulir], [link cek status], [website], dll.\n- Jika info tidak tersedia, jawab: "Untuk jam/biaya, saya belum dapat info pastinya. Bisa saya bantu cekkan atau Bapak/Ibu bisa konfirmasi ke kantor ya."\n`;
 }
 
 /**

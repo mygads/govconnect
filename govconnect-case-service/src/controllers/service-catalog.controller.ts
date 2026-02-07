@@ -460,8 +460,25 @@ export async function handleUpdateServiceRequestStatus(req: Request, res: Respon
         result_file_url: result_file_url ?? undefined,
         result_file_name: result_file_name ?? undefined,
         result_description: result_description ?? undefined,
-      }
+      },
+      include: { service: true },
     });
+
+    // Publish status update event for notification service
+    if (normalizedStatus) {
+      publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED, {
+        village_id: data.service?.village_id,
+        wa_user_id: data.wa_user_id,
+        channel: data.channel || 'WHATSAPP',
+        channel_identifier: data.channel_identifier || data.wa_user_id,
+        request_number: data.request_number,
+        status: normalizedStatus,
+        admin_notes: admin_notes ?? undefined,
+      }).catch((err: any) => {
+        logger.warn('Failed to publish status.updated event', { error: err.message });
+      });
+    }
+
     return res.json({ data });
   } catch (error: any) {
     logger.error('Update service request status error', { error: error.message });

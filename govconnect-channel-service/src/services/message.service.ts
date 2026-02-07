@@ -48,7 +48,7 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
   });
 
   // Enforce FIFO
-  await enforeFIFO(villageId, channel, data.channel_identifier);
+  await enforceFIFO(villageId, channel, data.channel_identifier);
 
   logger.info('Incoming message saved', { id: message.id });
   return message;
@@ -77,7 +77,7 @@ export async function saveOutgoingMessage(
   });
 
   // Enforce FIFO
-  await enforeFIFO(villageId, channel, data.channel_identifier);
+  await enforceFIFO(villageId, channel, data.channel_identifier);
 
   logger.info('Outgoing message saved', { id: message.id });
   return message;
@@ -86,7 +86,7 @@ export async function saveOutgoingMessage(
 /**
  * Maintain maximum 30 messages per user (FIFO)
  */
-async function enforeFIFO(village_id: string, channel: 'WHATSAPP' | 'WEBCHAT', channel_identifier: string): Promise<void> {
+async function enforceFIFO(village_id: string, channel: 'WHATSAPP' | 'WEBCHAT', channel_identifier: string): Promise<void> {
   const count = await prisma.message.count({
     where: { village_id, channel, channel_identifier },
   });
