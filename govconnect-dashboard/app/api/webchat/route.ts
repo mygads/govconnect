@@ -58,11 +58,16 @@ export async function POST(request: NextRequest) {
 
     const aiData = await aiResponse.json();
 
+    // During takeover, AI returns empty response (intent: TAKEOVER).
+    // We must preserve empty string — do NOT replace with fallback text.
+    const responseText = aiData.response ?? aiData.message ?? '';
+
     return NextResponse.json({
       success: true,
-      response: aiData.response || aiData.message || 'Terima kasih atas pesan Anda.',
+      response: responseText,
       guidanceText: aiData.guidanceText || '',
       metadata: aiData.metadata,
+      intent: aiData.metadata?.intent,
     });
 
   } catch (error: any) {

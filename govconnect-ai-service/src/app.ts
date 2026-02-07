@@ -33,6 +33,17 @@ import axios from 'axios';
 import { config } from './config/env';
 import { getParam, getQuery } from './utils/http';
 import { runGoldenSetEvaluation, getGoldenSetSummary } from './services/golden-set-eval.service';
+import {
+  getUsageByPeriod,
+  getUsageByModel,
+  getUsageByVillage,
+  getLayerBreakdown,
+  getAvgTokensPerChat,
+  getResponseCountByVillage,
+  getUsageByVillageAndModel,
+  getUsageByPeriodAndLayer,
+  getTokenUsageSummary,
+} from './services/token-usage.service';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -435,6 +446,146 @@ app.post('/stats/analytics/fix', (req: Request, res: Response) => {
       error: 'Failed to fix analytics',
       message: error.message,
     });
+  }
+});
+
+// ===========================================
+// AI Token Usage Endpoints (real Gemini usageMetadata)
+
+// GET /stats/token-usage/summary — overview card data
+app.get('/stats/token-usage/summary', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const summary = await getTokenUsageSummary(filters);
+    res.json(summary);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get token usage summary', message: error.message });
+  }
+});
+
+// GET /stats/token-usage/by-period?period=day|week|month
+app.get('/stats/token-usage/by-period', async (req: Request, res: Response) => {
+  try {
+    const period = (getQuery(req, 'period') || 'day') as 'day' | 'week' | 'month';
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      model: getQuery(req, 'model'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getUsageByPeriod(period, filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get usage by period', message: error.message });
+  }
+});
+
+// GET /stats/token-usage/by-period-layer?period=day|week|month (stacked chart)
+app.get('/stats/token-usage/by-period-layer', async (req: Request, res: Response) => {
+  try {
+    const period = (getQuery(req, 'period') || 'day') as 'day' | 'week' | 'month';
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getUsageByPeriodAndLayer(period, filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get usage by period and layer', message: error.message });
+  }
+});
+
+// GET /stats/token-usage/by-model
+app.get('/stats/token-usage/by-model', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getUsageByModel(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get usage by model', message: error.message });
+  }
+});
+
+// GET /stats/token-usage/by-village
+app.get('/stats/token-usage/by-village', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      model: getQuery(req, 'model'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getUsageByVillage(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get usage by village', message: error.message });
+  }
+});
+
+// GET /stats/token-usage/layer-breakdown — micro vs full NLU detail
+app.get('/stats/token-usage/layer-breakdown', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getLayerBreakdown(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get layer breakdown', message: error.message });
+  }
+});
+
+// GET /stats/token-usage/avg-per-chat — average input/output per main_chat call
+app.get('/stats/token-usage/avg-per-chat', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getAvgTokensPerChat(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get avg tokens per chat', message: error.message });
+  }
+});
+
+// GET /stats/token-usage/responses-by-village — AI response count per village (main_chat only)
+app.get('/stats/token-usage/responses-by-village', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getResponseCountByVillage(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get response count by village', message: error.message });
+  }
+});
+
+// GET /stats/token-usage/village-model-detail — per village + model breakdown
+app.get('/stats/token-usage/village-model-detail', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getUsageByVillageAndModel(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get village model detail', message: error.message });
   }
 });
 

@@ -285,6 +285,12 @@ async function callGeminiWithModel(
     const result = await model.generateContent(systemPrompt);
     const responseText = result.response.text();
     
+    // Extract actual token usage from Gemini API response
+    const usageMetadata = result.response.usageMetadata;
+    const inputTokens = usageMetadata?.promptTokenCount ?? 0;
+    const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
+    const totalTokens = usageMetadata?.totalTokenCount ?? (inputTokens + outputTokens);
+    
     const endTime = Date.now();
     const durationMs = endTime - startTime;
     
@@ -446,6 +452,9 @@ async function callGeminiWithModel(
       endTime,
       durationMs,
       model: modelName,
+      inputTokens,
+      outputTokens,
+      totalTokens,
     };
     
     logger.info('✅ Gemini response parsed successfully', {
@@ -453,6 +462,9 @@ async function callGeminiWithModel(
       intent: validatedResponse.intent,
       hasFields: Object.keys(validatedResponse.fields).length > 0,
       durationMs,
+      inputTokens,
+      outputTokens,
+      totalTokens,
     });
     
     return {

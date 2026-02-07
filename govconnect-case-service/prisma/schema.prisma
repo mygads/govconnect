@@ -27,6 +27,8 @@ model Complaint {
   foto_url     String?
   is_urgent    Boolean  @default(false)
   require_address Boolean @default(false)
+  reporter_name  String?  // Nama pelapor
+  reporter_phone String?  // Nomor telepon pelapor
   village_id   String?
   status       String   @default("OPEN") // OPEN, PROCESS, DONE, CANCELED, REJECT
   admin_notes  String?  @db.Text

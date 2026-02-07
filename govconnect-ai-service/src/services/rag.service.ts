@@ -112,99 +112,95 @@ function classifyQueryIntent(query: string): 'skip' | 'required' | 'optional' {
 }
 
 /**
- * ==================== QUERY EXPANSION ====================
- * Indonesian synonym mappings for better retrieval
+ * ==================== QUERY EXPANSION (Micro LLM) ====================
+ * Uses a lightweight Gemini model to expand user queries with relevant
+ * Indonesian synonyms/terms for better document retrieval.
+ *
+ * Unlike a static synonym map, the LLM understands context, slang,
+ * regional words, and abbreviations naturally.
  */
-const SYNONYM_MAP: Record<string, string[]> = {
-  // Waktu & Jadwal
-  'jam buka': ['waktu operasional', 'jadwal kerja', 'jam kerja', 'jam pelayanan', 'jam operasi'],
-  'jam tutup': ['waktu tutup', 'selesai pelayanan', 'jam pulang'],
-  'buka': ['operasional', 'beroperasi', 'melayani', 'aktif'],
-  'tutup': ['libur', 'tidak buka', 'tidak operasional'],
-  'jadwal': ['waktu', 'jam', 'schedule', 'waktu pelayanan'],
-  'hari kerja': ['hari aktif', 'hari pelayanan', 'senin sampai jumat'],
-  'libur': ['hari libur', 'hari off', 'tutup', 'tidak beroperasi'],
-  
-  // Lokasi & Tempat
-  'kantor': ['gedung', 'balai', 'tempat', 'lokasi', 'ruang'],
-  'alamat': ['lokasi', 'tempat', 'posisi', 'letak', 'dimana'],
-  'kelurahan': ['kantor kelurahan', 'lurah', 'pemerintah kelurahan'],
-  'kecamatan': ['kantor kecamatan', 'camat'],
-  'dimana': ['lokasi', 'tempat', 'letak', 'posisi'],
-  
-  // Dokumen & Surat
-  'surat': ['dokumen', 'berkas', 'formulir', 'form'],
-  'domisili': ['tempat tinggal', 'alamat', 'kediaman', 'tinggal'],
-  'ktp': ['kartu tanda penduduk', 'identitas', 'kartu identitas'],
-  'kk': ['kartu keluarga', 'data keluarga'],
-  'akta': ['surat keterangan', 'dokumen resmi'],
-  'pengantar': ['surat pengantar', 'rekomendasi', 'referensi'],
-  'izin': ['perizinan', 'permohonan izin', 'surat izin'],
-  
-  // Prosedur & Cara
-  'cara': ['bagaimana', 'proses', 'prosedur', 'langkah', 'tahapan', 'alur'],
-  'syarat': ['persyaratan', 'ketentuan', 'dokumen yang diperlukan', 'kelengkapan'],
-  'proses': ['prosedur', 'tahapan', 'langkah-langkah', 'alur'],
-  'daftar': ['mendaftar', 'registrasi', 'pendaftaran'],
-  'buat': ['membuat', 'mengurus', 'mengajukan', 'pembuatan'],
-  
-  // Biaya & Bayar
-  'biaya': ['tarif', 'harga', 'bayar', 'ongkos', 'fee'],
-  'gratis': ['tanpa biaya', 'tidak bayar', 'free', 'bebas biaya'],
-  'bayar': ['membayar', 'pembayaran', 'biaya'],
-  
-  // Kontak & Komunikasi
-  'telepon': ['nomor telepon', 'telp', 'hp', 'nomor hp', 'kontak'],
-  'hubungi': ['kontak', 'telepon', 'call', 'menghubungi'],
-  'whatsapp': ['wa', 'nomor wa', 'chat'],
-  'email': ['surel', 'alamat email', 'e-mail'],
-  
-  // Layanan
-  'layanan': ['pelayanan', 'jasa', 'service', 'bantuan'],
-  'pengaduan': ['laporan', 'keluhan', 'komplain', 'aduan'],
-  'bantuan': ['pertolongan', 'layanan', 'dukungan', 'support'],
-  
-  // Waktu tunggu
-  'berapa lama': ['durasi', 'waktu proses', 'estimasi waktu'],
-  'cepat': ['segera', 'kilat', 'express'],
-  'lama': ['durasi', 'waktu', 'berapa hari'],
-};
+
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { config } from '../config/env';
+import { extractAndRecord } from './token-usage.service';
+
+const EXPAND_MODELS = (() => {
+  const raw = (process.env.MICRO_NLU_MODELS || '').trim();
+  if (!raw) return ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
+  const models = raw.split(',').map(m => m.trim()).filter(Boolean);
+  return models.length ? models : ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
+})();
+
+const EXPAND_PROMPT = `Kamu adalah query expander untuk pencarian dokumen layanan pemerintah Indonesia.
+
+TUGAS:
+Diberikan QUERY dari warga, tambahkan 3-5 kata/frasa sinonim yang relevan untuk memperluas pencarian dokumen.
+
+ATURAN:
+- Pahami konteks dan maksud query (singkatan, slang, bahasa daerah).
+- Tambahkan sinonim yang relevan dalam bahasa Indonesia.
+- JANGAN ubah query asli, hanya tambahkan kata-kata relevan di akhir.
+- Output langsung teks query yang sudah di-expand (BUKAN JSON).
+
+CONTOH:
+Input: "cara bikin KTP"
+Output: cara bikin KTP kartu tanda penduduk identitas pembuatan prosedur persyaratan
+
+Input: "jam buka kelurahan"
+Output: jam buka kelurahan waktu operasional jadwal kerja pelayanan kantor
+
+QUERY:
+{query}`;
 
 /**
- * Expand query dengan sinonim untuk meningkatkan recall
- * 
- * @param query - Original user query
- * @returns Expanded query with synonyms
+ * Expand query using micro LLM for better retrieval recall.
+ * Falls back to original query if LLM fails.
  */
-export function expandQuery(query: string): string {
-  const queryLower = query.toLowerCase();
-  let expanded = query;
-  const addedTerms: string[] = [];
-  
-  for (const [term, synonyms] of Object.entries(SYNONYM_MAP)) {
-    if (queryLower.includes(term)) {
-      // Add synonyms that aren't already in the query
-      for (const syn of synonyms) {
-        if (!queryLower.includes(syn.toLowerCase()) && !addedTerms.includes(syn)) {
-          addedTerms.push(syn);
-        }
+export async function expandQuery(query: string): Promise<string> {
+  if (!config.geminiApiKey || !query.trim()) return query;
+
+  const prompt = EXPAND_PROMPT.replace('{query}', query);
+
+  for (const modelName of EXPAND_MODELS) {
+    try {
+      const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 150,
+        },
+      });
+
+      const startMs = Date.now();
+      const result = await model.generateContent(prompt);
+      const durationMs = Date.now() - startMs;
+      const expanded = result.response.text().trim();
+
+      // Record token usage
+      extractAndRecord(result, modelName, 'rag_expand', 'rag_query_expand', {
+        success: true,
+        duration_ms: durationMs,
+      });
+
+      if (expanded && expanded.length > query.length) {
+        logger.debug('Query expanded via micro LLM', {
+          original: query,
+          expanded: expanded.substring(0, 100),
+          model: modelName,
+        });
+        return expanded;
       }
+    } catch (error: any) {
+      logger.warn('Query expansion micro LLM failed, trying next model', {
+        model: modelName,
+        error: error.message,
+      });
     }
   }
-  
-  if (addedTerms.length > 0) {
-    // Limit expansion to prevent query from getting too long
-    const limitedTerms = addedTerms.slice(0, 5);
-    expanded = query + ' ' + limitedTerms.join(' ');
-    
-    logger.debug('Query expanded', {
-      original: query,
-      addedTerms: limitedTerms,
-      expandedLength: expanded.length,
-    });
-  }
-  
-  return expanded;
+
+  // Fallback: return original query if all models fail
+  return query;
 }
 
 /**
@@ -265,7 +261,7 @@ export async function retrieveContext(
 
   try {
     // Step 1: Expand query with synonyms for better recall
-    const expandedQuery = useQueryExpansion ? expandQuery(query) : query;
+    const expandedQuery = useQueryExpansion ? await expandQuery(query) : query;
     
     let filteredResults: VectorSearchResult[];
     

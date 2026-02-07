@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, KeyboardEvent } from "react";
+import { useState, useRef, useEffect, KeyboardEvent, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MessageCircle,
@@ -17,12 +17,129 @@ import {
   Bot,
   User,
   Trash2,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLiveChat } from "@/hooks/use-live-chat";
 import { ChatMessage } from "@/lib/live-chat-types";
 import Image from "next/image";
+
+// ==================== LINKIFY HELPER ====================
+
+/**
+ * Parse message text and split into segments of plain text and links.
+ * Detects:
+ * - URLs (http/https)
+ * - wa.me links (treated as WhatsApp contact)
+ * - Phone numbers (08xx, 628xx, +628xx formats)
+ */
+interface MessageSegment {
+  type: 'text' | 'url' | 'phone';
+  value: string;
+  /** Display label for the segment */
+  label?: string;
+}
+
+function parseMessageSegments(text: string): MessageSegment[] {
+  // Combined regex: URLs (incl wa.me) | Phone numbers
+  const linkRegex = /(https?:\/\/[^\s<>]+)|((?:\+62|62|0)8\d[\d\s-]{6,12}\d)/gi;
+  const segments: MessageSegment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = linkRegex.exec(text)) !== null) {
+    // Add preceding text
+    if (match.index > lastIndex) {
+      segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+    }
+
+    if (match[1]) {
+      // URL match
+      const url = match[1];
+      // Check if it's a wa.me link (WhatsApp contact)
+      const waMatch = url.match(/wa\.me\/(\d+)/);
+      if (waMatch) {
+        const phone = waMatch[1];
+        const displayPhone = phone.startsWith('62') ? `+${phone}` : phone;
+        segments.push({ type: 'phone', value: url, label: displayPhone });
+      } else {
+        // Regular URL - try to extract label from context (e.g. "Link Formulir Layanan:\nhttps://...")
+        segments.push({ type: 'url', value: url });
+      }
+    } else if (match[2]) {
+      // Phone number match
+      const raw = match[2].replace(/[\s-]/g, '');
+      let normalized = raw;
+      if (raw.startsWith('0')) normalized = `62${raw.slice(1)}`;
+      else if (raw.startsWith('+')) normalized = raw.slice(1);
+      segments.push({
+        type: 'phone',
+        value: `https://wa.me/${normalized}`,
+        label: match[2].trim(),
+      });
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text
+  if (lastIndex < text.length) {
+    segments.push({ type: 'text', value: text.slice(lastIndex) });
+  }
+
+  return segments;
+}
+
+/**
+ * Render message content with auto-linkified URLs and phone numbers
+ */
+function RichMessageContent({ content }: { content: string }) {
+  const segments = useMemo(() => parseMessageSegments(content), [content]);
+  
+  // If no links found, render as plain text
+  if (segments.length === 1 && segments[0].type === 'text') {
+    return <>{content}</>;
+  }
+
+  return (
+    <>
+      {segments.map((seg, i) => {
+        if (seg.type === 'text') {
+          return <span key={i}>{seg.value}</span>;
+        }
+        
+        if (seg.type === 'phone') {
+          return (
+            <a
+              key={i}
+              href={seg.value}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline underline-offset-2 hover:text-primary/80 inline-flex items-center gap-0.5 break-all"
+            >
+              {seg.label || seg.value}
+            </a>
+          );
+        }
+        
+        // URL
+        return (
+          <a
+            key={i}
+            href={seg.value}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2 hover:text-primary/80 inline-flex items-center gap-0.5 break-all"
+          >
+            {seg.label || 'Buka Link'}
+            <ExternalLink className="w-3 h-3 inline shrink-0" />
+          </a>
+        );
+      })}
+    </>
+  );
+}
 
 // Message status icon component
 function MessageStatus({ status }: { status: ChatMessage["status"] }) {
@@ -118,7 +235,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
           }`}
         >
           <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
-            {message.content}
+            <RichMessageContent content={message.content} />
           </p>
         </div>
         

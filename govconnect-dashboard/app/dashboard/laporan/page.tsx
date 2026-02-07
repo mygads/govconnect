@@ -15,7 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, Eye, Search, ImageIcon } from "lucide-react"
+import { AlertCircle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe } from "lucide-react"
 import { laporan } from "@/lib/frontend-api"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
 
@@ -23,11 +23,15 @@ interface Complaint {
   id: string
   complaint_id: string
   wa_user_id: string
+  channel?: 'WHATSAPP' | 'WEBCHAT'
+  channel_identifier?: string
   kategori: string
   deskripsi: string
   alamat?: string
   status: string
   foto_url?: string
+  reporter_name?: string
+  reporter_phone?: string
   created_at: string
 }
 
@@ -56,11 +60,14 @@ export default function LaporanListPage() {
   }
 
   const filteredComplaints = complaints.filter((complaint) => {
+    const searchLower = search.toLowerCase()
     const matchSearch =
       search === "" ||
-      complaint.complaint_id.toLowerCase().includes(search.toLowerCase()) ||
-      complaint.wa_user_id.includes(search) ||
-      complaint.kategori.toLowerCase().includes(search.toLowerCase())
+      complaint.complaint_id.toLowerCase().includes(searchLower) ||
+      complaint.wa_user_id?.includes(search) ||
+      complaint.kategori.toLowerCase().includes(searchLower) ||
+      (complaint.reporter_name || '').toLowerCase().includes(searchLower) ||
+      (complaint.reporter_phone || '').includes(search)
 
     const matchStatus = statusFilter === "all" || complaint.status === statusFilter
 
@@ -131,7 +138,7 @@ export default function LaporanListPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Cari nomor pengaduan, WA, atau kategori..."
+                  placeholder="Cari nomor pengaduan, nama pelapor, No HP, atau kategori..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="pl-9"
@@ -195,7 +202,8 @@ export default function LaporanListPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>No. Pengaduan</TableHead>
-                    <TableHead>WhatsApp</TableHead>
+                    <TableHead>Pelapor</TableHead>
+                    <TableHead>Channel</TableHead>
                     <TableHead>Kategori</TableHead>
                     <TableHead>Deskripsi</TableHead>
                     <TableHead>Status</TableHead>
@@ -216,8 +224,32 @@ export default function LaporanListPage() {
                           {complaint.complaint_id}
                         </div>
                       </TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {complaint.wa_user_id}
+                      <TableCell>
+                        <div className="flex flex-col gap-0.5">
+                          {complaint.reporter_name ? (
+                            <span className="font-medium text-sm">{complaint.reporter_name}</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground italic">Belum diketahui</span>
+                          )}
+                          {complaint.reporter_phone ? (
+                            <span className="text-xs text-muted-foreground font-mono">{complaint.reporter_phone}</span>
+                          ) : complaint.wa_user_id ? (
+                            <span className="text-xs text-muted-foreground font-mono">{complaint.wa_user_id}</span>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {(complaint.channel || (complaint.wa_user_id ? 'WHATSAPP' : 'WEBCHAT')) === 'WHATSAPP' ? (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1">
+                            <MessageSquare className="h-3 w-3" />
+                            WA
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 gap-1">
+                            <Globe className="h-3 w-3" />
+                            Web
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="capitalize">

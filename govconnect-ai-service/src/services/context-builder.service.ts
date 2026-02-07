@@ -24,7 +24,8 @@ interface MessageHistoryResponse {
 export async function buildContext(
   wa_user_id: string, 
   currentMessage: string, 
-  ragContext?: RAGContext | string
+  ragContext?: RAGContext | string,
+  complaintCategoriesText?: string
 ) {
   logger.info('Building context for LLM', { wa_user_id });
 
@@ -57,6 +58,9 @@ export async function buildContext(
     else if (currentHour >= 15 && currentHour < 18) timeOfDay = 'sore';
     
     const currentTime = wibTime.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+
+    // Default complaint categories fallback
+    const categoriesText = complaintCategoriesText || 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
     
     // Build full prompt using complete system prompt (all parts combined)
     const systemPrompt = getFullSystemPrompt()
@@ -66,7 +70,8 @@ export async function buildContext(
       .replace(/\{\{current_date\}\}/g, currentDate)
       .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate)
       .replace(/\{\{current_time\}\}/g, currentTime)
-      .replace(/\{\{time_of_day\}\}/g, timeOfDay);
+      .replace(/\{\{time_of_day\}\}/g, timeOfDay)
+      .replace(/\{\{complaint_categories\}\}/g, categoriesText);
     
     // Log the formatted history for debugging
     logger.debug('Conversation history formatted', {

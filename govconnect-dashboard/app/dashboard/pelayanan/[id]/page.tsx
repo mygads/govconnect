@@ -38,6 +38,7 @@ import {
   Inbox,
   ClipboardList,
   MessageSquare,
+  MessageCircle,
   Loader2,
   Upload,
   Download,
@@ -170,8 +171,7 @@ const citizenFieldLabels: Record<string, { label: string; icon: React.ElementTyp
   nama_lengkap: { label: "Nama Lengkap", icon: User },
   nik: { label: "NIK", icon: CreditCard },
   alamat: { label: "Alamat", icon: MapPin },
-  no_hp: { label: "Nomor HP", icon: Phone },
-  wa_user_id: { label: "WhatsApp", icon: Phone },
+  no_hp: { label: "Nomor Telepon", icon: Phone },
   tempat_lahir: { label: "Tempat Lahir", icon: MapPin },
   tanggal_lahir: { label: "Tanggal Lahir", icon: CalendarDays },
   jenis_kelamin: { label: "Jenis Kelamin", icon: User },
@@ -474,33 +474,53 @@ export default function ServiceRequestDetailPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {request.citizen_data_json && Object.keys(request.citizen_data_json).length > 0 ? (
-                  Object.entries(request.citizen_data_json).map(([key, value]) => {
-                    if (!value) return null
-                    const fieldConfig = citizenFieldLabels[key] || { label: key, icon: User }
-                    const Icon = fieldConfig.icon
-                    return (
-                      <div key={key} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                        <Icon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                        <div className="min-w-0">
-                          <p className="text-xs text-muted-foreground">{fieldConfig.label}</p>
-                          <p className="font-medium wrap-break-word">{String(value)}</p>
-                        </div>
+              {(() => {
+                // Determine the best phone number to display and use for WA chat
+                const citizenPhone = request.citizen_data_json?.no_hp || request.citizen_data_json?.wa_user_id || request.wa_user_id || ''
+                // Normalize phone for wa.me link (strip + and ensure 62 prefix)
+                const waNumber = citizenPhone.replace(/\D/g, '').replace(/^0/, '62')
+                const waLink = waNumber ? `https://wa.me/${waNumber}` : ''
+
+                return (
+                  <>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {request.citizen_data_json && Object.keys(request.citizen_data_json).length > 0 ? (
+                        Object.entries(request.citizen_data_json).map(([key, value]) => {
+                          if (!value) return null
+                          // Skip wa_user_id since we merge it with no_hp below
+                          if (key === 'wa_user_id') return null
+                          const fieldConfig = citizenFieldLabels[key] || { label: key, icon: User }
+                          const Icon = fieldConfig.icon
+                          return (
+                            <div key={key} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                              <Icon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                              <div className="min-w-0">
+                                <p className="text-xs text-muted-foreground">{fieldConfig.label}</p>
+                                <p className="font-medium break-words">{String(value)}</p>
+                              </div>
+                            </div>
+                          )
+                        })
+                      ) : (
+                        <p className="text-muted-foreground col-span-2">Tidak ada data pemohon</p>
+                      )}
+                    </div>
+                    {waLink && (
+                      <div className="mt-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2 text-green-700 border-green-300 hover:bg-green-50 hover:text-green-800 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950"
+                          onClick={() => window.open(waLink, '_blank')}
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                          Chat ke WhatsApp
+                        </Button>
                       </div>
-                    )
-                  })
-                ) : (
-                  <p className="text-muted-foreground col-span-2">Tidak ada data pemohon</p>
-                )}
-                <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 dark:bg-green-950/20">
-                  <Phone className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">WhatsApp</p>
-                    <p className="font-medium text-green-700 dark:text-green-400">{request.wa_user_id}</p>
-                  </div>
-                </div>
-              </div>
+                    )}
+                  </>
+                )
+              })()}
             </CardContent>
           </Card>
 
@@ -663,7 +683,7 @@ export default function ServiceRequestDetailPage() {
                   onChange={(e) => setAdminNotes(e.target.value)}
                   placeholder="Catatan untuk warga (opsional)"
                   rows={3}
-                  className="resize-none"
+                  className="resize-none placeholder:text-muted-foreground/40"
                 />
                 <p className="text-xs text-muted-foreground">Catatan ini akan dikirim ke warga melalui WhatsApp</p>
               </div>
@@ -726,7 +746,7 @@ export default function ServiceRequestDetailPage() {
                   onChange={(e) => setResultDescription(e.target.value)}
                   placeholder="Deskripsi hasil layanan (misal: Surat domisili sudah jadi, silakan diambil atau download file di atas)"
                   rows={2}
-                  className="resize-none"
+                  className="resize-none placeholder:text-muted-foreground/40"
                 />
               </div>
               

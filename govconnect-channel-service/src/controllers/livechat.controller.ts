@@ -232,6 +232,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       const messageId = `admin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
       await saveOutgoingMessage({
+        village_id: villageId, // Required for webchat poll filtering
         wa_user_id: undefined, // Webchat users don't have wa_user_id
         channel,
         channel_identifier: wa_user_id,

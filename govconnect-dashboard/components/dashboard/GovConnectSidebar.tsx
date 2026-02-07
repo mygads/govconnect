@@ -18,6 +18,7 @@ import {
   Activity,
   Settings2,
   Bell,
+  Cpu,
 } from "lucide-react"
 
 import {
@@ -173,6 +174,12 @@ export function GovConnectSidebar() {
           title: "AI Analytics",
           url: "/dashboard/ai-analytics",
           icon: Activity,
+          roles: ["superadmin"],
+        },
+        {
+          title: "AI Token Usage",
+          url: "/dashboard/superadmin/ai-usage",
+          icon: Cpu,
           roles: ["superadmin"],
         },
         {

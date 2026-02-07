@@ -41,6 +41,7 @@ import { detectLanguage, getLanguageContext } from './language-detection.service
 import { analyzeSentiment, getSentimentContext, needsHumanEscalation } from './sentiment-analysis.service';
 import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
+import { recordTokenUsage } from './token-usage.service';
 import { RAGContext } from '../types/embedding.types';
 import { preProcessMessage, postProcessResponse, shouldUseFastPath, buildFastPathResponse } from './ai-optimizer.service';
 import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile } from './user-profile.service';
@@ -399,13 +400,6 @@ function normalizeHandlerResult(result: HandlerResult): { replyText: string; gui
   };
 }
 
-function normalizeLookupKey(value: string): string {
-  return normalizeText(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
 async function resolveServiceSlugFromSearch(query: string, villageId?: string): Promise<{ slug: string; name?: string } | null> {
   const trimmedQuery = (query || '').trim();
   if (!trimmedQuery) return null;
@@ -413,11 +407,13 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
   try {
     const { config } = await import('../config/env');
     const axios = (await import('axios')).default;
+
+    // Fetch candidate services from Case Service
     const response = await axios.get(`${config.caseServiceUrl}/services/search`, {
       params: {
         village_id: villageId,
         q: trimmedQuery,
-        limit: 5,
+        limit: 10,
       },
       headers: { 'x-internal-api-key': config.internalApiKey },
       timeout: 5000,
@@ -434,116 +430,35 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
     }
     if (!services.length) return null;
 
-    const queryKey = normalizeLookupKey(trimmedQuery);
+    // Use micro LLM for semantic matching instead of synonym/keyword scoring
+    const { matchServiceSlug } = await import('./micro-llm-matcher.service');
+    const options = services
+      .filter((s: any) => s?.slug)
+      .map((s: any) => ({
+        slug: String(s.slug),
+        name: String(s.name || ''),
+        description: String(s.description || ''),
+      }));
 
-    const synonymMap: Record<string, string[]> = {
-      ktp: ['kartu tanda penduduk', 'e ktp', 'ektp', 'ktpel', 'ktp el'],
-      kk: ['kartu keluarga'],
-      domisili: ['surat domisili', 'keterangan domisili', 'alamat tinggal'],
-      pindah: ['mutasi', 'pindah datang', 'pindah keluar'],
-      usaha: ['sku', 'surat keterangan usaha'],
-      kelahiran: ['akta lahir', 'akte lahir'],
-      kematian: ['akta mati', 'akte mati'],
-      nikah: ['kawin', 'pernikahan'],
-      pengantar: ['antar', 'surat pengantar'],
-      kehilangan: ['hilang', 'kehilangan', 'rusak', 'penggantian'],
-      perbaikan: ['perubahan', 'koreksi', 'pembetulan'],
-      nama: ['data', 'identitas'],
-    };
+    if (!options.length) return null;
 
-    const buildSynonymSet = (text: string): Set<string> => {
-      const base = normalizeLookupKey(text);
-      const tokens = new Set(base.split(' ').filter(Boolean));
-      const expanded = new Set<string>(tokens);
+    const result = await matchServiceSlug(trimmedQuery, options);
 
-      for (const token of tokens) {
-        const synonyms = synonymMap[token];
-        if (synonyms) {
-          for (const syn of synonyms) {
-            const synKey = normalizeLookupKey(syn);
-            synKey.split(' ').filter(Boolean).forEach(t => expanded.add(t));
-          }
-        }
+    if (result?.matched_slug && result.confidence >= 0.5) {
+      const matched = services.find((s: any) => s.slug === result.matched_slug);
+      if (matched) {
+        logger.debug('resolveServiceSlugFromSearch: Micro LLM match', {
+          query: trimmedQuery,
+          matched_slug: result.matched_slug,
+          confidence: result.confidence,
+          reason: result.reason,
+        });
+        return { slug: String(matched.slug), name: String(matched.name || '') };
       }
+    }
 
-      for (const [key, synonyms] of Object.entries(synonymMap)) {
-        if (base.includes(key)) {
-          for (const syn of synonyms) {
-            const synKey = normalizeLookupKey(syn);
-            synKey.split(' ').filter(Boolean).forEach(t => expanded.add(t));
-          }
-        }
-        for (const syn of synonyms) {
-          if (base.includes(normalizeLookupKey(syn))) {
-            expanded.add(key);
-            const synKey = normalizeLookupKey(syn);
-            synKey.split(' ').filter(Boolean).forEach(t => expanded.add(t));
-          }
-        }
-      }
-
-      return expanded;
-    };
-
-    const queryTokens = buildSynonymSet(queryKey);
-
-    const scoreService = (service: any): number => {
-      const name = normalizeLookupKey(service?.name || '');
-      const slug = normalizeLookupKey(service?.slug || '');
-      const desc = normalizeLookupKey(service?.description || '');
-      const combined = `${name} ${slug} ${desc}`.trim();
-      if (!combined) return 0;
-
-      let score = 0;
-      if (queryKey && combined.includes(queryKey)) score += 20;
-      if (queryKey && name.includes(queryKey)) score += 15;
-      if (queryKey && slug.includes(queryKey)) score += 12;
-
-      const serviceTokens = new Set(combined.split(' ').filter(Boolean));
-      let overlap = 0;
-      for (const token of queryTokens) {
-        if (serviceTokens.has(token)) overlap += 1;
-      }
-      score += overlap * 8;
-
-      // Synonym-driven boosts
-      const boostedPairs: Array<[RegExp, RegExp]> = [
-        [/\b(ktp|ektp|ktpel)\b/i, /\bktp\b/i],
-        [/\b(kk|kartu\s+keluarga)\b/i, /\bkk\b/i],
-        [/\b(domisili|tinggal|alamat)\b/i, /domisili/i],
-        [/\b(pindah|mutasi)\b/i, /pindah|mutasi/i],
-        [/\b(sku|usaha)\b/i, /usaha|sku/i],
-        [/\b(akta|akte)\s+lahir\b/i, /lahir/i],
-        [/\b(akta|akte)\s+mati\b/i, /mati|kematian/i],
-        [/\b(kawin|nikah|pernikahan)\b/i, /nikah|kawin/i],
-        [/\b(hilang|rusak|penggantian)\b/i, /penggantian|perubahan|rusak|hilang/i],
-      ];
-
-      for (const [qPattern, sPattern] of boostedPairs) {
-        if (qPattern.test(queryKey) && sPattern.test(combined)) {
-          score += 10;
-        }
-      }
-
-      // Domain-specific boosts: perbaikan nama KK → Surat Beda Nama
-      if (/\bnama\b/i.test(queryKey) && /\bkk\b/i.test(queryKey)) {
-        if (/beda\s+nama|surat\s+beda\s+nama/i.test(combined)) score += 35;
-      }
-      if (/\bbeda\b/i.test(queryKey) && /\bnama\b/i.test(queryKey)) {
-        if (/beda\s+nama/i.test(combined)) score += 25;
-      }
-
-      return score;
-    };
-
-    const best = services
-      .map((s: any) => ({ s, score: scoreService(s) }))
-      .sort((a: any, b: any) => b.score - a.score)[0];
-
-    if (!best || best.score < 10) return null;
-    if (!best.s?.slug) return null;
-
-    return { slug: String(best.s.slug), name: String(best.s.name || '') };
+    logger.debug('resolveServiceSlugFromSearch: No match via micro LLM', { query: trimmedQuery });
+    return null;
   } catch (error: any) {
     logger.warn('Service search lookup failed', { error: error.message, villageId });
     return null;
@@ -568,16 +483,51 @@ async function getCachedComplaintTypes(villageId?: string): Promise<any[]> {
 }
 
 /**
- * Resolve complaint type configuration from database
- * Improved matching with fuzzy search and synonym support
- * 
- * Matching priority:
- * 1. Exact match on type name (case-insensitive)
- * 2. Partial match on type name (contains)
- * 3. Exact match on category name
- * 4. Partial match on category name (contains)
- * 5. Keyword/synonym matching
- * 6. Return first type from matched category if category matches
+ * Build complaint categories text for injection into LLM prompt.
+ * Fetches dynamic categories from Case Service DB and formats them
+ * so the LLM knows which kategori values are valid.
+ */
+async function buildComplaintCategoriesText(villageId?: string): Promise<string> {
+  try {
+    const types = await getCachedComplaintTypes(villageId);
+    if (!types || types.length === 0) {
+      return 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
+    }
+
+    // Group by category
+    const categoryMap = new Map<string, string[]>();
+    for (const type of types) {
+      const catName = type?.category?.name || 'Lainnya';
+      if (!categoryMap.has(catName)) {
+        categoryMap.set(catName, []);
+      }
+      const typeName = type?.name || '';
+      if (typeName) {
+        categoryMap.get(catName)!.push(typeName);
+      }
+    }
+
+    // Format: "Kategori: tipe1, tipe2, tipe3"
+    const lines: string[] = [];
+    for (const [category, typeNames] of categoryMap) {
+      const snakeCaseNames = typeNames.map(n => n.toLowerCase().replace(/\s+/g, '_'));
+      lines.push(`- ${category}: ${snakeCaseNames.join(', ')}`);
+    }
+    lines.push('- lainnya (gunakan jika tidak ada kategori yang cocok)');
+
+    return lines.join('\n');
+  } catch (error: any) {
+    logger.warn('Failed to build complaint categories text', { error: error.message });
+    return 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
+  }
+}
+
+/**
+ * Resolve complaint type configuration from database using micro LLM.
+ *
+ * Instead of hardcoded synonyms, sends the user's kategori + all available
+ * complaint types to a lightweight Gemini model for semantic matching.
+ * This handles slang, typos, regional words, informal language naturally.
  */
 export async function resolveComplaintTypeConfig(kategori?: string, villageId?: string) {
   if (!kategori || !villageId) return null;
@@ -585,98 +535,38 @@ export async function resolveComplaintTypeConfig(kategori?: string, villageId?: 
   const types = await getCachedComplaintTypes(villageId);
   if (!types.length) return null;
 
-  const target = normalizeLookupKey(kategori);
-  const targetLower = target.toLowerCase();
+  // Prepare options for micro LLM
+  const options = types
+    .filter(t => t?.id && t?.name)
+    .map(t => ({
+      id: t.id,
+      name: t.name,
+      categoryName: t.category?.name || 'Lainnya',
+    }));
 
-  // 1. Exact match on type name
-  const exactTypeMatch = types.find(type => 
-    normalizeLookupKey(type?.name || '').toLowerCase() === targetLower
-  );
-  if (exactTypeMatch) {
-    logger.debug('resolveComplaintTypeConfig: Exact type match', { kategori, matchedType: exactTypeMatch.name });
-    return exactTypeMatch;
-  }
+  if (!options.length) return null;
 
-  // 2. Partial match on type name (target contains type name or vice versa)
-  const partialTypeMatch = types.find(type => {
-    const typeName = normalizeLookupKey(type?.name || '').toLowerCase();
-    return typeName.includes(targetLower) || targetLower.includes(typeName);
-  });
-  if (partialTypeMatch) {
-    logger.debug('resolveComplaintTypeConfig: Partial type match', { kategori, matchedType: partialTypeMatch.name });
-    return partialTypeMatch;
-  }
+  try {
+    const { matchComplaintType } = await import('./micro-llm-matcher.service');
+    const result = await matchComplaintType(kategori, options);
 
-  // 3. Exact match on category name
-  const exactCategoryMatch = types.find(type => 
-    normalizeLookupKey(type?.category?.name || '').toLowerCase() === targetLower
-  );
-  if (exactCategoryMatch) {
-    logger.debug('resolveComplaintTypeConfig: Exact category match', { kategori, matchedCategory: exactCategoryMatch.category?.name });
-    return exactCategoryMatch;
-  }
-
-  // 4. Partial match on category name
-  const partialCategoryMatch = types.find(type => {
-    const categoryName = normalizeLookupKey(type?.category?.name || '').toLowerCase();
-    return categoryName.includes(targetLower) || targetLower.includes(categoryName);
-  });
-  if (partialCategoryMatch) {
-    logger.debug('resolveComplaintTypeConfig: Partial category match', { kategori, matchedCategory: partialCategoryMatch.category?.name });
-    return partialCategoryMatch;
-  }
-
-  // 5. Keyword/synonym matching - common Indonesian complaint terms
-  const synonymMap: Record<string, string[]> = {
-    'banjir': ['genangan', 'air', 'banjir', 'menggenangi', 'terendam', 'kebanjiran'],
-    'kebakaran': ['api', 'terbakar', 'kebakaran', 'asap', 'hangus'],
-    'jalan rusak': ['jalan', 'lubang', 'berlubang', 'rusak', 'aspal', 'retak', 'jalanan'],
-    'lampu mati': ['lampu', 'penerangan', 'gelap', 'mati', 'padam', 'listrik'],
-    'sampah': ['sampah', 'menumpuk', 'limbah', 'kotor', 'bau', 'jorok'],
-    'pohon tumbang': ['pohon', 'tumbang', 'roboh', 'dahan', 'ranting'],
-    'drainase': ['selokan', 'got', 'saluran', 'tersumbat', 'mampet', 'drainase', 'gorong'],
-    'fasilitas rusak': ['fasilitas', 'umum', 'rusak', 'taman', 'bangku'],
-    'bencana': ['bencana', 'alam', 'longsor', 'gempa', 'angin'],
-    'lingkungan': ['lingkungan', 'pencemaran', 'polusi', 'udara'],
-  };
-
-  // Try to find a type that matches via synonyms
-  for (const type of types) {
-    const typeName = normalizeLookupKey(type?.name || '').toLowerCase();
-    const categoryName = normalizeLookupKey(type?.category?.name || '').toLowerCase();
-    
-    // Check if any synonym group matches
-    for (const [key, synonyms] of Object.entries(synonymMap)) {
-      const keyLower = key.toLowerCase();
-      // If target matches any synonym AND type/category matches the key
-      const targetMatchesSynonym = synonyms.some(syn => targetLower.includes(syn) || syn.includes(targetLower));
-      const typeMatchesKey = typeName.includes(keyLower) || keyLower.includes(typeName) ||
-                             categoryName.includes(keyLower) || keyLower.includes(categoryName);
-      
-      if (targetMatchesSynonym && typeMatchesKey) {
-        logger.debug('resolveComplaintTypeConfig: Synonym match', { 
-          kategori, 
-          synonymKey: key, 
-          matchedType: type.name,
-          matchedCategory: type.category?.name 
+    if (result?.matched_id && result.confidence >= 0.5) {
+      const matched = types.find(t => t.id === result.matched_id);
+      if (matched) {
+        logger.debug('resolveComplaintTypeConfig: Micro LLM match', {
+          kategori,
+          matchedType: matched.name,
+          confidence: result.confidence,
+          reason: result.reason,
         });
-        return type;
+        return matched;
       }
     }
-  }
-
-  // 6. If target matches a category with multiple types, return the first one
-  const categoryMatches = types.filter(type => {
-    const categoryName = normalizeLookupKey(type?.category?.name || '').toLowerCase();
-    return categoryName.includes(targetLower) || targetLower.includes(categoryName);
-  });
-  if (categoryMatches.length > 0) {
-    logger.debug('resolveComplaintTypeConfig: First type from category', { 
-      kategori, 
-      matchedCategory: categoryMatches[0].category?.name,
-      matchedType: categoryMatches[0].name 
+  } catch (error: any) {
+    logger.warn('resolveComplaintTypeConfig: Micro LLM failed, no fallback', {
+      error: error.message,
+      kategori,
     });
-    return categoryMatches[0];
   }
 
   logger.debug('resolveComplaintTypeConfig: No match found', { kategori, villageId });
@@ -688,23 +578,29 @@ export async function resolveComplaintTypeConfig(kategori?: string, villageId?: 
  * WhatsApp handles links natively, webchat needs HTML anchor
  */
 function formatClickableLink(url: string, channel: ChannelType, label?: string): string {
-  if (channel === 'webchat') {
-    const displayLabel = label || url;
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${displayLabel}</a>`;
+  // Both channels: just return the URL.
+  // The webchat widget will auto-linkify URLs; WhatsApp does it natively.
+  if (label && channel === 'webchat') {
+    return `${label}:\n${url}`;
   }
   return url;
 }
 
 /**
- * Format phone number for clickable link
- * WhatsApp: wa.me link, Webchat: tel: link
+ * Format phone number for clickable display
+ * Webchat: show wa.me link so widget auto-linkifies it
+ * WhatsApp: just return the number (WA handles it natively)
  */
 function formatClickablePhone(phone: string, channel: ChannelType): string {
   // Normalize phone to 62xxx format for wa.me
-  const normalizedPhone = phone.replace(/^0/, '62').replace(/[^\d]/g, '');
+  const digits = (phone || '').replace(/[^\d]/g, '');
+  let normalizedPhone = digits;
+  if (digits.startsWith('0')) normalizedPhone = `62${digits.slice(1)}`;
+  else if (digits.startsWith('8')) normalizedPhone = `62${digits}`;
   
   if (channel === 'webchat') {
-    return `<a href="tel:${phone}" target="_blank">${phone}</a>`;
+    // Return wa.me link - webchat widget will auto-linkify
+    return `https://wa.me/${normalizedPhone}`;
   }
   // For WhatsApp, just return the number - WA handles it natively
   return phone;
@@ -3315,11 +3211,13 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     let messageCount: number;
     
     if (channel === 'webchat' && resolvedHistory) {
-      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, resolvedHistory, preloadedRAGContext);
+      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, resolvedHistory, preloadedRAGContext, resolvedVillageId);
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     } else {
-      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext);
+      // Build complaint categories text for WhatsApp channel too
+      const complaintCategoriesText = await buildComplaintCategoriesText(resolvedVillageId);
+      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText);
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     }
@@ -3353,6 +3251,23 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     
     const { response: llmResponse, metrics } = llmResult;
 
+    // Record actual token usage for main chat call
+    recordTokenUsage({
+      model: metrics.model,
+      input_tokens: metrics.inputTokens,
+      output_tokens: metrics.outputTokens,
+      total_tokens: metrics.totalTokens,
+      layer_type: 'full_nlu',
+      call_type: 'main_chat',
+      village_id: input.villageId,
+      wa_user_id: userId,
+      session_id: userId,
+      channel,
+      intent: llmResponse.intent,
+      success: true,
+      duration_ms: metrics.durationMs,
+    });
+
     // Anti-hallucination gate (jam operasional/biaya) when knowledge is empty
     // NOTE: Knowledge context is embedded inside systemPrompt when available.
     const hasKnowledge = hasKnowledgeInPrompt(systemPrompt);
@@ -3373,6 +3288,22 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
       const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
       const retryResult = await callGemini(retryPrompt);
       if (retryResult?.response?.reply_text) {
+        // Record retry token usage
+        recordTokenUsage({
+          model: retryResult.metrics.model,
+          input_tokens: retryResult.metrics.inputTokens,
+          output_tokens: retryResult.metrics.outputTokens,
+          total_tokens: retryResult.metrics.totalTokens,
+          layer_type: 'full_nlu',
+          call_type: 'anti_hallucination_retry',
+          village_id: input.villageId,
+          wa_user_id: userId,
+          session_id: userId,
+          channel,
+          intent: retryResult.response.intent,
+          success: true,
+          duration_ms: retryResult.metrics.durationMs,
+        });
         llmResult.response = retryResult.response;
       }
     }
@@ -3708,7 +3639,8 @@ async function buildContextWithHistory(
   userId: string,
   currentMessage: string,
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
-  ragContext?: RAGContext | string
+  ragContext?: RAGContext | string,
+  villageId?: string
 ): Promise<{ systemPrompt: string; messageCount: number }> {
   const promptModule = await import('../prompts/system-prompt') as any;
   const getPrompt = typeof promptModule.getFullSystemPrompt === 'function'
@@ -3758,6 +3690,9 @@ async function buildContextWithHistory(
   
   const currentTime = wibTime.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
   
+  // Build dynamic complaint categories from DB
+  const complaintCategoriesText = await buildComplaintCategoriesText(villageId);
+  
   const systemPrompt = getPrompt()
     .replace('{knowledge_context}', knowledgeSection)
     .replace('{history}', conversationHistory || '(Ini adalah percakapan pertama dengan user)')
@@ -3765,7 +3700,8 @@ async function buildContextWithHistory(
     .replace(/\{\{current_date\}\}/g, currentDate)
     .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate)
     .replace(/\{\{current_time\}\}/g, currentTime)
-    .replace(/\{\{time_of_day\}\}/g, timeOfDay);
+    .replace(/\{\{time_of_day\}\}/g, timeOfDay)
+    .replace(/\{\{complaint_categories\}\}/g, complaintCategoriesText);
   
   return { systemPrompt, messageCount: history.length };
 }

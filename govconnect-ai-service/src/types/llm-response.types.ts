@@ -56,6 +56,8 @@ export interface LLMMetrics {
   startTime: number;
   endTime: number;
   durationMs: number;
-  tokenCount?: number;
   model: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
 }

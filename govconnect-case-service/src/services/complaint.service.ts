@@ -4,6 +4,89 @@ import { publishEvent } from './rabbitmq.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import logger from '../utils/logger';
 import { invalidateStatsCache } from './query-batcher.service';
+import { resolveWithMicroLLM } from './micro-llm-resolver.service';
+
+// ==================== COMPLAINT TYPE RESOLVER (Micro LLM) ====================
+
+interface ResolvedComplaintType {
+  type_id: string;
+  category_id: string;
+  is_urgent: boolean;
+  require_address: boolean;
+  send_important_contacts: boolean;
+  important_contact_category: string | null;
+  matched_name: string;
+  match_method: string;
+}
+
+/**
+ * Resolve a kategori string to a ComplaintType using a micro LLM.
+ *
+ * Instead of hardcoded synonyms or pattern matching, this sends the user's
+ * kategori + all available complaint types to a lightweight Gemini model
+ * and lets AI semantically determine the best match.
+ *
+ * This handles slang, typos, regional words, informal language, etc. — things
+ * that static keyword maps can never fully cover.
+ *
+ * @returns ResolvedComplaintType or null if no match found
+ */
+export async function resolveComplaintTypeFromDB(
+  kategori: string,
+  villageId?: string
+): Promise<ResolvedComplaintType | null> {
+  if (!kategori) return null;
+
+  try {
+    const whereClause = villageId
+      ? { category: { village_id: villageId } }
+      : {};
+
+    const types = await prisma.complaintType.findMany({
+      where: whereClause,
+      include: { category: true },
+    });
+
+    if (!types.length) return null;
+
+    // Build options list for the micro LLM
+    const options = types.map(t => ({
+      id: t.id,
+      name: t.name,
+      category_name: t.category?.name || '',
+      is_urgent: t.is_urgent ?? false,
+    }));
+
+    // Ask micro LLM to semantically match
+    const llmResult = await resolveWithMicroLLM(kategori, options);
+
+    if (llmResult?.matched_id && llmResult.confidence >= 0.5) {
+      const matched = types.find(t => t.id === llmResult.matched_id);
+      if (matched) {
+        return {
+          type_id: matched.id,
+          category_id: matched.category_id,
+          is_urgent: matched.is_urgent ?? false,
+          require_address: matched.require_address ?? false,
+          send_important_contacts: matched.send_important_contacts ?? false,
+          important_contact_category: matched.important_contact_category || null,
+          matched_name: matched.name,
+          match_method: `micro_llm (confidence: ${llmResult.confidence}, reason: ${llmResult.reason})`,
+        };
+      }
+    }
+
+    logger.debug('resolveComplaintTypeFromDB: no match via micro LLM', {
+      kategori,
+      villageId,
+      llmResult,
+    });
+    return null;
+  } catch (error: any) {
+    logger.error('resolveComplaintTypeFromDB failed', { error: error.message, kategori, villageId });
+    return null;
+  }
+}
 
 export interface CreateComplaintData {
   wa_user_id?: string;
@@ -19,6 +102,8 @@ export interface CreateComplaintData {
   is_urgent?: boolean;
   require_address?: boolean;
   village_id?: string;
+  reporter_name?: string;
+  reporter_phone?: string;
 }
 
 export interface UpdateComplaintStatusData {
@@ -76,17 +161,44 @@ function isSameRequester(complaint: { channel: 'WHATSAPP' | 'WEBCHAT'; wa_user_i
 
 /**
  * Create new complaint
+ * Auto-resolves type_id/category_id from DB when not provided by caller.
  */
 export async function createComplaint(data: CreateComplaintData) {
   const complaint_id = await generateComplaintId();
 
-  // is_urgent should be passed from AI Service based on ComplaintType.is_urgent in database
-  // Default to false if not provided (caller should always provide this from DB config)
-  const isUrgent = data.is_urgent ?? false;
   const channel = data.channel || 'WHATSAPP';
   const channelIdentifier = channel === 'WEBCHAT'
     ? data.channel_identifier
     : data.wa_user_id;
+
+  // Server-side auto-resolve: lookup kategori → ComplaintType in DB
+  // This ensures correct type_id/category_id even if the AI didn't provide them
+  let resolvedTypeId = data.type_id || undefined;
+  let resolvedCategoryId = data.category_id || undefined;
+  let resolvedIsUrgent = data.is_urgent ?? false;
+  let resolvedRequireAddress = data.require_address ?? false;
+
+  if (!resolvedTypeId && data.kategori) {
+    const resolved = await resolveComplaintTypeFromDB(data.kategori, data.village_id);
+    if (resolved) {
+      resolvedTypeId = resolved.type_id;
+      resolvedCategoryId = resolvedCategoryId || resolved.category_id;
+      resolvedIsUrgent = resolved.is_urgent;
+      resolvedRequireAddress = resolved.require_address;
+      logger.info('Auto-resolved complaint type from DB', {
+        kategori: data.kategori,
+        matched_name: resolved.matched_name,
+        match_method: resolved.match_method,
+        type_id: resolved.type_id,
+        is_urgent: resolved.is_urgent,
+      });
+    } else {
+      logger.warn('Could not resolve complaint type from DB', {
+        kategori: data.kategori,
+        village_id: data.village_id,
+      });
+    }
+  }
   
   const complaint = await prisma.complaint.create({
     data: {
@@ -95,14 +207,16 @@ export async function createComplaint(data: CreateComplaintData) {
       channel,
       channel_identifier: channelIdentifier || null,
       kategori: data.kategori,
-      category_id: data.category_id,
-      type_id: data.type_id,
+      category_id: resolvedCategoryId,
+      type_id: resolvedTypeId,
       deskripsi: data.deskripsi,
       alamat: data.alamat,
       rt_rw: data.rt_rw,
       foto_url: data.foto_url,
-      is_urgent: isUrgent,
-      require_address: data.require_address ?? false,
+      is_urgent: resolvedIsUrgent,
+      require_address: resolvedRequireAddress,
+      reporter_name: data.reporter_name || null,
+      reporter_phone: data.reporter_phone || null,
       village_id: data.village_id,
       status: 'OPEN',
     },
@@ -113,7 +227,7 @@ export async function createComplaint(data: CreateComplaintData) {
   // would cause double response to the user.
   
   // Check if this is an urgent category and publish urgent alert
-  if (isUrgent) {
+  if (resolvedIsUrgent) {
     await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.URGENT_ALERT, {
       type: 'urgent_complaint',
       complaint_id: complaint.complaint_id,

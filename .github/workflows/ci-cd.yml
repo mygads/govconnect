@@ -504,14 +504,14 @@ jobs:
             # Run migrations for dashboard (has Prisma)
             if sudo docker compose ps dashboard | grep -q "running"; then
               echo "📦 Running Dashboard migrations..."
-              sudo docker compose exec -T dashboard sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" 2>&1 || echo "⚠️ Dashboard migration completed with warnings"
+              sudo docker compose exec -T dashboard sh -c "npx prisma migrate deploy || npx prisma db push" 2>&1 || echo "⚠️ Dashboard migration completed with warnings"
             fi
             
             # Run migrations for other services if they have Prisma
             for service in channel-service ai-service case-service notification-service; do
               if sudo docker compose ps $service | grep -q "running"; then
                 echo "📦 Running $service migrations..."
-                sudo docker compose exec -T $service sh -c "npx prisma migrate deploy || npx prisma db push --accept-data-loss" 2>&1 || echo "⚠️ $service migration completed with warnings"
+                sudo docker compose exec -T $service sh -c "npx prisma migrate deploy || npx prisma db push" 2>&1 || echo "⚠️ $service migration completed with warnings"
               fi
             done
             

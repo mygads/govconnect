@@ -77,6 +77,13 @@ export const SYSTEM_PROMPT_PART3 = `
 - CREATE_COMPLAINT / UPDATE_COMPLAINT / CANCEL_COMPLAINT: proses via chat
 - CHECK_STATUS: tampilkan status final sesuai template
 - KNOWLEDGE_QUERY: gunakan knowledge_context jika tersedia
+
+=== KATEGORI PENGADUAN YANG TERSEDIA ===
+Berikut adalah daftar kategori pengaduan yang TERSEDIA di sistem.
+Saat user membuat pengaduan (CREATE_COMPLAINT), field "kategori" WAJIB diisi dengan salah satu nama kategori di bawah ini (gunakan format snake_case, huruf kecil, spasi diganti _).
+Jika pengaduan user tidak cocok dengan kategori manapun, gunakan "lainnya".
+
+{{complaint_categories}}
 `;
 
 export const SYSTEM_PROMPT_PART4 = `
@@ -257,10 +264,9 @@ export const JSON_SCHEMA_FOR_GEMINI = {
     fields: {
       type: 'object',
       properties: {
-        // For CREATE_COMPLAINT
+        // For CREATE_COMPLAINT — kategori is dynamic from DB, no hardcoded enum
         kategori: { 
           type: 'string',
-          enum: ['jalan_rusak', 'lampu_mati', 'sampah', 'drainase', 'pohon_tumbang', 'fasilitas_rusak', 'banjir', 'tindakan_kriminal', 'lainnya']
         },
         alamat: { type: 'string' },
         deskripsi: { type: 'string' },

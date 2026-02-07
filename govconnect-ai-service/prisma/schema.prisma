@@ -92,3 +92,48 @@ model embedding_jobs {
   @@index([status])
   @@index([priority])
 }
+
+// ==================== AI TOKEN USAGE ====================
+// Tracks actual token usage from Gemini API responses (usageMetadata)
+// Stored per-call for granular analytics
+
+model ai_token_usage {
+  id              String   @id @default(cuid())
+  
+  // Model info
+  model           String   // e.g. "gemini-2.5-flash", "gemini-2.0-flash-lite"
+  
+  // Token counts (from Gemini usageMetadata)
+  input_tokens    Int      // promptTokenCount
+  output_tokens   Int      // candidatesTokenCount
+  total_tokens    Int      // totalTokenCount
+  
+  // Cost in USD (calculated from pricing table)
+  cost_usd        Float    @default(0)
+  
+  // Call classification
+  layer_type      String   // "full_nlu" | "micro_nlu" | "embedding" | "rag_expand"
+  call_type       String   // "main_chat" | "anti_hallucination_retry" | "complaint_type_match" | "service_slug_match" | "rag_query_expand" | "confirmation_classify"
+  
+  // Tenant & user context
+  village_id      String?
+  wa_user_id      String?
+  session_id      String?  // webchat session or WA user id
+  channel         String?  // "whatsapp" | "webchat"
+  
+  // LLM response context
+  intent          String?  // The detected intent (for main_chat calls)
+  success         Boolean  @default(true)
+  duration_ms     Int?     // How long the LLM call took
+  
+  created_at      DateTime @default(now())
+  
+  @@index([model])
+  @@index([village_id])
+  @@index([layer_type])
+  @@index([call_type])
+  @@index([created_at])
+  @@index([village_id, created_at])
+  @@index([model, created_at])
+  @@index([channel, created_at])
+}

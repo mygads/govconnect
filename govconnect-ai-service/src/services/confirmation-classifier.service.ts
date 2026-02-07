@@ -1,6 +1,7 @@
 import logger from '../utils/logger';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
+import { extractAndRecord } from './token-usage.service';
 
 export type ConfirmationDecision = 'CONFIRM' | 'REJECT' | 'UNCERTAIN';
 
@@ -75,8 +76,16 @@ export async function classifyConfirmation(message: string): Promise<Confirmatio
         },
       });
 
+      const startMs = Date.now();
       const result = await geminiModel.generateContent(prompt);
+      const durationMs = Date.now() - startMs;
       const responseText = result.response.text();
+
+      // Record token usage
+      extractAndRecord(result, model, 'micro_nlu', 'confirmation_classify', {
+        success: true,
+        duration_ms: durationMs,
+      });
 
       const cleaned = responseText
         .replace(/```json\n?/g, '')

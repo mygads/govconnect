@@ -327,6 +327,10 @@ export function useLiveChat() {
         setTimeout(() => {
           updateMessageStatus(userMessage.id, 'read');
         }, 500);
+      } else if (data.success && (data.response === '' || data.intent === 'TAKEOVER')) {
+        // Takeover mode or silent response — AI returned empty reply.
+        // Don't add any bubble; admin will respond via poll.
+        updateMessageStatus(userMessage.id, 'read');
       } else {
         // Add error message
         addMessage({
@@ -416,8 +420,8 @@ export function useLiveChat() {
           let hasNewMessages = false;
           
           for (const msg of data.messages) {
-            // Create unique key for message deduplication
-            const msgKey = `${msg.content}_${msg.timestamp}`;
+            // Create unique key for message deduplication (prefer message_id if available)
+            const msgKey = msg.message_id || msg.id || `${msg.content}_${msg.timestamp}`;
             
             // Check if message already processed
             if (processedMessagesRef.current.has(msgKey)) {

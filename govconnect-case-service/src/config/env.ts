@@ -12,6 +12,16 @@ interface EnvironmentConfig {
   logDir: string;
   idPrefixComplaint: string;
   idPrefixServiceRequest: string;
+  geminiApiKey: string;
+  microNluModels: string[];
+}
+
+function parseMicroNluModels(envValue?: string): string[] {
+  const defaults = ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
+  const raw = (envValue || '').trim();
+  if (!raw) return defaults;
+  const models = raw.split(',').map(m => m.trim()).filter(Boolean);
+  return models.length > 0 ? models : defaults;
 }
 
 function validateEnv(): EnvironmentConfig {
@@ -38,6 +48,8 @@ function validateEnv(): EnvironmentConfig {
     logDir: process.env.LOG_DIR || 'logs',
     idPrefixComplaint: process.env.ID_PREFIX_COMPLAINT || 'LAP',
     idPrefixServiceRequest: process.env.ID_PREFIX_SERVICE_REQUEST || 'LAY',
+    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    microNluModels: parseMicroNluModels(process.env.MICRO_NLU_MODELS),
   };
 }
 

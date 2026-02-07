@@ -22,18 +22,9 @@ router.post(
     // Accept WhatsApp phone (628xxx) or webchat session (web_xxx)
     body('wa_user_id').optional().matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
     body('kategori')
-      .isIn([
-        'jalan_rusak',
-        'lampu_mati',
-        'sampah',
-        'drainase',
-        'pohon_tumbang',
-        'fasilitas_rusak',
-        'banjir',
-        'tindakan_kriminal',
-        'lainnya',
-      ])
-      .withMessage('Invalid kategori'),
+      .isString()
+      .notEmpty()
+      .withMessage('kategori wajib diisi'),
     body('deskripsi').isLength({ min: 10, max: 1000 }).withMessage('Deskripsi 10-1000 chars'),
     body('alamat').optional().isString(),
     body('rt_rw').optional().isString(),

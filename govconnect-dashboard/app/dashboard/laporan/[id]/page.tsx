@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { AlertCircle, ArrowLeft, CheckCircle, Loader2, MapPin, MessageSquare, Phone, Calendar, Image, Printer } from "lucide-react"
+import { AlertCircle, ArrowLeft, CheckCircle, Loader2, MapPin, MessageSquare, Phone, Calendar, Image, Printer, Globe, User } from "lucide-react"
 import { laporan } from "@/lib/frontend-api"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
 import { printReceipt } from "@/lib/export-utils"
@@ -33,12 +33,16 @@ interface Complaint {
   id: string
   complaint_id: string
   wa_user_id: string
+  channel?: 'WHATSAPP' | 'WEBCHAT'
+  channel_identifier?: string
   kategori: string
   deskripsi: string
   alamat?: string
   rt_rw?: string
   foto_url?: string
   status: string
+  reporter_name?: string
+  reporter_phone?: string
   created_at: string
   updated_at: string
   updates?: ComplaintUpdate[]
@@ -231,10 +235,42 @@ export default function LaporanDetailPage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-muted-foreground flex items-center gap-2">
-                    <Phone className="h-4 w-4" />
-                    WhatsApp
+                    {(complaint.channel || 'WHATSAPP') === 'WHATSAPP' ? (
+                      <><Phone className="h-4 w-4" /> WhatsApp</>
+                    ) : (
+                      <><Globe className="h-4 w-4" /> Webchat</>
+                    )}
                   </Label>
-                  <p className="font-mono text-foreground">{complaint.wa_user_id}</p>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className={(complaint.channel || 'WHATSAPP') === 'WHATSAPP' 
+                      ? 'bg-green-50 text-green-700 border-green-200' 
+                      : 'bg-blue-50 text-blue-700 border-blue-200'
+                    }>
+                      {(complaint.channel || 'WHATSAPP') === 'WHATSAPP' ? 'WhatsApp' : 'Webchat'}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              {/* Reporter info */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground flex items-center gap-2">
+                    <User className="h-4 w-4" />
+                    Nama Pelapor
+                  </Label>
+                  <p className="text-foreground">
+                    {complaint.reporter_name || <span className="text-muted-foreground italic">Belum diketahui</span>}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground flex items-center gap-2">
+                    <Phone className="h-4 w-4" />
+                    No. Telepon Pelapor
+                  </Label>
+                  <p className="font-mono text-foreground">
+                    {complaint.reporter_phone || complaint.wa_user_id || <span className="text-muted-foreground italic">Belum diketahui</span>}
+                  </p>
                 </div>
               </div>
 

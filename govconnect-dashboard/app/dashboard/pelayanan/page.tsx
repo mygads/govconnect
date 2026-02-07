@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Search, RefreshCw, FileText } from "lucide-react"
+import { Search, RefreshCw, FileText, User, Phone, CreditCard, ChevronRight } from "lucide-react"
 
 interface ServiceRequest {
   id: string
@@ -15,6 +15,7 @@ interface ServiceRequest {
   wa_user_id: string
   status: string
   created_at: string
+  citizen_data_json?: Record<string, any>
   service: {
     id: string
     name: string
@@ -66,11 +67,19 @@ export default function ServiceRequestsPage() {
   const filteredRequests = useMemo(() => {
     if (!search) return requests
     const keyword = search.toLowerCase()
-    return requests.filter((item) =>
-      item.request_number.toLowerCase().includes(keyword) ||
-      item.wa_user_id.includes(search) ||
-      item.service?.name?.toLowerCase().includes(keyword)
-    )
+    return requests.filter((item) => {
+      const citizenName = (item.citizen_data_json?.nama_lengkap || '').toLowerCase()
+      const citizenNik = (item.citizen_data_json?.nik || '').toLowerCase()
+      const citizenPhone = (item.citizen_data_json?.no_hp || '').toLowerCase()
+      return (
+        item.request_number.toLowerCase().includes(keyword) ||
+        item.wa_user_id.includes(search) ||
+        item.service?.name?.toLowerCase().includes(keyword) ||
+        citizenName.includes(keyword) ||
+        citizenNik.includes(keyword) ||
+        citizenPhone.includes(keyword)
+      )
+    })
   }, [requests, search])
 
   const getStatusBadge = (status: string) => {
@@ -160,27 +169,52 @@ export default function ServiceRequestsPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredRequests.map((item) => (
-                <Link
-                  key={item.id}
-                  href={`/dashboard/pelayanan/${item.id}`}
-                  className="block border rounded-lg p-4 hover:bg-muted/30 transition-colors"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-foreground">{item.request_number}</p>
-                      <p className="text-sm text-muted-foreground">{item.service?.name}</p>
-                      <p className="text-xs text-muted-foreground">WA: {item.wa_user_id}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Badge className={getStatusBadge(item.status)}>{item.status}</Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(item.created_at).toLocaleString("id-ID")}
-                      </span>
+              {filteredRequests.map((item) => {
+                const nama = item.citizen_data_json?.nama_lengkap || '-'
+                const nik = item.citizen_data_json?.nik || ''
+                const noHp = item.citizen_data_json?.no_hp || item.wa_user_id
+                return (
+                  <div
+                    key={item.id}
+                    className="border rounded-lg p-4 hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-2 flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-foreground">{item.request_number}</p>
+                          <Badge className={getStatusBadge(item.status)}>{item.status}</Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">{item.service?.name}</p>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                          <span className="inline-flex items-center gap-1.5 text-foreground">
+                            <User className="h-3.5 w-3.5 text-muted-foreground" />
+                            {nama}
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                            <Phone className="h-3.5 w-3.5" />
+                            {noHp}
+                          </span>
+                          {nik && (
+                            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                              <CreditCard className="h-3.5 w-3.5" />
+                              {nik}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(item.created_at).toLocaleString("id-ID")}
+                        </p>
+                      </div>
+                      <Link href={`/dashboard/pelayanan/${item.id}`}>
+                        <Button variant="outline" size="sm" className="gap-1.5 shrink-0">
+                          Lihat Detail
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </Link>
                     </div>
                   </div>
-                </Link>
-              ))}
+                )
+              })}
             </div>
           )}
         </CardContent>

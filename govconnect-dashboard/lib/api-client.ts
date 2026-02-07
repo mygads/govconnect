@@ -380,6 +380,98 @@ export const ai = {
     });
   },
 
+  // ==================== Token Usage (Real Gemini) ====================
+
+  /**
+   * Get token usage summary
+   */
+  async getTokenUsageSummary(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/summary${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get token usage by period (day/week/month)
+   */
+  async getTokenUsageByPeriod(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/by-period${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get token usage by period + layer type (for stacked chart)
+   */
+  async getTokenUsageByPeriodLayer(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/by-period-layer${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get token usage by model
+   */
+  async getTokenUsageByModel(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/by-model${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get token usage by village
+   */
+  async getTokenUsageByVillage(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/by-village${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get micro vs full NLU layer breakdown
+   */
+  async getTokenUsageLayerBreakdown(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/layer-breakdown${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get average tokens per chat
+   */
+  async getTokenUsageAvgPerChat(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/avg-per-chat${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get AI response count per village (main_chat only)
+   */
+  async getTokenUsageResponsesByVillage(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/responses-by-village${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get detailed usage per village + model
+   */
+  async getTokenUsageVillageModelDetail(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/village-model-detail${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
   /**
    * Get golden set summary
    */
