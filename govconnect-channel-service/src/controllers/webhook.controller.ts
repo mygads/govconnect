@@ -9,6 +9,7 @@ import { processMediaFromWebhook, MediaInfo } from '../services/media.service';
 import { updateConversation, isUserInTakeover, setAIProcessing } from '../services/takeover.service';
 import { addPendingMessage } from '../services/pending-message.service';
 import { addMessageToBatch, cancelBatch } from '../services/message-batcher.service';
+import { resolveVillageIdFromInstanceName } from '../services/wa.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
 import { getQuery } from '../utils/http';
@@ -66,10 +67,15 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     }
 
     // Resolve village_id (tenant) from webhook context.
-    // We rely on instanceName being set to villageId when session is created.
+    // instanceName is the session name on the WA provider (often a slug like "desa-sanreseng-ade"),
+    // which needs to be resolved to the actual village_id (CUID) stored in the database.
     const instanceName: string | undefined =
       formInstanceName || payload.instanceName || formUserId || payload.userID;
-    const villageId: string | undefined = instanceName || process.env.DEFAULT_VILLAGE_ID;
+    const rawVillageId: string | undefined = instanceName || process.env.DEFAULT_VILLAGE_ID;
+    // Resolve slug → CUID (if instanceName is a slug, look up wa_sessions.instance_name to get the real village_id)
+    const villageId: string | undefined = rawVillageId
+      ? await resolveVillageIdFromInstanceName(rawVillageId)
+      : undefined;
 
     // Debug: Log full payload structure
     logger.debug('Webhook received', { 

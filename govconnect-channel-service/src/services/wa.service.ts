@@ -20,17 +20,54 @@ async function getSessionByVillageId(villageId: string) {
   });
 }
 
+/**
+ * Look up a WA session by instance_name (the slug used on the WA provider).
+ * This is needed because the webhook sends instanceName (slug) but the DB stores village_id (CUID).
+ */
+async function getSessionByInstanceName(instanceName: string) {
+  return prisma.wa_sessions.findUnique({
+    where: { instance_name: instanceName },
+  });
+}
+
+/**
+ * Resolve village_id from an instanceName (slug).
+ * Returns the CUID village_id if found via instance_name lookup,
+ * otherwise returns the input as-is (backward compatible).
+ */
+export async function resolveVillageIdFromInstanceName(instanceName: string): Promise<string> {
+  // First: check if instanceName is already a valid CUID village_id
+  const directSession = await getSessionByVillageId(instanceName);
+  if (directSession) return instanceName;
+
+  // Second: look up by instance_name (slug → CUID)
+  const sessionByName = await getSessionByInstanceName(instanceName);
+  if (sessionByName) {
+    logger.info('Resolved instance_name to village_id', {
+      instance_name: instanceName,
+      village_id: sessionByName.village_id,
+    });
+    return sessionByName.village_id;
+  }
+
+  // Fallback: return as-is (may fail downstream, but preserves existing behavior)
+  logger.warn('Could not resolve instance_name to village_id, using as-is', { instanceName });
+  return instanceName;
+}
+
 async function upsertSession(params: {
   villageId: string;
   adminId?: string;
   token: string;
   status?: string;
   waNumber?: string | null;
+  instanceName?: string;
 }) {
   return prisma.wa_sessions.upsert({
     where: { village_id: params.villageId },
     create: {
       village_id: params.villageId,
+      instance_name: params.instanceName || null,
       admin_id: params.adminId,
       wa_token: params.token,
       status: params.status || null,
@@ -42,6 +79,7 @@ async function upsertSession(params: {
       wa_token: params.token,
       status: params.status || null,
       wa_number: params.waNumber || null,
+      instance_name: params.instanceName || undefined,
       last_connected_at: params.status === 'connected' ? new Date() : undefined,
     },
   });
@@ -157,8 +195,19 @@ type ResolvedAccessToken = {
 async function resolveAccessToken(villageId?: string): Promise<ResolvedAccessToken> {
   const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
   if (resolvedVillageId) {
+    // Primary: lookup by village_id (CUID)
     const session = await getSessionByVillageId(resolvedVillageId);
     if (session?.wa_token) return { token: session.wa_token, source: 'session', village_id: resolvedVillageId };
+
+    // Fallback: lookup by instance_name (slug like "desa-sanreseng-ade")
+    const sessionByName = await getSessionByInstanceName(resolvedVillageId);
+    if (sessionByName?.wa_token) {
+      logger.info('Token resolved via instance_name fallback', {
+        instance_name: resolvedVillageId,
+        village_id: sessionByName.village_id,
+      });
+      return { token: sessionByName.wa_token, source: 'session', village_id: sessionByName.village_id };
+    }
   }
 
   const account = await getDefaultChannelAccount(resolvedVillageId);
@@ -386,10 +435,14 @@ export async function createSessionForVillage(params: {
     }
   }
 
+  // Compute the instance_name (session name on WA provider) — same logic as createSessionViaGenfityApp
+  const instanceName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
   await upsertSession({
     villageId: params.villageId,
     adminId: params.adminId,
     token,
+    instanceName,
   });
 
   // Enable auto_read and chat_log on genfity-wa-support after session is created

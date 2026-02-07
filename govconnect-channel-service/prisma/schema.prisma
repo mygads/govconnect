@@ -65,6 +65,7 @@ model wa_settings {
 model wa_sessions {
   id               String   @id @default(cuid())
   village_id       String   @unique
+  instance_name    String?  @unique // Session name on WA provider (slug e.g. "desa-sanreseng-ade")
   admin_id         String?
   wa_token         String
   wa_number        String?
