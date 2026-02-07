@@ -655,6 +655,70 @@ export interface UserHistoryResponse {
   };
 }
 
+// ==================== SERVICE CATALOG ====================
+
+export interface ServiceCatalogItem {
+  id: string;
+  name: string;
+  slug: string;
+  code?: string;
+  description?: string;
+  is_active: boolean;
+  category?: {
+    id: string;
+    name: string;
+  };
+}
+
+let serviceCatalogCache: ServiceCatalogItem[] | null = null;
+let serviceCatalogCacheTime = 0;
+const SERVICE_CATALOG_TTL = 15 * 60 * 1000; // 15 minutes
+
+/**
+ * Get all available services from case-service DB.
+ * Results are cached for 15 minutes.
+ */
+export async function getServiceCatalog(villageId?: string): Promise<ServiceCatalogItem[]> {
+  const now = Date.now();
+  if (serviceCatalogCache && (now - serviceCatalogCacheTime) < SERVICE_CATALOG_TTL) {
+    return serviceCatalogCache;
+  }
+
+  try {
+    const url = `${config.caseServiceUrl}/services`;
+    const response = await axios.get<{ data: ServiceCatalogItem[] }>(url, {
+      params: villageId ? { village_id: villageId } : undefined,
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10000,
+    });
+
+    const services = Array.isArray(response.data?.data) ? response.data.data : [];
+    serviceCatalogCache = services;
+    serviceCatalogCacheTime = now;
+
+    logger.info('✅ Service catalog fetched from DB', { count: services.length });
+    return services;
+  } catch (error: any) {
+    logger.warn('❌ Failed to fetch service catalog, using cache or empty', {
+      error: error.message,
+      status: error.response?.status,
+      hasCachedData: !!serviceCatalogCache,
+    });
+    return serviceCatalogCache || [];
+  }
+}
+
+/**
+ * Clear the service catalog cache (called from periodic cleanup)
+ */
+export function clearServiceCatalogCache(): void {
+  serviceCatalogCache = null;
+  serviceCatalogCacheTime = 0;
+}
+
 export interface ServiceRequirementDefinition {
   id: string;
   label: string;

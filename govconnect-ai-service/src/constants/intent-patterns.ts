@@ -206,52 +206,6 @@ export const KNOWLEDGE_BIAYA_PATTERNS = [
   /ada\s*biaya/i,
 ];
 
-// ==================== COMPLAINT CATEGORY PATTERNS ====================
-
-export const COMPLAINT_CATEGORY_PATTERNS: Record<string, RegExp[]> = {
-  'jalan_rusak': [
-    /\b(jalan|aspal)\s+(rusak|berlubang|retak|hancur|jelek)\b/i,
-    /\b(lubang|kerusakan)\s+(jalan|aspal)\b/i,
-  ],
-  'lampu_mati': [
-    /\b(lampu|penerangan)\s+(jalan\s+)?(mati|padam|rusak|tidak\s+menyala)\b/i,
-    /\b(pju|lampu\s+jalan)\s+(mati|padam)\b/i,
-  ],
-  'sampah': [
-    /\b(sampah)\s+(menumpuk|berserakan|banyak|tidak\s+diangkut)\b/i,
-    /\b(tumpukan|timbunan)\s+(sampah)\b/i,
-  ],
-  'drainase': [
-    /\b(saluran|got|selokan|drainase)\s+(tersumbat|mampet|macet|buntu)\b/i,
-    /\b(air|genangan)\s+(tidak\s+mengalir|meluap)\b/i,
-  ],
-  'pohon_tumbang': [
-    /\b(pohon)\s+(tumbang|roboh|patah|miring|bahaya)\b/i,
-  ],
-  'banjir': [
-    /\b(banjir|genangan\s+air|air\s+naik)\b/i,
-  ],
-  'fasilitas_rusak': [
-    /\b(fasilitas|taman|pagar|bangku|trotoar)\s+(rusak|jelek|hancur)\b/i,
-  ],
-};
-
-// ==================== SERVICE CODE PATTERNS ====================
-
-export const SERVICE_CODE_PATTERNS: Record<string, RegExp[]> = {
-  'SKD': [/\b(skd|domisili|keterangan\s+domisili)\b/i],
-  'SKTM': [/\b(sktm|tidak\s+mampu|keterangan\s+tidak\s+mampu)\b/i],
-  'SKU': [/\b(sku|usaha|keterangan\s+usaha)\b/i],
-  'SKBM': [/\b(skbm|belum\s+menikah|belum\s+nikah)\b/i],
-  'SPKTP': [/\b(spktp|pengantar\s+ktp|ktp\s+baru|perpanjang\s+ktp)\b/i],
-  'SPKK': [/\b(spkk|pengantar\s+kk|kartu\s+keluarga)\b/i],
-  'SPSKCK': [/\b(spskck|pengantar\s+skck|skck)\b/i],
-  'SPAKTA': [/\b(spakta|pengantar\s+akta|akta\s+kelahiran|akta\s+kematian)\b/i],
-  'IKR': [/\b(ikr|izin\s+keramaian|acara)\b/i],
-  'SKK': [/\b(skk|keterangan\s+kematian)\b/i],
-  'SPP': [/\b(spp|pengantar\s+pindah|pindah\s+domisili)\b/i],
-};
-
 // ==================== HELPER FUNCTIONS ====================
 
 /**
@@ -326,8 +280,6 @@ export default {
   CANCEL_SERVICE_PATTERNS,
   HISTORY_PATTERNS,
   KNOWLEDGE_QUERY_PATTERNS,
-  COMPLAINT_CATEGORY_PATTERNS,
-  SERVICE_CODE_PATTERNS,
   matchesAnyPattern,
   findMatchingCategory,
   detectIntentFromPatterns,

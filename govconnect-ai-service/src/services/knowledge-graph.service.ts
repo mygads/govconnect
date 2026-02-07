@@ -8,11 +8,14 @@
  * - Prerequisite relationships
  * - Related topics clustering
  * - Follow-up suggestions
+ * - **Dynamic DB-backed nodes**: Service nodes are loaded from DB via case-service API
+ *   and refreshed periodically. Hardcoded fallback data is used only if DB fetch fails.
  * 
  * This helps AI provide more contextual and helpful responses.
  */
 
 import logger from '../utils/logger';
+import { getServiceCatalog, type ServiceCatalogItem } from './case-client.service';
 
 // ==================== TYPES ====================
 
@@ -141,8 +144,11 @@ const ALL_RELATIONS: KnowledgeRelation[] = [
 
 // ==================== KNOWLEDGE NODES ====================
 
-const KNOWLEDGE_NODES: Map<string, KnowledgeNode> = new Map([
-  // Services
+/**
+ * Fallback service nodes — used ONLY when DB fetch fails.
+ * These will be overwritten by DB data on successful refresh.
+ */
+const FALLBACK_SERVICE_NODES: [string, KnowledgeNode][] = [
   ['SKD', { id: 'SKD', code: 'SKD', name: 'Surat Keterangan Domisili', category: 'layanan', keywords: ['domisili', 'tempat tinggal', 'alamat'], relations: [] }],
   ['SKTM', { id: 'SKTM', code: 'SKTM', name: 'Surat Keterangan Tidak Mampu', category: 'layanan', keywords: ['tidak mampu', 'miskin', 'kurang mampu'], relations: [] }],
   ['SKU', { id: 'SKU', code: 'SKU', name: 'Surat Keterangan Usaha', category: 'layanan', keywords: ['usaha', 'bisnis', 'dagang'], relations: [] }],
@@ -151,15 +157,17 @@ const KNOWLEDGE_NODES: Map<string, KnowledgeNode> = new Map([
   ['SPSKCK', { id: 'SPSKCK', code: 'SPSKCK', name: 'Surat Pengantar SKCK', category: 'layanan', keywords: ['skck', 'kelakuan baik', 'polisi'], relations: [] }],
   ['SPAKTA', { id: 'SPAKTA', code: 'SPAKTA', name: 'Surat Pengantar Akta', category: 'layanan', keywords: ['akta', 'kelahiran', 'kematian', 'nikah'], relations: [] }],
   ['IKR', { id: 'IKR', code: 'IKR', name: 'Izin Keramaian', category: 'layanan', keywords: ['keramaian', 'acara', 'hajatan', 'pesta'], relations: [] }],
-  
-  // Complaints
+];
+
+const STATIC_NODES: [string, KnowledgeNode][] = [
+  // Complaints (these are not in the service DB, keep static)
   ['jalan_rusak', { id: 'jalan_rusak', code: 'jalan_rusak', name: 'Jalan Rusak', category: 'laporan', keywords: ['jalan', 'rusak', 'berlubang', 'aspal'], relations: [] }],
   ['lampu_mati', { id: 'lampu_mati', code: 'lampu_mati', name: 'Lampu Jalan Mati', category: 'laporan', keywords: ['lampu', 'mati', 'penerangan', 'gelap'], relations: [] }],
   ['sampah', { id: 'sampah', code: 'sampah', name: 'Masalah Sampah', category: 'laporan', keywords: ['sampah', 'menumpuk', 'bau', 'kotor'], relations: [] }],
   ['drainase', { id: 'drainase', code: 'drainase', name: 'Saluran Air/Drainase', category: 'laporan', keywords: ['drainase', 'got', 'selokan', 'tersumbat'], relations: [] }],
   ['pohon_tumbang', { id: 'pohon_tumbang', code: 'pohon_tumbang', name: 'Pohon Tumbang', category: 'laporan', keywords: ['pohon', 'tumbang', 'roboh', 'bahaya'], relations: [] }],
   ['banjir', { id: 'banjir', code: 'banjir', name: 'Banjir', category: 'laporan', keywords: ['banjir', 'genangan', 'air'], relations: [] }],
-  
+
   // Info
   ['jam_buka', { id: 'jam_buka', code: 'jam_buka', name: 'Jam Operasional', category: 'informasi', keywords: ['jam', 'buka', 'tutup', 'operasional'], relations: [] }],
   ['lokasi', { id: 'lokasi', code: 'lokasi', name: 'Lokasi Kantor', category: 'informasi', keywords: ['lokasi', 'alamat', 'dimana', 'kantor'], relations: [] }],
@@ -167,7 +175,133 @@ const KNOWLEDGE_NODES: Map<string, KnowledgeNode> = new Map([
   ['syarat', { id: 'syarat', code: 'syarat', name: 'Persyaratan', category: 'informasi', keywords: ['syarat', 'persyaratan', 'dokumen', 'berkas'], relations: [] }],
   ['biaya', { id: 'biaya', code: 'biaya', name: 'Biaya', category: 'informasi', keywords: ['biaya', 'tarif', 'harga', 'bayar', 'gratis'], relations: [] }],
   ['proses', { id: 'proses', code: 'proses', name: 'Proses/Prosedur', category: 'informasi', keywords: ['proses', 'prosedur', 'cara', 'langkah'], relations: [] }],
+];
+
+/**
+ * The live knowledge node map — rebuilt dynamically from DB data.
+ */
+const KNOWLEDGE_NODES: Map<string, KnowledgeNode> = new Map([
+  ...FALLBACK_SERVICE_NODES,
+  ...STATIC_NODES,
 ]);
+
+let dbInitialized = false;
+let dbInitPromise: Promise<void> | null = null;
+
+/**
+ * Convert a service name from DB into keywords for matching.
+ * E.g. "Surat Pengantar KTP" → ['ktp', 'pengantar ktp', 'surat pengantar ktp']
+ */
+function deriveKeywords(name: string, slug: string, code?: string): string[] {
+  const keywords: string[] = [];
+  const lower = name.toLowerCase();
+
+  // Add the full name
+  keywords.push(lower);
+
+  // Add slug parts (slug is typically kebab-case)
+  const slugWords = slug.replace(/-/g, ' ');
+  if (slugWords !== lower) keywords.push(slugWords);
+
+  // Add code as keyword if present
+  if (code) keywords.push(code.toLowerCase());
+
+  // Extract meaningful words (skip common prefixes)
+  const skipWords = new Set(['surat', 'pengantar', 'keterangan', 'izin']);
+  const words = lower.split(/\s+/).filter(w => w.length > 2);
+  for (const word of words) {
+    if (!skipWords.has(word)) {
+      keywords.push(word);
+    }
+  }
+
+  // Deduplicate
+  return [...new Set(keywords)];
+}
+
+/**
+ * Build a code from slug or name (e.g. "surat-keterangan-domisili" → "SKD")
+ * Falls back to uppercase slug abbreviation.
+ */
+function deriveCode(slug: string, name: string): string {
+  // Try to build an abbreviation from the name's capitalized words
+  const words = name.split(/\s+/).filter(w => w.length > 1);
+  if (words.length >= 2) {
+    const abbr = words.map(w => w[0].toUpperCase()).join('');
+    if (abbr.length >= 2 && abbr.length <= 8) return abbr;
+  }
+  return slug.toUpperCase().replace(/-/g, '_').substring(0, 10);
+}
+
+/**
+ * Refresh service nodes from the database (via case-service API).
+ * Keeps static nodes (complaints, info) intact, replaces service nodes.
+ */
+export async function refreshFromDB(): Promise<void> {
+  try {
+    const services = await getServiceCatalog();
+    if (!services.length) {
+      logger.warn('[KnowledgeGraph] No services from DB, keeping fallback data');
+      return;
+    }
+
+    // Remove old service nodes (category === 'layanan')
+    for (const [key, node] of KNOWLEDGE_NODES) {
+      if (node.category === 'layanan') {
+        KNOWLEDGE_NODES.delete(key);
+      }
+    }
+
+    // Add service nodes from DB
+    for (const svc of services) {
+      if (!svc.is_active) continue;
+
+      const code = svc.code || deriveCode(svc.slug, svc.name);
+      const keywords = deriveKeywords(svc.name, svc.slug, svc.code);
+
+      const node: KnowledgeNode = {
+        id: svc.id || code,
+        code,
+        name: svc.name,
+        category: 'layanan',
+        keywords,
+        relations: [],
+      };
+
+      KNOWLEDGE_NODES.set(code, node);
+    }
+
+    // Re-populate relations for service nodes
+    for (const relation of ALL_RELATIONS) {
+      const node = KNOWLEDGE_NODES.get(relation.from);
+      if (node) {
+        // Avoid duplicating relations
+        if (!node.relations.some(r => r.from === relation.from && r.to === relation.to && r.type === relation.type)) {
+          node.relations.push(relation);
+        }
+      }
+    }
+
+    dbInitialized = true;
+    logger.info('[KnowledgeGraph] ✅ Refreshed service nodes from DB', {
+      totalNodes: KNOWLEDGE_NODES.size,
+      serviceNodes: [...KNOWLEDGE_NODES.values()].filter(n => n.category === 'layanan').length,
+    });
+  } catch (error: any) {
+    logger.warn('[KnowledgeGraph] Failed to refresh from DB, using existing data', { error: error.message });
+  }
+}
+
+/**
+ * Ensure DB data has been loaded at least once.
+ * Called lazily on first graph query. Non-blocking after first call.
+ */
+async function ensureInitialized(): Promise<void> {
+  if (dbInitialized) return;
+  if (dbInitPromise) return dbInitPromise;
+  dbInitPromise = refreshFromDB().finally(() => { dbInitPromise = null; });
+  return dbInitPromise;
+}
 
 // Populate relations in nodes
 for (const relation of ALL_RELATIONS) {
@@ -184,6 +318,53 @@ for (const relation of ALL_RELATIONS) {
  */
 export function getNode(code: string): KnowledgeNode | undefined {
   return KNOWLEDGE_NODES.get(code.toUpperCase()) || KNOWLEDGE_NODES.get(code.toLowerCase());
+}
+
+/**
+ * Get all service codes dynamically from the node map.
+ * Returns codes like ['SKD', 'SKTM', 'SKU', ...] based on DB data.
+ */
+export function getAllServiceCodes(): string[] {
+  const codes: string[] = [];
+  for (const node of KNOWLEDGE_NODES.values()) {
+    if (node.category === 'layanan') {
+      codes.push(node.code);
+    }
+  }
+  return codes;
+}
+
+/**
+ * Get all service keywords dynamically from the node map.
+ * Returns flat array of { keyword, code } pairs for matching.
+ */
+export function getAllServiceKeywords(): { keyword: string; code: string }[] {
+  const result: { keyword: string; code: string }[] = [];
+  for (const node of KNOWLEDGE_NODES.values()) {
+    if (node.category === 'layanan') {
+      for (const kw of node.keywords) {
+        result.push({ keyword: kw, code: node.code });
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Ensure knowledge graph is initialized from DB, then get graph context.
+ * This is the main entry point for the unified processor.
+ */
+export async function getGraphContextAsync(code: string): Promise<string> {
+  await ensureInitialized();
+  return getGraphContext(code);
+}
+
+/**
+ * Ensure knowledge graph is initialized from DB, then find node by keyword.
+ */
+export async function findNodeByKeywordAsync(keyword: string): Promise<KnowledgeNode | undefined> {
+  await ensureInitialized();
+  return findNodeByKeyword(keyword);
 }
 
 /**
@@ -326,8 +507,13 @@ export default {
   getNode,
   getRelatedNodes,
   findNodeByKeyword,
+  findNodeByKeywordAsync,
   getFollowUpSuggestions,
   getGraphContext,
+  getGraphContextAsync,
+  getAllServiceCodes,
+  getAllServiceKeywords,
+  refreshFromDB,
   KNOWLEDGE_NODES,
   ALL_RELATIONS,
 };

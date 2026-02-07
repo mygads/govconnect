@@ -3325,22 +3325,29 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     }
     
     // Step 6.5: Get knowledge graph context for service-related queries
-    // Always check for service code patterns in message
+    // Dynamically uses DB-backed knowledge graph (no hardcoded service codes/keywords)
     try {
-      const { getGraphContext, findNodeByKeyword } = await import('./knowledge-graph.service');
+      const { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } = await import('./knowledge-graph.service');
       
-      // Try to find relevant service code from message
-      const serviceCodeMatch = sanitizedMessage.match(/\b(SKD|SKTM|SKU|SPKTP|SPKK|SPSKCK|SPAKTA|IKR)\b/i);
-      if (serviceCodeMatch) {
-        graphContext = getGraphContext(serviceCodeMatch[1].toUpperCase());
-      } else {
-        // Try keyword matching
-        const keywords = ['domisili', 'tidak mampu', 'usaha', 'ktp', 'kk', 'skck', 'akta', 'keramaian'];
-        for (const kw of keywords) {
-          if (sanitizedMessage.toLowerCase().includes(kw)) {
-            const node = findNodeByKeyword(kw);
+      // Build dynamic service code regex from DB-backed knowledge graph
+      const serviceCodes = getAllServiceCodes();
+      if (serviceCodes.length > 0) {
+        const codesPattern = new RegExp(`\\b(${serviceCodes.join('|')})\\b`, 'i');
+        const serviceCodeMatch = sanitizedMessage.match(codesPattern);
+        if (serviceCodeMatch) {
+          graphContext = await getGraphContextAsync(serviceCodeMatch[1].toUpperCase());
+        }
+      }
+      
+      // If no direct code match, try keyword matching from DB-backed nodes
+      if (!graphContext) {
+        const serviceKeywords = getAllServiceKeywords();
+        const lowerMsg = sanitizedMessage.toLowerCase();
+        for (const { keyword } of serviceKeywords) {
+          if (lowerMsg.includes(keyword)) {
+            const node = await findNodeByKeywordAsync(keyword);
             if (node) {
-              graphContext = getGraphContext(node.code);
+              graphContext = await getGraphContextAsync(node.code);
               break;
             }
           }
