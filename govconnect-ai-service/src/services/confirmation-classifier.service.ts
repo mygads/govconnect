@@ -35,6 +35,13 @@ function parseModelListEnv(envValue: string | undefined, fallback: string[]): st
 }
 
 const CONFIRMATION_MODEL_PRIORITY = parseModelListEnv(process.env.MICRO_NLU_MODELS, DEFAULT_MODELS);
+
+// Reuse singleton (avoid creating new instance per call)
+const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+
+// Timeout for micro LLM calls (10 seconds)
+const MICRO_LLM_TIMEOUT_MS = 10_000;
+
 const CONFIRMATION_SYSTEM_PROMPT = `Anda adalah classifier konfirmasi untuk layanan publik.
 
 TUGAS:
@@ -67,7 +74,6 @@ export async function classifyConfirmation(message: string): Promise<Confirmatio
     const model = CONFIRMATION_MODEL_PRIORITY[i];
 
     try {
-      const genAI = new GoogleGenerativeAI(config.geminiApiKey);
       const geminiModel = genAI.getGenerativeModel({
         model,
         generationConfig: {
@@ -77,7 +83,12 @@ export async function classifyConfirmation(message: string): Promise<Confirmatio
       });
 
       const startMs = Date.now();
-      const result = await geminiModel.generateContent(prompt);
+      const result = await Promise.race([
+        geminiModel.generateContent(prompt),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Micro LLM timeout after ${MICRO_LLM_TIMEOUT_MS}ms`)), MICRO_LLM_TIMEOUT_MS)
+        ),
+      ]);
       const durationMs = Date.now() - startMs;
       const responseText = result.response.text();
 

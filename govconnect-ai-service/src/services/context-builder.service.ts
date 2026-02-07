@@ -99,10 +99,26 @@ export async function buildContext(
     });
     
     // Fallback: return prompt without history
+    // Still need to replace all template placeholders to avoid raw strings in LLM
+    const now2 = new Date();
+    const wibOffset2 = 7 * 60;
+    const utc2 = now2.getTime() + (now2.getTimezoneOffset() * 60000);
+    const wibTime2 = new Date(utc2 + (wibOffset2 * 60000));
+    const currentHour2 = wibTime2.getHours();
+    let timeOfDay2 = 'malam';
+    if (currentHour2 >= 5 && currentHour2 < 11) timeOfDay2 = 'pagi';
+    else if (currentHour2 >= 11 && currentHour2 < 15) timeOfDay2 = 'siang';
+    else if (currentHour2 >= 15 && currentHour2 < 18) timeOfDay2 = 'sore';
+    
     const fallbackPrompt = getFullSystemPrompt()
       .replace('{knowledge_context}', '')
       .replace('{history}', '(No conversation history available)')
-      .replace('{user_message}', currentMessage);
+      .replace('{user_message}', currentMessage)
+      .replace(/\{\{current_date\}\}/g, wibTime2.toISOString().split('T')[0])
+      .replace(/\{\{tomorrow_date\}\}/g, new Date(wibTime2.getTime() + 86400000).toISOString().split('T')[0])
+      .replace(/\{\{current_time\}\}/g, wibTime2.toTimeString().split(' ')[0].substring(0, 5))
+      .replace(/\{\{time_of_day\}\}/g, timeOfDay2)
+      .replace(/\{\{complaint_categories\}\}/g, 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya');
     
     return {
       systemPrompt: fallbackPrompt,
@@ -469,6 +485,12 @@ export function sanitizeUserInput(input: string): string {
     /\[\s*INST\s*\]/gi,
     /<\/?system>/gi,
     /\{\{[^}]+\}\}/g,  // Template injection
+    // Indonesian prompt injection patterns
+    /abaikan\s+(instruksi|perintah|aturan)\s+(sebelumnya|di\s*atas|semua)/gi,
+    /lupakan\s+(instruksi|perintah|aturan)/gi,
+    /kamu\s+(sekarang|adalah)\s+(seorang|menjadi)/gi,
+    // Role injection prevention (could trick LLM via conversation history)
+    /^(assistant|system)\s*:/gmi,
   ];
   
   for (const pattern of injectionPatterns) {

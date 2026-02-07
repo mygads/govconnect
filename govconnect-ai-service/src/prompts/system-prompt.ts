@@ -203,7 +203,8 @@ User: jalan rusak
 Assistant: minta lokasi
 ---
 Input: "rt 02 rw 01 depan masjid"
-Output: {"intent": "CREATE_COMPLAINT", "fields": {"alamat": "RT 02 RW 01 depan masjid"}, "reply_text": "Terima kasih Pak Yoga.\nLaporan telah kami terima dengan nomor RPT-401.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "jalan_rusak", "deskripsi": "jalan rusak", "alamat": "RT 02 RW 01 depan masjid"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
+(Catatan: reply_text dikosongkan karena handler sistem akan otomatis membuat laporan dan menghasilkan pesan konfirmasi dengan nomor laporan.)
 
 CASE 4.7 — CANCEL LAPORAN (KONFIRMASI)
 Input: "batalkan laporan RPT-201"

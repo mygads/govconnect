@@ -18,6 +18,9 @@ import { modelStatsService } from './model-stats.service';
 
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
+// Timeout for main LLM calls (30 seconds)
+const MAIN_LLM_TIMEOUT_MS = 30_000;
+
 // Available models pool - December 2025
 // Models are sorted by: 1) ENV (primary/fallback), 2) Success rate
 // https://ai.google.dev/pricing
@@ -282,7 +285,12 @@ async function callGeminiWithModel(
       },
     });
     
-    const result = await model.generateContent(systemPrompt);
+    const result = await Promise.race([
+      model.generateContent(systemPrompt),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`LLM timeout after ${MAIN_LLM_TIMEOUT_MS}ms`)), MAIN_LLM_TIMEOUT_MS)
+      ),
+    ]);
     const responseText = result.response.text();
     
     // Extract actual token usage from Gemini API response

@@ -270,6 +270,14 @@ setInterval(() => {
       logger.debug('Cleaned up expired pending photos', { userId: key });
     }
   }
+  // Also clean up stale complaint type cache (5 min TTL already, but purge entries older than 15 min)
+  const cacheTtlMs = 15 * 60 * 1000;
+  for (const [key, value] of complaintTypeCache.entries()) {
+    if (now - value.timestamp > cacheTtlMs) {
+      complaintTypeCache.delete(key);
+      logger.debug('Cleaned up stale complaint type cache', { villageId: key });
+    }
+  }
 }, 60 * 1000);
 
 // ==================== RESPONSE VALIDATION ====================
@@ -3195,7 +3203,7 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
         clearPendingCancelConfirmation(userId);
         return {
           success: true,
-          response: 'Baik Pak/Bu, pembatalan dibatalkan. Ada yang bisa kami bantu lagi?',
+          response: 'Baik Pak/Bu, laporan/layanan Anda tidak jadi dibatalkan. Ada yang bisa kami bantu lagi?',
           intent: 'QUESTION',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
@@ -3708,6 +3716,11 @@ async function handlePendingAddressConfirmation(
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);
     const combinedFotoUrl = consumePendingPhotos(userId);
     
+    // Resolve complaint type for category_id, type_id, is_urgent
+    const complaintTypeConfig = await resolveComplaintTypeConfig(pendingConfirm.kategori, pendingConfirm.village_id);
+    const isEmergency = detectEmergencyComplaint(pendingConfirm.deskripsi, message, pendingConfirm.kategori);
+    const userProfile = getProfile(userId);
+    
     const complaintId = await createComplaint({
       wa_user_id: channel === 'webchat' ? undefined : userId,
       channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
@@ -3718,11 +3731,23 @@ async function handlePendingAddressConfirmation(
       alamat: pendingConfirm.alamat,
       rt_rw: '',
       foto_url: combinedFotoUrl,
+      category_id: complaintTypeConfig?.category_id,
+      type_id: complaintTypeConfig?.id,
+      is_urgent: isEmergency,
+      reporter_name: userProfile.nama_lengkap,
+      reporter_phone: channel === 'webchat' ? userProfile.no_hp : userId,
     });
     
     if (!complaintId) {
       throw new Error('Failed to create complaint after address confirmation');
     }
+    
+    // Post-creation analytics
+    rateLimiterService.recordReport(userId);
+    aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
+    saveDefaultAddress(userId, pendingConfirm.alamat, '');
+    recordServiceUsage(userId, pendingConfirm.kategori);
+    recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
     
     const photoCount = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
     const withPhotoNote = photoCount > 0 ? `\n${photoCount > 1 ? photoCount + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
@@ -3748,6 +3773,11 @@ async function handlePendingAddressConfirmation(
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);
     const combinedFotoUrl = consumePendingPhotos(userId);
     
+    // Resolve complaint type for category_id, type_id, is_urgent
+    const typeConfig = await resolveComplaintTypeConfig(pendingConfirm.kategori, pendingConfirm.village_id);
+    const isUrgent = detectEmergencyComplaint(pendingConfirm.deskripsi, message, pendingConfirm.kategori);
+    const profile = getProfile(userId);
+    
     const complaintId = await createComplaint({
       wa_user_id: channel === 'webchat' ? undefined : userId,
       channel: channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
@@ -3758,11 +3788,23 @@ async function handlePendingAddressConfirmation(
       alamat: message.trim(),
       rt_rw: '',
       foto_url: combinedFotoUrl,
+      category_id: typeConfig?.category_id,
+      type_id: typeConfig?.id,
+      is_urgent: isUrgent,
+      reporter_name: profile.nama_lengkap,
+      reporter_phone: channel === 'webchat' ? profile.no_hp : userId,
     });
     
     if (!complaintId) {
       throw new Error('Failed to create complaint with updated address');
     }
+    
+    // Post-creation analytics
+    rateLimiterService.recordReport(userId);
+    aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
+    saveDefaultAddress(userId, message.trim(), '');
+    recordServiceUsage(userId, pendingConfirm.kategori);
+    recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
     
     const photoCount2 = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
     const withPhotoNote = photoCount2 > 0 ? `\n${photoCount2 > 1 ? photoCount2 + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
