@@ -34,9 +34,6 @@ PUBLIC_CHANNEL_BASE_URL=https://channel.govconnect.my.id
 # Jika kosong, Channel Service akan menerima verifikasi tanpa token (cocok jika genfity-wa tidak diset verify token).
 WA_WEBHOOK_VERIFY_TOKEN=
 
-# Default village untuk environment single-desa (opsional tapi direkomendasikan)
-DEFAULT_VILLAGE_ID=desa-001
-
 # (Opsional) dry run untuk testing tanpa outbound call
 WA_DRY_RUN=false
 ```
@@ -55,7 +52,7 @@ docker compose up -d --build
 
 1. Login ke GovConnect Dashboard
 2. Masuk menu **WhatsApp**
-3. Pilih desa (atau pastikan `DEFAULT_VILLAGE_ID` sudah benar)
+3. Pilih desa yang ingin dikoneksikan
 4. Klik **Buat Sesi WhatsApp**
 5. Klik **Konek WhatsApp**
 6. Scan QR dari aplikasi WhatsApp (HP)
@@ -64,7 +61,7 @@ docker compose up -d --build
 ## Troubleshooting
 
 **Status selalu 404 / “Belum ada sesi”**
-- Buat sesi dulu di menu WhatsApp (atau cek `DEFAULT_VILLAGE_ID`).
+- Buat sesi dulu di menu WhatsApp untuk desa yang ingin dihubungkan.
 
 **QR tidak muncul**
 - Pastikan WA Provider up dan `WA_API_URL` benar (harus include `/wa`).

@@ -60,9 +60,6 @@ INTERNAL_API_KEY=your_internal_api_key
 # URL publik channel-service (untuk webhook URL yang dipublish)
 PUBLIC_CHANNEL_BASE_URL=https://channel.govconnect.my.id
 
-# Default desa untuk environment single-tenant (opsional tapi direkomendasikan)
-DEFAULT_VILLAGE_ID=desa-001
-
 # (Opsional) fallback token jika belum ada token sesi di DB.
 # Normalnya token dibuat per-desa/per-user dan disimpan di DB internal (wa_sessions).
 WA_ACCESS_TOKEN=

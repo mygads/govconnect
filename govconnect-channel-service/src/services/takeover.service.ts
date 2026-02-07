@@ -2,7 +2,7 @@ import prisma from '../config/database';
 import logger from '../utils/logger';
 
 function resolveVillageId(villageId?: string): string {
-  return villageId || process.env.DEFAULT_VILLAGE_ID || 'default';
+  return villageId || 'unknown';
 }
 
 export interface TakeoverSession {

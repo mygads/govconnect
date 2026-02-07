@@ -18,12 +18,11 @@ import {
 } from '../types/webhook.types';
 
 async function isWaChannelEnabled(villageId?: string): Promise<boolean> {
-  const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
-  if (!resolvedVillageId) return true;
+  if (!villageId) return true;
 
   try {
     const account = await prisma.channel_accounts.findUnique({
-      where: { village_id: resolvedVillageId },
+      where: { village_id: villageId },
     });
 
     if (!account) return true;
@@ -71,7 +70,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // which needs to be resolved to the actual village_id (CUID) stored in the database.
     const instanceName: string | undefined =
       formInstanceName || payload.instanceName || formUserId || payload.userID;
-    const rawVillageId: string | undefined = instanceName || process.env.DEFAULT_VILLAGE_ID;
+    const rawVillageId: string | undefined = instanceName;
     // Resolve slug → CUID (if instanceName is a slug, look up wa_sessions.instance_name to get the real village_id)
     const villageId: string | undefined = rawVillageId
       ? await resolveVillageIdFromInstanceName(rawVillageId)

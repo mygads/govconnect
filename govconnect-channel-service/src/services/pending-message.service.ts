@@ -26,7 +26,7 @@ export interface PendingMessage {
 }
 
 function resolveVillageId(villageId?: string): string {
-  return villageId || process.env.DEFAULT_VILLAGE_ID || 'default';
+  return villageId || 'unknown';
 }
 
 /**

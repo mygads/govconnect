@@ -21,8 +21,7 @@ function resolveVillageId(req: Request): string | null {
   const queryVillageId = getQuery(req, 'village_id') || null;
   const bodyVillageId = typeof req.body?.village_id === 'string' ? req.body.village_id : null;
   const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : null;
-  const fallbackVillageId = process.env.DEFAULT_VILLAGE_ID || null;
-  return queryVillageId || bodyVillageId || headerVillageId || fallbackVillageId;
+  return queryVillageId || bodyVillageId || headerVillageId;
 }
 
 async function syncChannelAccountNumber(villageId: string, waNumber?: string | null) {

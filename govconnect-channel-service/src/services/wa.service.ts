@@ -86,12 +86,11 @@ async function upsertSession(params: {
 }
 
 async function getDefaultChannelAccount(villageId?: string) {
-  const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
-  if (!resolvedVillageId) return null;
+  if (!villageId) return null;
 
   try {
     return await prisma.channel_accounts.findUnique({
-      where: { village_id: resolvedVillageId },
+      where: { village_id: villageId },
     });
   } catch (error: any) {
     logger.warn('Failed to load channel account', { error: error.message });
@@ -193,28 +192,27 @@ type ResolvedAccessToken = {
 };
 
 async function resolveAccessToken(villageId?: string): Promise<ResolvedAccessToken> {
-  const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
-  if (resolvedVillageId) {
+  if (villageId) {
     // Primary: lookup by village_id (CUID)
-    const session = await getSessionByVillageId(resolvedVillageId);
-    if (session?.wa_token) return { token: session.wa_token, source: 'session', village_id: resolvedVillageId };
+    const session = await getSessionByVillageId(villageId);
+    if (session?.wa_token) return { token: session.wa_token, source: 'session', village_id: villageId };
 
     // Fallback: lookup by instance_name (slug like "desa-sanreseng-ade")
-    const sessionByName = await getSessionByInstanceName(resolvedVillageId);
+    const sessionByName = await getSessionByInstanceName(villageId);
     if (sessionByName?.wa_token) {
       logger.info('Token resolved via instance_name fallback', {
-        instance_name: resolvedVillageId,
+        instance_name: villageId,
         village_id: sessionByName.village_id,
       });
       return { token: sessionByName.wa_token, source: 'session', village_id: sessionByName.village_id };
     }
   }
 
-  const account = await getDefaultChannelAccount(resolvedVillageId);
-  if (account?.wa_token) return { token: account.wa_token, source: 'channel_account', village_id: resolvedVillageId };
+  const account = await getDefaultChannelAccount(villageId);
+  if (account?.wa_token) return { token: account.wa_token, source: 'channel_account', village_id: villageId };
   
   // No fallback to env token - tokens must be in database
-  throw new Error(`No WA token found for village ${resolvedVillageId || 'default'}. Please create a session first.`);
+  throw new Error(`No WA token found for village ${villageId || 'unknown'}. Please create a session first.`);
 }
 
 // Exported for other modules that must call WA provider via session token (e.g., media download).

@@ -632,7 +632,7 @@ export async function handleComplaintCreation(
 ): Promise<string> {
   const { kategori, rt_rw } = llmResponse.fields || {};
   let { alamat, deskripsi } = llmResponse.fields || {};
-  const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID;
+  const villageId = llmResponse.fields?.village_id;
   const complaintTypeConfig = await resolveComplaintTypeConfig(kategori, villageId);
   const requireAddress = complaintTypeConfig?.require_address ?? false;
   
@@ -1083,19 +1083,19 @@ function buildEditServiceFormUrl(
 }
 
 async function resolveVillageSlugForPublicForm(villageId?: string): Promise<string> {
-  if (!villageId) return process.env.DEFAULT_VILLAGE_SLUG || 'desa';
+  if (!villageId) return 'desa';
   try {
     const profile = await getVillageProfileSummary(villageId);
     if (profile?.short_name) return profile.short_name;
   } catch {
     // ignore
   }
-  return process.env.DEFAULT_VILLAGE_SLUG || 'desa';
+  return 'desa';
 }
 
 export async function handleServiceInfo(userId: string, llmResponse: any): Promise<HandlerResult> {
   let { service_slug, service_id } = llmResponse.fields || {};
-  const villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
+  const villageId = llmResponse.fields?.village_id || '';
   const rawMessage = llmResponse.fields?._original_message || llmResponse.fields?.service_name || llmResponse.fields?.service_query || '';
 
   if (!service_slug && !service_id && rawMessage) {
@@ -1216,7 +1216,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
 export async function handleServiceRequestCreation(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
   let { service_slug } = llmResponse.fields || {};
   const rawMessage = llmResponse.fields?._original_message || llmResponse.fields?.service_name || llmResponse.fields?.service_query || '';
-  let villageId = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID || '';
+  let villageId = llmResponse.fields?.village_id || '';
 
   // If no service_slug, try to resolve from raw message
   if (!service_slug && rawMessage) {
@@ -1675,7 +1675,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
   
   try {
     const categories = llmResponse.fields?.knowledge_category ? [llmResponse.fields.knowledge_category] : undefined;
-    const villageId: string | undefined = llmResponse.fields?.village_id || process.env.DEFAULT_VILLAGE_ID;
+    const villageId: string | undefined = llmResponse.fields?.village_id;
 
     const normalizedQuery = (message || '').toLowerCase();
     const profile = await getVillageProfileSummary(villageId);
@@ -2638,7 +2638,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       };
     }
 
-    const resolvedVillageId = villageId || process.env.DEFAULT_VILLAGE_ID;
+    const resolvedVillageId = villageId;
     const greetingPattern = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i;
 
     if (channel === 'whatsapp' && (!resolvedHistory || resolvedHistory.length === 0)) {

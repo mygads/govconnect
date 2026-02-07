@@ -14,7 +14,10 @@ function slugify(input: string): string {
 async function main() {
   console.log('🌱 Seeding government services...\n');
 
-  const villageId = process.env.DEFAULT_VILLAGE_ID || 'desa-001';
+  const villageId = process.env.SEED_VILLAGE_ID;
+  if (!villageId) {
+    throw new Error('SEED_VILLAGE_ID environment variable is required for seeding. Example: SEED_VILLAGE_ID=cml65fa1m0000mj01ee31edeh npx prisma db seed');
+  }
 
   // Ensure categories exist (by village + name)
   const categoryIdByName = new Map<string, string>();

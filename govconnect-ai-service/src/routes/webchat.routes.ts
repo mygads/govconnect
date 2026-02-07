@@ -34,15 +34,12 @@ import { getParam, getQuery } from '../utils/http';
 // Using same unified processor as WhatsApp for consistency
 logger.info('🏗️ Webchat architecture: Unified Processor (same as WhatsApp)');
 
-const DEFAULT_VILLAGE_ID = process.env.DEFAULT_VILLAGE_ID || '';
-
 async function isWebchatEnabled(villageId?: string): Promise<boolean> {
-  const resolvedVillageId = villageId || DEFAULT_VILLAGE_ID;
-  if (!resolvedVillageId) return true;
+  if (!villageId) return true;
 
   try {
     const response = await axios.get(
-      `${config.channelServiceUrl}/internal/channel-accounts/${resolvedVillageId}`,
+      `${config.channelServiceUrl}/internal/channel-accounts/${villageId}`,
       {
         headers: {
           'x-internal-api-key': config.internalApiKey,

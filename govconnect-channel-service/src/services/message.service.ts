@@ -5,7 +5,7 @@ import { MessageData } from '../types/message.types';
 const MAX_MESSAGES = 30;
 
 function resolveVillageId(villageId?: string): string {
-  return villageId || process.env.DEFAULT_VILLAGE_ID || 'default';
+  return villageId || 'unknown';
 }
 
 /**
