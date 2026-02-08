@@ -47,6 +47,9 @@ export async function handleEvent(routingKey: string, data: any): Promise<void> 
     // This prevents double response to user
 
     case RABBITMQ_CONFIG.routingKeys.complaintCreated:
+      // NOTE: This event is intentionally NOT published by case-service anymore.
+      // AI Service sends the response directly via publishAIReply.
+      // Keeping this handler for backward compatibility if event is ever re-enabled.
       await handleComplaintCreated(data as ComplaintCreatedEvent);
       break;
 

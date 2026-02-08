@@ -338,7 +338,7 @@ export function extractTime(text: string): string | null {
       hour = 0;
     }
     
-    // Validate working hours (08:00 - 15:00)
+    // Validate time range (00:00 - 23:59)
     if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
       return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
     }

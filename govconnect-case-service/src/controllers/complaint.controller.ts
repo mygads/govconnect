@@ -261,7 +261,8 @@ export async function handleUpdateComplaintStatus(req: Request, res: Response) {
  */
 export async function handleGetComplaintStatistics(req: Request, res: Response) {
   try {
-    const stats = await getComplaintStatistics();
+    const village_id = getQuery(req, 'village_id') || undefined;
+    const stats = await getComplaintStatistics(village_id);
     return res.json({ data: stats });
   } catch (error: any) {
     logger.error('Get statistics error', { error: error.message });

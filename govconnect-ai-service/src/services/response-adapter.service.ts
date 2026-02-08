@@ -35,23 +35,23 @@ export interface AdaptedResponse {
 
 const EMPATHY_PREFIXES: Record<string, string[]> = {
   angry: [
-    'Saya sangat memahami kekesalan Kakak, dan saya minta maaf atas ketidaknyamanan ini. ',
-    'Mohon maaf atas situasi ini Kak, saya paham ini sangat menjengkelkan. ',
-    'Saya mengerti Kakak sedang kesal, dan itu wajar. Izinkan saya bantu selesaikan. ',
+    'Saya sangat memahami kekesalan Bapak/Ibu, dan saya minta maaf atas ketidaknyamanan ini. ',
+    'Mohon maaf atas situasi ini Pak/Bu, saya paham ini sangat menjengkelkan. ',
+    'Saya mengerti Bapak/Ibu sedang kesal, dan itu wajar. Izinkan saya bantu selesaikan. ',
   ],
   negative: [
-    'Saya paham ini tidak mudah Kak. ',
+    'Saya paham ini tidak mudah Pak/Bu. ',
     'Mohon maaf atas ketidaknyamanannya. ',
-    'Saya mengerti Kak, mari kita selesaikan bersama. ',
+    'Saya mengerti Pak/Bu, mari kita selesaikan bersama. ',
   ],
   urgent: [
     '🚨 Saya paham ini situasi darurat. ',
-    '⚠️ Baik Kak, saya prioritaskan ini. ',
-    'Saya mengerti urgensinya Kak. ',
+    '⚠️ Baik Pak/Bu, saya prioritaskan ini. ',
+    'Saya mengerti urgensinya Pak/Bu. ',
   ],
   frustrated: [
     'Saya minta maaf jika penjelasan saya kurang jelas. Mari coba cara lain. ',
-    'Maaf ya Kak jika membingungkan. Saya coba jelaskan lebih sederhana. ',
+    'Maaf ya Pak/Bu jika membingungkan. Saya coba jelaskan lebih sederhana. ',
     'Saya paham ini membuat frustrasi. Izinkan saya bantu dengan cara berbeda. ',
   ],
 };
@@ -59,9 +59,9 @@ const EMPATHY_PREFIXES: Record<string, string[]> = {
 // ==================== HUMAN HELP OFFERS ====================
 
 const HUMAN_HELP_OFFERS: string[] = [
-  '\n\n💬 Jika Kakak ingin berbicara langsung dengan petugas, ketik "hubungi petugas" ya.',
-  '\n\n👤 Kakak juga bisa minta bantuan petugas langsung dengan ketik "minta bantuan".',
-  '\n\n📞 Kalau mau lebih cepat, Kakak bisa ketik "bicara dengan admin" untuk dihubungkan dengan petugas.',
+  '\n\n💬 Jika Bapak/Ibu ingin berbicara langsung dengan petugas, ketik "hubungi petugas" ya.',
+  '\n\n👤 Bapak/Ibu juga bisa minta bantuan petugas langsung dengan ketik "minta bantuan".',
+  '\n\n📞 Kalau mau lebih cepat, Bapak/Ibu bisa ketik "bicara dengan admin" untuk dihubungkan dengan petugas.',
 ];
 
 // ==================== STYLE ADAPTATIONS ====================
@@ -84,7 +84,7 @@ const FORMAL_REPLACEMENTS: [RegExp, string][] = [
 
 const INFORMAL_ADDITIONS: [RegExp, string][] = [
   [/\bBapak\/Ibu\b/g, 'Kak'],
-  [/\bAnda\b/g, 'Kakak'],
+  [/\bAnda\b/g, 'Kak'],
   [/\bterima kasih\b/gi, 'makasih'],
 ];
 
@@ -256,6 +256,7 @@ export function generateHumanTakeoverOffer(userId: string, reason: string): stri
   if (isInformal) {
     return `Kak, sepertinya ${reason}. Mau saya hubungkan dengan petugas langsung? Ketik "ya" untuk bicara dengan admin, atau lanjut chat dengan saya juga boleh 😊`;
   }
+
   
   return `Bapak/Ibu, ${reason}. Apakah Anda ingin saya hubungkan dengan petugas untuk bantuan lebih lanjut? Ketik "ya" untuk berbicara dengan admin, atau silakan lanjutkan percakapan dengan saya.`;
 }
@@ -269,6 +270,7 @@ export function generateApologyResponse(userId: string, issue: string): string {
   
   if (isInformal) {
     return `Maaf banget ya Kak, ${issue}. Saya paham ini bikin kesal. Izinkan saya coba bantu dengan cara lain...`;
+
   }
   
   return `Mohon maaf atas ${issue}. Kami memahami ketidaknyamanan yang Bapak/Ibu rasakan. Izinkan saya membantu dengan pendekatan yang berbeda...`;
@@ -311,7 +313,7 @@ export function buildAdaptationContext(
   
   // Style instruction
   if (profile.communication_style === 'formal') {
-    parts.push('[GAYA: FORMAL] Gunakan bahasa formal, hindari kata-kata santai seperti "Kak", "ya", "nih".');
+    parts.push('[GAYA: FORMAL] Gunakan bahasa formal, panggil "Bapak/Ibu". Hindari kata santai seperti "Kak", "nih", "banget".');
   } else if (profile.communication_style === 'informal') {
     parts.push('[GAYA: INFORMAL] Gunakan bahasa santai dan friendly, panggil "Kak".');
   }

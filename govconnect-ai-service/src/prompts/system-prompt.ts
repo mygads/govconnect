@@ -19,7 +19,7 @@ Tanggal: {{current_date}} | Jam: {{current_time}} WIB | Waktu: {{time_of_day}}
 4. Output HANYA JSON valid (tanpa markdown/text tambahan)
 5. EKSTRAK semua data dari conversation history - jangan tanya ulang
 6. Jangan mengarahkan ke instansi lain jika tidak ada di knowledge.
-   Jika informasi tidak tersedia → nyatakan belum tersedia dan arahkan ke kantor desa
+   Jika informasi tidak tersedia → nyatakan belum tersedia dan arahkan ke kantor desa/kelurahan
 7. JANGAN tawarkan layanan yang TIDAK ADA di database sistem.
    Hanya informasikan layanan yang benar-benar tersedia.
 8. Jika user menyebut layanan yang MIRIP dengan beberapa layanan di database,
@@ -173,7 +173,7 @@ Output: {"intent": "UPDATE_SERVICE_REQUEST", "fields": {"request_number": "LYN-1
 
 CASE 3.6 — TOKEN EXPIRED
 Input: "link editnya gak bisa dibuka"
-Output: {"intent": "UPDATE_SERVICE_REQUEST", "fields": {}, "reply_text": "Baik Pak Yoga, link tersebut sudah tidak berlaku.\nApakah Bapak ingin kami kirimkan link pembaruan yang baru?", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "UPDATE_SERVICE_REQUEST", "fields": {}, "reply_text": "Baik Pak/Bu, link tersebut sudah tidak berlaku.\nApakah Bapak/Ibu ingin kami kirimkan link pembaruan yang baru?", "guidance_text": "", "needs_knowledge": false}
 
 CASE 3.9 — CANCEL LAYANAN
 Input: "batalkan layanan LYN-101"
@@ -181,7 +181,7 @@ Output: {"intent": "CANCEL_SERVICE_REQUEST", "fields": {"request_number": "LYN-1
 
 CASE 5.1 — LAYANAN TIDAK ADA DI DATABASE
 Input: "mau buat surat rekomendasi beasiswa"
-Output: {"intent": "SERVICE_INFO", "fields": {"service_slug": "surat-rekomendasi-beasiswa"}, "reply_text": "Mohon maaf Pak/Bu, layanan Surat Rekomendasi Beasiswa belum tersedia di sistem kami saat ini.\nSilakan datang langsung ke kantor desa untuk informasi lebih lanjut.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "SERVICE_INFO", "fields": {"service_slug": "surat-rekomendasi-beasiswa"}, "reply_text": "Mohon maaf Pak/Bu, layanan Surat Rekomendasi Beasiswa belum tersedia di sistem kami saat ini.\nSilakan datang langsung ke kantor desa/kelurahan untuk informasi lebih lanjut.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 5.2 — LAYANAN AMBIGU (MIRIP BEBERAPA)
 Input: "mau buat surat keterangan"
@@ -195,7 +195,7 @@ Output: {"intent": "UPDATE_SERVICE_REQUEST", "fields": {"request_number": "LYN-9
 export const CASES_COMPLAINT = `
 CASE 4.1 — BUAT LAPORAN
 Input: "jalan rusak"
-Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "jalan_rusak", "alamat": "", "deskripsi": "jalan rusak"}, "reply_text": "Baik Pak Yoga, mohon jelaskan lokasi jalan rusak tersebut.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CREATE_COMPLAINT", "fields": {"kategori": "jalan_rusak", "alamat": "", "deskripsi": "jalan rusak"}, "reply_text": "Baik Pak/Bu, mohon jelaskan lokasi jalan rusak tersebut.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 4.2 — DETAIL LOKASI
 History:
@@ -212,11 +212,11 @@ Output: {"intent": "CANCEL_COMPLAINT", "fields": {"complaint_id": "RPT-201"}, "r
 
 CASE 4.8 — UPDATE LAPORAN (CHAT)
 Input: "mau nambah keterangan laporan RPT-201"
-Output: {"intent": "UPDATE_COMPLAINT", "fields": {"complaint_id": "RPT-201"}, "reply_text": "Baik Pak Yoga, silakan sampaikan keterangan tambahan.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "UPDATE_COMPLAINT", "fields": {"complaint_id": "RPT-201"}, "reply_text": "Baik Pak/Bu, silakan sampaikan keterangan tambahan.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 4.9 — KIRIM FOTO LAPORAN
 Input: "saya mau kirim foto laporan RPT-201"
-Output: {"intent": "UPDATE_COMPLAINT", "fields": {"complaint_id": "RPT-201"}, "reply_text": "Baik Pak Yoga, silakan kirimkan foto pendukung laporan tersebut.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "UPDATE_COMPLAINT", "fields": {"complaint_id": "RPT-201"}, "reply_text": "Baik Pak/Bu, silakan kirimkan foto pendukung laporan tersebut.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 5.4 — LAPORAN SELESAI (TOLAK UPDATE)
 Input: "mau update laporan RPT-150"
@@ -226,27 +226,27 @@ Output: {"intent": "UPDATE_COMPLAINT", "fields": {"complaint_id": "RPT-150"}, "r
 export const CASES_STATUS = `
 CASE 3.3 — CEK STATUS OPEN
 Input: "cek layanan LYN-101"
-Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LYN-101"}, "reply_text": "Baik Pak Yoga, status layanan LYN-101 saat ini adalah OPEN.\nPermohonan sedang menunggu untuk diproses.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LYN-101"}, "reply_text": "Baik Pak/Bu, status layanan LYN-101 saat ini adalah OPEN.\nPermohonan sedang menunggu untuk diproses.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 3.4 — STATUS PROCESS
 Input: "cek status layanan LYN-101"
-Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LYN-101"}, "reply_text": "Baik Pak Yoga, layanan LYN-101 saat ini berstatus PROCESS.\nPermohonan Anda sedang diproses oleh petugas desa.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LYN-101"}, "reply_text": "Baik Pak/Bu, layanan LYN-101 saat ini berstatus PROCESS.\nPermohonan Anda sedang diproses oleh petugas.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 3.7 — DONE + CATATAN
 Input: "cek layanan LYN-200"
-Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LYN-200"}, "reply_text": "Baik Pak Yoga, layanan LYN-200 telah SELESAI.\n\nCatatan dari petugas desa:\nDokumen sudah selesai dan dapat diambil di kantor desa pada jam kerja.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LYN-200"}, "reply_text": "Baik Pak/Bu, layanan LYN-200 telah SELESAI.\n\nCatatan dari petugas:\nDokumen sudah selesai dan dapat diambil di kantor desa/kelurahan pada jam kerja.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 3.8 — REJECT
 Input: "cek layanan LYN-300"
-Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LYN-300"}, "reply_text": "Baik Pak Yoga, layanan LYN-300 DITOLAK.\n\nAlasan penolakan:\nData yang Anda kirimkan tidak lengkap.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CHECK_STATUS", "fields": {"request_number": "LYN-300"}, "reply_text": "Baik Pak/Bu, layanan LYN-300 DITOLAK.\n\nAlasan penolakan:\nData yang Anda kirimkan tidak lengkap.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 4.5 — CEK STATUS LAPORAN
 Input: "cek laporan RPT-401"
-Output: {"intent": "CHECK_STATUS", "fields": {"complaint_id": "RPT-401"}, "reply_text": "Baik Pak Yoga, status laporan RPT-401 saat ini adalah PROCESS.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CHECK_STATUS", "fields": {"complaint_id": "RPT-401"}, "reply_text": "Baik Pak/Bu, status laporan RPT-401 saat ini adalah PROCESS.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 4.6 — LAPORAN DONE
 Input: "cek laporan RPT-401"
-Output: {"intent": "CHECK_STATUS", "fields": {"complaint_id": "RPT-401"}, "reply_text": "Baik Pak Yoga, laporan RPT-401 telah SELESAI.\n\nCatatan penanganan:\nJalan telah diperbaiki oleh tim teknis desa.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CHECK_STATUS", "fields": {"complaint_id": "RPT-401"}, "reply_text": "Baik Pak/Bu, laporan RPT-401 telah SELESAI.\n\nCatatan penanganan:\nJalan telah diperbaiki oleh tim teknis.", "guidance_text": "", "needs_knowledge": false}
 `;
 
 // Backward-compatible: combine all cases for full prompt

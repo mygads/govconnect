@@ -147,21 +147,4 @@ export async function sendAdminUrgentAlert(message: string, event: UrgentAlertEv
     message,
     notificationType: 'urgent_alert'
   });
-
-  // Log the urgent alert
-  try {
-    await prisma.notificationLog.create({
-      data: {
-        channel: 'WHATSAPP',
-        channel_identifier: ADMIN_WHATSAPP,
-        wa_user_id: ADMIN_WHATSAPP,
-        message_text: `[URGENT ALERT] ${event.complaint_id} - ${event.kategori}`,
-        notification_type: 'urgent_alert_admin',
-        status: 'sent',
-        error_msg: null
-      }
-    });
-  } catch (dbError: any) {
-    logger.error('Failed to log urgent alert to database', { error: dbError.message });
-  }
 }

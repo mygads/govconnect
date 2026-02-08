@@ -117,15 +117,10 @@ export async function getUserHistory(params: {
 }
 
 function getKategoriLabel(kategori: string): string {
-  const labels: Record<string, string> = {
-    jalan_rusak: 'Jalan Rusak',
-    lampu_mati: 'Lampu Mati',
-    sampah: 'Sampah',
-    drainase: 'Drainase',
-    pohon_tumbang: 'Pohon Tumbang',
-    fasilitas_rusak: 'Fasilitas Rusak',
-    banjir: 'Banjir',
-    lainnya: 'Lainnya',
-  };
-  return labels[kategori] || kategori;
+  // Dynamic: convert snake_case to Title Case (e.g. "jalan_rusak" -> "Jalan Rusak")
+  if (!kategori) return 'Lainnya';
+  return kategori
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }

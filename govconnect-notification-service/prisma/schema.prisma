@@ -18,8 +18,8 @@ model NotificationLog {
   channel_identifier String      // WA: 628xxx | Webchat: session_id
   wa_user_id         String?     // Legacy, deprecated - use channel_identifier
   message_text       String      @db.Text
-  notification_type  String      // "ai_reply" | "complaint_created" | "service_requested" | "status_updated"
-  status             String      // "sent" | "failed"
+  notification_type  String      // "ai_reply" | "complaint_created" | "service_requested" | "status_updated" | "urgent_alert"
+  status             String      // "sent" | "failed" | "skipped"
   error_msg          String?     @db.Text
   sent_at            DateTime    @default(now())
   

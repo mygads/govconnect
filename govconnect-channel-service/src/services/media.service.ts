@@ -9,9 +9,9 @@ import { getAccessTokenForVillage } from './wa.service';
 // Storage configuration
 const MEDIA_STORAGE_PATH = process.env.MEDIA_STORAGE_PATH || '/app/uploads';
 // Internal URL for Docker network (used by other services)
-const MEDIA_INTERNAL_URL = process.env.MEDIA_INTERNAL_URL || 'http://channel-service:3001/uploads';
+export const MEDIA_INTERNAL_URL = process.env.MEDIA_INTERNAL_URL || 'http://channel-service:3001/uploads';
 // Public URL for browser access (used by Dashboard)
-const MEDIA_PUBLIC_URL = process.env.MEDIA_PUBLIC_URL || 'http://localhost:3001/uploads';
+export const MEDIA_PUBLIC_URL = process.env.MEDIA_PUBLIC_URL || 'http://localhost:3001/uploads';
 
 export interface MediaInfo {
   hasMedia: boolean;

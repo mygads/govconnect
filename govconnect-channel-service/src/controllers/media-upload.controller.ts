@@ -1,9 +1,7 @@
 import type { Request, Response } from 'express';
 import logger from '../utils/logger';
 import { getQuery } from '../utils/http';
-
-const MEDIA_INTERNAL_URL = process.env.MEDIA_INTERNAL_URL || 'http://channel-service:3001/uploads';
-const MEDIA_PUBLIC_URL = process.env.MEDIA_PUBLIC_URL || 'http://localhost:3001/uploads';
+import { MEDIA_INTERNAL_URL, MEDIA_PUBLIC_URL } from '../services/media.service';
 
 function getScope(raw: unknown): string {
   const value = typeof raw === 'string' ? raw.trim() : '';

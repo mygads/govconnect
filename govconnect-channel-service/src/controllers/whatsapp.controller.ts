@@ -547,7 +547,7 @@ export async function forceDisconnectOtherVillage(req: Request, res: Response): 
 
     res.json({
       success: true,
-      data: { message: 'Session dari desa lain berhasil diputuskan' },
+      data: { message: 'Session dari desa/kelurahan lain berhasil diputuskan' },
     });
   } catch (error: any) {
     logger.error('Force disconnect error', { error: error.message });

@@ -116,8 +116,8 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   ],
   
   'KNOWLEDGE_QUERY': [
-    'Mohon maaf Pak/Bu, informasi tersebut belum tersedia.\nSilakan datang langsung ke kantor desa untuk bantuan lebih lanjut.',
-    'Mohon maaf Pak/Bu, informasi terkait hal tersebut belum tersedia.\nSilakan datang ke kantor desa pada jam kerja.',
+    'Mohon maaf Pak/Bu, informasi tersebut belum tersedia.\nSilakan datang langsung ke kantor desa/kelurahan untuk bantuan lebih lanjut.',
+    'Mohon maaf Pak/Bu, informasi terkait hal tersebut belum tersedia.\nSilakan datang ke kantor desa/kelurahan pada jam kerja.',
   ],
   
   'THANKS': THANKS_RESPONSES,

@@ -1306,7 +1306,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
 
       guidanceText = 'Apakah Bapak/Ibu ingin mengajukan layanan ini secara online?';
     } else {
-      replyText += 'Layanan ini diproses secara offline di kantor kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
+      replyText += 'Layanan ini diproses secara offline di kantor desa/kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
     }
     
     return { replyText, guidanceText: guidanceText || undefined };
@@ -1774,7 +1774,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
 
     if (isAskingAddress) {
       if (!profile?.address && !profile?.gmaps_url) {
-        return 'Mohon maaf Pak/Bu, informasi alamat kantor belum tersedia. Silakan datang langsung ke kantor desa pada jam kerja.';
+        return 'Mohon maaf Pak/Bu, informasi alamat kantor belum tersedia. Silakan datang langsung ke kantor desa/kelurahan pada jam kerja.';
       }
 
       if (profile?.address && profile?.gmaps_url) {
@@ -1791,7 +1791,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
     if (isAskingHours) {
       const hours: any = profile?.operating_hours;
       if (!hours || typeof hours !== 'object') {
-        return 'Mohon maaf Pak/Bu, informasi jam operasional belum tersedia. Silakan datang langsung ke kantor desa pada jam kerja.';
+        return 'Mohon maaf Pak/Bu, informasi jam operasional belum tersedia. Silakan datang langsung ke kantor desa/kelurahan pada jam kerja.';
       }
 
       const dayKeys = ['senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'minggu'] as const;
@@ -1809,9 +1809,9 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
         if (!daySchedule?.open || !daySchedule?.close) {
           const dayLabel = requestedDay.charAt(0).toUpperCase() + requestedDay.slice(1);
           if (requestedDay === 'sabtu' || requestedDay === 'minggu') {
-            return 'Mohon maaf Pak/Bu, kantor desa tidak beroperasi pada hari Sabtu dan Minggu.';
+            return 'Mohon maaf Pak/Bu, kantor tidak beroperasi pada hari Sabtu dan Minggu.';
           }
-          return `Mohon maaf Pak/Bu, kantor desa tidak beroperasi pada hari ${dayLabel}.`;
+          return `Mohon maaf Pak/Bu, kantor tidak beroperasi pada hari ${dayLabel}.`;
         }
         const dayLabel = requestedDay.charAt(0).toUpperCase() + requestedDay.slice(1);
         return `Kantor ${officeName} buka hari ${dayLabel} pukul ${daySchedule.open}–${daySchedule.close}.`;
@@ -2149,7 +2149,7 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
     }
 
     if (!contextString || total === 0) {
-      return `Maaf, saya belum memiliki informasi tentang hal tersebut untuk *${officeName}*. Jika perlu, silakan hubungi kantor desa/kelurahan pada jam kerja.`;
+      return `Maaf, saya belum memiliki informasi tentang hal tersebut untuk *${officeName}*. Jika perlu, silakan hubungi atau datang langsung ke kantor pada jam kerja.`;
     }
 
     const { systemPrompt } = await buildKnowledgeQueryContext(userId, message, contextString);

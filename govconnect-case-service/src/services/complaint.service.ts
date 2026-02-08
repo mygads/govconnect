@@ -411,9 +411,10 @@ export async function updateComplaintStatus(
 }
 
 /**
- * Get statistics
+ * Get statistics (filtered by village_id for multi-tenancy)
  */
-export async function getComplaintStatistics() {
+export async function getComplaintStatistics(villageId?: string) {
+  const where = villageId ? { village_id: villageId } : {};
   const [
     totalByStatus,
     totalByKategori,
@@ -423,18 +424,21 @@ export async function getComplaintStatistics() {
     prisma.complaint.groupBy({
       by: ['status'],
       _count: { status: true },
+      where,
     }),
     prisma.complaint.groupBy({
       by: ['kategori'],
       _count: { kategori: true },
+      where,
     }),
     prisma.complaint.groupBy({
       by: ['rt_rw'],
       _count: { rt_rw: true },
-      where: { rt_rw: { not: null } },
+      where: { ...where, rt_rw: { not: null } },
     }),
     prisma.complaint.count({
       where: {
+        ...where,
         created_at: {
           gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
         },
