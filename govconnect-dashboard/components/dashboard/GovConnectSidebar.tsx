@@ -20,6 +20,7 @@ import {
   Bell,
   Cpu,
   Database,
+  UserPlus,
 } from "lucide-react"
 
 import {
@@ -159,6 +160,12 @@ export function GovConnectSidebar() {
     {
       title: "Super Admin",
       items: [
+        {
+          title: "Register Desa Baru",
+          url: "/dashboard/superadmin/register",
+          icon: UserPlus,
+          roles: ["superadmin"],
+        },
         {
           title: "Daftar Desa",
           url: "/dashboard/superadmin/villages",

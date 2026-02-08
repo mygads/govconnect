@@ -1,4 +1,6 @@
 import express, { Request, Response } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import promClient from 'prom-client';
 import logger from './utils/logger';
@@ -56,14 +58,17 @@ promClient.collectDefaultMetrics({
 
 const app = express();
 
-function requireInternalKey(req: Request, res: Response): boolean {
+app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') || '*' }));
+app.use(helmet());
+
+const internalAuthMiddleware = (req: Request, res: Response, next: any) => {
   const apiKey = req.headers['x-internal-api-key'];
   if (!apiKey || apiKey !== config.internalApiKey) {
     res.status(403).json({ error: 'Forbidden' });
-    return false;
+    return;
   }
-  return true;
-}
+  next();
+};
 
 app.use(express.json());
 
@@ -122,6 +127,9 @@ app.get('/health/rabbitmq', (req: Request, res: Response) => {
   });
 });
 
+app.use('/admin', internalAuthMiddleware);
+app.use('/stats', internalAuthMiddleware);
+
 /**
  * Get AI message retry queue status
  * Shows messages that are waiting to be reprocessed after AI failures
@@ -150,7 +158,6 @@ app.get('/stats/retry-queue', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get retry queue status',
-      message: error.message,
     });
   }
 });
@@ -186,7 +193,6 @@ app.get('/admin/failed-messages', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get failed messages',
-      message: error.message,
     });
   }
 });
@@ -225,7 +231,6 @@ app.post('/admin/failed-messages/:messageId/retry', async (req: Request, res: Re
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to retry message',
-      message: error.message,
     });
   }
 });
@@ -246,7 +251,6 @@ app.post('/admin/failed-messages/retry-all', async (req: Request, res: Response)
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to retry all messages',
-      message: error.message,
     });
   }
 });
@@ -271,7 +275,6 @@ app.delete('/admin/failed-messages', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to clear messages',
-      message: error.message,
     });
   }
 });
@@ -290,8 +293,6 @@ export function isCacheEnabled(): boolean {
  * GET /admin/cache/stats — Get all cache statistics
  */
 app.get('/admin/cache/stats', (req: Request, res: Response) => {
-  if (!requireInternalKey(req, res)) return;
-
   const umpStats = getUMPCacheStats();
   const responseCacheStats = getCacheStats();
 
@@ -308,8 +309,6 @@ app.get('/admin/cache/stats', (req: Request, res: Response) => {
  * POST /admin/cache/clear-all — Clear all in-memory caches
  */
 app.post('/admin/cache/clear-all', (req: Request, res: Response) => {
-  if (!requireInternalKey(req, res)) return;
-
   const umpResult = clearAllUMPCaches();
   clearResponseCache();
   clearVillageProfileCache();
@@ -333,7 +332,6 @@ app.post('/admin/cache/clear-all', (req: Request, res: Response) => {
  * GET /admin/cache/mode — Get current cache mode
  */
 app.get('/admin/cache/mode', (req: Request, res: Response) => {
-  if (!requireInternalKey(req, res)) return;
   res.json({ cacheEnabled: _cacheEnabled });
 });
 
@@ -341,7 +339,6 @@ app.get('/admin/cache/mode', (req: Request, res: Response) => {
  * POST /admin/cache/mode — Toggle cache mode (dev/production)
  */
 app.post('/admin/cache/mode', (req: Request, res: Response) => {
-  if (!requireInternalKey(req, res)) return;
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') {
     res.status(400).json({ error: 'enabled (boolean) is required' });
@@ -449,7 +446,6 @@ app.get('/stats/models/:modelName', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get model stats',
-      message: error.message,
     });
   }
 });
@@ -463,7 +459,6 @@ app.get('/stats/analytics', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get analytics',
-      message: error.message,
     });
   }
 });
@@ -475,7 +470,6 @@ app.get('/stats/analytics/intents', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get intent distribution',
-      message: error.message,
     });
   }
 });
@@ -487,7 +481,6 @@ app.get('/stats/analytics/flow', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get conversation flow',
-      message: error.message,
     });
   }
 });
@@ -499,7 +492,6 @@ app.get('/stats/analytics/tokens', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get token usage',
-      message: error.message,
     });
   }
 });
@@ -511,7 +503,6 @@ app.get('/stats/analytics/full', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get full analytics',
-      message: error.message,
     });
   }
 });
@@ -523,7 +514,6 @@ app.post('/stats/analytics/reset', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to reset analytics',
-      message: error.message,
     });
   }
 });
@@ -535,7 +525,6 @@ app.post('/stats/analytics/fix', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to fix analytics',
-      message: error.message,
     });
   }
 });
@@ -554,7 +543,7 @@ app.get('/stats/token-usage/summary', async (req: Request, res: Response) => {
     const summary = await getTokenUsageSummary(filters);
     res.json(summary);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get token usage summary', message: error.message });
+    res.status(500).json({ error: 'Failed to get token usage summary' });
   }
 });
 
@@ -571,7 +560,7 @@ app.get('/stats/token-usage/by-period', async (req: Request, res: Response) => {
     const data = await getUsageByPeriod(period, filters);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get usage by period', message: error.message });
+    res.status(500).json({ error: 'Failed to get usage by period' });
   }
 });
 
@@ -587,7 +576,7 @@ app.get('/stats/token-usage/by-period-layer', async (req: Request, res: Response
     const data = await getUsageByPeriodAndLayer(period, filters);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get usage by period and layer', message: error.message });
+    res.status(500).json({ error: 'Failed to get usage by period and layer' });
   }
 });
 
@@ -602,7 +591,7 @@ app.get('/stats/token-usage/by-model', async (req: Request, res: Response) => {
     const data = await getUsageByModel(filters);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get usage by model', message: error.message });
+    res.status(500).json({ error: 'Failed to get usage by model' });
   }
 });
 
@@ -617,7 +606,7 @@ app.get('/stats/token-usage/by-village', async (req: Request, res: Response) => 
     const data = await getUsageByVillage(filters);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get usage by village', message: error.message });
+    res.status(500).json({ error: 'Failed to get usage by village' });
   }
 });
 
@@ -632,7 +621,7 @@ app.get('/stats/token-usage/layer-breakdown', async (req: Request, res: Response
     const data = await getLayerBreakdown(filters);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get layer breakdown', message: error.message });
+    res.status(500).json({ error: 'Failed to get layer breakdown' });
   }
 });
 
@@ -647,7 +636,7 @@ app.get('/stats/token-usage/avg-per-chat', async (req: Request, res: Response) =
     const data = await getAvgTokensPerChat(filters);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get avg tokens per chat', message: error.message });
+    res.status(500).json({ error: 'Failed to get avg tokens per chat' });
   }
 });
 
@@ -661,7 +650,7 @@ app.get('/stats/token-usage/responses-by-village', async (req: Request, res: Res
     const data = await getResponseCountByVillage(filters);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get response count by village', message: error.message });
+    res.status(500).json({ error: 'Failed to get response count by village' });
   }
 });
 
@@ -676,27 +665,24 @@ app.get('/stats/token-usage/village-model-detail', async (req: Request, res: Res
     const data = await getUsageByVillageAndModel(filters);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to get village model detail', message: error.message });
+    res.status(500).json({ error: 'Failed to get village model detail' });
   }
 });
 
 // ===========================================
 // Golden Set Evaluation Endpoints
 app.get('/stats/golden-set', (req: Request, res: Response) => {
-  if (!requireInternalKey(req, res)) return;
   try {
     const data = getGoldenSetSummary();
     res.json(data);
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get golden set summary',
-      message: error.message,
     });
   }
 });
 
 app.post('/stats/golden-set/run', async (req: Request, res: Response) => {
-  if (!requireInternalKey(req, res)) return;
   try {
     const { items, village_id } = req.body || {};
     if (!Array.isArray(items) || items.length === 0) {
@@ -709,7 +695,6 @@ app.post('/stats/golden-set/run', async (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to run golden set evaluation',
-      message: error.message,
     });
   }
 });
@@ -731,7 +716,6 @@ app.get('/rate-limit', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get rate limit stats',
-      message: error.message,
     });
   }
 });
@@ -755,7 +739,6 @@ app.get('/rate-limit/check/:wa_user_id', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to check rate limit',
-      message: error.message,
     });
   }
 });
@@ -770,7 +753,6 @@ app.get('/rate-limit/blacklist', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get blacklist',
-      message: error.message,
     });
   }
 });
@@ -795,7 +777,6 @@ app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to add to blacklist',
-      message: error.message,
     });
   }
 });
@@ -825,7 +806,6 @@ app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) =>
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to remove from blacklist',
-      message: error.message,
     });
   }
 });
@@ -855,7 +835,6 @@ app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to reset violations',
-      message: error.message,
     });
   }
 });
@@ -914,7 +893,6 @@ app.get('/stats/embeddings', async (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get embedding stats',
-      message: error.message,
     });
   }
 });
@@ -941,7 +919,6 @@ app.get('/stats/optimization', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get optimization stats',
-      message: error.message,
     });
   }
 });
@@ -967,7 +944,6 @@ app.get('/stats/conversation-fsm', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get FSM stats',
-      message: error.message,
     });
   }
 });
@@ -1015,7 +991,6 @@ app.get('/stats/dashboard', async (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get dashboard stats',
-      message: error.message,
     });
   }
 });
@@ -1039,7 +1014,6 @@ app.post('/stats/analyze-complexity', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to analyze complexity',
-      message: error.message,
     });
   }
 });
@@ -1057,7 +1031,6 @@ app.get('/stats/routing', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get routing stats',
-      message: error.message,
     });
   }
 });
@@ -1101,7 +1074,6 @@ app.get('/stats/circuit-breaker', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get circuit breaker stats',
-      message: error.message,
     });
   }
 });
@@ -1130,7 +1102,6 @@ app.post('/stats/circuit-breaker/reset', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to reset circuit breaker',
-      message: error.message,
     });
   }
 });

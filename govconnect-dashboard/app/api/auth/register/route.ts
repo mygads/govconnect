@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { hashPassword, generateToken } from '@/lib/auth'
+import { hashPassword, generateToken, getAuthUser } from '@/lib/auth'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
 
 const DEFAULT_KB_CATEGORIES = [
@@ -14,6 +14,15 @@ const DEFAULT_KB_CATEGORIES = [
 
 export async function POST(request: NextRequest) {
   try {
+    // Security check: Only superadmin can create new villages/admins
+    const user = await getAuthUser(request)
+    if (!user || user.role !== 'superadmin') {
+      return NextResponse.json(
+        { error: 'Forbidden: Only superadmin can register new villages' },
+        { status: 403 }
+      )
+    }
+
     const body = await request.json()
     // Trim whitespace from all string inputs
     const username = (body.username || '').trim()

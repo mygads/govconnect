@@ -66,9 +66,9 @@ router.post(
   handleCreateComplaint
 );
 
-router.get('/', handleGetComplaints);
+router.get('/', internalAuth, handleGetComplaints);
 router.get('/statistics', handleGetComplaintStatistics);
-router.get('/:id', handleGetComplaintById);
+router.get('/:id', internalAuth, handleGetComplaintById);
 
 // Check complaint status with ownership validation (user via AI)
 router.post(
@@ -84,6 +84,7 @@ router.post(
 
 router.patch(
   '/:id/status',
+  internalAuth,
   [
     body('status')
       .isIn(['OPEN', 'PROCESS', 'DONE', 'CANCELED', 'REJECT'])

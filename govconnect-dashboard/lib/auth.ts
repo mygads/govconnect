@@ -54,6 +54,16 @@ export async function verifyToken(token: string): Promise<JWTPayload | null> {
   }
 }
 
+export async function getAuthUser(request: NextRequest): Promise<JWTPayload | null> {
+  const authHeader = request.headers.get('authorization')
+  if (!authHeader) {
+    return null
+  }
+
+  const token = authHeader.replace('Bearer ', '')
+  return await verifyToken(token)
+}
+
 /**
  * Get admin session from request with village_id
  * Returns null if not authenticated

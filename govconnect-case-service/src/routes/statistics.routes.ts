@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import prisma from '../config/database'
 import logger from '../utils/logger'
 import { getQuery } from '../utils/http'
+import { internalAuth } from '../middleware/auth.middleware'
 
 const router: Router = Router()
 
@@ -11,88 +12,66 @@ router.use((_req: Request, res: Response, next) => {
   next();
 });
 
-router.get('/overview', async (req: Request, res: Response) => {
+router.get('/overview', internalAuth, async (req: Request, res: Response) => {
   try {
     const village_id = getQuery(req, 'village_id') || undefined;
-    const complaintWhere = village_id ? { village_id } : {};
-    // ServiceRequest filters through service relation
-    const serviceWhere = village_id ? { service: { village_id } } : {};
+    const complaintWhere: any = village_id ? { village_id } : {};
+    const serviceWhere: any = village_id ? { service: { village_id } } : {};
 
-    // Get complaint statistics
-    const [
-      totalLaporan,
-      laporanOpen,
-      laporanProcess,
-      laporanDone,
-      laporanCanceled,
-      laporanReject,
-    ] = await Promise.all([
-      prisma.complaint.count({ where: { ...complaintWhere } }),
-      prisma.complaint.count({ where: { status: 'OPEN', ...complaintWhere } }),
-      prisma.complaint.count({ where: { status: 'PROCESS', ...complaintWhere } }),
-      prisma.complaint.count({ where: { status: 'DONE', ...complaintWhere } }),
-      prisma.complaint.count({ where: { status: 'CANCELED', ...complaintWhere } }),
-      prisma.complaint.count({ where: { status: 'REJECT', ...complaintWhere } }),
-    ])
-
-    // Get service request statistics
-    const [
-      totalLayanan,
-      layananOpen,
-      layananProcess,
-      layananDone,
-      layananCanceled,
-      layananReject,
-    ] = await Promise.all([
-      prisma.serviceRequest.count({ where: { ...serviceWhere } }),
-      prisma.serviceRequest.count({ where: { status: 'OPEN', ...serviceWhere } }),
-      prisma.serviceRequest.count({ where: { status: 'PROCESS', ...serviceWhere } }),
-      prisma.serviceRequest.count({ where: { status: 'DONE', ...serviceWhere } }),
-      prisma.serviceRequest.count({ where: { status: 'CANCELED', ...serviceWhere } }),
-      prisma.serviceRequest.count({ where: { status: 'REJECT', ...serviceWhere } }),
-    ])
-
-    // Get recent activity counts
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    
-    const [laporanHariIni, layananHariIni] = await Promise.all([
-      prisma.complaint.count({
-        where: {
-          ...complaintWhere,
-          created_at: {
-            gte: today,
-          },
-        },
+
+    // Get statistics using groupBy (optimized)
+    const [
+      complaintStats,
+      serviceStats,
+      todayComplaintCount,
+      todayServiceCount,
+      totalComplaints,
+      totalServices
+    ] = await Promise.all([
+      // Group by status for complaints
+      prisma.complaint.groupBy({
+        by: ['status'],
+        where: complaintWhere,
+        _count: { status: true }
       }),
-      prisma.serviceRequest.count({
-        where: {
-          ...serviceWhere,
-          created_at: {
-            gte: today,
-          },
-        },
+      // Group by status for services
+      prisma.serviceRequest.groupBy({
+        by: ['status'],
+        where: serviceWhere,
+        _count: { status: true }
       }),
+      // Today counts
+      prisma.complaint.count({ where: { ...complaintWhere, created_at: { gte: today } } }),
+      prisma.serviceRequest.count({ where: { ...serviceWhere, created_at: { gte: today } } }),
+      // Total counts (could sum from groupBy, but this is safer if status is nullable or strictly needed)
+      prisma.complaint.count({ where: complaintWhere }),
+      prisma.serviceRequest.count({ where: serviceWhere })
     ])
 
+    // Helper to extract count from groupBy result
+    const getCount = (arr: any[], status: string) => 
+      arr.find(x => x.status === status)?._count.status || 0;
+
     const statistics = {
-      totalLaporan,
-      totalLayanan,
+      totalLaporan: totalComplaints,
+      totalLayanan: totalServices,
       laporan: {
-        open: laporanOpen,
-        process: laporanProcess,
-        done: laporanDone,
-        canceled: laporanCanceled,
-        reject: laporanReject,
-        hariIni: laporanHariIni,
+        open: getCount(complaintStats, 'OPEN'),
+        process: getCount(complaintStats, 'PROCESS'),
+        done: getCount(complaintStats, 'DONE'),
+        canceled: getCount(complaintStats, 'CANCELED'),
+        reject: getCount(complaintStats, 'REJECT'),
+        hariIni: todayComplaintCount,
       },
       layanan: {
-        open: layananOpen,
-        process: layananProcess,
-        done: layananDone,
-        canceled: layananCanceled,
-        reject: layananReject,
-        hariIni: layananHariIni,
+        open: getCount(serviceStats, 'OPEN'),
+        process: getCount(serviceStats, 'PROCESS'),
+        done: getCount(serviceStats, 'DONE'),
+        canceled: getCount(serviceStats, 'CANCELED'),
+        reject: getCount(serviceStats, 'REJECT'),
+        hariIni: todayServiceCount,
       },
     }
 
@@ -114,7 +93,7 @@ router.get('/overview', async (req: Request, res: Response) => {
   }
 })
 
-router.get('/by-category', async (req: Request, res: Response) => {
+router.get('/by-category', internalAuth, async (req: Request, res: Response) => {
   try {
     const village_id = getQuery(req, 'village_id') || undefined;
     const complaints = await prisma.complaint.groupBy({
@@ -148,7 +127,7 @@ router.get('/by-category', async (req: Request, res: Response) => {
   }
 })
 
-router.get('/by-status', async (req: Request, res: Response) => {
+router.get('/by-status', internalAuth, async (req: Request, res: Response) => {
   try {
     const village_id = getQuery(req, 'village_id') || undefined;
     const complaintWhere = village_id ? { village_id } : undefined;
@@ -195,128 +174,202 @@ router.get('/by-status', async (req: Request, res: Response) => {
   }
 })
 
-router.get('/trends', async (req: Request, res: Response) => {
+router.get('/trends', internalAuth, async (req: Request, res: Response) => {
   try {
     const period = getQuery(req, 'period') || 'weekly' // weekly, monthly
     const village_id = getQuery(req, 'village_id') || undefined;
     const now = new Date()
     
     // Calculate date ranges
-    const daysBack = period === 'monthly' ? 365 : 84 // 12 months or 12 weeks
+    const daysBack = period === 'monthly' ? 365 : 84
     const startDate = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000)
+
+    // Using raw SQL for optimized aggregation with parameterized queries
+    const truncType = period === 'monthly' ? 'month' : 'week';
     
-    const complaintWhere: any = { created_at: { gte: startDate } };
-    const serviceWhere: any = { created_at: { gte: startDate } };
-    if (village_id) {
-      complaintWhere.village_id = village_id;
-      serviceWhere.service = { village_id };
-    }
+    // 1. Complaint Trends (parameterized to prevent SQL injection)
+    const complaintTrendRaw = village_id
+      ? await prisma.$queryRawUnsafe<any[]>(`
+          SELECT DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
+          FROM "Complaint" 
+          WHERE created_at >= $2 AND village_id = $3
+          GROUP BY 1 ORDER BY 1
+        `, truncType, startDate, village_id)
+      : await prisma.$queryRawUnsafe<any[]>(`
+          SELECT DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
+          FROM "Complaint" 
+          WHERE created_at >= $2
+          GROUP BY 1 ORDER BY 1
+        `, truncType, startDate);
 
-    // Get all complaints in the period
-    const complaints = await prisma.complaint.findMany({
-      where: complaintWhere,
-      select: {
-        created_at: true,
-        kategori: true,
-        status: true,
-      },
-      orderBy: {
-        created_at: 'asc',
-      },
-    })
+    // 2. Service Trends
+    // ServiceRequest -> Service -> village_id
+    const serviceTrendRaw = village_id
+      ? await prisma.$queryRawUnsafe<any[]>(`
+          SELECT DATE_TRUNC($1, sr.created_at) as date, COUNT(*)::int as count 
+          FROM "ServiceRequest" sr
+          JOIN "Service" s ON sr.service_id = s.id 
+          WHERE s.village_id = $3 AND sr.created_at >= $2
+          GROUP BY 1 ORDER BY 1
+        `, truncType, startDate, village_id)
+      : await prisma.$queryRawUnsafe<any[]>(`
+          SELECT DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
+          FROM "ServiceRequest" sr
+          WHERE sr.created_at >= $2
+          GROUP BY 1 ORDER BY 1
+        `, truncType, startDate);
 
-    // Get all service requests in the period
-    const services = await prisma.serviceRequest.findMany({
-      where: serviceWhere,
-      select: {
-        created_at: true,
-        status: true,
-      },
-      orderBy: {
-        created_at: 'asc',
-      },
-    })
+    // 3. Category Trends (Complaints)
+    const categoryTrendRaw = village_id
+      ? await prisma.$queryRawUnsafe<any[]>(`
+          SELECT kategori, DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
+          FROM "Complaint"
+          WHERE created_at >= $2 AND village_id = $3
+          GROUP BY 1, 2 ORDER BY 2
+        `, truncType, startDate, village_id)
+      : await prisma.$queryRawUnsafe<any[]>(`
+          SELECT kategori, DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
+          FROM "Complaint"
+          WHERE created_at >= $2
+          GROUP BY 1, 2 ORDER BY 2
+        `, truncType, startDate);
 
-    // Group by period (week or month)
+    // 4. Hourly Distribution (Complaints + Services)
+    const hourlyComplaint = village_id
+      ? await prisma.$queryRawUnsafe<any[]>(`
+          SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*)::int as count
+          FROM "Complaint"
+          WHERE created_at >= $1 AND village_id = $2
+          GROUP BY 1
+        `, startDate, village_id)
+      : await prisma.$queryRawUnsafe<any[]>(`
+          SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*)::int as count
+          FROM "Complaint"
+          WHERE created_at >= $1
+          GROUP BY 1
+        `, startDate);
+
+    const hourlyService = village_id
+      ? await prisma.$queryRawUnsafe<any[]>(`
+          SELECT EXTRACT(HOUR FROM sr.created_at) as hour, COUNT(*)::int as count 
+          FROM "ServiceRequest" sr
+          JOIN "Service" s ON sr.service_id = s.id 
+          WHERE s.village_id = $2 AND sr.created_at >= $1
+          GROUP BY 1
+        `, startDate, village_id)
+      : await prisma.$queryRawUnsafe<any[]>(`
+          SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*)::int as count 
+          FROM "ServiceRequest" sr
+          WHERE sr.created_at >= $1
+          GROUP BY 1
+        `, startDate);
+
+    // 5. Daily Distribution (Dow)
+    const dailyComplaint = village_id
+      ? await prisma.$queryRawUnsafe<any[]>(`
+          SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*)::int as count
+          FROM "Complaint"
+          WHERE created_at >= $1 AND village_id = $2
+          GROUP BY 1
+        `, startDate, village_id)
+      : await prisma.$queryRawUnsafe<any[]>(`
+          SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*)::int as count
+          FROM "Complaint"
+          WHERE created_at >= $1
+          GROUP BY 1
+        `, startDate);
+
+    const dailyService = village_id
+      ? await prisma.$queryRawUnsafe<any[]>(`
+          SELECT EXTRACT(DOW FROM sr.created_at) as day, COUNT(*)::int as count 
+          FROM "ServiceRequest" sr
+          JOIN "Service" s ON sr.service_id = s.id 
+          WHERE s.village_id = $2 AND sr.created_at >= $1
+          GROUP BY 1
+        `, startDate, village_id)
+      : await prisma.$queryRawUnsafe<any[]>(`
+          SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*)::int as count 
+          FROM "ServiceRequest" sr
+          WHERE sr.created_at >= $1
+          GROUP BY 1
+        `, startDate);
+    
+    // Process Data
     const trendData: { [key: string]: { complaints: number; services: number } } = {}
     const hourlyData: { [hour: number]: number } = {}
-    const dailyData: { [day: number]: number } = {} // 0 = Sunday, 6 = Saturday
-    const categoryTrends: { [key: string]: { [period: string]: number } } = {}
+    const dailyData: { [day: number]: number } = {}
     
-    // Initialize hourly and daily data
+    // Init arrays
     for (let h = 0; h < 24; h++) hourlyData[h] = 0
     for (let d = 0; d < 7; d++) dailyData[d] = 0
 
-    // Process complaints
-    complaints.forEach((c) => {
-      const date = new Date(c.created_at)
-      const periodKey = period === 'monthly' 
-        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-        : getWeekKey(date)
-      
-      if (!trendData[periodKey]) {
-        trendData[periodKey] = { complaints: 0, services: 0 }
-      }
-      trendData[periodKey].complaints++
-      
-      // Peak hours analysis
-      hourlyData[date.getHours()]++
-      dailyData[date.getDay()]++
-      
-      // Category trends
-      if (!categoryTrends[c.kategori]) {
-        categoryTrends[c.kategori] = {}
-      }
-      if (!categoryTrends[c.kategori][periodKey]) {
-        categoryTrends[c.kategori][periodKey] = 0
-      }
-      categoryTrends[c.kategori][periodKey]++
-    })
+    // Helper to format key
+    const formatKey = (d: Date) => {
+        if (period === 'monthly') {
+             return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        }
+        return getWeekKey(d)
+    }
 
-    // Process services
-    services.forEach((s) => {
-      const date = new Date(s.created_at)
-      const periodKey = period === 'monthly'
-        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-        : getWeekKey(date)
-      
-      if (!trendData[periodKey]) {
-        trendData[periodKey] = { complaints: 0, services: 0 }
-      }
-      trendData[periodKey].services++
-      
-      // Also count services for hourly/daily analysis
-      hourlyData[date.getHours()]++
-      dailyData[date.getDay()]++
-    })
+    // Process Trends
+    complaintTrendRaw.forEach((row: any) => {
+        const d = new Date(row.date);
+        const k = formatKey(d);
+        if (!trendData[k]) trendData[k] = { complaints: 0, services: 0 };
+        trendData[k].complaints += row.count;
+    });
+    serviceTrendRaw.forEach((row: any) => {
+        const d = new Date(row.date);
+        const k = formatKey(d);
+        if (!trendData[k]) trendData[k] = { complaints: 0, services: 0 };
+        trendData[k].services += row.count;
+    });
 
-    // Convert to sorted arrays
+    // Process Distributions
+    [...hourlyComplaint, ...hourlyService].forEach((row: any) => {
+        hourlyData[row.hour] += row.count;
+    });
+     [...dailyComplaint, ...dailyService].forEach((row: any) => {
+        dailyData[row.day] += row.count;
+    });
+
+    // Process Category Trends
+    const categoryTrends: { [key: string]: { [period: string]: number } } = {}
+    categoryTrendRaw.forEach((row: any) => {
+        const d = new Date(row.date);
+        const k = formatKey(d);
+        if (!categoryTrends[row.kategori]) categoryTrends[row.kategori] = {};
+        if (!categoryTrends[row.kategori][k]) categoryTrends[row.kategori][k] = 0;
+        categoryTrends[row.kategori][k] += row.count;
+    });
+
+    // --- Logic from previous implementation ---
     const sortedPeriods = Object.keys(trendData).sort()
     const trendLabels = sortedPeriods.map((p) => formatPeriodLabel(p, period))
     const complaintTrend = sortedPeriods.map((p) => trendData[p].complaints)
     const serviceTrend = sortedPeriods.map((p) => trendData[p].services)
     const totalTrend = sortedPeriods.map((p) => trendData[p].complaints + trendData[p].services)
 
-    // Calculate predictions using simple moving average
     const predictions = calculatePredictions(totalTrend, 4)
-
-    // Find peak hours and days
-    const peakHour = Object.entries(hourlyData).reduce((a, b) => a[1] > b[1] ? a : b)
-    const peakDay = Object.entries(dailyData).reduce((a, b) => a[1] > b[1] ? a : b)
+    
+    const peakHour = Object.entries(hourlyData).reduce((a, b) => a[1] > b[1] ? a : b, ['0', 0]);
+    const peakDay = Object.entries(dailyData).reduce((a, b) => a[1] > b[1] ? a : b, ['0', 0]);
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
 
-    // Format category trends
     const formattedCategoryTrends = Object.entries(categoryTrends).map(([kategori, data]) => ({
       kategori,
       data: sortedPeriods.map((p) => data[p] || 0),
     }))
 
-    // Calculate growth rate
     const recentPeriods = complaintTrend.slice(-4)
     const previousPeriods = complaintTrend.slice(-8, -4)
     const recentAvg = recentPeriods.length > 0 ? recentPeriods.reduce((a, b) => a + b, 0) / recentPeriods.length : 0
     const previousAvg = previousPeriods.length > 0 ? previousPeriods.reduce((a, b) => a + b, 0) / previousPeriods.length : 0
     const growthRate = previousAvg > 0 ? ((recentAvg - previousAvg) / previousAvg * 100).toFixed(1) : 0
+
+    // Simple totals from trends (approximate match to "totalComplaints" in summary)
+    const totalComplaintsVal = complaintTrend.reduce((a,b)=>a+b, 0);
+    const totalServicesVal = serviceTrend.reduce((a,b)=>a+b, 0);
 
     res.json({
       period,
@@ -346,10 +399,10 @@ router.get('/trends', async (req: Request, res: Response) => {
       },
       categoryTrends: formattedCategoryTrends,
       summary: {
-        totalComplaints: complaints.length,
-        totalServices: services.length,
+        totalComplaints: totalComplaintsVal,
+        totalServices: totalServicesVal,
         avgPerPeriod: sortedPeriods.length > 0 
-          ? Math.round((complaints.length + services.length) / sortedPeriods.length) 
+          ? Math.round((totalComplaintsVal + totalServicesVal) / sortedPeriods.length) 
           : 0,
         growthRate: parseFloat(growthRate as string) || 0,
       },

@@ -20,6 +20,10 @@ services:
     container_name: govconnect-channel-service
     ports:
       - "127.0.0.1:3001:3001"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     env_file:
       - .env
     environment:
@@ -50,6 +54,10 @@ services:
     container_name: govconnect-ai-service
     ports:
       - "127.0.0.1:3002:3002"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     env_file:
       - .env
     environment:
@@ -78,6 +86,10 @@ services:
     container_name: govconnect-case-service
     ports:
       - "127.0.0.1:3003:3003"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     env_file:
       - .env
     environment:
@@ -106,6 +118,10 @@ services:
     container_name: govconnect-notification-service
     ports:
       - "127.0.0.1:3004:3004"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     env_file:
       - .env
     environment:
@@ -134,6 +150,10 @@ services:
     container_name: govconnect-dashboard
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-3000}:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     env_file:
       - .env
     environment:

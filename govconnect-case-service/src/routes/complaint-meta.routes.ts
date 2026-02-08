@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
+import { internalAuth } from '../middleware/auth.middleware';
 import {
   handleGetComplaintCategories,
   handleCreateComplaintCategory,
@@ -15,13 +16,13 @@ import {
 const router: ExpressRouter = Router();
 
 router.get('/complaints/categories', handleGetComplaintCategories);
-router.post('/complaints/categories', handleCreateComplaintCategory);
-router.patch('/complaints/categories/:id', handleUpdateComplaintCategory);
-router.delete('/complaints/categories/:id', handleDeleteComplaintCategory);
+router.post('/complaints/categories', internalAuth, handleCreateComplaintCategory);
+router.patch('/complaints/categories/:id', internalAuth, handleUpdateComplaintCategory);
+router.delete('/complaints/categories/:id', internalAuth, handleDeleteComplaintCategory);
 router.get('/complaints/types', handleGetComplaintTypes);
-router.post('/complaints/types', handleCreateComplaintType);
-router.patch('/complaints/types/:id', handleUpdateComplaintType);
-router.delete('/complaints/types/:id', handleDeleteComplaintType);
-router.post('/complaints/:id/updates', handleCreateComplaintUpdate);
+router.post('/complaints/types', internalAuth, handleCreateComplaintType);
+router.patch('/complaints/types/:id', internalAuth, handleUpdateComplaintType);
+router.delete('/complaints/types/:id', internalAuth, handleDeleteComplaintType);
+router.post('/complaints/:id/updates', internalAuth, handleCreateComplaintUpdate);
 
 export default router;

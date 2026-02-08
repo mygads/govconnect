@@ -2,8 +2,68 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { comparePassword, generateToken } from '@/lib/auth'
 
+// Simple in-memory rate limiter for login attempts
+const loginAttempts = new Map<string, { count: number; firstAttempt: number }>()
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000 // 15 minutes
+const MAX_ATTEMPTS = 10 // Max 10 attempts per window
+
+function getClientIp(request: NextRequest): string {
+  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    request.headers.get('x-real-ip') ||
+    'unknown'
+}
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now()
+  const entry = loginAttempts.get(ip)
+
+  if (!entry) return false
+
+  // Reset if window expired
+  if (now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
+    loginAttempts.delete(ip)
+    return false
+  }
+
+  return entry.count >= MAX_ATTEMPTS
+}
+
+function recordAttempt(ip: string): void {
+  const now = Date.now()
+  const entry = loginAttempts.get(ip)
+
+  if (!entry || now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
+    loginAttempts.set(ip, { count: 1, firstAttempt: now })
+  } else {
+    entry.count++
+  }
+}
+
+// Cleanup stale entries periodically (every 5 minutes)
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, entry] of loginAttempts.entries()) {
+    if (now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
+      loginAttempts.delete(ip)
+    }
+  }
+}, 5 * 60 * 1000)
+
 export async function POST(request: NextRequest) {
   try {
+    const clientIp = getClientIp(request)
+
+    // Check rate limit
+    if (isRateLimited(clientIp)) {
+      return NextResponse.json(
+        { error: 'Too many login attempts. Please try again later.' },
+        { status: 429 }
+      )
+    }
+
+    // Record the attempt
+    recordAttempt(clientIp)
+
     const body = await request.json()
     // Trim whitespace from username (not password)
     const username = (body.username || '').trim()

@@ -32,6 +32,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
     "mammoth": "^1.11.0",
     "multer": "^2.0.2",
     "officeparser": "^3.0.3",
@@ -47,6 +48,7 @@
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.8",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.10.1",

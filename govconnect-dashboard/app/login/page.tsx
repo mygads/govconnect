@@ -269,12 +269,7 @@ export default function LoginPage() {
                   )}
                 </Button>
 
-                <p className="text-center text-sm text-muted-foreground">
-                  Belum punya akun?{" "}
-                  <Link href="/register" className="text-secondary hover:underline">
-                    Daftar di sini
-                  </Link>
-                </p>
+
               </form>
             </CardContent>
           </Card>

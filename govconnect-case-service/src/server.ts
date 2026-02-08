@@ -23,11 +23,13 @@ async function startServer() {
     await initializeApp();
     
     // Start Express server
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       logger.info(`🚀 Case Service running on port ${PORT}`);
       logger.info(`📍 Environment: ${config.nodeEnv}`);
       logger.info(`📍 Health check: http://localhost:${PORT}/health`);
     });
+
+    return server;
   } catch (error: any) {
     logger.error('❌ Failed to start server', { error: error.message });
     process.exit(1);
@@ -37,10 +39,20 @@ async function startServer() {
 /**
  * Graceful shutdown
  */
-async function gracefulShutdown(signal: string) {
+async function gracefulShutdown(signal: string, server?: any) {
   logger.info(`🛑 ${signal} received, shutting down gracefully...`);
   
   try {
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err: any) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      logger.info('✅ Server connection closed');
+    }
+
     // Disconnect RabbitMQ
     await disconnectRabbitMQ();
     
@@ -57,8 +69,11 @@ async function gracefulShutdown(signal: string) {
 }
 
 // Handle signals
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+let server: any;
+startServer().then(s => server = s);
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM', server));
+process.on('SIGINT', () => gracefulShutdown('SIGINT', server));
 
 // Handle uncaught errors
 process.on('uncaughtException', (error) => {
