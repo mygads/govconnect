@@ -102,8 +102,8 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       // Fetch statistics
       const statsData = await statistics.getOverview()
       
-      // Fetch recent complaints
-      const complaintsData = await laporan.getAll()
+      // Fetch recent complaints (limit to 100 most recent for performance)
+      const complaintsData = await laporan.getAll({ limit: '100' })
       const allComplaints: Complaint[] = complaintsData.data || []
       
       // Filter urgent complaints - is_urgent is set from database via ComplaintType.is_urgent
@@ -227,8 +227,8 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     // Initial fetch
     fetchData()
     
-    // Start polling (every 10 seconds)
-    pollingIntervalRef.current = setInterval(fetchData, 10000)
+    // Start polling (every 30 seconds)
+    pollingIntervalRef.current = setInterval(fetchData, 30000)
     
     return () => {
       if (pollingIntervalRef.current) {

@@ -128,22 +128,6 @@ export const statistics = {
   async getAiUsage() {
     return fetchApi<any>('/api/statistics/ai-usage');
   },
-
-  async getAiAnalytics() {
-    return fetchApi<any>('/api/statistics/ai-analytics');
-  },
-
-  async getAiAnalyticsFlow() {
-    return fetchApi<any>('/api/statistics/ai-analytics/flow');
-  },
-
-  async getAiAnalyticsIntents() {
-    return fetchApi<any>('/api/statistics/ai-analytics/intents');
-  },
-
-  async getAiAnalyticsTokens() {
-    return fetchApi<any>('/api/statistics/ai-analytics/tokens');
-  },
 };
 
 // ==================== LIVECHAT ====================

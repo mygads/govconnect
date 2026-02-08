@@ -5,8 +5,11 @@ import { redirect } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/components/auth/AuthContext"
+import { Eye } from "lucide-react"
+import Link from "next/link"
 
 interface AdminUser {
   id: string
@@ -105,12 +108,13 @@ export default function SuperadminVillagesPage() {
                   <TableHead>Admin</TableHead>
                   <TableHead>Profil Singkat</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {villages.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">
                       Belum ada desa terdaftar.
                     </TableCell>
                   </TableRow>
@@ -139,6 +143,13 @@ export default function SuperadminVillagesPage() {
                         <Badge variant={village.is_active ? "default" : "secondary"}>
                           {village.is_active ? "Aktif" : "Nonaktif"}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Link href={`/dashboard/superadmin/villages/${village.id}`}>
+                          <Button variant="ghost" size="sm">
+                            <Eye className="h-4 w-4 mr-1" /> Detail
+                          </Button>
+                        </Link>
                       </TableCell>
                     </TableRow>
                   ))

@@ -21,6 +21,9 @@ import {
   Cpu,
   Database,
   UserPlus,
+  Target,
+  HeartPulse,
+  Plug,
 } from "lucide-react"
 
 import {
@@ -95,6 +98,12 @@ export function GovConnectSidebar() {
           icon: BarChart3,
           excludeRoles: ["superadmin"],
         },
+        {
+          title: "Analisis Tren",
+          url: "/dashboard/statistik/analytics",
+          icon: TrendingUp,
+          excludeRoles: ["superadmin"],
+        },
       ],
     },
     // === VILLAGE ADMIN ONLY: Pengaduan ===
@@ -167,6 +176,12 @@ export function GovConnectSidebar() {
           icon: Activity,
           excludeRoles: ["superadmin"],
         },
+        {
+          title: "Analitik Knowledge",
+          url: "/dashboard/knowledge-analytics",
+          icon: Target,
+          excludeRoles: ["superadmin"],
+        },
       ],
     },
     // === VILLAGE ADMIN ONLY: Pengaturan Desa ===
@@ -228,21 +243,21 @@ export function GovConnectSidebar() {
       title: "AI & Monitoring",
       items: [
         {
-          title: "AI Analytics",
-          url: "/dashboard/ai-analytics",
-          icon: Activity,
-          roles: ["superadmin"],
-        },
-        {
           title: "AI Token Usage",
           url: "/dashboard/superadmin/ai-usage",
           icon: Cpu,
           roles: ["superadmin"],
         },
         {
-          title: "Trend Analitik",
-          url: "/dashboard/statistik/analytics",
-          icon: TrendingUp,
+          title: "System Health",
+          url: "/dashboard/superadmin/system-health",
+          icon: HeartPulse,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Cek Koneksi LLM",
+          url: "/dashboard/superadmin/llm-check",
+          icon: Plug,
           roles: ["superadmin"],
         },
       ],

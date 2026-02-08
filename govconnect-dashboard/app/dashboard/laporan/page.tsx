@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Table,
   TableBody,
@@ -14,10 +15,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe } from "lucide-react"
+import { AlertCircle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe, Download, FileSpreadsheet, FileText as FilePdf, CheckSquare, Trash2, Loader2 } from "lucide-react"
 import { laporan } from "@/lib/frontend-api"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
+import { exportToExcel, exportToPDF } from "@/lib/export-utils"
+import { useToast } from "@/hooks/use-toast"
 
 interface Complaint {
   id: string
@@ -41,6 +57,9 @@ export default function LaporanListPage() {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkUpdating, setBulkUpdating] = useState(false)
+  const { toast } = useToast()
 
   useEffect(() => {
     fetchComplaints()
@@ -73,6 +92,57 @@ export default function LaporanListPage() {
 
     return matchSearch && matchStatus
   })
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredComplaints.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredComplaints.map(c => c.id)))
+    }
+  }
+
+  const handleBulkStatusUpdate = async (newStatus: string) => {
+    if (selectedIds.size === 0) return
+    setBulkUpdating(true)
+    let success = 0, failed = 0
+    for (const id of selectedIds) {
+      try {
+        await laporan.updateStatus(id, { status: newStatus })
+        success++
+      } catch { failed++ }
+    }
+    toast({
+      title: "Bulk Update Selesai",
+      description: `${success} berhasil, ${failed} gagal diperbarui ke ${formatStatus(newStatus)}`,
+    })
+    setSelectedIds(new Set())
+    setBulkUpdating(false)
+    fetchComplaints()
+  }
+
+  const handleExportExcel = () => {
+    const dataToExport = selectedIds.size > 0
+      ? filteredComplaints.filter(c => selectedIds.has(c.id))
+      : filteredComplaints
+    exportToExcel(dataToExport, { title: "Laporan Pengaduan Warga" })
+    toast({ title: "Export Berhasil", description: `${dataToExport.length} data diekspor ke Excel` })
+  }
+
+  const handleExportPDF = () => {
+    const dataToExport = selectedIds.size > 0
+      ? filteredComplaints.filter(c => selectedIds.has(c.id))
+      : filteredComplaints
+    exportToPDF(dataToExport, { title: "Laporan Pengaduan Warga" })
+    toast({ title: "Export Berhasil", description: `${dataToExport.length} data diekspor ke PDF` })
+  }
 
   if (loading) {
     return (
@@ -125,10 +195,58 @@ export default function LaporanListPage() {
             Kelola semua laporan masuk dari warga
           </p>
         </div>
-        <Button onClick={fetchComplaints} variant="outline">
-          Muat Ulang
-        </Button>
+        <div className="flex gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">
+                <Download className="h-4 w-4 mr-2" /> Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={handleExportExcel}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" /> Export Excel
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportPDF}>
+                <FilePdf className="h-4 w-4 mr-2" /> Export PDF
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button onClick={fetchComplaints} variant="outline">
+            Muat Ulang
+          </Button>
+        </div>
       </div>
+
+      {/* Bulk Actions Bar */}
+      {selectedIds.size > 0 && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="py-3 flex items-center justify-between">
+            <span className="text-sm font-medium">
+              <CheckSquare className="h-4 w-4 inline mr-1" />
+              {selectedIds.size} pengaduan dipilih
+            </span>
+            <div className="flex gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="outline" disabled={bulkUpdating}>
+                    {bulkUpdating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
+                    Ubah Status
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => handleBulkStatusUpdate("PROCESS")}>Tandai Proses</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleBulkStatusUpdate("DONE")}>Tandai Selesai</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleBulkStatusUpdate("REJECT")}>Tandai Ditolak</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleBulkStatusUpdate("CANCELED")}>Tandai Dibatalkan</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+                Batal
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -201,6 +319,12 @@ export default function LaporanListPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={selectedIds.size === filteredComplaints.length && filteredComplaints.length > 0}
+                        onCheckedChange={toggleSelectAll}
+                      />
+                    </TableHead>
                     <TableHead>No. Pengaduan</TableHead>
                     <TableHead>Pelapor</TableHead>
                     <TableHead>Channel</TableHead>
@@ -213,7 +337,13 @@ export default function LaporanListPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredComplaints.map((complaint) => (
-                    <TableRow key={complaint.id}>
+                    <TableRow key={complaint.id} className={selectedIds.has(complaint.id) ? "bg-primary/5" : ""}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedIds.has(complaint.id)}
+                          onCheckedChange={() => toggleSelect(complaint.id)}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
                           {complaint.foto_url && (

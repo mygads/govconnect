@@ -356,26 +356,47 @@ export default function LiveChatPage() {
     loadData()
   }, [fetchConversationsSilent])
 
-  // Polling for real-time updates (silent - no loading indicators)
+  // Polling for real-time updates - only when page is visible
   useEffect(() => {
-    // Clear previous polling
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current)
+    const startPolling = () => {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+      pollingRef.current = setInterval(() => {
+        fetchConversationsSilent()
+        fetchProcessingStatuses()
+        if (selectedConversationRef.current) {
+          fetchMessagesSilent(getConversationKey(selectedConversationRef.current))
+        }
+      }, 3000) // Poll every 3 seconds
     }
 
-    // Start new polling
-    pollingRef.current = setInterval(() => {
-      fetchConversationsSilent()
-      fetchProcessingStatuses() // Also fetch processing statuses
-      if (selectedConversationRef.current) {
-        fetchMessagesSilent(getConversationKey(selectedConversationRef.current))
-      }
-    }, 2000) // Poll every 2 seconds for more responsive status updates
-
-    return () => {
+    const stopPolling = () => {
       if (pollingRef.current) {
         clearInterval(pollingRef.current)
+        pollingRef.current = null
       }
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        // Immediately fetch when becoming visible, then start polling
+        fetchConversationsSilent()
+        fetchProcessingStatuses()
+        startPolling()
+      } else {
+        stopPolling()
+      }
+    }
+
+    // Start polling only if page is currently visible
+    if (document.visibilityState === "visible") {
+      startPolling()
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+
+    return () => {
+      stopPolling()
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
   }, [fetchConversationsSilent, fetchMessagesSilent, fetchProcessingStatuses])
 

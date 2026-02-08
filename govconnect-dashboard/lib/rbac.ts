@@ -9,13 +9,13 @@ const DISABLED_PATH_PREFIXES: string[] = []
 
 // Routes that only superadmin can access
 const SUPERADMIN_ONLY_RULES: RouteRule[] = [
-  { path: '/dashboard/ai-analytics', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/ai-usage', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/villages', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/admins', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/register', roles: ['superadmin'] },
-  { path: '/dashboard/statistik/analytics', roles: ['superadmin'] },
   { path: '/dashboard/settings/cache', roles: ['superadmin'] },
+  { path: '/dashboard/superadmin/system-health', roles: ['superadmin'] },
+  { path: '/dashboard/superadmin/llm-check', roles: ['superadmin'] },
 ]
 
 // Routes that only village admins can access (superadmin should NOT access these)
@@ -31,6 +31,7 @@ const VILLAGE_ONLY_ROUTES: string[] = [
   '/dashboard/testing-knowledge',
   '/dashboard/village-profile',
   '/dashboard/important-contacts',
+  '/dashboard/knowledge-analytics',
 ]
 
 const matchPath = (pathname: string, path: string) =>
