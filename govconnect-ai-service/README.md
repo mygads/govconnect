@@ -9,7 +9,7 @@ AI Orchestrator Service adalah **stateless service** yang bertanggung jawab untu
 - Fetch conversation history dari Channel Service
 - Process messages dengan Google Gemini LLM
 - Orchestrate ke Case Service untuk membuat laporan/permohonan layanan
-- Publish event `govconnect.ai.reply` untuk Notification Service
+- Publish event `govconnect.ai.reply` untuk Notifizcation Service
 
 ## 🏗️ Architecture
 
