@@ -1,2 +1,2 @@
 declare module 'officeparser';
-declare module 'textract';
+declare module 'word-extractor';

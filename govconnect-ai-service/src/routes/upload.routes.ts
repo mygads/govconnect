@@ -147,15 +147,12 @@ async function parseFileContent(filePath: string, mimeType: string): Promise<str
 
   if (mimeType === 'application/msword') {
     try {
-      const textract: any = await import('textract');
-      const extractedText = await new Promise<string>((resolve, reject) => {
-        textract.fromFileWithPath(filePath, (error: any, text: string) => {
-          if (error) reject(error);
-          else resolve(text || '');
-        });
-      });
+      const WordExtractor = (await import('word-extractor')).default;
+      const extractor = new WordExtractor();
+      const doc = await extractor.extract(filePath);
+      const extractedText = doc.getBody()?.trim() || '';
 
-      if (!extractedText || extractedText.trim().length === 0) {
+      if (!extractedText || extractedText.length === 0) {
         throw new Error('DOC contains no extractable text.');
       }
 
@@ -191,22 +188,27 @@ async function parseFileContent(filePath: string, mimeType: string): Promise<str
 
   if (mimeType === 'application/vnd.ms-powerpoint') {
     try {
-      const textract: any = await import('textract');
-      const extractedText = await new Promise<string>((resolve, reject) => {
-        textract.fromFileWithPath(filePath, (error: any, text: string) => {
-          if (error) reject(error);
-          else resolve(text || '');
-        });
-      });
+      const officeParser: any = await import('officeparser');
+      const parseOfficeAsync = officeParser.parseOfficeAsync || officeParser.default?.parseOfficeAsync;
 
-      if (!extractedText || extractedText.trim().length === 0) {
-        throw new Error('PPT contains no extractable text.');
+      if (!parseOfficeAsync) {
+        throw new Error('Legacy PPT format is not fully supported. Please convert your .ppt file to .pptx format and re-upload.');
+      }
+
+      const result = await parseOfficeAsync(filePath);
+      const extractedText = typeof result === 'string' ? result.trim() : (result?.text || '').trim();
+
+      if (!extractedText || extractedText.length === 0) {
+        throw new Error('PPT contains no extractable text. If the file is in legacy .ppt format, please convert to .pptx and re-upload.');
       }
 
       return extractedText;
     } catch (pptError: any) {
       logger.error('PPT parsing error', { error: pptError.message });
-      throw new Error(`Failed to parse PPT: ${pptError.message}`);
+      if (pptError.message.includes('convert')) {
+        throw pptError; // Pass through conversion messages as-is
+      }
+      throw new Error(`Failed to parse PPT: ${pptError.message}. Try converting to .pptx format.`);
     }
   }
   
