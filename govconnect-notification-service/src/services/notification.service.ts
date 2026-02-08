@@ -141,6 +141,7 @@ export async function sendAdminUrgentAlert(message: string, event: UrgentAlertEv
 
   // Send to admin
   await sendNotification({
+    village_id: event.village_id,
     channel: 'WHATSAPP',
     channel_identifier: ADMIN_WHATSAPP,
     message,

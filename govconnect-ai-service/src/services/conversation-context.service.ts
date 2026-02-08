@@ -194,37 +194,6 @@ export function updateContext(userId: string, updates: ContextUpdate): EnhancedC
 }
 
 /**
- * Record a clarification (user didn't provide expected data)
- */
-export function recordClarification(userId: string, field: string, reason: string): void {
-  const ctx = getEnhancedContext(userId);
-  
-  ctx.clarificationCount++;
-  ctx.validationErrors.push(`${field}: ${reason}`);
-  ctx.lastActivityTime = Date.now();
-  
-  // Check if stuck
-  if (ctx.clarificationCount >= 3) {
-    ctx.isStuck = true;
-    logger.warn('[ConversationContext] User appears stuck', {
-      userId,
-      clarificationCount: ctx.clarificationCount,
-      field,
-    });
-  }
-  
-  if (ctx.clarificationCount >= 5) {
-    ctx.needsHumanHelp = true;
-    logger.warn('[ConversationContext] User needs human help', {
-      userId,
-      clarificationCount: ctx.clarificationCount,
-    });
-  }
-  
-  contextCache.set(userId, ctx);
-}
-
-/**
  * Record successful data collection
  */
 export function recordDataCollected(userId: string, field: string, value: any): void {
@@ -396,64 +365,13 @@ export function getContextForLLM(userId: string): string {
   return parts.join('\n');
 }
 
-/**
- * Get smart follow-up question based on context
- */
-export function getSmartFollowUp(userId: string): string | null {
-  const ctx = getEnhancedContext(userId);
-  
-  if (ctx.missingFields.length === 0) {
-    return null;
-  }
-  
-  const nextField = ctx.missingFields[0];
-  
-  // If we've asked this before, try different approach
-  const askedBefore = ctx.unansweredQuestions.some(q => 
-    q.toLowerCase().includes(nextField.toLowerCase())
-  );
-  
-  const questionVariants: Record<string, string[]> = {
-    'alamat': [
-      'Di mana lokasi masalahnya? Sebutkan alamat atau patokan terdekat.',
-      'Boleh sebutkan alamatnya? Bisa pakai nama jalan, gang, atau patokan seperti "depan masjid X".',
-      'Untuk lokasi, cukup sebutkan patokan yang mudah ditemukan petugas ya.',
-    ],
-    'kategori': [
-      'Jenis masalah apa yang ingin dilaporkan?',
-      'Masalahnya tentang apa? Jalan rusak, lampu mati, sampah, atau yang lain?',
-      'Bisa jelaskan masalahnya? Nanti saya bantu kategorikan.',
-    ],
-    'nama_lengkap': [
-      'Siapa nama lengkap Kakak sesuai KTP?',
-      'Boleh sebutkan nama lengkap untuk data layanan?',
-      'Nama lengkapnya siapa ya Kak?',
-    ],
-    'nik': [
-      'Berapa NIK (16 digit) Kakak?',
-      'Boleh sebutkan NIK-nya? 16 digit angka di KTP.',
-      'NIK-nya berapa Kak? Yang 16 digit di KTP.',
-    ],
-  };
-  
-  const variants = questionVariants[nextField];
-  if (variants) {
-    const index = askedBefore ? Math.min(ctx.clarificationCount, variants.length - 1) : 0;
-    return variants[index];
-  }
-  
-  return `Boleh sebutkan ${nextField.replace(/_/g, ' ')} Kakak?`;
-}
-
 // ==================== EXPORTS ====================
 
 export default {
   getEnhancedContext,
   updateContext,
-  recordClarification,
   recordDataCollected,
   recordCompletedAction,
   resetContext,
   getContextForLLM,
-  getSmartFollowUp,
 };

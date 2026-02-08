@@ -376,15 +376,18 @@ export async function handleCreateServiceRequest(req: Request, res: Response) {
         channel_identifier: channel === 'WEBCHAT' ? String(channelIdentifier) : normalizedWaUserId,
         citizen_data_json: citizen_data_json || {},
         requirement_data_json: requirement_data_json || {},
-      }
+      },
+      include: { service: true },
     });
 
     publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.SERVICE_REQUESTED, {
+      village_id: created.service?.village_id,
       wa_user_id: normalizedWaUserId,
       channel: channel.toLowerCase(),
       channel_identifier: channel === 'WEBCHAT' ? String(channelIdentifier) : normalizedWaUserId,
       request_number: created.request_number,
       service_id,
+      service_name: created.service?.name || null,
     }).catch((error) => {
       logger.warn('Failed to publish service.requested event', { error: error.message });
     });
@@ -714,6 +717,19 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
         status: 'CANCELED',
         admin_notes: cancelNote,
       },
+    });
+
+    // Publish status update event so citizen gets WhatsApp confirmation
+    publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED, {
+      village_id: existing.service?.village_id,
+      wa_user_id: existing.wa_user_id,
+      channel: (existing.channel || 'WHATSAPP').toLowerCase(),
+      channel_identifier: existing.channel_identifier || existing.wa_user_id,
+      request_number: existing.request_number,
+      status: 'CANCELED',
+      admin_notes: cancelNote,
+    }).catch((err: any) => {
+      logger.warn('Failed to publish status.updated event for cancel', { error: err.message });
     });
 
     return res.json({ data: updated });

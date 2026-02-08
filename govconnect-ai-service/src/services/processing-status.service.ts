@@ -53,7 +53,7 @@ const STAGE_MESSAGES: Record<ProcessingStage, string[]> = {
     'Pesan diterima...',
   ],
   reading: [
-    'Membaca pesan Kakak...',
+    'Membaca pesan...',
     'Sedang memahami pertanyaan...',
     'Menganalisis pesan...',
   ],
@@ -63,7 +63,7 @@ const STAGE_MESSAGES: Record<ProcessingStage, string[]> = {
     'Mencari data terkait...',
   ],
   thinking: [
-    'AI sedang berpikir...',
+    'Sedang berpikir...',
     'Memproses informasi...',
     'Menyusun jawaban...',
   ],

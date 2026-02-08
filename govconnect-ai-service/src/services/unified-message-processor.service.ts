@@ -3324,7 +3324,8 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     } else {
       // Build complaint categories text for WhatsApp channel too
       const complaintCategoriesText = await buildComplaintCategoriesText(resolvedVillageId);
-      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText, promptFocus);
+      const villageName = templateContext?.villageName || (await getVillageProfileSummary(resolvedVillageId))?.name || undefined;
+      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText, promptFocus, villageName);
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     }

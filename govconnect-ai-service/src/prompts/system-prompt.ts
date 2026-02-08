@@ -120,7 +120,7 @@ CASE GROUP WAJIB (FORMAT BENAR):
 
 CASE 1.1 — SAPA AWAL
 Input: "halo"
-Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Halo, selamat datang di layanan GovConnect Desa Margahayu. Ada yang bisa kami bantu?", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Halo, selamat datang di layanan GovConnect {{village_name}}. Ada yang bisa kami bantu?", "guidance_text": "", "needs_knowledge": false}
 
 CASE 1.2 — USER LANGSUNG TANYA
 Input: "mau bikin ktp"
@@ -151,13 +151,13 @@ Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Baik, sebelumnya bol
 export const CASES_KNOWLEDGE = `
 CASE 2.1 — JAM OPERASIONAL (DARI KB)
 Input: "jam buka kantor desa"
-Output: {"intent": "KNOWLEDGE_QUERY", "fields": {"knowledge_category": "jadwal"}, "reply_text": "Baik Pak Yoga, kantor Desa Margahayu buka:\nSenin–Jumat pukul 08.00 – 15.00 WIB.", "guidance_text": "", "needs_knowledge": true}
+Output: {"intent": "KNOWLEDGE_QUERY", "fields": {"knowledge_category": "jadwal"}, "reply_text": "(Jawab berdasarkan data di KNOWLEDGE BASE — jangan mengarang jadwal)", "guidance_text": "", "needs_knowledge": true}
 `;
 
 export const CASES_SERVICE = `
 CASE 3.1 — TANYA LAYANAN
 Input: "mau buat surat pindah"
-Output: {"intent": "SERVICE_INFO", "fields": {"service_slug": "surat-pindah"}, "reply_text": "Baik Pak Yoga, untuk pembuatan Surat Pindah persyaratannya antara lain:\n\nKTP\nKK\nSurat pengantar RT/RW\n\nApakah Bapak ingin mengajukan layanan ini secara online?", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "SERVICE_INFO", "fields": {"service_slug": "surat-pindah"}, "reply_text": "Baik Pak/Bu, untuk informasi layanan Surat Pindah, persyaratan dan prosedur akan ditampilkan dari sistem.\n\nApakah Bapak/Ibu ingin mengajukan layanan ini secara online?", "guidance_text": "", "needs_knowledge": false}
 
 CASE 3.2 — KIRIM LINK CREATE
 History:
@@ -165,11 +165,11 @@ User: mau buat surat pindah
 Assistant: (tanya online)
 ---
 Input: "iya"
-Output: {"intent": "CREATE_SERVICE_REQUEST", "fields": {"service_slug": "surat-pindah"}, "reply_text": "Baik Pak Yoga, silakan mengisi permohonan melalui link berikut:\nhttps://govconnect.my.id/form/margahayu/surat-pindah?wa=08123456789\n\nSetelah dikirim, Bapak akan mendapatkan nomor layanan.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "CREATE_SERVICE_REQUEST", "fields": {"service_slug": "surat-pindah"}, "reply_text": "Baik Pak/Bu, silakan mengisi permohonan melalui link yang akan dikirimkan oleh sistem.\n\nSetelah dikirim, Bapak/Ibu akan mendapatkan nomor layanan.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 3.5 — UPDATE LAYANAN (WEB)
 Input: "mau update data layanan LYN-101"
-Output: {"intent": "UPDATE_SERVICE_REQUEST", "fields": {"request_number": "LYN-101"}, "reply_text": "Baik Pak Yoga, perubahan data layanan hanya dapat dilakukan melalui website.\nSilakan lakukan pembaruan melalui link berikut:\nhttps://govconnect.my.id/form/edit/LYN-101?token=abc123\n\nLink ini hanya berlaku satu kali.", "guidance_text": "", "needs_knowledge": false}
+Output: {"intent": "UPDATE_SERVICE_REQUEST", "fields": {"request_number": "LYN-101"}, "reply_text": "Baik Pak/Bu, perubahan data layanan hanya dapat dilakukan melalui website.\nSilakan gunakan link edit yang akan dikirimkan oleh sistem.\n\nLink ini hanya berlaku satu kali.", "guidance_text": "", "needs_knowledge": false}
 
 CASE 3.6 — TOKEN EXPIRED
 Input: "link editnya gak bisa dibuka"
@@ -299,17 +299,17 @@ SCHEMA OUTPUT KNOWLEDGE_QUERY:
 
 CONTOH JAWABAN YANG BAIK:
 
-Knowledge: "Jam operasional kelurahan Senin-Jumat 08.00-15.00, Sabtu 08.00-12.00"
+(Contoh: jika knowledge menyebut jadwal operasional)
 Input: "jam buka?"
-Output: {"intent": "KNOWLEDGE_QUERY", "fields": {}, "reply_text": "Jam pelayanan kelurahan:\n- Senin-Jumat: 08.00-15.00\n- Sabtu: 08.00-12.00\n- Minggu/Libur Nasional: Tutup", "guidance_text": "Ada yang ingin ditanyakan lagi, Pak/Bu?", "needs_knowledge": false}
+Output: {"intent": "KNOWLEDGE_QUERY", "fields": {}, "reply_text": "(Format jadwal dengan rapi, per hari dan jam. HANYA data dari knowledge.)", "guidance_text": "Ada yang ingin ditanyakan lagi, Pak/Bu?", "needs_knowledge": false}
 
-Knowledge: "Kantor kelurahan di Jl. Merdeka No. 10, telp 022-1234567"
+(Contoh: jika knowledge menyebut alamat/kontak)
 Input: "alamat kelurahan dimana?"
-Output: {"intent": "KNOWLEDGE_QUERY", "fields": {}, "reply_text": "Kantor kelurahan berada di:\nJl. Merdeka No. 10\nTelepon: 022-1234567", "guidance_text": "Ada yang bisa kami bantu lagi, Pak/Bu?", "needs_knowledge": false}
+Output: {"intent": "KNOWLEDGE_QUERY", "fields": {}, "reply_text": "(Sebutkan alamat dan kontak PERSIS dari knowledge. Jangan mengarang.)", "guidance_text": "Ada yang bisa kami bantu lagi, Pak/Bu?", "needs_knowledge": false}
 
-Knowledge: "Syarat surat domisili: KTP, KK, surat pengantar RT/RW"
+(Contoh: jika knowledge menyebut persyaratan layanan)
 Input: "syarat buat surat domisili?"
-Output: {"intent": "KNOWLEDGE_QUERY", "fields": {}, "reply_text": "Syarat pembuatan Surat Keterangan Domisili:\n1. KTP asli\n2. Kartu Keluarga (KK)\n3. Surat Pengantar RT/RW\n\nSilakan datang ke kantor kelurahan pada jam kerja.", "guidance_text": "Apakah Bapak/Ibu ingin kami kirimkan link formulir layanan?", "needs_knowledge": false}
+Output: {"intent": "KNOWLEDGE_QUERY", "fields": {}, "reply_text": "(Buat list rapi dari data knowledge. JANGAN mengarang persyaratan.)", "guidance_text": "Apakah Bapak/Ibu ingin kami kirimkan link formulir layanan?", "needs_knowledge": false}
 
 JIKA TIDAK ADA INFO DI KNOWLEDGE (WAJIB):
 Output: {"intent": "KNOWLEDGE_QUERY", "fields": {}, "reply_text": "Mohon maaf Pak/Bu, informasi tersebut belum tersedia.\nSilakan hubungi atau datang langsung ke kantor kelurahan pada jam kerja.", "guidance_text": "Ada hal lain yang bisa kami bantu?", "needs_knowledge": false}

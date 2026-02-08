@@ -33,6 +33,7 @@ export interface StatusUpdatedEvent extends BaseChannelEvent {
 export interface UrgentAlertEvent {
   type: string;
   complaint_id: string;
+  village_id?: string;
   kategori: string;
   deskripsi: string;
   alamat?: string;

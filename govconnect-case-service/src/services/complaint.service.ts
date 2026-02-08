@@ -231,6 +231,7 @@ export async function createComplaint(data: CreateComplaintData) {
     await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.URGENT_ALERT, {
       type: 'urgent_complaint',
       complaint_id: complaint.complaint_id,
+      village_id: complaint.village_id,
       kategori: complaint.kategori,
       deskripsi: complaint.deskripsi,
       alamat: complaint.alamat,

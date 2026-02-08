@@ -1,7 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { SYSTEM_PROMPT_WITH_KNOWLEDGE, getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '../prompts/system-prompt';
+import { getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '../prompts/system-prompt';
 import { RAGContext } from '../types/embedding.types';
 
 interface Message {
@@ -26,7 +26,8 @@ export async function buildContext(
   currentMessage: string, 
   ragContext?: RAGContext | string,
   complaintCategoriesText?: string,
-  promptFocus?: PromptFocus
+  promptFocus?: PromptFocus,
+  villageName?: string
 ) {
   logger.info('Building context for LLM', { wa_user_id, promptFocus: promptFocus || 'full' });
 
@@ -72,7 +73,8 @@ export async function buildContext(
       .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate)
       .replace(/\{\{current_time\}\}/g, currentTime)
       .replace(/\{\{time_of_day\}\}/g, timeOfDay)
-      .replace(/\{\{complaint_categories\}\}/g, categoriesText);
+      .replace(/\{\{complaint_categories\}\}/g, categoriesText)
+      .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
     
     // Log the formatted history for debugging
     logger.debug('Conversation history formatted', {
@@ -118,7 +120,8 @@ export async function buildContext(
       .replace(/\{\{tomorrow_date\}\}/g, new Date(wibTime2.getTime() + 86400000).toISOString().split('T')[0])
       .replace(/\{\{current_time\}\}/g, wibTime2.toTimeString().split(' ')[0].substring(0, 5))
       .replace(/\{\{time_of_day\}\}/g, timeOfDay2)
-      .replace(/\{\{complaint_categories\}\}/g, 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya');
+      .replace(/\{\{complaint_categories\}\}/g, 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya')
+      .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
     
     return {
       systemPrompt: fallbackPrompt,

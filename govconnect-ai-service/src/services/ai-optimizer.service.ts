@@ -36,24 +36,7 @@ export interface OptimizedProcessResult extends ProcessMessageResult {
   };
 }
 
-// ==================== QUICK RESPONSES ====================
-
-/**
- * Quick responses for simple intents that don't need LLM
- */
-const QUICK_RESPONSES: Record<string, { response: string; guidance?: string }> = {
-  'THANKS': {
-    response: 'Sama-sama! 😊 Senang bisa membantu. Kalau ada yang perlu dibantu lagi, langsung chat aja ya!',
-  },
-  'CONFIRMATION': {
-    response: '', // Will be handled by pending state
-  },
-  'REJECTION': {
-    response: 'Baik, tidak masalah. Ada yang lain yang bisa saya bantu?',
-  },
-};
-
-// ==================== OPTIMIZATION FUNCTIONS ====================
+// ==================== OPTIMIZATION FUNCTIONS ======================================
 
 /**
  * Pre-process message and determine optimization strategy
@@ -85,23 +68,7 @@ export function preProcessMessage(
   };
 }
 
-/**
- * Handle quick responses for simple intents
- */
-export function getQuickResponse(
-  intent: string,
-  extractedFields: Record<string, any>
-): { response: string; guidance?: string } | null {
-  // Check for quick response
-  const quickResponse = QUICK_RESPONSES[intent];
-  if (quickResponse && quickResponse.response) {
-    return quickResponse;
-  }
-  
-  return null;
-}
-
-// ==================== METRICS & MONITORING ====================
+// ==================== METRICS & MONITORING ======================================
 
 /**
  * Get optimization statistics
@@ -148,7 +115,6 @@ export function enhanceLLMFields(
 
 export default {
   preProcessMessage,
-  getQuickResponse,
   getOptimizationStats,
   initializeOptimizer,
   enhanceLLMFields,
