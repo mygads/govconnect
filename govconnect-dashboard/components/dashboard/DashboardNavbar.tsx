@@ -17,11 +17,14 @@ import { SidebarTrigger } from "@/components/ui/sidebar"
 import { useAuth } from "@/components/auth/AuthContext"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { NotificationCenter } from "@/components/dashboard/NotificationCenter"
+import { isSuperadmin } from "@/lib/rbac"
 
 export function DashboardNavbar() {
   const { theme, setTheme } = useTheme()
   const { user, logout } = useAuth()
   const router = useRouter()
+
+  const userIsSuperadmin = isSuperadmin(user?.role)
 
   const getInitials = (name: string) => {
     return name
@@ -53,8 +56,8 @@ export function DashboardNavbar() {
       <SidebarTrigger className="-ml-1 h-8 w-8 hover:bg-accent rounded-md transition-colors" />
 
       <div className="ml-auto flex items-center gap-2">
-        {/* Notification Center */}
-        <NotificationCenter />
+        {/* Notification Center - only for village admins (needs RealtimeProvider) */}
+        {!userIsSuperadmin && <NotificationCenter />}
 
         {/* Theme Toggle */}
         <Button
@@ -96,7 +99,7 @@ export function DashboardNavbar() {
               <Settings className="mr-2 h-4 w-4" />
               <span>Pengaturan</span>
             </DropdownMenuItem>
-            {user?.role === 'superadmin' && (
+            {userIsSuperadmin && (
               <DropdownMenuItem 
                 onClick={() => router.push('/dashboard/settings/notifications')} 
                 className="cursor-pointer"

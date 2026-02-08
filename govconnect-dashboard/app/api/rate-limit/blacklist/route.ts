@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
 
     const token = authHeader.replace('Bearer ', '')
     const payload = await verifyToken(token)
-    if (!payload || payload.role !== 'superadmin') {
+    if (!payload || (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     const token = authHeader.replace('Bearer ', '')
     const payload = await verifyToken(token)
-    if (!payload || payload.role !== 'superadmin') {
+    if (!payload || (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -72,7 +72,7 @@ export async function DELETE(request: NextRequest) {
 
     const token = authHeader.replace('Bearer ', '')
     const payload = await verifyToken(token)
-    if (!payload || payload.role !== 'superadmin') {
+    if (!payload || (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin')) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

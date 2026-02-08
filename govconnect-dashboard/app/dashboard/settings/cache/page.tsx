@@ -84,8 +84,6 @@ export default function CacheManagementPage() {
 
   useEffect(() => {
     fetchStats()
-    const interval = setInterval(fetchStats, 10000) // Auto-refresh every 10s
-    return () => clearInterval(interval)
   }, [fetchStats])
 
   const handleClearAll = async () => {
@@ -392,7 +390,7 @@ export default function CacheManagementPage() {
 
       {/* Footer info */}
       <p className="text-xs text-muted-foreground text-center">
-        Auto-refresh setiap 10 detik · Terakhir diperbarui: {stats?.timestamp ? new Date(stats.timestamp).toLocaleTimeString('id-ID') : '-'}
+        Gunakan tombol Refresh untuk memperbarui data · Terakhir diperbarui: {stats?.timestamp ? new Date(stats.timestamp).toLocaleTimeString('id-ID') : '-'}
       </p>
     </div>
   )

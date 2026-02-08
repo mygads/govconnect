@@ -1,8 +1,18 @@
 "use client"
 
 import { RealtimeStatsGrid, RecentComplaintsCard } from "@/components/dashboard/RealtimeStats"
+import { useAuth } from "@/components/auth/AuthContext"
+import { isSuperadmin } from "@/lib/rbac"
+import { SuperadminDashboard } from "@/components/dashboard/SuperadminDashboard"
 
 export default function DashboardPage() {
+  const { user } = useAuth()
+
+  // Superadmin gets a completely different dashboard
+  if (isSuperadmin(user?.role)) {
+    return <SuperadminDashboard />
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -17,7 +27,7 @@ export default function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <RecentComplaintsCard />
         
-        {/* Quick Actions Card - Optional */}
+        {/* Quick Actions Card */}
         <div className="space-y-4">
           <h3 className="text-lg font-semibold">Aksi Cepat</h3>
           <div className="grid gap-3">
@@ -52,17 +62,17 @@ export default function DashboardPage() {
             </a>
             
             <a 
-              href="/dashboard/settings/notifications" 
+              href="/dashboard/channel-settings" 
               className="p-4 rounded-lg border hover:bg-muted/50 transition-colors flex items-center gap-3"
             >
-              <div className="h-10 w-10 rounded-lg bg-red-100 flex items-center justify-center">
-                <svg className="h-5 w-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                <svg className="h-5 w-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                 </svg>
               </div>
               <div>
-                <p className="font-medium">Pengaturan Notifikasi</p>
-                <p className="text-sm text-muted-foreground">Atur alert laporan darurat</p>
+                <p className="font-medium">Pengaturan Channel</p>
+                <p className="text-sm text-muted-foreground">Atur koneksi WhatsApp</p>
               </div>
             </a>
           </div>

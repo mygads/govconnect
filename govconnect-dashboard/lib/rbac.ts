@@ -7,31 +7,60 @@ export type RouteRule = {
 
 const DISABLED_PATH_PREFIXES: string[] = []
 
-const ROLE_RULES: RouteRule[] = [
+// Routes that only superadmin can access
+const SUPERADMIN_ONLY_RULES: RouteRule[] = [
   { path: '/dashboard/ai-analytics', roles: ['superadmin'] },
-  { path: '/dashboard/superadmin/ai-quality', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/ai-usage', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/villages', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/admins', roles: ['superadmin'] },
+  { path: '/dashboard/superadmin/register', roles: ['superadmin'] },
   { path: '/dashboard/statistik/analytics', roles: ['superadmin'] },
-  { path: '/dashboard/settings/rate-limit', roles: ['superadmin'] },
-  { path: '/dashboard/settings/notifications', roles: ['superadmin'] },
   { path: '/dashboard/settings/cache', roles: ['superadmin'] },
+]
+
+// Routes that only village admins can access (superadmin should NOT access these)
+const VILLAGE_ONLY_ROUTES: string[] = [
+  '/dashboard/statistik',
+  '/dashboard/laporan',
+  '/dashboard/pengaduan',
+  '/dashboard/layanan',
+  '/dashboard/pelayanan',
+  '/dashboard/channel-settings',
+  '/dashboard/livechat',
+  '/dashboard/knowledge',
+  '/dashboard/testing-knowledge',
+  '/dashboard/village-profile',
+  '/dashboard/important-contacts',
 ]
 
 const matchPath = (pathname: string, path: string) =>
   pathname === path || pathname.startsWith(`${path}/`)
 
+export function isSuperadmin(role: AdminRole | string | undefined): boolean {
+  return role === 'superadmin'
+}
+
 export function isRouteAllowed(role: AdminRole | undefined, pathname: string): boolean {
   if (DISABLED_PATH_PREFIXES.some((prefix) => matchPath(pathname, prefix))) return false
   if (!role) return true
 
-  const rule = ROLE_RULES.find((item) => matchPath(pathname, item.path))
-  if (!rule) return true
-  return rule.roles.includes(role)
+  // Check superadmin-only routes FIRST (higher priority)
+  const superadminRule = SUPERADMIN_ONLY_RULES.find((item) => matchPath(pathname, item.path))
+  if (superadminRule) {
+    return superadminRule.roles.includes(role)
+  }
+
+  // Superadmin cannot access village-specific routes
+  if (role === 'superadmin') {
+    const isVillageRoute = VILLAGE_ONLY_ROUTES.some((route) => matchPath(pathname, route))
+    if (isVillageRoute) return false
+  }
+
+  return true
 }
 
-export function canAccess(role: AdminRole | undefined, allowedRoles?: AdminRole[]): boolean {
+export function canAccess(role: AdminRole | undefined, allowedRoles?: AdminRole[], excludeRoles?: AdminRole[]): boolean {
+  if (excludeRoles && excludeRoles.length > 0 && role && excludeRoles.includes(role)) return false
   if (!allowedRoles || allowedRoles.length === 0) return true
   if (!role) return false
   return allowedRoles.includes(role)

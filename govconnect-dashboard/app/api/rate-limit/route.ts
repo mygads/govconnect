@@ -17,8 +17,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
     }
 
-    // Only superadmin can access
-    if (payload.role !== 'superadmin') {
+    // Allow superadmin and village_admin
+    if (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

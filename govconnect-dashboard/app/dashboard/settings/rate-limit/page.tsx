@@ -38,7 +38,6 @@ import {
   Settings,
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
-import { redirect } from "next/navigation"
 
 interface RateLimitConfig {
   enabled: boolean
@@ -80,13 +79,6 @@ export default function RateLimitPage() {
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [newBlacklist, setNewBlacklist] = useState({ wa_user_id: '', reason: '', expiresInDays: '' })
   const [submitting, setSubmitting] = useState(false)
-
-  // Redirect non-superadmin
-  useEffect(() => {
-    if (user && user.role !== 'superadmin') {
-      redirect('/dashboard')
-    }
-  }, [user])
 
   const fetchData = useCallback(async () => {
     try {

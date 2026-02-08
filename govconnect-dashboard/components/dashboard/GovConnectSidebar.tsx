@@ -37,6 +37,19 @@ import {
 import { useAuth } from "@/components/auth/AuthContext"
 import { canAccess, type AdminRole } from "@/lib/rbac"
 
+interface MenuItem {
+  title: string
+  url: string
+  icon: React.ComponentType<{ className?: string }>
+  roles?: string[]
+  excludeRoles?: string[]
+}
+
+interface MenuGroup {
+  title: string
+  items: MenuItem[]
+}
+
 export function GovConnectSidebar() {
   const pathname = usePathname()
   const { theme, resolvedTheme } = useTheme()
@@ -60,7 +73,8 @@ export function GovConnectSidebar() {
     return pathname.startsWith(path + "/")
   }
 
-  const menuItems = [
+  const menuItems: MenuGroup[] = [
+    // === SHARED: Dashboard (shown to all, but content differs) ===
     {
       title: "Ringkasan",
       items: [
@@ -69,19 +83,21 @@ export function GovConnectSidebar() {
           url: "/dashboard",
           icon: LayoutDashboard,
         },
+      ],
+    },
+    // === VILLAGE ADMIN ONLY: Statistik ===
+    {
+      title: "Statistik",
+      items: [
         {
           title: "Statistik",
           url: "/dashboard/statistik",
           icon: BarChart3,
-        },
-        {
-          title: "Trend Analitik",
-          url: "/dashboard/statistik/analytics",
-          icon: TrendingUp,
-          roles: ["superadmin"],
+          excludeRoles: ["superadmin"],
         },
       ],
     },
+    // === VILLAGE ADMIN ONLY: Pengaduan ===
     {
       title: "Pengaduan",
       items: [
@@ -89,14 +105,17 @@ export function GovConnectSidebar() {
           title: "Daftar Pengaduan",
           url: "/dashboard/laporan",
           icon: FileText,
+          excludeRoles: ["superadmin"],
         },
         {
           title: "Kategori & Jenis",
           url: "/dashboard/pengaduan/kategori-jenis",
           icon: Shield,
+          excludeRoles: ["superadmin"],
         },
       ],
     },
+    // === VILLAGE ADMIN ONLY: Layanan ===
     {
       title: "Layanan",
       items: [
@@ -104,14 +123,17 @@ export function GovConnectSidebar() {
           title: "Katalog Layanan",
           url: "/dashboard/layanan",
           icon: Settings2,
+          excludeRoles: ["superadmin"],
         },
         {
           title: "Permohonan Layanan",
           url: "/dashboard/pelayanan",
           icon: FileText,
+          excludeRoles: ["superadmin"],
         },
       ],
     },
+    // === VILLAGE ADMIN ONLY: Channel ===
     {
       title: "Channel",
       items: [
@@ -119,14 +141,17 @@ export function GovConnectSidebar() {
           title: "Pengaturan Channel",
           url: "/dashboard/channel-settings",
           icon: Smartphone,
+          excludeRoles: ["superadmin"],
         },
         {
           title: "Live Chat & Ambil Alih",
           url: "/dashboard/livechat",
           icon: MessageCircle,
+          excludeRoles: ["superadmin"],
         },
       ],
     },
+    // === VILLAGE ADMIN ONLY: Basis Pengetahuan ===
     {
       title: "Basis Pengetahuan",
       items: [
@@ -134,31 +159,49 @@ export function GovConnectSidebar() {
           title: "Basis Pengetahuan",
           url: "/dashboard/knowledge",
           icon: Brain,
+          excludeRoles: ["superadmin"],
         },
         {
           title: "Uji Pengetahuan",
           url: "/dashboard/testing-knowledge",
           icon: Activity,
+          excludeRoles: ["superadmin"],
         },
       ],
     },
+    // === VILLAGE ADMIN ONLY: Pengaturan Desa ===
     {
-      title: "Pengaturan",
+      title: "Pengaturan Desa",
       items: [
         {
           title: "Profil Desa",
           url: "/dashboard/village-profile",
           icon: Settings2,
+          excludeRoles: ["superadmin"],
         },
         {
           title: "Nomor Penting",
           url: "/dashboard/important-contacts",
           icon: Bell,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Pengaturan Notifikasi",
+          url: "/dashboard/settings/notifications",
+          icon: Bell,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Rate Limit & Blacklist",
+          url: "/dashboard/settings/rate-limit",
+          icon: Shield,
+          excludeRoles: ["superadmin"],
         },
       ],
     },
+    // === SUPERADMIN ONLY: Kelola Desa & Admin ===
     {
-      title: "Super Admin",
+      title: "Kelola Desa",
       items: [
         {
           title: "Register Desa Baru",
@@ -178,6 +221,12 @@ export function GovConnectSidebar() {
           icon: Settings2,
           roles: ["superadmin"],
         },
+      ],
+    },
+    // === SUPERADMIN ONLY: AI & Monitoring ===
+    {
+      title: "AI & Monitoring",
+      items: [
         {
           title: "AI Analytics",
           url: "/dashboard/ai-analytics",
@@ -191,23 +240,17 @@ export function GovConnectSidebar() {
           roles: ["superadmin"],
         },
         {
-          title: "AI Golden Set",
-          url: "/dashboard/superadmin/ai-quality",
-          icon: Activity,
+          title: "Trend Analitik",
+          url: "/dashboard/statistik/analytics",
+          icon: TrendingUp,
           roles: ["superadmin"],
         },
-        {
-          title: "Pengaturan Notifikasi",
-          url: "/dashboard/settings/notifications",
-          icon: Bell,
-          roles: ["superadmin"],
-        },
-        {
-          title: "Rate Limit & Blacklist",
-          url: "/dashboard/settings/rate-limit",
-          icon: Shield,
-          roles: ["superadmin"],
-        },
+      ],
+    },
+    // === SUPERADMIN ONLY: Pengaturan Sistem ===
+    {
+      title: "Pengaturan Sistem",
+      items: [
         {
           title: "Cache Management",
           url: "/dashboard/settings/cache",
@@ -252,7 +295,7 @@ export function GovConnectSidebar() {
       <SidebarContent className="bg-white dark:bg-gray-950">
         {menuItems.map((group, index) => {
           const allowedItems = group.items.filter((item) =>
-            canAccess(user?.role as AdminRole, item.roles as AdminRole[])
+            canAccess(user?.role as AdminRole, item.roles as AdminRole[], item.excludeRoles as AdminRole[])
           )
 
           if (allowedItems.length === 0) return null

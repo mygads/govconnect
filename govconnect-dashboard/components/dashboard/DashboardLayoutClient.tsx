@@ -10,7 +10,7 @@ import { RealtimeProvider } from "@/components/dashboard/RealtimeProvider"
 import { UrgentAlertBanner } from "@/components/dashboard/NotificationCenter"
 import { LiveChatWidget } from "@/components/landing/LiveChatWidget"
 import { useAuth } from "@/components/auth/AuthContext"
-import { isRouteAllowed, type AdminRole } from "@/lib/rbac"
+import { isRouteAllowed, isSuperadmin, type AdminRole } from "@/lib/rbac"
 
 interface DashboardLayoutClientProps {
   children: React.ReactNode
@@ -21,6 +21,8 @@ export default function DashboardLayoutClient({ children }: DashboardLayoutClien
   const router = useRouter()
   const { user, isLoading } = useAuth()
 
+  const userIsSuperadmin = isSuperadmin(user?.role)
+
   useEffect(() => {
     if (isLoading || !user) return
     if (!isRouteAllowed(user.role as AdminRole, pathname)) {
@@ -28,20 +30,29 @@ export default function DashboardLayoutClient({ children }: DashboardLayoutClien
     }
   }, [isLoading, pathname, router, user])
 
+  const dashboardContent = (
+    <SidebarProvider>
+      <GovConnectSidebar />
+      <SidebarInset>
+        {!userIsSuperadmin && <UrgentAlertBanner />}
+        <DashboardNavbar />
+        <main className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-900 p-4 md:p-6">
+          {children}
+        </main>
+      </SidebarInset>
+      {/* Live Chat Widget - only for village admins */}
+      {!userIsSuperadmin && <LiveChatWidget />}
+    </SidebarProvider>
+  )
+
+  // Superadmin doesn't need RealtimeProvider (village complaint polling)
+  if (userIsSuperadmin) {
+    return dashboardContent
+  }
+
   return (
     <RealtimeProvider>
-      <SidebarProvider>
-        <GovConnectSidebar />
-        <SidebarInset>
-          <UrgentAlertBanner />
-          <DashboardNavbar />
-          <main className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-900 p-4 md:p-6">
-            {children}
-          </main>
-        </SidebarInset>
-        {/* Live Chat Widget */}
-        <LiveChatWidget />
-      </SidebarProvider>
+      {dashboardContent}
     </RealtimeProvider>
   )
 }
