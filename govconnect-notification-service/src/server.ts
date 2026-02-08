@@ -67,9 +67,10 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', { promise, reason });
-  process.exit(1);
+process.on('unhandledRejection', (reason: any, _promise) => {
+  logger.error('Unhandled Rejection', { reason: reason?.message || reason, stack: reason?.stack });
+  // Don't exit on unhandled rejections - log and continue
+  // This prevents crash loops from transient DB/network errors
 });
 
 startServer();

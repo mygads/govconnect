@@ -5,6 +5,12 @@ import { getQuery } from '../utils/http'
 
 const router: Router = Router()
 
+// Cache control middleware for statistics endpoints (60s browser cache)
+router.use((_req: Request, res: Response, next) => {
+  res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
+  next();
+});
+
 router.get('/overview', async (req: Request, res: Response) => {
   try {
     const village_id = getQuery(req, 'village_id') || undefined;

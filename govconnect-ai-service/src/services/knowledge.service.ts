@@ -286,9 +286,21 @@ export async function getRAGContext(query: string, categories?: string[], villag
 /**
  * Get village profile summary directly from Dashboard DB
  * Use for greeting personalization (no embedding needed)
+ * Cached for 15 minutes — village profile rarely changes.
  */
+
+// In-memory cache for village profiles (M4 optimization)
+const _villageProfileCache = new Map<string, { data: VillageProfileSummary | null; ts: number }>();
+const VILLAGE_PROFILE_TTL = 15 * 60 * 1000; // 15 minutes
+
 export async function getVillageProfileSummary(villageId?: string): Promise<VillageProfileSummary | null> {
   if (!villageId) return null;
+
+  // Check cache
+  const cached = _villageProfileCache.get(villageId);
+  if (cached && Date.now() - cached.ts < VILLAGE_PROFILE_TTL) {
+    return cached.data;
+  }
 
   try {
     const response = await axios.get<{ data: VillageProfileSummary | null }>(
@@ -302,7 +314,9 @@ export async function getVillageProfileSummary(villageId?: string): Promise<Vill
       }
     );
 
-    return response.data.data || null;
+    const profile = response.data.data || null;
+    _villageProfileCache.set(villageId, { data: profile, ts: Date.now() });
+    return profile;
   } catch (error: any) {
     logger.warn('Failed to get village profile summary', {
       error: error.message,
@@ -310,6 +324,15 @@ export async function getVillageProfileSummary(villageId?: string): Promise<Vill
     });
     return null;
   }
+}
+
+/**
+ * Clear the village profile cache (for admin cache management).
+ */
+export function clearVillageProfileCache(): number {
+  const count = _villageProfileCache.size;
+  _villageProfileCache.clear();
+  return count;
 }
 
 /**

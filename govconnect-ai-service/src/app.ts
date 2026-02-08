@@ -19,7 +19,7 @@ import { aiAnalyticsService } from './services/ai-analytics.service';
 import { getEmbeddingStats, getEmbeddingCacheStats } from './services/embedding.service';
 import { getVectorDbStats } from './services/vector-db.service';
 import { resilientHttp } from './services/circuit-breaker.service';
-import { getTopCachedQueries, getCacheStats } from './services/response-cache.service';
+import { getTopCachedQueries, getCacheStats, clearCache as clearResponseCache } from './services/response-cache.service';
 import { getRoutingStats, analyzeComplexity } from './services/smart-router.service';
 import { getFSMStats, getAllActiveContexts } from './services/conversation-fsm.service';
 import knowledgeRoutes from './routes/knowledge.routes';
@@ -44,6 +44,9 @@ import {
   getUsageByPeriodAndLayer,
   getTokenUsageSummary,
 } from './services/token-usage.service';
+import { clearAllUMPCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
+import { clearVillageProfileCache } from './services/knowledge.service';
+import { getEmbeddingCacheStats as getEmbCacheDetailStats } from './services/embedding.service';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -271,6 +274,94 @@ app.delete('/admin/failed-messages', (req: Request, res: Response) => {
       message: error.message,
     });
   }
+});
+
+// ==================== ADMIN CACHE MANAGEMENT ====================
+
+// Global cache mode: when false, caches are bypassed (dev mode)
+let _cacheEnabled = true;
+
+/** Check if caching is enabled (used by services) */
+export function isCacheEnabled(): boolean {
+  return _cacheEnabled;
+}
+
+/**
+ * GET /admin/cache/stats — Get all cache statistics
+ */
+app.get('/admin/cache/stats', (req: Request, res: Response) => {
+  if (!requireInternalKey(req, res)) return;
+
+  const umpStats = getUMPCacheStats();
+  const responseCacheStats = getCacheStats();
+
+  res.json({
+    cacheEnabled: _cacheEnabled,
+    activeProcessing: getActiveProcessingCount(),
+    umpCaches: umpStats,
+    responseCache: responseCacheStats,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * POST /admin/cache/clear-all — Clear all in-memory caches
+ */
+app.post('/admin/cache/clear-all', (req: Request, res: Response) => {
+  if (!requireInternalKey(req, res)) return;
+
+  const umpResult = clearAllUMPCaches();
+  clearResponseCache();
+  clearVillageProfileCache();
+
+  logger.info('All caches cleared via admin endpoint');
+
+  res.json({
+    status: 'success',
+    message: 'All caches cleared',
+    details: {
+      umpCachesCleared: umpResult.cleared,
+      umpCacheNames: umpResult.caches,
+      responseCacheCleared: true,
+      villageProfileCacheCleared: true,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * GET /admin/cache/mode — Get current cache mode
+ */
+app.get('/admin/cache/mode', (req: Request, res: Response) => {
+  if (!requireInternalKey(req, res)) return;
+  res.json({ cacheEnabled: _cacheEnabled });
+});
+
+/**
+ * POST /admin/cache/mode — Toggle cache mode (dev/production)
+ */
+app.post('/admin/cache/mode', (req: Request, res: Response) => {
+  if (!requireInternalKey(req, res)) return;
+  const { enabled } = req.body;
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled (boolean) is required' });
+    return;
+  }
+  _cacheEnabled = enabled;
+  logger.info(`Cache mode changed to: ${enabled ? 'ENABLED (production)' : 'DISABLED (dev)'}`);
+
+  // If disabling cache, also clear existing caches
+  if (!enabled) {
+    clearAllUMPCaches();
+    clearResponseCache();
+    clearVillageProfileCache();
+    logger.info('All caches cleared after switching to dev mode');
+  }
+
+  res.json({
+    cacheEnabled: _cacheEnabled,
+    message: enabled ? 'Cache enabled (production mode)' : 'Cache disabled (dev mode) — all caches cleared',
+  });
 });
 
 app.get('/health/services', async (req: Request, res: Response) => {

@@ -19,6 +19,7 @@ import {
   Settings2,
   Bell,
   Cpu,
+  Database,
 } from "lucide-react"
 
 import {
@@ -198,6 +199,12 @@ export function GovConnectSidebar() {
           title: "Rate Limit & Blacklist",
           url: "/dashboard/settings/rate-limit",
           icon: Shield,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Cache Management",
+          url: "/dashboard/settings/cache",
+          icon: Database,
           roles: ["superadmin"],
         },
       ],

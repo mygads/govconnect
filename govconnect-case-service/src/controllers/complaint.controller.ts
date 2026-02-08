@@ -84,7 +84,20 @@ export async function handleCreateComplaint(req: Request, res: Response) {
       rt_rw,
     });
 
-    const complaint = await createComplaint(req.body);
+    const complaint = await createComplaint({
+      wa_user_id,
+      kategori,
+      deskripsi,
+      alamat,
+      rt_rw,
+      foto_url,
+      channel: resolvedChannel,
+      channel_identifier: resolvedIdentifier,
+      village_id: req.body.village_id,
+      type_id: req.body.type_id,
+      category_id: req.body.category_id,
+      is_urgent: req.body.is_urgent,
+    });
 
     // Include info about similar reports if any
     const responseData: any = {

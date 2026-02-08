@@ -15,6 +15,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
@@ -87,6 +88,23 @@ async function processWebchatMessage(params: {
 
 const router = Router();
 
+// Rate limit: max 15 messages per minute per session
+const webchatRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  keyGenerator: (req: Request) => req.body?.session_id || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'Terlalu banyak pesan, silakan tunggu sebentar.',
+  },
+  handler: (_req, res, _next, options) => {
+    logger.warn('Webchat rate limit exceeded', { ip: _req.ip, session_id: _req.body?.session_id });
+    res.status(429).json(options.message);
+  },
+});
+
 async function fetchWebchatHistory(params: {
   session_id: string;
   village_id?: string;
@@ -128,7 +146,7 @@ async function fetchWebchatHistory(params: {
  * 
  * Menggunakan unified processor untuk konsistensi dengan WhatsApp
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
   const startTime = Date.now();
   
   try {
@@ -264,7 +282,9 @@ router.post('/', async (req: Request, res: Response) => {
     
     // Process batched message using selected architecture
     // This ensures consistent NLU, intent detection, RAG, prompts, etc.
-    const result = await processWebchatMessage({
+    // 25s timeout to prevent hanging requests
+    const WEBCHAT_TIMEOUT_MS = 25_000;
+    const resultPromise = processWebchatMessage({
       userId: session_id,
       message: batchResult.combinedMessage, // Use combined message from batch
       conversationHistory: [...historyMessages, { role: 'user', content: batchResult.combinedMessage, timestamp: new Date() }].map((m) => ({
@@ -273,6 +293,27 @@ router.post('/', async (req: Request, res: Response) => {
       })),
       village_id,
     });
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('WEBCHAT_TIMEOUT')), WEBCHAT_TIMEOUT_MS)
+    );
+
+    let result: ProcessMessageResult;
+    try {
+      result = await Promise.race([resultPromise, timeoutPromise]);
+    } catch (timeoutErr: any) {
+      if (timeoutErr.message === 'WEBCHAT_TIMEOUT') {
+        logger.warn('Webchat processing timed out', { session_id, timeout: WEBCHAT_TIMEOUT_MS });
+        res.json({
+          success: true,
+          response: 'Maaf, pemrosesan pesan memakan waktu terlalu lama. Silakan coba lagi.',
+          intent: 'TIMEOUT',
+          metadata: { session_id, processingTimeMs: Date.now() - startTime },
+        });
+        return;
+      }
+      throw timeoutErr;
+    }
     
     // Save AI response to Channel Service (for Live Chat dashboard)
     saveWebchatMessage({

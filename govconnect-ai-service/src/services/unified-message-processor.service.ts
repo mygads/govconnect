@@ -19,8 +19,11 @@
  */
 
 import logger from '../utils/logger';
+import axios from 'axios';
+import { config } from '../config/env';
 import { buildContext, buildKnowledgeQueryContext, sanitizeUserInput } from './context-builder.service';
 import type { PromptFocus } from '../prompts/system-prompt';
+import * as systemPromptModule from '../prompts/system-prompt';
 import { callGemini } from './llm.service';
 import {
   createComplaint,
@@ -32,6 +35,7 @@ import {
   getServiceRequestStatusWithOwnership,
   requestServiceRequestEditToken,
   getServiceRequirements,
+  getComplaintStatusWithOwnership,
   ServiceRequirementDefinition,
   HistoryItem,
 } from './case-client.service';
@@ -57,6 +61,10 @@ import {
   logAntiHallucinationEvent,
   needsAntiHallucinationRetry,
 } from './anti-hallucination.service';
+import { matchServiceSlug, matchComplaintType } from './micro-llm-matcher.service';
+import { createProcessingTracker } from './processing-status.service';
+import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
+import { getSmartFallback, getErrorFallback } from './fallback-response.service';
 
 // ==================== TYPES ====================
 
@@ -102,56 +110,54 @@ export interface ProcessMessageResult {
   error?: string;
 }
 
-// ==================== IN-MEMORY CACHES ====================
+// ==================== IN-MEMORY CACHES (Bounded LRU) ====================
+// All caches use LRU eviction to prevent unbounded memory growth (OOM protection).
+// Max sizes are generous — under normal load each cache holds < 100 entries.
+
+import { LRUCache } from '../utils/lru-cache';
 
 // Address confirmation state cache (for VAGUE addresses)
-// Key: userId, Value: { alamat, kategori, deskripsi, timestamp, foto_url }
-const pendingAddressConfirmation: Map<string, {
+const pendingAddressConfirmation = new LRUCache<string, {
   alamat: string;
   kategori: string;
   deskripsi: string;
   village_id?: string;
   timestamp: number;
   foto_url?: string;
-}> = new Map();
+}>({ maxSize: 1000, ttlMs: 10 * 60 * 1000, name: 'pendingAddressConfirmation' });
 
 // Pending address request cache (for MISSING required addresses)
-// Key: userId, Value: { kategori, deskripsi, village_id, timestamp, foto_url }
-const pendingAddressRequest: Map<string, {
+const pendingAddressRequest = new LRUCache<string, {
   kategori: string;
   deskripsi: string;
   village_id?: string;
   timestamp: number;
   foto_url?: string;
-}> = new Map();
+}>({ maxSize: 1000, ttlMs: 10 * 60 * 1000, name: 'pendingAddressRequest' });
 
 // Cancellation confirmation state cache
-// Key: userId, Value: { type, id, reason, timestamp }
-const pendingCancelConfirmation: Map<string, {
+const pendingCancelConfirmation = new LRUCache<string, {
   type: 'laporan' | 'layanan';
   id: string;
   reason?: string;
   timestamp: number;
-}> = new Map();
+}>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingCancelConfirmation' });
 
 // Name confirmation state cache
-// Key: userId, Value: { name, timestamp }
-const pendingNameConfirmation: Map<string, {
+const pendingNameConfirmation = new LRUCache<string, {
   name: string;
   timestamp: number;
-}> = new Map();
+}>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingNameConfirmation' });
 
 // Online service form offer state cache
-// Key: userId, Value: { service_slug, village_id, timestamp }
-const pendingServiceFormOffer: Map<string, {
+const pendingServiceFormOffer = new LRUCache<string, {
   service_slug: string;
   village_id?: string;
   timestamp: number;
-}> = new Map();
+}>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingServiceFormOffer' });
 
 // Pending complaint data cache (waiting for name/phone before creating complaint)
-// Key: userId, Value: { complaint data + what we're waiting for }
-const pendingComplaintData: Map<string, {
+const pendingComplaintData = new LRUCache<string, {
   kategori: string;
   deskripsi: string;
   alamat?: string;
@@ -160,15 +166,14 @@ const pendingComplaintData: Map<string, {
   foto_url?: string;
   channel: ChannelType;
   timestamp: number;
-  waitingFor: 'nama' | 'no_hp';  // What data we're waiting for
-}> = new Map();
+  waitingFor: 'nama' | 'no_hp';
+}>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingComplaintData' });
 
 // Accumulated photos cache (for multi-photo complaint support, max 5 per user)
-// Key: userId, Value: { urls: string[], timestamp: number }
-const pendingPhotos: Map<string, {
+const pendingPhotos = new LRUCache<string, {
   urls: string[];
   timestamp: number;
-}> = new Map();
+}>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingPhotos' });
 
 const MAX_PHOTOS_PER_COMPLAINT = 5;
 
@@ -221,64 +226,120 @@ function getPendingPhotoCount(userId: string): number {
   return pendingPhotos.get(userId)?.urls.length || 0;
 }
 
-// Complaint types cache (per village)
-const complaintTypeCache: Map<string, { data: any[]; timestamp: number }> = new Map();
+// Complaint types cache (per village) — bounded LRU
+const complaintTypeCache = new LRUCache<string, { data: any[]; timestamp: number }>({
+  maxSize: 100, ttlMs: 5 * 60 * 1000, name: 'complaintTypeCache',
+});
 
-// Cleanup expired confirmations (older than 10 minutes)
+// Conversation history cache — avoids HTTP round-trip per message (H2 optimization)
+// Key: userId, Value: { history, timestamp }
+// New incoming/outgoing messages are appended directly to the cache.
+const conversationHistoryCache = new LRUCache<string, {
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  timestamp: number;
+}>({ maxSize: 2000, ttlMs: 60 * 1000, name: 'conversationHistoryCache' });
+
+// Service search results cache — avoids HTTP + micro LLM per lookup (M3 optimization)
+// Key: `${villageId}:${queryNormalized}`, Value: { slug, name, timestamp }
+const serviceSearchCache = new LRUCache<string, {
+  slug: string;
+  name?: string;
+  timestamp: number;
+}>({ maxSize: 500, ttlMs: 5 * 60 * 1000, name: 'serviceSearchCache' });
+
+// Village profile cache — near-static data, avoids HTTP per knowledge query (M4 optimization)
+// Key: villageId, Value: { profile, timestamp }
+const villageProfileCache = new LRUCache<string, {
+  profile: any;
+  timestamp: number;
+}>({ maxSize: 50, ttlMs: 15 * 60 * 1000, name: 'villageProfileCache' });
+
+// Cleanup expired entries from all LRU caches (TTL-based purge)
 setInterval(() => {
-  const now = Date.now();
-  const expireMs = 10 * 60 * 1000; // 10 minutes
-  for (const [key, value] of pendingAddressConfirmation.entries()) {
-    if (now - value.timestamp > expireMs) {
-      pendingAddressConfirmation.delete(key);
-      logger.debug('Cleaned up expired address confirmation', { userId: key });
-    }
+  const caches = [
+    pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
+    pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
+    pendingPhotos, complaintTypeCache, conversationHistoryCache,
+    serviceSearchCache, villageProfileCache,
+  ];
+  let totalPurged = 0;
+  for (const cache of caches) {
+    totalPurged += cache.purgeExpired();
   }
-  for (const [key, value] of pendingCancelConfirmation.entries()) {
-    if (now - value.timestamp > expireMs) {
-      pendingCancelConfirmation.delete(key);
-      logger.debug('Cleaned up expired cancel confirmation', { userId: key });
-    }
-  }
-  for (const [key, value] of pendingNameConfirmation.entries()) {
-    if (now - value.timestamp > expireMs) {
-      pendingNameConfirmation.delete(key);
-      logger.debug('Cleaned up expired name confirmation', { userId: key });
-    }
-  }
-  for (const [key, value] of pendingServiceFormOffer.entries()) {
-    if (now - value.timestamp > expireMs) {
-      pendingServiceFormOffer.delete(key);
-      logger.debug('Cleaned up expired service form offer', { userId: key });
-    }
-  }
-  for (const [key, value] of pendingAddressRequest.entries()) {
-    if (now - value.timestamp > expireMs) {
-      pendingAddressRequest.delete(key);
-      logger.debug('Cleaned up expired address request', { userId: key });
-    }
-  }
-  for (const [key, value] of pendingComplaintData.entries()) {
-    if (now - value.timestamp > expireMs) {
-      pendingComplaintData.delete(key);
-      logger.debug('Cleaned up expired pending complaint data', { userId: key });
-    }
-  }
-  for (const [key, value] of pendingPhotos.entries()) {
-    if (now - value.timestamp > expireMs) {
-      pendingPhotos.delete(key);
-      logger.debug('Cleaned up expired pending photos', { userId: key });
-    }
-  }
-  // Also clean up stale complaint type cache (5 min TTL already, but purge entries older than 15 min)
-  const cacheTtlMs = 15 * 60 * 1000;
-  for (const [key, value] of complaintTypeCache.entries()) {
-    if (now - value.timestamp > cacheTtlMs) {
-      complaintTypeCache.delete(key);
-      logger.debug('Cleaned up stale complaint type cache', { villageId: key });
-    }
+  if (totalPurged > 0) {
+    logger.debug(`Purged ${totalPurged} expired cache entries`);
   }
 }, 60 * 1000);
+
+/**
+ * Clear ALL in-memory caches (for admin cache management endpoint).
+ */
+export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
+  const cacheList = [
+    { cache: pendingAddressConfirmation, name: 'pendingAddressConfirmation' },
+    { cache: pendingAddressRequest, name: 'pendingAddressRequest' },
+    { cache: pendingCancelConfirmation, name: 'pendingCancelConfirmation' },
+    { cache: pendingNameConfirmation, name: 'pendingNameConfirmation' },
+    { cache: pendingServiceFormOffer, name: 'pendingServiceFormOffer' },
+    { cache: pendingComplaintData, name: 'pendingComplaintData' },
+    { cache: pendingPhotos, name: 'pendingPhotos' },
+    { cache: complaintTypeCache, name: 'complaintTypeCache' },
+    { cache: conversationHistoryCache, name: 'conversationHistoryCache' },
+    { cache: serviceSearchCache, name: 'serviceSearchCache' },
+    { cache: villageProfileCache, name: 'villageProfileCache' },
+  ];
+  let cleared = 0;
+  const names: string[] = [];
+  for (const { cache, name } of cacheList) {
+    if (cache.size > 0) {
+      cleared += cache.size;
+      names.push(`${name}(${cache.size})`);
+      cache.clear();
+    }
+  }
+  logger.info(`[Admin] Cleared all UMP caches: ${cleared} entries`, { caches: names });
+  return { cleared, caches: names };
+}
+
+/**
+ * Get stats from ALL UMP caches (for admin dashboard).
+ */
+export function getUMPCacheStats() {
+  return [
+    pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
+    pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
+    pendingPhotos, complaintTypeCache, conversationHistoryCache,
+    serviceSearchCache, villageProfileCache,
+  ].map(c => c.getStats());
+}
+
+// ==================== ACTIVE PROCESSING TRACKER ====================
+
+let _activeProcessingCount = 0;
+
+/** Get the count of messages currently being processed */
+export function getActiveProcessingCount(): number {
+  return _activeProcessingCount;
+}
+
+/**
+ * Wait until all in-flight message processing completes (for graceful shutdown).
+ * Polls every 500ms, gives up after maxWaitMs.
+ */
+export async function drainActiveProcessing(maxWaitMs: number = 15_000): Promise<boolean> {
+  if (_activeProcessingCount === 0) return true;
+  logger.info(`Draining ${_activeProcessingCount} active message(s)...`);
+  const deadline = Date.now() + maxWaitMs;
+  while (_activeProcessingCount > 0 && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (_activeProcessingCount > 0) {
+    logger.warn(`Drain timeout: ${_activeProcessingCount} message(s) still active after ${maxWaitMs}ms`);
+    return false;
+  }
+  logger.info('All active processing drained');
+  return true;
+}
 
 // ==================== SHARED CONSTANTS ====================
 
@@ -510,9 +571,14 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
   const trimmedQuery = (query || '').trim();
   if (!trimmedQuery) return null;
 
+  // Check service search cache first (M3 optimization)
+  const cacheKey = `${villageId || ''}:${trimmedQuery.toLowerCase()}`;
+  const cached = serviceSearchCache.get(cacheKey);
+  if (cached) {
+    logger.debug('resolveServiceSlugFromSearch: served from cache', { query: trimmedQuery, slug: cached.slug });
+    return { slug: cached.slug, name: cached.name };
+  }
   try {
-    const { config } = await import('../config/env');
-    const axios = (await import('axios')).default;
 
     // Fetch candidate services from Case Service
     const response = await axios.get(`${config.caseServiceUrl}/services/search`, {
@@ -537,7 +603,6 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
     if (!services.length) return null;
 
     // Use micro LLM for semantic matching instead of synonym/keyword scoring
-    const { matchServiceSlug } = await import('./micro-llm-matcher.service');
     const options = services
       .filter((s: any) => s?.slug)
       .map((s: any) => ({
@@ -559,7 +624,10 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
           confidence: result.confidence,
           reason: result.reason,
         });
-        return { slug: String(matched.slug), name: String(matched.name || '') };
+        const matchResult = { slug: String(matched.slug), name: String(matched.name || '') };
+        // Cache the result for 5 min
+        serviceSearchCache.set(cacheKey, { ...matchResult, timestamp: Date.now() });
+        return matchResult;
       }
     }
 
@@ -654,7 +722,6 @@ export async function resolveComplaintTypeConfig(kategori?: string, villageId?: 
   if (!options.length) return null;
 
   try {
-    const { matchComplaintType } = await import('./micro-llm-matcher.service');
     const result = await matchComplaintType(kategori, options);
 
     if (result?.matched_id && result.confidence >= 0.5) {
@@ -1100,9 +1167,14 @@ async function fetchConversationHistoryFromChannel(
   wa_user_id: string,
   village_id?: string
 ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+  // Check cache first — avoids HTTP round-trip per message
+  const cached = conversationHistoryCache.get(wa_user_id);
+  if (cached) {
+    logger.debug('Conversation history served from cache', { wa_user_id, count: cached.history.length });
+    return cached.history;
+  }
+
   try {
-    const { config } = await import('../config/env');
-    const axios = (await import('axios')).default;
     const response = await axios.get(`${config.channelServiceUrl}/internal/messages`, {
       params: { wa_user_id, limit: 30, ...(village_id ? { village_id } : {}) },
       headers: { 'x-internal-api-key': config.internalApiKey },
@@ -1116,16 +1188,37 @@ async function fetchConversationHistoryFromChannel(
       return aTime - bTime;
     });
 
-    return ordered.map((m: any) => ({
-      role: m.direction === 'IN' ? 'user' : 'assistant',
+    const history = ordered.map((m: any) => ({
+      role: (m.direction === 'IN' ? 'user' : 'assistant') as 'user' | 'assistant',
       content: m.message_text || '',
     }));
+
+    // Cache the result (60s TTL via LRU config)
+    conversationHistoryCache.set(wa_user_id, { history, timestamp: Date.now() });
+    return history;
   } catch (error: any) {
     logger.warn('Failed to load WhatsApp history for name detection', {
       wa_user_id,
       error: error.message,
     });
     return [];
+  }
+}
+
+/**
+ * Append a message to the conversation history cache for a user.
+ * This keeps the cache fresh without needing another HTTP round-trip.
+ */
+function appendToHistoryCache(userId: string, role: 'user' | 'assistant', content: string): void {
+  const cached = conversationHistoryCache.get(userId);
+  if (cached) {
+    cached.history.push({ role, content });
+    // Keep max 30 messages in cache (FIFO)
+    if (cached.history.length > 30) {
+      cached.history.shift();
+    }
+    cached.timestamp = Date.now();
+    conversationHistoryCache.set(userId, cached);
   }
 }
 
@@ -1221,8 +1314,6 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
   }
   
   try {
-    const { config } = await import('../config/env');
-    const axios = (await import('axios')).default;
     
     // Query service details from case-service
     const fetchService = async (slug?: string, id?: string) => {
@@ -1342,8 +1433,6 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
   }
 
   try {
-    const { config } = await import('../config/env');
-    const axios = (await import('axios')).default;
 
     let response = await axios.get(`${config.caseServiceUrl}/services/by-slug`, {
       params: { village_id: villageId, slug: service_slug },
@@ -1591,7 +1680,6 @@ export async function handleStatusCheck(userId: string, channel: ChannelType, ll
   
   if (complaint_id) {
     // Use ownership validation - user can only check their own complaints
-    const { getComplaintStatusWithOwnership } = await import('./case-client.service');
     const result = await getComplaintStatusWithOwnership(complaint_id, buildChannelParams(channel, userId));
     
     if (!result.success) {
@@ -1937,9 +2025,6 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
 
     const tryAnswerFromServiceCatalog = async (): Promise<string | null> => {
       try {
-        const { config } = await import('../config/env');
-        const axios = (await import('axios')).default;
-        const { matchServiceSlug } = await import('./micro-llm-matcher.service');
 
         const response = await axios.get(`${config.caseServiceUrl}/services`, {
           params: { village_id: villageId },
@@ -2090,9 +2175,6 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
 
       // Use micro LLM to check if the query is about a specific service
       try {
-        const { matchServiceSlug } = await import('./micro-llm-matcher.service');
-        const { config } = await import('../config/env');
-        const axios = (await import('axios')).default;
         const svcResp = await axios.get(`${config.caseServiceUrl}/services`, {
           params: { village_id: villageId },
           headers: { 'x-internal-api-key': config.internalApiKey },
@@ -2638,12 +2720,11 @@ export function setPendingAddressRequest(userId: string, data: {
  * 7. Otherwise → full LLM processing
  */
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
+  _activeProcessingCount++;
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId } = input;
   let resolvedHistory = conversationHistory;
   
-  // Import processing status tracker
-  const { createProcessingTracker } = await import('./processing-status.service');
   const tracker = createProcessingTracker(userId);
   
   logger.info('🎯 [UnifiedProcessor] Processing message', {
@@ -2675,6 +2756,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     if (channel === 'whatsapp' && (!resolvedHistory || resolvedHistory.length === 0)) {
       resolvedHistory = await fetchConversationHistoryFromChannel(userId, resolvedVillageId);
+      // Append current user message to cache so subsequent calls see it
+      appendToHistoryCache(userId, 'user', message);
       logger.info('📚 [UnifiedProcessor] Loaded WhatsApp history', {
         userId,
         historyCount: resolvedHistory?.length || 0,
@@ -3259,7 +3342,6 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     // Step 6.5: Get knowledge graph context for service-related queries
     // Dynamically uses DB-backed knowledge graph (no hardcoded service codes/keywords)
     try {
-      const { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } = await import('./knowledge-graph.service');
       
       // Build dynamic service code regex from DB-backed knowledge graph
       const serviceCodes = getAllServiceCodes();
@@ -3560,6 +3642,11 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     // Update status: complete
     tracker.complete();
     
+    // Append AI response to conversation history cache (keeps cache fresh for next message)
+    if (channel === 'whatsapp') {
+      appendToHistoryCache(userId, 'assistant', finalResponse);
+    }
+    
     logger.info('✅ [UnifiedProcessor] Message processed', {
       userId,
       channel,
@@ -3597,7 +3684,6 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     });
     
     // Use smart fallback based on context
-    const { getSmartFallback, getErrorFallback } = await import('./fallback-response.service');
     
     // Determine error type for better fallback
     let errorType: string | undefined;
@@ -3621,6 +3707,8 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
       metadata: { processingTimeMs, hasKnowledge: false },
       error: error.message,
     };
+  } finally {
+    _activeProcessingCount--;
   }
 }
 
@@ -3763,12 +3851,11 @@ async function buildContextWithHistory(
   villageId?: string,
   promptFocus?: string
 ): Promise<{ systemPrompt: string; messageCount: number }> {
-  const promptModule = await import('../prompts/system-prompt') as any;
-  const getPrompt = promptFocus && typeof promptModule.getAdaptiveSystemPrompt === 'function'
-    ? () => promptModule.getAdaptiveSystemPrompt(promptFocus)
-    : typeof promptModule.getFullSystemPrompt === 'function'
-      ? promptModule.getFullSystemPrompt
-      : () => promptModule.SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
+  const getPrompt = promptFocus && typeof systemPromptModule.getAdaptiveSystemPrompt === 'function'
+    ? () => (systemPromptModule as any).getAdaptiveSystemPrompt(promptFocus)
+    : typeof systemPromptModule.getFullSystemPrompt === 'function'
+      ? systemPromptModule.getFullSystemPrompt
+      : () => (systemPromptModule as any).SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
 
   const conversationHistory = history
     .slice(-10)

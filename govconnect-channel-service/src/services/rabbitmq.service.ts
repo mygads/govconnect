@@ -12,6 +12,7 @@ import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.
 let connection: any = null;
 let channel: any = null;
 let isReconnecting = false;
+let isShuttingDown = false;
 let reconnectAttempts = 0;
 
 export function isRabbitMQConnected(): boolean {
@@ -82,10 +83,14 @@ async function handleReconnect(): Promise<void> {
     logger.debug('Reconnection already in progress, skipping...');
     return;
   }
+  if (isShuttingDown) {
+    logger.info('Shutdown in progress, skipping reconnect');
+    return;
+  }
   
   isReconnecting = true;
   
-  while (true) {
+  while (!isShuttingDown) {
     reconnectAttempts++;
     const delay = calculateReconnectDelay(reconnectAttempts);
     
@@ -222,7 +227,8 @@ export async function publishEvent(routingKey: string, payload: any): Promise<vo
  */
 export async function disconnectRabbitMQ(): Promise<void> {
   try {
-    // Mark as intentionally disconnecting to prevent auto-reconnect
+    // Mark as shutting down to prevent auto-reconnect
+    isShuttingDown = true;
     isReconnecting = true; // Prevents reconnect on close event
     
     if (channel) {

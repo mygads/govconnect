@@ -1,5 +1,6 @@
 import express, { Application } from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import promClient from 'prom-client';
 import complaintRoutes from './routes/complaint.routes';
@@ -45,9 +46,18 @@ app.use((req, res, next) => {
   next();
 });
 
+// Rate limiting for write endpoints
+const writeRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+
 // Register routes
 app.use('/health', healthRoutes);
-app.use('/laporan', complaintRoutes);
+app.use('/laporan', writeRateLimit, complaintRoutes);
 app.use('/', serviceCatalogRoutes);
 app.use('/', complaintMetaRoutes);
 app.use('/statistics', statisticsRoutes);

@@ -5,6 +5,7 @@ import { config } from './config/env';
 import { connectRabbitMQ, startConsuming, disconnectRabbitMQ } from './services/rabbitmq.service';
 import { processMessage } from './services/ai-orchestrator.service';
 import { initializeOptimizer } from './services/ai-optimizer.service';
+import { drainActiveProcessing } from './services/unified-message-processor.service';
 
 // UNIFIED PROCESSOR - same architecture for WhatsApp and Webchat
 // No more pattern matching, full LLM understanding
@@ -65,6 +66,9 @@ async function gracefulShutdown() {
         });
       });
     }
+
+    // Wait for in-flight message processing to complete (max 15s)
+    await drainActiveProcessing(15_000);
     
     // Disconnect RabbitMQ
     await disconnectRabbitMQ();

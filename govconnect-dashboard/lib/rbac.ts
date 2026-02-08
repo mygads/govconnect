@@ -16,6 +16,7 @@ const ROLE_RULES: RouteRule[] = [
   { path: '/dashboard/statistik/analytics', roles: ['superadmin'] },
   { path: '/dashboard/settings/rate-limit', roles: ['superadmin'] },
   { path: '/dashboard/settings/notifications', roles: ['superadmin'] },
+  { path: '/dashboard/settings/cache', roles: ['superadmin'] },
 ]
 
 const matchPath = (pathname: string, path: string) =>

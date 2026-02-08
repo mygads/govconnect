@@ -124,6 +124,9 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import { extractAndRecord } from './token-usage.service';
 
+// Singleton — reuse across all expandQuery invocations
+const ragGenAI = new GoogleGenerativeAI(config.geminiApiKey || '');
+
 const EXPAND_MODELS = (() => {
   const raw = (process.env.MICRO_NLU_MODELS || '').trim();
   if (!raw) return ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
@@ -163,8 +166,7 @@ export async function expandQuery(query: string): Promise<string> {
 
   for (const modelName of EXPAND_MODELS) {
     try {
-      const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-      const model = genAI.getGenerativeModel({
+      const model = ragGenAI.getGenerativeModel({
         model: modelName,
         generationConfig: {
           temperature: 0.2,

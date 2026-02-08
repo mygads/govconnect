@@ -4,6 +4,10 @@ import { MessageData } from '../types/message.types';
 
 const MAX_MESSAGES = 30;
 
+// Counter to skip FIFO on every message — only enforce periodically
+const fifoCounter = new Map<string, number>();
+const FIFO_CHECK_INTERVAL = 5; // Only run FIFO every 5th message per conversation
+
 function resolveVillageId(villageId?: string): string {
   return villageId || 'unknown';
 }
@@ -85,33 +89,47 @@ export async function saveOutgoingMessage(
 
 /**
  * Maintain maximum 30 messages per user (FIFO)
+ * Optimized: only runs every 5th message per conversation to reduce DB load,
+ * and uses a single raw SQL query instead of 3 separate queries.
  */
 async function enforceFIFO(village_id: string, channel: 'WHATSAPP' | 'WEBCHAT', channel_identifier: string): Promise<void> {
-  const count = await prisma.message.count({
-    where: { village_id, channel, channel_identifier },
-  });
+  const key = `${village_id}:${channel}:${channel_identifier}`;
+  const count = (fifoCounter.get(key) || 0) + 1;
+  fifoCounter.set(key, count);
 
-  if (count > MAX_MESSAGES) {
-    const toDelete = count - MAX_MESSAGES;
+  // Only check every Nth message
+  if (count % FIFO_CHECK_INTERVAL !== 0) return;
 
-    // Get oldest messages
-    const oldestMessages = await prisma.message.findMany({
-      where: { village_id, channel, channel_identifier },
-      orderBy: { timestamp: 'asc' },
-      take: toDelete,
-      select: { id: true },
+  try {
+    // Single query: delete old messages beyond MAX_MESSAGES limit
+    const result = await prisma.$executeRaw`
+      DELETE FROM "Message"
+      WHERE id IN (
+        SELECT id FROM "Message"
+        WHERE village_id = ${village_id}
+          AND channel = ${channel}::"Channel"
+          AND channel_identifier = ${channel_identifier}
+        ORDER BY timestamp ASC
+        OFFSET 0
+        LIMIT (
+          SELECT GREATEST(
+            (SELECT COUNT(*) FROM "Message"
+             WHERE village_id = ${village_id}
+               AND channel = ${channel}::"Channel"
+               AND channel_identifier = ${channel_identifier})
+            - ${MAX_MESSAGES}, 0
+          )
+        )
+      )
+    `;
+
+    if (result > 0) {
+      logger.info(`FIFO: Deleted ${result} old messages`, { channel, channel_identifier });
+    }
+  } catch (error: any) {
+    logger.warn('FIFO enforcement failed, will retry next cycle', {
+      channel, channel_identifier, error: error.message,
     });
-
-    // Delete them
-    await prisma.message.deleteMany({
-      where: {
-        id: {
-          in: oldestMessages.map((m: { id: string }) => m.id),
-        },
-      },
-    });
-
-    logger.info(`FIFO: Deleted ${toDelete} old messages`, { channel, channel_identifier });
   }
 }
 

@@ -14,6 +14,9 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import logger from '../utils/logger';
 
+// Singleton — reuse across all resolveWithMicroLLM invocations
+const genAI = new GoogleGenerativeAI(config.geminiApiKey || '');
+
 export interface MicroLLMMatch {
   /** The matched type ID, or null if no match */
   matched_id: string | null;
@@ -81,7 +84,6 @@ export async function resolveWithMicroLLM(
 
   for (const modelName of config.microNluModels) {
     try {
-      const genAI = new GoogleGenerativeAI(config.geminiApiKey);
       const model = genAI.getGenerativeModel({
         model: modelName,
         generationConfig: {

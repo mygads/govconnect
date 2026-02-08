@@ -32,6 +32,9 @@ function parseMicroModels(): string[] {
 
 const MICRO_MODELS = parseMicroModels();
 
+// Singleton — reuse across all callMicroLLM invocations
+const genAI = new GoogleGenerativeAI(config.geminiApiKey || '');
+
 // ---------- Generic micro LLM call ----------
 
 async function callMicroLLM(
@@ -46,7 +49,6 @@ async function callMicroLLM(
 
   for (const modelName of MICRO_MODELS) {
     try {
-      const genAI = new GoogleGenerativeAI(config.geminiApiKey);
       const model = genAI.getGenerativeModel({
         model: modelName,
         generationConfig: {
