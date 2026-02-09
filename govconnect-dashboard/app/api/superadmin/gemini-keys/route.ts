@@ -33,8 +33,11 @@ const TIER_LIMITS = {
   free: {
     label: 'Free',
     models: {
+      'gemini-2.0-flash-lite':  { rpm: 10,  tpm: 250_000, rpd: 20 },
+      'gemini-2.0-flash':       { rpm: 5,   tpm: 250_000, rpd: 20 },
       'gemini-2.5-flash-lite':  { rpm: 10,  tpm: 250_000, rpd: 20 },
       'gemini-2.5-flash':       { rpm: 5,   tpm: 250_000, rpd: 20 },
+      'gemini-2.5-pro':         { rpm: 2,   tpm: 250_000, rpd: 10 },
       'gemini-3-flash-preview': { rpm: 5,   tpm: 250_000, rpd: 20 },
       'gemini-embedding-001':   { rpm: 100, tpm: 30_000,  rpd: 1_000 },
     },

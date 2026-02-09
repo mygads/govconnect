@@ -220,6 +220,28 @@ export default function GeminiKeysPage() {
     }
   }
 
+  // Reactivate invalid key
+  const handleReactivate = async (key: GeminiKey) => {
+    try {
+      const res = await fetch(`/api/superadmin/gemini-keys/${key.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ is_valid: true }),
+      })
+      if (!res.ok) throw new Error("Failed")
+      toast({
+        title: "Berhasil",
+        description: `Key "${key.name}" berhasil direaktivasi. Failure counter direset.`,
+      })
+      fetchKeys()
+    } catch {
+      toast({ title: "Error", description: "Gagal mereaktivasi key.", variant: "destructive" })
+    }
+  }
+
   // Delete key
   const handleDelete = async () => {
     if (!deleteTarget) return
@@ -544,6 +566,17 @@ export default function GeminiKeysPage() {
                               >
                                 <Eye className="h-4 w-4" />
                               </Button>
+                              {!key.is_valid && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-green-600 hover:text-green-700"
+                                  onClick={() => handleReactivate(key)}
+                                  title="Reaktivasi key (reset status invalid)"
+                                >
+                                  <ShieldCheck className="h-4 w-4" />
+                                </Button>
+                              )}
                               <Switch
                                 checked={key.is_active}
                                 onCheckedChange={() => handleToggleActive(key)}
@@ -662,6 +695,21 @@ export default function GeminiKeysPage() {
                     <div className="col-span-2">
                       <span className="text-muted-foreground">Error Terakhir:</span>
                       <span className="ml-2 text-yellow-600 text-xs">{detailKey.last_error}</span>
+                    </div>
+                  )}
+                  {!detailKey.is_valid && (
+                    <div className="col-span-2">
+                      <Button
+                        size="sm"
+                        onClick={() => { handleReactivate(detailKey); setDetailKey(null); }}
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                      >
+                        <ShieldCheck className="mr-2 h-4 w-4" />
+                        Reaktivasi Key
+                      </Button>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        Reset status invalid dan failure counter
+                      </span>
                     </div>
                   )}
                 </div>
@@ -804,10 +852,13 @@ export default function GeminiKeysPage() {
         </CardHeader>
         <CardContent className="text-sm space-y-2 text-muted-foreground">
           <p><strong>Prioritas:</strong> Key BYOK (free dulu, lalu tier1/tier2) → .env fallback jika semua habis</p>
-          <p><strong>Auto-switch:</strong> Saat kapasitas key mencapai 80%, otomatis pindah ke key berikutnya</p>
-          <p><strong>Model fallback:</strong> 2.0-flash-lite → 2.5-flash-lite → 2.0-flash → 2.5-flash → 3-flash-preview</p>
+          <p><strong>Auto-switch:</strong> Saat kapasitas key mencapai 80%, otomatis pindah ke key/model berikutnya</p>
+          <p><strong>Model fallback (free):</strong> 2.0-flash-lite → 2.5-flash-lite → 2.0-flash → 2.5-flash → 3-flash-preview</p>
+          <p><strong>Model fallback (tier1/2):</strong> 2.0-flash-lite → 2.5-flash-lite → 2.0-flash → 2.5-flash → 3-flash-preview</p>
           <p><strong>Retry:</strong> 2x retry per model, lalu pindah ke model berikutnya</p>
-          <p><strong>Auto-invalid:</strong> Key otomatis ditandai invalid setelah 10 kegagalan berturut-turut</p>
+          <p><strong>429 rate limit:</strong> Jika model terkena rate limit, langsung skip ke model lain (tidak menambah failure counter)</p>
+          <p><strong>Auto-invalid:</strong> Key otomatis ditandai invalid setelah 10 kegagalan non-rate-limit berturut-turut</p>
+          <p><strong>Reaktivasi:</strong> Key invalid bisa direaktivasi manual via tombol hijau (🛡️) di tabel</p>
           <p><strong>Rate limit reset:</strong> RPM reset tiap menit, RPD reset tiap hari (UTC midnight)</p>
         </CardContent>
       </Card>

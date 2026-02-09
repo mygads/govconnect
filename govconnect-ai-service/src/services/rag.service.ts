@@ -123,7 +123,7 @@ function classifyQueryIntent(query: string): 'skip' | 'required' | 'optional' {
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import { extractAndRecord } from './token-usage.service';
-import { apiKeyManager, MAX_RETRIES_PER_MODEL } from './api-key-manager.service';
+import { apiKeyManager, MAX_RETRIES_PER_MODEL, isRateLimitError } from './api-key-manager.service';
 
 const EXPAND_MODELS = (() => {
   const raw = (process.env.MICRO_NLU_MODELS || '').trim();
@@ -214,6 +214,13 @@ export async function expandQuery(query: string): Promise<string> {
         });
         if (key.isByok && key.keyId) {
           apiKeyManager.recordFailure(key.keyId, error.message);
+        }
+        // 429 / rate limit → mark model at capacity, skip to next model
+        if (isRateLimitError(error.message || '')) {
+          if (key.isByok && key.keyId) {
+            apiKeyManager.recordRateLimit(key.keyId, modelName, key.tier);
+          }
+          break;
         }
         if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('401') ||
             error.message?.includes('404') || error.message?.includes('not found')) break;

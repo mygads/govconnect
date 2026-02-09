@@ -4,7 +4,7 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { processUnifiedMessage } from '../services/unified-message-processor.service';
 import { extractAndRecord } from '../services/token-usage.service';
-import { apiKeyManager } from '../services/api-key-manager.service';
+import { apiKeyManager, isRateLimitError } from '../services/api-key-manager.service';
 import { firstHeader } from '../utils/http';
 
 // Using same unified processor as WhatsApp for consistency
@@ -112,6 +112,10 @@ router.post('/ping', verifyInternalKey, async (req: Request, res: Response) => {
           keyName: key.keyName,
           error: lastError,
         });
+        // Mark rate-limited model at capacity so getCallPlan skips it
+        if (isRateLimitError(lastError) && key.isByok && key.keyId) {
+          apiKeyManager.recordRateLimit(key.keyId, modelName, key.tier);
+        }
         continue;
       }
     }

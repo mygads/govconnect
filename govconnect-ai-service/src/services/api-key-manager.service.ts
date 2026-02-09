@@ -79,18 +79,22 @@ const MAX_CONSECUTIVE_FAILURES = 10;
 export const MAX_RETRIES_PER_MODEL = 2;
 
 /**
- * Model fallback order — cheapest/fastest first.
- * Uses only models available across all tiers (including free).
- * 2.0-flash-lite and 2.0-flash are NOT available on free tier.
+ * Model fallback order (free tier) — cheapest/fastest first.
+ * All these models are available on every tier including free.
+ * Pro models excluded from fallback (expensive + very limited quota).
  */
 export const MODEL_FALLBACK_ORDER = [
+  'gemini-2.0-flash-lite',
   'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
   'gemini-2.5-flash',
   'gemini-3-flash-preview',
 ];
 
 /**
- * Extended model fallback for paid tiers (tier1/tier2) — includes 2.0 models.
+ * Model fallback for paid tiers (tier1/tier2) — cheapest/fastest first.
+ * Same order as free tier but with much higher limits.
+ * Pro models excluded from fallback (expensive + limited quota).
  */
 export const MODEL_FALLBACK_ORDER_PAID = [
   'gemini-2.0-flash-lite',
@@ -105,18 +109,26 @@ export const MODEL_FALLBACK_ORDER_PAID = [
 // Limits are PER PROJECT (per API key), per model.
 // "Unlimited" RPD represented as 999_999.
 
-/** Free tier rate limits — only 4 models available */
+/** Free tier rate limits — from AI Studio rate limit dashboard.
+ *  Models not shown in dashboard (2.0-flash-lite, 2.0-flash, 2.5-pro)
+ *  use estimated limits based on same-class models. */
 const FREE_TIER_LIMITS: Record<string, ModelRateLimit> = {
+  'gemini-2.0-flash-lite':  { rpm: 10,  tpm: 250_000, rpd: 20 },  // estimated (same as 2.5-flash-lite)
+  'gemini-2.0-flash':       { rpm: 5,   tpm: 250_000, rpd: 20 },  // estimated (same as 2.5-flash)
   'gemini-2.5-flash-lite':  { rpm: 10,  tpm: 250_000, rpd: 20 },
   'gemini-2.5-flash':       { rpm: 5,   tpm: 250_000, rpd: 20 },
+  'gemini-2.5-pro':         { rpm: 2,   tpm: 250_000, rpd: 10 },  // estimated (pro very limited on free)
   'gemini-3-flash-preview': { rpm: 5,   tpm: 250_000, rpd: 20 },
   'gemini-embedding-001':   { rpm: 100, tpm: 30_000,  rpd: 1_000 },
 };
 
-/** Free tier: only these models are available (NO 2.0-flash, NO 2.0-flash-lite) */
+/** Free tier: all available models (verified Feb 2026) */
 const FREE_TIER_MODELS = [
+  'gemini-2.0-flash-lite',
+  'gemini-2.0-flash',
   'gemini-2.5-flash-lite',
   'gemini-2.5-flash',
+  'gemini-2.5-pro',
   'gemini-3-flash-preview',
   'gemini-embedding-001',
 ];
@@ -162,6 +174,11 @@ const TIER2_LIMITS: Record<string, ModelRateLimit> = {
 const TIER2_MODELS = TIER1_MODELS; // Same model list
 
 // ==================== Helper Functions ====================
+
+/** Check if an error message indicates a rate-limit (429 / RESOURCE_EXHAUSTED) */
+export function isRateLimitError(error: string): boolean {
+  return error.includes('429') || error.includes('RESOURCE_EXHAUSTED') || error.includes('Too Many Requests');
+}
 
 function getTierLimits(tier: string): Record<string, ModelRateLimit> {
   switch (tier) {
@@ -397,10 +414,48 @@ class ApiKeyManager {
   }
 
   /**
+   * Record a rate-limit (429 / RESOURCE_EXHAUSTED) hit for a specific model.
+   * Does NOT count toward consecutive failures (the key itself is valid).
+   * Instead, marks the model as at-capacity by bumping the local usage
+   * counter to the RPD limit so that getCallPlan() skips it.
+   */
+  recordRateLimit(keyId: string, model: string, tier: string): void {
+    const limit = getModelLimit(tier, model);
+    if (!limit) return;
+
+    const dayKey = getCurrentDayKey();
+    const dayUsage = this.getUsage(keyId, model, 'day', dayKey);
+    // Set RPD usage to the limit so isAtCapacity() returns true
+    if (dayUsage.request_count < limit.rpd) {
+      dayUsage.request_count = limit.rpd;
+    }
+
+    const minuteKey = getCurrentMinuteKey();
+    const minuteUsage = this.getUsage(keyId, model, 'minute', minuteKey);
+    if (minuteUsage.request_count < limit.rpm) {
+      minuteUsage.request_count = limit.rpm;
+    }
+
+    logger.info('🔑 Model marked at capacity due to 429', {
+      keyId,
+      model,
+      tier,
+      rpd_limit: limit.rpd,
+    });
+  }
+
+  /**
    * Record failure — increment consecutive failures.
    * If threshold reached, mark key as invalid.
+   * NOTE: Rate-limit errors (429) should NOT call this method;
+   * use recordRateLimit() instead.
    */
   recordFailure(keyId: string, error: string): void {
+    // Guard: rate-limit errors are not key failures
+    if (isRateLimitError(error)) {
+      return;
+    }
+
     const key = this.byokKeys.find(k => k.id === keyId);
     if (!key) return;
 
@@ -580,8 +635,12 @@ class ApiKeyManager {
     const entries = Object.entries(this.usageCache);
     if (entries.length === 0) return;
 
-    // Collect records to send
-    const records: Array<{
+    // Snapshot the current counters and reset them BEFORE sending.
+    // This prevents double-counting: if a new request arrives during the
+    // async flush, it will be recorded in the (now zeroed) cache entry
+    // and sent in the NEXT flush cycle.
+    const snapshot: Array<{
+      cacheKey: string;
       key_id: string;
       model: string;
       period_type: string;
@@ -605,16 +664,36 @@ class ApiKeyManager {
       const periodType = parts[parts.length - 2];
       const periodKey = parts[parts.length - 1];
 
-      records.push({
+      snapshot.push({
+        cacheKey,
         key_id: keyId,
         model,
         period_type: periodType,
         period_key: periodKey,
-        ...usage,
+        request_count: usage.request_count,
+        input_tokens: usage.input_tokens,
+        total_tokens: usage.total_tokens,
       });
+
+      // Reset the cache entry counters NOW (not after the flush)
+      // so that new requests during the async send are counted fresh.
+      usage.request_count = 0;
+      usage.input_tokens = 0;
+      usage.total_tokens = 0;
     }
 
-    if (records.length === 0) return;
+    if (snapshot.length === 0) return;
+
+    // Clean up old cache entries (keep current minute and day only)
+    for (const cacheKey of Object.keys(this.usageCache)) {
+      const isCurrentMinute = cacheKey.includes(`:minute:${currentMinuteKey}`);
+      const isCurrentDay = cacheKey.includes(`:day:${currentDayKey}`);
+      if (!isCurrentMinute && !isCurrentDay) {
+        delete this.usageCache[cacheKey];
+      }
+    }
+
+    const records = snapshot.map(({ cacheKey, ...rest }) => rest);
 
     try {
       const dashboardUrl = config.dashboardServiceUrl || 'http://dashboard:3000';
@@ -627,16 +706,24 @@ class ApiKeyManager {
         body: JSON.stringify({ records }),
         signal: AbortSignal.timeout(5000),
       });
-
-      // Clean up old cache entries (keep current minute and day only)
-      for (const cacheKey of Object.keys(this.usageCache)) {
-        const isCurrentMinute = cacheKey.includes(`:minute:${currentMinuteKey}`);
-        const isCurrentDay = cacheKey.includes(`:day:${currentDayKey}`);
-        if (!isCurrentMinute && !isCurrentDay) {
-          delete this.usageCache[cacheKey];
+    } catch (error: any) {
+      // Flush failed — add the snapshot amounts back so they're retried next cycle
+      for (const snap of snapshot) {
+        const entry = this.usageCache[snap.cacheKey];
+        if (entry) {
+          entry.request_count += snap.request_count;
+          entry.input_tokens += snap.input_tokens;
+          entry.total_tokens += snap.total_tokens;
+        }
+        // Entry might have been cleaned up above; recreate it
+        else {
+          this.usageCache[snap.cacheKey] = {
+            request_count: snap.request_count,
+            input_tokens: snap.input_tokens,
+            total_tokens: snap.total_tokens,
+          };
         }
       }
-    } catch (error: any) {
       logger.warn('Failed to flush BYOK usage to dashboard', { error: error.message });
     }
   }

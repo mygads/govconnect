@@ -533,21 +533,6 @@ export default function AITokenUsagePage() {
         </div>
       )}
 
-      {/* Info Alert — Penjelasan Token Counting */}
-      <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/50 p-4">
-        <div className="flex gap-3">
-          <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-          <div className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
-            <p className="font-medium">Mengapa token terlihat banyak?</p>
-            <p className="text-xs text-blue-700 dark:text-blue-300">
-              Setiap 1 pesan dari user menghasilkan <strong>beberapa API call</strong>: main_chat (respons utama + system prompt ~5K token),
-              ditambah micro-NLU (konfirmasi, deteksi layanan, dll). Token di sini adalah total <em>semua</em> call internal, bukan hanya pesan user.
-              Bandingkan kolom <strong>main_chat</strong> untuk melihat penggunaan yang relevan ke user.
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Summary Cards — Informasi Umum */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <SummaryCard

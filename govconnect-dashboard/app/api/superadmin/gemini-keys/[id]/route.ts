@@ -50,7 +50,7 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const allowedFields = ['name', 'gmail_account', 'tier', 'is_active', 'priority']
+    const allowedFields = ['name', 'gmail_account', 'tier', 'is_active', 'is_valid', 'priority']
     const updateData: Record<string, any> = {}
 
     for (const field of allowedFields) {
@@ -63,10 +63,17 @@ export async function PATCH(
       return NextResponse.json({ error: 'Tier harus free, tier1, atau tier2' }, { status: 400 })
     }
 
-    // If reactivating, reset consecutive failures
+    // If reactivating (toggling is_active from false→true), also reset validity
     if (updateData.is_active === true && !existing.is_active) {
       updateData.consecutive_failures = 0
       updateData.is_valid = true
+      updateData.invalid_reason = null
+      updateData.last_error = null
+    }
+
+    // If re-validating (toggling is_valid from false→true), reset failure counters
+    if (updateData.is_valid === true && !existing.is_valid) {
+      updateData.consecutive_failures = 0
       updateData.invalid_reason = null
       updateData.last_error = null
     }

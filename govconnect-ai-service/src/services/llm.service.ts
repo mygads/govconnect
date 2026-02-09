@@ -16,7 +16,7 @@ import { config } from '../config/env';
 import { LLMResponse, LLMResponseSchema, LLMMetrics } from '../types/llm-response.types';
 import { JSON_SCHEMA_FOR_GEMINI } from '../prompts/system-prompt';
 import { modelStatsService } from './model-stats.service';
-import { apiKeyManager, MODEL_FALLBACK_ORDER_PAID, MAX_RETRIES_PER_MODEL } from './api-key-manager.service';
+import { apiKeyManager, MODEL_FALLBACK_ORDER_PAID, MAX_RETRIES_PER_MODEL, isRateLimitError } from './api-key-manager.service';
 
 // Timeout for main LLM calls (30 seconds)
 const MAIN_LLM_TIMEOUT_MS = 30_000;
@@ -135,6 +135,15 @@ export async function callGemini(systemPrompt: string): Promise<{ response: LLMR
       modelStatsService.recordFailure(modelName, lastError, callDuration);
       if (key.isByok && key.keyId) {
         apiKeyManager.recordFailure(key.keyId, lastError);
+      }
+
+      // 429 / rate limit → mark model at capacity, skip to next model (no retry)
+      if (isRateLimitError(lastError)) {
+        if (key.isByok && key.keyId) {
+          apiKeyManager.recordRateLimit(key.keyId, modelName, key.tier);
+        }
+        logger.warn('⚠️ Rate limit hit, skipping model', { keyName: key.keyName, model: modelName });
+        break;
       }
 
       // 404 / not found → skip retries, move to next model
