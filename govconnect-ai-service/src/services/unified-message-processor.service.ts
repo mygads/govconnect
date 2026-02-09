@@ -2817,7 +2817,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       // Use micro LLM for name confirmation (full NLU, no regex fallback)
       let nameDecision: string;
       try {
-        const nameResult = await classifyConfirmation(message.trim());
+        const nameResult = await classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
         nameDecision = nameResult?.decision === 'CONFIRM' ? 'yes' : nameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
         nameDecision = 'uncertain';
@@ -2858,7 +2858,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       // Use micro LLM for name confirmation via history (full NLU, no regex fallback)
       let histNameDecision: string;
       try {
-        const histNameResult = await classifyConfirmation(message.trim());
+        const histNameResult = await classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
         histNameDecision = histNameResult?.decision === 'CONFIRM' ? 'yes' : histNameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
         histNameDecision = 'uncertain';
@@ -2893,7 +2893,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 2.2: Check pending online service form offer
     const pendingOffer = pendingServiceFormOffer.get(userId);
     if (pendingOffer) {
-      const confirmationResult = await classifyConfirmation(message);
+      const confirmationResult = await classifyConfirmation(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
       const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
       const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
 
@@ -3269,7 +3269,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       // Use micro LLM for confirmation classification (full NLU, no regex fallback)
       let cancelDecision: string;
       try {
-        const cancelResult = await classifyConfirmation(message.trim());
+        const cancelResult = await classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
         cancelDecision = cancelResult?.decision === 'CONFIRM' ? 'yes' : cancelResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
         cancelDecision = 'uncertain';
@@ -3828,7 +3828,7 @@ async function handlePendingAddressConfirmation(
   // Use micro LLM for confirmation classification (full NLU, no regex fallback)
   let addrDecision: string;
   try {
-    const addrResult = await classifyConfirmation(message.trim());
+    const addrResult = await classifyConfirmation(message.trim(), { village_id: pendingConfirm.village_id, wa_user_id: userId, session_id: userId, channel });
     addrDecision = addrResult?.decision === 'CONFIRM' ? 'yes' : addrResult?.decision === 'REJECT' ? 'no' : 'uncertain';
   } catch {
     addrDecision = 'uncertain';

@@ -65,7 +65,10 @@ PESAN USER:
 {user_message}
 `;
 
-export async function classifyConfirmation(message: string): Promise<ConfirmationResult | null> {
+export async function classifyConfirmation(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<ConfirmationResult | null> {
   const prompt = CONFIRMATION_SYSTEM_PROMPT.replace('{user_message}', message || '');
 
   // Build call plan using BYOK keys + fallback
@@ -100,6 +103,7 @@ export async function classifyConfirmation(message: string): Promise<Confirmatio
         }
 
         extractAndRecord(result, modelName, 'micro_nlu', 'confirmation_classify', {
+          ...context,
           success: true,
           duration_ms: durationMs,
           key_source: key.isByok ? 'byok' : 'env',

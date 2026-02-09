@@ -14,6 +14,7 @@ interface EnvironmentConfig {
   idPrefixServiceRequest: string;
   geminiApiKey: string;
   microNluModels: string[];
+  aiServiceUrl: string;
 }
 
 function parseMicroNluModels(envValue?: string): string[] {
@@ -50,6 +51,7 @@ function validateEnv(): EnvironmentConfig {
     idPrefixServiceRequest: process.env.ID_PREFIX_SERVICE_REQUEST || 'LAY',
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     microNluModels: parseMicroNluModels(process.env.MICRO_NLU_MODELS),
+    aiServiceUrl: process.env.AI_SERVICE_URL || 'http://ai-service:3002',
   };
 }
 

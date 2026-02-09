@@ -6,6 +6,7 @@
  *
  * BYOK-aware: Uses API key rotation via AI service endpoint.
  * Falls back to .env GEMINI_API_KEY if BYOK not available.
+ * Token usage is recorded to AI service for dashboard tracking.
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -78,6 +79,50 @@ async function getByokKeys(): Promise<ByokKey[]> {
 
 // Env fallback
 const envGenAI = config.geminiApiKey ? new GoogleGenerativeAI(config.geminiApiKey) : null;
+
+/**
+ * Fire-and-forget: record token usage to AI service for dashboard tracking.
+ * Case service doesn't share the ai_token_usage table, so we POST to AI service.
+ */
+async function recordTokenUsageToAIService(
+  usageMetadata: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | undefined,
+  model: string,
+  durationMs: number,
+  keySource: 'byok' | 'env',
+  keyId?: string,
+  keyTier?: string,
+): Promise<void> {
+  try {
+    const inputTokens = usageMetadata?.promptTokenCount ?? 0;
+    const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
+    const totalTokens = usageMetadata?.totalTokenCount ?? (inputTokens + outputTokens);
+    if (totalTokens === 0) return;
+
+    await fetch(`${config.aiServiceUrl}/admin/record-token-usage`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-api-key': config.internalApiKey,
+      },
+      body: JSON.stringify({
+        model,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        total_tokens: totalTokens,
+        layer_type: 'micro_nlu',
+        call_type: 'complaint_type_match',
+        success: true,
+        duration_ms: durationMs,
+        key_source: keySource,
+        key_id: keyId ?? null,
+        key_tier: keyTier ?? null,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (error: any) {
+    logger.warn('Failed to record token usage to AI service', { error: error.message });
+  }
+}
 
 export interface MicroLLMMatch {
   /** The matched type ID, or null if no match */
@@ -164,7 +209,9 @@ export async function resolveWithMicroLLM(
             generationConfig: { temperature: 0.1, maxOutputTokens: 200 },
           });
 
+          const startMs = Date.now();
           const result = await model.generateContent(prompt);
+          const durationMs = Date.now() - startMs;
           const responseText = result.response.text();
           const cleaned = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
           const parsed = JSON.parse(cleaned) as MicroLLMMatch;
@@ -175,6 +222,12 @@ export async function resolveWithMicroLLM(
             const exists = availableTypes.some(t => t.id === parsed.matched_id);
             if (!exists) { parsed.matched_id = null; parsed.confidence = 0; }
           }
+
+          // Record token usage to AI service (fire-and-forget)
+          recordTokenUsageToAIService(
+            result.response.usageMetadata as any,
+            modelName, durationMs, 'byok', bkey.id, bkey.tier,
+          );
 
           logger.info('Micro LLM resolved complaint type', {
             kategori, matched_id: parsed.matched_id, confidence: parsed.confidence,
@@ -204,7 +257,9 @@ export async function resolveWithMicroLLM(
             generationConfig: { temperature: 0.1, maxOutputTokens: 200 },
           });
 
+          const startMs = Date.now();
           const result = await model.generateContent(prompt);
+          const durationMs = Date.now() - startMs;
           const responseText = result.response.text();
           const cleaned = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
           const parsed = JSON.parse(cleaned) as MicroLLMMatch;
@@ -215,6 +270,12 @@ export async function resolveWithMicroLLM(
             const exists = availableTypes.some(t => t.id === parsed.matched_id);
             if (!exists) { parsed.matched_id = null; parsed.confidence = 0; }
           }
+
+          // Record token usage to AI service (fire-and-forget)
+          recordTokenUsageToAIService(
+            result.response.usageMetadata as any,
+            modelName, durationMs, 'env',
+          );
 
           logger.info('Micro LLM resolved complaint type (env fallback)', {
             kategori, matched_id: parsed.matched_id, confidence: parsed.confidence, model: modelName,

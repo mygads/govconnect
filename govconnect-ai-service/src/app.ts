@@ -46,6 +46,7 @@ import {
   getUsageByPeriodAndLayer,
   getTokenUsageSummary,
   getTokenUsageBySource,
+  recordTokenUsage,
 } from './services/token-usage.service';
 import { clearAllUMPCaches, clearUserCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
 import { clearVillageProfileCache } from './services/knowledge.service';
@@ -909,6 +910,37 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/webchat', webchatRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/testing', testingRoutes);
+
+/**
+ * Internal endpoint for cross-service token usage recording.
+ * Used by case-service (and other services) that make their own Gemini LLM calls
+ * but don't have direct access to the ai_token_usage table.
+ */
+app.post('/admin/record-token-usage', async (req: Request, res: Response) => {
+  try {
+    const { model, input_tokens, output_tokens, total_tokens, layer_type, call_type, village_id, wa_user_id, session_id, channel, intent, success, duration_ms, key_source, key_id, key_tier } = req.body;
+    if (!model || typeof input_tokens !== 'number' || typeof output_tokens !== 'number') {
+      res.status(400).json({ error: 'Missing required fields: model, input_tokens, output_tokens' });
+      return;
+    }
+    await recordTokenUsage({
+      model,
+      input_tokens,
+      output_tokens,
+      total_tokens: total_tokens ?? (input_tokens + output_tokens),
+      layer_type: layer_type || 'micro_nlu',
+      call_type: call_type || 'complaint_type_match',
+      village_id, wa_user_id, session_id, channel, intent,
+      success: success ?? true,
+      duration_ms: duration_ms ?? null,
+      key_source, key_id, key_tier,
+    });
+    res.json({ ok: true });
+  } catch (error: any) {
+    logger.error('Failed to record external token usage', { error: error.message });
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
 
 app.get('/stats/embeddings', async (req: Request, res: Response) => {
   try {

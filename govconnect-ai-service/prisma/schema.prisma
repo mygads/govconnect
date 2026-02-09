@@ -113,7 +113,7 @@ model ai_token_usage {
   
   // Call classification
   layer_type      String   // "full_nlu" | "micro_nlu" | "embedding" | "rag_expand"
-  call_type       String   // "main_chat" | "anti_hallucination_retry" | "complaint_type_match" | "service_slug_match" | "rag_query_expand" | "confirmation_classify"
+  call_type       String   // "main_chat" | "anti_hallucination_retry" | "complaint_type_match" | "service_slug_match" | "rag_query_expand" | "confirmation_classify" | "farewell_classify" | "greeting_classify" | "embedding_single" | "embedding_batch"
   
   // Tenant & user context
   village_id      String?
