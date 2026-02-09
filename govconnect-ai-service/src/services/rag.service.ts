@@ -123,9 +123,7 @@ function classifyQueryIntent(query: string): 'skip' | 'required' | 'optional' {
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import { extractAndRecord } from './token-usage.service';
-
-// Singleton — reuse across all expandQuery invocations
-const ragGenAI = new GoogleGenerativeAI(config.geminiApiKey || '');
+import { apiKeyManager, MAX_RETRIES_PER_MODEL } from './api-key-manager.service';
 
 const EXPAND_MODELS = (() => {
   const raw = (process.env.MICRO_NLU_MODELS || '').trim();
@@ -160,44 +158,63 @@ QUERY:
  * Falls back to original query if LLM fails.
  */
 export async function expandQuery(query: string): Promise<string> {
-  if (!config.geminiApiKey || !query.trim()) return query;
+  if (!query.trim()) return query;
+  if (!config.geminiApiKey && apiKeyManager.getByokKeys().length === 0) return query;
 
   const prompt = EXPAND_PROMPT.replace('{query}', query);
 
-  for (const modelName of EXPAND_MODELS) {
-    try {
-      const model = ragGenAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 150,
-        },
-      });
+  // Build call plan using BYOK keys + fallback
+  const callPlan = apiKeyManager.getCallPlan(EXPAND_MODELS, EXPAND_MODELS);
 
-      const startMs = Date.now();
-      const result = await model.generateContent(prompt);
-      const durationMs = Date.now() - startMs;
-      const expanded = result.response.text().trim();
-
-      // Record token usage
-      extractAndRecord(result, modelName, 'rag_expand', 'rag_query_expand', {
-        success: true,
-        duration_ms: durationMs,
-      });
-
-      if (expanded && expanded.length > query.length) {
-        logger.debug('Query expanded via micro LLM', {
-          original: query,
-          expanded: expanded.substring(0, 100),
+  for (const { key, model: modelName } of callPlan) {
+    for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
+      try {
+        const model = key.genAI.getGenerativeModel({
           model: modelName,
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 150,
+          },
         });
-        return expanded;
+
+        const startMs = Date.now();
+        const result = await model.generateContent(prompt);
+        const durationMs = Date.now() - startMs;
+        const expanded = result.response.text().trim();
+
+        // Record BYOK usage
+        if (key.isByok && key.keyId) {
+          const usage = result.response.usageMetadata;
+          apiKeyManager.recordSuccess(key.keyId);
+          apiKeyManager.recordUsage(key.keyId, modelName, usage?.promptTokenCount ?? 0, usage?.totalTokenCount ?? 0);
+        }
+
+        extractAndRecord(result, modelName, 'rag_expand', 'rag_query_expand', {
+          success: true,
+          duration_ms: durationMs,
+        });
+
+        if (expanded && expanded.length > query.length) {
+          logger.debug('Query expanded via micro LLM', {
+            original: query,
+            expanded: expanded.substring(0, 100),
+            model: modelName,
+          });
+          return expanded;
+        }
+      } catch (error: any) {
+        logger.warn('Query expansion failed', {
+          keyName: key.keyName,
+          model: modelName,
+          retry: retry + 1,
+          error: error.message,
+        });
+        if (key.isByok && key.keyId) {
+          apiKeyManager.recordFailure(key.keyId, error.message);
+        }
+        if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('401') ||
+            error.message?.includes('404') || error.message?.includes('not found')) break;
       }
-    } catch (error: any) {
-      logger.warn('Query expansion micro LLM failed, trying next model', {
-        model: modelName,
-        error: error.message,
-      });
     }
   }
 

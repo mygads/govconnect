@@ -2,6 +2,7 @@ import logger from '../utils/logger';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import { extractAndRecord } from './token-usage.service';
+import { apiKeyManager, MAX_RETRIES_PER_MODEL } from './api-key-manager.service';
 
 export type ConfirmationDecision = 'CONFIRM' | 'REJECT' | 'UNCERTAIN';
 
@@ -36,9 +37,6 @@ function parseModelListEnv(envValue: string | undefined, fallback: string[]): st
 
 const CONFIRMATION_MODEL_PRIORITY = parseModelListEnv(process.env.MICRO_NLU_MODELS, DEFAULT_MODELS);
 
-// Reuse singleton (avoid creating new instance per call)
-const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-
 // Timeout for micro LLM calls (10 seconds)
 const MICRO_LLM_TIMEOUT_MS = 10_000;
 
@@ -70,55 +68,72 @@ PESAN USER:
 export async function classifyConfirmation(message: string): Promise<ConfirmationResult | null> {
   const prompt = CONFIRMATION_SYSTEM_PROMPT.replace('{user_message}', message || '');
 
-  for (let i = 0; i < CONFIRMATION_MODEL_PRIORITY.length; i++) {
-    const model = CONFIRMATION_MODEL_PRIORITY[i];
+  // Build call plan using BYOK keys + fallback
+  const callPlan = apiKeyManager.getCallPlan(CONFIRMATION_MODEL_PRIORITY, CONFIRMATION_MODEL_PRIORITY);
 
-    try {
-      const geminiModel = genAI.getGenerativeModel({
-        model,
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 200,
-        },
-      });
+  for (const { key, model: modelName } of callPlan) {
+    for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
+      try {
+        const geminiModel = key.genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 200,
+          },
+        });
 
-      const startMs = Date.now();
-      const result = await Promise.race([
-        geminiModel.generateContent(prompt),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Micro LLM timeout after ${MICRO_LLM_TIMEOUT_MS}ms`)), MICRO_LLM_TIMEOUT_MS)
-        ),
-      ]);
-      const durationMs = Date.now() - startMs;
-      const responseText = result.response.text();
+        const startMs = Date.now();
+        const result = await Promise.race([
+          geminiModel.generateContent(prompt),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Micro LLM timeout after ${MICRO_LLM_TIMEOUT_MS}ms`)), MICRO_LLM_TIMEOUT_MS)
+          ),
+        ]);
+        const durationMs = Date.now() - startMs;
+        const responseText = result.response.text();
 
-      // Record token usage
-      extractAndRecord(result, model, 'micro_nlu', 'confirmation_classify', {
-        success: true,
-        duration_ms: durationMs,
-      });
+        // Record BYOK usage
+        if (key.isByok && key.keyId) {
+          const usage = result.response.usageMetadata;
+          apiKeyManager.recordSuccess(key.keyId);
+          apiKeyManager.recordUsage(key.keyId, modelName, usage?.promptTokenCount ?? 0, usage?.totalTokenCount ?? 0);
+        }
 
-      const cleaned = responseText
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
+        extractAndRecord(result, modelName, 'micro_nlu', 'confirmation_classify', {
+          success: true,
+          duration_ms: durationMs,
+        });
 
-      const parsed = JSON.parse(cleaned) as ConfirmationResult;
+        const cleaned = responseText
+          .replace(/```json\n?/g, '')
+          .replace(/```\n?/g, '')
+          .trim();
 
-      if (!parsed?.decision || typeof parsed.confidence !== 'number') {
-        throw new Error('Invalid confirmation response');
+        const parsed = JSON.parse(cleaned) as ConfirmationResult;
+
+        if (!parsed?.decision || typeof parsed.confidence !== 'number') {
+          throw new Error('Invalid confirmation response');
+        }
+
+        return {
+          decision: parsed.decision,
+          confidence: Math.max(0, Math.min(1, parsed.confidence)),
+          reason: parsed.reason,
+        };
+      } catch (error: any) {
+        logger.warn('Confirmation classifier failed', {
+          keyName: key.keyName,
+          model: modelName,
+          retry: retry + 1,
+          error: error.message,
+        });
+        if (key.isByok && key.keyId) {
+          apiKeyManager.recordFailure(key.keyId, error.message);
+        }
+        // API key / model not found → skip immediately
+        if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('401') ||
+            error.message?.includes('404') || error.message?.includes('not found')) break;
       }
-
-      return {
-        decision: parsed.decision,
-        confidence: Math.max(0, Math.min(1, parsed.confidence)),
-        reason: parsed.reason,
-      };
-    } catch (error: any) {
-      logger.warn('Confirmation classifier failed, trying next model', {
-        model,
-        error: error.message,
-      });
     }
   }
 

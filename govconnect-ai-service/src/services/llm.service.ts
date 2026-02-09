@@ -2,11 +2,12 @@
  * LLM Service - Handles Gemini API calls with ROBUST retry mechanism
  * 
  * Features:
- * - Primary/Fallback model from Dashboard Settings
+ * - BYOK API key rotation (auto-switch at 80% capacity)
+ * - Model fallback chain: 2.0-flash-lite → 2.5-flash-lite → 2.0-flash → 2.5-flash → 3-flash
+ * - 2 retries per model, then switch model (applies to all: BYOK free, tier1, and .env)
+ * - BYOK keys first, .env GEMINI_API_KEY as ultimate fallback
  * - Dynamic model priority based on success rates (tracked in model-stats.service)
- * - Infinite retry (NEVER returns error to user)
  * - Model usage statistics tracking
- * - Automatic model switching on failure
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -15,44 +16,15 @@ import { config } from '../config/env';
 import { LLMResponse, LLMResponseSchema, LLMMetrics } from '../types/llm-response.types';
 import { JSON_SCHEMA_FOR_GEMINI } from '../prompts/system-prompt';
 import { modelStatsService } from './model-stats.service';
-
-const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+import { apiKeyManager, MODEL_FALLBACK_ORDER_PAID, MAX_RETRIES_PER_MODEL } from './api-key-manager.service';
 
 // Timeout for main LLM calls (30 seconds)
 const MAIN_LLM_TIMEOUT_MS = 30_000;
 
-// Available models pool - December 2025
-// Models are sorted by: 1) ENV (primary/fallback), 2) Success rate
-// https://ai.google.dev/pricing
-const AVAILABLE_MODELS = [
-  'gemini-2.5-flash',         // Hybrid reasoning, 1M context, $0.30/$2.50 per 1M tokens
-  'gemini-2.5-flash-lite',    // Smallest, cost-efficient, $0.10/$0.40 per 1M tokens
-  'gemini-2.0-flash',         // Balanced multimodal, 1M context, $0.10/$0.40 per 1M tokens
-  'gemini-2.0-flash-lite',    // Legacy cost-efficient, $0.075/$0.30 per 1M tokens
-];
-
-// Model pricing reference per 1M tokens (USD) - December 2025:
-// ┌─────────────────────────┬──────────┬───────────┬─────────────────────────────────────┐
-// │ Model                   │ Input    │ Output    │ Description                         │
-// ├─────────────────────────┼──────────┼───────────┼─────────────────────────────────────┤
-// │ gemini-2.5-flash        │ $0.30    │ $2.50     │ Hybrid reasoning, thinking budget   │
-// │ gemini-2.5-flash-lite   │ $0.10    │ $0.40     │ Smallest, high throughput           │
-// │ gemini-2.0-flash        │ $0.10    │ $0.40     │ Balanced multimodal                 │
-// │ gemini-2.0-flash-lite   │ $0.075   │ $0.30     │ Legacy cost-efficient               │
-// └─────────────────────────┴──────────┴───────────┴─────────────────────────────────────┘
-//
-// All models support: Structured output ✓, Function calling ✓
-// 2.5 models also support: Thinking/Reasoning ✓
-
-// Retry configuration - Optimized for efficiency
-// Layer 1: 4 models × 2 retries × 1 cycle = 8 attempts MAX
-// If all fail, message goes to Layer 2 retry queue (cron every 10 min)
-const MAX_RETRIES_PER_MODEL = 2;     // Max retries per model before switching
-const BASE_RETRY_DELAY_MS = 1000;    // Base delay for exponential backoff (1 second)
-const MAX_RETRY_DELAY_MS = 5000;     // Max delay cap (5 seconds)
-const MAX_CYCLES = 1;                // Only 1 cycle through all models
-const CYCLE_DELAY_MS = 2000;         // 2 seconds delay (not used with 1 cycle)
-const JSON_RETRY_EXTRA_DELAY_MS = 500; // Extra delay for JSON parsing errors
+// Retry configuration
+const BASE_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 5000;
+const JSON_RETRY_EXTRA_DELAY_MS = 500;
 
 /**
  * Sleep for specified milliseconds
@@ -87,177 +59,109 @@ function parseModelListEnv(envValue: string | undefined, fallback: string[]): st
 }
 
 /**
- * Get dynamically sorted model priority based on:
- * 1. ENV (FULL_NLU_MODELS - comma-separated list)
- * 2. Success rates from model stats
- */
-async function getModelPriority(): Promise<string[]> {
-  try {
-    // NOTE: Model selection must NOT be configurable from Dashboard UI.
-    // Configure via ENV only (FULL_NLU_MODELS).
-    const envModels = parseModelListEnv(process.env.FULL_NLU_MODELS, AVAILABLE_MODELS);
-    
-    // Filter to only models we support
-    const priorityModels = envModels.filter(m => AVAILABLE_MODELS.includes(m));
-    
-    // Add remaining models sorted by success rate
-    const remainingModels = AVAILABLE_MODELS.filter(m => !priorityModels.includes(m));
-    const sortedRemaining = modelStatsService.getModelPriority(remainingModels);
-    
-    const finalPriority = [...priorityModels, ...sortedRemaining];
-    
-    logger.debug('📊 Model priority calculated', {
-      envModels,
-      priority: finalPriority,
-    });
-    
-    return finalPriority;
-  } catch (error) {
-    logger.warn('⚠️ Failed to calculate model priority, using default priority', { error });
-    return modelStatsService.getModelPriority(AVAILABLE_MODELS);
-  }
-}
-
-/**
- * Call Gemini with structured JSON output
- * Returns null if all models fail - message will stay in pending queue for retry
- * NEVER returns error message to user
+ * Call Gemini with structured JSON output.
+ * Uses BYOK key rotation + model fallback chain.
+ *
+ * Flow:
+ * 1. Build call plan: [BYOK keys × models] + [.env key × models]
+ * 2. For each (key, model): try up to 2 times
+ * 3. If model fails → next model. If key exhausted → next key.
+ * 4. Returns null if ALL fail — message stays in pending queue for Layer 2 retry.
  */
 export async function callGemini(systemPrompt: string): Promise<{ response: LLMResponse; metrics: LLMMetrics } | null> {
   const startTime = Date.now();
   let totalAttempts = 0;
   let lastError: string = '';
-  
-  // Get dynamically sorted model priority based on settings and success rates
-  let modelPriority = await getModelPriority();
-  
-  logger.info('🎯 Starting LLM call with dynamic model priority', {
-    priority: modelPriority,
+
+  // Get env-configured model list
+  const envModels = parseModelListEnv(process.env.FULL_NLU_MODELS, MODEL_FALLBACK_ORDER_PAID);
+
+  // Build call plan: BYOK keys first, .env fallback last
+  const callPlan = apiKeyManager.getCallPlan(envModels);
+
+  if (callPlan.length === 0) {
+    logger.error('🚨 No API keys or models available for LLM call');
+    return null;
+  }
+
+  logger.info('🎯 Starting LLM call with BYOK key rotation', {
+    planLength: callPlan.length,
+    keys: [...new Set(callPlan.map(p => p.key.keyName))],
+    models: [...new Set(callPlan.map(p => p.model))],
   });
-  
-  // Multiple cycles through all models
-  for (let cycle = 0; cycle < MAX_CYCLES; cycle++) {
-    if (cycle > 0) {
-      logger.warn(`🔄 Starting model cycle ${cycle + 1}/${MAX_CYCLES}`, {
-        waitTime: CYCLE_DELAY_MS,
+
+  // Try each (key, model) combination with retries
+  for (const { key, model: modelName } of callPlan) {
+    for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
+      totalAttempts++;
+
+      logger.info('🔄 Attempting LLM call', {
+        keyName: key.keyName,
+        isByok: key.isByok,
+        model: modelName,
+        retry: retry + 1,
+        totalAttempts,
       });
-      await sleep(CYCLE_DELAY_MS);
-      
-      // Re-fetch priority (might have changed based on recent failures)
-      modelPriority = await getModelPriority();
-      logger.info('📊 Updated model priority for new cycle', {
-        priority: modelPriority,
-      });
-    }
-    
-    // Try each model with retries
-    for (const modelName of modelPriority) {
-      for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
-        totalAttempts++;
-        
-        logger.info('🔄 Attempting LLM call', {
+
+      const callStartTime = Date.now();
+      const result = await callGeminiWithModel(systemPrompt, modelName, startTime, key.genAI);
+      const callDuration = Date.now() - callStartTime;
+
+      if (result.success && result.data) {
+        // Record success
+        modelStatsService.recordSuccess(modelName, callDuration);
+        if (key.isByok && key.keyId) {
+          apiKeyManager.recordSuccess(key.keyId);
+          const m = result.data.metrics;
+          apiKeyManager.recordUsage(key.keyId, modelName, m.inputTokens, m.totalTokens);
+        }
+
+        logger.info('✅ LLM call successful', {
+          keyName: key.keyName,
           model: modelName,
-          retry: retry + 1,
-          cycle: cycle + 1,
           totalAttempts,
+          durationMs: callDuration,
         });
-        
-        const callStartTime = Date.now();
-        const result = await callGeminiWithModel(systemPrompt, modelName, startTime);
-        const callDuration = Date.now() - callStartTime;
-        
-        if (result.success && result.data) {
-          // Record success in stats
-          modelStatsService.recordSuccess(modelName, callDuration);
-          
-          logger.info('✅ LLM call successful', {
-            model: modelName,
-            totalAttempts,
-            durationMs: callDuration,
-          });
-          
-          return result.data;
-        }
-        
-        lastError = result.error || 'Unknown error';
-        
-        // Record failure in stats
-        modelStatsService.recordFailure(modelName, lastError, callDuration);
-        
-        // Check if it's a model not found error - skip retries for this model
-        if (lastError.includes('404') || lastError.includes('not found') || lastError.includes('not supported')) {
-          logger.warn('⚠️ Model not available, skipping to next model', {
-            model: modelName,
-            error: lastError,
-          });
-          break; // Skip retries, move to next model
-        }
-        
-        // Calculate backoff delay based on retry attempt
+
+        return result.data;
+      }
+
+      lastError = result.error || 'Unknown error';
+      modelStatsService.recordFailure(modelName, lastError, callDuration);
+      if (key.isByok && key.keyId) {
+        apiKeyManager.recordFailure(key.keyId, lastError);
+      }
+
+      // 404 / not found → skip retries, move to next model
+      if (lastError.includes('404') || lastError.includes('not found') || lastError.includes('not supported')) {
+        logger.warn('⚠️ Model not available, skipping', { model: modelName, error: lastError });
+        break;
+      }
+
+      // API key invalid → skip retries, move to next key
+      if (lastError.includes('API_KEY_INVALID') || lastError.includes('PERMISSION_DENIED') || lastError.includes('401')) {
+        logger.warn('⚠️ API key error, skipping key', { keyName: key.keyName, error: lastError });
+        break;
+      }
+
+      // Exponential backoff before retry
+      if (retry < MAX_RETRIES_PER_MODEL - 1) {
         const isJsonError = lastError.includes('JSON') || lastError.includes('Unterminated') || lastError.includes('parsing');
         const backoffDelay = calculateBackoffDelay(retry);
         const actualDelay = isJsonError ? backoffDelay + JSON_RETRY_EXTRA_DELAY_MS : backoffDelay;
-        
-        if (isJsonError) {
-          logger.warn('⚠️ JSON parsing error, will retry with backoff', {
-            model: modelName,
-            retry: retry + 1,
-            error: lastError,
-            backoffDelay: actualDelay,
-          });
-        }
-        
-        // Wait before retry with exponential backoff (unless it's the last retry)
-        if (retry < MAX_RETRIES_PER_MODEL - 1) {
-          logger.info(`⏳ Waiting ${actualDelay}ms before retry (exponential backoff)...`, {
-            attempt: retry + 1,
-            delay: actualDelay,
-          });
-          await sleep(actualDelay);
-        }
+        await sleep(actualDelay);
       }
     }
   }
-  
-  // All cycles exhausted - do one final attempt with the most stable model
-  logger.error('❌ All model cycles exhausted, doing final fallback', {
-    totalAttempts,
-    lastError,
-  });
-  
-  // Final attempt sequence with longer delays - prioritize most reliable models
-  const finalModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
-  
-  for (const model of finalModels) {
-    await sleep(5000); // Wait 5 seconds
-    
-    logger.info('🆘 Final fallback attempt', { model });
-    
-    const callStartTime = Date.now();
-    const finalResult = await callGeminiWithModel(systemPrompt, model, startTime);
-    const callDuration = Date.now() - callStartTime;
-    
-    if (finalResult.success && finalResult.data) {
-      modelStatsService.recordSuccess(model, callDuration);
-      return finalResult.data;
-    }
-    
-    modelStatsService.recordFailure(model, finalResult.error || 'Final fallback failed', callDuration);
-  }
-  
-  // ABSOLUTE LAST RESORT - all models failed
-  // Return null to indicate failure - message will stay in pending queue for retry later
-  const endTime = Date.now();
-  const durationMs = endTime - startTime;
-  
-  logger.error('🚨 CRITICAL: All LLM attempts exhausted - message will be retried later', {
+
+  // ALL combinations exhausted
+  const durationMs = Date.now() - startTime;
+  logger.error('🚨 CRITICAL: All LLM attempts exhausted — message will be retried later', {
     totalAttempts,
     durationMs,
     lastError,
   });
-  
-  // Return null to signal failure - no response will be sent
-  // Message stays in pending queue and will be retried by cron job
+
   return null;
 }
 
@@ -267,15 +171,18 @@ export async function callGemini(systemPrompt: string): Promise<{ response: LLMR
 async function callGeminiWithModel(
   systemPrompt: string, 
   modelName: string, 
-  startTime: number
+  startTime: number,
+  genAIInstance?: GoogleGenerativeAI
 ): Promise<{ success: boolean; data?: { response: LLMResponse; metrics: LLMMetrics }; error?: string }> {
+  const activeGenAI = genAIInstance || new GoogleGenerativeAI(config.geminiApiKey);
+
   logger.info('Calling Gemini API', {
     model: modelName,
     temperature: config.llmTemperature,
   });
   
   try {
-    const model = genAI.getGenerativeModel({
+    const model = activeGenAI.getGenerativeModel({
       model: modelName,
       generationConfig: {
         temperature: config.llmTemperature,

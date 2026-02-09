@@ -14,6 +14,7 @@ import { config } from '../config/env';
 import logger from '../utils/logger';
 import { extractAndRecord } from './token-usage.service';
 import type { LayerType, CallType } from './token-usage.service';
+import { apiKeyManager, MAX_RETRIES_PER_MODEL } from './api-key-manager.service';
 
 // ---------- Model Priority ----------
 
@@ -32,52 +33,71 @@ function parseMicroModels(): string[] {
 
 const MICRO_MODELS = parseMicroModels();
 
-// Singleton — reuse across all callMicroLLM invocations
-const genAI = new GoogleGenerativeAI(config.geminiApiKey || '');
-
-// ---------- Generic micro LLM call ----------
+// ---------- Generic micro LLM call (BYOK-aware) ----------
 
 async function callMicroLLM(
   prompt: string,
   call_type: CallType,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<string | null> {
-  if (!config.geminiApiKey) {
-    logger.warn('Micro LLM skipped: GEMINI_API_KEY not configured');
+  if (!config.geminiApiKey && apiKeyManager.getByokKeys().length === 0) {
+    logger.warn('Micro LLM skipped: no API keys configured');
     return null;
   }
 
-  for (const modelName of MICRO_MODELS) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 300,
-        },
-      });
+  // Build call plan using BYOK keys + fallback
+  const callPlan = apiKeyManager.getCallPlan(MICRO_MODELS, MICRO_MODELS);
 
-      const startMs = Date.now();
-      const result = await model.generateContent(prompt);
-      const durationMs = Date.now() - startMs;
+  for (const { key, model: modelName } of callPlan) {
+    for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
+      try {
+        const model = key.genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 300,
+          },
+        });
 
-      // Record token usage from actual Gemini usageMetadata
-      extractAndRecord(result, modelName, 'micro_nlu' as LayerType, call_type, {
-        ...context,
-        success: true,
-        duration_ms: durationMs,
-      });
+        const startMs = Date.now();
+        const result = await model.generateContent(prompt);
+        const durationMs = Date.now() - startMs;
 
-      return result.response.text();
-    } catch (error: any) {
-      logger.warn('Micro LLM model failed, trying next', {
-        model: modelName,
-        error: error.message,
-      });
+        // Record usage
+        if (key.isByok && key.keyId) {
+          const usage = result.response.usageMetadata;
+          apiKeyManager.recordSuccess(key.keyId);
+          apiKeyManager.recordUsage(key.keyId, modelName, usage?.promptTokenCount ?? 0, usage?.totalTokenCount ?? 0);
+        }
+
+        extractAndRecord(result, modelName, 'micro_nlu' as LayerType, call_type, {
+          ...context,
+          success: true,
+          duration_ms: durationMs,
+        });
+
+        return result.response.text();
+      } catch (error: any) {
+        logger.warn('Micro LLM failed', {
+          keyName: key.keyName,
+          model: modelName,
+          retry: retry + 1,
+          error: error.message,
+        });
+
+        if (key.isByok && key.keyId) {
+          apiKeyManager.recordFailure(key.keyId, error.message);
+        }
+
+        // API key error → skip key entirely
+        if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('401')) break;
+        // Model not found → skip model
+        if (error.message?.includes('404') || error.message?.includes('not found')) break;
+      }
     }
   }
 
-  logger.error('All micro LLM models failed');
+  logger.error('All micro LLM attempts failed');
   return null;
 }
 

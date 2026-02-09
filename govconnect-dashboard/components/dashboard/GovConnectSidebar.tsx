@@ -24,6 +24,7 @@ import {
   Target,
   HeartPulse,
   Plug,
+  KeyRound,
 } from "lucide-react"
 
 import {
@@ -258,6 +259,12 @@ export function GovConnectSidebar() {
           title: "Cek Koneksi LLM",
           url: "/dashboard/superadmin/llm-check",
           icon: Plug,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Gemini BYOK Keys",
+          url: "/dashboard/superadmin/gemini-keys",
+          icon: KeyRound,
           roles: ["superadmin"],
         },
       ],

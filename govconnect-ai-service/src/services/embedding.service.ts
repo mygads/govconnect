@@ -26,9 +26,7 @@ import {
   EmbeddingConfig,
   EmbeddingStats,
 } from '../types/embedding.types';
-
-// Initialize Gemini client
-const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+import { apiKeyManager } from './api-key-manager.service';
 
 // Default configuration
 const DEFAULT_MODEL = 'gemini-embedding-001';
@@ -37,6 +35,20 @@ const MAX_BATCH_SIZE = 100; // Gemini API limit
 const EMBEDDING_RETRY_COUNT = parseInt(process.env.EMBEDDING_RETRY_COUNT || '2', 10);
 const EMBEDDING_RETRY_BASE_MS = parseInt(process.env.EMBEDDING_RETRY_BASE_MS || '750', 10);
 const EMBEDDING_RETRY_MAX_MS = parseInt(process.env.EMBEDDING_RETRY_MAX_MS || '5000', 10);
+
+/**
+ * Get a GenAI instance for embedding calls, using BYOK if available.
+ */
+function getEmbeddingGenAI(): GoogleGenerativeAI {
+  const selected = apiKeyManager.selectKey(DEFAULT_MODEL);
+  if (selected) {
+    if (selected.isByok && selected.keyId) {
+      apiKeyManager.recordUsage(selected.keyId, DEFAULT_MODEL, 0, 0); // Updated post-call
+    }
+    return selected.genAI;
+  }
+  return new GoogleGenerativeAI(config.geminiApiKey);
+}
 
 function isBlankText(text: unknown): boolean {
   return typeof text !== 'string' || text.trim().length === 0;
@@ -292,7 +304,7 @@ export async function generateEmbedding(
     });
 
     // Get embedding model
-    const embeddingModel = genAI.getGenerativeModel({ model });
+    const embeddingModel = getEmbeddingGenAI().getGenerativeModel({ model });
 
     // Call Gemini API - embedContent accepts string directly or EmbedContentRequest
     const result = await withRetry(
@@ -446,7 +458,7 @@ export async function generateBatchEmbeddings(
     });
 
     // Get embedding model
-    const embeddingModel = genAI.getGenerativeModel({ model });
+    const embeddingModel = getEmbeddingGenAI().getGenerativeModel({ model });
 
     // Prepare batch request - include model explicitly to avoid API validation issues
     const requestModel = model.startsWith('models/') ? model : `models/${model}`;

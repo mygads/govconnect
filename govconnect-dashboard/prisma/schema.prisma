@@ -307,3 +307,65 @@ model genfity_whatsapp_sessions {
   @@index([connected])
 }
 
+// ==================== GEMINI API KEYS (BYOK) ====================
+// Superadmin can add multiple Gemini API keys from different Google accounts
+// Keys are tried in priority order; when one hits 80% of its rate limits,
+// the system automatically switches to the next available key.
+// The .env GEMINI_API_KEY acts as the ultimate fallback.
+
+model gemini_api_keys {
+  id              String   @id @default(cuid())
+  name            String   // Friendly name, e.g. "Akun Gmail Pak Kades"
+  api_key         String   // The actual Gemini API key (encrypted at rest)
+  gmail_account   String   // Gmail account that owns this key
+  tier            String   @default("free") // "free" | "tier1" | "tier2"
+  
+  // Status management
+  is_active       Boolean  @default(true)   // Admin toggle (active/inactive)
+  is_valid        Boolean  @default(true)   // System-detected validity
+  invalid_reason  String?  // Why the key was marked invalid
+  last_error      String?  @db.Text // Last error message
+  consecutive_failures Int @default(0) // Consecutive failures count
+  
+  // Priority — lower = tried first
+  priority        Int      @default(0)
+  
+  // Timestamps
+  last_used_at    DateTime?
+  last_validated_at DateTime?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  
+  usage_records   gemini_api_key_usage[]
+  
+  @@index([is_active, is_valid])
+  @@index([tier])
+  @@index([priority])
+}
+
+// ==================== GEMINI API KEY USAGE TRACKING ====================
+// Tracks per-minute and per-day usage for each API key+model combo.
+// Used to calculate whether a key has hit 80% of its rate limit.
+
+model gemini_api_key_usage {
+  id              String   @id @default(cuid())
+  key_id          String   // FK to gemini_api_keys
+  model           String   // e.g. "gemini-2.5-flash"
+  
+  // Period tracking
+  period_type     String   // "minute" | "day"
+  period_key      String   // "2026-02-09T14:05" for minute, "2026-02-09" for day
+  
+  // Counters
+  request_count   Int      @default(0) // RPM or RPD
+  input_tokens    Int      @default(0) // TPM (input tokens)
+  total_tokens    Int      @default(0) // TPM (total tokens)
+  
+  key             gemini_api_keys @relation(fields: [key_id], references: [id], onDelete: Cascade)
+  
+  @@unique([key_id, model, period_type, period_key])
+  @@index([key_id])
+  @@index([period_type, period_key])
+  @@index([key_id, model, period_type, period_key])
+}
+
