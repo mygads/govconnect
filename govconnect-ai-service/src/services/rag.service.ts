@@ -192,6 +192,9 @@ export async function expandQuery(query: string): Promise<string> {
         extractAndRecord(result, modelName, 'rag_expand', 'rag_query_expand', {
           success: true,
           duration_ms: durationMs,
+          key_source: key.isByok ? 'byok' : 'env',
+          key_id: key.keyId,
+          key_tier: key.tier,
         });
 
         if (expanded && expanded.length > query.length) {

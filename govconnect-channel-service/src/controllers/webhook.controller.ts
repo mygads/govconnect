@@ -241,8 +241,9 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     });
 
     // Update conversation for live chat
-    const pushName = payload.event?.Info.PushName || undefined;
-    await updateConversation(waUserId, message, pushName, true, villageId, 'WHATSAPP');
+    // NOTE: Do NOT pass WA pushName as user_name — the AI must ask the user's name directly.
+    // PushName is the WA profile display name and is often inaccurate (nicknames, fake names, etc.)
+    await updateConversation(waUserId, message, undefined, true, villageId, 'WHATSAPP');
 
     // Wait for media processing to complete
     await mediaPromise;

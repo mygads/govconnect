@@ -19,6 +19,7 @@ const ENDPOINT_MAP: Record<string, keyof typeof ai> = {
   'avg-per-chat': 'getTokenUsageAvgPerChat',
   'responses-by-village': 'getTokenUsageResponsesByVillage',
   'village-model-detail': 'getTokenUsageVillageModelDetail',
+  'by-source': 'getTokenUsageBySource',
 }
 
 export async function GET(

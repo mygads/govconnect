@@ -45,8 +45,9 @@ import {
   getUsageByVillageAndModel,
   getUsageByPeriodAndLayer,
   getTokenUsageSummary,
+  getTokenUsageBySource,
 } from './services/token-usage.service';
-import { clearAllUMPCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
+import { clearAllUMPCaches, clearUserCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
 import { clearVillageProfileCache } from './services/knowledge.service';
 import { getEmbeddingCacheStats as getEmbCacheDetailStats } from './services/embedding.service';
 
@@ -324,6 +325,25 @@ app.post('/admin/cache/clear-all', (req: Request, res: Response) => {
       responseCacheCleared: true,
       villageProfileCacheCleared: true,
     },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * POST /admin/cache/clear-user — Clear all in-memory caches for a specific user
+ * Body: { userId: string }
+ * Used when admin clears a conversation or webchat user resets session.
+ */
+app.post('/admin/cache/clear-user', (req: Request, res: Response) => {
+  const { userId } = req.body || {};
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+  const result = clearUserCaches(userId);
+  res.json({
+    status: 'success',
+    message: `Caches cleared for user ${userId}`,
+    cleared: result.cleared,
     timestamp: new Date().toISOString(),
   });
 });
@@ -666,6 +686,17 @@ app.get('/stats/token-usage/village-model-detail', async (req: Request, res: Res
     res.json(data);
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to get village model detail' });
+  }
+});
+
+// GET /stats/token-usage/by-source — BYOK vs ENV breakdown
+app.get('/stats/token-usage/by-source', async (req: Request, res: Response) => {
+  try {
+    const slug = getQuery(req, 'village_id');
+    const data = await getTokenUsageBySource(slug);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get token usage by source' });
   }
 });
 

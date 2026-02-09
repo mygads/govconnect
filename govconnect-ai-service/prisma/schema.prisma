@@ -126,6 +126,11 @@ model ai_token_usage {
   success         Boolean  @default(true)
   duration_ms     Int?     // How long the LLM call took
   
+  // API Key source tracking
+  key_source      String?  // "byok" | "env" | null (for older records)
+  key_id          String?  // BYOK key ID if applicable
+  key_tier        String?  // "free" | "tier1" | "tier2" | "env"
+  
   created_at      DateTime @default(now())
   
   @@index([model])
@@ -136,4 +141,5 @@ model ai_token_usage {
   @@index([village_id, created_at])
   @@index([model, created_at])
   @@index([channel, created_at])
+  @@index([key_source])
 }

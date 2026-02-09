@@ -27,6 +27,7 @@ import {
   EmbeddingStats,
 } from '../types/embedding.types';
 import { apiKeyManager } from './api-key-manager.service';
+import { recordTokenUsage } from './token-usage.service';
 
 // Default configuration
 const DEFAULT_MODEL = 'gemini-embedding-001';
@@ -38,16 +39,32 @@ const EMBEDDING_RETRY_MAX_MS = parseInt(process.env.EMBEDDING_RETRY_MAX_MS || '5
 
 /**
  * Get a GenAI instance for embedding calls, using BYOK if available.
+ * Returns both the GenAI instance and key source metadata for token tracking.
  */
-function getEmbeddingGenAI(): GoogleGenerativeAI {
+function getEmbeddingGenAI(): { genAI: GoogleGenerativeAI; keySource: string; keyId: string | null; keyTier: string } {
   const selected = apiKeyManager.selectKey(DEFAULT_MODEL);
   if (selected) {
     if (selected.isByok && selected.keyId) {
       apiKeyManager.recordUsage(selected.keyId, DEFAULT_MODEL, 0, 0); // Updated post-call
     }
-    return selected.genAI;
+    return {
+      genAI: selected.genAI,
+      keySource: selected.isByok ? 'byok' : 'env',
+      keyId: selected.keyId,
+      keyTier: selected.tier,
+    };
   }
-  return new GoogleGenerativeAI(config.geminiApiKey);
+  return {
+    genAI: new GoogleGenerativeAI(config.geminiApiKey),
+    keySource: 'env',
+    keyId: null,
+    keyTier: 'env',
+  };
+}
+
+/** Estimate token count from text length (roughly 4 chars ≈ 1 token for mixed Indonesian/English) */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
 }
 
 function isBlankText(text: unknown): boolean {
@@ -304,7 +321,8 @@ export async function generateEmbedding(
     });
 
     // Get embedding model
-    const embeddingModel = getEmbeddingGenAI().getGenerativeModel({ model });
+    const embeddingKey = getEmbeddingGenAI();
+    const embeddingModel = embeddingKey.genAI.getGenerativeModel({ model });
 
     // Call Gemini API - embedContent accepts string directly or EmbedContentRequest
     const result = await withRetry(
@@ -327,6 +345,22 @@ export async function generateEmbedding(
 
     const endTime = Date.now();
     const latencyMs = endTime - startTime;
+
+    // Record embedding token usage (estimate tokens from text length)
+    const estimatedTokens = estimateTokens(text);
+    recordTokenUsage({
+      model,
+      input_tokens: estimatedTokens,
+      output_tokens: 0,
+      total_tokens: estimatedTokens,
+      layer_type: 'embedding',
+      call_type: 'embedding_single',
+      success: true,
+      duration_ms: latencyMs,
+      key_source: embeddingKey.keySource,
+      key_id: embeddingKey.keyId,
+      key_tier: embeddingKey.keyTier,
+    });
 
     // Update stats
     stats.totalEmbeddingsGenerated++;
@@ -458,7 +492,8 @@ export async function generateBatchEmbeddings(
     });
 
     // Get embedding model
-    const embeddingModel = getEmbeddingGenAI().getGenerativeModel({ model });
+    const embeddingKey = getEmbeddingGenAI();
+    const embeddingModel = embeddingKey.genAI.getGenerativeModel({ model });
 
     // Prepare batch request - include model explicitly to avoid API validation issues
     const requestModel = model.startsWith('models/') ? model : `models/${model}`;
@@ -511,6 +546,22 @@ export async function generateBatchEmbeddings(
     stats.averageLatencyMs = (stats.averageLatencyMs + latencyMs) / 2;
     stats.lastEmbeddingAt = new Date();
     updateSuccessRate(true);
+
+    // Record batch embedding token usage
+    const totalEstimatedTokens = nonBlankTexts.reduce((sum, t) => sum + estimateTokens(t), 0);
+    recordTokenUsage({
+      model,
+      input_tokens: totalEstimatedTokens,
+      output_tokens: 0,
+      total_tokens: totalEstimatedTokens,
+      layer_type: 'embedding',
+      call_type: 'embedding_batch',
+      success: true,
+      duration_ms: latencyMs,
+      key_source: embeddingKey.keySource,
+      key_id: embeddingKey.keyId,
+      key_tier: embeddingKey.keyTier,
+    });
 
     logger.info('Batch embeddings generated successfully', {
       count: nonBlankEmbeddings.length,

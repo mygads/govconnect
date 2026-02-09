@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useState, useEffect } from "react";
 import { Sun, Moon, Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LiveChatWidget } from "@/components/landing/LiveChatWidget";
 
 export default function FormLayout({
     children,
@@ -94,6 +95,9 @@ export default function FormLayout({
                     {children}
                 </div>
             </main>
+
+            {/* Live Chat Widget — available on public form pages */}
+            <LiveChatWidget isDark={isDark} />
 
             {/* Footer */}
             <footer className="border-t border-border/50 bg-muted/20">

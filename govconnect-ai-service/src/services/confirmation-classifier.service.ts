@@ -102,6 +102,9 @@ export async function classifyConfirmation(message: string): Promise<Confirmatio
         extractAndRecord(result, modelName, 'micro_nlu', 'confirmation_classify', {
           success: true,
           duration_ms: durationMs,
+          key_source: key.isByok ? 'byok' : 'env',
+          key_id: key.keyId,
+          key_tier: key.tier,
         });
 
         const cleaned = responseText

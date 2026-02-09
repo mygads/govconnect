@@ -16,6 +16,7 @@
 export type IntentType = 
   | 'GREETING'
   | 'THANKS'
+  | 'FAREWELL'
   | 'CONFIRMATION'
   | 'REJECTION'
   | 'CREATE_COMPLAINT'
@@ -62,6 +63,21 @@ export const THANKS_PATTERNS = [
   /^(terima\s*kasih|makasih|thanks|thank\s*you|thx|tq)[\s!.,]*$/i,
   /^(ok\s+)?makasih[\s!.,]*$/i,
   /^(mantap|keren|bagus|good)[\s!.,]*$/i,
+];
+
+// ==================== FAREWELL PATTERNS ====================
+
+export const FAREWELL_PATTERNS = [
+  /^(dah|udah|sudah)\s+(gaada|ga\s*ada|gak\s*ada|tidak\s*ada|cukup)[\s!.,]*$/i,
+  /^(ga|gak|tidak|gk)\s*(ada|perlu)(\s+lagi)?[\s!.,]*$/i,
+  /^(udah|sudah|dah)\s+(itu\s+aja|itu\s+saja|segitu\s+aja|cukup)[\s!.,]*$/i,
+  /^(yaudah|ya\s+udah|yasudah|ya\s+sudah)[\s!.,]*$/i,
+  /^(cukup|enough)[\s!.,]*$/i,
+  /^(gak|ga|tidak)\s+ada\s+(pertanyaan|yang)\s+(lain|lagi)[\s!.,]*$/i,
+  /^(nothing|no)\s*(else|more|lagi)?[\s!.,]*$/i,
+  /^(udah\s+)?cukup\s+(makasih|terima\s*kasih)[\s!.,]*$/i,
+  /^(makasih|terima\s*kasih)\s+(udah|sudah)\s+cukup[\s!.,]*$/i,
+  /^dah\s+gaada[\s!.,]*$/i,
 ];
 
 // ==================== COMPLAINT PATTERNS ====================
@@ -195,6 +211,11 @@ export function detectIntentFromPatterns(message: string): IntentType | null {
     if (matchesAnyPattern(lowerMessage, REJECTION_PATTERNS)) return 'REJECTION';
     if (matchesAnyPattern(lowerMessage, THANKS_PATTERNS)) return 'THANKS';
   }
+
+  // Farewell check (short messages indicating user wants to end conversation)
+  if (lowerMessage.length < 50) {
+    if (matchesAnyPattern(lowerMessage, FAREWELL_PATTERNS)) return 'FAREWELL';
+  }
   
   // Check for IDs first (high confidence)
   if (/\bLAP-\d{8}-\d{3}\b/i.test(message) || /\bLAY-\d{8}-\d{3}\b/i.test(message)) {
@@ -220,6 +241,7 @@ export default {
   CONFIRMATION_PATTERNS,
   REJECTION_PATTERNS,
   THANKS_PATTERNS,
+  FAREWELL_PATTERNS,
   CREATE_COMPLAINT_PATTERNS,
   SERVICE_INFO_PATTERNS,
   CREATE_SERVICE_REQUEST_PATTERNS,

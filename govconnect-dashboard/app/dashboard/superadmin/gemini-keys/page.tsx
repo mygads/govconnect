@@ -681,22 +681,30 @@ export default function GeminiKeysPage() {
                           <TableHead className="text-xs">Model</TableHead>
                           <TableHead className="text-xs text-right">RPD Used</TableHead>
                           <TableHead className="text-xs text-right">RPD Limit</TableHead>
-                          <TableHead className="text-xs text-right">Sisa</TableHead>
-                          <TableHead className="text-xs">Kapasitas</TableHead>
+                          <TableHead className="text-xs text-right">RPM Limit</TableHead>
+                          <TableHead className="text-xs text-right">TPM Limit</TableHead>
+                          <TableHead className="text-xs text-right">Token Used</TableHead>
+                          <TableHead className="text-xs text-right">Sisa RPD</TableHead>
+                          <TableHead className="text-xs">Kapasitas RPD</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {detailKey.today_usage.map(u => {
                           const limits = detailKey.tier_limits[u.model]
                           const rpdLimit = limits?.rpd || 0
+                          const rpmLimit = limits?.rpm || 0
+                          const tpmLimit = limits?.tpm || 0
                           const rpdRemaining = Math.max(0, rpdLimit - u.rpd_used)
                           const pct = getCapacityPct(u.rpd_used, rpdLimit)
                           return (
                             <TableRow key={u.model}>
                               <TableCell className="text-xs font-mono">{u.model.replace("gemini-", "")}</TableCell>
                               <TableCell className="text-xs text-right font-mono">{u.rpd_used}</TableCell>
-                              <TableCell className="text-xs text-right font-mono">{formatNumber(rpdLimit)}</TableCell>
-                              <TableCell className="text-xs text-right font-mono">{formatNumber(rpdRemaining)}</TableCell>
+                              <TableCell className="text-xs text-right font-mono">{rpdLimit >= 999_999 ? "∞" : formatNumber(rpdLimit)}</TableCell>
+                              <TableCell className="text-xs text-right font-mono">{formatNumber(rpmLimit)}</TableCell>
+                              <TableCell className="text-xs text-right font-mono">{formatNumber(tpmLimit)}</TableCell>
+                              <TableCell className="text-xs text-right font-mono">{formatNumber(u.tokens_used)}</TableCell>
+                              <TableCell className="text-xs text-right font-mono">{rpdLimit >= 999_999 ? "∞" : formatNumber(rpdRemaining)}</TableCell>
                               <TableCell>
                                 <div className="flex items-center gap-2">
                                   <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">

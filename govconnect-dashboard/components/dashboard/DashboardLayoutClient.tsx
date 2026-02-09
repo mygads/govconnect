@@ -8,7 +8,7 @@ import { GovConnectSidebar } from "@/components/dashboard/GovConnectSidebar"
 import { DashboardNavbar } from "@/components/dashboard/DashboardNavbar"
 import { RealtimeProvider } from "@/components/dashboard/RealtimeProvider"
 import { UrgentAlertBanner } from "@/components/dashboard/NotificationCenter"
-import { LiveChatWidget } from "@/components/landing/LiveChatWidget"
+// LiveChatWidget removed — only shown on landing page and form pages
 import { useAuth } from "@/components/auth/AuthContext"
 import { isRouteAllowed, isSuperadmin, type AdminRole } from "@/lib/rbac"
 
@@ -40,8 +40,7 @@ export default function DashboardLayoutClient({ children }: DashboardLayoutClien
           {children}
         </main>
       </SidebarInset>
-      {/* Live Chat Widget - only for village admins */}
-      {!userIsSuperadmin && <LiveChatWidget />}
+      {/* Live Chat Widget removed — only shown on landing page & form pages */}
     </SidebarProvider>
   )
 

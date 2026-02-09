@@ -17,6 +17,9 @@ import {
   Shield,
   Users,
   Calculator,
+  Info,
+  Layers,
+  Wallet,
 } from "lucide-react"
 import {
   Chart as ChartJS,
@@ -63,6 +66,16 @@ interface TokenSummary {
   full_nlu_calls: number
   micro_nlu_tokens: number
   full_nlu_tokens: number
+  embedding_calls: number
+  embedding_tokens: number
+  embedding_cost: number
+  rag_expand_calls: number
+  rag_expand_tokens: number
+  main_chat_calls: number
+  main_chat_tokens: number
+  main_chat_cost: number
+  full_nlu_cost: number
+  micro_nlu_cost: number
 }
 
 interface PeriodUsage {
@@ -273,6 +286,7 @@ export default function AITokenUsagePage() {
   const [summary, setSummary] = useState<TokenSummary | null>(null)
   const [byModel, setByModel] = useState<ModelUsage[]>([])
   const [avgPerChat, setAvgPerChat] = useState<AvgPerChat | null>(null)
+  const [bySource, setBySource] = useState<{ source: string; total_calls: number; total_tokens: number; input_tokens: number; output_tokens: number; total_cost_usd: number }[]>([])
   const [summaryLoading, setSummaryLoading] = useState(true)
 
   // Periode tab data (loaded on demand)
@@ -301,17 +315,19 @@ export default function AITokenUsagePage() {
     if (user && user.role !== "superadmin") redirect("/dashboard")
   }, [user])
 
-  // Load summary data on mount (3 calls)
+  // Load summary data on mount (4 calls)
   const loadSummary = useCallback(async () => {
     setSummaryLoading(true)
-    const [s, bm, apc] = await Promise.all([
+    const [s, bm, apc, bs] = await Promise.all([
       fetchData<TokenSummary>("summary"),
       fetchData<ModelUsage[]>("by-model"),
       fetchData<AvgPerChat>("avg-per-chat"),
+      fetchData<{ source: string; total_calls: number; total_tokens: number; input_tokens: number; output_tokens: number; total_cost_usd: number }[]>("by-source"),
     ])
     setSummary(s)
     setByModel(bm || [])
     setAvgPerChat(apc)
+    setBySource(bs || [])
     setSummaryLoading(false)
   }, [])
 
@@ -431,8 +447,23 @@ export default function AITokenUsagePage() {
         </button>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Info Alert — Penjelasan Token Counting */}
+      <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/50 p-4">
+        <div className="flex gap-3">
+          <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
+            <p className="font-medium">Mengapa token terlihat banyak?</p>
+            <p className="text-xs text-blue-700 dark:text-blue-300">
+              Setiap 1 pesan dari user menghasilkan <strong>beberapa API call</strong>: main_chat (respons utama + system prompt ~5K token),
+              ditambah micro-NLU (konfirmasi, deteksi layanan, dll). Token di sini adalah total <em>semua</em> call internal, bukan hanya pesan user.
+              Bandingkan kolom <strong>main_chat</strong> untuk melihat penggunaan yang relevan ke user.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Summary Cards — Informasi Umum */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <SummaryCard
           icon={<Zap className="h-5 w-5 text-indigo-600" />}
           label="Total Token"
@@ -456,31 +487,76 @@ export default function AITokenUsagePage() {
         />
         <SummaryCard
           icon={<MessageSquare className="h-5 w-5 text-blue-600" />}
-          label="Rata-rata / Chat"
-          value={summaryLoading ? null : formatNumber(avgPerChat?.avg_total || 0)}
-          sub={summaryLoading ? null : `${formatNumber(avgPerChat?.avg_input || 0)} in / ${formatNumber(avgPerChat?.avg_output || 0)} out · ${formatNumber(avgPerChat?.total_chats || 0)} chats`}
+          label="Sesi Chat (main_chat)"
+          value={summaryLoading ? null : formatNumber(summary?.main_chat_calls || 0)}
+          sub={summaryLoading ? null : `${formatNumber(summary?.main_chat_tokens || 0)} tokens · ${formatIDR(summary?.main_chat_cost || 0)}`}
+          loading={summaryLoading}
+        />
+        <SummaryCard
+          icon={<Layers className="h-5 w-5 text-purple-600" />}
+          label="Embedding"
+          value={summaryLoading ? null : formatNumber(summary?.embedding_tokens || 0)}
+          sub={summaryLoading ? null : `${formatNumber(summary?.embedding_calls || 0)} calls · ${formatIDR(summary?.embedding_cost || 0)}`}
           loading={summaryLoading}
         />
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — Informasi Detail */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="ringkasan">Ringkasan</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="ringkasan">Ikhtisar Token</TabsTrigger>
+          <TabsTrigger value="biaya">Biaya</TabsTrigger>
           <TabsTrigger value="periode">Per Periode</TabsTrigger>
           <TabsTrigger value="village">Per Desa</TabsTrigger>
           <TabsTrigger value="layer">Layer Detail</TabsTrigger>
         </TabsList>
 
-        {/* ====== RINGKASAN TAB ====== */}
+        {/* ====== IKHTISAR TOKEN TAB ====== */}
         <TabsContent value="ringkasan" className="space-y-6 mt-4">
+          {/* Token distribution cards — Full NLU / Micro NLU / Embedding / RAG */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="h-3 w-3 rounded-full bg-indigo-500" />
+                <span className="text-xs text-muted-foreground font-medium">Full NLU</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.full_nlu_tokens || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.full_nlu_calls || 0)} calls · {formatIDR(summary?.full_nlu_cost || 0)}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="h-3 w-3 rounded-full bg-amber-500" />
+                <span className="text-xs text-muted-foreground font-medium">Micro NLU</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.micro_nlu_tokens || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.micro_nlu_calls || 0)} calls · {formatIDR(summary?.micro_nlu_cost || 0)}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="h-3 w-3 rounded-full bg-purple-500" />
+                <span className="text-xs text-muted-foreground font-medium">Embedding</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.embedding_tokens || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.embedding_calls || 0)} calls · {formatIDR(summary?.embedding_cost || 0)}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="h-3 w-3 rounded-full bg-teal-500" />
+                <span className="text-xs text-muted-foreground font-medium">RAG Expand</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.rag_expand_tokens || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_expand_calls || 0)} calls</p>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Micro vs Full NLU Doughnut */}
+            {/* Layer Distribution Doughnut (Full NLU / Micro NLU / Embedding / RAG) */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Cpu className="h-4 w-4" /> Micro NLU vs Full NLU
+                  <Cpu className="h-4 w-4" /> Distribusi Token per Layer
                 </CardTitle>
+                <CardDescription>Full NLU (chat utama), Micro NLU (klasifier), Embedding, RAG Expand</CardDescription>
               </CardHeader>
               <CardContent>
                 {summaryLoading ? <Skeleton className="h-56" /> : (
@@ -488,26 +564,21 @@ export default function AITokenUsagePage() {
                     <div className="h-56 flex items-center justify-center">
                       <Doughnut
                         data={{
-                          labels: ["Full NLU", "Micro NLU"],
+                          labels: ["Full NLU", "Micro NLU", "Embedding", "RAG Expand"],
                           datasets: [{
-                            data: [summary?.full_nlu_tokens || 0, summary?.micro_nlu_tokens || 0],
-                            backgroundColor: ["#6366f1", "#f59e0b"],
+                            data: [
+                              summary?.full_nlu_tokens || 0,
+                              summary?.micro_nlu_tokens || 0,
+                              summary?.embedding_tokens || 0,
+                              summary?.rag_expand_tokens || 0,
+                            ],
+                            backgroundColor: ["#6366f1", "#f59e0b", "#a855f7", "#14b8a6"],
                             borderWidth: 2,
                             borderColor: "#fff",
                           }],
                         }}
                         options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }}
                       />
-                    </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                      <div className="rounded-lg bg-indigo-50 dark:bg-indigo-950 p-2 text-center">
-                        <div className="font-bold text-indigo-700 dark:text-indigo-300">{formatNumber(summary?.full_nlu_tokens || 0)}</div>
-                        <div className="text-muted-foreground">Full NLU ({formatNumber(summary?.full_nlu_calls || 0)} calls)</div>
-                      </div>
-                      <div className="rounded-lg bg-amber-50 dark:bg-amber-950 p-2 text-center">
-                        <div className="font-bold text-amber-700 dark:text-amber-300">{formatNumber(summary?.micro_nlu_tokens || 0)}</div>
-                        <div className="text-muted-foreground">Micro NLU ({formatNumber(summary?.micro_nlu_calls || 0)} calls)</div>
-                      </div>
                     </div>
                   </>
                 )}
@@ -518,12 +589,12 @@ export default function AITokenUsagePage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <BarChart3 className="h-4 w-4" /> Distribusi per Model
+                  <BarChart3 className="h-4 w-4" /> Distribusi Token per Model
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {summaryLoading ? <Skeleton className="h-56" /> : (
-                  <div className="h-72 flex items-center justify-center">
+                  <div className="h-56 flex items-center justify-center">
                     <Doughnut
                       data={{
                         labels: byModel.map((m) => m.model),
@@ -542,11 +613,103 @@ export default function AITokenUsagePage() {
             </Card>
           </div>
 
-          {/* Model Detail Table — with per-model pricing */}
+          {/* Token Detail Table per Model — token-focused (tanpa harga, harga ada di tab Biaya) */}
           <Card>
             <CardHeader>
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Cpu className="h-4 w-4" /> Detail Penggunaan per Model
+                <Cpu className="h-4 w-4" /> Detail Token per Model
+              </CardTitle>
+              <CardDescription>Jumlah token input &amp; output per model. Lihat tab &quot;Biaya&quot; untuk rincian harga.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {summaryLoading ? <Skeleton className="h-48" /> : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-muted-foreground">
+                        <th className="pb-2 pr-3">Model</th>
+                        <th className="pb-2 pr-3 text-right">Input Tokens</th>
+                        <th className="pb-2 pr-3 text-right">Output Tokens</th>
+                        <th className="pb-2 pr-3 text-right">Total Tokens</th>
+                        <th className="pb-2 pr-3 text-right">API Calls</th>
+                        <th className="pb-2 text-right">Avg Latency</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {byModel.map((m, i) => (
+                        <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                          <td className="py-2 pr-3"><span className="font-mono text-xs">{m.model}</span></td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(m.input_tokens)}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(m.output_tokens)}</td>
+                          <td className="py-2 pr-3 text-right font-semibold">{formatNumber(m.total_tokens)}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(m.call_count)}</td>
+                          <td className="py-2 text-right">{m.avg_duration_ms ? m.avg_duration_ms + "ms" : "-"}</td>
+                        </tr>
+                      ))}
+                      {byModel.length > 0 && (
+                        <tr className="border-t-2 font-semibold bg-muted/30">
+                          <td className="py-2 pr-3">TOTAL</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.input_tokens, 0))}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.output_tokens, 0))}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.total_tokens, 0))}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.call_count, 0))}</td>
+                          <td className="py-2 text-right">-</td>
+                        </tr>
+                      )}
+                      {byModel.length === 0 && (
+                        <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ====== BIAYA (COST) TAB ====== */}
+        <TabsContent value="biaya" className="space-y-6 mt-4">
+          {/* Cost Summary Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="rounded-lg bg-emerald-100 dark:bg-emerald-950 p-2"><Wallet className="h-4 w-4 text-emerald-600" /></div>
+                <span className="text-xs text-muted-foreground font-medium">Total Biaya</span>
+              </div>
+              <p className="text-lg font-bold text-emerald-600">{summaryLoading ? "..." : formatIDR(summary?.total_cost_usd || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatUSD(summary?.total_cost_usd || 0)}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="rounded-lg bg-indigo-100 dark:bg-indigo-950 p-2"><Cpu className="h-4 w-4 text-indigo-600" /></div>
+                <span className="text-xs text-muted-foreground font-medium">Biaya Full NLU</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.full_nlu_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.full_nlu_calls || 0)} calls</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="rounded-lg bg-amber-100 dark:bg-amber-950 p-2"><Zap className="h-4 w-4 text-amber-600" /></div>
+                <span className="text-xs text-muted-foreground font-medium">Biaya Micro NLU</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.micro_nlu_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.micro_nlu_calls || 0)} calls</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="rounded-lg bg-purple-100 dark:bg-purple-950 p-2"><Layers className="h-4 w-4 text-purple-600" /></div>
+                <span className="text-xs text-muted-foreground font-medium">Biaya Embedding</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.embedding_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.embedding_calls || 0)} calls</p>
+            </div>
+          </div>
+
+          {/* Rincian Biaya per Model */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <DollarSign className="h-4 w-4" /> Rincian Biaya per Model
               </CardTitle>
               <CardDescription>Biaya dihitung berdasarkan harga resmi Gemini API (input &amp; output berbeda per model). Kurs: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")}</CardDescription>
             </CardHeader>
@@ -557,13 +720,12 @@ export default function AITokenUsagePage() {
                     <thead>
                       <tr className="border-b text-left text-muted-foreground">
                         <th className="pb-2 pr-3">Model</th>
-                        <th className="pb-2 pr-3 text-right">Input</th>
-                        <th className="pb-2 pr-3 text-right">Output</th>
-                        <th className="pb-2 pr-3 text-right">Harga Input</th>
-                        <th className="pb-2 pr-3 text-right">Harga Output</th>
-                        <th className="pb-2 pr-3 text-right">Calls</th>
-                        <th className="pb-2 pr-3 text-right">Latency</th>
-                        <th className="pb-2 text-right">Total Biaya</th>
+                        <th className="pb-2 pr-3 text-right">Input Tokens</th>
+                        <th className="pb-2 pr-3 text-right">Output Tokens</th>
+                        <th className="pb-2 pr-3 text-right">Harga Input (IDR)</th>
+                        <th className="pb-2 pr-3 text-right">Harga Output (IDR)</th>
+                        <th className="pb-2 pr-3 text-right">Total Biaya (IDR)</th>
+                        <th className="pb-2 text-right">Biaya (USD)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -581,9 +743,8 @@ export default function AITokenUsagePage() {
                             <td className="py-2 pr-3 text-right">{formatNumber(m.output_tokens)}</td>
                             <td className="py-2 pr-3 text-right text-blue-600">{formatIDR(c.inputCost)}</td>
                             <td className="py-2 pr-3 text-right text-orange-600">{formatIDR(c.outputCost)}</td>
-                            <td className="py-2 pr-3 text-right">{formatNumber(m.call_count)}</td>
-                            <td className="py-2 pr-3 text-right">{m.avg_duration_ms ? m.avg_duration_ms + "ms" : "-"}</td>
-                            <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(c.totalCost)}</td>
+                            <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(c.totalCost)}</td>
+                            <td className="py-2 text-right text-muted-foreground">{formatUSD(c.totalCost)}</td>
                           </tr>
                         )
                       })}
@@ -594,16 +755,169 @@ export default function AITokenUsagePage() {
                           <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.output_tokens, 0))}</td>
                           <td className="py-2 pr-3 text-right text-blue-600">{formatIDR(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).inputCost, 0))}</td>
                           <td className="py-2 pr-3 text-right text-orange-600">{formatIDR(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).outputCost, 0))}</td>
-                          <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.call_count, 0))}</td>
-                          <td className="py-2 pr-3 text-right">-</td>
-                          <td className="py-2 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).totalCost, 0))}</td>
+                          <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).totalCost, 0))}</td>
+                          <td className="py-2 text-right text-muted-foreground">{formatUSD(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).totalCost, 0))}</td>
                         </tr>
                       )}
                       {byModel.length === 0 && (
-                        <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
+                        <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
                       )}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Biaya per Layer / Call Type */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Activity className="h-4 w-4" /> Biaya per Layer
+                </CardTitle>
+                <CardDescription>Perbandingan biaya antara Full NLU, Micro NLU, dan Embedding</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {summaryLoading ? <Skeleton className="h-56" /> : (
+                  <div className="h-56 flex items-center justify-center">
+                    <Doughnut
+                      data={{
+                        labels: ["Full NLU", "Micro NLU", "Embedding"],
+                        datasets: [{
+                          data: [
+                            summary?.full_nlu_cost || 0,
+                            summary?.micro_nlu_cost || 0,
+                            summary?.embedding_cost || 0,
+                          ],
+                          backgroundColor: ["#6366f1", "#f59e0b", "#a855f7"],
+                          borderWidth: 2,
+                          borderColor: "#fff",
+                        }],
+                      }}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                          legend: { position: "bottom" },
+                          tooltip: {
+                            callbacks: {
+                              label: (ctx: any) => `${ctx.label}: ${formatIDR(ctx.raw)} (${formatUSD(ctx.raw)})`,
+                            },
+                          },
+                        },
+                      }}
+                    />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Sumber API Key — BYOK vs ENV */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Shield className="h-4 w-4" /> Sumber API Key
+                </CardTitle>
+                <CardDescription>Rincian penggunaan dari BYOK keys vs .env API key utama</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {summaryLoading ? <Skeleton className="h-24" /> : bySource.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Info className="h-4 w-4 text-amber-600" />
+                      <span className="text-sm font-medium text-amber-800 dark:text-amber-200">Belum Ada Data</span>
+                    </div>
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      Data sumber API key akan muncul setelah ada percakapan baru yang terekam dengan tracking key source.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left border-b">
+                            <th className="py-2 pr-3 font-medium text-muted-foreground">Sumber</th>
+                            <th className="py-2 pr-3 font-medium text-muted-foreground text-right">API Calls</th>
+                            <th className="py-2 pr-3 font-medium text-muted-foreground text-right">Token</th>
+                            <th className="py-2 pr-3 font-medium text-muted-foreground text-right">Biaya (IDR)</th>
+                            <th className="py-2 font-medium text-muted-foreground text-right">Biaya (USD)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bySource.map((s) => (
+                            <tr key={s.source} className="border-b last:border-0">
+                              <td className="py-2 pr-3 font-medium text-sm">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                                  s.source === 'byok' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
+                                  s.source === 'env' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
+                                  'bg-gray-100 text-gray-700 dark:bg-gray-900 dark:text-gray-300'
+                                }`}>
+                                  {s.source === 'byok' ? 'BYOK Keys' : s.source === 'env' ? '.env Fallback' : s.source}
+                                </span>
+                              </td>
+                              <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(s.total_calls)}</td>
+                              <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(s.total_tokens)}</td>
+                              <td className="py-2 pr-3 text-right tabular-nums text-green-600">{formatIDR(s.total_cost_usd)}</td>
+                              <td className="py-2 text-right tabular-nums text-blue-600">{formatUSD(s.total_cost_usd)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="text-xs text-muted-foreground space-y-1 mt-2">
+                      <p className="font-medium">Cara kerja rotasi API key:</p>
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        <li><strong>BYOK (Free):</strong> Digunakan pertama — gratis tapi limit rendah</li>
+                        <li><strong>BYOK (Tier 1/2):</strong> Digunakan jika free habis — berbayar, limit tinggi</li>
+                        <li><strong>.env fallback:</strong> Digunakan jika semua BYOK habis</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Estimasi Biaya per Pesan */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Calculator className="h-4 w-4" /> Estimasi Biaya per Sesi Chat
+              </CardTitle>
+              <CardDescription>Rata-rata biaya dan token per sesi chat (hanya main_chat yang dihitung)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {summaryLoading ? <Skeleton className="h-24" /> : (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Total Chat Sesi</div>
+                    <div className="text-xl font-bold">{formatNumber(summary?.main_chat_calls || 0)}</div>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Avg Token / Chat</div>
+                    <div className="text-xl font-bold">{formatNumber(avgPerChat?.avg_total || 0)}</div>
+                    <div className="text-xs text-muted-foreground">{formatNumber(avgPerChat?.avg_input || 0)} in / {formatNumber(avgPerChat?.avg_output || 0)} out</div>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Biaya Main Chat</div>
+                    <div className="text-xl font-bold text-emerald-600">{formatIDR(summary?.main_chat_cost || 0)}</div>
+                    <div className="text-xs text-muted-foreground">{formatUSD(summary?.main_chat_cost || 0)}</div>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Avg Biaya / Chat</div>
+                    <div className="text-xl font-bold text-emerald-600">
+                      {(summary?.main_chat_calls || 0) > 0
+                        ? formatIDR((summary?.main_chat_cost || 0) / (summary?.main_chat_calls || 1))
+                        : "Rp 0"}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {(summary?.main_chat_calls || 0) > 0
+                        ? formatUSD((summary?.main_chat_cost || 0) / (summary?.main_chat_calls || 1))
+                        : "$0.00"}
+                    </div>
+                  </div>
                 </div>
               )}
             </CardContent>

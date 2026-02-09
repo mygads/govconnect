@@ -74,6 +74,9 @@ async function callMicroLLM(
           ...context,
           success: true,
           duration_ms: durationMs,
+          key_source: key.isByok ? 'byok' : 'env',
+          key_id: key.keyId,
+          key_tier: key.tier,
         });
 
         return result.response.text();
@@ -255,4 +258,124 @@ export async function matchServiceSlug(
   });
 
   return parsed;
+}
+
+// ==================== FAREWELL CLASSIFIER ====================
+
+const FAREWELL_CLASSIFY_PROMPT = `Kamu adalah classifier percakapan untuk layanan publik Indonesia (GovConnect).
+
+TUGAS:
+Tentukan apakah pesan user menunjukkan bahwa dia ingin MENGAKHIRI percakapan (FAREWELL) atau masih ingin MELANJUTKAN (CONTINUE).
+
+FAREWELL mencakup:
+- Ucapan selamat tinggal (bye, dadah, sampai jumpa)
+- Menyatakan tidak ada pertanyaan lagi (ga ada lagi, cukup, sudah itu aja)
+- Mengakhiri percakapan secara implisit (yaudah, ok makasih udah cukup)
+- Menyatakan selesai (udah selesai, enough, nothing more)
+
+BUKAN FAREWELL:
+- Menyatakan cukup data dalam konteks pengisian form ("udah cukup" saat diminta detail)
+- Terima kasih biasa tanpa indikasi akhir percakapan
+- Menyatakan persetujuan ("cukup segitu aja" untuk data complaint)
+- Pertanyaan lanjutan atau permintaan baru
+
+OUTPUT (JSON saja, tanpa markdown):
+{
+  "decision": "FAREWELL|CONTINUE",
+  "confidence": 0.0-1.0,
+  "reason": "penjelasan singkat"
+}
+
+PESAN USER:
+{user_message}`;
+
+export interface FarewellResult {
+  decision: 'FAREWELL' | 'CONTINUE';
+  confidence: number;
+  reason?: string;
+}
+
+export async function classifyFarewell(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<FarewellResult | null> {
+  const prompt = FAREWELL_CLASSIFY_PROMPT.replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'farewell_classify', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as FarewellResult | null;
+  if (!parsed?.decision || typeof parsed.confidence !== 'number') return null;
+
+  logger.info('Micro LLM classified farewell', {
+    message: message.substring(0, 60),
+    decision: parsed.decision,
+    confidence: parsed.confidence,
+  });
+
+  return {
+    decision: parsed.decision,
+    confidence: Math.max(0, Math.min(1, parsed.confidence)),
+    reason: parsed.reason,
+  };
+}
+
+// ==================== GREETING CLASSIFIER ====================
+
+const GREETING_CLASSIFY_PROMPT = `Kamu adalah classifier percakapan untuk layanan publik Indonesia (GovConnect).
+
+TUGAS:
+Tentukan apakah pesan user adalah SALAM/GREETING murni (GREETING) atau sudah mengandung PERMINTAAN/pertanyaan (HAS_REQUEST).
+
+GREETING murni:
+- Halo, hai, hi, hello, hey
+- Selamat pagi/siang/sore/malam
+- Assalamualaikum, permisi
+- Salam-salam tanpa isi lain
+
+HAS_REQUEST (greeting + permintaan):
+- "Halo, saya mau lapor jalan rusak"
+- "Selamat pagi, mau tanya jam operasional"
+- "Assalamualaikum, butuh surat keterangan"
+- Pesan yang langsung ke inti pertanyaan
+
+OUTPUT (JSON saja, tanpa markdown):
+{
+  "decision": "GREETING|HAS_REQUEST",
+  "confidence": 0.0-1.0,
+  "reason": "penjelasan singkat"
+}
+
+PESAN USER:
+{user_message}`;
+
+export interface GreetingResult {
+  decision: 'GREETING' | 'HAS_REQUEST';
+  confidence: number;
+  reason?: string;
+}
+
+export async function classifyGreeting(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<GreetingResult | null> {
+  const prompt = GREETING_CLASSIFY_PROMPT.replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'greeting_classify', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as GreetingResult | null;
+  if (!parsed?.decision || typeof parsed.confidence !== 'number') return null;
+
+  logger.info('Micro LLM classified greeting', {
+    message: message.substring(0, 60),
+    decision: parsed.decision,
+    confidence: parsed.confidence,
+  });
+
+  return {
+    decision: parsed.decision,
+    confidence: Math.max(0, Math.min(1, parsed.confidence)),
+    reason: parsed.reason,
+  };
 }

@@ -49,7 +49,7 @@ import { aiAnalyticsService } from './ai-analytics.service';
 import { recordTokenUsage } from './token-usage.service';
 import { RAGContext } from '../types/embedding.types';
 import { preProcessMessage } from './ai-optimizer.service';
-import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile } from './user-profile.service';
+import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile, clearProfile } from './user-profile.service';
 import { getEnhancedContext, updateContext, recordDataCollected, recordCompletedAction, getContextForLLM } from './conversation-context.service';
 import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
 import { linkUserToPhone, recordChannelActivity, updateSharedData, getCrossChannelContextForLLM } from './cross-channel-context.service';
@@ -61,7 +61,7 @@ import {
   logAntiHallucinationEvent,
   needsAntiHallucinationRetry,
 } from './anti-hallucination.service';
-import { matchServiceSlug, matchComplaintType } from './micro-llm-matcher.service';
+import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting } from './micro-llm-matcher.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
@@ -302,6 +302,30 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
 }
 
 /**
+ * Clear all in-memory caches for a SPECIFIC user.
+ * Used when admin clears a conversation or user resets their chat session.
+ * Also clears the user profile's personal data (name, phone, etc.)
+ */
+export function clearUserCaches(userId: string): { cleared: number } {
+  const userCaches = [
+    pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
+    pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
+    pendingPhotos, conversationHistoryCache,
+  ];
+  let cleared = 0;
+  for (const cache of userCaches) {
+    if (cache.get(userId)) {
+      cache.delete(userId);
+      cleared++;
+    }
+  }
+  // Also clear user profile personal data
+  clearProfile(userId);
+  logger.info(`[Admin] Cleared caches for user: ${userId}`, { cleared });
+  return { cleared };
+}
+
+/**
  * Get stats from ALL UMP caches (for admin dashboard).
  */
 export function getUMPCacheStats() {
@@ -492,36 +516,8 @@ export function isVagueAddress(alamat: string): boolean {
 }
 
 /**
- * Check if message is a confirmation response
- */
-export function isConfirmationResponse(message: string): boolean {
-  const cleanMessage = message.trim().toLowerCase();
-  
-  const confirmPatterns = [
-    /^ya$/i, /^iya$/i, /^yap$/i, /^yup$/i,
-    /^ok$/i, /^oke$/i, /^okey$/i, /^okay$/i,
-    /^baik$/i, /^lanjut$/i, /^lanjutkan$/i, /^setuju$/i, /^boleh$/i, /^silakan$/i, /^siap$/i,
-    /^buat\s*(saja|aja)?$/i, /^proses\s*(saja|aja)?$/i, /^kirim\s*(saja|aja)?$/i,
-    /^ya,?\s*(lanjutkan|lanjut|buat|proses)/i,
-    /^sudah\s*(cukup)?$/i, /^cukup$/i, /^itu\s*(saja|aja)$/i,
-    /^(itu|ini)\s*(sudah|udah)$/i, /^(sudah|udah)$/i, /^(sudah|udah)\s*(itu|ini)$/i,
-    /^(udah|sudah)\s*(cukup|lengkap)$/i, /^segitu\s*(saja|aja)?$/i, /^ya\s*(sudah|udah|cukup)/i,
-    /^tidak\s*(perlu)?\s*(tambah|detail)/i, /^ga\s*(perlu|usah)/i, /^gak\s*(perlu|usah)/i,
-    /^nggak\s*(perlu|usah)/i, /^engga[k]?\s*(perlu|usah)/i,
-  ];
-  
-  return confirmPatterns.some(pattern => pattern.test(cleanMessage));
-}
 
-function isNegativeConfirmation(message: string): boolean {
-  const cleanMessage = message.trim().toLowerCase();
-  const rejectPatterns = [
-    /^tidak$/i, /^ga$/i, /^gak$/i, /^nggak$/i, /^engga(k)?$/i,
-    /^batal$/i, /^jangan$/i, /^gak jadi$/i, /^ga jadi$/i, /^nggak jadi$/i,
-    /^tidak jadi$/i, /^belum$/i,
-  ];
-  return rejectPatterns.some(pattern => pattern.test(cleanMessage));
-}
+
 
 /**
  * Detect emergency complaint
@@ -567,12 +563,43 @@ function normalizeHandlerResult(result: HandlerResult): { replyText: string; gui
   };
 }
 
+/**
+ * Expand common service aliases used by Indonesian citizens.
+ * E.g. "surat N1" → "surat pengantar nikah", "KTP" → "pembuatan ktp"
+ */
+function expandServiceAlias(query: string): string {
+  const aliasMap: Array<{ pattern: RegExp; replacement: string }> = [
+    { pattern: /\bsurat\s+N1\b/i, replacement: 'surat pengantar nikah' },
+    { pattern: /\bN1\s+(nikah|buat\s+nikah|untuk\s+nikah)/i, replacement: 'surat pengantar nikah' },
+    { pattern: /\bsurat\s+N2\b/i, replacement: 'surat keterangan asal usul' },
+    { pattern: /\bsurat\s+N4\b/i, replacement: 'surat keterangan orang tua' },
+    { pattern: /\be-?KTP\b/i, replacement: 'pembuatan KTP' },
+    { pattern: /\bbikin\s+KTP\b/i, replacement: 'pembuatan KTP' },
+    { pattern: /\bSKTM\b/i, replacement: 'surat keterangan tidak mampu' },
+    { pattern: /\bSKU\b/i, replacement: 'surat keterangan usaha' },
+    { pattern: /\bSKD\b/i, replacement: 'surat keterangan domisili' },
+    { pattern: /\bbikin\s+KK\b/i, replacement: 'pembuatan kartu keluarga' },
+  ];
+
+  let expanded = query;
+  for (const { pattern, replacement } of aliasMap) {
+    if (pattern.test(expanded)) {
+      expanded = expanded.replace(pattern, replacement);
+      break; // Only one alias expansion per query
+    }
+  }
+  return expanded;
+}
+
 async function resolveServiceSlugFromSearch(query: string, villageId?: string): Promise<{ slug: string; name?: string } | null> {
   const trimmedQuery = (query || '').trim();
   if (!trimmedQuery) return null;
 
+  // Expand common service aliases before searching
+  const expandedQuery = expandServiceAlias(trimmedQuery);
+
   // Check service search cache first (M3 optimization)
-  const cacheKey = `${villageId || ''}:${trimmedQuery.toLowerCase()}`;
+  const cacheKey = `${villageId || ''}:${expandedQuery.toLowerCase()}`;
   const cached = serviceSearchCache.get(cacheKey);
   if (cached) {
     logger.debug('resolveServiceSlugFromSearch: served from cache', { query: trimmedQuery, slug: cached.slug });
@@ -584,7 +611,7 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
     const response = await axios.get(`${config.caseServiceUrl}/services/search`, {
       params: {
         village_id: villageId,
-        q: trimmedQuery,
+        q: expandedQuery,
         limit: 10,
       },
       headers: { 'x-internal-api-key': config.internalApiKey },
@@ -613,13 +640,13 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
 
     if (!options.length) return null;
 
-    const result = await matchServiceSlug(trimmedQuery, options);
+    const result = await matchServiceSlug(expandedQuery, options);
 
     if (result?.matched_slug && result.confidence >= 0.5) {
       const matched = services.find((s: any) => s.slug === result.matched_slug);
       if (matched) {
         logger.debug('resolveServiceSlugFromSearch: Micro LLM match', {
-          query: trimmedQuery,
+          query: expandedQuery,
           matched_slug: result.matched_slug,
           confidence: result.confidence,
           reason: result.reason,
@@ -1481,7 +1508,7 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
     const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug || service_slug, userId, channel === 'webchat' ? 'webchat' : 'whatsapp');
 
     const clickableUrl = formatClickableLink(formUrl, channel, 'Link Formulir Layanan');
-    return `Baik Pak/Bu, silakan mengisi permohonan melalui link berikut:\n${clickableUrl}\n\nSetelah dikirim, Bapak/Ibu akan mendapatkan nomor layanan.`;
+    return `Baik Pak/Bu, silakan mengisi permohonan melalui link berikut:\n${clickableUrl}\n\nSetelah dikirim, Bapak/Ibu akan mendapatkan nomor layanan.\n⚠️ Mohon simpan nomor layanan dengan baik.\nUntuk cek status, ketik: *status <kode layanan>*\n(Contoh: status LAY-20250209-001)`;
   } catch (error: any) {
     logger.error('Failed to validate service before sending form link', { error: error.message, service_slug, villageId });
     return llmResponse.reply_text || 'Mohon maaf Pak/Bu, saya belum bisa menyiapkan link formulirnya sekarang. Coba lagi sebentar ya.';
@@ -2752,7 +2779,28 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     const resolvedVillageId = villageId;
-    const greetingPattern = /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i;
+
+    // Classify greeting once via micro NLU and cache the result for multiple usage points
+    let greetingClassified = false;
+    let isGreetingMessage = false;
+    const checkGreeting = async (): Promise<boolean> => {
+      if (!greetingClassified) {
+        greetingClassified = true;
+        try {
+          const greetingResult = await classifyGreeting(message.trim(), {
+            village_id: resolvedVillageId,
+            wa_user_id: userId,
+            session_id: userId,
+            channel,
+          });
+          isGreetingMessage = greetingResult?.decision === 'GREETING' && greetingResult.confidence >= 0.7;
+        } catch (error: any) {
+          logger.warn('[UnifiedProcessor] Greeting NLU failed', { error: error.message });
+          isGreetingMessage = false;
+        }
+      }
+      return isGreetingMessage;
+    };
 
     if (channel === 'whatsapp' && (!resolvedHistory || resolvedHistory.length === 0)) {
       resolvedHistory = await fetchConversationHistoryFromChannel(userId, resolvedVillageId);
@@ -2766,13 +2814,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     const pendingName = pendingNameConfirmation.get(userId);
     if (pendingName) {
-      // Use micro LLM for name confirmation (fallback to regex if LLM fails)
+      // Use micro LLM for name confirmation (full NLU, no regex fallback)
       let nameDecision: string;
       try {
         const nameResult = await classifyConfirmation(message.trim());
         nameDecision = nameResult?.decision === 'CONFIRM' ? 'yes' : nameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
-        nameDecision = isConfirmationResponse(message) ? 'yes' : isNegativeConfirmation(message) ? 'no' : 'uncertain';
+        nameDecision = 'uncertain';
       }
 
       if (nameDecision === 'yes') {
@@ -2807,13 +2855,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     const lastPromptedName = extractNameFromAssistantPrompt(getLastAssistantMessage(resolvedHistory));
     if (lastPromptedName) {
-      // Use micro LLM for name confirmation via history (fallback to regex)
+      // Use micro LLM for name confirmation via history (full NLU, no regex fallback)
       let histNameDecision: string;
       try {
         const histNameResult = await classifyConfirmation(message.trim());
         histNameDecision = histNameResult?.decision === 'CONFIRM' ? 'yes' : histNameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
-        histNameDecision = isConfirmationResponse(message) ? 'yes' : isNegativeConfirmation(message) ? 'no' : 'uncertain';
+        histNameDecision = 'uncertain';
       }
 
       if (histNameDecision === 'yes') {
@@ -2845,12 +2893,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 2.2: Check pending online service form offer
     const pendingOffer = pendingServiceFormOffer.get(userId);
     if (pendingOffer) {
-      const wantsFormLink = /\b(link|tautan|formulir|form|online)(nya)?\b/i.test(message);
       const confirmationResult = await classifyConfirmation(message);
       const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
       const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
 
-      if (isLikelyConfirm || wantsFormLink) {
+      if (isLikelyConfirm) {
         clearPendingServiceFormOffer(userId);
         const llmLike = {
           intent: 'CREATE_SERVICE_REQUEST',
@@ -2903,13 +2950,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         };
       }
 
-      if (greetingPattern.test(message.trim())) {
+      if (await checkGreeting()) {
         const profile = await getVillageProfileSummary(resolvedVillageId);
         const villageLabel = profile?.name ? profile.name : 'Desa/Kelurahan';
         return {
           success: true,
-          response: `Selamat datang di layanan GovConnect ${villageLabel}.
-Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
+          response: `Selamat datang di layanan GovConnect ${villageLabel}.\nBoleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
           intent: 'QUESTION',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
@@ -2942,6 +2988,31 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
         intent: 'QUESTION',
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
       };
+    }
+    
+    // Step 1.9: Farewell detection — user wants to end conversation (micro NLU)
+    if (message.trim().length < 80) {
+      try {
+        const farewellResult = await classifyFarewell(message.trim(), {
+          village_id: resolvedVillageId,
+          wa_user_id: userId,
+          session_id: userId,
+          channel,
+        });
+        if (farewellResult?.decision === 'FAREWELL' && farewellResult.confidence >= 0.8) {
+          const userName = knownName || getProfile(userId).nama_lengkap;
+          const nameGreeting = userName ? ` ${userName}` : '';
+          tracker.complete();
+          return {
+            success: true,
+            response: `Baik Pak/Bu${nameGreeting}, terima kasih sudah menghubungi layanan GovConnect. Semoga informasinya bermanfaat. Jangan ragu hubungi kami kembali jika ada keperluan lain ya!`,
+            intent: 'QUESTION',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          };
+        }
+      } catch (error: any) {
+        logger.warn('[UnifiedProcessor] Farewell NLU failed, continuing normal flow', { error: error.message });
+      }
     }
     
     // Step 2: Check pending address confirmation (for vague addresses)
@@ -3195,13 +3266,13 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     // Step 2.1: Check pending cancel confirmation
     const pendingCancel = pendingCancelConfirmation.get(userId);
     if (pendingCancel) {
-      // Use micro LLM for confirmation classification (fallback to regex if LLM fails)
+      // Use micro LLM for confirmation classification (full NLU, no regex fallback)
       let cancelDecision: string;
       try {
         const cancelResult = await classifyConfirmation(message.trim());
         cancelDecision = cancelResult?.decision === 'CONFIRM' ? 'yes' : cancelResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
-        cancelDecision = isConfirmationResponse(message) ? 'yes' : isNegativeConfirmation(message) ? 'no' : 'uncertain';
+        cancelDecision = 'uncertain';
       }
 
       if (cancelDecision === 'yes') {
@@ -3249,10 +3320,36 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     }
 
     // Step 2.5: AI Optimization - Pre-process message
+    // Step 2.45: Direct LAP/LAY code detection — bypass LLM for direct status check
+    const lapMatch = message.match(/\b(LAP-\d{8}-\d{3})\b/i);
+    const layMatch = message.match(/\b(LAY-\d{8}-\d{3})\b/i);
+    if (lapMatch || layMatch) {
+      const code = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase();
+      const isLap = code.startsWith('LAP-');
+      const directCheckLlm = {
+        intent: 'CHECK_STATUS',
+        fields: isLap ? { complaint_id: code } : { request_number: code },
+        reply_text: '',
+      };
+      logger.info('[UnifiedProcessor] Direct LAP/LAY code detected, bypassing LLM', { userId, code });
+      tracker.preparing();
+      const statusReply = await handleStatusCheck(userId, channel, directCheckLlm, message);
+      tracker.complete();
+      if (channel === 'whatsapp') {
+        appendToHistoryCache(userId, 'assistant', statusReply);
+      }
+      return {
+        success: true,
+        response: statusReply,
+        intent: 'CHECK_STATUS',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
+
     const historyString = resolvedHistory?.map(m => `${m.role}: ${m.content}`).join('\n') || '';
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
 
-    if (greetingPattern.test(message.trim())) {
+    if (await checkGreeting()) {
       const profile = await getVillageProfileSummary(resolvedVillageId);
       if (profile?.name) {
         templateContext = {
@@ -3319,7 +3416,7 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
     
     let preloadedRAGContext: RAGContext | string | undefined;
     let graphContext = '';
-    const isGreeting = greetingPattern.test(sanitizedMessage.trim());
+    const isGreeting = await checkGreeting();
     const looksLikeQuestion = shouldRetrieveContext(sanitizedMessage);
     const prefetchVillageId = resolvedVillageId;
     
@@ -3456,6 +3553,9 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
       intent: llmResponse.intent,
       success: true,
       duration_ms: metrics.durationMs,
+      key_source: metrics.keySource,
+      key_id: metrics.keyId,
+      key_tier: metrics.keyTier,
     });
 
     // Anti-hallucination gate (jam operasional/biaya) when knowledge is empty
@@ -3493,6 +3593,9 @@ Boleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
           intent: retryResult.response.intent,
           success: true,
           duration_ms: retryResult.metrics.durationMs,
+          key_source: retryResult.metrics.keySource,
+          key_id: retryResult.metrics.keyId,
+          key_tier: retryResult.metrics.keyTier,
         });
         llmResult.response = retryResult.response;
       }
@@ -3722,13 +3825,13 @@ async function handlePendingAddressConfirmation(
   channel: 'whatsapp' | 'webchat',
   mediaUrl?: string
 ): Promise<string | null> {
-  // Use micro LLM for confirmation classification (fallback to regex if LLM fails)
+  // Use micro LLM for confirmation classification (full NLU, no regex fallback)
   let addrDecision: string;
   try {
     const addrResult = await classifyConfirmation(message.trim());
     addrDecision = addrResult?.decision === 'CONFIRM' ? 'yes' : addrResult?.decision === 'REJECT' ? 'no' : 'uncertain';
   } catch {
-    addrDecision = isConfirmationResponse(message) ? 'yes' : 'uncertain';
+    addrDecision = 'uncertain';
   }
 
   if (addrDecision === 'yes') {
@@ -3918,38 +4021,17 @@ async function buildContextWithHistory(
 
 /**
  * Fallback responses when AI is unavailable
- * Now uses the smart fallback service for better context-aware responses
+ * Uses centralized intent-patterns for emergency fallback detection (LLM-down only)
  */
 function getFallbackResponse(message: string): string {
   // Import dynamically to avoid circular dependency
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { getFallbackByIntent } = require('./fallback-response.service');
+  const { detectIntentFromPatterns } = require('../constants/intent-patterns');
   
-  const lowerMessage = message.toLowerCase();
-  
-  // Detect intent from message for better fallback
-  if (/^(halo|hai|hi|hello|selamat|assalam)/i.test(lowerMessage)) {
-    return getFallbackByIntent('GREETING');
-  }
-  
-  if (lowerMessage.includes('surat') || lowerMessage.includes('dokumen') || lowerMessage.includes('keterangan') || lowerMessage.includes('layanan') || lowerMessage.includes('permohonan')) {
-    return getFallbackByIntent('CREATE_SERVICE_REQUEST');
-  }
-  
-  if (lowerMessage.includes('lapor') || lowerMessage.includes('keluhan') || lowerMessage.includes('aduan') || lowerMessage.includes('rusak') || lowerMessage.includes('mati')) {
-    return getFallbackByIntent('CREATE_COMPLAINT');
-  }
-  
-  if (lowerMessage.includes('status') || lowerMessage.includes('cek') || /LAP-|LAY-/i.test(lowerMessage)) {
-    return getFallbackByIntent('CHECK_STATUS');
-  }
-  
-  if (lowerMessage.includes('jam') || lowerMessage.includes('buka') || lowerMessage.includes('operasional') || lowerMessage.includes('syarat')) {
-    return getFallbackByIntent('KNOWLEDGE_QUERY');
-  }
-  
-  if (lowerMessage.includes('terima kasih') || lowerMessage.includes('makasih')) {
-    return getFallbackByIntent('THANKS');
+  const detected = detectIntentFromPatterns(message);
+  if (detected) {
+    return getFallbackByIntent(detected);
   }
   
   return getFallbackByIntent('UNKNOWN');
@@ -3967,7 +4049,6 @@ export default {
   handleKnowledgeQuery,
   validateResponse,
   isVagueAddress,
-  isConfirmationResponse,
   detectEmergencyComplaint,
   getPendingAddressConfirmation,
   clearPendingAddressConfirmation,

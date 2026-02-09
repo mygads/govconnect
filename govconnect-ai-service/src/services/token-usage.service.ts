@@ -77,7 +77,11 @@ export type CallType =
   | 'complaint_type_match'
   | 'service_slug_match'
   | 'rag_query_expand'
-  | 'confirmation_classify';
+  | 'confirmation_classify'
+  | 'farewell_classify'
+  | 'greeting_classify'
+  | 'embedding_single'
+  | 'embedding_batch';
 
 export interface TokenUsageRecord {
   model: string;
@@ -93,6 +97,9 @@ export interface TokenUsageRecord {
   intent?: string | null;
   success?: boolean;
   duration_ms?: number | null;
+  key_source?: string | null;  // "byok" | "env"
+  key_id?: string | null;      // BYOK key ID
+  key_tier?: string | null;    // "free" | "tier1" | "tier2" | "env"
 }
 
 export interface UsageMetadata {
@@ -127,6 +134,9 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> 
         intent: record.intent ?? null,
         success: record.success ?? true,
         duration_ms: record.duration_ms ?? null,
+        key_source: record.key_source ?? null,
+        key_id: record.key_id ?? null,
+        key_tier: record.key_tier ?? null,
       },
     });
 
@@ -161,6 +171,9 @@ export function extractAndRecord(
     intent?: string | null;
     success?: boolean;
     duration_ms?: number | null;
+    key_source?: string | null;
+    key_id?: string | null;
+    key_tier?: string | null;
   }
 ): { inputTokens: number; outputTokens: number; totalTokens: number } {
   const meta: UsageMetadata = geminiResult?.response?.usageMetadata ?? {};
@@ -486,6 +499,16 @@ export async function getTokenUsageSummary(
   full_nlu_calls: number;
   micro_nlu_tokens: number;
   full_nlu_tokens: number;
+  embedding_calls: number;
+  embedding_tokens: number;
+  embedding_cost: number;
+  rag_expand_calls: number;
+  rag_expand_tokens: number;
+  main_chat_calls: number;
+  main_chat_tokens: number;
+  main_chat_cost: number;
+  full_nlu_cost: number;
+  micro_nlu_cost: number;
 }> {
   const range = defaultRange('month');
   const startDate = filters?.start ? new Date(filters.start) : range.start;
@@ -506,7 +529,17 @@ export async function getTokenUsageSummary(
       COALESCE(SUM(CASE WHEN layer_type = 'micro_nlu' THEN 1 ELSE 0 END), 0)::int AS micro_nlu_calls,
       COALESCE(SUM(CASE WHEN layer_type = 'full_nlu' THEN 1 ELSE 0 END), 0)::int AS full_nlu_calls,
       COALESCE(SUM(CASE WHEN layer_type = 'micro_nlu' THEN total_tokens ELSE 0 END), 0)::int AS micro_nlu_tokens,
-      COALESCE(SUM(CASE WHEN layer_type = 'full_nlu' THEN total_tokens ELSE 0 END), 0)::int AS full_nlu_tokens
+      COALESCE(SUM(CASE WHEN layer_type = 'full_nlu' THEN total_tokens ELSE 0 END), 0)::int AS full_nlu_tokens,
+      COALESCE(SUM(CASE WHEN layer_type = 'embedding' THEN 1 ELSE 0 END), 0)::int AS embedding_calls,
+      COALESCE(SUM(CASE WHEN layer_type = 'embedding' THEN total_tokens ELSE 0 END), 0)::int AS embedding_tokens,
+      COALESCE(SUM(CASE WHEN layer_type = 'embedding' THEN cost_usd ELSE 0 END), 0)::float AS embedding_cost,
+      COALESCE(SUM(CASE WHEN layer_type = 'rag_expand' THEN 1 ELSE 0 END), 0)::int AS rag_expand_calls,
+      COALESCE(SUM(CASE WHEN layer_type = 'rag_expand' THEN total_tokens ELSE 0 END), 0)::int AS rag_expand_tokens,
+      COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN 1 ELSE 0 END), 0)::int AS main_chat_calls,
+      COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN total_tokens ELSE 0 END), 0)::int AS main_chat_tokens,
+      COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN cost_usd ELSE 0 END), 0)::float AS main_chat_cost,
+      COALESCE(SUM(CASE WHEN layer_type = 'full_nlu' THEN cost_usd ELSE 0 END), 0)::float AS full_nlu_cost,
+      COALESCE(SUM(CASE WHEN layer_type = 'micro_nlu' THEN cost_usd ELSE 0 END), 0)::float AS micro_nlu_cost
     FROM ai_token_usage
     WHERE ${where}
   `);
@@ -521,5 +554,42 @@ export async function getTokenUsageSummary(
     full_nlu_calls: 0,
     micro_nlu_tokens: 0,
     full_nlu_tokens: 0,
+    embedding_calls: 0,
+    embedding_tokens: 0,
+    embedding_cost: 0,
+    rag_expand_calls: 0,
+    rag_expand_tokens: 0,
+    main_chat_calls: 0,
+    main_chat_tokens: 0,
+    main_chat_cost: 0,
+    full_nlu_cost: 0,
+    micro_nlu_cost: 0,
   };
+}
+
+/**
+ * Get token usage breakdown by key source (BYOK vs ENV).
+ * Returns aggregated totals per source for the given slug filter.
+ */
+export async function getTokenUsageBySource(slug?: string) {
+  const conditions: Prisma.Sql[] = [];
+  if (slug) conditions.push(Prisma.sql`village_id = ${slug}`);
+
+  const where = conditions.length > 0
+    ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
+    : Prisma.empty;
+
+  return prisma.$queryRaw<any[]>(Prisma.sql`
+    SELECT
+      COALESCE(key_source, 'unknown') AS source,
+      COUNT(*)::int AS total_calls,
+      COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+      COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
+      COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
+      COALESCE(SUM(cost_usd), 0)::float AS total_cost_usd
+    FROM ai_token_usage
+    ${where}
+    GROUP BY COALESCE(key_source, 'unknown')
+    ORDER BY total_tokens DESC
+  `);
 }

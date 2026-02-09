@@ -200,6 +200,26 @@ function createDefaultProfile(wa_user_id: string): UserProfile {
 }
 
 /**
+ * Clear/reset user profile — removes all personal data (name, phone, etc.)
+ * Used when admin clears a conversation or user resets their chat.
+ */
+export function clearProfile(wa_user_id: string): void {
+  const existing = profileCache.get(wa_user_id);
+  if (existing) {
+    // Reset personal fields but keep interaction stats
+    existing.nama_lengkap = undefined;
+    existing.nik = undefined;
+    existing.no_hp = undefined;
+    existing.default_address = undefined;
+    existing.default_rt_rw = undefined;
+    existing.default_kelurahan = undefined;
+    existing.updated_at = new Date();
+    isDirty = true;
+    logger.info('👤 Profile cleared (personal data reset)', { wa_user_id });
+  }
+}
+
+/**
  * Update user profile
  */
 export function updateProfile(wa_user_id: string, updates: ProfileUpdate): UserProfile {

@@ -473,6 +473,16 @@ export const ai = {
   },
 
   /**
+   * Get token usage breakdown by key source (BYOK vs ENV)
+   */
+  async getTokenUsageBySource(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/by-source${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
    * Get golden set summary
    */
   async getGoldenSetSummary() {

@@ -123,6 +123,11 @@ export async function callGemini(systemPrompt: string): Promise<{ response: LLMR
           durationMs: callDuration,
         });
 
+        // Inject key source info into metrics for token usage tracking
+        result.data.metrics.keySource = key.isByok ? 'byok' : 'env';
+        result.data.metrics.keyId = key.keyId;
+        result.data.metrics.keyTier = key.tier;
+
         return result.data;
       }
 
