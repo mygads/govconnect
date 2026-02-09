@@ -4,31 +4,66 @@
  * Persists actual Gemini API token usage (from usageMetadata) to PostgreSQL.
  * Provides aggregation queries for the AI Usage dashboard.
  *
- * Pricing reference (USD per 1M tokens) — December 2025:
- * ┌─────────────────────────┬──────────┬───────────┐
- * │ Model                   │ Input    │ Output    │
- * ├─────────────────────────┼──────────┼───────────┤
- * │ gemini-2.5-flash        │ $0.30    │ $2.50     │
- * │ gemini-2.5-flash-lite   │ $0.10    │ $0.40     │
- * │ gemini-2.0-flash        │ $0.10    │ $0.40     │
- * │ gemini-2.0-flash-lite   │ $0.075   │ $0.30     │
- * └─────────────────────────┴──────────┴───────────┘
+ * Pricing reference (USD per 1M tokens, paid tier <=200k context) — February 2026:
+ * ┌─────────────────────────────────┬──────────┬───────────┐
+ * │ Model                           │ Input    │ Output    │
+ * ├─────────────────────────────────┼──────────┼───────────┤
+ * │ gemini-3-pro-preview            │ $2.00    │ $12.00    │
+ * │ gemini-3-flash-preview          │ $0.50    │ $3.00     │
+ * │ gemini-2.5-pro                  │ $1.25    │ $10.00    │
+ * │ gemini-2.5-flash                │ $0.30    │ $2.50     │
+ * │ gemini-2.5-flash-lite           │ $0.10    │ $0.40     │
+ * │ gemini-2.0-flash                │ $0.10    │ $0.40     │
+ * │ gemini-2.0-flash-lite           │ $0.075   │ $0.30     │
+ * │ gemini-1.5-pro                  │ $1.25    │ $5.00     │
+ * │ gemini-1.5-flash                │ $0.075   │ $0.30     │
+ * └─────────────────────────────────┴──────────┴───────────┘
  */
 
 import prisma from '../lib/prisma';
+import { Prisma } from '@prisma/client';
 import logger from '../utils/logger';
 
 // ==================== Pricing ====================
 
 const PRICING: Record<string, { input: number; output: number }> = {
-  'gemini-2.5-flash':      { input: 0.30,  output: 2.50 },
-  'gemini-2.5-flash-lite': { input: 0.10,  output: 0.40 },
-  'gemini-2.0-flash':      { input: 0.10,  output: 0.40 },
-  'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
+  // Gemini 3
+  'gemini-3-pro-preview':       { input: 2.00,  output: 12.00 },
+  'gemini-3-flash-preview':     { input: 0.50,  output: 3.00 },
+  // Gemini 2.5
+  'gemini-2.5-pro':             { input: 1.25,  output: 10.00 },
+  'gemini-2.5-pro-preview':     { input: 1.25,  output: 10.00 },
+  'gemini-2.5-flash':           { input: 0.30,  output: 2.50 },
+  'gemini-2.5-flash-preview':   { input: 0.30,  output: 2.50 },
+  'gemini-2.5-flash-lite':      { input: 0.10,  output: 0.40 },
+  'gemini-2.5-flash-lite-preview': { input: 0.10, output: 0.40 },
+  // Gemini 2.0
+  'gemini-2.0-flash':           { input: 0.10,  output: 0.40 },
+  'gemini-2.0-flash-exp':       { input: 0.10,  output: 0.40 },
+  'gemini-2.0-flash-lite':      { input: 0.075, output: 0.30 },
+  // Gemini 1.5 (legacy)
+  'gemini-1.5-pro':             { input: 1.25,  output: 5.00 },
+  'gemini-1.5-flash':           { input: 0.075, output: 0.30 },
+  'gemini-1.5-flash-8b':        { input: 0.0375, output: 0.15 },
 };
 
+/** Find pricing for a model name — supports date-suffixed names like gemini-2.5-flash-preview-05-20 */
+function findPricing(model: string): { input: number; output: number } {
+  if (PRICING[model]) return PRICING[model];
+  // Prefix match (longest key first)
+  const keys = Object.keys(PRICING).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    if (model.startsWith(key)) return PRICING[key];
+  }
+  // Fallback by family
+  if (model.includes('flash-lite')) return { input: 0.10, output: 0.40 };
+  if (model.includes('flash'))      return { input: 0.30, output: 2.50 };
+  if (model.includes('pro'))        return { input: 1.25, output: 10.00 };
+  return { input: 0.30, output: 2.50 }; // default flash
+}
+
 function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
-  const p = PRICING[model] || { input: 0.10, output: 0.40 };
+  const p = findPricing(model);
   return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
 }
 
@@ -182,15 +217,15 @@ export async function getUsageByPeriod(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  const conditions: string[] = [`created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`];
-  if (filters?.village_id) conditions.push(`village_id = '${filters.village_id}'`);
-  if (filters?.model) conditions.push(`model = '${filters.model}'`);
+  const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  if (filters?.model) conditions.push(Prisma.sql`model = ${filters.model}`);
 
-  const where = conditions.join(' AND ');
+  const where = Prisma.join(conditions, ' AND ');
 
-  const rows = await prisma.$queryRawUnsafe<any[]>(`
+  const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
-      date_trunc('${trunc}', created_at) AS period_start,
+      date_trunc(${trunc}, created_at) AS period_start,
       SUM(input_tokens)::int AS input_tokens,
       SUM(output_tokens)::int AS output_tokens,
       SUM(total_tokens)::int AS total_tokens,
@@ -218,12 +253,12 @@ export async function getUsageByModel(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  const conditions: string[] = [`created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`];
-  if (filters?.village_id) conditions.push(`village_id = '${filters.village_id}'`);
+  const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
 
-  const where = conditions.join(' AND ');
+  const where = Prisma.join(conditions, ' AND ');
 
-  return prisma.$queryRawUnsafe<any[]>(`
+  return prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
       model,
       SUM(input_tokens)::int AS input_tokens,
@@ -249,15 +284,15 @@ export async function getUsageByVillage(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  const conditions: string[] = [
-    `created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`,
-    `village_id IS NOT NULL`,
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`,
+    Prisma.sql`village_id IS NOT NULL`,
   ];
-  if (filters?.model) conditions.push(`model = '${filters.model}'`);
+  if (filters?.model) conditions.push(Prisma.sql`model = ${filters.model}`);
 
-  const where = conditions.join(' AND ');
+  const where = Prisma.join(conditions, ' AND ');
 
-  return prisma.$queryRawUnsafe<any[]>(`
+  return prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
       village_id,
       SUM(input_tokens)::int AS input_tokens,
@@ -282,12 +317,12 @@ export async function getLayerBreakdown(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  const conditions: string[] = [`created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`];
-  if (filters?.village_id) conditions.push(`village_id = '${filters.village_id}'`);
+  const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
 
-  const where = conditions.join(' AND ');
+  const where = Prisma.join(conditions, ' AND ');
 
-  return prisma.$queryRawUnsafe<any[]>(`
+  return prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
       layer_type,
       call_type,
@@ -315,15 +350,15 @@ export async function getAvgTokensPerChat(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  const conditions: string[] = [
-    `created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`,
-    `call_type = 'main_chat'`,
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`,
+    Prisma.sql`call_type = 'main_chat'`,
   ];
-  if (filters?.village_id) conditions.push(`village_id = '${filters.village_id}'`);
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
 
-  const where = conditions.join(' AND ');
+  const where = Prisma.join(conditions, ' AND ');
 
-  const rows = await prisma.$queryRawUnsafe<any[]>(`
+  const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
       COALESCE(AVG(input_tokens), 0)::int AS avg_input,
       COALESCE(AVG(output_tokens), 0)::int AS avg_output,
@@ -347,14 +382,14 @@ export async function getResponseCountByVillage(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  return prisma.$queryRawUnsafe<any[]>(`
+  return prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
       village_id,
       COUNT(*)::int AS response_count,
       COUNT(DISTINCT wa_user_id)::int AS unique_users
     FROM ai_token_usage
-    WHERE created_at >= '${startDate.toISOString()}'
-      AND created_at <= '${endDate.toISOString()}'
+    WHERE created_at >= ${startDate}
+      AND created_at <= ${endDate}
       AND call_type = 'main_chat'
       AND village_id IS NOT NULL
     GROUP BY village_id
@@ -372,22 +407,22 @@ export async function getUsageByVillageAndModel(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  const conditions: string[] = [
-    `created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`,
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`,
   ];
 
   // Support special __null__ to query superadmin testing data (village_id IS NULL)
   if (filters?.village_id === '__null__') {
-    conditions.push(`village_id IS NULL`);
+    conditions.push(Prisma.sql`village_id IS NULL`);
   } else if (filters?.village_id) {
-    conditions.push(`village_id = '${filters.village_id}'`);
+    conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
   } else {
-    conditions.push(`village_id IS NOT NULL`);
+    conditions.push(Prisma.sql`village_id IS NOT NULL`);
   }
 
-  const where = conditions.join(' AND ');
+  const where = Prisma.join(conditions, ' AND ');
 
-  return prisma.$queryRawUnsafe<any[]>(`
+  return prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
       village_id,
       model,
@@ -416,14 +451,14 @@ export async function getUsageByPeriodAndLayer(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  const conditions: string[] = [`created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`];
-  if (filters?.village_id) conditions.push(`village_id = '${filters.village_id}'`);
+  const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
 
-  const where = conditions.join(' AND ');
+  const where = Prisma.join(conditions, ' AND ');
 
-  return prisma.$queryRawUnsafe<any[]>(`
+  return prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
-      date_trunc('${trunc}', created_at) AS period_start,
+      date_trunc(${trunc}, created_at) AS period_start,
       layer_type,
       SUM(input_tokens)::int AS input_tokens,
       SUM(output_tokens)::int AS output_tokens,
@@ -456,12 +491,12 @@ export async function getTokenUsageSummary(
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
-  const conditions: string[] = [`created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`];
-  if (filters?.village_id) conditions.push(`village_id = '${filters.village_id}'`);
+  const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
 
-  const where = conditions.join(' AND ');
+  const where = Prisma.join(conditions, ' AND ');
 
-  const rows = await prisma.$queryRawUnsafe<any[]>(`
+  const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT
       COALESCE(SUM(input_tokens), 0)::int AS total_input_tokens,
       COALESCE(SUM(output_tokens), 0)::int AS total_output_tokens,
