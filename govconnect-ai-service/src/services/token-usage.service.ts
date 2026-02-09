@@ -374,9 +374,16 @@ export async function getUsageByVillageAndModel(
 
   const conditions: string[] = [
     `created_at >= '${startDate.toISOString()}' AND created_at <= '${endDate.toISOString()}'`,
-    `village_id IS NOT NULL`,
   ];
-  if (filters?.village_id) conditions.push(`village_id = '${filters.village_id}'`);
+
+  // Support special __null__ to query superadmin testing data (village_id IS NULL)
+  if (filters?.village_id === '__null__') {
+    conditions.push(`village_id IS NULL`);
+  } else if (filters?.village_id) {
+    conditions.push(`village_id = '${filters.village_id}'`);
+  } else {
+    conditions.push(`village_id IS NOT NULL`);
+  }
 
   const where = conditions.join(' AND ');
 

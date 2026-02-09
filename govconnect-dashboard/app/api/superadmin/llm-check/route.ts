@@ -48,13 +48,13 @@ export async function GET(request: NextRequest) {
       results.models = null
     }
 
-    // 3. Test LLM with a simple query via testing-knowledge style call
+    // 3. Test LLM with a simple query via the testing chat endpoint
     try {
       const start = Date.now()
-      const testRes = await apiFetch(buildUrl(ServicePath.AI, '/api/test-connection'), {
+      const testRes = await apiFetch(buildUrl(ServicePath.AI, '/api/testing/chat'), {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ query: 'test koneksi' }),
+        body: JSON.stringify({ message: 'test koneksi', user_id: 'llm_check_probe' }),
         timeout: 15000,
       })
       const elapsed = Date.now() - start

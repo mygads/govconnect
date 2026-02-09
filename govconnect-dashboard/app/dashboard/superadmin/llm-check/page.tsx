@@ -185,7 +185,7 @@ export default function LLMCheckPage() {
                     </p>
                     <p className="text-sm">
                       <span className="font-medium">Total Cost:</span>{" "}
-                      ${(usage.total_cost || usage.totalCost || 0).toFixed(4)}
+                      ${(usage.total_cost_usd || usage.total_cost || usage.totalCost || 0).toFixed(4)}
                     </p>
                   </div>
                 ) : (

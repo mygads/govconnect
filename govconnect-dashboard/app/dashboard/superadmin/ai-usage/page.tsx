@@ -12,6 +12,10 @@ import {
   Zap,
   DollarSign,
   RefreshCw,
+  Eye,
+  X,
+  Shield,
+  Users,
 } from "lucide-react"
 import {
   Chart as ChartJS,
@@ -29,6 +33,7 @@ import {
 import { Bar, Line, Doughnut } from "react-chartjs-2"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/components/auth/AuthContext"
 
@@ -114,6 +119,23 @@ interface VillageResponse {
   village_id: string
   response_count: number
   unique_users: number
+}
+
+interface VillageModelDetail {
+  village_id: string
+  model: string
+  layer_type: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cost_usd: number
+  call_count: number
+}
+
+interface VillageInfo {
+  id: string
+  name: string
+  slug: string
 }
 
 // ==================== Helpers ====================
@@ -214,8 +236,14 @@ export default function AITokenUsagePage() {
   // Village tab data (loaded on demand)
   const [byVillage, setByVillage] = useState<VillageUsage[]>([])
   const [responsesByVillage, setResponsesByVillage] = useState<VillageResponse[]>([])
+  const [villageNames, setVillageNames] = useState<Record<string, string>>({})
   const [villageLoading, setVillageLoading] = useState(false)
   const [villageLoaded, setVillageLoaded] = useState(false)
+
+  // Village detail modal
+  const [detailVillageId, setDetailVillageId] = useState<string | null>(null)
+  const [detailData, setDetailData] = useState<VillageModelDetail[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
 
   // Layer tab data (loaded on demand)
   const [layerBreakdown, setLayerBreakdown] = useState<LayerBreakdown[]>([])
@@ -256,15 +284,25 @@ export default function AITokenUsagePage() {
     setPeriodeLoaded(true)
   }, [period])
 
-  // Load village data on demand (2 calls)
+  // Load village data on demand (3 calls: by-village, responses-by-village, village names)
   const loadVillage = useCallback(async () => {
     setVillageLoading(true)
-    const [bv, rbv] = await Promise.all([
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
+    const [bv, rbv, villagesRes] = await Promise.all([
       fetchData<VillageUsage[]>("by-village"),
       fetchData<VillageResponse[]>("responses-by-village"),
+      fetch("/api/superadmin/villages", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).then(r => r.ok ? r.json() : []).catch(() => []),
     ])
     setByVillage(bv || [])
     setResponsesByVillage(rbv || [])
+    // Build village name map
+    const nameMap: Record<string, string> = {}
+    if (Array.isArray(villagesRes)) {
+      villagesRes.forEach((v: VillageInfo) => { nameMap[v.id] = v.name })
+    }
+    setVillageNames(nameMap)
     setVillageLoading(false)
     setVillageLoaded(true)
   }, [])
@@ -277,6 +315,28 @@ export default function AITokenUsagePage() {
     setLayerLoading(false)
     setLayerLoaded(true)
   }, [])
+
+  // Open village detail modal
+  const openVillageDetail = useCallback(async (villageId: string) => {
+    setDetailVillageId(villageId)
+    setDetailLoading(true)
+    const params: Record<string, string> = {}
+    // Use __null__ for superadmin testing (village_id IS NULL in DB)
+    if (villageId === "__superadmin__") {
+      params.village_id = "__null__"
+    } else {
+      params.village_id = villageId
+    }
+    const data = await fetchData<VillageModelDetail[]>("village-model-detail", params)
+    setDetailData(data || [])
+    setDetailLoading(false)
+  }, [])
+
+  // Helper to resolve village name
+  const getVillageName = useCallback((villageId: string | null | undefined): string => {
+    if (!villageId || villageId === "" || villageId === "null" || villageId === "undefined") return "Superadmin (Testing)"
+    return villageNames[villageId] || villageId
+  }, [villageNames])
 
   // Handle tab change - load data on demand
   const handleTabChange = (tab: string) => {
@@ -614,6 +674,52 @@ export default function AITokenUsagePage() {
             </div>
           ) : (
             <>
+              {/* Superadmin vs Village Summary */}
+              {(() => {
+                // by-village only returns non-null village_ids (real villages)
+                // superadmin testing = total (from summary) - sum(village usage)
+                const villageTotalTokens = byVillage.reduce((s, v) => s + v.total_tokens, 0)
+                const villageTotalCost = byVillage.reduce((s, v) => s + v.cost_usd, 0)
+                const villageTotalCalls = byVillage.reduce((s, v) => s + v.call_count, 0)
+                const superadminTokens = Math.max(0, (summary?.total_tokens || 0) - villageTotalTokens)
+                const superadminCost = Math.max(0, (summary?.total_cost_usd || 0) - villageTotalCost)
+                const superadminCalls = Math.max(0, (summary?.total_calls || 0) - villageTotalCalls)
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="rounded-xl border bg-card p-4 flex items-start gap-3">
+                      <div className="rounded-lg bg-purple-100 dark:bg-purple-950 p-2.5">
+                        <Shield className="h-5 w-5 text-purple-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-xs text-muted-foreground">Superadmin (Testing)</p>
+                        <p className="text-xl font-bold mt-0.5">{formatNumber(superadminTokens)} tokens</p>
+                        <p className="text-xs text-muted-foreground">{formatCost(superadminCost)} · {superadminCalls} calls</p>
+                      </div>
+                      {superadminTokens > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openVillageDetail("__superadmin__")}
+                          className="h-7 px-2 text-xs shrink-0"
+                        >
+                          <Eye className="h-3 w-3 mr-1" /> Detail
+                        </Button>
+                      )}
+                    </div>
+                    <div className="rounded-xl border bg-card p-4 flex items-start gap-3">
+                      <div className="rounded-lg bg-blue-100 dark:bg-blue-950 p-2.5">
+                        <Users className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Desa (Produksi)</p>
+                        <p className="text-xl font-bold mt-0.5">{formatNumber(villageTotalTokens)} tokens</p>
+                        <p className="text-xs text-muted-foreground">{formatCost(villageTotalCost)} · {villageTotalCalls} calls · {byVillage.length} desa</p>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* AI Responses per Village Chart */}
                 <Card>
@@ -626,7 +732,7 @@ export default function AITokenUsagePage() {
                   <CardContent className="h-64">
                     <Bar
                       data={{
-                        labels: responsesByVillage.slice(0, 10).map((r) => r.village_id?.slice(0, 12) + "..."),
+                        labels: responsesByVillage.slice(0, 10).map((r) => getVillageName(r.village_id)),
                         datasets: [
                           {
                             label: "AI Responses",
@@ -647,42 +753,80 @@ export default function AITokenUsagePage() {
                   </CardContent>
                 </Card>
 
-                {/* Village Token Usage Table */}
+                {/* Village Token Usage Doughnut */}
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                      <Building2 className="h-4 w-4" /> Token Usage per Desa
+                      <BarChart3 className="h-4 w-4" /> Distribusi Token per Desa
                     </CardTitle>
                   </CardHeader>
-                  <CardContent>
-                    <div className="overflow-y-auto max-h-64">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b text-left text-muted-foreground">
-                            <th className="pb-2 pr-4">Village ID</th>
-                            <th className="pb-2 pr-4 text-right">Total Tokens</th>
-                            <th className="pb-2 pr-4 text-right">Calls</th>
-                            <th className="pb-2 text-right">Biaya</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {byVillage.map((v, i) => (
-                            <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
-                              <td className="py-1.5 pr-4 font-mono text-xs">{v.village_id}</td>
-                              <td className="py-1.5 pr-4 text-right">{formatNumber(v.total_tokens)}</td>
-                              <td className="py-1.5 pr-4 text-right">{formatNumber(v.call_count)}</td>
-                              <td className="py-1.5 text-right text-emerald-600 dark:text-emerald-400">{formatCost(v.cost_usd)}</td>
-                            </tr>
-                          ))}
-                          {byVillage.length === 0 && (
-                            <tr><td colSpan={4} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                  <CardContent className="h-64 flex items-center justify-center">
+                    <Doughnut
+                      data={{
+                        labels: byVillage.slice(0, 8).map((v) => getVillageName(v.village_id)),
+                        datasets: [{
+                          data: byVillage.slice(0, 8).map((v) => v.total_tokens),
+                          backgroundColor: byVillage.slice(0, 8).map((_, i) => MODEL_COLORS[i % MODEL_COLORS.length]),
+                          borderWidth: 2,
+                          borderColor: "#fff",
+                        }],
+                      }}
+                      options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }}
+                    />
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Village Token Usage Table */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <Building2 className="h-4 w-4" /> Token Usage per Desa
+                  </CardTitle>
+                  <CardDescription>Klik &quot;Lihat Detail&quot; untuk melihat breakdown per model dan layer</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left text-muted-foreground">
+                          <th className="pb-2 pr-4">Desa</th>
+                          <th className="pb-2 pr-4 text-right">Total Tokens</th>
+                          <th className="pb-2 pr-4 text-right">Calls</th>
+                          <th className="pb-2 pr-4 text-right">Biaya</th>
+                          <th className="pb-2 text-right">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {byVillage.map((v, i) => (
+                          <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="py-2 pr-4">
+                              <span className="font-medium text-sm">{getVillageName(v.village_id)}</span>
+                            </td>
+                            <td className="py-2 pr-4 text-right">{formatNumber(v.total_tokens)}</td>
+                            <td className="py-2 pr-4 text-right">{formatNumber(v.call_count)}</td>
+                            <td className="py-2 pr-4 text-right text-emerald-600 dark:text-emerald-400">{formatCost(v.cost_usd)}</td>
+                            <td className="py-2 text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openVillageDetail(v.village_id)}
+                                className="h-7 px-2 text-xs"
+                              >
+                                <Eye className="h-3 w-3 mr-1" />
+                                Lihat Detail
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                        {byVillage.length === 0 && (
+                          <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
 
               {/* AI Responses Detail Table */}
               <Card>
@@ -699,7 +843,7 @@ export default function AITokenUsagePage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b text-left text-muted-foreground">
-                          <th className="pb-2 pr-4">Village ID</th>
+                          <th className="pb-2 pr-4">Desa</th>
                           <th className="pb-2 pr-4 text-right">Total Responses</th>
                           <th className="pb-2 text-right">Unique Users</th>
                         </tr>
@@ -707,7 +851,9 @@ export default function AITokenUsagePage() {
                       <tbody>
                         {responsesByVillage.map((v, i) => (
                           <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
-                            <td className="py-2 pr-4 font-mono text-xs">{v.village_id}</td>
+                            <td className="py-2 pr-4">
+                              <span className="text-sm font-medium">{getVillageName(v.village_id)}</span>
+                            </td>
                             <td className="py-2 pr-4 text-right font-semibold">{formatNumber(v.response_count)}</td>
                             <td className="py-2 text-right">{formatNumber(v.unique_users)}</td>
                           </tr>
@@ -721,6 +867,101 @@ export default function AITokenUsagePage() {
                 </CardContent>
               </Card>
             </>
+          )}
+
+          {/* Village Detail Modal */}
+          {detailVillageId && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setDetailVillageId(null)}>
+              <div className="bg-background rounded-xl shadow-xl border max-w-2xl w-full max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between p-4 border-b">
+                  <div>
+                    <h3 className="font-semibold text-lg flex items-center gap-2">
+                      {detailVillageId === "__superadmin__" ? (
+                        <>
+                          <Shield className="h-5 w-5 text-purple-600" />
+                          Superadmin (Testing)
+                        </>
+                      ) : (
+                        <>
+                          <Building2 className="h-5 w-5 text-blue-600" />
+                          {getVillageName(detailVillageId)}
+                        </>
+                      )}
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">Detail penggunaan per model dan layer</p>
+                  </div>
+                  <button onClick={() => setDetailVillageId(null)} className="rounded-lg p-1.5 hover:bg-muted transition-colors">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="p-4 overflow-y-auto max-h-[calc(80vh-80px)]">
+                  {detailLoading ? (
+                    <div className="space-y-3">
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                    </div>
+                  ) : detailData.length === 0 ? (
+                    <p className="text-center text-muted-foreground py-8">Belum ada data detail</p>
+                  ) : (
+                    <>
+                      {/* Summary for this village */}
+                      <div className="grid grid-cols-3 gap-3 mb-4">
+                        <div className="rounded-lg bg-muted p-3 text-center">
+                          <div className="text-xs text-muted-foreground">Total Tokens</div>
+                          <div className="text-lg font-bold">{formatNumber(detailData.reduce((s, d) => s + d.total_tokens, 0))}</div>
+                        </div>
+                        <div className="rounded-lg bg-muted p-3 text-center">
+                          <div className="text-xs text-muted-foreground">Total Calls</div>
+                          <div className="text-lg font-bold">{formatNumber(detailData.reduce((s, d) => s + d.call_count, 0))}</div>
+                        </div>
+                        <div className="rounded-lg bg-muted p-3 text-center">
+                          <div className="text-xs text-muted-foreground">Total Biaya</div>
+                          <div className="text-lg font-bold text-emerald-600">{formatCost(detailData.reduce((s, d) => s + d.cost_usd, 0))}</div>
+                        </div>
+                      </div>
+
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left text-muted-foreground">
+                            <th className="pb-2 pr-3">Layer</th>
+                            <th className="pb-2 pr-3">Model</th>
+                            <th className="pb-2 pr-3 text-right">Input</th>
+                            <th className="pb-2 pr-3 text-right">Output</th>
+                            <th className="pb-2 pr-3 text-right">Total</th>
+                            <th className="pb-2 pr-3 text-right">Calls</th>
+                            <th className="pb-2 text-right">Biaya</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailData.map((d, i) => (
+                            <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                              <td className="py-2 pr-3">
+                                <span
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                                  style={{
+                                    backgroundColor: (LAYER_COLORS[d.layer_type] || "#94a3b8") + "20",
+                                    color: LAYER_COLORS[d.layer_type] || "#94a3b8",
+                                  }}
+                                >
+                                  {LAYER_LABELS[d.layer_type] || d.layer_type}
+                                </span>
+                              </td>
+                              <td className="py-2 pr-3 font-mono text-xs">{d.model}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(d.input_tokens)}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(d.output_tokens)}</td>
+                              <td className="py-2 pr-3 text-right font-semibold">{formatNumber(d.total_tokens)}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(d.call_count)}</td>
+                              <td className="py-2 text-right text-emerald-600 dark:text-emerald-400">{formatCost(d.cost_usd)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
         </TabsContent>
 
