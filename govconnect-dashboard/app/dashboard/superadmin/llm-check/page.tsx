@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/components/auth/AuthContext"
 import {
   Brain, RefreshCcw, CheckCircle2, XCircle, AlertTriangle,
-  Clock, Zap, Server, Cpu, Activity
+  Clock, Server, Cpu, Activity
 } from "lucide-react"
 
 interface LLMTestResult {
@@ -28,7 +28,6 @@ interface LLMCheckData {
   aiServiceError?: string
   models?: any
   llmTests: LLMTestResult[]
-  tokenUsageSummary?: any
 }
 
 export default function LLMCheckPage() {
@@ -85,7 +84,6 @@ export default function LLMCheckPage() {
 
   const models = data?.models
   const modelList = Array.isArray(models?.models) ? models.models : Array.isArray(models?.data) ? models.data : Array.isArray(models) ? models : []
-  const usage = data?.tokenUsageSummary
 
   return (
     <div className="space-y-6">
@@ -106,7 +104,7 @@ export default function LLMCheckPage() {
       {data && (
         <>
           {/* AI Service Status */}
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2">
             <Card className={
               data.aiServiceStatus === "healthy" ? "border-green-200" :
               data.aiServiceStatus === "unhealthy" ? "border-red-200" : "border-yellow-200"
@@ -165,34 +163,6 @@ export default function LLMCheckPage() {
               </Card>
             ))}
 
-            {/* Token Usage */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <Zap className="h-4 w-4" /> Token Usage
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {usage ? (
-                  <div className="space-y-1">
-                    <p className="text-sm">
-                      <span className="font-medium">Total Input:</span>{" "}
-                      {usage.total_input_tokens?.toLocaleString() || usage.totalInputTokens?.toLocaleString() || "0"}
-                    </p>
-                    <p className="text-sm">
-                      <span className="font-medium">Total Output:</span>{" "}
-                      {usage.total_output_tokens?.toLocaleString() || usage.totalOutputTokens?.toLocaleString() || "0"}
-                    </p>
-                    <p className="text-sm">
-                      <span className="font-medium">Total Cost:</span>{" "}
-                      ${(usage.total_cost_usd || usage.total_cost || usage.totalCost || 0).toFixed(4)}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Data tidak tersedia</p>
-                )}
-              </CardContent>
-            </Card>
           </div>
 
           {/* AI Service Details */}

@@ -47,6 +47,7 @@ import {
   getTokenUsageSummary,
   getTokenUsageBySource,
   recordTokenUsage,
+  resetAllTokenUsage,
 } from './services/token-usage.service';
 import { clearAllUMPCaches, clearUserCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
 import { clearVillageProfileCache } from './services/knowledge.service';
@@ -939,6 +940,20 @@ app.post('/admin/record-token-usage', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Failed to record external token usage', { error: error.message });
     res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/**
+ * DELETE /admin/reset-token-usage
+ * Truncates the ai_token_usage table. Used by superadmin to clear all AI usage data.
+ */
+app.delete('/admin/reset-token-usage', async (req: Request, res: Response) => {
+  try {
+    await resetAllTokenUsage();
+    res.json({ ok: true, message: 'All token usage data has been reset' });
+  } catch (error: any) {
+    logger.error('Failed to reset token usage', { error: error.message });
+    res.status(500).json({ error: 'Failed to reset token usage data' });
   }
 });
 

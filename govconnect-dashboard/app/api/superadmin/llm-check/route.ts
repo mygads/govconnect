@@ -48,13 +48,13 @@ export async function GET(request: NextRequest) {
       results.models = null
     }
 
-    // 3. Test LLM with a simple query via the testing chat endpoint
+    // 3. Test LLM with a lightweight ping (minimal tokens ~20)
     try {
       const start = Date.now()
-      const testRes = await apiFetch(buildUrl(ServicePath.AI, '/api/testing/chat'), {
+      const testRes = await apiFetch(buildUrl(ServicePath.AI, '/api/testing/ping'), {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ message: 'test koneksi', user_id: 'llm_check_probe' }),
+        body: JSON.stringify({}),
         timeout: 15000,
       })
       const elapsed = Date.now() - start
@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
         results.llmTests.push({
           name: 'LLM Connection Test',
           status: 'connected',
-          responseTime: elapsed,
+          responseTime: testData.responseTime || elapsed,
           details: testData,
         })
       } else {
@@ -82,19 +82,6 @@ export async function GET(request: NextRequest) {
         responseTime: 0,
         error: e.message,
       })
-    }
-
-    // 4. Check token usage summary to see if any recent activity
-    try {
-      const usageRes = await apiFetch(buildUrl(ServicePath.AI, '/stats/token-usage/summary'), {
-        headers: getHeaders(),
-        timeout: 8000,
-      })
-      if (usageRes.ok) {
-        results.tokenUsageSummary = await usageRes.json()
-      }
-    } catch (e) {
-      results.tokenUsageSummary = null
     }
 
     return NextResponse.json(results)

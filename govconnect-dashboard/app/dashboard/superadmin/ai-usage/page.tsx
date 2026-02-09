@@ -20,6 +20,7 @@ import {
   Info,
   Layers,
   Wallet,
+  Trash2,
 } from "lucide-react"
 import {
   Chart as ChartJS,
@@ -311,6 +312,10 @@ export default function AITokenUsagePage() {
   const [layerLoading, setLayerLoading] = useState(false)
   const [layerLoaded, setLayerLoaded] = useState(false)
 
+  // Reset database
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [resetting, setResetting] = useState(false)
+
   useEffect(() => {
     if (user && user.role !== "superadmin") redirect("/dashboard")
   }, [user])
@@ -419,6 +424,41 @@ export default function AITokenUsagePage() {
     }
   }, [period]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reset all token usage data
+  const handleResetDatabase = async () => {
+    try {
+      setResetting(true)
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
+      const res = await fetch("/api/superadmin/reset-token-usage", {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (res.ok) {
+        // Clear all local state and reload
+        setSummary(null)
+        setByModel([])
+        setAvgPerChat(null)
+        setBySource([])
+        setByPeriod([])
+        setByPeriodLayer([])
+        setByVillage([])
+        setResponsesByVillage([])
+        setAllModelDetail([])
+        setLayerBreakdown([])
+        setPeriodeLoaded(false)
+        setVillageLoaded(false)
+        setLayerLoaded(false)
+        // Reload summary
+        loadSummary()
+      }
+    } catch (e) {
+      console.error("Reset failed:", e)
+    } finally {
+      setResetting(false)
+      setShowResetConfirm(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -432,20 +472,66 @@ export default function AITokenUsagePage() {
             Monitoring penggunaan token AI — Harga dari pricing resmi Gemini API (Kurs: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")})
           </p>
         </div>
-        <button
-          onClick={() => {
-            loadSummary()
-            if (periodeLoaded) { setPeriodeLoaded(false); loadPeriode() }
-            if (villageLoaded) { setVillageLoaded(false); loadVillage() }
-            if (layerLoaded) { setLayerLoaded(false); loadLayer() }
-          }}
-          disabled={summaryLoading}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${summaryLoading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowResetConfirm(true)}
+            disabled={resetting || summaryLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950 transition-colors disabled:opacity-50"
+          >
+            <Trash2 className="h-4 w-4" />
+            Reset Data
+          </button>
+          <button
+            onClick={() => {
+              loadSummary()
+              if (periodeLoaded) { setPeriodeLoaded(false); loadPeriode() }
+              if (villageLoaded) { setVillageLoaded(false); loadVillage() }
+              if (layerLoaded) { setLayerLoaded(false); loadLayer() }
+            }}
+            disabled={summaryLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${summaryLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Reset Confirmation Dialog */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl p-6 max-w-md mx-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-full bg-red-100 dark:bg-red-900 p-2">
+                <Trash2 className="h-5 w-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg">Reset Semua Data AI Usage?</h3>
+                <p className="text-sm text-muted-foreground">Tindakan ini tidak dapat dibatalkan</p>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Semua data penggunaan token AI (termasuk statistik per desa, model, dan periode) akan dihapus secara permanen.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                disabled={resetting}
+                className="px-4 py-2 text-sm font-medium rounded-lg border hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleResetDatabase}
+                disabled={resetting}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {resetting ? "Menghapus..." : "Ya, Reset Semua"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Info Alert — Penjelasan Token Counting */}
       <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/50 p-4">
@@ -865,14 +951,6 @@ export default function AITokenUsagePage() {
                           ))}
                         </tbody>
                       </table>
-                    </div>
-                    <div className="text-xs text-muted-foreground space-y-1 mt-2">
-                      <p className="font-medium">Cara kerja rotasi API key:</p>
-                      <ul className="list-disc pl-4 space-y-0.5">
-                        <li><strong>BYOK (Free):</strong> Digunakan pertama — gratis tapi limit rendah</li>
-                        <li><strong>BYOK (Tier 1/2):</strong> Digunakan jika free habis — berbayar, limit tinggi</li>
-                        <li><strong>.env fallback:</strong> Digunakan jika semua BYOK habis</li>
-                      </ul>
                     </div>
                   </div>
                 )}

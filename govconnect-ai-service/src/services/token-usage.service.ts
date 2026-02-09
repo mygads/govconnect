@@ -80,6 +80,7 @@ export type CallType =
   | 'confirmation_classify'
   | 'farewell_classify'
   | 'greeting_classify'
+  | 'connection_test'
   | 'embedding_single'
   | 'embedding_batch';
 
@@ -592,4 +593,15 @@ export async function getTokenUsageBySource(slug?: string) {
     GROUP BY COALESCE(key_source, 'unknown')
     ORDER BY total_tokens DESC
   `);
+}
+
+/**
+ * Reset (delete) all token usage data.
+ * Used by superadmin to clear testing/development data.
+ * Returns the number of deleted rows.
+ */
+export async function resetAllTokenUsage(): Promise<number> {
+  const result = await prisma.$executeRaw`TRUNCATE TABLE ai_token_usage`;
+  logger.info('🗑️ All token usage data has been reset (TRUNCATE)', { affectedRows: result });
+  return result;
 }
