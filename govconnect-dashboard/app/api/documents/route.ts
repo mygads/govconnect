@@ -234,20 +234,30 @@ export async function POST(request: NextRequest) {
     } catch (aiError: any) {
       console.error('AI service error:', aiError)
       
+      const isNetworkError = aiError.message?.includes('fetch failed') || 
+        aiError.code === 'ECONNREFUSED' || 
+        aiError.code === 'EAI_AGAIN' ||
+        aiError.cause?.code === 'ECONNREFUSED' ||
+        aiError.cause?.code === 'EAI_AGAIN'
+      
+      const errorMsg = isNetworkError 
+        ? 'AI service tidak dapat dijangkau. Silakan coba lagi nanti.'
+        : (aiError.message || 'Gagal memproses dokumen')
+      
       // Update status to failed
       await prisma.knowledge_documents.update({
         where: { id: documentId },
         data: {
           status: 'failed',
-          error_message: aiError.message || 'Failed to connect to AI service',
+          error_message: errorMsg,
         },
       })
       
       return NextResponse.json({
         success: false,
         data: document,
-        error: 'Failed to process document: ' + (aiError.message || 'AI service unavailable'),
-      }, { status: 500 })
+        error: errorMsg,
+      }, { status: isNetworkError ? 503 : 500 })
     }
   } catch (error: any) {
     console.error('Error uploading document:', error)

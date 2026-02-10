@@ -41,7 +41,7 @@ export async function GET(
     }
 
     if (!document.file_url) {
-      return NextResponse.json({ error: 'File not ready' }, { status: 409 })
+      return NextResponse.json({ error: 'File belum siap atau belum diproses' }, { status: 409 })
     }
 
     const rawUrl = document.file_url
@@ -49,9 +49,23 @@ export async function GET(
       ? rawUrl
       : buildUrl(ServicePath.AI, rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`)
 
-    const response = await fetch(normalized)
+    let response: Response
+    try {
+      response = await fetch(normalized, { signal: AbortSignal.timeout(15000) })
+    } catch (fetchErr: any) {
+      console.error('Download fetch error:', fetchErr.message, 'URL:', normalized)
+      return NextResponse.json(
+        { error: 'Gagal mengambil file dari AI service. Pastikan AI service aktif.' },
+        { status: 502 }
+      )
+    }
+
     if (!response.ok) {
-      return NextResponse.json({ error: 'Failed to download file' }, { status: 502 })
+      console.error('Download response not ok:', response.status, 'URL:', normalized)
+      return NextResponse.json(
+        { error: `Gagal mengunduh file (status ${response.status}). File mungkin sudah dihapus.` },
+        { status: 502 }
+      )
     }
 
     const contentType = response.headers.get('content-type') || 'application/octet-stream'
