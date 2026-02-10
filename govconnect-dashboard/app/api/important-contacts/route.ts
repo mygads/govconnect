@@ -43,6 +43,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'category_id, name, phone are required' }, { status: 400 })
   }
 
+  // Validate category belongs to admin's village (multi-tenancy security)
+  const category = await prisma.important_contact_categories.findUnique({
+    where: { id: category_id },
+  })
+  if (!category || category.village_id !== session.admin.village_id) {
+    return NextResponse.json({ error: 'Kategori tidak ditemukan atau bukan milik desa Anda' }, { status: 403 })
+  }
+
   const contact = await prisma.important_contacts.create({
     data: {
       category_id,

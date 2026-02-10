@@ -89,9 +89,10 @@ export async function handleEndTakeover(req: Request, res: Response): Promise<vo
  * Get all active takeovers
  * GET /internal/takeover
  */
-export async function handleGetActiveTakeovers(_req: Request, res: Response): Promise<void> {
+export async function handleGetActiveTakeovers(req: Request, res: Response): Promise<void> {
   try {
-    const sessions = await getActiveTakeovers();
+    const villageId = resolveVillageId(req);
+    const sessions = await getActiveTakeovers(villageId);
 
     res.json({
       success: true,
@@ -389,6 +390,7 @@ export async function handleRetryAI(req: Request, res: Response): Promise<void> 
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
     const channel = resolveChannel(req, wa_user_id || undefined);
+    const villageId = resolveVillageId(req);
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
@@ -399,27 +401,28 @@ export async function handleRetryAI(req: Request, res: Response): Promise<void> 
     const { publishEvent } = await import('../services/rabbitmq.service');
     const { rabbitmqConfig } = await import('../config/rabbitmq');
 
-    // Get the pending message that failed
-    const pendingMessage = await getPendingMessage(wa_user_id, channel);
+    // Get the pending message that failed — pass village_id for correct lookup
+    const pendingMessage = await getPendingMessage(wa_user_id, channel, villageId);
 
     if (!pendingMessage) {
       res.status(404).json({ error: 'No pending message found for retry' });
       return;
     }
 
-    // Set AI processing status again
-    await setAIProcessing(wa_user_id, pendingMessage.message_id, undefined, channel);
+    // Set AI processing status again — use the village_id from the message
+    await setAIProcessing(wa_user_id, pendingMessage.message_id, pendingMessage.village_id, channel);
 
-    // Re-publish the message to AI service queue
+    // Re-publish the message to AI service queue with correct village_id
     await publishEvent(rabbitmqConfig.ROUTING_KEYS.MESSAGE_RECEIVED, {
       wa_user_id,
+      village_id: pendingMessage.village_id,
       message: pendingMessage.message_text,
       message_id: pendingMessage.message_id,
       is_retry: true,
       channel: channel.toLowerCase(),
     });
 
-    logger.info('AI retry requested', { wa_user_id, message_id: pendingMessage.message_id });
+    logger.info('AI retry requested', { wa_user_id, message_id: pendingMessage.message_id, village_id: pendingMessage.village_id });
 
     res.json({
       success: true,

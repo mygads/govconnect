@@ -181,13 +181,15 @@ export async function endTakeover(
 }
 
 /**
- * Get all active takeover sessions
+ * Get all active takeover sessions (filtered by village_id for multi-tenancy)
  */
-export async function getActiveTakeovers(): Promise<TakeoverSession[]> {
+export async function getActiveTakeovers(village_id?: string): Promise<TakeoverSession[]> {
+  const where: any = { ended_at: null };
+  if (village_id) {
+    where.village_id = village_id;
+  }
   return prisma.takeoverSession.findMany({
-    where: {
-      ended_at: null,
-    },
+    where,
     orderBy: {
       started_at: 'desc',
     },
@@ -555,19 +557,30 @@ export async function setAIError(
  */
 export async function getPendingMessage(
   channel_identifier: string,
-  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
-): Promise<{ message_id: string; message_text: string } | null> {
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP',
+  village_id?: string
+): Promise<{ message_id: string; message_text: string; village_id: string } | null> {
   try {
-    const village_id = resolveVillageId(undefined);
-    const conversation = await prisma.conversation.findUnique({
-      where: {
-        village_id_channel_channel_identifier: {
-          village_id,
-          channel,
-          channel_identifier,
+    // Try with provided village_id first, then search across all villages
+    let conversation;
+    if (village_id) {
+      conversation = await prisma.conversation.findUnique({
+        where: {
+          village_id_channel_channel_identifier: {
+            village_id,
+            channel,
+            channel_identifier,
+          },
         },
-      },
-    });
+      });
+    }
+    // Fallback: find any conversation for this user
+    if (!conversation) {
+      conversation = await prisma.conversation.findFirst({
+        where: { channel, channel_identifier, pending_message_id: { not: null } },
+        orderBy: { updated_at: 'desc' },
+      });
+    }
 
     if (!conversation?.pending_message_id) {
       return null;
@@ -575,7 +588,7 @@ export async function getPendingMessage(
 
     const message = await prisma.message.findFirst({
       where: {
-        village_id,
+        village_id: conversation.village_id,
         channel,
         channel_identifier,
         message_id: conversation.pending_message_id,
@@ -589,6 +602,7 @@ export async function getPendingMessage(
     return {
       message_id: message.message_id,
       message_text: message.message_text,
+      village_id: conversation.village_id,
     };
   } catch (error: any) {
     logger.error('Failed to get pending message', { error: error.message, channel_identifier });

@@ -4,6 +4,8 @@ export interface HallucinationSignals {
   mentionsOfficeHours: boolean;
   mentionsCost: boolean;
   mentionsFakeLinks: boolean;
+  mentionsPhoneNumber: boolean;
+  mentionsAddress: boolean;
 }
 
 const OFFICE_HOURS_PATTERNS: RegExp[] = [
@@ -32,17 +34,34 @@ const FAKE_LINK_PATTERNS: RegExp[] = [
   /formulir.*?secara\s+online/i, // "formulir pengaduan secara online" - common hallucination
 ];
 
+// Detect phone numbers that may be hallucinated (not from knowledge)
+const PHONE_PATTERNS: RegExp[] = [
+  /\b0\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/, // 021-1234-5678, 0411 123 4567
+  /\b\+?62\s?\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/, // +62 812 3456 7890
+  /\b08\d{8,11}\b/, // 081234567890
+  /\b\(0\d{2,3}\)\s?\d{6,8}\b/, // (021) 12345678
+];
+
+// Detect specific addresses that may be hallucinated
+const ADDRESS_PATTERNS: RegExp[] = [
+  /\bjl\.?\s+[A-Z][a-zA-Z\s]+(?:no\.?\s*\d+)/i, // Jl. Sudirman No. 123
+  /\bjalan\s+[A-Z][a-zA-Z\s]+(?:no\.?\s*\d+)/i, // Jalan Merdeka No. 45
+  /\bkode\s*pos\s*:?\s*\d{5}\b/i, // Kode pos: 12345
+];
+
 export function detectHallucinationSignals(text: string | undefined): HallucinationSignals {
   const safeText = (text || '').trim();
   if (!safeText) {
-    return { mentionsOfficeHours: false, mentionsCost: false, mentionsFakeLinks: false };
+    return { mentionsOfficeHours: false, mentionsCost: false, mentionsFakeLinks: false, mentionsPhoneNumber: false, mentionsAddress: false };
   }
 
   const mentionsOfficeHours = OFFICE_HOURS_PATTERNS.some((p) => p.test(safeText));
   const mentionsCost = COST_PATTERNS.some((p) => p.test(safeText));
   const mentionsFakeLinks = FAKE_LINK_PATTERNS.some((p) => p.test(safeText));
+  const mentionsPhoneNumber = PHONE_PATTERNS.some((p) => p.test(safeText));
+  const mentionsAddress = ADDRESS_PATTERNS.some((p) => p.test(safeText));
 
-  return { mentionsOfficeHours, mentionsCost, mentionsFakeLinks };
+  return { mentionsOfficeHours, mentionsCost, mentionsFakeLinks, mentionsPhoneNumber, mentionsAddress };
 }
 
 export function hasKnowledgeInPrompt(systemPrompt: string | undefined): boolean {
@@ -77,17 +96,21 @@ export function needsAntiHallucinationRetry(args: {
     };
   }
 
-  // For office hours and cost, only flag as hallucination if no knowledge context
+  // For office hours, cost, phone, and address — only flag as hallucination if no knowledge context
   if (args.hasKnowledge) return { shouldRetry: false };
 
   const mentionsOfficeHours = replySignals.mentionsOfficeHours || guidanceSignals.mentionsOfficeHours;
   const mentionsCost = replySignals.mentionsCost || guidanceSignals.mentionsCost;
+  const mentionsPhoneNumber = replySignals.mentionsPhoneNumber || guidanceSignals.mentionsPhoneNumber;
+  const mentionsAddress = replySignals.mentionsAddress || guidanceSignals.mentionsAddress;
 
-  if (!mentionsOfficeHours && !mentionsCost) return { shouldRetry: false };
+  if (!mentionsOfficeHours && !mentionsCost && !mentionsPhoneNumber && !mentionsAddress) return { shouldRetry: false };
 
   const reasonParts: string[] = [];
   if (mentionsOfficeHours) reasonParts.push('jam operasional');
   if (mentionsCost) reasonParts.push('biaya');
+  if (mentionsPhoneNumber) reasonParts.push('nomor telepon');
+  if (mentionsAddress) reasonParts.push('alamat spesifik');
 
   return {
     shouldRetry: true,
@@ -96,7 +119,7 @@ export function needsAntiHallucinationRetry(args: {
 }
 
 export function appendAntiHallucinationInstruction(prompt: string): string {
-  return `${prompt}\n\nKOREKSI WAJIB (ANTI-HALU):\n- Jangan menyebut jam operasional/hari kerja/pukul tertentu jika TIDAK ada di KNOWLEDGE.\n- Jangan menyebut biaya (gratis/berbayar/angka Rp) jika TIDAK ada di KNOWLEDGE.\n- JANGAN PERNAH menyebut link placeholder seperti [link formulir], [link cek status], [website], dll.\n- Jika info tidak tersedia, jawab: "Untuk jam/biaya, saya belum dapat info pastinya. Bisa saya bantu cekkan atau Bapak/Ibu bisa konfirmasi ke kantor ya."\n`;
+  return `${prompt}\n\nKOREKSI WAJIB (ANTI-HALU):\n- Jangan menyebut jam operasional/hari kerja/pukul tertentu jika TIDAK ada di KNOWLEDGE.\n- Jangan menyebut biaya (gratis/berbayar/angka Rp) jika TIDAK ada di KNOWLEDGE.\n- JANGAN PERNAH menyebut link placeholder seperti [link formulir], [link cek status], [website], dll.\n- Jangan menyebut nomor telepon/kontak spesifik jika TIDAK ada di KNOWLEDGE atau database kontak penting.\n- Jangan menyebut alamat kantor/instansi spesifik (Jl. ..., No. ...) jika TIDAK ada di KNOWLEDGE.\n- Jika info tidak tersedia, jawab: "Untuk jam/biaya/kontak, saya belum dapat info pastinya. Bisa saya bantu cekkan atau Bapak/Ibu bisa konfirmasi ke kantor ya."\n`;
 }
 
 /**

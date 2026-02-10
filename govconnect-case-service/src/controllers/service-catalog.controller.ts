@@ -432,16 +432,17 @@ export async function handleUpdateServiceRequestStatus(req: Request, res: Respon
       return res.status(400).json({ error: 'id is required' });
     }
     
-    // Validate village_id for multi-tenancy security
-    const village_id = getQuery(req, 'village_id') || undefined;
-    if (village_id) {
-      const request = await prisma.serviceRequest.findFirst({
-        where: { OR: [{ id }, { request_number: id }] },
-        include: { service: true },
-      });
-      if (request && request.service?.village_id !== village_id) {
-        return res.status(404).json({ error: 'Service request not found' });
-      }
+    // Validate village_id for multi-tenancy security (MANDATORY)
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) {
+      return res.status(400).json({ error: 'village_id is required for multi-tenancy isolation' });
+    }
+    const existingRequest = await prisma.serviceRequest.findFirst({
+      where: { OR: [{ id }, { request_number: id }] },
+      include: { service: true },
+    });
+    if (!existingRequest || existingRequest.service?.village_id !== village_id) {
+      return res.status(404).json({ error: 'Service request not found' });
     }
     
     const { status, admin_notes, result_file_url, result_file_name, result_description } = req.body;
@@ -762,11 +763,18 @@ export async function handleGetServiceHistory(req: Request, res: Response) {
       return res.status(400).json({ error: 'session_id/channel_identifier is required' });
     }
 
+    // Validate village_id for multi-tenancy security (MANDATORY)
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) {
+      return res.status(400).json({ error: 'village_id is required for multi-tenancy isolation' });
+    }
+
     const wa_user_id = wa_user_id_raw ? normalizeTo628(wa_user_id_raw) : null;
     const data = await prisma.serviceRequest.findMany({
       where: {
         ...(wa_user_id ? { wa_user_id } : {}),
         ...(channelIdentifier ? { channel, channel_identifier: String(channelIdentifier) } : {}),
+        service: { village_id },
       },
       include: { service: true },
       orderBy: { created_at: 'desc' }

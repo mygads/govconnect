@@ -67,7 +67,7 @@ router.post(
 );
 
 router.get('/', internalAuth, handleGetComplaints);
-router.get('/statistics', handleGetComplaintStatistics);
+router.get('/statistics', internalAuth, handleGetComplaintStatistics);
 router.get('/:id', internalAuth, handleGetComplaintById);
 
 // Check complaint status with ownership validation (user via AI)

@@ -46,16 +46,16 @@ export function createApp(): Application {
     next();
   });
 
+  // Prometheus Metrics endpoint (before metricsMiddleware to avoid tracking itself)
+  app.get('/metrics', metricsHandler);
+
+  // Metrics middleware — MUST be before routes to track all requests
+  app.use(metricsMiddleware('channel-service'));
+
   // Routes
   app.use('/webhook', webhookRoutes);
   app.use('/internal', internalRoutes);
   app.use('/health', healthRoutes);
-
-  // Prometheus Metrics endpoint (before metricsMiddleware to avoid tracking itself)
-  app.get('/metrics', metricsHandler);
-
-  // Metrics middleware (tracks all requests after this point)
-  app.use(metricsMiddleware('channel-service'));
 
   // Swagger API Documentation
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {

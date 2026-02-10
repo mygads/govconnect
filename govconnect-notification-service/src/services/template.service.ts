@@ -5,10 +5,12 @@ export function buildAIReplyMessage(reply_text: string): string {
 export function buildComplaintCreatedMessage(data: {
   complaint_id: string;
   kategori: string;
+  village_name?: string;
 }): string {
   const kategoriText = formatKategori(data.kategori).toLowerCase();
+  const desaInfo = data.village_name ? ` (${data.village_name})` : '';
   
-  return `✅ *Laporan Diterima*
+  return `✅ *Laporan Diterima*${desaInfo}
 
 No: *${data.complaint_id}*
 Kategori: ${kategoriText}
@@ -96,6 +98,7 @@ export function buildUrgentAlertMessage(data: {
   alamat?: string;
   rt_rw?: string;
   created_at: string;
+  village_name?: string;
 }): string {
   const kategoriText = formatKategori(data.kategori);
   const waktu = new Date(data.created_at).toLocaleString('id-ID', {
@@ -105,8 +108,9 @@ export function buildUrgentAlertMessage(data: {
     hour: '2-digit',
     minute: '2-digit'
   });
+  const desaLabel = data.village_name ? ` - ${data.village_name}` : '';
   
-  let message = `🚨 *LAPORAN DARURAT* 🚨
+  let message = `🚨 *LAPORAN DARURAT${desaLabel}* 🚨
 
 *ID:* ${data.complaint_id}
 *Kategori:* ${kategoriText}

@@ -3,6 +3,16 @@ import prisma from '../config/database';
 import logger from '../utils/logger';
 import { getParam, getQuery } from '../utils/http';
 
+/**
+ * Extract village_id from request headers (set by Dashboard via X-Village-Id)
+ * Used for multi-tenancy ownership validation on write operations
+ */
+function getVillageIdFromHeader(req: Request): string | undefined {
+  return typeof req.headers['x-village-id'] === 'string'
+    ? req.headers['x-village-id']
+    : undefined;
+}
+
 // ===== Complaint Categories =====
 export async function handleGetComplaintCategories(req: Request, res: Response) {
   try {
@@ -48,6 +58,11 @@ export async function handleUpdateComplaintCategory(req: Request, res: Response)
     if (!existing) {
       return res.status(404).json({ error: 'Category not found' });
     }
+    // Validate village ownership
+    const headerVillageId = getVillageIdFromHeader(req);
+    if (headerVillageId && existing.village_id !== headerVillageId) {
+      return res.status(403).json({ error: 'Tidak memiliki akses ke kategori ini' });
+    }
     const data = await prisma.complaintCategory.update({
       where: { id },
       data: { name, description },
@@ -68,6 +83,11 @@ export async function handleDeleteComplaintCategory(req: Request, res: Response)
     const existing = await prisma.complaintCategory.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: 'Category not found' });
+    }
+    // Validate village ownership
+    const headerVillageId = getVillageIdFromHeader(req);
+    if (headerVillageId && existing.village_id !== headerVillageId) {
+      return res.status(403).json({ error: 'Tidak memiliki akses ke kategori ini' });
     }
 
     const typeCount = await prisma.complaintType.count({ where: { category_id: id } });
@@ -115,6 +135,14 @@ export async function handleCreateComplaintType(req: Request, res: Response) {
     if (!category_id || !name) {
       return res.status(400).json({ error: 'category_id and name are required' });
     }
+    // Validate category belongs to admin's village
+    const headerVillageId = getVillageIdFromHeader(req);
+    if (headerVillageId) {
+      const category = await prisma.complaintCategory.findUnique({ where: { id: category_id } });
+      if (!category || category.village_id !== headerVillageId) {
+        return res.status(403).json({ error: 'Tidak memiliki akses ke kategori ini' });
+      }
+    }
     const data = await prisma.complaintType.create({
       data: {
         category_id,
@@ -143,9 +171,14 @@ export async function handleUpdateComplaintType(req: Request, res: Response) {
     if (!name) {
       return res.status(400).json({ error: 'name is required' });
     }
-    const existing = await prisma.complaintType.findUnique({ where: { id } });
+    const existing = await prisma.complaintType.findUnique({ where: { id }, include: { category: true } });
     if (!existing) {
       return res.status(404).json({ error: 'Type not found' });
+    }
+    // Validate village ownership via parent category
+    const headerVillageId2 = getVillageIdFromHeader(req);
+    if (headerVillageId2 && existing.category?.village_id !== headerVillageId2) {
+      return res.status(403).json({ error: 'Tidak memiliki akses ke jenis pengaduan ini' });
     }
     const data = await prisma.complaintType.update({
       where: { id },
@@ -171,9 +204,14 @@ export async function handleDeleteComplaintType(req: Request, res: Response) {
     if (!id) {
       return res.status(400).json({ error: 'id is required' });
     }
-    const existing = await prisma.complaintType.findUnique({ where: { id } });
+    const existing = await prisma.complaintType.findUnique({ where: { id }, include: { category: true } });
     if (!existing) {
       return res.status(404).json({ error: 'Type not found' });
+    }
+    // Validate village ownership via parent category
+    const headerVillageId3 = getVillageIdFromHeader(req);
+    if (headerVillageId3 && existing.category?.village_id !== headerVillageId3) {
+      return res.status(403).json({ error: 'Tidak memiliki akses ke jenis pengaduan ini' });
     }
     await prisma.complaintType.delete({ where: { id } });
     return res.json({ status: 'success' });

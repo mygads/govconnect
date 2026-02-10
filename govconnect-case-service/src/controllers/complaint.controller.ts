@@ -242,13 +242,14 @@ export async function handleUpdateComplaintStatus(req: Request, res: Response) {
       return res.status(400).json({ error: 'id is required' });
     }
     
-    // Validate village_id for multi-tenancy security
-    const village_id = getQuery(req, 'village_id') || undefined;
-    if (village_id) {
-      const complaint = await getComplaintById(id);
-      if (complaint && complaint.village_id !== village_id) {
-        return res.status(404).json({ error: 'Complaint not found' });
-      }
+    // Validate village_id for multi-tenancy security (MANDATORY)
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) {
+      return res.status(400).json({ error: 'village_id is required for multi-tenancy isolation' });
+    }
+    const existing = await getComplaintById(id);
+    if (!existing || existing.village_id !== village_id) {
+      return res.status(404).json({ error: 'Complaint not found' });
     }
     
     const { status, admin_notes } = req.body;

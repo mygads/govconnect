@@ -30,9 +30,12 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const status = searchParams.get('status')
     const limit = parseInt(searchParams.get('limit') || '100')
+    const villageId = searchParams.get('village_id')
 
     const where: any = {}
     if (status) where.status = status
+    // Filter by village_id for multi-tenancy isolation
+    if (villageId) where.village_id = villageId
 
     const documents = await prisma.knowledge_documents.findMany({
       where,

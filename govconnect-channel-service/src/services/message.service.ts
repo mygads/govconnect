@@ -102,20 +102,21 @@ async function enforceFIFO(village_id: string, channel: 'WHATSAPP' | 'WEBCHAT', 
 
   try {
     // Single query: delete old messages beyond MAX_MESSAGES limit
+    // Table is "messages" (@@map), enum is "ChannelType" in PostgreSQL
     const result = await prisma.$executeRaw`
-      DELETE FROM "Message"
+      DELETE FROM "messages"
       WHERE id IN (
-        SELECT id FROM "Message"
+        SELECT id FROM "messages"
         WHERE village_id = ${village_id}
-          AND channel = ${channel}::"Channel"
+          AND channel = ${channel}::"ChannelType"
           AND channel_identifier = ${channel_identifier}
         ORDER BY timestamp ASC
         OFFSET 0
         LIMIT (
           SELECT GREATEST(
-            (SELECT COUNT(*) FROM "Message"
+            (SELECT COUNT(*) FROM "messages"
              WHERE village_id = ${village_id}
-               AND channel = ${channel}::"Channel"
+               AND channel = ${channel}::"ChannelType"
                AND channel_identifier = ${channel_identifier})
             - ${MAX_MESSAGES}, 0
           )

@@ -17,6 +17,7 @@ model NotificationLog {
   channel            ChannelType @default(WHATSAPP)
   channel_identifier String      // WA: 628xxx | Webchat: session_id
   wa_user_id         String?     // Legacy, deprecated - use channel_identifier
+  village_id         String?     // Multi-tenancy: desa pemilik notifikasi
   message_text       String      @db.Text
   notification_type  String      // "ai_reply" | "complaint_created" | "service_requested" | "status_updated" | "urgent_alert"
   status             String      // "sent" | "failed" | "skipped"
@@ -25,6 +26,7 @@ model NotificationLog {
   
   @@index([channel, channel_identifier])
   @@index([wa_user_id])
+  @@index([village_id])
   @@index([status])
   @@index([notification_type])
   @@index([sent_at])

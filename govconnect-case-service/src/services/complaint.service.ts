@@ -164,6 +164,11 @@ function isSameRequester(complaint: { channel: 'WHATSAPP' | 'WEBCHAT'; wa_user_i
  * Auto-resolves type_id/category_id from DB when not provided by caller.
  */
 export async function createComplaint(data: CreateComplaintData) {
+  // Enforce village_id as required for multi-tenancy
+  if (!data.village_id) {
+    throw new Error('village_id is required for creating complaints');
+  }
+
   const complaint_id = await generateComplaintId();
 
   const channel = data.channel || 'WHATSAPP';
@@ -368,6 +373,24 @@ export async function getComplaintsList(filters: ComplaintFilters) {
 }
 
 /**
+ * Valid status transitions map.
+ * Prevents invalid transitions like DONE → OPEN.
+ */
+const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
+  OPEN: ['PROCESS', 'DONE', 'CANCELED', 'REJECT'],
+  PROCESS: ['DONE', 'CANCELED', 'REJECT'],
+  DONE: [],       // Terminal state — no further transitions allowed
+  CANCELED: [],   // Terminal state
+  REJECT: [],     // Terminal state
+};
+
+function isValidTransition(currentStatus: string, newStatus: string): boolean {
+  const allowed = VALID_STATUS_TRANSITIONS[currentStatus];
+  if (!allowed) return true; // Unknown status → allow (backward compat)
+  return allowed.includes(newStatus);
+}
+
+/**
  * Update complaint status (supports both database id and complaint_id)
  */
 export async function updateComplaintStatus(
@@ -378,6 +401,11 @@ export async function updateComplaintStatus(
   const existingComplaint = await getComplaintById(id);
   if (!existingComplaint) {
     throw new Error('Complaint not found');
+  }
+
+  // Validate status transition
+  if (!isValidTransition(existingComplaint.status, updateData.status)) {
+    throw new Error(`Transisi status tidak valid: ${existingComplaint.status} → ${updateData.status}. Status ${existingComplaint.status} sudah final.`);
   }
   
   const complaint = await prisma.complaint.update({
@@ -605,11 +633,17 @@ export async function updateComplaintByUser(
       return { success: false, error: 'LOCKED', message: 'Laporan sudah selesai/dibatalkan/ditolak dan tidak bisa diubah' };
     }
 
+    // If deskripsi starts with [Update], append to existing description
+    let finalDeskripsi = data.deskripsi;
+    if (finalDeskripsi && finalDeskripsi.startsWith('[Update]') && complaint.deskripsi) {
+      finalDeskripsi = `${complaint.deskripsi}\n\n${finalDeskripsi}`;
+    }
+
     const updated = await prisma.complaint.update({
       where: { id: complaint.id },
       data: {
         alamat: data.alamat ?? undefined,
-        deskripsi: data.deskripsi ?? undefined,
+        deskripsi: finalDeskripsi ?? undefined,
         rt_rw: data.rt_rw ?? undefined,
       },
     });

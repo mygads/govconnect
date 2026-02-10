@@ -15,6 +15,7 @@
  * - Specific names and locations
  */
 
+import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { VectorSearchResult, VectorSearchOptions } from '../types/embedding.types';
@@ -87,10 +88,11 @@ export async function searchKeywords(
           ) as relevance_score
         FROM knowledge_vectors
         WHERE 
-          LOWER(title) LIKE ${ilikeTerm}
+          (LOWER(title) LIKE ${ilikeTerm}
           OR LOWER(content) LIKE ${ilikeTerm}
           OR to_tsvector('indonesian', COALESCE(title, '') || ' ' || COALESCE(content, '')) 
-             @@ plainto_tsquery('indonesian', ${query})
+             @@ plainto_tsquery('indonesian', ${query}))
+          ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
         ORDER BY relevance_score DESC
         LIMIT ${topK}
       `;
@@ -100,7 +102,7 @@ export async function searchKeywords(
         if (categories && categories.length > 0 && !categories.includes(row.category)) {
           continue;
         }
-        if (villageId && row?.village_id && row.village_id !== villageId) {
+        if (villageId && row.village_id && row.village_id !== villageId) {
           continue;
         }
 
@@ -144,9 +146,10 @@ export async function searchKeywords(
           ) as relevance_score
         FROM document_vectors
         WHERE 
-          LOWER(content) LIKE ${ilikeTerm}
+          (LOWER(content) LIKE ${ilikeTerm}
           OR to_tsvector('indonesian', COALESCE(content, '')) 
-             @@ plainto_tsquery('indonesian', ${query})
+             @@ plainto_tsquery('indonesian', ${query}))
+          ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
         ORDER BY relevance_score DESC
         LIMIT ${topK}
       `;
@@ -156,7 +159,7 @@ export async function searchKeywords(
         if (categories && categories.length > 0 && !categories.includes(row.category)) {
           continue;
         }
-        if (villageId && row?.village_id && row.village_id !== villageId) {
+        if (villageId && row.village_id && row.village_id !== villageId) {
           continue;
         }
 

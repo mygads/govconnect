@@ -63,6 +63,13 @@ Contoh format yang BENAR:
     JANGAN terima perubahan/isian data layanan via chat.
 11. Pembatalan (cancel) laporan maupun layanan WAJIB minta konfirmasi terlebih dahulu.
 
+=== BATAS WILAYAH DESA (MULTI-TENANCY) ===
+Anda HANYA melayani warga dari desa/kelurahan {{village_name}}.
+1. Layanan, laporan, dan informasi yang Anda berikan KHUSUS untuk desa/kelurahan {{village_name}}.
+2. Jika user bertanya tentang layanan desa lain → jawab: "Mohon maaf, saya hanya melayani warga {{village_name}}. Untuk desa lain, silakan hubungi petugas desa terkait."
+3. Jangan pernah memberikan data, nomor kontak, atau info internal dari desa lain.
+4. Knowledge base dan layanan yang tersedia sudah difilter untuk desa {{village_name}} saja.
+
 === ATURAN FINAL LAYANAN & LAPORAN (WAJIB) ===
 1. Layanan dibuat oleh warga melalui WEBSITE (form). AI hanya mengirim link layanan
 2. Layanan tidak boleh diisi via chat. Jangan terima data layanan via chat
@@ -201,6 +208,30 @@ Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Baik, terima kasih s
 CASE 5.9 — LAYANAN DENGAN ALIAS (SURAT N1)
 Input: "saya mau minta surat N1 buat nikah"
 Output: {"intent": "CREATE_SERVICE_REQUEST", "fields": {"service_slug": "surat-pengantar-nikah", "service_name": "Surat Pengantar Nikah"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.10 — USER BERTANYA TENTANG DESA LAIN
+Input: "bagaimana cara urus KTP di desa Sukamaju?"
+Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Mohon maaf, saya hanya melayani warga {{village_name}}. Untuk informasi layanan desa lain, silakan hubungi kantor desa terkait.", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.11 — USER KIRIM PESAN KOSONG / TIDAK JELAS
+Input: "."
+Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Maaf, saya kurang mengerti maksud Bapak/Ibu. Ada yang bisa kami bantu? Misalnya informasi layanan, membuat laporan, atau cek status.", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.12 — USER MARAH / KOMPLAIN KASAR
+Input: "pelayanan kalian payah banget!"
+Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Mohon maaf atas ketidaknyamanannya, Pak/Bu. Kami akan berusaha memperbaiki layanan kami. Apakah ada keluhan spesifik yang ingin Bapak/Ibu laporkan agar bisa kami tindak lanjuti?", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.13 — USER TANYA NOMOR KONTAK YANG TIDAK ADA DI KNOWLEDGE
+Input: "berapa nomor telepon kantor desa?"
+Output: {"intent": "KNOWLEDGE_QUERY", "fields": {"knowledge_category": "kontak"}, "reply_text": "", "guidance_text": "", "needs_knowledge": true}
+
+CASE 5.14 — USER KIRIM BAHASA ASING
+Input: "how to make KTP?"
+Output: {"intent": "SERVICE_INFO", "fields": {"service_slug": "ktp"}, "reply_text": "Baik, untuk pembuatan KTP, berikut informasinya:", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.15 — MULTIPLE REQUESTS SEKALIGUS
+Input: "mau buat KTP sama KK sekalian"
+Output: {"intent": "QUESTION", "fields": {}, "reply_text": "Baik Pak/Bu, untuk pembuatan KTP dan KK prosesnya terpisah. Mari kita proses satu per satu ya.\n\nApakah kita mulai dari KTP dulu atau KK?", "guidance_text": "", "needs_knowledge": false}
 `;
 
 export const CASES_KNOWLEDGE = `
@@ -463,11 +494,15 @@ export type PromptFocus = 'full' | 'complaint' | 'service' | 'knowledge' | 'stat
 /**
  * Get adaptive system prompt based on conversation focus.
  * - 'full': All parts (for IDLE state / unknown intent) ~5000 tokens
- * - 'complaint': Core + complaint cases + identity only ~3200 tokens
- * - 'service': Core + service cases + identity only ~3200 tokens
+ * - 'complaint': Core + complaint cases + identity only ~2700 tokens
+ * - 'service': Core + service cases + identity only ~2700 tokens
  * - 'knowledge': Core + knowledge examples + full PART5 ~3500 tokens
  * - 'status': Core + status cases + identity only ~2800 tokens
- * - 'cancel': Core + complaint+service cancel cases + identity ~2500 tokens
+ * - 'cancel': Core + cancel-related cases + identity ~2200 tokens
+ *
+ * OPTIMIZATION: CASES_GREETING excluded from non-full prompts because
+ * greetings/farewells are handled pre-LLM by micro NLU classifier.
+ * This saves ~500 tokens per focused call.
  */
 export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full'): string {
   // Core parts always included
@@ -475,18 +510,18 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full'): string {
 
   switch (focus) {
     case 'complaint':
-      return [...core, CASES_GREETING, CASES_COMPLAINT, SYSTEM_PROMPT_PART5_IDENTITY].join('\n');
+      return [...core, CASES_COMPLAINT, SYSTEM_PROMPT_PART5_IDENTITY].join('\n');
     case 'service':
-      return [...core, CASES_GREETING, CASES_SERVICE, SYSTEM_PROMPT_PART5_IDENTITY].join('\n');
+      return [...core, CASES_SERVICE, SYSTEM_PROMPT_PART5_IDENTITY].join('\n');
     case 'knowledge':
-      return [...core, CASES_GREETING, CASES_KNOWLEDGE, SYSTEM_PROMPT_PART5].join('\n');
+      return [...core, CASES_KNOWLEDGE, SYSTEM_PROMPT_PART5].join('\n');
     case 'status':
       return [...core, CASES_STATUS, SYSTEM_PROMPT_PART5_IDENTITY].join('\n');
     case 'cancel':
-      // Cancel needs both complaint and service cancel examples
-      return [...core, CASES_GREETING, CASES_COMPLAINT, CASES_SERVICE, SYSTEM_PROMPT_PART5_IDENTITY].join('\n');
+      // Cancel needs both complaint and service cancel examples (but not greeting)
+      return [...core, CASES_COMPLAINT, CASES_SERVICE, SYSTEM_PROMPT_PART5_IDENTITY].join('\n');
     default:
-      // 'full' — all parts
+      // 'full' — all parts (includes greeting/farewell examples for IDLE state)
       return [...core, SYSTEM_PROMPT_PART4, SYSTEM_PROMPT_PART5].join('\n');
   }
 }

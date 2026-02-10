@@ -63,7 +63,8 @@ import {
   needsAntiHallucinationRetry,
   sanitizeFakeLinks,
 } from './anti-hallucination.service';
-import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting, classifyNameUpdate } from './micro-llm-matcher.service';
+import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting, classifyNameUpdate, classifyMessage } from './micro-llm-matcher.service';
+import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
@@ -1117,7 +1118,11 @@ export async function handleComplaintCreation(
     }
 
     const statusLine = isEmergency || hasRtRw ? '\nStatus laporan saat ini: OPEN.' : '';
-    return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${statusLine}${withPhotoNote}${importantContactsMessage}`;
+    const photoReminder = photoCount === 0
+      ? '\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.'
+      : '';
+    const multiComplaintHint = '\n\nJika ada laporan lain, silakan langsung sampaikan.';
+    return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${statusLine}${withPhotoNote}${photoReminder}${importantContactsMessage}${multiComplaintHint}`;
   }
   
   aiAnalyticsService.recordFailure('CREATE_COMPLAINT');
@@ -1829,7 +1834,13 @@ export async function handleComplaintUpdate(userId: string, channel: ChannelType
     return 'Baik, silakan sampaikan keterangan tambahan yang ingin ditambahkan.';
   }
 
-  const result = await updateComplaintByUser(complaint_id, buildChannelParams(channel, userId), { alamat, deskripsi, rt_rw });
+  // Mark update descriptions with [Update] prefix so case service can append
+  let mergedDeskripsi = deskripsi;
+  if (deskripsi) {
+    mergedDeskripsi = `[Update] ${deskripsi}`;
+  }
+
+  const result = await updateComplaintByUser(complaint_id, buildChannelParams(channel, userId), { alamat, deskripsi: mergedDeskripsi, rt_rw });
 
   if (!result.success) {
     if (result.error === 'NOT_FOUND') {
@@ -2852,14 +2863,15 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     };
 
     // Classify greeting once via micro NLU and cache the result for multiple usage points
-    let greetingClassified = false;
-    let isGreetingMessage = false;
-    const checkGreeting = async (): Promise<boolean> => {
-      if (!greetingClassified) {
-        greetingClassified = true;
+    // Uses unified classifier that returns message_type + rag_needed + categories in ONE call
+    let unifiedClassifyResult: UnifiedClassifyResult | null = null;
+    let unifiedClassified = false;
+    const getUnifiedClassification = async (): Promise<UnifiedClassifyResult | null> => {
+      if (!unifiedClassified) {
+        unifiedClassified = true;
         try {
-          const greetingResult = await withMicroNluBudget(
-            () => classifyGreeting(message.trim(), {
+          unifiedClassifyResult = await withMicroNluBudget(
+            () => classifyMessage(message.trim(), {
               village_id: resolvedVillageId,
               wa_user_id: userId,
               session_id: userId,
@@ -2867,11 +2879,21 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             }),
             null
           );
-          isGreetingMessage = greetingResult?.decision === 'GREETING' && greetingResult.confidence >= 0.7;
         } catch (error: any) {
-          logger.warn('[UnifiedProcessor] Greeting NLU failed', { error: error.message });
-          isGreetingMessage = false;
+          logger.warn('[UnifiedProcessor] Unified NLU classify failed', { error: error.message });
+          unifiedClassifyResult = null;
         }
+      }
+      return unifiedClassifyResult;
+    };
+
+    let greetingClassified = false;
+    let isGreetingMessage = false;
+    const checkGreeting = async (): Promise<boolean> => {
+      if (!greetingClassified) {
+        greetingClassified = true;
+        const unified = await getUnifiedClassification();
+        isGreetingMessage = unified?.message_type === 'GREETING' && unified.confidence >= 0.7;
       }
       return isGreetingMessage;
     };
@@ -3106,19 +3128,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       }
     }
     
-    // Step 1.9: Farewell detection — user wants to end conversation (micro NLU)
+    // Step 1.9: Farewell detection — uses unified classifier (shares same LLM call as greeting/RAG check)
     if (message.trim().length < 80) {
       try {
-        const farewellResult = await withMicroNluBudget(
-          () => classifyFarewell(message.trim(), {
-            village_id: resolvedVillageId,
-            wa_user_id: userId,
-            session_id: userId,
-            channel,
-          }),
-          null
-        );
-        if (farewellResult?.decision === 'FAREWELL' && farewellResult.confidence >= 0.8) {
+        const unified = await getUnifiedClassification();
+        if (unified?.message_type === 'FAREWELL' && unified.confidence >= 0.8) {
           const userName = knownName || getProfile(userId).nama_lengkap;
           const nameGreeting = userName ? ` ${userName}` : '';
           tracker.complete();
@@ -3134,6 +3148,63 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       }
     }
     
+    // Step 1.95: Help/Menu command — quick feature listing
+    const helpPattern = /^\s*(bantuan|help|menu|fitur|layanan apa saja|bisa apa|apa saja|panduan)\s*[?.!]*\s*$/i;
+    if (helpPattern.test(message.trim())) {
+      const userName = knownName || getProfile(userId).nama_lengkap;
+      const nameGreeting = userName ? ` ${userName}` : '';
+      tracker.complete();
+      return {
+        success: true,
+        response: `Halo Pak/Bu${nameGreeting}! Berikut layanan yang tersedia di GovConnect:\n\n` +
+          `📋 *Pengaduan* — Laporkan keluhan infrastruktur, lingkungan, dll\n` +
+          `📄 *Layanan Surat* — Ajukan pembuatan surat (SKTM, domisili, dll)\n` +
+          `🔍 *Cek Status* — Cek status pengaduan atau permohonan surat\n` +
+          `❌ *Batalkan* — Batalkan pengaduan atau permohonan\n` +
+          `ℹ️ *Informasi* — Tanya syarat, prosedur, jam layanan, dll\n\n` +
+          `Silakan ketik keperluan Bapak/Ibu, misalnya:\n` +
+          `• "Saya mau lapor jalan rusak"\n` +
+          `• "Syarat buat SKTM apa?"\n` +
+          `• "Cek status laporan LAP-xxx"`,
+        intent: 'QUESTION',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
+
+    // Step 1.96: Voice/Sticker/GIF fallback — unsupported media types
+    if (input.mediaType && ['voice', 'audio', 'sticker', 'gif', 'video_note'].includes(input.mediaType.toLowerCase())) {
+      const mediaLabels: Record<string, string> = {
+        voice: 'pesan suara', audio: 'audio', sticker: 'sticker',
+        gif: 'GIF', video_note: 'video',
+      };
+      const label = mediaLabels[input.mediaType.toLowerCase()] || input.mediaType;
+      tracker.complete();
+      return {
+        success: true,
+        response: `Mohon maaf, saat ini kami belum bisa memproses ${label}. ` +
+          `Silakan ketik pesan dalam bentuk teks ya, Pak/Bu.\n\n` +
+          `Ketik *bantuan* untuk melihat daftar layanan yang tersedia.`,
+        intent: 'QUESTION',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
+    }
+
+    // Step 1.97: Pre-LLM emergency detection — fast-track urgent complaints
+    // If user message contains emergency keywords AND no pending data flow is active,
+    // nudge them to report the complaint immediately without waiting for LLM classification.
+    const emergencyKeywordsPreLLM = /(?:darurat|kebakaran|terbakar|banjir\s*besar|kecelakaan|korban|ambruk|runtuh|roboh|gas\s*bocor|tenggelam|tersengat)/i;
+    const hasPendingFlow = pendingAddressConfirmation.has(userId) || pendingAddressRequest.has(userId);
+    if (!hasPendingFlow && emergencyKeywordsPreLLM.test(message)) {
+      // Don't return early — just log and let the message proceed with elevated priority.
+      // The LLM will classify it as CREATE_COMPLAINT. We set promptFocus hint for later.
+      logger.warn('[UnifiedProcessor] 🚨 Pre-LLM emergency keywords detected', {
+        userId,
+        matchedPattern: message.match(emergencyKeywordsPreLLM)?.[0],
+      });
+      // Store emergency hint so promptFocus can be set to 'complaint' even before NLU runs
+      (input as any)._emergencyHint = true;
+    }
+
     // Step 2: Check pending address confirmation (for vague addresses)
     const pendingConfirm = pendingAddressConfirmation.get(userId);
     if (pendingConfirm) {
@@ -3554,13 +3625,16 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
     
     // Step 6: Pre-fetch RAG context if needed
-    // Update status: searching knowledge
+    // Uses unified NLU classifier result for intelligent RAG skip/fetch decision
+    // This avoids a separate shouldRetrieveContext() call that would invoke classifyRAGIntent again
     tracker.searching();
     
     let preloadedRAGContext: RAGContext | string | undefined;
     let graphContext = '';
     const isGreeting = await checkGreeting();
-    const looksLikeQuestion = await shouldRetrieveContext(sanitizedMessage);
+    const unified = await getUnifiedClassification();
+    const looksLikeQuestion = unified?.rag_needed ?? await shouldRetrieveContext(sanitizedMessage);
+    const nluCategories = unified?.categories || [];
     const prefetchVillageId = resolvedVillageId;
     
     if (isGreeting) {
@@ -3572,7 +3646,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       }
     } else if (looksLikeQuestion) {
       try {
-        const ragContext = await getRAGContext(sanitizedMessage, undefined, prefetchVillageId);
+        // Pass NLU-inferred categories to RAG for more targeted search
+        const ragContext = await getRAGContext(sanitizedMessage, nluCategories.length > 0 ? nluCategories : undefined, prefetchVillageId);
         if (ragContext.totalResults > 0) preloadedRAGContext = ragContext;
       } catch (error: any) {
         logger.warn('[UnifiedProcessor] RAG fetch failed', { error: error.message });
@@ -3613,6 +3688,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     // Step 7: Build context
     // Determine prompt focus based on conversation state to reduce token usage
+    // Priority: FSM state > previous intent > NLU message_type > 'full'
     let promptFocus: PromptFocus = 'full';
     const currentIntent = conversationCtx.currentIntent;
     
@@ -3630,10 +3706,42 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       promptFocus = 'complaint';
     } else if (currentIntent === 'SERVICE_INFO' || currentIntent === 'CREATE_SERVICE_REQUEST' || currentIntent === 'UPDATE_SERVICE_REQUEST') {
       promptFocus = 'service';
+    } else if (unified?.message_type && unified.confidence >= 0.7) {
+      // NLU→PromptFocus bridge: use micro NLU classification for first message / IDLE state
+      // This saves ~1500-2000 tokens by loading only relevant case examples
+      switch (unified.message_type) {
+        case 'COMPLAINT':
+          promptFocus = 'complaint';
+          break;
+        case 'QUESTION':
+          // Questions could be service or knowledge — use RAG categories to decide
+          if (nluCategories.some(c => ['layanan', 'prosedur'].includes(c))) {
+            promptFocus = 'service';
+          } else if (nluCategories.length > 0) {
+            promptFocus = 'knowledge';
+          }
+          // else remains 'full' — ambiguous question
+          break;
+        // GREETING, FAREWELL, DATA_INPUT, CONFIRMATION, SOCIAL → keep 'full'
+      }
     }
-    // else 'full' — IDLE state with no prior context
+    // else 'full' — IDLE state with no prior context or low NLU confidence
+
+    // Emergency hint → force complaint focus (from Step 1.97)
+    if (promptFocus === 'full' && (input as any)._emergencyHint) {
+      promptFocus = 'complaint';
+    }
+
+    // Knowledge graph → prompt focus override:
+    // If knowledge graph matched a service code, ensure we use 'service' focus
+    if (promptFocus === 'full' && graphContext) {
+      promptFocus = 'service';
+    }
     
-    logger.debug('[UnifiedProcessor] Adaptive prompt focus', { userId, fsmState, currentIntent, promptFocus });
+    logger.debug('[UnifiedProcessor] Adaptive prompt focus', {
+      userId, fsmState, currentIntent, promptFocus,
+      nluMessageType: unified?.message_type, nluConfidence: unified?.confidence,
+    });
 
     let systemPrompt: string;
     let messageCount: number;
