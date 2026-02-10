@@ -836,8 +836,10 @@ PERCAKAPAN:
 Output hanya ringkasan singkat, tanpa format JSON.`;
 
 // Cache summarization results per userId to avoid re-summarizing unchanged history
+// Uses TTL-based eviction with bounded size to prevent unbounded memory growth.
 const _summaryCache = new Map<string, { hash: string; summary: string; ts: number }>();
-const SUMMARY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const SUMMARY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes (increased from 5m — summaries are stable)
+const MAX_SUMMARY_CACHE = 200;
 
 function simpleHash(text: string): string {
   let hash = 0;
@@ -873,13 +875,18 @@ export async function summarizeConversation(
 
   if (result) {
     const summary = result.trim();
-    _summaryCache.set(userId, { hash, summary, ts: Date.now() });
+    const now = Date.now();
+    _summaryCache.set(userId, { hash, summary, ts: now });
 
-    // Evict old entries
-    if (_summaryCache.size > 500) {
-      const now = Date.now();
+    // Evict expired + enforce max size
+    if (_summaryCache.size > MAX_SUMMARY_CACHE) {
       for (const [key, val] of _summaryCache) {
         if (now - val.ts > SUMMARY_CACHE_TTL) _summaryCache.delete(key);
+      }
+      // If still over limit, remove oldest entries
+      while (_summaryCache.size > MAX_SUMMARY_CACHE) {
+        const firstKey = _summaryCache.keys().next().value;
+        if (firstKey) _summaryCache.delete(firstKey); else break;
       }
     }
 
@@ -945,22 +952,45 @@ export async function validateResponseAgainstKnowledge(
   }
 }
 
-let _cachedClassifyResult: { message: string; result: UnifiedClassifyResult | null; ts: number } | null = null;
+// Keyed cache for classify results — prevents race conditions under concurrent requests.
+// Key = hash(message), stores result per-message with 2s TTL.
+const _classifyCache = new Map<string, { result: UnifiedClassifyResult | null; ts: number }>();
+const CLASSIFY_CACHE_TTL = 2000; // 2 seconds
+const MAX_CLASSIFY_CACHE = 50;
 
 /**
  * Get unified classification result, cached within a 2-second window
  * to avoid duplicate LLM calls when greeting/farewell/RAG check the same message.
+ * Uses keyed Map instead of single global variable to handle concurrent requests safely.
  */
 async function classifyMessageCached(
   message: string,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<UnifiedClassifyResult | null> {
   const trimmed = message.trim();
-  if (_cachedClassifyResult && _cachedClassifyResult.message === trimmed && Date.now() - _cachedClassifyResult.ts < 2000) {
-    return _cachedClassifyResult.result;
+  const cacheKey = simpleHash(trimmed);
+  const now = Date.now();
+
+  const cached = _classifyCache.get(cacheKey);
+  if (cached && now - cached.ts < CLASSIFY_CACHE_TTL) {
+    return cached.result;
   }
+
   const result = await classifyMessage(trimmed, context);
-  _cachedClassifyResult = { message: trimmed, result, ts: Date.now() };
+  _classifyCache.set(cacheKey, { result, ts: now });
+
+  // Evict expired entries when cache grows too large
+  if (_classifyCache.size > MAX_CLASSIFY_CACHE) {
+    for (const [k, v] of _classifyCache) {
+      if (now - v.ts > CLASSIFY_CACHE_TTL) _classifyCache.delete(k);
+    }
+    // If still too large after TTL eviction, remove oldest
+    if (_classifyCache.size > MAX_CLASSIFY_CACHE) {
+      const firstKey = _classifyCache.keys().next().value;
+      if (firstKey) _classifyCache.delete(firstKey);
+    }
+  }
+
   return result;
 }
 

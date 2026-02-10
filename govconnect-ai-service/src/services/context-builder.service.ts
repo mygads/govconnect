@@ -42,6 +42,7 @@ export async function buildContext(
     
     // Build knowledge section with confidence-aware instructions
     const knowledgeSection = buildKnowledgeSection(ragContext);
+    const hasKnowledge = !!knowledgeSection.trim();
     
     // Calculate current date, time, and tomorrow for prompt (in WIB timezone)
     const wib = getWIBDateTime();
@@ -54,7 +55,8 @@ export async function buildContext(
     const categoriesText = complaintCategoriesText || 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
     
     // Build full prompt using adaptive system prompt (filters by focus)
-    const systemPrompt = (promptFocus ? getAdaptiveSystemPrompt(promptFocus) : getFullSystemPrompt())
+    // Pass hasKnowledge to skip PART5_KNOWLEDGE block when RAG returned no results (~400 tokens saved)
+    const systemPrompt = (promptFocus ? getAdaptiveSystemPrompt(promptFocus, hasKnowledge) : getFullSystemPrompt())
       .replace('{knowledge_context}', knowledgeSection)
       .replace('{history}', conversationHistory)
       .replace('{user_message}', currentMessage)

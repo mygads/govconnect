@@ -229,12 +229,23 @@ export function learnFromMessage(wa_user_id: string, message: string): void {
   let updated = false;
   
   // Extract NIK if not already saved
+  // Only match valid NIK structure: province code (01-94), birth date encoding, sequence
   if (!profile.nik) {
     const nikMatch = message.match(/\b(\d{16})\b/);
     if (nikMatch) {
-      profile.nik = nikMatch[1];
-      updated = true;
-      logger.debug('👤 Learned NIK from message', { wa_user_id });
+      const nik = nikMatch[1];
+      // Basic NIK validation: province code 01-94, valid date portion
+      const provinceCode = parseInt(nik.substring(0, 2), 10);
+      const dayPart = parseInt(nik.substring(6, 8), 10);
+      // Female NIK adds 40 to day (01-31 for male, 41-71 for female)
+      const isValidProvince = provinceCode >= 1 && provinceCode <= 94;
+      const isValidDay = (dayPart >= 1 && dayPart <= 31) || (dayPart >= 41 && dayPart <= 71);
+      if (isValidProvince && isValidDay) {
+        // Store masked: keep first 6 + last 4, mask middle with asterisks
+        profile.nik = nik.substring(0, 6) + '******' + nik.substring(12);
+        updated = true;
+        logger.debug('👤 Learned NIK from message (masked)', { wa_user_id });
+      }
     }
   }
   

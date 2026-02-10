@@ -400,7 +400,9 @@ Output: {"intent": "CHECK_STATUS", "confidence": 0.95, "fields": {"complaint_id"
 `;
 
 // Backward-compatible: combine all cases for full prompt
-export const SYSTEM_PROMPT_PART4 = [CASES_GREETING, CASES_KNOWLEDGE, CASES_SERVICE, CASES_COMPLAINT, CASES_STATUS].join('\n');
+// NOTE: CASES_GREETING_CORE excluded — greeting/farewell handled pre-LLM by micro NLU.
+// Only CASES_EDGE retained for the LLM to handle ambiguous edge cases.
+export const SYSTEM_PROMPT_PART4 = [CASES_EDGE, CASES_KNOWLEDGE, CASES_SERVICE, CASES_COMPLAINT, CASES_STATUS].join('\n');
 
 // ==================== PART5: IDENTITY + KNOWLEDGE (SPLIT) ====================
 
@@ -583,16 +585,16 @@ export type PromptFocus = 'full' | 'complaint' | 'service' | 'knowledge' | 'stat
  * Composes ONLY relevant prompt sections to minimize tokens and reduce LLM confusion.
  *
  * Token estimates per focus:
- * - 'full':      ~5000 tokens (all rules, all cases, all intents)
+ * - 'full':      ~4200 tokens (all rules, edge + domain cases, no greeting cases)
  * - 'complaint': ~1400 tokens (core + complaint rules/intents/cases + edge cases)
  * - 'service':   ~1800 tokens (core + service rules/intents/cases + edge cases)
- * - 'knowledge': ~1600 tokens (core + knowledge rules + full PART5 + edge cases)
+ * - 'knowledge': ~1200-1600 tokens (core + knowledge rules + PART5 only if KB has data)
  * - 'status':    ~1200 tokens (core + status rules/cases + edge cases)
- * - 'cancel':    ~2000 tokens (core + cancel + complaint/service rules/intents/cases)
+ * - 'cancel':    ~1200 tokens (core + cancel rules + intents + edge cases)
  *
- * vs OLD approach: every focus was ~3500+ tokens (included ALL rules + ALL intents)
+ * @param hasKnowledge - If false, skip SYSTEM_PROMPT_PART5_KNOWLEDGE to save ~400 tokens
  */
-export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full'): string {
+export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full', hasKnowledge: boolean = true): string {
   switch (focus) {
     case 'complaint':
       return [
@@ -618,7 +620,9 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full'): string {
         PROMPT_RULES_KNOWLEDGE,
         PART3_INTENT_HEADER, PART3_GENERAL_INTENTS, PART3_INTENT_FALLBACK,
         CASES_KNOWLEDGE, CASES_EDGE,
-        SYSTEM_PROMPT_PART5,
+        SYSTEM_PROMPT_PART5_IDENTITY,
+        // Only include knowledge confidence rules + examples when RAG returned data
+        ...(hasKnowledge ? [SYSTEM_PROMPT_PART5_KNOWLEDGE] : []),
       ].join('\n');
 
     case 'status':
@@ -631,19 +635,23 @@ export function getAdaptiveSystemPrompt(focus: PromptFocus = 'full'): string {
       ].join('\n');
 
     case 'cancel':
+      // Slim cancel: only cancel rules + relevant intents. No full complaint/service cases.
       return [
         PROMPT_CORE, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
-        PROMPT_RULES_CANCEL, PROMPT_RULES_COMPLAINT, PROMPT_RULES_SERVICE,
+        PROMPT_RULES_CANCEL,
         PART3_INTENT_HEADER, PART3_COMPLAINT_INTENTS, PART3_SERVICE_INTENTS, PART3_GENERAL_INTENTS, PART3_INTENT_FALLBACK,
-        CASES_COMPLAINT, CASES_SERVICE, CASES_EDGE,
+        CASES_EDGE,
         SYSTEM_PROMPT_PART5_IDENTITY,
       ].join('\n');
 
     default:
-      // 'full' — all parts (includes greeting/farewell examples for IDLE state)
+      // 'full' — all parts (greeting cases excluded since handled by NLU pre-LLM)
       return [
         SYSTEM_PROMPT_TEMPLATE, SYSTEM_PROMPT_PART2, SYSTEM_PROMPT_PART2_5,
-        SYSTEM_PROMPT_PART3, SYSTEM_PROMPT_PART4, SYSTEM_PROMPT_PART5,
+        SYSTEM_PROMPT_PART3, SYSTEM_PROMPT_PART4,
+        SYSTEM_PROMPT_PART5_IDENTITY,
+        // Only include knowledge rules when RAG returned data
+        ...(hasKnowledge ? [SYSTEM_PROMPT_PART5_KNOWLEDGE] : []),
       ].join('\n');
   }
 }

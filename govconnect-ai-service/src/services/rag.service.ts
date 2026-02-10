@@ -172,10 +172,18 @@ function normalizeForExpansionCache(q: string): string {
  * Expand query using micro LLM for better retrieval recall.
  * Results are cached for 15 minutes to avoid redundant LLM calls.
  * Falls back to original query if LLM fails.
+ * Skips expansion for very short queries (≤3 words) — direct keyword match is sufficient.
  */
 export async function expandQuery(query: string): Promise<string> {
   if (!query.trim()) return query;
   if (!config.geminiApiKey && apiKeyManager.getByokKeys().length === 0) return query;
+
+  // Skip expansion for very short queries — LLM overhead not worth it
+  const wordCount = query.trim().split(/\s+/).length;
+  if (wordCount <= 2) {
+    logger.debug('Query expansion skipped (≤2 words)', { query: query.substring(0, 40) });
+    return query;
+  }
 
   // Check expansion cache first
   const cacheKey = normalizeForExpansionCache(query);

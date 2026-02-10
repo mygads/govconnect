@@ -462,6 +462,7 @@ export function validateResponse(response: string): string {
 /**
  * Check if an address is too vague/incomplete using micro NLU.
  * Returns true if address needs confirmation.
+ * Fast-path: skip NLU if address clearly contains RT/RW or street+number.
  */
 export async function isVagueAddress(
   alamat: string,
@@ -471,6 +472,13 @@ export async function isVagueAddress(
   
   const cleanAlamat = alamat.trim();
   if (cleanAlamat.length < 3) return true;
+  
+  // Fast-path: address with RT+RW or street+number is specific enough — skip LLM call
+  const hasRtRw = /\brt\s*\.?\s*\d+\s*[\/\s]*rw\s*\.?\s*\d+/i.test(cleanAlamat);
+  const hasStreetNumber = /\b(?:jl|jln|jalan)\.?\s+\w+.*(?:no|nomor|blok)\.?\s*\d+/i.test(cleanAlamat);
+  if (hasRtRw || hasStreetNumber) {
+    return false; // Address is specific enough
+  }
   
   const result = await analyzeAddress(cleanAlamat, {
     ...context,
@@ -4187,11 +4195,6 @@ async function buildContextWithHistory(
   villageId?: string,
   promptFocus?: string
 ): Promise<{ systemPrompt: string; messageCount: number }> {
-  const getPrompt = promptFocus && typeof systemPromptModule.getAdaptiveSystemPrompt === 'function'
-    ? () => (systemPromptModule as any).getAdaptiveSystemPrompt(promptFocus)
-    : typeof systemPromptModule.getFullSystemPrompt === 'function'
-      ? systemPromptModule.getFullSystemPrompt
-      : () => (systemPromptModule as any).SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
 
   const conversationHistory = await (async () => {
     const SUMMARIZE_THRESHOLD = 8;
@@ -4210,9 +4213,21 @@ async function buildContextWithHistory(
         );
       } catch { /* fallback below */ }
       
-      const prefix = summaryText
-        ? `[RINGKASAN PERCAKAPAN SEBELUMNYA (${older.length} pesan)]\n${summaryText}\n\n[PERCAKAPAN TERBARU]\n`
-        : '';
+      let prefix: string;
+      if (summaryText) {
+        prefix = `[RINGKASAN PERCAKAPAN SEBELUMNYA (${older.length} pesan)]\n${summaryText}\n\n[PERCAKAPAN TERBARU]\n`;
+      } else {
+        // Fallback: extract key info from older messages instead of dropping them silently
+        const keyParts = older
+          .filter(m => m.role === 'user')
+          .map(m => m.content)
+          .filter(c => c.length > 5)
+          .slice(-3) // Keep last 3 user messages as keywords
+          .map(c => c.substring(0, 80));
+        prefix = keyParts.length > 0
+          ? `[TOPIK SEBELUMNYA: ${keyParts.join('; ')}]\n\n[PERCAKAPAN TERBARU]\n`
+          : '';
+      }
       return prefix + recent.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
     }
     return history.slice(-10).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
@@ -4246,7 +4261,15 @@ async function buildContextWithHistory(
   // Build dynamic complaint categories from DB
   const complaintCategoriesText = await buildComplaintCategoriesText(villageId);
   
-  const systemPrompt = getPrompt()
+  // Determine if knowledge exists for conditional prompt inclusion
+  const hasKnowledge = !!knowledgeSection.trim();
+  const getPromptFn = promptFocus && typeof systemPromptModule.getAdaptiveSystemPrompt === 'function'
+    ? () => (systemPromptModule as any).getAdaptiveSystemPrompt(promptFocus, hasKnowledge)
+    : typeof systemPromptModule.getFullSystemPrompt === 'function'
+      ? systemPromptModule.getFullSystemPrompt
+      : () => (systemPromptModule as any).SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
+  
+  const systemPrompt = getPromptFn()
     .replace('{knowledge_context}', knowledgeSection)
     .replace('{history}', conversationHistory || '(Ini adalah percakapan pertama dengan user)')
     .replace('{user_message}', currentMessage)
