@@ -65,6 +65,7 @@ import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreetin
 import { createProcessingTracker } from './processing-status.service';
 import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
+import { getCachedResponse, setCachedResponse, isCacheable } from './response-cache.service';
 
 // ==================== TYPES ====================
 
@@ -247,20 +248,13 @@ const serviceSearchCache = new LRUCache<string, {
   timestamp: number;
 }>({ maxSize: 500, ttlMs: 5 * 60 * 1000, name: 'serviceSearchCache' });
 
-// Village profile cache — near-static data, avoids HTTP per knowledge query (M4 optimization)
-// Key: villageId, Value: { profile, timestamp }
-const villageProfileCache = new LRUCache<string, {
-  profile: any;
-  timestamp: number;
-}>({ maxSize: 50, ttlMs: 15 * 60 * 1000, name: 'villageProfileCache' });
-
 // Cleanup expired entries from all LRU caches (TTL-based purge)
 setInterval(() => {
   const caches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
     pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
-    serviceSearchCache, villageProfileCache,
+    serviceSearchCache,
   ];
   let totalPurged = 0;
   for (const cache of caches) {
@@ -286,7 +280,6 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
     { cache: complaintTypeCache, name: 'complaintTypeCache' },
     { cache: conversationHistoryCache, name: 'conversationHistoryCache' },
     { cache: serviceSearchCache, name: 'serviceSearchCache' },
-    { cache: villageProfileCache, name: 'villageProfileCache' },
   ];
   let cleared = 0;
   const names: string[] = [];
@@ -333,7 +326,7 @@ export function getUMPCacheStats() {
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
     pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
-    serviceSearchCache, villageProfileCache,
+    serviceSearchCache,
   ].map(c => c.getStats());
 }
 
@@ -670,16 +663,15 @@ async function getCachedComplaintTypes(villageId?: string): Promise<any[]> {
   if (!villageId) return [];
 
   const cacheKey = villageId;
-  const now = Date.now();
   const cached = complaintTypeCache.get(cacheKey);
-  const ttlMs = 5 * 60 * 1000; // 5 minutes
 
-  if (cached && now - cached.timestamp < ttlMs) {
+  // LRU cache already handles TTL expiration — .get() returns undefined if expired
+  if (cached) {
     return cached.data;
   }
 
   const data = await getComplaintTypes(villageId);
-  complaintTypeCache.set(cacheKey, { data, timestamp: now });
+  complaintTypeCache.set(cacheKey, { data, timestamp: Date.now() });
   return data;
 }
 
@@ -3410,6 +3402,33 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       });
     }
     
+    // Step 5.8: Response cache check — skip expensive RAG + LLM for repeated questions
+    // Only for stateless queries (FAQ, knowledge, greetings) — never for user-specific flows
+    const fsmState = conversationCtx.fsmState;
+    if (fsmState === 'IDLE' && isCacheable(sanitizedMessage)) {
+      const cachedResp = getCachedResponse(sanitizedMessage);
+      if (cachedResp) {
+        const processingTimeMs = Date.now() - startTime;
+        tracker.complete();
+        if (channel === 'whatsapp') {
+          appendToHistoryCache(userId, 'assistant', cachedResp.response);
+        }
+        logger.info('⚡ [UnifiedProcessor] Response served from cache', {
+          userId, channel, intent: cachedResp.intent, processingTimeMs,
+        });
+        return {
+          success: true,
+          response: cachedResp.response,
+          guidanceText: cachedResp.guidanceText,
+          intent: cachedResp.intent,
+          metadata: {
+            processingTimeMs,
+            hasKnowledge: cachedResp.intent === 'KNOWLEDGE_QUERY',
+          },
+        };
+      }
+    }
+    
     // Step 6: Pre-fetch RAG context if needed
     // Update status: searching knowledge
     tracker.searching();
@@ -3471,7 +3490,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 7: Build context
     // Determine prompt focus based on conversation state to reduce token usage
     let promptFocus: PromptFocus = 'full';
-    const fsmState = conversationCtx.fsmState;
     const currentIntent = conversationCtx.currentIntent;
     
     if (fsmState === 'COLLECTING_COMPLAINT_DATA' || fsmState === 'CONFIRMING_COMPLAINT' || fsmState === 'AWAITING_ADDRESS_DETAIL') {
@@ -3756,6 +3774,9 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       intent: effectiveLlmResponse.intent,
       processingTimeMs,
     });
+    
+    // Save cacheable responses for future use (FAQ, knowledge, greetings)
+    setCachedResponse(message, finalResponse, effectiveLlmResponse.intent, finalGuidance);
     
     return {
       success: true,

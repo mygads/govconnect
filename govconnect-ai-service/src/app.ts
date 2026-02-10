@@ -50,7 +50,7 @@ import {
   resetAllTokenUsage,
 } from './services/token-usage.service';
 import { clearAllUMPCaches, clearUserCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
-import { clearVillageProfileCache } from './services/knowledge.service';
+import { clearVillageProfileCache, getVillageProfileCacheStats } from './services/knowledge.service';
 import { getEmbeddingCacheStats as getEmbCacheDetailStats } from './services/embedding.service';
 
 // Initialize Prometheus default metrics
@@ -298,11 +298,13 @@ export function isCacheEnabled(): boolean {
 app.get('/admin/cache/stats', (req: Request, res: Response) => {
   const umpStats = getUMPCacheStats();
   const responseCacheStats = getCacheStats();
+  const villageProfileStats = getVillageProfileCacheStats();
 
   res.json({
     cacheEnabled: _cacheEnabled,
     activeProcessing: getActiveProcessingCount(),
     umpCaches: umpStats,
+    villageProfileCache: villageProfileStats,
     responseCache: responseCacheStats,
     timestamp: new Date().toISOString(),
   });

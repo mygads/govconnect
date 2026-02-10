@@ -355,6 +355,20 @@ export async function handleDeleteConversation(req: Request, res: Response): Pro
 
     await deleteConversationHistory(wa_user_id, villageId, channel);
 
+    // Clear AI user profile/caches so name is forgotten (fresh session)
+    try {
+      const { config } = await import('../config/env');
+      await fetch(`${config.AI_SERVICE_URL}/admin/cache/clear-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: wa_user_id }),
+      });
+      logger.info('AI cache cleared for user', { wa_user_id });
+    } catch (aiErr: any) {
+      // Non-blocking — conversation is already deleted
+      logger.warn('Failed to clear AI cache for user', { wa_user_id, error: aiErr.message });
+    }
+
     logger.info('Conversation deleted', { wa_user_id });
 
     res.json({

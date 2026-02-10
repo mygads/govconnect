@@ -361,6 +361,16 @@ export function useLiveChat() {
 
   // Clear chat / Start new session
   const clearChat = useCallback(() => {
+    // Clear AI caches/profile so user starts fresh (fire-and-forget)
+    const oldSessionId = state.session?.sessionId;
+    if (oldSessionId) {
+      fetch('/api/webchat/clear-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: oldSessionId }),
+      }).catch(() => { /* non-blocking */ });
+    }
+
     setState(prev => {
       if (!prev.session?.village?.id) return prev;
 
@@ -374,7 +384,7 @@ export function useLiveChat() {
       };
       return { ...prev, session: newSession, unreadCount: 0 };
     });
-  }, []);
+  }, [state.session?.sessionId]);
 
   const switchVillage = useCallback(() => {
     if (typeof window !== 'undefined') {

@@ -336,6 +336,24 @@ export function clearVillageProfileCache(): number {
 }
 
 /**
+ * Get village profile cache stats (for admin dashboard).
+ */
+export function getVillageProfileCacheStats() {
+  const now = Date.now();
+  let activeEntries = 0;
+  for (const [, v] of _villageProfileCache) {
+    if (now - v.ts < VILLAGE_PROFILE_TTL) activeEntries++;
+  }
+  return {
+    name: 'villageProfileCache',
+    size: activeEntries,
+    maxSize: -1,
+    ttlMs: VILLAGE_PROFILE_TTL,
+    total: _villageProfileCache.size,
+  };
+}
+
+/**
  * Get kelurahan information context for greetings
  * This fetches basic kelurahan info (nama, alamat) to personalize welcome message
  */
