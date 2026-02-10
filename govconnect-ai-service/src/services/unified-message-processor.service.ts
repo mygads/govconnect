@@ -3688,7 +3688,14 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     // Step 7: Build context
     // Determine prompt focus based on conversation state to reduce token usage
-    // Priority: FSM state > previous intent > NLU message_type > 'full'
+    // Priority: FSM state > previous intent > NLU message_type > emergency > graph > 'full'
+    //
+    // ADAPTIVE PROMPT SAVINGS (vs full ~5000 tokens):
+    //   complaint → ~1400 tokens (core + complaint rules/intents/cases + edge)
+    //   service   → ~1800 tokens (core + service rules/intents/cases + edge)
+    //   knowledge → ~1600 tokens (core + knowledge rules + PART5 + edge)
+    //   status    → ~1200 tokens (core + status rules/cases + edge)
+    //   cancel    → ~2000 tokens (core + cancel + complaint/service)
     let promptFocus: PromptFocus = 'full';
     const currentIntent = conversationCtx.currentIntent;
     
@@ -3708,7 +3715,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       promptFocus = 'service';
     } else if (unified?.message_type && unified.confidence >= 0.7) {
       // NLU→PromptFocus bridge: use micro NLU classification for first message / IDLE state
-      // This saves ~1500-2000 tokens by loading only relevant case examples
+      // This saves ~3000-3500 tokens by loading only relevant rules, intents, and case examples
       switch (unified.message_type) {
         case 'COMPLAINT':
           promptFocus = 'complaint';
