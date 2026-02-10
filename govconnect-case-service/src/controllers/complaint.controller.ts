@@ -33,7 +33,7 @@ function resolveChannelIdentifier(req: Request, channel: 'WHATSAPP' | 'WEBCHAT')
  */
 export async function handleCreateComplaint(req: Request, res: Response) {
   try {
-    const { wa_user_id, kategori, deskripsi, alamat, rt_rw, foto_url, channel, channel_identifier } = req.body;
+    const { wa_user_id, kategori, deskripsi, alamat, rt_rw, foto_url, channel, channel_identifier, reporter_name, reporter_phone } = req.body;
     const resolvedChannel = resolveChannelFromRequest(req);
     const resolvedIdentifier = resolveChannelIdentifier(req, resolvedChannel) || channel_identifier;
 
@@ -97,6 +97,8 @@ export async function handleCreateComplaint(req: Request, res: Response) {
       type_id: req.body.type_id,
       category_id: req.body.category_id,
       is_urgent: req.body.is_urgent,
+      reporter_name,
+      reporter_phone,
     });
 
     // Include info about similar reports if any
