@@ -33,7 +33,6 @@ export {
   handleKnowledgeQuery,
   validateResponse,
   isVagueAddress,
-  detectEmergencyComplaint,
   processUnifiedMessage,
   getPendingAddressConfirmation,
   clearPendingAddressConfirmation,

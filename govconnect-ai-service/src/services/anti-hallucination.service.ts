@@ -83,6 +83,8 @@ export function needsAntiHallucinationRetry(args: {
   replyText?: string;
   guidanceText?: string;
   hasKnowledge: boolean;
+  /** Raw knowledge text from RAG — used to cross-reference phone/address signals */
+  knowledgeText?: string;
 }): { shouldRetry: boolean; reason?: string } {
   const replySignals = detectHallucinationSignals(args.replyText);
   const guidanceSignals = detectHallucinationSignals(args.guidanceText);
@@ -96,9 +98,6 @@ export function needsAntiHallucinationRetry(args: {
     };
   }
 
-  // For office hours, cost, phone, and address — only flag as hallucination if no knowledge context
-  if (args.hasKnowledge) return { shouldRetry: false };
-
   const mentionsOfficeHours = replySignals.mentionsOfficeHours || guidanceSignals.mentionsOfficeHours;
   const mentionsCost = replySignals.mentionsCost || guidanceSignals.mentionsCost;
   const mentionsPhoneNumber = replySignals.mentionsPhoneNumber || guidanceSignals.mentionsPhoneNumber;
@@ -106,6 +105,35 @@ export function needsAntiHallucinationRetry(args: {
 
   if (!mentionsOfficeHours && !mentionsCost && !mentionsPhoneNumber && !mentionsAddress) return { shouldRetry: false };
 
+  // When knowledge context exists, cross-reference detected signals
+  if (args.hasKnowledge) {
+    const kb = args.knowledgeText || '';
+    if (!kb) return { shouldRetry: false }; // Can't cross-ref without text
+
+    const responseText = [args.replyText, args.guidanceText].filter(Boolean).join(' ');
+    const unverifiedParts: string[] = [];
+
+    // Cross-ref phone: extract phone numbers from response and check if they appear in knowledge
+    if (mentionsPhoneNumber) {
+      const phonesInResponse = responseText.match(/(?:0\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}|\+?62\s?\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}|08\d{8,11}|\(0\d{2,3}\)\s?\d{6,8})/g) || [];
+      const unverifiedPhones = phonesInResponse.filter(phone => {
+        const digits = phone.replace(/[^\d]/g, '');
+        return !kb.includes(digits) && !kb.includes(phone);
+      });
+      if (unverifiedPhones.length > 0) unverifiedParts.push('nomor telepon');
+    }
+
+    // Cross-ref address: only flag if no address info exists in knowledge at all
+    if (mentionsAddress) {
+      const hasAddressInKb = /\b(jl|jln|jalan)\.?\s+\w+/i.test(kb) || /kode\s*pos/i.test(kb);
+      if (!hasAddressInKb) unverifiedParts.push('alamat spesifik');
+    }
+
+    if (unverifiedParts.length === 0) return { shouldRetry: false };
+    return { shouldRetry: true, reason: `Menyebut ${unverifiedParts.join(' dan ')} tidak ditemukan di knowledge` };
+  }
+
+  // No knowledge at all — flag everything
   const reasonParts: string[] = [];
   if (mentionsOfficeHours) reasonParts.push('jam operasional');
   if (mentionsCost) reasonParts.push('biaya');

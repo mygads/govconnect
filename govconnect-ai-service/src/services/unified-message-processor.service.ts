@@ -112,6 +112,8 @@ export interface ProcessMessageResult {
     knowledgeConfidence?: string;
     sentiment?: string;
     language?: string;
+    /** Unique trace ID for correlating logs across NLU → RAG → LLM → response */
+    traceId?: string;
   };
   /** Error message if failed */
   error?: string;
@@ -492,16 +494,8 @@ export async function isVagueAddress(
   return result.quality === 'vague' || result.quality === 'not_address';
 }
 
-/**
- * Detect emergency complaint — DB-driven only.
- * Uses `is_urgent` flag from complaint type configuration set by village admin.
- * No hardcoded keyword matching — the DB is the single source of truth.
- */
-export function detectEmergencyComplaint(_deskripsi: string, _currentMessage: string, _kategori: string): boolean {
-  // This function is now a no-op stub. Emergency detection is fully DB-driven
-  // via complaintTypeConfig.is_urgent. Callers should use DB value directly.
-  return false;
-}
+// detectEmergencyComplaint REMOVED — was a no-op stub.
+// Emergency detection is fully DB-driven via complaintTypeConfig.is_urgent.
 
 type HandlerResult = string | { replyText: string; guidanceText?: string };
 
@@ -785,11 +779,6 @@ export async function handleComplaintCreation(
   // SMART ALAMAT DETECTION: If LLM didn't extract alamat, try NLU-based extraction
   if (!alamat) {
     alamat = await extractAddressFromMessage(currentMessage, userId, { village_id: villageId, channel, kategori });
-  }
-  
-  // FALLBACK: Extract alamat from complaint message using NLU
-  if (!alamat && currentMessage.length > 20) {
-    alamat = await extractAddressFromComplaintMessage(currentMessage, userId, { village_id: villageId, channel, kategori });
   }
   
   // Fallback: if deskripsi is empty but we have kategori, generate default description
@@ -1517,17 +1506,7 @@ async function extractAddressFromMessage(currentMessage: string, userId: string,
   return '';
 }
 
-/**
- * Extract address from complaint message that contains both complaint and address
- * Example: "lampu mati di jalan sudirman no 10 bandung"
- * Example: "banjir di depan sman 1 margahayu"
- * 
- * IMPROVED: Uses NLU-based address analysis for accurate extraction
- */
-async function extractAddressFromComplaintMessage(message: string, userId: string, context?: { village_id?: string; channel?: string; kategori?: string }): Promise<string> {
-  // Reuse the same NLU-based extraction since analyzeAddress handles mixed messages
-  return extractAddressFromMessage(message, userId, context);
-}
+// extractAddressFromComplaintMessage REMOVED — was identical to extractAddressFromMessage.
 
 /**
  * Handle status check for complaints dan permohonan layanan
@@ -2647,9 +2626,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation } = input;
   let resolvedHistory = conversationHistory;
   
+  // Generate trace ID for correlating all logs in this request
+  const traceId = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  
   const tracker = createProcessingTracker(userId);
   
   logger.info('🎯 [UnifiedProcessor] Processing message', {
+    traceId,
     userId,
     channel,
     messageLength: message.length,
@@ -2668,7 +2651,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         success: false,
         response: '',
         intent: 'SPAM',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         error: 'Spam message detected',
       };
     }
@@ -2766,7 +2749,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: `Baik, terima kasih Pak/Bu ${pendingName.name}. Ada yang bisa kami bantu?`,
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -2776,7 +2759,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: 'Mohon maaf, boleh kami tahu nama yang benar?',
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -2785,7 +2768,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         success: true,
         response: `Baik, apakah benar ini dengan Bapak/Ibu ${pendingName.name}? Balas YA atau BUKAN ya.`,
         intent: 'QUESTION',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -2815,7 +2798,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: `Baik, terima kasih Pak/Bu ${lastPromptedName}. Ada yang bisa kami bantu?`,
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -2824,7 +2807,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: 'Mohon maaf, boleh kami tahu nama yang benar?',
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
       // uncertain → fall through to normal processing
@@ -2856,7 +2839,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: linkReply,
           intent: 'CREATE_SERVICE_REQUEST',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -2866,7 +2849,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: 'Baik Pak/Bu, siap. Kalau Bapak/Ibu mau proses nanti, kabari kami ya.',
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -2874,7 +2857,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         success: true,
         response: 'Apakah Bapak/Ibu ingin kami kirim link formulirnya sekarang? Balas *iya* atau *tidak* ya.',
         intent: 'CREATE_SERVICE_REQUEST',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -2899,7 +2882,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: 'Maaf Pak/Bu, saya belum menangkap nama Anda. Mohon tuliskan nama Anda, misalnya: "Nama saya Yoga".',
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -2910,7 +2893,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: `Selamat datang di layanan GovConnect ${villageLabel}.\nBoleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -2918,7 +2901,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         success: true,
         response: 'Baik Pak/Bu, sebelum melanjutkan boleh kami tahu nama Anda terlebih dahulu?',
         intent: 'QUESTION',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -2931,7 +2914,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: `Baik, terima kasih Pak/Bu ${currentName}. Ada yang bisa kami bantu?`,
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -2940,7 +2923,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         success: true,
         response: `Baik, apakah benar ini dengan Bapak/Ibu ${currentName}?`,
         intent: 'QUESTION',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -2965,7 +2948,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             success: true,
             response: `Baik, nama Anda sudah kami perbarui dari "${knownName}" menjadi "${resolvedNewName}". Ada yang bisa kami bantu lagi?`,
             intent: 'QUESTION',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
           };
         }
         // NO_UPDATE → name mentioned in other context, continue normal processing
@@ -2986,7 +2969,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             success: true,
             response: `Baik Pak/Bu${nameGreeting}, terima kasih sudah menghubungi layanan GovConnect. Semoga informasinya bermanfaat. Jangan ragu hubungi kami kembali jika ada keperluan lain ya!`,
             intent: 'QUESTION',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
           };
         }
       } catch (error: any) {
@@ -3013,7 +2996,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           `• "Syarat buat SKTM apa?"\n` +
           `• "Cek status laporan LAP-xxx"`,
         intent: 'QUESTION',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -3031,7 +3014,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           `Silakan ketik pesan dalam bentuk teks ya, Pak/Bu.\n\n` +
           `Ketik *bantuan* untuk melihat daftar layanan yang tersedia.`,
         intent: 'QUESTION',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -3048,7 +3031,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: confirmResult,
           intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
     }
@@ -3092,7 +3075,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: complaintResult,
           intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       } else if (message.trim().length > 10) {
         // User might have provided address in free text, use their message as address
@@ -3128,7 +3111,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: complaintResult,
           intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
     }
@@ -3159,7 +3142,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
               success: true,
               response: `Terima kasih Pak/Bu ${extractedName}. Mohon informasikan juga nomor telepon yang dapat dihubungi.`,
               intent: 'CREATE_COMPLAINT',
-              metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+              metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
             };
           }
           
@@ -3194,7 +3177,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             success: true,
             response: complaintResult,
             intent: 'CREATE_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
           };
         }
         
@@ -3203,7 +3186,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: 'Mohon maaf Pak/Bu, boleh tuliskan nama lengkap Anda untuk melanjutkan laporan?',
           intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
       
@@ -3250,7 +3233,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             success: true,
             response: complaintResult,
             intent: 'CREATE_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
           };
         }
         
@@ -3259,7 +3242,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: 'Mohon maaf Pak/Bu, format nomor telepon sepertinya kurang tepat. Silakan masukkan nomor HP yang valid (contoh: 081234567890).',
           intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
     }
@@ -3276,7 +3259,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             success: true,
             response: `Maaf Pak/Bu, maksimal ${MAX_PHOTOS_PER_COMPLAINT} foto per laporan. Foto sebelumnya sudah kami simpan. Silakan lanjutkan menjawab pertanyaan kami.`,
             intent: 'CREATE_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
           };
         }
         addPendingPhoto(userId, mediaUrl);
@@ -3286,7 +3269,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: `✅ Foto ke-${newCount} sudah kami terima.${remaining > 0 ? ` Anda masih bisa mengirim ${remaining} foto lagi.` : ' Batas foto sudah tercapai.'} Silakan lanjutkan menjawab pertanyaan sebelumnya ya Pak/Bu.`,
           intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -3301,7 +3284,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           `Jika ingin melaporkan pengaduan, silakan jelaskan masalahnya dan foto akan kami lampirkan otomatis.\n\n` +
           `Contoh: "Jalan rusak di depan kantor kelurahan"`,
         intent: 'QUESTION',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -3330,7 +3313,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
               ? buildCancelSuccessResponse('laporan', pendingCancel.id, result.message)
               : buildCancelErrorResponse('laporan', pendingCancel.id, result.error, result.message),
             intent: 'CANCEL_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
           };
         }
 
@@ -3341,7 +3324,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             ? buildCancelSuccessResponse('layanan', pendingCancel.id, serviceResult.message)
             : buildCancelErrorResponse('layanan', pendingCancel.id, serviceResult.error, serviceResult.message),
           intent: 'CANCEL_SERVICE_REQUEST',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -3351,7 +3334,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: true,
           response: 'Baik Pak/Bu, laporan/layanan Anda tidak jadi dibatalkan. Ada yang bisa kami bantu lagi?',
           intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
 
@@ -3360,7 +3343,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         success: true,
         response: 'Mohon konfirmasi ya Pak/Bu. Balas "YA" untuk melanjutkan pembatalan, atau "TIDAK" untuk membatalkan.',
         intent: pendingCancel.type === 'laporan' ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -3387,7 +3370,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         success: true,
         response: statusReply,
         intent: 'CHECK_STATUS',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
     }
 
@@ -3664,10 +3647,14 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // 2. Micro-LLM validation (cheap, ~10x less tokens than full retry) to confirm
     // 3. Full LLM retry only for confirmed fake links (always hallucination)
     const hasKnowledge = hasKnowledgeInPrompt(systemPrompt);
+    // Extract knowledge text early for cross-referencing in anti-hallucination
+    const knowledgeMatch = systemPrompt.match(/KNOWLEDGE BASE YANG TERSEDIA:\n([\s\S]*?)(?:\n\[CONFIDENCE:|$)/);
+    const knowledgeText = knowledgeMatch?.[1] || '';
     const gate = needsAntiHallucinationRetry({
       replyText: llmResponse.reply_text,
       guidanceText: llmResponse.guidance_text,
       hasKnowledge,
+      knowledgeText,
     });
 
     if (gate.shouldRetry) {
@@ -3688,9 +3675,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         }
       } else if (hasKnowledge) {
         // Has knowledge → use micro-LLM to validate against knowledge (cheap check)
-        // Extract knowledge section from systemPrompt for validation
-        const knowledgeMatch = systemPrompt.match(/KNOWLEDGE BASE YANG TERSEDIA:\n([\s\S]*?)(?:\n\[CONFIDENCE:|$)/);
-        const knowledgeText = knowledgeMatch?.[1] || '';
         const responseText = [llmResult.response.reply_text, llmResult.response.guidance_text].filter(Boolean).join(' ');
         
         if (knowledgeText) {
@@ -4010,6 +3994,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         knowledgeConfidence: typeof preloadedRAGContext === 'object' ? preloadedRAGContext.confidence?.level : undefined,
         sentiment: sentiment.level !== 'neutral' ? sentiment.level : undefined,
         language: languageDetection.primary !== 'indonesian' ? languageDetection.primary : undefined,
+        traceId,
       },
     };
     
@@ -4020,6 +4005,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     tracker.error(error.message);
     
     logger.error('❌ [UnifiedProcessor] Processing failed', {
+      traceId,
       userId,
       channel,
       error: error.message,
@@ -4047,7 +4033,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       success: false,
       response: fallbackResponse,
       intent: 'ERROR',
-      metadata: { processingTimeMs, hasKnowledge: false },
+      metadata: { processingTimeMs, hasKnowledge: false, traceId },
       error: error.message,
     };
   } finally {
@@ -4312,7 +4298,6 @@ export default {
   handleKnowledgeQuery,
   validateResponse,
   isVagueAddress,
-  detectEmergencyComplaint,
   getPendingAddressConfirmation,
   clearPendingAddressConfirmation,
   setPendingAddressConfirmation,
