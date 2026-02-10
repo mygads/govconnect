@@ -15,7 +15,7 @@
  */
 
 import crypto from 'crypto';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, TaskType } from '@google/generative-ai';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import {
@@ -328,7 +328,7 @@ export async function generateEmbedding(
     const result = await withRetry(
       () => embeddingModel.embedContent({
         content: { role: 'user', parts: [{ text }] },
-        taskType,
+        taskType: taskType as unknown as TaskType,
       }),
       'embedContent'
     );
@@ -506,7 +506,7 @@ export async function generateBatchEmbeddings(
           requests: nonBlankTexts.map(text => ({
             model: requestModel,
             content: { role: 'user', parts: [{ text }] },
-            taskType,
+            taskType: taskType as unknown as TaskType,
           })),
         }),
       'batchEmbedContents'
