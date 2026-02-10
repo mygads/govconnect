@@ -7,8 +7,6 @@
  * - Blacklist management for spam numbers
  */
 
-import fs from 'fs';
-import path from 'path';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 
@@ -53,90 +51,22 @@ interface RateLimitStats {
   }>;
 }
 
-const RATE_LIMIT_FILE_PATH = path.join(process.cwd(), 'data', 'rate-limits.json');
-const SAVE_INTERVAL_MS = 30000; // Save every 30 seconds
-
 class RateLimiterService {
   private data: RateLimitStorage;
-  private saveInterval: ReturnType<typeof setInterval> | null = null;
-  private isDirty: boolean = false;
   private blockedCount: number = 0;
 
   constructor() {
-    this.data = this.loadData();
-    this.startPeriodicSave();
-    this.startDailyReset();
-    logger.info('🛡️ Rate Limiter Service initialized', {
-      enabled: config.rateLimitEnabled,
-      maxReportsPerDay: config.maxReportsPerDay,
-      cooldownSeconds: config.cooldownSeconds,
-      blacklistedUsers: Object.keys(this.data.blacklist).length,
-    });
-  }
-
-  /**
-   * Load data from file or create default
-   */
-  private loadData(): RateLimitStorage {
-    try {
-      const dataDir = path.dirname(RATE_LIMIT_FILE_PATH);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-
-      if (fs.existsSync(RATE_LIMIT_FILE_PATH)) {
-        const data = fs.readFileSync(RATE_LIMIT_FILE_PATH, 'utf-8');
-        const parsed = JSON.parse(data) as RateLimitStorage;
-        logger.info('📊 Rate limit data loaded from file', {
-          users: Object.keys(parsed.users).length,
-          blacklisted: Object.keys(parsed.blacklist).length,
-        });
-        return parsed;
-      }
-    } catch (error) {
-      logger.warn('⚠️ Could not load rate limit data, starting fresh', {
-        error: (error as Error).message,
-      });
-    }
-
-    return {
+    this.data = {
       users: {},
       blacklist: {},
       lastUpdated: new Date().toISOString(),
     };
-  }
-
-  /**
-   * Save data to file
-   */
-  private saveData(): void {
-    try {
-      const dataDir = path.dirname(RATE_LIMIT_FILE_PATH);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-
-      this.data.lastUpdated = new Date().toISOString();
-      fs.writeFileSync(RATE_LIMIT_FILE_PATH, JSON.stringify(this.data, null, 2));
-      this.isDirty = false;
-      
-      logger.debug('💾 Rate limit data saved to file');
-    } catch (error) {
-      logger.error('❌ Failed to save rate limit data', {
-        error: (error as Error).message,
-      });
-    }
-  }
-
-  /**
-   * Start periodic save interval
-   */
-  private startPeriodicSave(): void {
-    this.saveInterval = setInterval(() => {
-      if (this.isDirty) {
-        this.saveData();
-      }
-    }, SAVE_INTERVAL_MS);
+    this.startDailyReset();
+    logger.info('🛡️ Rate Limiter Service initialized (in-memory)', {
+      enabled: config.rateLimitEnabled,
+      maxReportsPerDay: config.maxReportsPerDay,
+      cooldownSeconds: config.cooldownSeconds,
+    });
   }
 
   /**
@@ -158,7 +88,6 @@ class RateLimiterService {
       }
       
       if (resetCount > 0) {
-        this.isDirty = true;
         logger.info('🔄 Daily rate limit reset', { resetCount });
       }
       
@@ -232,7 +161,6 @@ class RateLimiterService {
       if (timeSinceLastReport < config.cooldownSeconds) {
         const remaining = Math.ceil(config.cooldownSeconds - timeSinceLastReport);
         userData.violations++;
-        this.isDirty = true;
         this.blockedCount++;
         
         logger.warn('⏳ User in cooldown period', {
@@ -258,7 +186,6 @@ class RateLimiterService {
     // Check daily limit
     if (userData.dailyReports >= config.maxReportsPerDay) {
       userData.violations++;
-      this.isDirty = true;
       this.blockedCount++;
       
       logger.warn('🚫 User exceeded daily limit', {
@@ -297,7 +224,6 @@ class RateLimiterService {
     const userData = this.getUserData(wa_user_id);
     userData.dailyReports++;
     userData.lastReportTime = Date.now();
-    this.isDirty = true;
     
     logger.info('📝 Report recorded for rate limit', {
       wa_user_id,
@@ -319,7 +245,6 @@ class RateLimiterService {
       if (expiresAt < new Date()) {
         // Expired, remove from blacklist
         delete this.data.blacklist[wa_user_id];
-        this.isDirty = true;
         return false;
       }
     }
@@ -347,7 +272,6 @@ class RateLimiterService {
       addedBy,
       expiresAt,
     };
-    this.isDirty = true;
     
     logger.warn('🚫 User added to blacklist', {
       wa_user_id,
@@ -363,7 +287,6 @@ class RateLimiterService {
   removeFromBlacklist(wa_user_id: string): boolean {
     if (this.data.blacklist[wa_user_id]) {
       delete this.data.blacklist[wa_user_id];
-      this.isDirty = true;
       logger.info('✅ User removed from blacklist', { wa_user_id });
       return true;
     }
@@ -392,7 +315,6 @@ class RateLimiterService {
     }
     
     if (cleaned > 0) {
-      this.isDirty = true;
       logger.info('🧹 Cleaned expired blacklist entries', { count: cleaned });
     }
   }
@@ -435,34 +357,12 @@ class RateLimiterService {
   resetUserViolations(wa_user_id: string): boolean {
     if (this.data.users[wa_user_id]) {
       this.data.users[wa_user_id].violations = 0;
-      this.isDirty = true;
       return true;
     }
     return false;
   }
 
-  /**
-   * Force save (for shutdown)
-   */
-  forceSave(): void {
-    this.saveData();
-  }
-
-  /**
-   * Shutdown cleanup
-   */
-  shutdown(): void {
-    if (this.saveInterval) {
-      clearInterval(this.saveInterval);
-    }
-    this.saveData();
-    logger.info('🛡️ Rate Limiter Service shutdown complete');
-  }
 }
 
 // Export singleton
 export const rateLimiterService = new RateLimiterService();
-
-// Graceful shutdown
-process.on('SIGTERM', () => rateLimiterService.shutdown());
-process.on('SIGINT', () => rateLimiterService.shutdown());

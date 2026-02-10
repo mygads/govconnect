@@ -225,6 +225,13 @@ for (const relation of ALL_RELATIONS) {
   }
 }
 
+// Periodic refresh from DB every 5 minutes to pick up admin changes
+setInterval(() => {
+  refreshFromDB().catch((err: any) =>
+    logger.warn('[KnowledgeGraph] Periodic refresh failed', { error: err.message })
+  );
+}, 5 * 60_000);
+
 // ==================== GRAPH OPERATIONS ====================
 
 /**

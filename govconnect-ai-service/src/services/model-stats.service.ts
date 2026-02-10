@@ -5,8 +5,6 @@
  * Uses in-memory storage with periodic persistence to file.
  */
 
-import fs from 'fs';
-import path from 'path';
 import logger from '../utils/logger';
 
 interface ModelStats {
@@ -31,83 +29,16 @@ interface StatsStorage {
   totalRequests: number;
 }
 
-const STATS_FILE_PATH = path.join(process.cwd(), 'data', 'model-stats.json');
-const SAVE_INTERVAL_MS = 60000; // Save every 1 minute
-
 class ModelStatsService {
   private stats: StatsStorage;
-  private saveInterval: ReturnType<typeof setInterval> | null = null;
-  private isDirty: boolean = false;
 
   constructor() {
-    this.stats = this.loadStats();
-    this.startPeriodicSave();
-  }
-
-  /**
-   * Load stats from file or create default
-   */
-  private loadStats(): StatsStorage {
-    try {
-      // Ensure data directory exists
-      const dataDir = path.dirname(STATS_FILE_PATH);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-
-      if (fs.existsSync(STATS_FILE_PATH)) {
-        const data = fs.readFileSync(STATS_FILE_PATH, 'utf-8');
-        const parsed = JSON.parse(data) as StatsStorage;
-        logger.info('📊 Model stats loaded from file', {
-          totalRequests: parsed.totalRequests,
-          models: Object.keys(parsed.models).length,
-        });
-        return parsed;
-      }
-    } catch (error) {
-      logger.warn('⚠️ Could not load model stats, starting fresh', {
-        error: (error as Error).message,
-      });
-    }
-
-    return {
+    this.stats = {
       models: {},
       lastUpdated: new Date().toISOString(),
       totalRequests: 0,
     };
-  }
-
-  /**
-   * Save stats to file
-   */
-  private saveStats(): void {
-    try {
-      const dataDir = path.dirname(STATS_FILE_PATH);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-
-      this.stats.lastUpdated = new Date().toISOString();
-      fs.writeFileSync(STATS_FILE_PATH, JSON.stringify(this.stats, null, 2));
-      this.isDirty = false;
-      
-      logger.debug('💾 Model stats saved to file');
-    } catch (error) {
-      logger.error('❌ Failed to save model stats', {
-        error: (error as Error).message,
-      });
-    }
-  }
-
-  /**
-   * Start periodic save interval
-   */
-  private startPeriodicSave(): void {
-    this.saveInterval = setInterval(() => {
-      if (this.isDirty) {
-        this.saveStats();
-      }
-    }, SAVE_INTERVAL_MS);
+    logger.info('📊 Model stats service initialized (in-memory)');
   }
 
   /**
@@ -144,7 +75,6 @@ class ModelStatsService {
     stats.lastUsed = new Date().toISOString();
     
     this.stats.totalRequests++;
-    this.isDirty = true;
 
     logger.info('📈 Model success recorded', {
       model,
@@ -178,7 +108,6 @@ class ModelStatsService {
     }
 
     this.stats.totalRequests++;
-    this.isDirty = true;
 
     logger.warn('📉 Model failure recorded', {
       model,
@@ -255,28 +184,7 @@ class ModelStatsService {
     return this.stats.models[model] || null;
   }
 
-  /**
-   * Force save stats (for graceful shutdown)
-   */
-  forceSave(): void {
-    this.saveStats();
-  }
-
-  /**
-   * Cleanup on shutdown
-   */
-  shutdown(): void {
-    if (this.saveInterval) {
-      clearInterval(this.saveInterval);
-    }
-    this.saveStats();
-    logger.info('📊 Model stats service shutdown complete');
-  }
 }
 
 // Export singleton instance
 export const modelStatsService = new ModelStatsService();
-
-// Handle graceful shutdown
-process.on('SIGTERM', () => modelStatsService.shutdown());
-process.on('SIGINT', () => modelStatsService.shutdown());

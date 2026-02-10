@@ -334,7 +334,7 @@ export async function hybridSearch(
     const [vectorResults, keywordResults] = await Promise.all([
       searchVectors(embedding.values, {
         topK: topK * 2, // Get more for fusion
-        minScore: minScore * 0.8, // Lower threshold, will filter after
+        minScore: Math.max(minScore * 0.8, 0.45), // Lower threshold for fusion, but cap at 0.45 floor
         categories,
         sourceTypes,
         villageId,

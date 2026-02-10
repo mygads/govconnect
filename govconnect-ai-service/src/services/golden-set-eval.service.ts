@@ -84,6 +84,7 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
       channel: 'webchat',
       message: sanitized,
       villageId,
+      isEvaluation: true,
     });
 
     const predictedIntent = result.intent || 'UNKNOWN';

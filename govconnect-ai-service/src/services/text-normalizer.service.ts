@@ -23,7 +23,7 @@ const TYPO_CORRECTIONS: Record<string, string> = {
   'gue': 'saya', 
   'gua': 'saya',
   'aku': 'saya',
-  'w': 'saya',
+  // 'w' removed: \b word boundary matches standalone 'w' in 'RW', addresses, and proper nouns
   
   // Time expressions
   'bsk': 'besok',

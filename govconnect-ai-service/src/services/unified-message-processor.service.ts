@@ -19,6 +19,7 @@
  */
 
 import logger from '../utils/logger';
+import { getWIBDateTime } from '../utils/wib-datetime';
 import axios from 'axios';
 import { config } from '../config/env';
 import { buildContext, buildKnowledgeQueryContext, sanitizeUserInput } from './context-builder.service';
@@ -49,10 +50,10 @@ import { aiAnalyticsService } from './ai-analytics.service';
 import { recordTokenUsage } from './token-usage.service';
 import { RAGContext } from '../types/embedding.types';
 import { preProcessMessage } from './ai-optimizer.service';
-import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile, clearProfile } from './user-profile.service';
+import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile, clearProfile, deleteProfile } from './user-profile.service';
+import { updateConversationUserProfile } from './channel-client.service';
 import { getEnhancedContext, updateContext, recordDataCollected, recordCompletedAction, getContextForLLM } from './conversation-context.service';
 import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
-import { linkUserToPhone, recordChannelActivity, updateSharedData, getCrossChannelContextForLLM } from './cross-channel-context.service';
 import { normalizeText } from './text-normalizer.service';
 import { classifyConfirmation } from './confirmation-classifier.service';
 import {
@@ -60,8 +61,9 @@ import {
   hasKnowledgeInPrompt,
   logAntiHallucinationEvent,
   needsAntiHallucinationRetry,
+  sanitizeFakeLinks,
 } from './anti-hallucination.service';
-import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting } from './micro-llm-matcher.service';
+import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting, classifyNameUpdate } from './micro-llm-matcher.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
@@ -86,6 +88,9 @@ export interface ProcessMessageInput {
   mediaUrl?: string;
   /** Optional media type */
   mediaType?: string;
+  /** When true, skip side effects (profile writes, analytics, rate limits, cache writes).
+   *  Used by golden-set evaluation to avoid polluting production data. */
+  isEvaluation?: boolean;
 }
 
 export interface ProcessMessageResult {
@@ -312,10 +317,30 @@ export function clearUserCaches(userId: string): { cleared: number } {
       cleared++;
     }
   }
-  // Also clear user profile personal data
-  clearProfile(userId);
+  // Fully delete user profile so AI has zero memory of this user
+  deleteProfile(userId);
   logger.info(`[Admin] Cleared caches for user: ${userId}`, { cleared });
   return { cleared };
+}
+
+/**
+ * Sync user name to Channel Service conversation record.
+ * This updates the sidebar display in the livechat dashboard
+ * (shows user name instead of phone number).
+ * Non-blocking — failures are logged but don't affect the response.
+ */
+function syncNameToChannelService(
+  channelIdentifier: string,
+  userName: string,
+  villageId?: string,
+  channel?: ChannelType,
+): void {
+  const channelUpper = (channel || 'whatsapp').toUpperCase() as 'WHATSAPP' | 'WEBCHAT';
+  updateConversationUserProfile(channelIdentifier, { user_name: userName }, villageId, channelUpper)
+    .then(ok => {
+      if (ok) logger.debug('👤 Name synced to Channel Service', { channelIdentifier, userName });
+    })
+    .catch(() => { /* non-critical */ });
 }
 
 /**
@@ -1840,7 +1865,7 @@ export async function handleHistory(userId: string, channel: ChannelType): Promi
 /**
  * Handle knowledge query
  */
-export async function handleKnowledgeQuery(userId: string, message: string, llmResponse: any): Promise<string> {
+export async function handleKnowledgeQuery(userId: string, message: string, llmResponse: any, mainLlmReplyText?: string): Promise<string> {
   logger.info('Handling knowledge query', { userId, knowledgeCategory: llmResponse.fields?.knowledge_category });
   
   try {
@@ -2042,6 +2067,10 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       return lines.join('\n');
     }
 
+    // Cache for service slug match to avoid duplicate Case Service API + LLM calls
+    let cachedServiceMatch: { matched_slug: string; confidence: number } | null = null;
+    let cachedActiveServices: any[] | null = null;
+
     const tryAnswerFromServiceCatalog = async (): Promise<string | null> => {
       try {
 
@@ -2067,6 +2096,10 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
           })),
           { village_id: villageId }
         );
+
+        // Cache the result for appendServiceOfferIfNeeded
+        cachedActiveServices = activeServices;
+        cachedServiceMatch = match?.matched_slug ? { matched_slug: match.matched_slug, confidence: match.confidence } : null;
 
         if (!match?.matched_slug || match.confidence < 0.5) return null;
         const best = activeServices.find((s: any) => s.slug === match.matched_slug);
@@ -2192,23 +2225,30 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       // Already contains an offer
       if (/(ajukan|mengajukan|link|formulir)/i.test(text)) return text;
 
-      // Use micro LLM to check if the query is about a specific service
+      // Reuse cached match from tryAnswerFromServiceCatalog (avoids duplicate API + LLM call)
       try {
-        const svcResp = await axios.get(`${config.caseServiceUrl}/services`, {
-          params: { village_id: villageId },
-          headers: { 'x-internal-api-key': config.internalApiKey },
-          timeout: 5000,
-        });
-        const services = Array.isArray(svcResp.data?.data) ? svcResp.data.data : [];
-        if (services.length > 0) {
-          const activeServices = services.filter((s: any) => s.is_active !== false);
-          const match = await matchServiceSlug(
-            normalizedQuery,
-            activeServices.map((s: any) => ({ slug: s.slug || '', name: s.name || '', description: s.description || '' })),
-            { village_id: villageId }
-          );
-          if (match?.matched_slug && match.confidence >= 0.5) {
-            return `${text}\n\nJika Bapak/Ibu ingin mengajukan layanan ini, kami bisa bantu kirimkan link pengajuan.`;
+        if (cachedServiceMatch && cachedServiceMatch.confidence >= 0.5) {
+          return `${text}\n\nJika Bapak/Ibu ingin mengajukan layanan ini, kami bisa bantu kirimkan link pengajuan.`;
+        }
+
+        // If cache is empty (tryAnswerFromServiceCatalog wasn't called or failed), do fresh lookup
+        if (cachedServiceMatch === null && cachedActiveServices === null) {
+          const svcResp = await axios.get(`${config.caseServiceUrl}/services`, {
+            params: { village_id: villageId },
+            headers: { 'x-internal-api-key': config.internalApiKey },
+            timeout: 5000,
+          });
+          const services = Array.isArray(svcResp.data?.data) ? svcResp.data.data : [];
+          if (services.length > 0) {
+            const activeServices = services.filter((s: any) => s.is_active !== false);
+            const match = await matchServiceSlug(
+              normalizedQuery,
+              activeServices.map((s: any) => ({ slug: s.slug || '', name: s.name || '', description: s.description || '' })),
+              { village_id: villageId }
+            );
+            if (match?.matched_slug && match.confidence >= 0.5) {
+              return `${text}\n\nJika Bapak/Ibu ingin mengajukan layanan ini, kami bisa bantu kirimkan link pengajuan.`;
+            }
           }
         }
       } catch {
@@ -2251,6 +2291,22 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
 
     if (!contextString || total === 0) {
       return `Maaf, saya belum memiliki informasi tentang hal tersebut untuk *${officeName}*. Jika perlu, silakan hubungi atau datang langsung ke kantor pada jam kerja.`;
+    }
+
+    // Skip second LLM call when the main LLM already produced a substantive
+    // answer using the same preloaded RAG context.  Deterministic handlers
+    // (address, hours, contact, service catalog) still run above — this only
+    // skips the final callGemini() that would largely duplicate work.
+    const hasPreloaded = !!preloadedContext;
+    if (hasPreloaded && mainLlmReplyText && mainLlmReplyText.length > 50) {
+      // Reject generic/placeholder replies that the main LLM sometimes produces
+      const isGeneric = /(saya akan|saya cari|mencari informasi|berikut informasi yang saya|sedang mencari)/i.test(mainLlmReplyText);
+      if (!isGeneric) {
+        logger.info('[KnowledgeQuery] Reusing main LLM reply, skipping second callGemini', {
+          userId, replyLength: mainLlmReplyText.length,
+        });
+        return await appendServiceOfferIfNeeded(mainLlmReplyText);
+      }
     }
 
     const { systemPrompt } = await buildKnowledgeQueryContext(userId, message, contextString);
@@ -2741,7 +2797,7 @@ export function setPendingAddressRequest(userId: string, data: {
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   _activeProcessingCount++;
   const startTime = Date.now();
-  const { userId, message, channel, conversationHistory, mediaUrl, villageId } = input;
+  const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation } = input;
   let resolvedHistory = conversationHistory;
   
   const tracker = createProcessingTracker(userId);
@@ -2772,6 +2828,29 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     const resolvedVillageId = villageId;
 
+    // Cumulative timeout budget for micro-NLU classifiers (prevents worst-case stacking)
+    const MICRO_NLU_BUDGET_MS = 8000;
+    let microNluElapsedMs = 0;
+    const hasMicroNluBudget = () => microNluElapsedMs < MICRO_NLU_BUDGET_MS;
+    const withMicroNluBudget = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+      if (!hasMicroNluBudget()) {
+        logger.warn('[UnifiedProcessor] Micro-NLU budget exhausted, skipping classifier', {
+          elapsed: microNluElapsedMs, budget: MICRO_NLU_BUDGET_MS,
+        });
+        return fallback;
+      }
+      const t0 = Date.now();
+      try {
+        const remaining = MICRO_NLU_BUDGET_MS - microNluElapsedMs;
+        return await Promise.race([
+          fn(),
+          new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Micro-NLU budget timeout')), remaining)),
+        ]);
+      } finally {
+        microNluElapsedMs += Date.now() - t0;
+      }
+    };
+
     // Classify greeting once via micro NLU and cache the result for multiple usage points
     let greetingClassified = false;
     let isGreetingMessage = false;
@@ -2779,12 +2858,15 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       if (!greetingClassified) {
         greetingClassified = true;
         try {
-          const greetingResult = await classifyGreeting(message.trim(), {
-            village_id: resolvedVillageId,
-            wa_user_id: userId,
-            session_id: userId,
-            channel,
-          });
+          const greetingResult = await withMicroNluBudget(
+            () => classifyGreeting(message.trim(), {
+              village_id: resolvedVillageId,
+              wa_user_id: userId,
+              session_id: userId,
+              channel,
+            }),
+            null
+          );
           isGreetingMessage = greetingResult?.decision === 'GREETING' && greetingResult.confidence >= 0.7;
         } catch (error: any) {
           logger.warn('[UnifiedProcessor] Greeting NLU failed', { error: error.message });
@@ -2809,7 +2891,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       // Use micro LLM for name confirmation (full NLU, no regex fallback)
       let nameDecision: string;
       try {
-        const nameResult = await classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
+        const nameResult = await withMicroNluBudget(
+          () => classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
+          null
+        );
         nameDecision = nameResult?.decision === 'CONFIRM' ? 'yes' : nameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
         nameDecision = 'uncertain';
@@ -2818,6 +2903,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       if (nameDecision === 'yes') {
         pendingNameConfirmation.delete(userId);
         updateProfile(userId, { nama_lengkap: pendingName.name });
+        syncNameToChannelService(userId, pendingName.name, resolvedVillageId, channel);
         return {
           success: true,
           response: `Baik, terima kasih Pak/Bu ${pendingName.name}. Ada yang bisa kami bantu?`,
@@ -2850,7 +2936,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       // Use micro LLM for name confirmation via history (full NLU, no regex fallback)
       let histNameDecision: string;
       try {
-        const histNameResult = await classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
+        const histNameResult = await withMicroNluBudget(
+          () => classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
+          null
+        );
         histNameDecision = histNameResult?.decision === 'CONFIRM' ? 'yes' : histNameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
         histNameDecision = 'uncertain';
@@ -2863,6 +2952,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           source: 'history_prompt',
         });
         updateProfile(userId, { nama_lengkap: lastPromptedName });
+        syncNameToChannelService(userId, lastPromptedName, resolvedVillageId, channel);
         return {
           success: true,
           response: `Baik, terima kasih Pak/Bu ${lastPromptedName}. Ada yang bisa kami bantu?`,
@@ -2885,7 +2975,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 2.2: Check pending online service form offer
     const pendingOffer = pendingServiceFormOffer.get(userId);
     if (pendingOffer) {
-      const confirmationResult = await classifyConfirmation(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
+      const confirmationResult = await withMicroNluBudget(
+        () => classifyConfirmation(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
+        null
+      );
       const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
       const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
 
@@ -2965,6 +3058,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       const explicitName = /(nama\s+(saya|aku|gue|gw)|panggil\s+saya)/i.test(message);
       if (explicitName) {
         updateProfile(userId, { nama_lengkap: currentName });
+        syncNameToChannelService(userId, currentName, resolvedVillageId, channel);
         return {
           success: true,
           response: `Baik, terima kasih Pak/Bu ${currentName}. Ada yang bisa kami bantu?`,
@@ -2981,16 +3075,49 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
       };
     }
+
+    // Step 1.8b: Name update/correction — user already known but mentions a different name
+    // Uses micro NLU to distinguish "nama saya X" (klarifikasi) vs mentioning someone else
+    if (knownName && currentName && knownName.toLowerCase() !== currentName.toLowerCase()) {
+      try {
+        const nameUpdateResult = await withMicroNluBudget(
+          () => classifyNameUpdate(message, knownName, {
+            village_id: resolvedVillageId,
+            wa_user_id: userId,
+            session_id: userId,
+            channel,
+          }),
+          null
+        );
+        if (nameUpdateResult?.decision === 'UPDATE_NAME' && nameUpdateResult.confidence >= 0.7) {
+          const resolvedNewName = nameUpdateResult.new_name?.trim() || currentName;
+          updateProfile(userId, { nama_lengkap: resolvedNewName });
+          syncNameToChannelService(userId, resolvedNewName, resolvedVillageId, channel);
+          return {
+            success: true,
+            response: `Baik, nama Anda sudah kami perbarui dari "${knownName}" menjadi "${resolvedNewName}". Ada yang bisa kami bantu lagi?`,
+            intent: 'QUESTION',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+          };
+        }
+        // NO_UPDATE → name mentioned in other context, continue normal processing
+      } catch (error: any) {
+        logger.warn('[UnifiedProcessor] Name update NLU failed, continuing normal flow', { error: error.message });
+      }
+    }
     
     // Step 1.9: Farewell detection — user wants to end conversation (micro NLU)
     if (message.trim().length < 80) {
       try {
-        const farewellResult = await classifyFarewell(message.trim(), {
-          village_id: resolvedVillageId,
-          wa_user_id: userId,
-          session_id: userId,
-          channel,
-        });
+        const farewellResult = await withMicroNluBudget(
+          () => classifyFarewell(message.trim(), {
+            village_id: resolvedVillageId,
+            wa_user_id: userId,
+            session_id: userId,
+            channel,
+          }),
+          null
+        );
         if (farewellResult?.decision === 'FAREWELL' && farewellResult.confidence >= 0.8) {
           const userName = knownName || getProfile(userId).nama_lengkap;
           const nameGreeting = userName ? ` ${userName}` : '';
@@ -3110,8 +3237,9 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         // Try to extract name from message
         const extractedName = extractNameFromText(message);
         if (extractedName) {
-          // Save name to profile
+          // Save name to profile + sync to Channel Service sidebar
           updateProfile(userId, { nama_lengkap: extractedName });
+          syncNameToChannelService(userId, extractedName, resolvedVillageId, channel);
           
           // Check if webchat still needs phone
           if (pendingComplaint.channel === 'webchat' && !userProfile.no_hp) {
@@ -3180,8 +3308,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         if (phoneMatch) {
           const phone = phoneMatch[1].replace(/^\+/, '');
           
-          // Save phone to profile
+          // Save phone to profile + sync to Channel Service
           updateProfile(userId, { no_hp: phone });
+          const channelUpper = (pendingComplaint.channel || 'webchat').toUpperCase() as 'WHATSAPP' | 'WEBCHAT';
+          updateConversationUserProfile(userId, { user_phone: phone }, pendingComplaint.village_id, channelUpper)
+            .catch(() => { /* non-critical */ });
           
           // All data complete, proceed with complaint creation
           pendingComplaintData.delete(userId);
@@ -3261,7 +3392,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       // Use micro LLM for confirmation classification (full NLU, no regex fallback)
       let cancelDecision: string;
       try {
-        const cancelResult = await classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
+        const cancelResult = await withMicroNluBudget(
+          () => classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
+          null
+        );
         cancelDecision = cancelResult?.decision === 'CONFIRM' ? 'yes' : cancelResult?.decision === 'REJECT' ? 'no' : 'uncertain';
       } catch {
         cancelDecision = 'uncertain';
@@ -3367,20 +3501,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     // Step 5.5: User Profile & Context Enhancement
     // Learn from message (extract NIK, phone, detect style)
-    learnFromMessage(userId, message);
-    
-    // Step 5.6: Cross-channel context
-    // Record activity and try to link phone number
-    recordChannelActivity(userId);
-    const phoneFromMessage = message.match(/\b(08\d{8,11}|628\d{8,12})\b/)?.[1];
-    if (phoneFromMessage) {
-      linkUserToPhone(userId, phoneFromMessage);
-      updateSharedData(userId, { name: undefined }); // Will be filled by profile
+    if (!isEvaluation) {
+      learnFromMessage(userId, message);
+      recordInteraction(userId, sentiment.score, undefined);
     }
-    const crossChannelContext = getCrossChannelContextForLLM(userId);
-    
-    // Record interaction for profile (intent will be determined by Micro NLU later)
-    recordInteraction(userId, sentiment.score, undefined);
     
     // Get profile context for LLM
     const profileContext = getProfileContext(userId);
@@ -3436,7 +3560,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     let preloadedRAGContext: RAGContext | string | undefined;
     let graphContext = '';
     const isGreeting = await checkGreeting();
-    const looksLikeQuestion = shouldRetrieveContext(sanitizedMessage);
+    const looksLikeQuestion = await shouldRetrieveContext(sanitizedMessage);
     const prefetchVillageId = resolvedVillageId;
     
     if (isGreeting) {
@@ -3527,7 +3651,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       messageCount = contextResult.messageCount;
     }
     
-    // Inject language, sentiment, profile, conversation, graph, and cross-channel context
+    // Inject language, sentiment, profile, conversation, graph context
     const allContexts = [
       languageContext,
       sentimentContext,
@@ -3535,7 +3659,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       conversationContextStr,
       adaptationContext,
       graphContext,
-      crossChannelContext,
     ].filter(Boolean).join('\n');
     
     if (allContexts) {
@@ -3618,16 +3741,35 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         llmResult.response = retryResult.response;
       }
     }
+
+    // ── Post-processing sanitization pipeline ──
+    // Runs on EVERY final response to catch hallucinations that slipped through.
+    if (llmResult.response.reply_text) {
+      llmResult.response.reply_text = sanitizeFakeLinks(llmResult.response.reply_text);
+    }
+    if (llmResult.response.guidance_text) {
+      llmResult.response.guidance_text = sanitizeFakeLinks(llmResult.response.guidance_text);
+    }
+    // Remove fabricated phone numbers when no knowledge context is present
+    if (!hasKnowledge) {
+      const FAKE_PHONE_PATTERN = /\b0\d{2,3}[-.\s]?\d{4,8}\b/g;
+      if (llmResult.response.reply_text && FAKE_PHONE_PATTERN.test(llmResult.response.reply_text)) {
+        llmResult.response.reply_text = llmResult.response.reply_text.replace(FAKE_PHONE_PATTERN, '[nomor telepon tersedia di kantor]');
+        logger.warn('[UnifiedProcessor] Sanitized fabricated phone number from reply');
+      }
+    }
     
-    // Track analytics
-    aiAnalyticsService.recordIntent(
-      userId,
-      llmResult.response.intent,
-      metrics.durationMs,
-      systemPrompt.length,
-      llmResult.response.reply_text.length,
-      metrics.model
-    );
+    // Track analytics (skip during evaluation)
+    if (!isEvaluation) {
+      aiAnalyticsService.recordIntent(
+        userId,
+        llmResult.response.intent,
+        metrics.durationMs,
+        systemPrompt.length,
+        llmResult.response.reply_text.length,
+        metrics.model
+      );
+    }
     
     logger.info('[UnifiedProcessor] LLM response received', {
       userId,
@@ -3731,7 +3873,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             _preloaded_knowledge_context: preloadedRAGContext.contextString,
           } as any;
         }
-        finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse);
+        finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText);
         break;
       
       case 'QUESTION':
@@ -3775,8 +3917,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       processingTimeMs,
     });
     
-    // Save cacheable responses for future use (FAQ, knowledge, greetings)
-    setCachedResponse(message, finalResponse, effectiveLlmResponse.intent, finalGuidance);
+    // Save cacheable responses for future use (FAQ, knowledge, greetings) — skip during eval
+    if (!isEvaluation) {
+      setCachedResponse(message, finalResponse, effectiveLlmResponse.intent, finalGuidance);
+    }
     
     return {
       success: true,
@@ -4005,24 +4149,11 @@ async function buildContextWithHistory(
   }
   
   // Calculate current date, time, and tomorrow for prompt (in WIB timezone)
-  const now = new Date();
-  const wibOffset = 7 * 60; // WIB is UTC+7
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const wibTime = new Date(utc + (wibOffset * 60000));
-  
-  const currentDate = wibTime.toISOString().split('T')[0]; // YYYY-MM-DD
-  const tomorrow = new Date(wibTime);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
-  
-  // Get current time info for greeting
-  const currentHour = wibTime.getHours();
-  let timeOfDay = 'malam';
-  if (currentHour >= 5 && currentHour < 11) timeOfDay = 'pagi';
-  else if (currentHour >= 11 && currentHour < 15) timeOfDay = 'siang';
-  else if (currentHour >= 15 && currentHour < 18) timeOfDay = 'sore';
-  
-  const currentTime = wibTime.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+  const wib = getWIBDateTime();
+  const currentDate = wib.date;
+  const tomorrowDate = wib.tomorrow;
+  const currentTime = wib.time;
+  const timeOfDay = wib.timeOfDay;
   
   // Build dynamic complaint categories from DB
   const complaintCategoriesText = await buildComplaintCategoriesText(villageId);

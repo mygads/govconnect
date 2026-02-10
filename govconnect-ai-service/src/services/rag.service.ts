@@ -27,19 +27,25 @@ import { hybridSearch, HybridSearchResult } from './hybrid-search.service';
  */
 const DEFAULT_TOP_K = 5;
 const DEFAULT_MIN_SCORE = 0.65;
+const MIN_EFFECTIVE_SCORE = 0.45; // Floor to prevent noise from cascading threshold reductions
 const MAX_CONTEXT_LENGTH = 4000; // Characters to avoid token limit
 
 /**
  * ==================== QUERY INTENT CLASSIFICATION ====================
- * Determines if RAG is needed for a query to save resources
+ * Uses micro NLU (LLM) to intelligently decide if RAG is needed.
+ * Fast regex pre-filter only for trivial cases to save LLM calls.
  */
 
-// Patterns that DON'T need RAG (greetings, simple confirmations)
-const SKIP_RAG_PATTERNS = [
-  /^(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalamualaikum|permisi)/i,
-  /^(ya|tidak|iya|ok|oke|baik|terima\s*kasih|makasih|siap)/i,
-  /^(benar|betul|setuju|lanjut|sudah|belum|bisa|boleh)/i,
-  /^(siapa\s+(nama\s+)?kamu|kamu\s+siapa)/i,
+import { classifyRAGIntent } from './micro-llm-matcher.service';
+
+// Fast pre-filter: ONLY for trivially obvious non-RAG messages (saves LLM call)
+// These are so clearly non-informational that LLM classification is wasteful
+const OBVIOUS_SKIP_PATTERNS = [
+  /^(halo|hai|hi|hello|hey)\s*[.!?]*$/i,
+  /^(selamat\s+(pagi|siang|sore|malam))\s*[.!?]*$/i,
+  /^(assalamualaikum|permisi)\s*[.!?]*$/i,
+  /^(ya|tidak|iya|ok|oke|baik|siap|lanjut)\s*[.!?]*$/i,
+  /^(terima\s*kasih|makasih|thanks?)\s*[.!?]*$/i,
 ];
 
 // Spam/malicious content patterns - skip processing entirely
@@ -67,48 +73,48 @@ export function isSpamMessage(message: string): boolean {
   return false;
 }
 
-// Patterns that REQUIRE RAG (information requests)
-const REQUIRE_RAG_PATTERNS = [
-  /bagaimana|gimana|cara|langkah|prosedur|proses/i,
-  /apa\s+(itu|saja|syarat)|dimana|kapan|berapa|biaya|tarif|harga/i,
-  /layanan|pelayanan|pendaftaran|pengajuan|permohonan/i,
-  /surat|dokumen|berkas|formulir|persyaratan/i,
-  /alamat|lokasi|jam\s+(buka|kerja|operasional)/i,
-];
+/**
+ * Result from query intent classification
+ */
+interface QueryIntentResult {
+  intent: 'skip' | 'required' | 'optional';
+  nluCategories?: string[];
+}
 
 /**
- * Classify query intent to determine RAG necessity
- * @returns 'skip' | 'required' | 'optional'
+ * Classify query intent to determine RAG necessity.
+ * Uses micro NLU (LLM) for intelligent classification.
+ * Also returns NLU-inferred categories for smarter retrieval.
+ * Falls back to 'optional' if LLM is unavailable.
  */
-function classifyQueryIntent(query: string): 'skip' | 'required' | 'optional' {
+async function classifyQueryIntent(
+  query: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<QueryIntentResult> {
   const normalizedQuery = query.trim().toLowerCase();
-  const wordCount = normalizedQuery.split(/\s+/).length;
-  
-  // Short greetings don't need RAG
-  if (wordCount < 3) {
-    for (const pattern of SKIP_RAG_PATTERNS) {
-      if (pattern.test(normalizedQuery)) {
-        return 'skip';
-      }
-    }
-  }
 
-  // Check for patterns that definitely need RAG
-  for (const pattern of REQUIRE_RAG_PATTERNS) {
+  // Fast pre-filter: trivially obvious skips (saves an LLM call)
+  for (const pattern of OBVIOUS_SKIP_PATTERNS) {
     if (pattern.test(normalizedQuery)) {
-      return 'required';
+      return { intent: 'skip' };
     }
   }
 
-  // Check for greeting/simple patterns
-  for (const pattern of SKIP_RAG_PATTERNS) {
-    if (pattern.test(normalizedQuery)) {
-      return 'skip';
+  // Use micro NLU for intelligent classification
+  try {
+    const result = await classifyRAGIntent(query, context);
+    if (result && result.confidence >= 0.6) {
+      if (result.decision === 'RAG_REQUIRED') return { intent: 'required', nluCategories: result.categories };
+      if (result.decision === 'RAG_SKIP') return { intent: 'skip', nluCategories: result.categories };
     }
+    // Low confidence → treat as optional (still search, lower threshold)
+    if (result) return { intent: 'optional', nluCategories: result.categories };
+  } catch (err: any) {
+    logger.warn('RAG intent NLU failed, falling back to optional', { error: err.message });
   }
 
-  // Default: optional (use RAG with lower threshold)
-  return 'optional';
+  // Fallback: if LLM unavailable, default to optional (still searches RAG)
+  return { intent: 'optional' };
 }
 
 /**
@@ -153,13 +159,31 @@ Output: jam buka kelurahan waktu operasional jadwal kerja pelayanan kantor
 QUERY:
 {query}`;
 
+// ── Query expansion cache ──
+const expansionCache = new Map<string, { expanded: string; ts: number }>();
+const EXPANSION_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+const MAX_EXPANSION_CACHE = 200;
+
+function normalizeForExpansionCache(q: string): string {
+  return q.toLowerCase().trim().replace(/\s+/g, ' ').replace(/[^\w\s]/g, '');
+}
+
 /**
  * Expand query using micro LLM for better retrieval recall.
+ * Results are cached for 15 minutes to avoid redundant LLM calls.
  * Falls back to original query if LLM fails.
  */
 export async function expandQuery(query: string): Promise<string> {
   if (!query.trim()) return query;
   if (!config.geminiApiKey && apiKeyManager.getByokKeys().length === 0) return query;
+
+  // Check expansion cache first
+  const cacheKey = normalizeForExpansionCache(query);
+  const cached = expansionCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < EXPANSION_CACHE_TTL) {
+    logger.debug('Query expansion cache hit', { query: query.substring(0, 40) });
+    return cached.expanded;
+  }
 
   const prompt = EXPAND_PROMPT.replace('{query}', query);
 
@@ -203,6 +227,12 @@ export async function expandQuery(query: string): Promise<string> {
             expanded: expanded.substring(0, 100),
             model: modelName,
           });
+          // Cache the expansion result
+          if (expansionCache.size >= MAX_EXPANSION_CACHE) {
+            const oldest = expansionCache.keys().next().value;
+            if (oldest) expansionCache.delete(oldest);
+          }
+          expansionCache.set(cacheKey, { expanded, ts: Date.now() });
           return expanded;
         }
       } catch (error: any) {
@@ -260,7 +290,8 @@ export async function retrieveContext(
   } = options as VectorSearchOptions & { useQueryExpansion?: boolean; useHybridSearch?: boolean };
 
   // Step 0: Check query intent - skip RAG for greetings/simple responses
-  const queryIntent = classifyQueryIntent(query);
+  const queryIntentResult = await classifyQueryIntent(query);
+  const queryIntent = queryIntentResult.intent;
   
   if (queryIntent === 'skip') {
     logger.debug('Skipping RAG for simple query', { 
@@ -275,15 +306,26 @@ export async function retrieveContext(
     };
   }
 
-  // Adjust threshold based on intent
-  const adjustedMinScore = queryIntent === 'required' ? minScore : minScore * 0.9;
+  // Adjust threshold based on intent, but enforce a minimum floor
+  const adjustedMinScore = Math.max(
+    queryIntent === 'required' ? minScore : minScore * 0.9,
+    MIN_EFFECTIVE_SCORE
+  );
+
+  // Use NLU-inferred categories if caller didn't provide any
+  const effectiveCategories = categories && categories.length > 0
+    ? categories
+    : queryIntentResult.nluCategories && queryIntentResult.nluCategories.length > 0
+      ? queryIntentResult.nluCategories
+      : undefined;
 
   logger.info('Starting RAG retrieval', {
     queryLength: query.length,
     queryIntent,
     topK,
     minScore: adjustedMinScore,
-    categories,
+    categories: effectiveCategories,
+    nluCategories: queryIntentResult.nluCategories,
     useQueryExpansion,
     useHybridSearch,
   });
@@ -300,7 +342,7 @@ export async function retrieveContext(
       const hybridResults = await hybridSearch(expandedQuery, {
         topK,
         minScore: adjustedMinScore,
-        categories,
+        categories: effectiveCategories,
         sourceTypes,
         villageId,
         useQueryExpansion: false, // Already expanded
@@ -651,14 +693,16 @@ function compressContent(content: string, maxLength: number): string {
  * @param query - User's message
  * @returns Whether the query likely needs knowledge lookup
  */
-export function shouldRetrieveContext(query: string): boolean {
+export async function shouldRetrieveContext(query: string): Promise<boolean> {
   // Use classifyQueryIntent internally for consistency
-  const intent = classifyQueryIntent(query);
-  return intent !== 'skip';
+  const result = await classifyQueryIntent(query);
+  return result.intent !== 'skip';
 }
 
 /**
- * Get relevant categories based on query content
+ * Get relevant categories based on query content.
+ * Kept as lightweight keyword-based fallback when NLU categories are unavailable.
+ * The primary path now uses NLU-inferred categories from classifyQueryIntent().
  * 
  * @param query - User's message
  * @returns Array of relevant category names

@@ -267,34 +267,184 @@ export async function matchServiceSlug(
   return parsed;
 }
 
-// ==================== FAREWELL CLASSIFIER ====================
+// ==================== NAME UPDATE CLASSIFIER ====================
 
-const FAREWELL_CLASSIFY_PROMPT = `Kamu adalah classifier percakapan untuk layanan publik Indonesia (GovConnect).
+const NAME_UPDATE_CLASSIFY_PROMPT = `Kamu adalah classifier percakapan untuk layanan publik Indonesia (GovConnect).
+
+KONTEKS:
+User saat ini tercatat dengan nama: "{current_name}"
+User menyebutkan nama berbeda dalam pesannya.
 
 TUGAS:
-Tentukan apakah pesan user menunjukkan bahwa dia ingin MENGAKHIRI percakapan (FAREWELL) atau masih ingin MELANJUTKAN (CONTINUE).
+Tentukan apakah user BERMAKSUD mengubah/mengoreksi namanya, atau nama tersebut hanya disebut dalam konteks lain (misalnya menyebut nama orang lain, nama tempat, dll).
 
-FAREWELL mencakup:
-- Ucapan selamat tinggal (bye, dadah, sampai jumpa)
-- Menyatakan tidak ada pertanyaan lagi (ga ada lagi, cukup, sudah itu aja)
-- Mengakhiri percakapan secara implisit (yaudah, ok makasih udah cukup)
-- Menyatakan selesai (udah selesai, enough, nothing more)
+UPDATE_NAME — user ingin namanya diperbarui:
+- Klarifikasi nama: "nama saya Yoga", "saya Yoga bukan Wonyoung"
+- Koreksi nama: "nama saya salah, yang benar Yoga"
+- Permintaan ganti: "tolong ubah nama saya jadi Yoga", "ganti nama ke Yoga"
+- Menyatakan identitas berbeda: "bukan, saya Yoga"
 
-BUKAN FAREWELL:
-- Menyatakan cukup data dalam konteks pengisian form ("udah cukup" saat diminta detail)
-- Terima kasih biasa tanpa indikasi akhir percakapan
-- Menyatakan persetujuan ("cukup segitu aja" untuk data complaint)
-- Pertanyaan lanjutan atau permintaan baru
+NO_UPDATE — nama disebut tapi bukan untuk mengubah identitas user:
+- Menyebut nama orang lain: "saya mau tanya soal Pak Yoga"
+- Nama tempat/instansi: "kantor kelurahan Yoga"
+- Konteks pelaporan: "yang bermasalah atas nama Yoga"
+- Nama dalam percakapan umum tanpa intent mengubah identitas
 
 OUTPUT (JSON saja, tanpa markdown):
 {
-  "decision": "FAREWELL|CONTINUE",
+  "decision": "UPDATE_NAME|NO_UPDATE",
+  "new_name": "nama baru jika UPDATE_NAME, null jika NO_UPDATE",
   "confidence": 0.0-1.0,
   "reason": "penjelasan singkat"
 }
 
 PESAN USER:
 {user_message}`;
+
+export interface NameUpdateResult {
+  decision: 'UPDATE_NAME' | 'NO_UPDATE';
+  new_name?: string | null;
+  confidence: number;
+  reason?: string;
+}
+
+export async function classifyNameUpdate(
+  message: string,
+  currentName: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<NameUpdateResult | null> {
+  const prompt = NAME_UPDATE_CLASSIFY_PROMPT
+    .replace('{current_name}', currentName || '')
+    .replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'name_update_classify', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as NameUpdateResult | null;
+  if (!parsed?.decision || typeof parsed.confidence !== 'number') return null;
+
+  logger.info('Micro LLM classified name update', {
+    message: message.substring(0, 60),
+    currentName,
+    decision: parsed.decision,
+    newName: parsed.new_name,
+    confidence: parsed.confidence,
+  });
+
+  return {
+    decision: parsed.decision,
+    new_name: parsed.new_name,
+    confidence: Math.max(0, Math.min(1, parsed.confidence)),
+    reason: parsed.reason,
+  };
+}
+
+// ==================== UNIFIED MESSAGE CLASSIFIER ====================
+// Replaces 3 separate LLM calls (RAG intent + greeting + farewell) with ONE.
+// Also infers knowledge categories for smarter RAG retrieval.
+
+const UNIFIED_CLASSIFY_PROMPT = `Kamu adalah classifier pesan untuk sistem layanan publik Indonesia (GovConnect).
+
+TUGAS:
+Analisis pesan user dan tentukan SEMUA aspek berikut dalam SATU jawaban:
+
+1. **message_type**: Jenis pesan utama
+   - GREETING: Salam murni tanpa permintaan ("halo", "selamat pagi", "assalamualaikum")
+   - FAREWELL: Ingin mengakhiri percakapan ("bye", "udah cukup", "gak ada lagi", "makasih udah cukup")
+   - QUESTION: Pertanyaan atau permintaan informasi faktual
+   - DATA_INPUT: Menjawab pertanyaan bot / memberikan data ("nama saya Budi", "alamat di Jl. Merdeka", "RT 02 RW 01")
+   - COMPLAINT: Laporan/keluhan ("jalan rusak", "lampu mati", "sampah menumpuk")
+   - CONFIRMATION: Konfirmasi singkat ("ya", "ok", "baik", "tidak", "batal")
+   - SOCIAL: Percakapan sosial ("apa kabar?", "kamu siapa?", "siapa namamu?")
+
+2. **rag_needed**: Apakah perlu cari di knowledge base?
+   - true: Pertanyaan tentang prosedur/SOP, syarat, biaya, jadwal, lokasi, pejabat/personil, layanan, dokumen, info desa, program, regulasi
+   - false: Salam, konfirmasi, data input, keluhan (handled by complaint flow), percakapan sosial, farewell
+
+3. **categories**: Kategori knowledge yang relevan (array, bisa kosong jika rag_needed=false)
+   Pilih dari: "jadwal", "kontak", "prosedur", "layanan", "informasi_umum", "faq", "profil_desa", "pengaduan", "struktur_desa"
+   Boleh lebih dari satu jika relevan.
+
+CONTOH:
+- "halo" → GREETING, rag_needed: false, categories: []
+- "jam buka kantor?" → QUESTION, rag_needed: true, categories: ["jadwal"]
+- "siapa kepala desanya?" → QUESTION, rag_needed: true, categories: ["informasi_umum", "struktur_desa"]
+- "cara buat KTP gimana?" → QUESTION, rag_needed: true, categories: ["prosedur", "layanan"]
+- "udah cukup makasih" → FAREWELL, rag_needed: false, categories: []
+- "jalan rusak depan masjid" → COMPLAINT, rag_needed: false, categories: []
+- "nama saya Yoga" → DATA_INPUT, rag_needed: false, categories: []
+- "ya" → CONFIRMATION, rag_needed: false, categories: []
+- "layanan apa aja yang ada?" → QUESTION, rag_needed: true, categories: ["layanan"]
+- "alamat kantor desa dimana?" → QUESTION, rag_needed: true, categories: ["kontak", "informasi_umum"]
+
+OUTPUT (JSON saja, tanpa markdown):
+{
+  "message_type": "GREETING|FAREWELL|QUESTION|DATA_INPUT|COMPLAINT|CONFIRMATION|SOCIAL",
+  "rag_needed": true/false,
+  "categories": ["kategori1", "kategori2"],
+  "confidence": 0.0-1.0,
+  "reason": "penjelasan singkat"
+}
+
+PESAN USER:
+{user_message}`;
+
+export type MessageType = 'GREETING' | 'FAREWELL' | 'QUESTION' | 'DATA_INPUT' | 'COMPLAINT' | 'CONFIRMATION' | 'SOCIAL';
+
+export interface UnifiedClassifyResult {
+  message_type: MessageType;
+  rag_needed: boolean;
+  categories: string[];
+  confidence: number;
+  reason?: string;
+}
+
+export async function classifyMessage(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<UnifiedClassifyResult | null> {
+  const prompt = UNIFIED_CLASSIFY_PROMPT.replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'unified_classify', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as UnifiedClassifyResult | null;
+  if (!parsed?.message_type || typeof parsed.confidence !== 'number') return null;
+
+  // Validate message_type
+  const validTypes: MessageType[] = ['GREETING', 'FAREWELL', 'QUESTION', 'DATA_INPUT', 'COMPLAINT', 'CONFIRMATION', 'SOCIAL'];
+  if (!validTypes.includes(parsed.message_type)) return null;
+
+  // Ensure categories is always an array
+  if (!Array.isArray(parsed.categories)) parsed.categories = [];
+
+  logger.info('Micro LLM unified classify', {
+    message: message.substring(0, 60),
+    type: parsed.message_type,
+    rag_needed: parsed.rag_needed,
+    categories: parsed.categories,
+    confidence: parsed.confidence,
+  });
+
+  return {
+    message_type: parsed.message_type,
+    rag_needed: !!parsed.rag_needed,
+    categories: parsed.categories,
+    confidence: Math.max(0, Math.min(1, parsed.confidence)),
+    reason: parsed.reason,
+  };
+}
+
+// ==================== LEGACY WRAPPERS ====================
+// These wrap classifyMessage for backward compatibility.
+// They share a SINGLE cached result per call chain via classifyMessageCached().
+
+export interface RAGIntentResult {
+  decision: 'RAG_REQUIRED' | 'RAG_SKIP';
+  confidence: number;
+  reason?: string;
+  categories?: string[];
+}
 
 export interface FarewellResult {
   decision: 'FAREWELL' | 'CONTINUE';
@@ -302,87 +452,67 @@ export interface FarewellResult {
   reason?: string;
 }
 
-export async function classifyFarewell(
-  message: string,
-  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
-): Promise<FarewellResult | null> {
-  const prompt = FAREWELL_CLASSIFY_PROMPT.replace('{user_message}', message || '');
-
-  const raw = await callMicroLLM(prompt, 'farewell_classify', context);
-  if (!raw) return null;
-
-  const parsed = parseJSON(raw) as FarewellResult | null;
-  if (!parsed?.decision || typeof parsed.confidence !== 'number') return null;
-
-  logger.info('Micro LLM classified farewell', {
-    message: message.substring(0, 60),
-    decision: parsed.decision,
-    confidence: parsed.confidence,
-  });
-
-  return {
-    decision: parsed.decision,
-    confidence: Math.max(0, Math.min(1, parsed.confidence)),
-    reason: parsed.reason,
-  };
-}
-
-// ==================== GREETING CLASSIFIER ====================
-
-const GREETING_CLASSIFY_PROMPT = `Kamu adalah classifier percakapan untuk layanan publik Indonesia (GovConnect).
-
-TUGAS:
-Tentukan apakah pesan user adalah SALAM/GREETING murni (GREETING) atau sudah mengandung PERMINTAAN/pertanyaan (HAS_REQUEST).
-
-GREETING murni:
-- Halo, hai, hi, hello, hey
-- Selamat pagi/siang/sore/malam
-- Assalamualaikum, permisi
-- Salam-salam tanpa isi lain
-
-HAS_REQUEST (greeting + permintaan):
-- "Halo, saya mau lapor jalan rusak"
-- "Selamat pagi, mau tanya jam operasional"
-- "Assalamualaikum, butuh surat keterangan"
-- Pesan yang langsung ke inti pertanyaan
-
-OUTPUT (JSON saja, tanpa markdown):
-{
-  "decision": "GREETING|HAS_REQUEST",
-  "confidence": 0.0-1.0,
-  "reason": "penjelasan singkat"
-}
-
-PESAN USER:
-{user_message}`;
-
 export interface GreetingResult {
   decision: 'GREETING' | 'HAS_REQUEST';
   confidence: number;
   reason?: string;
 }
 
+let _cachedClassifyResult: { message: string; result: UnifiedClassifyResult | null; ts: number } | null = null;
+
+/**
+ * Get unified classification result, cached within a 2-second window
+ * to avoid duplicate LLM calls when greeting/farewell/RAG check the same message.
+ */
+async function classifyMessageCached(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<UnifiedClassifyResult | null> {
+  const trimmed = message.trim();
+  if (_cachedClassifyResult && _cachedClassifyResult.message === trimmed && Date.now() - _cachedClassifyResult.ts < 2000) {
+    return _cachedClassifyResult.result;
+  }
+  const result = await classifyMessage(trimmed, context);
+  _cachedClassifyResult = { message: trimmed, result, ts: Date.now() };
+  return result;
+}
+
+export async function classifyRAGIntent(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<RAGIntentResult | null> {
+  const unified = await classifyMessageCached(message, context);
+  if (!unified) return null;
+  return {
+    decision: unified.rag_needed ? 'RAG_REQUIRED' : 'RAG_SKIP',
+    confidence: unified.confidence,
+    reason: unified.reason,
+    categories: unified.categories,
+  };
+}
+
+export async function classifyFarewell(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<FarewellResult | null> {
+  const unified = await classifyMessageCached(message, context);
+  if (!unified) return null;
+  return {
+    decision: unified.message_type === 'FAREWELL' ? 'FAREWELL' : 'CONTINUE',
+    confidence: unified.confidence,
+    reason: unified.reason,
+  };
+}
+
 export async function classifyGreeting(
   message: string,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<GreetingResult | null> {
-  const prompt = GREETING_CLASSIFY_PROMPT.replace('{user_message}', message || '');
-
-  const raw = await callMicroLLM(prompt, 'greeting_classify', context);
-  if (!raw) return null;
-
-  const parsed = parseJSON(raw) as GreetingResult | null;
-  if (!parsed?.decision || typeof parsed.confidence !== 'number') return null;
-
-  logger.info('Micro LLM classified greeting', {
-    message: message.substring(0, 60),
-    decision: parsed.decision,
-    confidence: parsed.confidence,
-  });
-
+  const unified = await classifyMessageCached(message, context);
+  if (!unified) return null;
   return {
-    decision: parsed.decision,
-    confidence: Math.max(0, Math.min(1, parsed.confidence)),
-    reason: parsed.reason,
+    decision: unified.message_type === 'GREETING' ? 'GREETING' : 'HAS_REQUEST',
+    confidence: unified.confidence,
+    reason: unified.reason,
   };
 }

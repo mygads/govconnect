@@ -1,5 +1,6 @@
 import axios from 'axios';
 import logger from '../utils/logger';
+import { getWIBDateTime } from '../utils/wib-datetime';
 import { config } from '../config/env';
 import { getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '../prompts/system-prompt';
 import { RAGContext } from '../types/embedding.types';
@@ -42,24 +43,11 @@ export async function buildContext(
     const knowledgeSection = buildKnowledgeSection(ragContext);
     
     // Calculate current date, time, and tomorrow for prompt (in WIB timezone)
-    const now = new Date();
-    const wibOffset = 7 * 60; // WIB is UTC+7
-    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const wibTime = new Date(utc + (wibOffset * 60000));
-    
-    const currentDate = wibTime.toISOString().split('T')[0]; // YYYY-MM-DD
-    const tomorrow = new Date(wibTime);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
-    
-    // Get current time info for greeting
-    const currentHour = wibTime.getHours();
-    let timeOfDay = 'malam';
-    if (currentHour >= 5 && currentHour < 11) timeOfDay = 'pagi';
-    else if (currentHour >= 11 && currentHour < 15) timeOfDay = 'siang';
-    else if (currentHour >= 15 && currentHour < 18) timeOfDay = 'sore';
-    
-    const currentTime = wibTime.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+    const wib = getWIBDateTime();
+    const currentDate = wib.date;
+    const tomorrowDate = wib.tomorrow;
+    const currentTime = wib.time;
+    const timeOfDay = wib.timeOfDay;
 
     // Default complaint categories fallback
     const categoriesText = complaintCategoriesText || 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
@@ -102,24 +90,16 @@ export async function buildContext(
     
     // Fallback: return prompt without history
     // Still need to replace all template placeholders to avoid raw strings in LLM
-    const now2 = new Date();
-    const wibOffset2 = 7 * 60;
-    const utc2 = now2.getTime() + (now2.getTimezoneOffset() * 60000);
-    const wibTime2 = new Date(utc2 + (wibOffset2 * 60000));
-    const currentHour2 = wibTime2.getHours();
-    let timeOfDay2 = 'malam';
-    if (currentHour2 >= 5 && currentHour2 < 11) timeOfDay2 = 'pagi';
-    else if (currentHour2 >= 11 && currentHour2 < 15) timeOfDay2 = 'siang';
-    else if (currentHour2 >= 15 && currentHour2 < 18) timeOfDay2 = 'sore';
+    const wibFallback = getWIBDateTime();
     
     const fallbackPrompt = getFullSystemPrompt()
       .replace('{knowledge_context}', '')
       .replace('{history}', '(No conversation history available)')
       .replace('{user_message}', currentMessage)
-      .replace(/\{\{current_date\}\}/g, wibTime2.toISOString().split('T')[0])
-      .replace(/\{\{tomorrow_date\}\}/g, new Date(wibTime2.getTime() + 86400000).toISOString().split('T')[0])
-      .replace(/\{\{current_time\}\}/g, wibTime2.toTimeString().split(' ')[0].substring(0, 5))
-      .replace(/\{\{time_of_day\}\}/g, timeOfDay2)
+      .replace(/\{\{current_date\}\}/g, wibFallback.date)
+      .replace(/\{\{tomorrow_date\}\}/g, wibFallback.tomorrow)
+      .replace(/\{\{current_time\}\}/g, wibFallback.time)
+      .replace(/\{\{time_of_day\}\}/g, wibFallback.timeOfDay)
       .replace(/\{\{complaint_categories\}\}/g, 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya')
       .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
     
@@ -141,7 +121,7 @@ function buildKnowledgeSection(ragContext?: RAGContext | string): string {
   // Handle legacy string format (backward compatibility)
   if (typeof ragContext === 'string') {
     if (!ragContext.trim()) return '';
-    return `\n\nKNOWLEDGE BASE YANG TERSEDIA:\n${ragContext}`;
+    return `\n\nKNOWLEDGE BASE YANG TERSEDIA:\n${sanitizeKnowledgeContext(ragContext)}`;
   }
   
   // Handle full RAGContext object
@@ -172,7 +152,7 @@ INSTRUKSI: Knowledge mungkin hanya sebagian relevan. Gunakan dengan hati-hati, b
   }
   
   return `\n\nKNOWLEDGE BASE YANG TERSEDIA:
-${ragContext.contextString}
+${sanitizeKnowledgeContext(ragContext.contextString)}
 ${confidenceInstruction}`;
 }
 
@@ -217,7 +197,7 @@ PESAN TERAKHIR USER:
     
     // Build full prompt using knowledge-specific template
     const systemPrompt = KNOWLEDGE_QA_SYSTEM_PROMPT
-      .replace('{knowledge_context}', knowledgeContext)
+      .replace('{knowledge_context}', sanitizeKnowledgeContext(knowledgeContext))
       .replace('{history}', conversationHistory)
       .replace('{user_message}', currentMessage);
     
@@ -501,4 +481,36 @@ export function sanitizeUserInput(input: string): string {
   }
   
   return sanitized.trim();
+}
+
+/**
+ * Sanitize knowledge context retrieved from RAG before injecting into prompts.
+ * Lighter than sanitizeUserInput — knowledge is admin-managed but could still
+ * contain injection patterns if malicious content was uploaded to KB.
+ */
+function sanitizeKnowledgeContext(context: string): string {
+  if (!context) return '';
+
+  let sanitized = context;
+
+  // Remove control characters (except \n, \r, \t for formatting)
+  sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+
+  // Strip prompt injection patterns that could override system instructions
+  const injectionPatterns = [
+    /ignore\s+(previous|all|above)\s+instructions?/gi,
+    /you\s+are\s+(now|a)\s+/gi,
+    /\[\s*INST\s*\]/gi,
+    /<\/?system>/gi,
+    /\{\{[^}]+\}\}/g,
+    /abaikan\s+(instruksi|perintah|aturan)\s+(sebelumnya|di\s*atas|semua)/gi,
+    /lupakan\s+(instruksi|perintah|aturan)/gi,
+    /^(assistant|system)\s*:/gmi,
+  ];
+
+  for (const pattern of injectionPatterns) {
+    sanitized = sanitized.replace(pattern, '');
+  }
+
+  return sanitized;
 }

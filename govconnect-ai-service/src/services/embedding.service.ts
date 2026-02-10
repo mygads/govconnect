@@ -324,9 +324,12 @@ export async function generateEmbedding(
     const embeddingKey = getEmbeddingGenAI();
     const embeddingModel = embeddingKey.genAI.getGenerativeModel({ model });
 
-    // Call Gemini API - embedContent accepts string directly or EmbedContentRequest
+    // Call Gemini API - use proper EmbedContentRequest with taskType for optimal quality
     const result = await withRetry(
-      () => embeddingModel.embedContent(text),
+      () => embeddingModel.embedContent({
+        content: { role: 'user', parts: [{ text }] },
+        taskType,
+      }),
       'embedContent'
     );
 
@@ -495,7 +498,7 @@ export async function generateBatchEmbeddings(
     const embeddingKey = getEmbeddingGenAI();
     const embeddingModel = embeddingKey.genAI.getGenerativeModel({ model });
 
-    // Prepare batch request - include model explicitly to avoid API validation issues
+    // Prepare batch request - include model and taskType for optimal embedding quality
     const requestModel = model.startsWith('models/') ? model : `models/${model}`;
     const batchResult = await withRetry(
       () =>
@@ -503,6 +506,7 @@ export async function generateBatchEmbeddings(
           requests: nonBlankTexts.map(text => ({
             model: requestModel,
             content: { role: 'user', parts: [{ text }] },
+            taskType,
           })),
         }),
       'batchEmbedContents'

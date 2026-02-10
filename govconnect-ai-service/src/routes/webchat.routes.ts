@@ -92,7 +92,13 @@ const router = Router();
 const webchatRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 15,
-  keyGenerator: (req: Request) => req.body?.session_id || req.ip || 'unknown',
+  keyGenerator: (req: Request) => {
+    // Prefer session_id; fall back to X-Forwarded-For (behind reverse proxy) then req.ip
+    return req.body?.session_id
+      || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+      || req.ip
+      || 'unknown';
+  },
   standardHeaders: true,
   legacyHeaders: false,
   message: {

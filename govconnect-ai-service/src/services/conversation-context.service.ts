@@ -11,6 +11,7 @@
  */
 
 import logger from '../utils/logger';
+import { LRUCache } from '../utils/lru-cache';
 import { getContext as getFSMContext, ConversationState } from './conversation-fsm.service';
 
 // ==================== TYPES ====================
@@ -62,20 +63,13 @@ interface ContextUpdate {
 
 // ==================== STORAGE ====================
 
-const contextCache = new Map<string, EnhancedContext>();
-
-// Cleanup expired contexts (older than 30 minutes)
-const CONTEXT_TTL = 30 * 60 * 1000;
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [userId, ctx] of contextCache.entries()) {
-    if (now - ctx.lastActivityTime > CONTEXT_TTL) {
-      contextCache.delete(userId);
-      logger.debug('[ConversationContext] Cleaned up expired context', { userId });
-    }
-  }
-}, 5 * 60 * 1000);
+// Bounded LRU cache replaces unbounded Map + setInterval cleanup.
+// TTL = 30 minutes (same as previous CONTEXT_TTL), max 1000 users.
+const contextCache = new LRUCache<string, EnhancedContext>({
+  maxSize: 1000,
+  ttlMs: 30 * 60 * 1000,
+  name: 'conversation-context',
+});
 
 // ==================== CORE FUNCTIONS ====================
 

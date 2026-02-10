@@ -10,9 +10,8 @@
  * Data disimpan di file JSON (production: gunakan Redis/Database)
  */
 
-import fs from 'fs';
-import path from 'path';
 import logger from '../utils/logger';
+import { LRUCache } from '../utils/lru-cache';
 
 // ==================== TYPES ====================
 
@@ -68,93 +67,14 @@ export interface ProfileUpdate {
   no_hp?: string;
 }
 
-// ==================== STORAGE ====================
+// In-memory LRU cache (bounded, no file persistence — AI service is stateless)
+const profileCache = new LRUCache<string, UserProfile>({
+  maxSize: 2000,
+  ttlMs: 24 * 60 * 60 * 1000, // 24 hours
+  name: 'user-profiles',
+});
 
-const PROFILES_FILE_PATH = path.join(process.cwd(), 'data', 'user-profiles.json');
-const SAVE_INTERVAL_MS = 60000; // Save every 1 minute
-
-// In-memory cache
-const profileCache = new Map<string, UserProfile>();
-let isDirty = false;
-let saveInterval: ReturnType<typeof setInterval> | null = null;
-
-// ==================== INITIALIZATION ====================
-
-/**
- * Load profiles from file
- */
-function loadProfiles(): void {
-  try {
-    const dataDir = path.dirname(PROFILES_FILE_PATH);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    if (fs.existsSync(PROFILES_FILE_PATH)) {
-      const data = fs.readFileSync(PROFILES_FILE_PATH, 'utf-8');
-      const profiles = JSON.parse(data) as UserProfile[];
-      
-      for (const profile of profiles) {
-        // Convert date strings back to Date objects
-        profile.first_interaction = new Date(profile.first_interaction);
-        profile.last_interaction = new Date(profile.last_interaction);
-        profile.created_at = new Date(profile.created_at);
-        profile.updated_at = new Date(profile.updated_at);
-
-        if ((profile as any).total_service_requests === undefined) {
-          (profile as any).total_service_requests = 0;
-        }
-        
-        profileCache.set(profile.wa_user_id, profile);
-      }
-      
-      logger.info('👤 User profiles loaded', { count: profileCache.size });
-    }
-  } catch (error) {
-    logger.warn('⚠️ Could not load user profiles, starting fresh', {
-      error: (error as Error).message,
-    });
-  }
-}
-
-/**
- * Save profiles to file
- */
-function saveProfiles(): void {
-  if (!isDirty) return;
-  
-  try {
-    const dataDir = path.dirname(PROFILES_FILE_PATH);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    const profiles = Array.from(profileCache.values());
-    fs.writeFileSync(PROFILES_FILE_PATH, JSON.stringify(profiles, null, 2));
-    isDirty = false;
-    
-    logger.debug('💾 User profiles saved', { count: profiles.length });
-  } catch (error) {
-    logger.error('❌ Failed to save user profiles', {
-      error: (error as Error).message,
-    });
-  }
-}
-
-/**
- * Start periodic save
- */
-function startPeriodicSave(): void {
-  if (saveInterval) return;
-  
-  saveInterval = setInterval(() => {
-    saveProfiles();
-  }, SAVE_INTERVAL_MS);
-}
-
-// Initialize on module load
-loadProfiles();
-startPeriodicSave();
+logger.info('👤 User Profile Service initialized (in-memory LRU)');
 
 // ==================== CORE FUNCTIONS ====================
 
@@ -167,7 +87,6 @@ export function getProfile(wa_user_id: string): UserProfile {
   if (!profile) {
     profile = createDefaultProfile(wa_user_id);
     profileCache.set(wa_user_id, profile);
-    isDirty = true;
     
     logger.info('👤 New user profile created', { wa_user_id });
   }
@@ -214,9 +133,21 @@ export function clearProfile(wa_user_id: string): void {
     existing.default_rt_rw = undefined;
     existing.default_kelurahan = undefined;
     existing.updated_at = new Date();
-    isDirty = true;
     logger.info('👤 Profile cleared (personal data reset)', { wa_user_id });
   }
+}
+
+/**
+ * Fully delete user profile from cache — removes the entire entry.
+ * Used when admin deletes a conversation so AI has zero memory of the user.
+ * The deleted state is persisted to user-profiles.json on next flush.
+ */
+export function deleteProfile(wa_user_id: string): boolean {
+  const existed = profileCache.delete(wa_user_id);
+  if (existed) {
+    logger.info('🗑️ Profile fully deleted', { wa_user_id });
+  }
+  return existed;
 }
 
 /**
@@ -237,7 +168,6 @@ export function updateProfile(wa_user_id: string, updates: ProfileUpdate): UserP
   if (updates.no_hp !== undefined) profile.no_hp = updates.no_hp;
   
   profile.updated_at = new Date();
-  isDirty = true;
   
   logger.debug('👤 Profile updated', { wa_user_id, updates: Object.keys(updates) });
   
@@ -266,18 +196,6 @@ export function recordInteraction(
   if (sentimentScore < -0.5) {
     profile.frustration_count++;
   }
-  
-  // Track frequent services
-  if (intent) {
-    if (intent === 'CREATE_COMPLAINT') {
-      profile.total_complaints++;
-    } else if (intent === 'CREATE_SERVICE_REQUEST') {
-      profile.total_service_requests++;
-    }
-  }
-  
-  profile.updated_at = new Date();
-  isDirty = true;
 }
 
 /**
@@ -301,7 +219,6 @@ export function recordServiceUsage(wa_user_id: string, serviceCode: string): voi
   }
   
   profile.updated_at = new Date();
-  isDirty = true;
 }
 
 /**
@@ -347,7 +264,6 @@ export function learnFromMessage(wa_user_id: string, message: string): void {
   
   if (updated) {
     profile.updated_at = new Date();
-    isDirty = true;
   }
 }
 
@@ -364,9 +280,8 @@ export function saveDefaultAddress(wa_user_id: string, alamat: string, rt_rw?: s
       profile.default_rt_rw = rt_rw;
     }
     profile.updated_at = new Date();
-    isDirty = true;
-    
-    logger.debug('👤 Saved default address', { wa_user_id, alamat: alamat.substring(0, 30) });
+  
+  logger.debug('👤 Saved default address', { wa_user_id, alamat: alamat.substring(0, 30) });
   }
 }
 
@@ -461,32 +376,10 @@ export function getMostFrequentService(wa_user_id: string): string | null {
 
 // ==================== CLEANUP ====================
 
-/**
- * Force save (for shutdown)
- */
-export function forceSave(): void {
-  isDirty = true;
-  saveProfiles();
-}
-
-/**
- * Shutdown cleanup
- */
-export function shutdown(): void {
-  if (saveInterval) {
-    clearInterval(saveInterval);
-  }
-  forceSave();
-  logger.info('👤 User Profile Service shutdown complete');
-}
-
-// Graceful shutdown
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
 export default {
   getProfile,
   updateProfile,
+  deleteProfile,
   recordInteraction,
   recordServiceUsage,
   learnFromMessage,
@@ -495,6 +388,4 @@ export default {
   getAutoFillSuggestions,
   isReturningUser,
   getMostFrequentService,
-  forceSave,
-  shutdown,
 };

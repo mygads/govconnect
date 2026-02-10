@@ -6,6 +6,7 @@
  */
 
 import logger from '../utils/logger';
+import { LRUCache } from '../utils/lru-cache';
 
 export type SentimentLevel = 'positive' | 'neutral' | 'negative' | 'angry' | 'urgent';
 
@@ -18,24 +19,13 @@ export interface SentimentResult {
   suggestedTone: string; // Hint for AI response tone
 }
 
-// In-memory sentiment history for escalation tracking
-// Key: wa_user_id, Value: array of recent sentiment scores
-const sentimentHistory: Map<string, { score: number; timestamp: number }[]> = new Map();
-
-// Cleanup old sentiment history (older than 1 hour)
-setInterval(() => {
-  const now = Date.now();
-  const expireMs = 60 * 60 * 1000; // 1 hour
-  
-  for (const [userId, history] of sentimentHistory.entries()) {
-    const filtered = history.filter(h => now - h.timestamp < expireMs);
-    if (filtered.length === 0) {
-      sentimentHistory.delete(userId);
-    } else {
-      sentimentHistory.set(userId, filtered);
-    }
-  }
-}, 10 * 60 * 1000); // Clean every 10 minutes
+// Bounded LRU cache replaces unbounded Map + setInterval cleanup.
+// TTL = 1 hour (same as previous), max 500 users.
+const sentimentHistory = new LRUCache<string, { score: number; timestamp: number }[]>({
+  maxSize: 500,
+  ttlMs: 60 * 60 * 1000,
+  name: 'sentiment-history',
+});
 
 /**
  * Sentiment patterns

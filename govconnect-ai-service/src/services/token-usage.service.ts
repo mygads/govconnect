@@ -48,7 +48,7 @@ const PRICING: Record<string, { input: number; output: number }> = {
 };
 
 /** Find pricing for a model name — supports date-suffixed names like gemini-2.5-flash-preview-05-20 */
-function findPricing(model: string): { input: number; output: number } {
+export function findPricing(model: string): { input: number; output: number } {
   if (PRICING[model]) return PRICING[model];
   // Prefix match (longest key first)
   const keys = Object.keys(PRICING).sort((a, b) => b.length - a.length);
@@ -80,6 +80,9 @@ export type CallType =
   | 'confirmation_classify'
   | 'farewell_classify'
   | 'greeting_classify'
+  | 'name_update_classify'
+  | 'rag_intent_classify'
+  | 'unified_classify'
   | 'connection_test'
   | 'embedding_single'
   | 'embedding_batch';

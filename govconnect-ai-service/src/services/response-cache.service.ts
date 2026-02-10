@@ -81,12 +81,14 @@ function normalizeQuery(query: string): string {
 }
 
 /**
- * Generate cache key from normalized query
+ * Generate cache key from normalized query.
+ * Includes village_id so different villages never share cached answers.
  */
-function generateCacheKey(query: string, intent?: string): string {
+function generateCacheKey(query: string, intent?: string, villageId?: string): string {
   const normalized = normalizeQuery(query);
-  // Include intent in key if provided (for more specific caching)
-  return intent ? `${intent}:${normalized}` : normalized;
+  const village = villageId || '_default';
+  // Include intent and village in key for tenant-safe caching
+  return intent ? `${village}:${intent}:${normalized}` : `${village}:${normalized}`;
 }
 
 // ==================== CACHEABLE PATTERNS ====================
@@ -172,8 +174,8 @@ export function isCacheable(query: string, intent?: string): boolean {
 /**
  * Get cached response for a query
  */
-export function getCachedResponse(query: string, intent?: string): CachedResponse | null {
-  const key = generateCacheKey(query, intent);
+export function getCachedResponse(query: string, intent?: string, villageId?: string): CachedResponse | null {
+  const key = generateCacheKey(query, intent, villageId);
   const cached = responseCache.get(key);
   
   if (!cached) {
@@ -211,7 +213,8 @@ export function setCachedResponse(
   query: string,
   response: string,
   intent: string,
-  guidanceText?: string
+  guidanceText?: string,
+  villageId?: string
 ): void {
   // Check if cacheable
   if (!isCacheable(query, intent)) {
@@ -222,7 +225,7 @@ export function setCachedResponse(
     return;
   }
   
-  const key = generateCacheKey(query, intent);
+  const key = generateCacheKey(query, intent, villageId);
   
   // Check cache size and evict if needed
   if (responseCache.size >= CACHE_CONFIG.maxSize) {

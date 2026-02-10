@@ -8,24 +8,10 @@
  * - Response quality metricss
  */
 
-import fs from 'fs';
-import path from 'path';
 import logger from '../utils/logger';
+import { findPricing as getTokenPricing } from './token-usage.service';
 
-// Gemini pricing per 1M tokens (in USD) - December 2025
-// https://ai.google.dev/pricing - Updated December 2025
-const GEMINI_PRICING: Record<string, { input: number; output: number; description: string }> = {
-  // Gemini 2.5 Flash - Hybrid reasoning model, 1M context, best price/performance
-  'gemini-2.5-flash': { input: 0.30, output: 2.50, description: 'Hybrid reasoning, 1M context, thinking budget' },
-  // Gemini 2.5 Flash-Lite - Smallest, most cost-efficient
-  'gemini-2.5-flash-lite': { input: 0.10, output: 0.40, description: 'Smallest, cost-efficient, high throughput' },
-  'gemini-2.0-flash': { input: 0.10, output: 0.40, description: 'Balanced multimodal, 1M context' },
-  // Gemini 2.0 Flash-Lite - Legacy cost-efficient
-  'gemini-2.0-flash-lite': { input: 0.075, output: 0.30, description: 'Legacy cost-efficient' },
-  // Default fallback
-  'default': { input: 0.10, output: 0.40, description: 'Default pricing' },
-};
-
+// Use token-usage.service as single source of truth for pricing
 // Estimated tokens per character (rough estimate for Indonesian text)
 const CHARS_PER_TOKEN = 3.5;
 
@@ -91,47 +77,16 @@ interface SessionData {
   lastActivity: number;
 }
 
-const ANALYTICS_FILE_PATH = path.join(process.cwd(), 'data', 'ai-analytics.json');
-const SAVE_INTERVAL_MS = 60000; // Save every 1 minute
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 class AIAnalyticsService {
   private data: AnalyticsStorage;
   private sessions: Map<string, SessionData> = new Map();
-  private saveInterval: ReturnType<typeof setInterval> | null = null;
-  private isDirty: boolean = false;
 
   constructor() {
-    this.data = this.loadData();
-    this.validateAndFixData(); // Fix any corrupted data on startup
-    this.startPeriodicSave();
+    this.data = this.getDefaultStorage();
     this.startSessionCleanup();
-    logger.info('📊 AI Analytics Service initialized');
-  }
-
-  /**
-   * Load data from file or create default
-   */
-  private loadData(): AnalyticsStorage {
-    try {
-      const dataDir = path.dirname(ANALYTICS_FILE_PATH);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-
-      if (fs.existsSync(ANALYTICS_FILE_PATH)) {
-        const data = fs.readFileSync(ANALYTICS_FILE_PATH, 'utf-8');
-        const parsed = JSON.parse(data) as AnalyticsStorage;
-        logger.info('📊 AI Analytics loaded from file');
-        return parsed;
-      }
-    } catch (error) {
-      logger.warn('⚠️ Could not load AI analytics, starting fresh', {
-        error: (error as Error).message,
-      });
-    }
-
-    return this.getDefaultStorage();
+    logger.info('📊 AI Analytics Service initialized (in-memory)');
   }
 
   /**
@@ -163,39 +118,6 @@ class AIAnalyticsService {
       },
       lastUpdated: new Date().toISOString(),
     };
-  }
-
-  /**
-   * Save data to file
-   */
-  private saveData(): void {
-    try {
-      const dataDir = path.dirname(ANALYTICS_FILE_PATH);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-
-      this.data.lastUpdated = new Date().toISOString();
-      fs.writeFileSync(ANALYTICS_FILE_PATH, JSON.stringify(this.data, null, 2));
-      this.isDirty = false;
-      
-      logger.debug('💾 AI Analytics saved to file');
-    } catch (error) {
-      logger.error('❌ Failed to save AI analytics', {
-        error: (error as Error).message,
-      });
-    }
-  }
-
-  /**
-   * Start periodic save interval
-   */
-  private startPeriodicSave(): void {
-    this.saveInterval = setInterval(() => {
-      if (this.isDirty) {
-        this.saveData();
-      }
-    }, SAVE_INTERVAL_MS);
   }
 
   /**
@@ -286,8 +208,6 @@ class AIAnalyticsService {
     this.data.accuracy.overallAccuracy = this.data.accuracy.totalClassifications > 0
       ? Math.round((this.data.accuracy.correctClassifications / this.data.accuracy.totalClassifications) * 100)
       : 0;
-
-    this.isDirty = true;
   }
 
   /**
@@ -296,7 +216,6 @@ class AIAnalyticsService {
   recordSuccess(intent: string): void {
     if (this.data.intents[intent]) {
       this.data.intents[intent].successCount++;
-      this.isDirty = true;
     }
 
     // Also update accuracy
@@ -310,7 +229,6 @@ class AIAnalyticsService {
     this.data.accuracy.overallAccuracy = Math.round(
       (this.data.accuracy.correctClassifications / this.data.accuracy.totalClassifications) * 100
     );
-    this.isDirty = true;
   }
 
   /**
@@ -331,8 +249,6 @@ class AIAnalyticsService {
       }
       this.data.accuracy.confusionMatrix[intent][correctedIntent]++;
     }
-
-    this.isDirty = true;
   }
 
   /**
@@ -394,19 +310,18 @@ class AIAnalyticsService {
         this.data.conversationFlow.dropOffPoints[lastIntent] = 0;
       }
       this.data.conversationFlow.dropOffPoints[lastIntent]++;
-
-      this.isDirty = true;
     }
   }
 
   /**
    * Record token usage and calculate cost
+   * Uses token-usage.service pricing as single source of truth
    */
   private recordTokenUsage(model: string, inputChars: number, outputChars: number): void {
     const inputTokens = Math.ceil(inputChars / CHARS_PER_TOKEN);
     const outputTokens = Math.ceil(outputChars / CHARS_PER_TOKEN);
     
-    const pricing = GEMINI_PRICING[model as keyof typeof GEMINI_PRICING] || GEMINI_PRICING.default;
+    const pricing = getTokenPricing(model);
     const costUSD = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
 
     // Update totals
@@ -618,7 +533,6 @@ class AIAnalyticsService {
     logger.warn('🔄 Resetting all AI analytics data');
     this.data = this.getDefaultStorage();
     this.sessions.clear();
-    this.saveData();
     logger.info('✅ AI Analytics reset complete');
   }
 
@@ -683,37 +597,12 @@ class AIAnalyticsService {
     }
     
     if (fixed) {
-      this.saveData();
+      logger.info('🔧 Analytics data validation fixed issues');
     }
     logger.info('✅ Analytics data validation and fix complete');
   }
 
-  /**
-   * Force save (for shutdown)
-   */
-  forceSave(): void {
-    // End all active sessions first
-    for (const session of this.sessions.values()) {
-      this.recordSessionEnd(session);
-    }
-    this.saveData();
-  }
-
-  /**
-   * Shutdown cleanup
-   */
-  shutdown(): void {
-    if (this.saveInterval) {
-      clearInterval(this.saveInterval);
-    }
-    this.forceSave();
-    logger.info('📊 AI Analytics Service shutdown complete');
-  }
 }
 
 // Export singleton
 export const aiAnalyticsService = new AIAnalyticsService();
-
-// Graceful shutdown
-process.on('SIGTERM', () => aiAnalyticsService.shutdown());
-process.on('SIGINT', () => aiAnalyticsService.shutdown());
