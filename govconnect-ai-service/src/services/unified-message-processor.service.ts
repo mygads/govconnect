@@ -69,10 +69,44 @@ import { createProcessingTracker } from './processing-status.service';
 import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
 import { getCachedResponse, setCachedResponse, isCacheable } from './response-cache.service';
+import {
+  ChannelType,
+  normalizeHandlerResult,
+  COMPLAINT_STATUS_MAP,
+  SERVICE_STATUS_MAP,
+  validateResponse,
+  formatClickableLink,
+  formatClickablePhone,
+  buildImportantContactsMessage,
+  maskSensitiveId,
+  toSafeDate,
+  formatDateTimeId,
+  formatRelativeTime,
+  formatKategori,
+  getStatusInfo,
+  buildAdminNoteSection,
+  buildNaturalStatusResponse,
+  buildNaturalServiceStatusResponse,
+  buildComplaintDetailResponse,
+  buildServiceRequestDetailResponse,
+  buildCancelSuccessResponse,
+  buildCancelErrorResponse,
+  buildHistoryResponse,
+  getStatusLabel,
+  extractDateFromText,
+  extractTimeFromText,
+  normalizeTo628,
+  isValidCitizenWaNumber,
+  getPublicFormBaseUrl,
+  buildPublicServiceFormUrl,
+  buildEditServiceFormUrl,
+  buildChannelParams,
+} from './ump-formatters';
+import type { HandlerResult } from './ump-formatters';
+export type { ChannelType } from './ump-formatters';
+export { validateResponse } from './ump-formatters';
 
 // ==================== TYPES ====================
-
-export type ChannelType = 'whatsapp' | 'webchat' | 'other';
 
 export interface ProcessMessageInput {
   /** Unique user identifier (wa_user_id for WhatsApp, session_id for webchat) */
@@ -386,78 +420,7 @@ export async function drainActiveProcessing(maxWaitMs: number = 15_000): Promise
   return true;
 }
 
-// ==================== SHARED CONSTANTS ====================
-
-// COMPLAINT_KEYWORD_PATTERN and LANDMARK_PATTERNS removed — address analysis is now NLU-based.
-
-/**
- * Status display maps — shared across complaint and service request formatters.
- */
-const COMPLAINT_STATUS_MAP: Record<string, { emoji: string; text: string; description: string }> = {
-  'OPEN': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
-  'PROCESS': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
-  'DONE': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
-  'CANCELED': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
-  'REJECT': { emoji: '❌', text: 'REJECT', description: 'Laporan ditolak oleh petugas desa.' },
-  'baru': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
-  'proses': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
-  'selesai': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
-  'dibatalkan': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
-};
-
-const SERVICE_STATUS_MAP: Record<string, { emoji: string; text: string }> = {
-  'OPEN': { emoji: '🆕', text: 'OPEN' },
-  'PROCESS': { emoji: '🔄', text: 'PROCESS' },
-  'DONE': { emoji: '✅', text: 'DONE' },
-  'CANCELED': { emoji: '🔴', text: 'CANCELED' },
-  'REJECT': { emoji: '❌', text: 'REJECT' },
-  'baru': { emoji: '🆕', text: 'OPEN' },
-  'proses': { emoji: '🔄', text: 'PROCESS' },
-  'selesai': { emoji: '✅', text: 'DONE' },
-  'dibatalkan': { emoji: '🔴', text: 'CANCELED' },
-};
-
-// ==================== RESPONSE VALIDATION ====================
-
-/**
- * Profanity patterns to filter from AI response
- */
-const PROFANITY_PATTERNS = [
-  /\b(anjing|babi|bangsat|kontol|memek|ngentot|jancok|kampret|tai|asu|bajingan|keparat)\b/gi,
-  /\b(bodoh|tolol|idiot|goblok|bego|dungu)\b/gi,
-];
-
-/**
- * Validate and sanitize AI response before sending to user
- */
-export function validateResponse(response: string): string {
-  if (!response || response.trim().length === 0) {
-    return 'Ada yang bisa saya bantu lagi?';
-  }
-  
-  let cleaned = response;
-  for (const pattern of PROFANITY_PATTERNS) {
-    cleaned = cleaned.replace(pattern, '***');
-  }
-  
-  // Ensure response isn't too long
-  if (cleaned.length > 4000) {
-    cleaned = cleaned.substring(0, 3950) + '...\n\nPesan terpotong karena terlalu panjang.';
-  }
-  
-  // Remove raw JSON/code artifacts
-  if (cleaned.includes('```') || cleaned.includes('{"')) {
-    cleaned = cleaned.replace(/```[\s\S]*?```/g, '');
-    cleaned = cleaned.replace(/\{\"[\s\S]*?\}/g, '');
-    cleaned = cleaned.trim();
-    
-    if (cleaned.length < 10) {
-      return 'Maaf, terjadi kesalahan. Silakan ulangi pertanyaan Anda.';
-    }
-  }
-  
-  return cleaned;
-}
+// Status maps, validateResponse, formatters → imported from './ump-formatters'
 
 // ==================== ADDRESS VALIDATION ====================
 
@@ -497,17 +460,7 @@ export async function isVagueAddress(
 // detectEmergencyComplaint REMOVED — was a no-op stub.
 // Emergency detection is fully DB-driven via complaintTypeConfig.is_urgent.
 
-type HandlerResult = string | { replyText: string; guidanceText?: string };
-
-function normalizeHandlerResult(result: HandlerResult): { replyText: string; guidanceText?: string } {
-  if (typeof result === 'string') {
-    return { replyText: result };
-  }
-  return {
-    replyText: result.replyText,
-    guidanceText: result.guidanceText,
-  };
-}
+// HandlerResult + normalizeHandlerResult → imported from './ump-formatters'
 
 // expandServiceAlias REMOVED — each village has different abbreviations/aliases.
 // matchServiceSlug micro NLU handles semantic matching against the village's service catalog.
@@ -703,50 +656,7 @@ export async function resolveComplaintTypeConfig(kategori?: string, villageId?: 
   return null;
 }
 
-/**
- * Format URL for clickable link in webchat
- * WhatsApp handles links natively, webchat needs HTML anchor
- */
-function formatClickableLink(url: string, channel: ChannelType, label?: string): string {
-  // Both channels: just return the URL.
-  // The webchat widget will auto-linkify URLs; WhatsApp does it natively.
-  if (label && channel === 'webchat') {
-    return `${label}:\n${url}`;
-  }
-  return url;
-}
-
-/**
- * Format phone number for clickable display
- * Webchat: show wa.me link so widget auto-linkifies it
- * WhatsApp: just return the number (WA handles it natively)
- */
-function formatClickablePhone(phone: string, channel: ChannelType): string {
-  // Normalize phone to 62xxx format for wa.me
-  const digits = (phone || '').replace(/[^\d]/g, '');
-  let normalizedPhone = digits;
-  if (digits.startsWith('0')) normalizedPhone = `62${digits.slice(1)}`;
-  else if (digits.startsWith('8')) normalizedPhone = `62${digits}`;
-  
-  if (channel === 'webchat') {
-    // Return wa.me link - webchat widget will auto-linkify
-    return `https://wa.me/${normalizedPhone}`;
-  }
-  // For WhatsApp, just return the number - WA handles it natively
-  return phone;
-}
-
-function buildImportantContactsMessage(contacts: Array<{ name: string; phone: string; description?: string | null }>, channel: ChannelType = 'whatsapp'): string {
-  if (!contacts.length) return '';
-
-  const lines = contacts.map(contact => {
-    const desc = contact.description ? ` (${contact.description})` : '';
-    const phoneFormatted = formatClickablePhone(contact.phone, channel);
-    return `• ${contact.name}: ${phoneFormatted}${desc}`;
-  });
-
-  return `\n\n📞 *Nomor Penting Terkait*\n${lines.join('\n')}`;
-}
+// formatClickableLink, formatClickablePhone, buildImportantContactsMessage → imported from './ump-formatters'
 
 // ==================== ACTION HANDLERS ====================
 
@@ -1037,17 +947,7 @@ export async function handleComplaintCreation(
   throw new Error('Failed to create complaint in Case Service');
 }
 
-/**
- * Handle service information request - Query requirements from database
- */
-function normalizeTo628(input: string): string {
-  const digits = (input || '').replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.startsWith('0')) return `62${digits.slice(1)}`;
-  if (digits.startsWith('62')) return digits;
-  if (digits.startsWith('8')) return `62${digits}`;
-  return digits;
-}
+// normalizeTo628 → imported from './ump-formatters'
 
 /**
  * Extract name from text using micro NLU.
@@ -1175,64 +1075,8 @@ function appendToHistoryCache(userId: string, role: 'user' | 'assistant', conten
   }
 }
 
-function buildChannelParams(
-  channel: ChannelType,
-  userId: string
-): { channel: 'WEBCHAT' | 'WHATSAPP'; wa_user_id?: string; channel_identifier?: string } {
-  const isWebchat = channel === 'webchat';
-  return {
-    channel: isWebchat ? 'WEBCHAT' : 'WHATSAPP',
-    wa_user_id: isWebchat ? undefined : userId,
-    channel_identifier: isWebchat ? userId : undefined,
-  };
-}
-
-function isValidCitizenWaNumber(value: string): boolean {
-  return /^628\d{8,12}$/.test(value);
-}
-
-function getPublicFormBaseUrl(): string {
-  return (process.env.PUBLIC_BASE_URL
-    || 'https://govconnect.my.id'
-  ).replace(/\/$/, '');
-}
-
-function buildPublicServiceFormUrl(
-  baseUrl: string,
-  villageSlug: string,
-  serviceSlug: string,
-  userId: string,
-  channel: 'whatsapp' | 'webchat'
-): string {
-  const url = `${baseUrl}/form/${villageSlug}/${serviceSlug}`;
-  if (channel === 'webchat') {
-    return `${url}?session=${encodeURIComponent(userId)}`;
-  }
-  const waUser = normalizeTo628(userId);
-  if (!isValidCitizenWaNumber(waUser)) return url;
-  return `${url}?wa=${encodeURIComponent(waUser)}`;
-}
-
-function buildEditServiceFormUrl(
-  baseUrl: string,
-  requestNumber: string,
-  token: string,
-  userId: string,
-  channel: 'whatsapp' | 'webchat'
-): string {
-  const url = `${baseUrl}/form/edit/${encodeURIComponent(requestNumber)}`;
-  const params = new URLSearchParams();
-  params.set('token', token);
-  if (channel === 'webchat') {
-    params.set('session', userId);
-  } else {
-    const waUser = normalizeTo628(userId);
-    if (isValidCitizenWaNumber(waUser)) {
-      params.set('wa', waUser);
-    }
-  }
-  return `${url}?${params.toString()}`;
-}
+// buildChannelParams, isValidCitizenWaNumber, getPublicFormBaseUrl,
+// buildPublicServiceFormUrl, buildEditServiceFormUrl → imported from './ump-formatters'
 
 async function resolveVillageSlugForPublicForm(villageId?: string): Promise<string> {
   if (!villageId) return 'desa';
@@ -2149,384 +1993,12 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
   }
 }
 
-
-// ==================== HELPER FUNCTIONS ====================
-
-/**
- * Extract date from text
- */
-function extractDateFromText(text: string): string | null {
-  const today = new Date();
-  const cleanText = text.toLowerCase();
-  
-  if (/besok/i.test(cleanText)) {
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().split('T')[0];
-  }
-  if (/lusa/i.test(cleanText)) {
-    const dayAfter = new Date(today);
-    dayAfter.setDate(dayAfter.getDate() + 2);
-    return dayAfter.toISOString().split('T')[0];
-  }
-  
-  const dateMatch = text.match(/(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+(\d{4})/i);
-  if (dateMatch) {
-    const months: Record<string, number> = {
-      'januari': 0, 'februari': 1, 'maret': 2, 'april': 3, 'mei': 4, 'juni': 5,
-      'juli': 6, 'agustus': 7, 'september': 8, 'oktober': 9, 'november': 10, 'desember': 11
-    };
-    const day = parseInt(dateMatch[1]);
-    const month = months[dateMatch[2].toLowerCase()];
-    const year = parseInt(dateMatch[3]);
-    const date = new Date(year, month, day);
-    return date.toISOString().split('T')[0];
-  }
-  
-  const isoMatch = text.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (isoMatch) return isoMatch[0];
-  
-  return null;
-}
-
-/**
- * Extract time from text
- */
-function extractTimeFromText(text: string): string | null {
-  const cleanText = text.toLowerCase();
-  
-  const jamMatch = cleanText.match(/jam\s*(\d{1,2})(?::(\d{2}))?\s*(pagi|siang|sore|malam)?/i);
-  if (jamMatch) {
-    let hour = parseInt(jamMatch[1]);
-    const minute = jamMatch[2] ? parseInt(jamMatch[2]) : 0;
-    const period = jamMatch[3]?.toLowerCase();
-    
-    if (period === 'sore' && hour < 12) hour += 12;
-    if (period === 'malam' && hour < 12) hour += 12;
-    if (period === 'pagi' && hour === 12) hour = 0;
-    
-    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-  }
-  
-  const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
-  if (timeMatch) {
-    const hour = parseInt(timeMatch[1]);
-    const minute = parseInt(timeMatch[2]);
-    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-  }
-  
-  return null;
-}
-
-/**
- * Build natural response for complaint status
- */
-function buildNaturalStatusResponse(complaint: any): string {
-  const statusInfo = getStatusInfo(complaint.status);
-  const complaintId = complaint.complaint_id;
-
-  if (statusInfo.text === 'DONE') {
-    const note = complaint.admin_notes || '-';
-    return `Laporan ${complaintId} telah SELESAI.\nCatatan penanganan: ${note}`;
-  }
-
-  if (statusInfo.text === 'REJECT') {
-    return `Laporan ${complaintId} DITOLAK.\nAlasan penolakan: ${complaint.admin_notes || '-'}`;
-  }
-
-  if (statusInfo.text === 'CANCELED') {
-    return `Laporan ${complaintId} telah DIBATALKAN.\nKeterangan: ${complaint.admin_notes || 'Dibatalkan oleh masyarakat'}`;
-  }
-
-  if (statusInfo.text === 'PROCESS') {
-    return `Status laporan ${complaintId} saat ini adalah PROCESS.`;
-  }
-
-  return `Status laporan ${complaintId} saat ini adalah ${statusInfo.text}.`;
-}
-
-/**
- * Build natural response for service request status
- * Now includes result file and description from admin
- */
-function buildNaturalServiceStatusResponse(serviceRequest: any): string {
-  const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
-
-  let message = `Baik Pak/Bu, status layanan ${serviceRequest.request_number} saat ini adalah ${statusInfo.text}.`;
-
-  if (statusInfo.text === 'OPEN') {
-    message += `\nPermohonan sedang menunggu untuk diproses.`;
-  }
-
-  if (statusInfo.text === 'PROCESS') {
-    message += `\nPermohonan Anda sedang diproses oleh petugas desa.`;
-  }
-
-  if (statusInfo.text === 'DONE') {
-    if (serviceRequest.admin_notes) {
-      message += `\n\nCatatan dari petugas desa:\n${serviceRequest.admin_notes}`;
-    }
-  }
-
-  if (statusInfo.text === 'REJECT') {
-    message += `\n\nAlasan penolakan:\n${serviceRequest.admin_notes || '-'}`;
-  }
-
-  if (statusInfo.text === 'CANCELED') {
-    message += `\n\nKeterangan: ${serviceRequest.admin_notes || 'Dibatalkan'}`;
-  }
-
-  return message;
-}
-
-function maskSensitiveId(value: string, keepStart = 4, keepEnd = 4): string {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  if (text.length <= keepStart + keepEnd) return text;
-  const masked = '*'.repeat(Math.max(3, text.length - keepStart - keepEnd));
-  return `${text.slice(0, keepStart)}${masked}${text.slice(-keepEnd)}`;
-}
-
-function toSafeDate(value: any): Date | null {
-  if (!value) return null;
-  const d = new Date(value);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-function formatDateTimeId(date: Date | null): string {
-  if (!date) return '-';
-  return date.toISOString().replace('T', ' ').replace('Z', ' UTC');
-}
-
-function buildComplaintDetailResponse(complaint: any): string {
-  const statusInfo = getStatusInfo(complaint.status);
-  const createdAt = toSafeDate(complaint.created_at || complaint.createdAt);
-  const updatedAt = toSafeDate(complaint.updated_at || complaint.updatedAt);
-  const adminNoteSection = buildAdminNoteSection(complaint.status, complaint.admin_notes);
-
-  let message = `📄 *Detail Laporan*\n\n`;
-  message += `🆔 *Nomor:* ${complaint.complaint_id}\n`;
-  message += `📌 *Jenis:* ${formatKategori(complaint.kategori)}\n`;
-  if (complaint.alamat) message += `📍 *Lokasi:* ${complaint.alamat}\n`;
-  if (complaint.rt_rw) message += `🏠 *RT/RW:* ${complaint.rt_rw}\n`;
-  if (complaint.deskripsi) message += `\n📝 *Deskripsi:*\n${complaint.deskripsi}\n`;
-
-  message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
-  message += `${statusInfo.description}\n`;
-
-  if (adminNoteSection) {
-    message += adminNoteSection;
-  }
-
-  message += `\n🗓️ *Dibuat:* ${formatDateTimeId(createdAt)}\n`;
-  message += `🕐 *Update terakhir:* ${formatDateTimeId(updatedAt)}\n`;
-
-  return message;
-}
-
-function buildServiceRequestDetailResponse(serviceRequest: any, requirementDefs: ServiceRequirementDefinition[] = []): string {
-  const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
-  const createdAt = toSafeDate(serviceRequest.created_at || serviceRequest.createdAt);
-  const updatedAt = toSafeDate(serviceRequest.updated_at || serviceRequest.updatedAt);
-  const adminNoteSection = buildAdminNoteSection(serviceRequest.status, serviceRequest.admin_notes);
-
-  let message = `📄 *Detail Layanan*\n\n`;
-  message += `🆔 *Nomor:* ${serviceRequest.request_number}\n`;
-  message += `📌 *Layanan:* ${serviceRequest.service?.name || 'Layanan Administrasi'}\n`;
-  message += `\n${statusInfo.emoji} *Status:* ${statusInfo.text}\n`;
-
-  if (adminNoteSection) {
-    message += adminNoteSection;
-  }
-
-  if (serviceRequest.result_description) {
-    message += `\n📝 *Hasil:* ${serviceRequest.result_description}\n`;
-  }
-
-  if (serviceRequest.result_file_url) {
-    const fileName = serviceRequest.result_file_name || 'Dokumen Hasil';
-    message += `\n📎 *Dokumen:* ${fileName}\n`;
-    message += `🔗 Link download: ${serviceRequest.result_file_url}\n`;
-  }
-
-  const citizen = serviceRequest.citizen_data_json || {};
-  const reqData = serviceRequest.requirement_data_json || {};
-  const reqFilledCount = typeof reqData === 'object' && reqData ? Object.values(reqData).filter(Boolean).length : 0;
-
-  message += `\n👤 *Data pemohon (ringkas):*\n`;
-  if (citizen.nama_lengkap) message += `• Nama: ${citizen.nama_lengkap}\n`;
-  if (citizen.nik) message += `• NIK: ${maskSensitiveId(String(citizen.nik), 4, 4)}\n`;
-  if (citizen.alamat) message += `• Alamat: ${citizen.alamat}\n`;
-  if (citizen.wa_user_id) message += `• WA: ${citizen.wa_user_id}\n`;
-
-  const hasDefs = Array.isArray(requirementDefs) && requirementDefs.length > 0;
-  if (!hasDefs) {
-    message += `• Persyaratan terisi: ${reqFilledCount}\n`;
-  }
-
-  if (hasDefs) {
-    const defsSorted = [...requirementDefs].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
-    const totalRequired = defsSorted.filter(d => d.is_required).length;
-    const filledRequired = defsSorted.filter(d => d.is_required && !!(reqData as any)?.[d.id]).length;
-    message += `• Persyaratan wajib terisi: ${filledRequired}/${totalRequired}\n`;
-
-    const isProbablyUrl = (value: unknown): boolean => {
-      const s = typeof value === 'string' ? value : '';
-      return /^https?:\/\//i.test(s) || /\.(pdf|jpg|jpeg|png|doc|docx)(\?|#|$)/i.test(s);
-    };
-
-    const safeValueSummary = (def: ServiceRequirementDefinition, rawValue: any): string | null => {
-      if (!rawValue) return null;
-      if (def.field_type === 'file') return 'Terlampir';
-      if (isProbablyUrl(rawValue)) return 'Terlampir';
-      const s = String(rawValue);
-      const cleaned = s.replace(/\s+/g, ' ').trim();
-      if (!cleaned) return null;
-      if (cleaned.length > 60) return `${cleaned.slice(0, 57)}...`;
-      return cleaned;
-    };
-
-    const missingRequired = defsSorted.filter(d => d.is_required && !(reqData as any)?.[d.id]);
-    if (missingRequired.length > 0) {
-      const missLines = missingRequired.map(d => `❌ ${d.label}`).join('\n');
-      message += `\n⚠️ *Persyaratan wajib belum lengkap:*\n${missLines}\n`;
-    } else if (totalRequired > 0) {
-      message += `\n✅ *Semua persyaratan wajib sudah lengkap.*\n`;
-    }
-
-    const filledSummaries = defsSorted
-      .map(d => {
-        const raw = (reqData as any)?.[d.id];
-        const summary = safeValueSummary(d, raw);
-        if (!summary) return null;
-        return `✅ ${d.label}: ${summary}`;
-      })
-      .filter(Boolean) as string[];
-
-    // Keep the output compact: show up to 10 filled summaries.
-    if (filledSummaries.length > 0) {
-      message += `\n📎 *Ringkasan persyaratan terisi:*\n${filledSummaries.slice(0, 10).join('\n')}\n`;
-      if (filledSummaries.length > 10) {
-        message += `(${filledSummaries.length - 10} item lainnya disembunyikan)\n`;
-      }
-    }
-  }
-
-  message += `\n🗓️ *Dibuat:* ${formatDateTimeId(createdAt)}\n`;
-  message += `🕐 *Update terakhir:* ${formatDateTimeId(updatedAt)}\n`;
-
-  return message;
-}
-
-function formatRelativeTime(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMinutes = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMinutes / 60);
-  const diffDays = Math.floor(diffHours / 24);
-  
-  if (diffMinutes < 1) return 'baru saja';
-  if (diffMinutes < 60) return `${diffMinutes} menit yang lalu`;
-  if (diffHours < 24) return `${diffHours} jam yang lalu`;
-  if (diffDays === 1) return 'kemarin';
-  return `${diffDays} hari yang lalu`;
-}
-
-/**
- * Format kategori for display. Uses simple title-case transformation
- * since the kategori value itself comes from DB via LLM matching.
- */
-function formatKategori(kategori: string): string {
-  if (!kategori) return 'Lainnya';
-  // Convert snake_case to Title Case
-  return kategori
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function getStatusInfo(status: string): { emoji: string; text: string; description: string } {
-  return COMPLAINT_STATUS_MAP[status] || { emoji: '📋', text: status, description: 'Silakan tunggu update selanjutnya ya!' };
-}
-
-function buildAdminNoteSection(status: string, adminNotes?: string): string {
-  const normalized = (status || '').toString().toUpperCase();
-  const note = adminNotes ? String(adminNotes).trim() : '';
-
-  if (normalized === 'DONE') {
-    return note ? `\n\n💬 *Catatan petugas:*\n${note}\n` : '';
-  }
-
-  if (normalized === 'REJECT') {
-    return `\n\n📝 *Alasan penolakan:*\n${note || '-'}\n`;
-  }
-
-  if (normalized === 'CANCELED') {
-    return `\n\n📝 *Keterangan:* ${note || 'Dibatalkan'}\n`;
-  }
-
-  return note ? `\n\n💬 *Catatan petugas:*\n${note}\n` : '';
-}
-
-function buildCancelSuccessResponse(type: 'laporan' | 'layanan', id: string, reason: string): string {
-  const label = type === 'laporan' ? 'Laporan' : 'Layanan';
-  const note = reason || 'Dibatalkan oleh masyarakat';
-  return `${label} ${id} telah DIBATALKAN.\nKeterangan: ${note}`;
-}
-
-function buildCancelErrorResponse(type: 'laporan' | 'layanan', id: string, error?: string, message?: string): string {
-  const label = type === 'laporan' ? 'laporan' : 'layanan';
-  switch (error) {
-    case 'NOT_FOUND':
-      return `Mohon maaf Pak/Bu, kami tidak menemukan ${label} dengan nomor *${id}*.`;
-    case 'NOT_OWNER':
-      return `Mohon maaf Pak/Bu, ${label} *${id}* ini bukan milik Anda, jadi tidak bisa dibatalkan.`;
-    case 'ALREADY_COMPLETED':
-    case 'LOCKED':
-      return `Mohon maaf Pak/Bu, ${label} *${id}* sudah tidak bisa dibatalkan karena statusnya sudah final.`;
-    default:
-      return `Mohon maaf Pak/Bu, ada kendala saat membatalkan ${label}. ${message || 'Silakan coba lagi.'}`;
-  }
-}
-
-function buildHistoryResponse(items: HistoryItem[], total: number): string {
-  const complaints = items.filter(i => i.type === 'complaint');
-  const services = items.filter(i => i.type === 'service');
-
-  if (complaints.length > 0) {
-    let message = 'Berikut laporan yang pernah Anda kirimkan:\n\n';
-    for (const item of complaints.slice(0, 5)) {
-      const statusLabel = getStatusLabel(item.status);
-      const desc = (item.description || '').trim() || 'Laporan';
-      message += `${item.display_id} – ${desc} – ${statusLabel}\n`;
-    }
-    return message.trim();
-  }
-
-  if (services.length > 0) {
-    let message = 'Berikut layanan yang pernah Anda ajukan:\n\n';
-    for (const item of services.slice(0, 5)) {
-      const statusLabel = getStatusLabel(item.status);
-      const desc = (item.description || '').trim() || 'Layanan';
-      message += `${item.display_id} – ${desc} – ${statusLabel}\n`;
-    }
-    return message.trim();
-  }
-
-  return `Berikut riwayat Anda (${total}).`;
-}
-
-function getStatusLabel(status: string): string {
-  const normalized = String(status || '').toUpperCase();
-  // Use shared COMPLAINT_STATUS_MAP for consistent status labels
-  const entry = COMPLAINT_STATUS_MAP[status] || COMPLAINT_STATUS_MAP[normalized];
-  if (entry) return entry.text;
-  // Fallback for Indonesian status names
-  const fallback: Record<string, string> = {
-    BARU: 'OPEN', PENDING: 'OPEN', PROSES: 'PROCESS',
-    SELESAI: 'SELESAI', DIBATALKAN: 'DIBATALKAN', DITOLAK: 'DITOLAK',
-  };
-  return fallback[normalized] || normalized || 'UNKNOWN';
-}
+// Helper functions (extractDateFromText, extractTimeFromText, buildNaturalStatusResponse,
+// buildNaturalServiceStatusResponse, maskSensitiveId, toSafeDate, formatDateTimeId,
+// buildComplaintDetailResponse, buildServiceRequestDetailResponse, formatRelativeTime,
+// formatKategori, getStatusInfo, buildAdminNoteSection, buildCancelSuccessResponse,
+// buildCancelErrorResponse, buildHistoryResponse, getStatusLabel)
+// → all imported from './ump-formatters'
 
 
 // ==================== MAIN PROCESSOR ====================

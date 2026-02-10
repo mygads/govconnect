@@ -11,9 +11,9 @@ import type { ServiceRequirementDefinition } from './case-client.service';
 
 // ==================== TYPES ====================
 
-export type ChannelType = 'whatsapp' | 'webchat';
+export type ChannelType = 'whatsapp' | 'webchat' | 'other';
 
-type HandlerResult = string | { replyText: string; guidanceText?: string };
+export type HandlerResult = string | { replyText: string; guidanceText?: string };
 
 export function normalizeHandlerResult(result: HandlerResult): { replyText: string; guidanceText?: string } {
   if (typeof result === 'string') {
