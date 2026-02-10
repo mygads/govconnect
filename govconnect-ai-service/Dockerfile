@@ -72,35 +72,41 @@ COPY --from=builder /app/dist ./dist
 # Generate Prisma client for production
 RUN pnpm prisma generate
 
-# Create logs directory
-RUN mkdir -p logs && chown -R aiuser:nodejs /app
-
-USER aiuser
+# Create required directories with proper permissions
+RUN mkdir -p logs uploads/documents data && chown -R aiuser:nodejs /app
 
 EXPOSE 3002
 
-# Create entrypoint script with auto-migration (pin Prisma CLI to match @prisma/client version)
+# Create entrypoint script — runs as root to fix volume permissions, then drops to aiuser
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'set -e' >> /app/entrypoint.sh && \
+    echo '' >> /app/entrypoint.sh && \
+    echo '# Fix volume permissions (Docker volumes mount as root)' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/uploads/documents /app/data /app/logs' >> /app/entrypoint.sh && \
+    echo 'chown -R aiuser:nodejs /app/uploads /app/data /app/logs 2>/dev/null || true' >> /app/entrypoint.sh && \
+    echo '' >> /app/entrypoint.sh && \
+    echo '# Run migrations as aiuser' >> /app/entrypoint.sh && \
     echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
     echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
     echo '  if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
     echo '    echo "📦 Running migrate deploy..."' >> /app/entrypoint.sh && \
-    echo '    npx prisma@6.19.0 migrate deploy 2>&1 || {' >> /app/entrypoint.sh && \
+    echo '    su -s /bin/sh aiuser -c "npx prisma@6.19.0 migrate deploy 2>&1" || {' >> /app/entrypoint.sh && \
     echo '      echo "⚠️ Migration failed, trying db push..."' >> /app/entrypoint.sh && \
-    echo '      npx prisma@6.19.0 db push --skip-generate 2>&1 || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '      su -s /bin/sh aiuser -c "npx prisma@6.19.0 db push --skip-generate 2>&1" || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
     echo '    }' >> /app/entrypoint.sh && \
     echo '  else' >> /app/entrypoint.sh && \
     echo '    echo "📦 No migrations found, running db push..."' >> /app/entrypoint.sh && \
-    echo '    npx prisma@6.19.0 db push --skip-generate 2>&1 || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '    su -s /bin/sh aiuser -c "npx prisma@6.19.0 db push --skip-generate 2>&1" || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
     echo '  fi' >> /app/entrypoint.sh && \
     echo 'else' >> /app/entrypoint.sh && \
     echo '  echo "⚠️ DATABASE_URL not set, skipping migrations"' >> /app/entrypoint.sh && \
     echo 'fi' >> /app/entrypoint.sh && \
     echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
     echo 'echo "🚀 Starting AI Service..."' >> /app/entrypoint.sh && \
-    echo 'exec node dist/server.js' >> /app/entrypoint.sh && \
+    echo 'exec su -s /bin/sh aiuser -c "node dist/server.js"' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
+
+# NOTE: Do NOT set USER aiuser — entrypoint runs as root to fix volume perms, then drops to aiuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

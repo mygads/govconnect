@@ -26,9 +26,14 @@ const router = Router();
 // Configure multer for file uploads
 const uploadDir = path.join(process.cwd(), 'uploads', 'documents');
 
-// Ensure upload directory exists
-if (!existsSync(uploadDir)) {
-  mkdirSync(uploadDir, { recursive: true });
+// Ensure upload directory exists (graceful — don't crash if permission denied)
+try {
+  if (!existsSync(uploadDir)) {
+    mkdirSync(uploadDir, { recursive: true });
+  }
+} catch (err: any) {
+  console.error(`Warning: Could not create upload directory ${uploadDir}: ${err.message}`);
+  console.error('File uploads will fail until the directory is created with proper permissions.');
 }
 
 const storage = multer.diskStorage({
