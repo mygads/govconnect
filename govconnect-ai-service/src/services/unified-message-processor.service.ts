@@ -63,7 +63,7 @@ import {
   needsAntiHallucinationRetry,
   sanitizeFakeLinks,
 } from './anti-hallucination.service';
-import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting, classifyNameUpdate, classifyMessage, extractNameViaNLU, classifyKnowledgeSubtype, analyzeAddress, matchContactQuery, classifyUpdateIntent } from './micro-llm-matcher.service';
+import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting, classifyNameUpdate, classifyMessage, extractNameViaNLU, classifyKnowledgeSubtype, analyzeAddress, matchContactQuery, classifyUpdateIntent, validateResponseAgainstKnowledge } from './micro-llm-matcher.service';
 import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
@@ -3651,8 +3651,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       key_tier: metrics.keyTier,
     });
 
-    // Anti-hallucination gate (jam operasional/biaya) when knowledge is empty
-    // NOTE: Knowledge context is embedded inside systemPrompt when available.
+    // Anti-hallucination gate — multi-layer approach:
+    // 1. Regex detection (fast, free) to identify potential hallucination signals
+    // 2. Micro-LLM validation (cheap, ~10x less tokens than full retry) to confirm
+    // 3. Full LLM retry only for confirmed fake links (always hallucination)
     const hasKnowledge = hasKnowledgeInPrompt(systemPrompt);
     const gate = needsAntiHallucinationRetry({
       replyText: llmResponse.reply_text,
@@ -3668,29 +3670,85 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         model: metrics.model,
       });
 
-      const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
-      const retryResult = await callGemini(retryPrompt);
-      if (retryResult?.response?.reply_text) {
-        // Record retry token usage
-        recordTokenUsage({
-          model: retryResult.metrics.model,
-          input_tokens: retryResult.metrics.inputTokens,
-          output_tokens: retryResult.metrics.outputTokens,
-          total_tokens: retryResult.metrics.totalTokens,
-          layer_type: 'full_nlu',
-          call_type: 'anti_hallucination_retry',
-          village_id: input.villageId,
-          wa_user_id: userId,
-          session_id: userId,
-          channel,
-          intent: retryResult.response.intent,
-          success: true,
-          duration_ms: retryResult.metrics.durationMs,
-          key_source: retryResult.metrics.keySource,
-          key_id: retryResult.metrics.keyId,
-          key_tier: retryResult.metrics.keyTier,
-        });
-        llmResult.response = retryResult.response;
+      // For fake links → always sanitize (no LLM needed, regex is sufficient)
+      if (gate.reason?.includes('link palsu')) {
+        if (llmResult.response.reply_text) {
+          llmResult.response.reply_text = sanitizeFakeLinks(llmResult.response.reply_text);
+        }
+        if (llmResult.response.guidance_text) {
+          llmResult.response.guidance_text = sanitizeFakeLinks(llmResult.response.guidance_text);
+        }
+      } else if (hasKnowledge) {
+        // Has knowledge → use micro-LLM to validate against knowledge (cheap check)
+        // Extract knowledge section from systemPrompt for validation
+        const knowledgeMatch = systemPrompt.match(/KNOWLEDGE BASE YANG TERSEDIA:\n([\s\S]*?)(?:\n\[CONFIDENCE:|$)/);
+        const knowledgeText = knowledgeMatch?.[1] || '';
+        const responseText = [llmResult.response.reply_text, llmResult.response.guidance_text].filter(Boolean).join(' ');
+        
+        if (knowledgeText) {
+          const validation = await validateResponseAgainstKnowledge(responseText, knowledgeText, {
+            village_id: input.villageId,
+            wa_user_id: userId,
+            session_id: userId,
+            channel,
+          });
+          
+          if (validation?.has_hallucination) {
+            logger.warn('[UnifiedProcessor] Micro-LLM confirmed hallucination', {
+              userId, issues: validation.issues,
+            });
+            // Only do full retry if micro-LLM confirms hallucination
+            const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
+            const retryResult = await callGemini(retryPrompt);
+            if (retryResult?.response?.reply_text) {
+              recordTokenUsage({
+                model: retryResult.metrics.model,
+                input_tokens: retryResult.metrics.inputTokens,
+                output_tokens: retryResult.metrics.outputTokens,
+                total_tokens: retryResult.metrics.totalTokens,
+                layer_type: 'full_nlu',
+                call_type: 'anti_hallucination_retry',
+                village_id: input.villageId,
+                wa_user_id: userId,
+                session_id: userId,
+                channel,
+                intent: retryResult.response.intent,
+                success: true,
+                duration_ms: retryResult.metrics.durationMs,
+                key_source: retryResult.metrics.keySource,
+                key_id: retryResult.metrics.keyId,
+                key_tier: retryResult.metrics.keyTier,
+              });
+              llmResult.response = retryResult.response;
+            }
+          }
+          // else: micro-LLM says no hallucination → skip expensive full retry (saves ~5000 tokens)
+        }
+      } else {
+        // No knowledge context + hallucination signals → full retry with anti-hallucination instruction
+        const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
+        const retryResult = await callGemini(retryPrompt);
+        if (retryResult?.response?.reply_text) {
+          recordTokenUsage({
+            model: retryResult.metrics.model,
+            input_tokens: retryResult.metrics.inputTokens,
+            output_tokens: retryResult.metrics.outputTokens,
+            total_tokens: retryResult.metrics.totalTokens,
+            layer_type: 'full_nlu',
+            call_type: 'anti_hallucination_retry',
+            village_id: input.villageId,
+            wa_user_id: userId,
+            session_id: userId,
+            channel,
+            intent: retryResult.response.intent,
+            success: true,
+            duration_ms: retryResult.metrics.durationMs,
+            key_source: retryResult.metrics.keySource,
+            key_id: retryResult.metrics.keyId,
+            key_tier: retryResult.metrics.keyTier,
+          });
+          llmResult.response = retryResult.response;
+        }
       }
     }
 
@@ -3754,6 +3812,18 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     // Emergency auto-category removed — LLM handles intent and category classification.
     // is_urgent flag comes from DB complaintTypeConfig after LLM determines kategori.
+
+    // ── Confidence-based intent validation ──
+    // If LLM reports low confidence (<0.4), fall back to QUESTION to ask for clarification
+    // rather than risk processing a wrong intent (e.g., creating a complaint for a question).
+    const llmConfidence = typeof effectiveLlmResponse.confidence === 'number' ? effectiveLlmResponse.confidence : 0.8;
+    if (llmConfidence < 0.4 && effectiveLlmResponse.intent !== 'QUESTION' && effectiveLlmResponse.intent !== 'UNKNOWN') {
+      logger.info('[UnifiedProcessor] Low LLM confidence, demoting to QUESTION', {
+        userId, originalIntent: effectiveLlmResponse.intent, confidence: llmConfidence,
+      });
+      // Keep the reply_text (LLM already generated a clarification) but override intent
+      effectiveLlmResponse.intent = 'QUESTION' as any;
+    }
 
     // Service slug resolution: when LLM detected SERVICE_INFO/CREATE_SERVICE_REQUEST
     // but didn't extract the specific service_slug, try to resolve it from the message
@@ -4123,10 +4193,30 @@ async function buildContextWithHistory(
       ? systemPromptModule.getFullSystemPrompt
       : () => (systemPromptModule as any).SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
 
-  const conversationHistory = history
-    .slice(-10)
-    .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-    .join('\n');
+  const conversationHistory = await (async () => {
+    const SUMMARIZE_THRESHOLD = 8;
+    const MAX_RECENT = 6;
+    if (history.length > SUMMARIZE_THRESHOLD) {
+      const older = history.slice(0, history.length - MAX_RECENT);
+      const recent = history.slice(-MAX_RECENT);
+      
+      // Try micro-LLM summarization for older messages
+      let summaryText: string | null = null;
+      try {
+        const { summarizeConversation } = require('./micro-llm-matcher.service');
+        summaryText = await summarizeConversation(
+          older.map(m => ({ role: m.role === 'user' ? 'User' : 'Assistant', content: m.content })),
+          { wa_user_id: userId }
+        );
+      } catch { /* fallback below */ }
+      
+      const prefix = summaryText
+        ? `[RINGKASAN PERCAKAPAN SEBELUMNYA (${older.length} pesan)]\n${summaryText}\n\n[PERCAKAPAN TERBARU]\n`
+        : '';
+      return prefix + recent.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
+    }
+    return history.slice(-10).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
+  })();
   
   let knowledgeSection = '';
   if (ragContext) {

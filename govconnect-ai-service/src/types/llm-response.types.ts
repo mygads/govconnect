@@ -15,6 +15,7 @@ export const LLMResponseSchema = z.object({
     'QUESTION', 
     'UNKNOWN'
   ]),
+  confidence: z.number().min(0).max(1).optional().default(0.8),
   fields: z.object({
     // For CREATE_COMPLAINT
     kategori: z.string().optional(),

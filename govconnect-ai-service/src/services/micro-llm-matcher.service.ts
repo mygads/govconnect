@@ -824,6 +824,127 @@ export interface GreetingResult {
   reason?: string;
 }
 
+// ── Conversation Summarization via Micro LLM ──
+
+const SUMMARIZE_PROMPT = `Ringkas percakapan berikut menjadi 2-4 kalimat singkat dalam Bahasa Indonesia.
+Fokus pada: nama user, topik utama, data yang sudah diberikan (alamat, nomor laporan/layanan, kategori keluhan), dan status terakhir percakapan.
+Jangan menambahkan informasi yang tidak ada di percakapan.
+
+PERCAKAPAN:
+{conversation}
+
+Output hanya ringkasan singkat, tanpa format JSON.`;
+
+// Cache summarization results per userId to avoid re-summarizing unchanged history
+const _summaryCache = new Map<string, { hash: string; summary: string; ts: number }>();
+const SUMMARY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function simpleHash(text: string): string {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return hash.toString(36);
+}
+
+/**
+ * Summarize older conversation history via micro LLM to save tokens.
+ * Only called when history exceeds threshold (e.g., >8 messages).
+ * Returns a 2-4 sentence summary of the older messages.
+ */
+export async function summarizeConversation(
+  messages: Array<{ role: string; content: string }>,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<string | null> {
+  if (!messages || messages.length === 0) return null;
+
+  const userId = context?.wa_user_id || 'unknown';
+  const conversationText = messages.map(m => `${m.role}: ${m.content}`).join('\n');
+  const hash = simpleHash(conversationText);
+
+  // Check cache
+  const cached = _summaryCache.get(userId);
+  if (cached && cached.hash === hash && Date.now() - cached.ts < SUMMARY_CACHE_TTL) {
+    return cached.summary;
+  }
+
+  const prompt = SUMMARIZE_PROMPT.replace('{conversation}', conversationText);
+  const result = await callMicroLLM(prompt, 'summarize' as CallType, context);
+
+  if (result) {
+    const summary = result.trim();
+    _summaryCache.set(userId, { hash, summary, ts: Date.now() });
+
+    // Evict old entries
+    if (_summaryCache.size > 500) {
+      const now = Date.now();
+      for (const [key, val] of _summaryCache) {
+        if (now - val.ts > SUMMARY_CACHE_TTL) _summaryCache.delete(key);
+      }
+    }
+
+    return summary;
+  }
+
+  return null;
+}
+
+// ── Anti-Hallucination Validation via Micro LLM ──
+
+const VALIDATE_HALLUCINATION_PROMPT = `Kamu adalah validator fakta. Periksa apakah respons AI di bawah mengandung informasi yang TIDAK ADA di KNOWLEDGE yang diberikan.
+
+KNOWLEDGE (sumber kebenaran):
+{knowledge}
+
+RESPONS AI:
+{response}
+
+Periksa apakah respons menyebut:
+1. Jam operasional/jadwal yang TIDAK ada di knowledge
+2. Nomor telepon/kontak yang TIDAK ada di knowledge
+3. Alamat spesifik yang TIDAK ada di knowledge
+4. Biaya/tarif yang TIDAK ada di knowledge
+5. Link/URL palsu atau placeholder
+
+Output HANYA JSON:
+{"has_hallucination": true/false, "issues": ["deskripsi masalah 1", ...]}`;
+
+export interface HallucinationValidation {
+  has_hallucination: boolean;
+  issues: string[];
+}
+
+/**
+ * Validate LLM response against knowledge context using micro LLM.
+ * Much cheaper than doing a full LLM retry (~10x less tokens).
+ * Returns validation result indicating if hallucination was detected.
+ */
+export async function validateResponseAgainstKnowledge(
+  response: string,
+  knowledge: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<HallucinationValidation | null> {
+  if (!response || !knowledge) return null;
+
+  // Truncate to save tokens — we only need enough context
+  const truncatedKnowledge = knowledge.length > 1500 ? knowledge.substring(0, 1500) + '...' : knowledge;
+  const truncatedResponse = response.length > 500 ? response.substring(0, 500) + '...' : response;
+
+  const prompt = VALIDATE_HALLUCINATION_PROMPT
+    .replace('{knowledge}', truncatedKnowledge)
+    .replace('{response}', truncatedResponse);
+
+  const result = await callMicroLLM(prompt, 'hallucination_check' as CallType, context);
+  if (!result) return null;
+
+  try {
+    const parsed = parseJSON(result) as HallucinationValidation | null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 let _cachedClassifyResult: { message: string; result: UnifiedClassifyResult | null; ts: number } | null = null;
 
 /**

@@ -4,6 +4,7 @@ import { getWIBDateTime } from '../utils/wib-datetime';
 import { config } from '../config/env';
 import { getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '../prompts/system-prompt';
 import { RAGContext } from '../types/embedding.types';
+import { summarizeConversation } from './micro-llm-matcher.service';
 
 interface Message {
   id: string;
@@ -36,8 +37,8 @@ export async function buildContext(
     // Fetch message history from Channel Service
     const messages = await fetchMessageHistory(wa_user_id, config.maxHistoryMessages);
     
-    // Format conversation history
-    const conversationHistory = formatConversationHistory(messages);
+    // Format conversation history (uses micro-LLM summarization for long histories)
+    const conversationHistory = await formatConversationHistory(messages, wa_user_id);
     
     // Build knowledge section with confidence-aware instructions
     const knowledgeSection = buildKnowledgeSection(ragContext);
@@ -192,8 +193,8 @@ PESAN TERAKHIR USER:
     // Fetch message history from Channel Service
     const messages = await fetchMessageHistory(wa_user_id, config.maxHistoryMessages);
     
-    // Format conversation history
-    const conversationHistory = formatConversationHistory(messages);
+    // Format conversation history (micro-LLM summarization for long histories)
+    const conversationHistory = await formatConversationHistory(messages, wa_user_id);
     
     // Build full prompt using knowledge-specific template
     const systemPrompt = KNOWLEDGE_QA_SYSTEM_PROMPT
@@ -308,8 +309,9 @@ function extractUserName(messages: Message[]): string | null {
  * Format conversation history for LLM
  * Includes timestamp context and message summarization for long histories
  * Now also extracts and highlights user's name if found
+ * Uses micro-LLM summarization for histories > SUMMARIZE_THRESHOLD messages
  */
-function formatConversationHistory(messages: Message[]): string {
+async function formatConversationHistory(messages: Message[], wa_user_id?: string): Promise<string> {
   if (messages.length === 0) {
     return '(Ini adalah percakapan pertama dengan user)';
   }
@@ -317,8 +319,9 @@ function formatConversationHistory(messages: Message[]): string {
   // Extract user's name from history
   const userName = extractUserName(messages);
   
-  // If history is very long, summarize older messages
-  const MAX_DETAILED_MESSAGES = 10;
+  // Threshold for micro-LLM summarization (saves ~500-1000 tokens for long conversations)
+  const SUMMARIZE_THRESHOLD = 8;
+  const MAX_RECENT_MESSAGES = 6;
   let formatted = '';
   
   // Add user name context at the top if found
@@ -326,15 +329,34 @@ function formatConversationHistory(messages: Message[]): string {
     formatted += `[INFO USER: Nama user adalah "${userName}" - GUNAKAN nama ini untuk memanggil!]\n\n`;
   }
   
-  if (messages.length > MAX_DETAILED_MESSAGES) {
-    // Summarize older messages
-    const olderMessages = messages.slice(0, messages.length - MAX_DETAILED_MESSAGES);
-    const recentMessages = messages.slice(-MAX_DETAILED_MESSAGES);
+  if (messages.length > SUMMARIZE_THRESHOLD) {
+    // Split: older messages for summary, recent messages kept verbatim
+    const olderMessages = messages.slice(0, messages.length - MAX_RECENT_MESSAGES);
+    const recentMessages = messages.slice(-MAX_RECENT_MESSAGES);
     
-    // Extract key info from older messages (complaints, addresses, etc.)
-    const extractedInfo = extractKeyInfo(olderMessages);
-    if (extractedInfo) {
-      formatted += `[RINGKASAN PERCAKAPAN SEBELUMNYA]\n${extractedInfo}\n\n[PERCAKAPAN TERBARU]\n`;
+    // Try micro-LLM summarization first (smarter, more concise)
+    const olderForSummary = olderMessages.map(m => ({
+      role: m.direction === 'IN' ? 'User' : 'Assistant',
+      content: m.message_text,
+    }));
+    
+    let summaryText: string | null = null;
+    try {
+      summaryText = await summarizeConversation(olderForSummary, { wa_user_id });
+    } catch (err: any) {
+      logger.warn('Micro-LLM summarization failed, falling back to keyword extraction', {
+        wa_user_id, error: err.message,
+      });
+    }
+    
+    if (summaryText) {
+      formatted += `[RINGKASAN PERCAKAPAN SEBELUMNYA (${olderMessages.length} pesan)]\n${summaryText}\n\n[PERCAKAPAN TERBARU]\n`;
+    } else {
+      // Fallback: keyword-based extraction
+      const extractedInfo = extractKeyInfo(olderMessages);
+      if (extractedInfo) {
+        formatted += `[RINGKASAN PERCAKAPAN SEBELUMNYA]\n${extractedInfo}\n\n[PERCAKAPAN TERBARU]\n`;
+      }
     }
     
     // Format recent messages with relative time
