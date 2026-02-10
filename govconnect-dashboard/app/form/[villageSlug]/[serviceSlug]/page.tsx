@@ -277,10 +277,13 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
         setSubmitting(true);
 
         try {
+            // Normalize wa_user_id to 62 format (in case user typed 08xxx)
+            const normalizedWa = normalizeTo628(citizenData.wa_user_id);
+            
             // Derive no_hp from wa_user_id (628xxx -> 08xxx)
-            const derivedNoHp = citizenData.wa_user_id.startsWith("628")
-                ? `0${citizenData.wa_user_id.slice(2)}`
-                : citizenData.wa_user_id;
+            const derivedNoHp = normalizedWa.startsWith("628")
+                ? `0${normalizedWa.slice(2)}`
+                : normalizedWa;
             
             // Determine channel based on how user accessed the form
             const channel = sessionId ? "WEBCHAT" : "WHATSAPP";
@@ -290,7 +293,7 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     service_id: service.id,
-                    wa_user_id: citizenData.wa_user_id,
+                    wa_user_id: normalizedWa,
                     channel,
                     channel_identifier: sessionId || undefined, // For webchat tracking
                     citizen_data: {
@@ -512,6 +515,14 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
                                     onChange={(e) => {
                                         if (isWaPrefilled) return;
                                         updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""));
+                                    }}
+                                    onBlur={(e) => {
+                                        if (isWaPrefilled) return;
+                                        // Auto-convert 08xx to 628xx when user leaves the field
+                                        const normalized = normalizeTo628(e.target.value);
+                                        if (normalized && normalized !== citizenData.wa_user_id) {
+                                            updateCitizenField("wa_user_id", normalized);
+                                        }
                                     }}
                                     placeholder="628xxxxxxxxxx"
                                     className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"

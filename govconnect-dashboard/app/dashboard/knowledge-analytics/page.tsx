@@ -10,9 +10,24 @@ import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Brain, RefreshCcw, TrendingUp, TrendingDown, AlertTriangle,
-  CheckCircle, XCircle, HelpCircle, BarChart3, Target
+  CheckCircle, XCircle, HelpCircle, BarChart3, Target, MessageSquareWarning
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
+
+/** Format a date into a simple relative time string (no external deps). */
+function formatRelativeTime(date: Date): string {
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const diffMins = Math.floor(diffMs / 60_000)
+  if (diffMins < 1) return "baru saja"
+  if (diffMins < 60) return `${diffMins} menit lalu`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours} jam lalu`
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 30) return `${diffDays} hari lalu`
+  const diffMonths = Math.floor(diffDays / 30)
+  return `${diffMonths} bulan lalu`
+}
 
 interface OverviewStats {
   totalQueries: number
@@ -29,10 +44,28 @@ interface IntentItem {
   avgConfidence: number
 }
 
+interface KnowledgeGapItem {
+  id: string
+  query: string
+  intent: string
+  confidence: string
+  hitCount: number
+  firstSeen: string
+  lastSeen: string
+  channel: string
+}
+
+interface KnowledgeGapsData {
+  topGaps: KnowledgeGapItem[]
+  statusCounts: Record<string, number>
+  totalOpen: number
+}
+
 interface AnalyticsData {
   overview: OverviewStats
   intents: IntentItem[]
   flow: Record<string, any>
+  knowledgeGaps?: KnowledgeGapsData
   rawAnalytics: any
 }
 
@@ -105,6 +138,9 @@ export default function KnowledgeAnalyticsPage() {
     fallbackCount: 0, hitRate: 0, missRate: 0,
   }
   const intents = data?.intents || []
+  const knowledgeGaps = data?.knowledgeGaps
+  const topGaps = knowledgeGaps?.topGaps || []
+  const gapStatusCounts = knowledgeGaps?.statusCounts || { open: 0, resolved: 0, ignored: 0 }
   const hitRateNum = typeof overview.hitRate === "string" ? parseFloat(overview.hitRate) : overview.hitRate
 
   return (
@@ -344,6 +380,76 @@ export default function KnowledgeAnalyticsPage() {
               </li>
             )}
           </ul>
+        </CardContent>
+      </Card>
+
+      {/* Knowledge Gaps Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquareWarning className="h-5 w-5 text-orange-600" /> Pertanyaan Belum Terjawab
+          </CardTitle>
+          <CardDescription>
+            Pertanyaan warga yang tidak ditemukan jawabannya di knowledge base — tambahkan
+            knowledge untuk topik ini agar AI dapat menjawab dengan lebih baik.
+          </CardDescription>
+          {(gapStatusCounts.open > 0 || gapStatusCounts.resolved > 0) && (
+            <div className="flex gap-2 mt-2">
+              <Badge className="bg-orange-100 text-orange-800">{gapStatusCounts.open} Belum Ditangani</Badge>
+              <Badge className="bg-green-100 text-green-800">{gapStatusCounts.resolved} Sudah Dijawab</Badge>
+              {gapStatusCounts.ignored > 0 && (
+                <Badge className="bg-gray-100 text-gray-600">{gapStatusCounts.ignored} Diabaikan</Badge>
+              )}
+            </div>
+          )}
+        </CardHeader>
+        <CardContent>
+          {topGaps.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <CheckCircle className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>Tidak ada knowledge gap yang terdeteksi</p>
+              <p className="text-xs mt-1">Semua pertanyaan warga sudah terjawab oleh knowledge base</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>#</TableHead>
+                  <TableHead>Pertanyaan</TableHead>
+                  <TableHead>Intent</TableHead>
+                  <TableHead>Frekuensi</TableHead>
+                  <TableHead>Channel</TableHead>
+                  <TableHead>Terakhir</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {topGaps.map((gap, idx) => {
+                  const lastSeen = gap.lastSeen ? new Date(gap.lastSeen) : null
+                  const relativeTime = lastSeen
+                    ? formatRelativeTime(lastSeen)
+                    : "-"
+                  return (
+                    <TableRow key={gap.id}>
+                      <TableCell className="font-mono text-sm">{idx + 1}</TableCell>
+                      <TableCell className="max-w-xs truncate" title={gap.query}>
+                        {gap.query}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">{gap.intent}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span className={`font-medium ${gap.hitCount >= 5 ? "text-red-600" : gap.hitCount >= 3 ? "text-yellow-600" : ""}`}>
+                          {gap.hitCount}×
+                        </span>
+                      </TableCell>
+                      <TableCell className="capitalize text-xs">{gap.channel}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{relativeTime}</TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

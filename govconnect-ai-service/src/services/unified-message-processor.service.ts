@@ -610,7 +610,7 @@ function expandServiceAlias(query: string): string {
   return expanded;
 }
 
-async function resolveServiceSlugFromSearch(query: string, villageId?: string): Promise<{ slug: string; name?: string } | null> {
+async function resolveServiceSlugFromSearch(query: string, villageId?: string): Promise<{ slug: string; name?: string; alternatives?: Array<{ slug: string; name: string }> } | null> {
   const trimmedQuery = (query || '').trim();
   if (!trimmedQuery) return null;
 
@@ -675,6 +675,15 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
         serviceSearchCache.set(cacheKey, { ...matchResult, timestamp: Date.now() });
         return matchResult;
       }
+    }
+
+    // If ambiguous (matched_slug is null but alternatives exist), return with alternatives
+    if (!result?.matched_slug && result?.alternatives && result.alternatives.length > 1) {
+      logger.info('resolveServiceSlugFromSearch: Ambiguous match, returning alternatives', {
+        query: expandedQuery,
+        alternatives: result.alternatives,
+      });
+      return { slug: '', name: '', alternatives: result.alternatives };
     }
 
     logger.debug('resolveServiceSlugFromSearch: No match via micro LLM', { query: trimmedQuery });
@@ -1146,15 +1155,35 @@ function extractNameFromText(text: string): string | null {
   if (!cleaned) return null;
 
   const lower = cleaned.toLowerCase();
-  const stopWords = new Set(['ya', 'iya', 'y', 'tidak', 'gak', 'nggak', 'ok', 'oke', 'sip', 'siap', 'baik']);
+  // Expanded stop words: greetings, affirmations, common short words that are NOT names
+  const stopWords = new Set([
+    'ya', 'iya', 'y', 'tidak', 'gak', 'nggak', 'ok', 'oke', 'sip', 'siap', 'baik',
+    // Greetings
+    'halo', 'hai', 'hey', 'hi', 'hello', 'hallo', 'hei',
+    'assalamualaikum', 'assalamu', 'alaikum', 'waalaikumsalam',
+    'selamat', 'pagi', 'siang', 'sore', 'malam',
+    // Common short words / test messages
+    'tes', 'test', 'coba', 'cek', 'tolong', 'bantu', 'bantuan', 'help', 'menu',
+    'mau', 'minta', 'bisa', 'ada', 'apa', 'ini', 'itu', 'juga', 'lagi', 'dong',
+    'gimana', 'bagaimana', 'kapan', 'dimana', 'kenapa', 'mengapa', 'siapa',
+    // Affirmation / negation
+    'betul', 'benar', 'bener', 'yup', 'yoi', 'gpp', 'gabisa', 'kagak', 'engga', 'enggak', 'jangan',
+    // Government / service words that are not names
+    'warga', 'desa', 'kelurahan', 'kecamatan', 'kantor', 'admin', 'petugas',
+    'lapor', 'laporan', 'layanan', 'surat', 'pengaduan', 'status',
+    'terima', 'kasih', 'makasih', 'trimakasih',
+  ]);
   if (stopWords.has(lower)) return null;
+
+  // Reject multi-word phrases where ALL words are stop words (e.g. "selamat pagi")
+  const words = lower.split(/\s+/);
+  if (words.length > 1 && words.every(w => stopWords.has(w))) return null;
 
   const patterns = [
     /^nama\s+([a-zA-Z\s]{2,30})$/i,
     /^nama\s*:\s*([a-zA-Z\s]{2,30})$/i,
     /nama\s+(?:saya|aku|gue|gw)\s+(?:adalah\s+)?([a-zA-Z\s]{2,30})/i,
     /^([a-zA-Z\s]{2,30})\s+itu\s+nama\s+saya$/i,
-    /saya\s+([a-zA-Z\s]{2,30})/i,
     /panggil\s+saya\s+([a-zA-Z\s]{2,30})/i,
   ];
 
@@ -1163,13 +1192,36 @@ function extractNameFromText(text: string): string | null {
     if (match && match[1]) {
       const rawName = match[1].trim();
       const normalized = rawName.replace(/^(pak|bu|bapak|ibu)\s+/i, '').trim();
+      // Reject if the extracted name itself is a stop word
+      if (stopWords.has(normalized.toLowerCase())) continue;
       const name = normalized.split(/\s+/).slice(0, 2).join(' ');
       return name.charAt(0).toUpperCase() + name.slice(1);
     }
   }
 
+  // "saya X" pattern — stricter: reject if X is a common word
+  const sayaMatch = cleaned.match(/saya\s+([a-zA-Z\s]{2,30})/i);
+  if (sayaMatch && sayaMatch[1]) {
+    const rawName = sayaMatch[1].trim();
+    const normalized = rawName.replace(/^(pak|bu|bapak|ibu)\s+/i, '').trim();
+    const nameWords = normalized.toLowerCase().split(/\s+/);
+    // Only accept if the first word is NOT a stop word (avoids "saya warga" → "Warga")
+    if (!stopWords.has(nameWords[0])) {
+      const name = normalized.split(/\s+/).slice(0, 2).join(' ');
+      return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+  }
+
+  // Catch-all for standalone name: must be 2-30 chars, alphabetic, single or two words
+  // BUT must not be a single common Indonesian word
   if (cleaned.length >= 2 && cleaned.length <= 30 && /^[a-zA-Z]+(?:\s+[a-zA-Z]+)?$/.test(cleaned)) {
+    // Reject single words shorter than 3 chars (too ambiguous)
+    const nameWords = cleaned.split(/\s+/);
+    if (nameWords.length === 1 && nameWords[0].length < 3) return null;
+    // Reject if any word is a stop word
+    if (nameWords.some(w => stopWords.has(w.toLowerCase()))) return null;
     const normalized = cleaned.replace(/^(pak|bu|bapak|ibu)\s+/i, '').trim();
+    if (!normalized || stopWords.has(normalized.toLowerCase())) return null;
     return normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
   }
 
@@ -1341,13 +1393,18 @@ async function resolveVillageSlugForPublicForm(villageId?: string): Promise<stri
   return 'desa';
 }
 
-export async function handleServiceInfo(userId: string, llmResponse: any): Promise<HandlerResult> {
+export async function handleServiceInfo(userId: string, llmResponse: any, channel: ChannelType = 'whatsapp'): Promise<HandlerResult> {
   let { service_slug, service_id } = llmResponse.fields || {};
   const villageId = llmResponse.fields?.village_id || '';
   const rawMessage = llmResponse.fields?._original_message || llmResponse.fields?.service_name || llmResponse.fields?.service_query || '';
 
   if (!service_slug && !service_id && rawMessage) {
     const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
+    if (resolved?.alternatives && resolved.alternatives.length > 1) {
+      // Ambiguous match — present options to user
+      const optionsList = resolved.alternatives.map((a, i) => `${i + 1}. ${a.name}`).join('\n');
+      return { replyText: `Mohon maaf Pak/Bu, ada beberapa layanan yang cocok:\n\n${optionsList}\n\nMohon pilih salah satu dengan menyebutkan nama lengkap layanannya.` };
+    }
     if (resolved?.slug) {
       service_slug = resolved.slug;
       llmResponse.fields = {
@@ -1437,14 +1494,16 @@ export async function handleServiceInfo(userId: string, llmResponse: any): Promi
     }
 
     if (isOnline) {
-      // Offer first, then send the form link only when the user confirms.
+      // Proactively include the form link so the user can immediately apply.
+      // Also set pendingServiceFormOffer as fallback if user replies "ya" later.
       setPendingServiceFormOffer(userId, {
         service_slug: service.slug,
         village_id: resolvedVillageId || villageId,
         timestamp: Date.now(),
       });
 
-      guidanceText = 'Apakah Bapak/Ibu ingin mengajukan layanan ini secara online?';
+      const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug, userId, channel === 'webchat' ? 'webchat' : 'whatsapp');
+      guidanceText = `Jika ingin mengajukan layanan ini secara online, silakan klik link berikut:\n${formUrl}`;
     } else {
       replyText += 'Layanan ini diproses secara offline di kantor desa/kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
     }
@@ -1876,7 +1935,7 @@ export async function handleHistory(userId: string, channel: ChannelType): Promi
 /**
  * Handle knowledge query
  */
-export async function handleKnowledgeQuery(userId: string, message: string, llmResponse: any, mainLlmReplyText?: string): Promise<string> {
+export async function handleKnowledgeQuery(userId: string, message: string, llmResponse: any, mainLlmReplyText?: string, channel: string = 'whatsapp'): Promise<string> {
   logger.info('Handling knowledge query', { userId, knowledgeCategory: llmResponse.fields?.knowledge_category });
   
   try {
@@ -1990,10 +2049,16 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
 
       const keywordTargets = [
         { pattern: /(pemadam|damkar|kebakaran)/i, searchLabel: 'pemadam|kebakaran|damkar', displayLabel: 'pemadam kebakaran' },
-        { pattern: /(polisi)/i, searchLabel: 'polisi', displayLabel: 'polisi' },
-        { pattern: /(ambulans|ambulan|rumah\s*sakit|rs)/i, searchLabel: 'ambulan|ambulans|rs|rumah sakit', displayLabel: 'ambulan' },
+        { pattern: /(polisi|polsek|polres)/i, searchLabel: 'polisi|polsek|polres', displayLabel: 'polisi' },
+        { pattern: /(ambulans|ambulan|rumah\s*sakit|rs\b)/i, searchLabel: 'ambulan|ambulans|rs|rumah sakit', displayLabel: 'ambulan/RS' },
         { pattern: /(pln|listrik)/i, searchLabel: 'pln|listrik', displayLabel: 'PLN' },
         { pattern: /(bpbd|bencana)/i, searchLabel: 'bpbd|bencana', displayLabel: 'BPBD' },
+        { pattern: /(puskesmas|posyandu|dokter|bidan|kesehatan)/i, searchLabel: 'puskesmas|posyandu|dokter|bidan|kesehatan', displayLabel: 'puskesmas/kesehatan' },
+        { pattern: /(sekolah|sdn|smp|sma|pendidikan|guru)/i, searchLabel: 'sekolah|sdn|smp|sma|pendidikan', displayLabel: 'sekolah/pendidikan' },
+        { pattern: /(camat|kecamatan)/i, searchLabel: 'camat|kecamatan', displayLabel: 'kecamatan' },
+        { pattern: /(lurah|kelurahan|kades|kepala\s*desa)/i, searchLabel: 'lurah|kelurahan|kades|kepala desa', displayLabel: 'kelurahan/desa' },
+        { pattern: /(pdam|air\s*bersih)/i, searchLabel: 'pdam|air', displayLabel: 'PDAM' },
+        { pattern: /(rt\s*\d|rw\s*\d|ketua\s*rt|ketua\s*rw)/i, searchLabel: 'rt|rw|ketua', displayLabel: 'RT/RW' },
       ];
 
       const matchedTargets = keywordTargets.filter(k => k.pattern.test(normalizedQuery));
@@ -2015,6 +2080,24 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
           const category = (c.category?.name || '').toLowerCase();
           return keywordRegex.test(name) || keywordRegex.test(desc) || keywordRegex.test(category);
         });
+      } else if (contacts && contacts.length > 0 && matchedSearchLabels.length === 0 && !wantsPengaduan && !wantsPelayanan) {
+        // Generic fallback: no predefined keyword matched, but user asked for a specific contact.
+        // Try to filter contacts by matching significant words from the user query against contact name/description.
+        const queryStopWords = new Set(['nomor', 'nomer', 'no', 'telepon', 'telpon', 'telp', 'hp', 'kontak', 'hubungi', 'berapa', 'tolong', 'minta', 'bisa', 'saya', 'mau', 'wa', 'whatsapp']);
+        const significantWords = normalizedQuery.split(/\s+/).filter(w => w.length >= 3 && !queryStopWords.has(w));
+        if (significantWords.length > 0) {
+          const genericRegex = new RegExp(significantWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i');
+          const filtered = contacts.filter(c => {
+            const name = (c.name || '').toLowerCase();
+            const desc = (c.description || '').toLowerCase();
+            const category = (c.category?.name || '').toLowerCase();
+            return genericRegex.test(name) || genericRegex.test(desc) || genericRegex.test(category);
+          });
+          if (filtered.length > 0) {
+            contacts = filtered;
+          }
+          // If no match found, keep all contacts (better to show all than nothing)
+        }
       }
 
       const dbPhoneSet = new Set(
@@ -2061,9 +2144,18 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       const hasDbContacts = top.length > 0;
       const lines: string[] = [hasDbContacts ? `Kontak ${officeName}:` : `Nomor penting ${officeName}:`];
 
+      // Format phone for WhatsApp: make it a tappable wa.me link
+      const formatPhone = (phone: string): string => {
+        const digits = normalizePhoneNumber(phone);
+        if (channel === 'whatsapp' && digits.startsWith('62')) {
+          return `wa.me/${digits}`;
+        }
+        return phone;
+      };
+
       for (const c of top) {
         const extra = c.description ? ` — ${c.description}` : '';
-        lines.push(`- ${c.name}: ${c.phone}${extra}`);
+        lines.push(`- ${c.name}: ${formatPhone(c.phone || '')}${extra}`);
       }
 
       if (kbUnique.length > 0) {
@@ -2071,7 +2163,8 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
           lines.push('\nNomor tambahan (KB):');
         }
         for (const phone of kbUnique.slice(0, 3)) {
-          lines.push(`- ${phone}`);
+          const display = channel === 'whatsapp' && phone.startsWith('62') ? `wa.me/${phone}` : phone;
+          lines.push(`- ${display}`);
         }
       }
 
@@ -2148,7 +2241,11 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
             village_id: villageId,
             timestamp: Date.now(),
           });
-          replyText += 'Apakah Bapak/Ibu ingin mengajukan layanan ini secara online?';
+          // Proactively include the form link
+          const baseUrl = getPublicFormBaseUrl();
+          const villageSlug = await resolveVillageSlugForPublicForm(villageId || '');
+          const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, best.slug, userId, 'whatsapp');
+          replyText += `Jika ingin mengajukan layanan ini secara online, silakan klik link berikut:\n${formUrl}`;
         } else {
           replyText += 'Layanan ini diproses secara offline di kantor kelurahan/desa.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
         }
@@ -3044,8 +3141,16 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     // Hard gate: wajib tahu nama sebelum proses apa pun
     const profileName = getProfile(userId).nama_lengkap || null;
-    const knownName = extractNameFromHistory(resolvedHistory) || profileName;
+    const historyName = extractNameFromHistory(resolvedHistory);
+    const knownName = historyName || profileName;
     const currentName = extractNameFromText(message);
+
+    // If we found a name from chat history but it's not persisted in profile yet,
+    // persist it now and sync to Channel Service (fixes livechat showing phone only)
+    if (historyName && !profileName) {
+      updateProfile(userId, { nama_lengkap: historyName });
+      syncNameToChannelService(userId, historyName, resolvedVillageId, channel);
+    }
     if (!knownName && !currentName) {
       const askedNameBefore = wasNamePrompted(resolvedHistory);
       if (askedNameBefore) {
@@ -3191,18 +3296,32 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     // Step 1.97: Pre-LLM emergency detection — fast-track urgent complaints
     // If user message contains emergency keywords AND no pending data flow is active,
-    // nudge them to report the complaint immediately without waiting for LLM classification.
+    // auto-detect complaint category and fast-track through complaint creation.
     const emergencyKeywordsPreLLM = /(?:darurat|kebakaran|terbakar|banjir\s*besar|kecelakaan|korban|ambruk|runtuh|roboh|gas\s*bocor|tenggelam|tersengat)/i;
     const hasPendingFlow = pendingAddressConfirmation.has(userId) || pendingAddressRequest.has(userId);
     if (!hasPendingFlow && emergencyKeywordsPreLLM.test(message)) {
-      // Don't return early — just log and let the message proceed with elevated priority.
-      // The LLM will classify it as CREATE_COMPLAINT. We set promptFocus hint for later.
       logger.warn('[UnifiedProcessor] 🚨 Pre-LLM emergency keywords detected', {
         userId,
         matchedPattern: message.match(emergencyKeywordsPreLLM)?.[0],
       });
       // Store emergency hint so promptFocus can be set to 'complaint' even before NLU runs
       (input as any)._emergencyHint = true;
+
+      // Auto-detect category from emergency keywords to prevent LLM from asking again
+      const emergencyCategoryMap: Array<{ pattern: RegExp; kategori: string }> = [
+        { pattern: /kebakaran|terbakar|api/i, kategori: 'kebakaran' },
+        { pattern: /banjir/i, kategori: 'banjir' },
+        { pattern: /pohon.*tumbang|tumbang/i, kategori: 'pohon_tumbang' },
+        { pattern: /ambruk|runtuh|roboh/i, kategori: 'fasilitas_rusak' },
+        { pattern: /gas\s*bocor/i, kategori: 'gas_bocor' },
+        { pattern: /kecelakaan/i, kategori: 'kecelakaan' },
+        { pattern: /tenggelam/i, kategori: 'banjir' },
+        { pattern: /tersengat|listrik\s*konslet/i, kategori: 'listrik' },
+      ];
+      const matchedEmergency = emergencyCategoryMap.find(e => e.pattern.test(message));
+      if (matchedEmergency) {
+        (input as any)._emergencyKategori = matchedEmergency.kategori;
+      }
     }
 
     // Step 2: Check pending address confirmation (for vague addresses)
@@ -3455,6 +3574,20 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
         };
       }
+
+      // Photo-only message outside any active flow — store and acknowledge
+      addPendingPhoto(userId, mediaUrl);
+      const userName = knownName || getProfile(userId).nama_lengkap;
+      const nameGreeting = userName ? ` ${userName}` : '';
+      tracker.complete();
+      return {
+        success: true,
+        response: `Terima kasih Pak/Bu${nameGreeting}, foto sudah kami terima. ` +
+          `Jika ingin melaporkan pengaduan, silakan jelaskan masalahnya dan foto akan kami lampirkan otomatis.\n\n` +
+          `Contoh: "Jalan rusak di depan kantor kelurahan"`,
+        intent: 'QUESTION',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false },
+      };
     }
 
     // Step 2.1: Check pending cancel confirmation
@@ -3915,6 +4048,27 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     let finalReplyText = effectiveLlmResponse.reply_text;
     let guidanceText = effectiveLlmResponse.guidance_text || '';
 
+    // Emergency auto-category: if pre-LLM detected emergency keywords and auto-assigned a category,
+    // inject it into the LLM response if the LLM didn't extract a category.
+    if ((input as any)._emergencyKategori) {
+      const llmKategori = effectiveLlmResponse.fields?.kategori;
+      if (!llmKategori) {
+        effectiveLlmResponse.fields = {
+          ...(effectiveLlmResponse.fields || {}),
+          kategori: (input as any)._emergencyKategori,
+        } as any;
+        // Force intent to CREATE_COMPLAINT if it wasn't already
+        if (effectiveLlmResponse.intent !== 'CREATE_COMPLAINT') {
+          logger.info('[UnifiedProcessor] Emergency auto-promoting intent to CREATE_COMPLAINT', {
+            userId,
+            originalIntent: effectiveLlmResponse.intent,
+            kategori: (input as any)._emergencyKategori,
+          });
+          effectiveLlmResponse.intent = 'CREATE_COMPLAINT';
+        }
+      }
+    }
+
     // Service slug resolution: when LLM detected SERVICE_INFO/CREATE_SERVICE_REQUEST
     // but didn't extract the specific service_slug, try to resolve it from the message
     // using micro-LLM semantic search (NOT pattern matching)
@@ -3945,7 +4099,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       
       case 'SERVICE_INFO':
         {
-          const serviceInfoResult = normalizeHandlerResult(await handleServiceInfo(userId, effectiveLlmResponse));
+          const serviceInfoResult = normalizeHandlerResult(await handleServiceInfo(userId, effectiveLlmResponse, channel));
           finalReplyText = serviceInfoResult.replyText;
           if (serviceInfoResult.guidanceText && !guidanceText) {
             guidanceText = serviceInfoResult.guidanceText;
@@ -3988,7 +4142,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             _preloaded_knowledge_context: preloadedRAGContext.contextString,
           } as any;
         }
-        finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText);
+        finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel);
         break;
       
       case 'QUESTION':
@@ -3999,7 +4153,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             ...(effectiveLlmResponse.fields || {}),
             _preloaded_knowledge_context: preloadedRAGContext.contextString,
           } as any;
-          finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText);
+          finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel);
         }
         // else: use LLM reply as-is (greeting, chitchat, etc.)
         break;

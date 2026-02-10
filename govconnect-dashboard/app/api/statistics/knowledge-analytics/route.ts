@@ -48,13 +48,7 @@ export async function GET(request: NextRequest) {
     const intents = intentData?.intents || intentData?.data || []
     const flow = flowData?.flow || flowData?.data || flowData || {}
 
-    // Calculate knowledge coverage
-    const totalQueries = analyticsData?.totalQueries || analyticsData?.total_queries || 0
-    const knowledgeHits = knowledgeData?.hits || flow.knowledge_hit || flow.knowledgeHit || 0
-    const knowledgeMisses = knowledgeData?.misses || flow.knowledge_miss || flow.knowledgeMiss || 0
-    const fallbackCount = flow.fallback || flow.fallbackCount || 0
-
-    // Fetch persistent knowledge gaps from DB
+    // Fetch persistent knowledge gaps from DB (needed for both gap table AND fallback stats)
     let topGaps: any[] = []
     let gapStatusCounts: Record<string, number> = { open: 0, resolved: 0, ignored: 0 }
     try {
@@ -84,6 +78,18 @@ export async function GET(request: NextRequest) {
         gapStatusCounts[sc.status] = sc._count
       }
     } catch (e) { console.log('Knowledge gaps DB unavailable') }
+
+    // Calculate knowledge coverage
+    // Prefer real-time AI stats; if AI service has reset (all zeros), use DB-based counts as fallback
+    const aiTotalQueries = analyticsData?.totalQueries || analyticsData?.total_queries || 0
+    const aiKnowledgeHits = knowledgeData?.hits || flow.knowledge_hit || flow.knowledgeHit || 0
+    const aiKnowledgeMisses = knowledgeData?.misses || flow.knowledge_miss || flow.knowledgeMiss || 0
+    const fallbackCount = flow.fallback || flow.fallbackCount || 0
+
+    // If AI in-memory stats are zero (e.g., after restart), use DB gap counts as miss indicator
+    const totalQueries = aiTotalQueries > 0 ? aiTotalQueries : (gapStatusCounts.open + gapStatusCounts.resolved + gapStatusCounts.ignored) || 0
+    const knowledgeHits = aiKnowledgeHits
+    const knowledgeMisses = aiKnowledgeMisses > 0 ? aiKnowledgeMisses : gapStatusCounts.open || 0
 
     return NextResponse.json({
       overview: {

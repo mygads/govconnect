@@ -207,12 +207,14 @@ ATURAN:
 - Pahami MAKNA dan KONTEKS, bukan kecocokan kata literal.
 - User bisa pakai singkatan (KTP, KK, SKU), bahasa informal, slang.
 - Jika tidak ada yang cocok sama sekali, kembalikan matched_slug: null.
+- PENTING: Jika ada 2+ layanan yang SAMA-SAMA COCOK (ambigu), kembalikan matched_slug: null dan isi alternatives dengan slug+nama layanan yang cocok. Contoh: query "surat BBM" bisa berarti "rekomendasi BBM" atau "pengantar BBM" — ini ambigu.
 
 OUTPUT (JSON saja, tanpa markdown):
 {
   "matched_slug": "slug_layanan atau null",
   "confidence": 0.0-1.0,
-  "reason": "penjelasan singkat"
+  "reason": "penjelasan singkat",
+  "alternatives": [{"slug": "slug1", "name": "Nama Layanan 1"}, {"slug": "slug2", "name": "Nama Layanan 2"}]
 }
 
 DAFTAR LAYANAN:
@@ -225,6 +227,7 @@ export interface ServiceMatch {
   matched_slug: string | null;
   confidence: number;
   reason: string;
+  alternatives?: Array<{ slug: string; name: string }>;
 }
 
 export async function matchServiceSlug(
