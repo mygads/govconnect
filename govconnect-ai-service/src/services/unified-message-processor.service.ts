@@ -63,7 +63,7 @@ import {
   needsAntiHallucinationRetry,
   sanitizeFakeLinks,
 } from './anti-hallucination.service';
-import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting, classifyNameUpdate, classifyMessage } from './micro-llm-matcher.service';
+import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting, classifyNameUpdate, classifyMessage, extractNameViaNLU, classifyKnowledgeSubtype, analyzeAddress, matchContactQuery, classifyUpdateIntent } from './micro-llm-matcher.service';
 import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
@@ -386,25 +386,7 @@ export async function drainActiveProcessing(maxWaitMs: number = 15_000): Promise
 
 // ==================== SHARED CONSTANTS ====================
 
-/**
- * Complaint description keywords — used to filter complaint words out of address text.
- * Shared across isVagueAddress, extractAddressFromMessage, extractAddressFromComplaintMessage.
- */
-const COMPLAINT_KEYWORD_PATTERN = /menumpuk|tumpukan|berserakan|rusak|berlubang|retak|mati|padam|tidak\s+menyala|tersumbat|banjir|genangan|tumbang|roboh|patah|menghalangi|menutupi|sampah|limbah|kotoran|macet|kendala/gi;
-
-/**
- * Landmark patterns — used to validate addresses containing well-known place types.
- * These are universal Indonesian place types that don't change per village.
- */
-const LANDMARK_PATTERNS: RegExp[] = [
-  /masjid\s+\w+/i, /mushola/i, /gereja\s+\w+/i,
-  /sekolah\s+\w+/i, /sd\s*n?\s*\d*/i, /smp\s*n?\s*\d*/i, /sma\s*n?\s*\d*/i, /smk\s*n?\s*\d*/i,
-  /warung\s+\w+/i, /toko\s+\w+/i, /pasar\s+\w+/i, /kantor\s+\w+/i,
-  /puskesmas/i, /posyandu/i, /lapangan\s+\w*/i, /taman\s+\w+/i,
-  /makam\s+\w*/i, /kuburan/i, /pertigaan/i, /perempatan/i, /bundaran/i,
-  /jembatan\s+\w*/i, /terminal\s+\w*/i, /stasiun\s+\w*/i,
-  /bank\s+\w+/i, /atm\s+\w*/i, /alfamart/i, /indomaret/i, /spbu/i,
-];
+// COMPLAINT_KEYWORD_PATTERN and LANDMARK_PATTERNS removed — address analysis is now NLU-based.
 
 /**
  * Status display maps — shared across complaint and service request formatters.
@@ -478,96 +460,39 @@ export function validateResponse(response: string): string {
 // ==================== ADDRESS VALIDATION ====================
 
 /**
- * Check if an address is too vague/incomplete
- * Returns true if address needs confirmation
- * 
- * NOTE: We are MORE LENIENT now - informal addresses with landmarks are ACCEPTED
+ * Check if an address is too vague/incomplete using micro NLU.
+ * Returns true if address needs confirmation.
  */
-export function isVagueAddress(alamat: string): boolean {
+export async function isVagueAddress(
+  alamat: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string; kategori?: string }
+): Promise<boolean> {
   if (!alamat) return true;
   
-  const cleanAlamat = alamat.toLowerCase().trim();
+  const cleanAlamat = alamat.trim();
+  if (cleanAlamat.length < 3) return true;
   
-  // If the "address" contains complaint keywords, it's not an address at all!
-  if (COMPLAINT_KEYWORD_PATTERN.test(cleanAlamat)) {
-    return true;
-  }
-  // Reset regex lastIndex since we use /g flag
-  COMPLAINT_KEYWORD_PATTERN.lastIndex = 0;
+  const result = await analyzeAddress(cleanAlamat, {
+    ...context,
+    is_complaint_context: true,
+    kategori: context?.kategori,
+  });
   
-  // Check if address contains a LANDMARK - if so, it's VALID!
-  if (LANDMARK_PATTERNS.some(pattern => pattern.test(cleanAlamat))) {
-    return false;
-  }
+  // If NLU call fails, be lenient (accept the address)
+  if (!result) return false;
   
-  // Check for street/location identifiers
-  const hasLocationIdentifiers = [
-    /\bno\.?\s*\d+/i, /\bnomor\s*\d+/i,
-    /\brt\s*\.?\s*\d+/i, /\brw\s*\.?\s*\d+/i,
-    /\bblok\s*[a-z0-9]+/i, /\bgang\s+\w+/i, /\bgg\.?\s*\w+/i,
-    /\bkomplek\s+\w+/i, /\bperumahan\s+\w+/i,
-    /\bjalan\s+[a-z]+/i, /\bjln\.?\s+[a-z]+/i, /\bjl\.?\s+[a-z]+/i,
-    /depan\s+\w+\s+\w+/i, /sebelah\s+\w+/i, /belakang\s+\w+/i, /samping\s+\w+/i,
-  ].some(pattern => pattern.test(cleanAlamat));
-  
-  if (hasLocationIdentifiers) {
-    return false;
-  }
-  
-  // List of patterns that are truly TOO vague
-  const vaguePatterns = [
-    /^jalan\s*raya$/i, /^jln\s*raya$/i, /^jl\.?\s*raya$/i,
-    /^kelurahan$/i, /^kecamatan$/i, /^desa$/i,
-    /^di\s*sini$/i, /^sini$/i,
-  ];
-  
-  if (vaguePatterns.some(pattern => pattern.test(cleanAlamat))) {
-    return true;
-  }
-  
-  // If address is very short (< 5 chars), it's probably too vague
-  if (cleanAlamat.length < 5) {
-    return true;
-  }
-  
-  // Default: Accept the address (be lenient)
-  return false;
+  return result.quality === 'vague' || result.quality === 'not_address';
 }
 
 /**
-
-
-
-/**
- * Detect emergency complaint
+ * Detect emergency complaint — DB-driven only.
+ * Uses `is_urgent` flag from complaint type configuration set by village admin.
+ * No hardcoded keyword matching — the DB is the single source of truth.
  */
-export function detectEmergencyComplaint(deskripsi: string, currentMessage: string, kategori: string): boolean {
-  const combinedText = `${deskripsi} ${currentMessage}`.toLowerCase();
-  
-  const emergencyKeywords = [
-    /darurat/i, /urgent/i, /segera/i, /bahaya/i, /berbahaya/i,
-    /kecelakaan/i, /korban/i, /luka/i, /terluka/i,
-    /kebakaran/i, /api/i, /terbakar/i,
-    /banjir\s+besar/i, /air\s+naik/i, /tenggelam/i,
-    /roboh/i, /ambruk/i, /runtuh/i,
-    /listrik\s+konslet/i, /kabel\s+putus/i, /tersengat/i,
-    /gas\s+bocor/i, /bau\s+gas/i,
-  ];
-  
-  const hasEmergencyKeyword = emergencyKeywords.some(pattern => pattern.test(combinedText));
-  
-  // Fallback heuristic for high-priority categories when DB is_urgent is unavailable.
-  // The primary is_urgent check happens via complaintTypeConfig.is_urgent from DB.
-  const highPriorityCategories = ['pohon_tumbang', 'banjir', 'fasilitas_rusak'];
-  const isHighPriorityCategory = highPriorityCategories.includes(kategori);
-  
-  const blockingKeywords = [
-    /menghalangi/i, /menutupi/i, /menutup/i, /memblokir/i,
-    /tidak\s+bisa\s+lewat/i, /jalan\s+tertutup/i,
-  ];
-  const hasBlockingKeyword = blockingKeywords.some(pattern => pattern.test(combinedText));
-  
-  return hasEmergencyKeyword || (isHighPriorityCategory && hasBlockingKeyword);
+export function detectEmergencyComplaint(_deskripsi: string, _currentMessage: string, _kategori: string): boolean {
+  // This function is now a no-op stub. Emergency detection is fully DB-driven
+  // via complaintTypeConfig.is_urgent. Callers should use DB value directly.
+  return false;
 }
 
 type HandlerResult = string | { replyText: string; guidanceText?: string };
@@ -582,43 +507,18 @@ function normalizeHandlerResult(result: HandlerResult): { replyText: string; gui
   };
 }
 
-/**
- * Expand common service aliases used by Indonesian citizens.
- * E.g. "surat N1" → "surat pengantar nikah", "KTP" → "pembuatan ktp"
- */
-function expandServiceAlias(query: string): string {
-  const aliasMap: Array<{ pattern: RegExp; replacement: string }> = [
-    { pattern: /\bsurat\s+N1\b/i, replacement: 'surat pengantar nikah' },
-    { pattern: /\bN1\s+(nikah|buat\s+nikah|untuk\s+nikah)/i, replacement: 'surat pengantar nikah' },
-    { pattern: /\bsurat\s+N2\b/i, replacement: 'surat keterangan asal usul' },
-    { pattern: /\bsurat\s+N4\b/i, replacement: 'surat keterangan orang tua' },
-    { pattern: /\be-?KTP\b/i, replacement: 'pembuatan KTP' },
-    { pattern: /\bbikin\s+KTP\b/i, replacement: 'pembuatan KTP' },
-    { pattern: /\bSKTM\b/i, replacement: 'surat keterangan tidak mampu' },
-    { pattern: /\bSKU\b/i, replacement: 'surat keterangan usaha' },
-    { pattern: /\bSKD\b/i, replacement: 'surat keterangan domisili' },
-    { pattern: /\bbikin\s+KK\b/i, replacement: 'pembuatan kartu keluarga' },
-  ];
-
-  let expanded = query;
-  for (const { pattern, replacement } of aliasMap) {
-    if (pattern.test(expanded)) {
-      expanded = expanded.replace(pattern, replacement);
-      break; // Only one alias expansion per query
-    }
-  }
-  return expanded;
-}
+// expandServiceAlias REMOVED — each village has different abbreviations/aliases.
+// matchServiceSlug micro NLU handles semantic matching against the village's service catalog.
 
 async function resolveServiceSlugFromSearch(query: string, villageId?: string): Promise<{ slug: string; name?: string; alternatives?: Array<{ slug: string; name: string }> } | null> {
   const trimmedQuery = (query || '').trim();
   if (!trimmedQuery) return null;
 
-  // Expand common service aliases before searching
-  const expandedQuery = expandServiceAlias(trimmedQuery);
+  // Pass raw query directly to micro NLU — no hardcoded alias expansion
+  const searchQuery = trimmedQuery;
 
   // Check service search cache first (M3 optimization)
-  const cacheKey = `${villageId || ''}:${expandedQuery.toLowerCase()}`;
+  const cacheKey = `${villageId || ''}:${searchQuery.toLowerCase()}`;
   const cached = serviceSearchCache.get(cacheKey);
   if (cached) {
     logger.debug('resolveServiceSlugFromSearch: served from cache', { query: trimmedQuery, slug: cached.slug });
@@ -630,7 +530,7 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
     const response = await axios.get(`${config.caseServiceUrl}/services/search`, {
       params: {
         village_id: villageId,
-        q: expandedQuery,
+        q: searchQuery,
         limit: 10,
       },
       headers: { 'x-internal-api-key': config.internalApiKey },
@@ -659,13 +559,13 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
 
     if (!options.length) return null;
 
-    const result = await matchServiceSlug(expandedQuery, options);
+    const result = await matchServiceSlug(searchQuery, options);
 
     if (result?.matched_slug && result.confidence >= 0.5) {
       const matched = services.find((s: any) => s.slug === result.matched_slug);
       if (matched) {
         logger.debug('resolveServiceSlugFromSearch: Micro LLM match', {
-          query: expandedQuery,
+          query: searchQuery,
           matched_slug: result.matched_slug,
           confidence: result.confidence,
           reason: result.reason,
@@ -680,7 +580,7 @@ async function resolveServiceSlugFromSearch(query: string, villageId?: string): 
     // If ambiguous (matched_slug is null but alternatives exist), return with alternatives
     if (!result?.matched_slug && result?.alternatives && result.alternatives.length > 1) {
       logger.info('resolveServiceSlugFromSearch: Ambiguous match, returning alternatives', {
-        query: expandedQuery,
+        query: searchQuery,
         alternatives: result.alternatives,
       });
       return { slug: '', name: '', alternatives: result.alternatives };
@@ -874,14 +774,14 @@ export async function handleComplaintCreation(
     currentMessage: currentMessage.substring(0, 100),
   });
   
-  // SMART ALAMAT DETECTION: If LLM didn't extract alamat, try to detect from current message
+  // SMART ALAMAT DETECTION: If LLM didn't extract alamat, try NLU-based extraction
   if (!alamat) {
-    alamat = extractAddressFromMessage(currentMessage, userId);
+    alamat = await extractAddressFromMessage(currentMessage, userId, { village_id: villageId, channel, kategori });
   }
   
-  // FALLBACK: Extract alamat from complaint message using pattern matching
+  // FALLBACK: Extract alamat from complaint message using NLU
   if (!alamat && currentMessage.length > 20) {
-    alamat = extractAddressFromComplaintMessage(currentMessage, userId);
+    alamat = await extractAddressFromComplaintMessage(currentMessage, userId, { village_id: villageId, channel, kategori });
   }
   
   // Fallback: if deskripsi is empty but we have kategori, generate default description
@@ -937,7 +837,9 @@ export async function handleComplaintCreation(
       // Use DB-backed complaint type name if available
       const kategoriLabel = complaintTypeConfig?.name?.toLowerCase()
         || kategori.replace(/_/g, ' ');
-      const isEmergencyNeedAddress = detectEmergencyComplaint(deskripsi || '', currentMessage, kategori);
+      // Emergency detection is DB-driven via complaintTypeConfig.is_urgent
+      const isEmergencyNeedAddress = typeof complaintTypeConfig?.is_urgent === 'boolean'
+        ? complaintTypeConfig.is_urgent : false;
       
       logger.info('Storing pending address request', { userId, kategori, deskripsi });
       
@@ -951,7 +853,7 @@ export async function handleComplaintCreation(
   }
   
   // Check if alamat is too vague - ask for confirmation
-  if (alamat && isVagueAddress(alamat)) {
+  if (alamat && await isVagueAddress(alamat, { village_id: villageId, wa_user_id: userId, session_id: userId, channel, kategori })) {
     logger.info('Address is vague, asking for confirmation', { userId, alamat, kategori });
     
     // Accumulate photo if present
@@ -975,9 +877,9 @@ export async function handleComplaintCreation(
   // PRIORITY RULE:
   // - Jika ada konfigurasi jenis pengaduan, gunakan itu sebagai sumber utama.
   // - Heuristic hanya dipakai sebagai fallback saat tidak ada konfigurasi.
+  // Emergency detection is fully DB-driven via complaintTypeConfig.is_urgent
   const isEmergency = typeof complaintTypeConfig?.is_urgent === 'boolean'
-    ? complaintTypeConfig.is_urgent
-    : detectEmergencyComplaint(deskripsi || '', currentMessage, kategori);
+    ? complaintTypeConfig.is_urgent : false;
   
   // ==================== NAME & PHONE VALIDATION ====================
   // Before creating complaint, we need user's identity:
@@ -1150,90 +1052,43 @@ function normalizeTo628(input: string): string {
   return digits;
 }
 
-function extractNameFromText(text: string): string | null {
-  const cleaned = (text || '').trim().replace(/[.!?,]+$/g, '').trim();
-  if (!cleaned) return null;
+/**
+ * Extract name from text using micro NLU.
+ * Returns null quickly for obviously non-name inputs (empty, too long, numbers only).
+ * For real name extraction, use extractNameViaNLU() directly.
+ */
+async function extractNameFromTextNLU(
+  text: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string; last_assistant_message?: string }
+): Promise<string | null> {
+  const cleaned = (text || '').trim();
+  if (!cleaned || cleaned.length > 60 || cleaned.length < 2) return null;
+  // Pure numbers/symbols → not a name
+  if (/^[\d\s\W]+$/.test(cleaned)) return null;
 
-  const lower = cleaned.toLowerCase();
-  // Expanded stop words: greetings, affirmations, common short words that are NOT names
-  const stopWords = new Set([
-    'ya', 'iya', 'y', 'tidak', 'gak', 'nggak', 'ok', 'oke', 'sip', 'siap', 'baik',
-    // Greetings
-    'halo', 'hai', 'hey', 'hi', 'hello', 'hallo', 'hei',
-    'assalamualaikum', 'assalamu', 'alaikum', 'waalaikumsalam',
-    'selamat', 'pagi', 'siang', 'sore', 'malam',
-    // Common short words / test messages
-    'tes', 'test', 'coba', 'cek', 'tolong', 'bantu', 'bantuan', 'help', 'menu',
-    'mau', 'minta', 'bisa', 'ada', 'apa', 'ini', 'itu', 'juga', 'lagi', 'dong',
-    'gimana', 'bagaimana', 'kapan', 'dimana', 'kenapa', 'mengapa', 'siapa',
-    // Affirmation / negation
-    'betul', 'benar', 'bener', 'yup', 'yoi', 'gpp', 'gabisa', 'kagak', 'engga', 'enggak', 'jangan',
-    // Government / service words that are not names
-    'warga', 'desa', 'kelurahan', 'kecamatan', 'kantor', 'admin', 'petugas',
-    'lapor', 'laporan', 'layanan', 'surat', 'pengaduan', 'status',
-    'terima', 'kasih', 'makasih', 'trimakasih',
-  ]);
-  if (stopWords.has(lower)) return null;
-
-  // Reject multi-word phrases where ALL words are stop words (e.g. "selamat pagi")
-  const words = lower.split(/\s+/);
-  if (words.length > 1 && words.every(w => stopWords.has(w))) return null;
-
-  const patterns = [
-    /^nama\s+([a-zA-Z\s]{2,30})$/i,
-    /^nama\s*:\s*([a-zA-Z\s]{2,30})$/i,
-    /nama\s+(?:saya|aku|gue|gw)\s+(?:adalah\s+)?([a-zA-Z\s]{2,30})/i,
-    /^([a-zA-Z\s]{2,30})\s+itu\s+nama\s+saya$/i,
-    /panggil\s+saya\s+([a-zA-Z\s]{2,30})/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = cleaned.match(pattern);
-    if (match && match[1]) {
-      const rawName = match[1].trim();
-      const normalized = rawName.replace(/^(pak|bu|bapak|ibu)\s+/i, '').trim();
-      // Reject if the extracted name itself is a stop word
-      if (stopWords.has(normalized.toLowerCase())) continue;
-      const name = normalized.split(/\s+/).slice(0, 2).join(' ');
-      return name.charAt(0).toUpperCase() + name.slice(1);
-    }
-  }
-
-  // "saya X" pattern — stricter: reject if X is a common word
-  const sayaMatch = cleaned.match(/saya\s+([a-zA-Z\s]{2,30})/i);
-  if (sayaMatch && sayaMatch[1]) {
-    const rawName = sayaMatch[1].trim();
-    const normalized = rawName.replace(/^(pak|bu|bapak|ibu)\s+/i, '').trim();
-    const nameWords = normalized.toLowerCase().split(/\s+/);
-    // Only accept if the first word is NOT a stop word (avoids "saya warga" → "Warga")
-    if (!stopWords.has(nameWords[0])) {
-      const name = normalized.split(/\s+/).slice(0, 2).join(' ');
-      return name.charAt(0).toUpperCase() + name.slice(1);
-    }
-  }
-
-  // Catch-all for standalone name: must be 2-30 chars, alphabetic, single or two words
-  // BUT must not be a single common Indonesian word
-  if (cleaned.length >= 2 && cleaned.length <= 30 && /^[a-zA-Z]+(?:\s+[a-zA-Z]+)?$/.test(cleaned)) {
-    // Reject single words shorter than 3 chars (too ambiguous)
-    const nameWords = cleaned.split(/\s+/);
-    if (nameWords.length === 1 && nameWords[0].length < 3) return null;
-    // Reject if any word is a stop word
-    if (nameWords.some(w => stopWords.has(w.toLowerCase()))) return null;
-    const normalized = cleaned.replace(/^(pak|bu|bapak|ibu)\s+/i, '').trim();
-    if (!normalized || stopWords.has(normalized.toLowerCase())) return null;
-    return normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
-  }
-
-  return null;
+  const result = await extractNameViaNLU(cleaned, context);
+  if (!result || !result.name || result.confidence < 0.6) return null;
+  return result.name;
 }
 
-function extractNameFromHistory(history?: Array<{ role: 'user' | 'assistant'; content: string }>): string | null {
+async function extractNameFromHistoryNLU(
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<string | null> {
   if (!history || history.length === 0) return null;
+  // Find the last assistant message for context
+  let lastAssistantMsg = '';
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i].role === 'assistant') {
+      lastAssistantMsg = history[i].content || '';
+      break;
+    }
+  }
+  // Check user messages from newest to oldest
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const item = history[i];
     if (item.role !== 'user') continue;
-    const name = extractNameFromText(item.content);
+    const name = await extractNameFromTextNLU(item.content, { ...context, last_assistant_message: lastAssistantMsg });
     if (name) return name;
   }
   return null;
@@ -1636,59 +1491,21 @@ export async function handleServiceRequestEditLink(userId: string, channel: Chan
 
 /**
  * Extract address from message using smart detection
- * IMPROVED: More strict validation to avoid false positives
+ * IMPROVED: Uses NLU-based address analysis for accurate extraction
  */
-function extractAddressFromMessage(currentMessage: string, userId: string): string {
-  // Clean message: remove common prefixes like "alamatnya", "alamat saya", etc.
-  let cleanedMessage = currentMessage.trim()
-    .replace(/^(alamatnya|alamat\s*nya|alamat\s*saya|alamat\s*di|itu\s*alamat|ini\s*alamat)\s*/i, '')
-    .replace(/^(di|ke)\s+/i, '')
-    .trim();
-  
-  // Use shared complaint keyword pattern to check if message is complaint, not address
-  const isJustAddress = !COMPLAINT_KEYWORD_PATTERN.test(cleanedMessage) && cleanedMessage.length < 100;
-  COMPLAINT_KEYWORD_PATTERN.lastIndex = 0;
-  
-  // IMPROVED: Reject ONLY if the entire message is just these words (no address content)
-  const pureNonAddressPhrases = /^(itu|ini|ya|iya|yak|yup|oke|ok|siap|sudah|cukup|proses|lanjut|hadeh|aduh|wah|ah|oh|hm|hmm|tolol|bodoh|goblok|bego|tidak|bukan|bener|benar|salah|gimana|bagaimana|apa|kenapa|mengapa|kapan|dimana|siapa|mana|sini|situ|sana|gitu|gini|dong|deh|sih|nih|tuh|lah|kan|kah|pun|juga|jadi|terus|lalu|kemudian|makanya|soalnya|karena|sebab)$/i;
-  if (pureNonAddressPhrases.test(cleanedMessage)) {
-    return '';
-  }
-  
-  if (isJustAddress && cleanedMessage.length >= 5) {
-    const addressPatterns = [
-      /jalan/i, /jln/i, /jl\./i,
-      /\bno\b/i, /nomor/i,
-      /\brt\b/i, /\brw\b/i,
-      /gang/i, /gg\./i,
-      /komplek/i, /perumahan/i, /blok/i,
-    ];
-    
-    const looksLikeFormalAddress = addressPatterns.some(pattern => pattern.test(cleanedMessage));
-    
-    if (looksLikeFormalAddress) {
-      logger.info('Smart alamat detection: formal address detected', { userId, detectedAlamat: cleanedMessage });
-      return cleanedMessage;
+async function extractAddressFromMessage(currentMessage: string, userId: string, context?: { village_id?: string; channel?: string; kategori?: string }): Promise<string> {
+  try {
+    const result = await analyzeAddress(currentMessage, {
+      village_id: context?.village_id, wa_user_id: userId, session_id: userId,
+      channel: context?.channel as ChannelType, kategori: context?.kategori,
+    });
+    if (result && result.has_address && result.address && result.quality !== 'not_address') {
+      logger.info('NLU address extraction: address detected', { userId, detectedAlamat: result.address, quality: result.quality });
+      return result.address;
     }
-    
-    const informalAddressPatterns = [
-      /dekat\s+\w{3,}|depan\s+\w{3,}|belakang\s+\w{3,}|samping\s+\w{3,}/i,
-      // Use shared landmark patterns to detect informal addresses with place references
-      ...LANDMARK_PATTERNS.slice(0, 6), // masjid, mushola, gereja, sekolah, sd/smp/sma/smk
-    ];
-    
-    const looksLikeInformalAddress = informalAddressPatterns.some(pattern => pattern.test(cleanedMessage));
-    
-    if (looksLikeInformalAddress && cleanedMessage.length >= 10) {
-      let alamat = cleanedMessage.replace(/kak$/i, '').trim();
-      
-      if (alamat.length >= 5 && /[a-zA-Z]/.test(alamat)) {
-        logger.info('Smart alamat detection: informal address/location detected', { userId, detectedAlamat: alamat });
-        return alamat;
-      }
-    }
+  } catch (err) {
+    logger.warn('NLU address extraction failed, returning empty', { userId, error: (err as Error).message });
   }
-  
   return '';
 }
 
@@ -1697,70 +1514,11 @@ function extractAddressFromMessage(currentMessage: string, userId: string): stri
  * Example: "lampu mati di jalan sudirman no 10 bandung"
  * Example: "banjir di depan sman 1 margahayu"
  * 
- * IMPROVED: Better detection for landmarks like schools, mosques, etc.
+ * IMPROVED: Uses NLU-based address analysis for accurate extraction
  */
-function extractAddressFromComplaintMessage(message: string, userId: string): string {
-  // Pattern 1: "di depan/dekat/belakang/samping [landmark]"
-  // This catches: "di depan sman 1", "di dekat masjid al-ikhlas"
-  const extractionLandmarkPatterns = [
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+((?:sman?|smpn?|sdn?|smkn?|sd|smp|sma|smk)\s*\d*\s*\w+(?:\s+\w+)?)/i,
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(masjid\s+[\w\s]+)/i,
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(gereja\s+[\w\s]+)/i,
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(kantor\s+[\w\s]+)/i,
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(pasar\s+[\w\s]+)/i,
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(terminal\s+[\w\s]+)/i,
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(stasiun\s+[\w\s]+)/i,
-    /(?:di\s+)?(?:depan|dekat|belakang|samping|sekitar)\s+(puskesmas\s*[\w\s]*)/i,
-  ];
-  
-  for (const pattern of extractionLandmarkPatterns) {
-    const match = message.match(pattern);
-    if (match && match[1]) {
-      // Include the preposition (depan/dekat/etc) for context
-      const fullMatch = message.match(new RegExp(`((?:depan|dekat|belakang|samping|sekitar)\\s+${match[1].replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')})`, 'i'));
-      const alamat = fullMatch ? fullMatch[1].trim() : match[1].trim();
-      
-      if (alamat.length >= 5) {
-        logger.info('Smart alamat detection: landmark address extracted', { userId, detectedAlamat: alamat });
-        return alamat;
-      }
-    }
-  }
-  
-  // Pattern 2: "di [jalan/jln/jl] [nama jalan]"
-  const streetPatterns = [
-    /(?:di|lokasi|alamat|tempat)\s+((?:jalan|jln|jl\.?)[^,]+(?:no\.?\s*\d+)?(?:\s+\w+)?)/i,
-  ];
-  
-  for (const pattern of streetPatterns) {
-    const match = message.match(pattern);
-    if (match && match[1]) {
-      const alamat = match[1].trim();
-      if (alamat.length >= 10 && /[a-zA-Z]/.test(alamat)) {
-        logger.info('Smart alamat detection: street address extracted', { userId, detectedAlamat: alamat });
-        return alamat;
-      }
-    }
-  }
-  
-  // Pattern 3: Generic "di [location]" with known place identifiers
-  const genericLocationPattern = /(?:di|lokasi)\s+([\w\s]{5,})/i;
-  
-  const genericMatch = message.match(genericLocationPattern);
-  if (genericMatch && genericMatch[1]) {
-    const alamat = genericMatch[1].trim();
-    // Filter out complaint keywords from the extracted address using shared constant
-    const cleanAlamat = alamat.replace(COMPLAINT_KEYWORD_PATTERN, '').trim();
-    COMPLAINT_KEYWORD_PATTERN.lastIndex = 0;
-    
-    // Only accept if remainder looks like an address (has landmark or location words)
-    if (cleanAlamat.length >= 5 && /[a-zA-Z]/.test(cleanAlamat) && LANDMARK_PATTERNS.some(p => p.test(cleanAlamat))) {
-      logger.info('Smart alamat detection: location-based address extracted', { userId, detectedAlamat: cleanAlamat });
-      return cleanAlamat;
-    }
-  }
-  
-  return '';
+async function extractAddressFromComplaintMessage(message: string, userId: string, context?: { village_id?: string; channel?: string; kategori?: string }): Promise<string> {
+  // Reuse the same NLU-based extraction since analyzeAddress handles mixed messages
+  return extractAddressFromMessage(message, userId, context);
 }
 
 /**
@@ -1884,7 +1642,18 @@ export async function handleComplaintUpdate(userId: string, channel: ChannelType
     return llmResponse.reply_text || 'Mohon sebutkan nomor laporan yang ingin diperbarui (contoh: LAP-20251201-001).';
   }
 
-  const wantsPhoto = /(kirim|kirimkan|unggah|upload).*(foto|gambar)/i.test(currentMessage || '');
+  // Use NLU to classify update intent instead of regex
+  let wantsPhoto = false;
+  try {
+    const updateIntent = await classifyUpdateIntent(currentMessage || '', {
+      village_id: undefined, wa_user_id: userId, session_id: userId, channel,
+    });
+    if (updateIntent && updateIntent.intent === 'send_photo' && updateIntent.confidence >= 0.6) {
+      wantsPhoto = true;
+    }
+  } catch {
+    // NLU failed, proceed without photo detection
+  }
   if (wantsPhoto) {
     return 'Baik, silakan kirimkan foto pendukung laporan tersebut.';
   }
@@ -1963,16 +1732,20 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       return Array.from(new Set(normalized));
     };
 
-    // Deterministic (no-LLM) answers for profile/office info to prevent hallucination.
-    // If the data isn't in DB, we explicitly say it's unavailable.
-    const isAskingAddress = /(alamat|lokasi|maps|google\s*maps)/i.test(normalizedQuery);
-    const isAskingHours = /(jam|operasional|buka|tutup|hari\s*kerja)/i.test(normalizedQuery);
-    const isTrackingNumberQuestion = /(\b(LAP|LAY)-\d{8}-\d{3}\b)/i.test(message) || /\bnomor\s+(layanan|pengaduan)\b/i.test(normalizedQuery);
-    // Avoid treating generic mentions of "WA/Webchat" as a contact request.
-    // Only route to contact lookup when user explicitly asks for a number/contact/hotline.
-    const isAskingContact =
-      !isTrackingNumberQuestion &&
-      /(kontak|hubungi|telepon|telp|call\s*center|hotline|\bnomor\b(\s+(wa|whatsapp|telp|telepon|kontak|hp))?)/i.test(normalizedQuery);
+    // Deterministic (no-LLM-hallucination) answers for profile/office info.
+    // Use micro NLU to classify what kind of question the user is asking,
+    // then answer from DB data to prevent hallucination.
+    const knowledgeSubtype = await classifyKnowledgeSubtype(message, {
+      village_id: villageId,
+      wa_user_id: userId,
+      session_id: userId,
+      channel,
+    });
+    const subtypeResult = knowledgeSubtype?.subtype || 'general';
+    const isAskingAddress = subtypeResult === 'address';
+    const isAskingHours = subtypeResult === 'hours';
+    const isAskingContact = subtypeResult === 'contact';
+    const isTrackingNumberQuestion = subtypeResult === 'tracking';
 
     if (isAskingAddress) {
       if (!profile?.address && !profile?.gmaps_url) {
@@ -2043,61 +1816,27 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
     }
 
     if (isAskingContact) {
-      const wantsPengaduan = /pengaduan/i.test(normalizedQuery);
-      const wantsPelayanan = /pelayanan|layanan/i.test(normalizedQuery);
-      const wantsEmergency = /(pemadam|damkar|kebakaran|polisi|ambulans|ambulan|rs|rumah\s*sakit|pln|listrik|bpbd|bencana)/i.test(normalizedQuery);
+      // Use NLU to understand what type of contact user wants
+      const contactEntity = knowledgeSubtype?.contact_entity || null;
 
-      const keywordTargets = [
-        { pattern: /(pemadam|damkar|kebakaran)/i, searchLabel: 'pemadam|kebakaran|damkar', displayLabel: 'pemadam kebakaran' },
-        { pattern: /(polisi|polsek|polres)/i, searchLabel: 'polisi|polsek|polres', displayLabel: 'polisi' },
-        { pattern: /(ambulans|ambulan|rumah\s*sakit|rs\b)/i, searchLabel: 'ambulan|ambulans|rs|rumah sakit', displayLabel: 'ambulan/RS' },
-        { pattern: /(pln|listrik)/i, searchLabel: 'pln|listrik', displayLabel: 'PLN' },
-        { pattern: /(bpbd|bencana)/i, searchLabel: 'bpbd|bencana', displayLabel: 'BPBD' },
-        { pattern: /(puskesmas|posyandu|dokter|bidan|kesehatan)/i, searchLabel: 'puskesmas|posyandu|dokter|bidan|kesehatan', displayLabel: 'puskesmas/kesehatan' },
-        { pattern: /(sekolah|sdn|smp|sma|pendidikan|guru)/i, searchLabel: 'sekolah|sdn|smp|sma|pendidikan', displayLabel: 'sekolah/pendidikan' },
-        { pattern: /(camat|kecamatan)/i, searchLabel: 'camat|kecamatan', displayLabel: 'kecamatan' },
-        { pattern: /(lurah|kelurahan|kades|kepala\s*desa)/i, searchLabel: 'lurah|kelurahan|kades|kepala desa', displayLabel: 'kelurahan/desa' },
-        { pattern: /(pdam|air\s*bersih)/i, searchLabel: 'pdam|air', displayLabel: 'PDAM' },
-        { pattern: /(rt\s*\d|rw\s*\d|ketua\s*rt|ketua\s*rw)/i, searchLabel: 'rt|rw|ketua', displayLabel: 'RT/RW' },
-      ];
+      let contacts = await getImportantContacts(villageId || '');
 
-      const matchedTargets = keywordTargets.filter(k => k.pattern.test(normalizedQuery));
-      const matchedSearchLabels = matchedTargets.map(k => k.searchLabel);
-      const matchedDisplayLabels = matchedTargets.map(k => k.displayLabel);
+      // Use micro NLU to match contacts semantically
+      if (contacts && contacts.length > 0 && contactEntity) {
+        const contactMatchResult = await matchContactQuery(
+          message,
+          contacts.map(c => ({
+            name: c.name || '',
+            description: c.description || '',
+            category: c.category?.name || '',
+          })),
+          { village_id: villageId, wa_user_id: userId, session_id: userId, channel }
+        );
 
-      const categoryName = wantsPengaduan ? 'Pengaduan' : wantsPelayanan ? 'Pelayanan' : null;
-      let contacts = await getImportantContacts(villageId || '', categoryName);
-      if ((!contacts || contacts.length === 0) && categoryName) {
-        contacts = await getImportantContacts(villageId || '');
-      }
-
-
-      if (contacts && contacts.length > 0 && matchedSearchLabels.length > 0) {
-        const keywordRegex = new RegExp(matchedSearchLabels.map(k => k.replace(/\s+/g, '\\s+')).join('|'), 'i');
-        contacts = contacts.filter(c => {
-          const name = (c.name || '').toLowerCase();
-          const desc = (c.description || '').toLowerCase();
-          const category = (c.category?.name || '').toLowerCase();
-          return keywordRegex.test(name) || keywordRegex.test(desc) || keywordRegex.test(category);
-        });
-      } else if (contacts && contacts.length > 0 && matchedSearchLabels.length === 0 && !wantsPengaduan && !wantsPelayanan) {
-        // Generic fallback: no predefined keyword matched, but user asked for a specific contact.
-        // Try to filter contacts by matching significant words from the user query against contact name/description.
-        const queryStopWords = new Set(['nomor', 'nomer', 'no', 'telepon', 'telpon', 'telp', 'hp', 'kontak', 'hubungi', 'berapa', 'tolong', 'minta', 'bisa', 'saya', 'mau', 'wa', 'whatsapp']);
-        const significantWords = normalizedQuery.split(/\s+/).filter(w => w.length >= 3 && !queryStopWords.has(w));
-        if (significantWords.length > 0) {
-          const genericRegex = new RegExp(significantWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i');
-          const filtered = contacts.filter(c => {
-            const name = (c.name || '').toLowerCase();
-            const desc = (c.description || '').toLowerCase();
-            const category = (c.category?.name || '').toLowerCase();
-            return genericRegex.test(name) || genericRegex.test(desc) || genericRegex.test(category);
-          });
-          if (filtered.length > 0) {
-            contacts = filtered;
-          }
-          // If no match found, keep all contacts (better to show all than nothing)
+        if (contactMatchResult && contactMatchResult.matched_indices.length > 0) {
+          contacts = contactMatchResult.matched_indices.map(i => contacts![i]).filter(Boolean);
         }
+        // If no NLU match found, keep all contacts (better to show all than nothing)
       }
 
       const dbPhoneSet = new Set(
@@ -2110,31 +1849,23 @@ export async function handleKnowledgeQuery(userId: string, message: string, llmR
       if (villageId) {
         const knowledgeResult = await searchKnowledge(message, categories, villageId);
         const kbContext = knowledgeResult?.context || '';
-        if (matchedSearchLabels.length > 0) {
-          const keywordRegex = new RegExp(matchedSearchLabels.map(k => k.replace(/\s+/g, '\\s+')).join('|'), 'i');
-          const lines = kbContext.split(/\r?\n/).filter(line => keywordRegex.test(line));
-          kbPhoneCandidates = extractPhoneNumbers(lines.join('\n'));
-        } else {
-          kbPhoneCandidates = extractPhoneNumbers(kbContext);
-        }
+        // Extract all phone numbers from knowledge context
+        kbPhoneCandidates = extractPhoneNumbers(kbContext);
       }
 
       const kbUnique = kbPhoneCandidates.filter(phone => !dbPhoneSet.has(phone));
 
       if ((!contacts || contacts.length === 0) && kbUnique.length === 0) {
-        const keywordHint = matchedDisplayLabels.length > 0 ? ` untuk ${matchedDisplayLabels.join(' / ')}` : '';
-        return `Mohon maaf Pak/Bu, informasi nomor penting${keywordHint} di ${officeName} belum tersedia.`;
+        const entityHint = contactEntity ? ` untuk ${contactEntity}` : '';
+        return `Mohon maaf Pak/Bu, informasi nomor penting${entityHint} di ${officeName} belum tersedia.`;
       }
 
       const profileNameLower = (profile?.name || '').toLowerCase();
       const scored = contacts
         .map(c => {
           const nameLower = (c.name || '').toLowerCase();
-          const categoryLower = (c.category?.name || '').toLowerCase();
           let score = 0;
           if (profileNameLower && nameLower.includes(profileNameLower)) score += 5;
-          if (wantsPengaduan && categoryLower.includes('pengaduan')) score += 3;
-          if (wantsPelayanan && categoryLower.includes('pelayanan')) score += 3;
           if (/admin/i.test(nameLower)) score += 1;
           return { c, score };
         })
@@ -3141,9 +2872,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     // Hard gate: wajib tahu nama sebelum proses apa pun
     const profileName = getProfile(userId).nama_lengkap || null;
-    const historyName = extractNameFromHistory(resolvedHistory);
+    const nluContext = { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel };
+    const lastAssistantMsg = getLastAssistantMessage(resolvedHistory);
+    const historyName = await extractNameFromHistoryNLU(resolvedHistory, nluContext);
     const knownName = historyName || profileName;
-    const currentName = extractNameFromText(message);
+    const currentName = await extractNameFromTextNLU(message, { ...nluContext, last_assistant_message: lastAssistantMsg });
 
     // If we found a name from chat history but it's not persisted in profile yet,
     // persist it now and sync to Channel Service (fixes livechat showing phone only)
@@ -3294,35 +3027,9 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       };
     }
 
-    // Step 1.97: Pre-LLM emergency detection — fast-track urgent complaints
-    // If user message contains emergency keywords AND no pending data flow is active,
-    // auto-detect complaint category and fast-track through complaint creation.
-    const emergencyKeywordsPreLLM = /(?:darurat|kebakaran|terbakar|banjir\s*besar|kecelakaan|korban|ambruk|runtuh|roboh|gas\s*bocor|tenggelam|tersengat)/i;
-    const hasPendingFlow = pendingAddressConfirmation.has(userId) || pendingAddressRequest.has(userId);
-    if (!hasPendingFlow && emergencyKeywordsPreLLM.test(message)) {
-      logger.warn('[UnifiedProcessor] 🚨 Pre-LLM emergency keywords detected', {
-        userId,
-        matchedPattern: message.match(emergencyKeywordsPreLLM)?.[0],
-      });
-      // Store emergency hint so promptFocus can be set to 'complaint' even before NLU runs
-      (input as any)._emergencyHint = true;
-
-      // Auto-detect category from emergency keywords to prevent LLM from asking again
-      const emergencyCategoryMap: Array<{ pattern: RegExp; kategori: string }> = [
-        { pattern: /kebakaran|terbakar|api/i, kategori: 'kebakaran' },
-        { pattern: /banjir/i, kategori: 'banjir' },
-        { pattern: /pohon.*tumbang|tumbang/i, kategori: 'pohon_tumbang' },
-        { pattern: /ambruk|runtuh|roboh/i, kategori: 'fasilitas_rusak' },
-        { pattern: /gas\s*bocor/i, kategori: 'gas_bocor' },
-        { pattern: /kecelakaan/i, kategori: 'kecelakaan' },
-        { pattern: /tenggelam/i, kategori: 'banjir' },
-        { pattern: /tersengat|listrik\s*konslet/i, kategori: 'listrik' },
-      ];
-      const matchedEmergency = emergencyCategoryMap.find(e => e.pattern.test(message));
-      if (matchedEmergency) {
-        (input as any)._emergencyKategori = matchedEmergency.kategori;
-      }
-    }
+    // Step 1.97: Emergency detection is now fully DB-driven.
+    // No pre-LLM keyword matching — the LLM handles intent classification,
+    // and is_urgent comes from complaintTypeConfig in the DB.
 
     // Step 2: Check pending address confirmation (for vague addresses)
     const pendingConfirm = pendingAddressConfirmation.get(userId);
@@ -3341,8 +3048,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 2.05: Check pending address request (for missing required addresses)
     const pendingAddr = pendingAddressRequest.get(userId);
     if (pendingAddr) {
-      // Try to extract address from user's message
-      const extractedAddr = extractAddressFromMessage(message, userId);
+      // Try to extract address from user's message via NLU
+      const extractedAddr = await extractAddressFromMessage(message, userId, { village_id: pendingAddr.village_id });
       if (extractedAddr && extractedAddr.length >= 5) {
         pendingAddressRequest.delete(userId);
         
@@ -3425,7 +3132,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       
       if (pendingComplaint.waitingFor === 'nama') {
         // Try to extract name from message
-        const extractedName = extractNameFromText(message);
+        const extractedName = await extractNameFromTextNLU(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
         if (extractedName) {
           // Save name to profile + sync to Channel Service sidebar
           updateProfile(userId, { nama_lengkap: extractedName });
@@ -3867,10 +3574,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
     // else 'full' — IDLE state with no prior context or low NLU confidence
 
-    // Emergency hint → force complaint focus (from Step 1.97)
-    if (promptFocus === 'full' && (input as any)._emergencyHint) {
-      promptFocus = 'complaint';
-    }
+    // (Emergency hint removed — no pre-LLM keyword detection, LLM handles intent)
 
     // Knowledge graph → prompt focus override:
     // If knowledge graph matched a service code, ensure we use 'service' focus
@@ -4048,26 +3752,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     let finalReplyText = effectiveLlmResponse.reply_text;
     let guidanceText = effectiveLlmResponse.guidance_text || '';
 
-    // Emergency auto-category: if pre-LLM detected emergency keywords and auto-assigned a category,
-    // inject it into the LLM response if the LLM didn't extract a category.
-    if ((input as any)._emergencyKategori) {
-      const llmKategori = effectiveLlmResponse.fields?.kategori;
-      if (!llmKategori) {
-        effectiveLlmResponse.fields = {
-          ...(effectiveLlmResponse.fields || {}),
-          kategori: (input as any)._emergencyKategori,
-        } as any;
-        // Force intent to CREATE_COMPLAINT if it wasn't already
-        if (effectiveLlmResponse.intent !== 'CREATE_COMPLAINT') {
-          logger.info('[UnifiedProcessor] Emergency auto-promoting intent to CREATE_COMPLAINT', {
-            userId,
-            originalIntent: effectiveLlmResponse.intent,
-            kategori: (input as any)._emergencyKategori,
-          });
-          effectiveLlmResponse.intent = 'CREATE_COMPLAINT';
-        }
-      }
-    }
+    // Emergency auto-category removed — LLM handles intent and category classification.
+    // is_urgent flag comes from DB complaintTypeConfig after LLM determines kategori.
 
     // Service slug resolution: when LLM detected SERVICE_INFO/CREATE_SERVICE_REQUEST
     // but didn't extract the specific service_slug, try to resolve it from the message
@@ -4320,7 +4006,7 @@ async function handlePendingAddressConfirmation(
     
     // Resolve complaint type for category_id, type_id, is_urgent
     const complaintTypeConfig = await resolveComplaintTypeConfig(pendingConfirm.kategori, pendingConfirm.village_id);
-    const isEmergency = detectEmergencyComplaint(pendingConfirm.deskripsi, message, pendingConfirm.kategori);
+    const isEmergency = typeof complaintTypeConfig?.is_urgent === 'boolean' ? complaintTypeConfig.is_urgent : false;
     const userProfile = getProfile(userId);
     
     const complaintId = await createComplaint({
@@ -4362,12 +4048,13 @@ async function handlePendingAddressConfirmation(
     return 'Baik Pak/Bu, silakan berikan alamat yang lebih spesifik (contoh: Jl. Merdeka No. 5 RT 02/RW 03), atau ketik "batal" jika ingin membatalkan laporan.';
   }
 
-  // Check if user provides more specific address
-  const looksLikeAddress = [
-    /jalan/i, /jln/i, /jl\./i, /\bno\b/i, /nomor/i, /\brt\b/i, /\brw\b/i, /gang/i, /gg\./i, /komplek/i, /perumahan/i, /blok/i,
-  ].some(pattern => pattern.test(message));
+  // Check if user provides more specific address via NLU
+  const addressCheck = await analyzeAddress(message, {
+    village_id: pendingConfirm.village_id, wa_user_id: userId, session_id: userId, channel, kategori: pendingConfirm.kategori,
+  });
+  const looksLikeAddress = addressCheck && addressCheck.has_address && addressCheck.quality === 'specific';
   
-  if (looksLikeAddress && !isVagueAddress(message)) {
+  if (looksLikeAddress) {
     logger.info('User provided more specific address', { userId, newAlamat: message });
     
     pendingAddressConfirmation.delete(userId);
@@ -4377,7 +4064,7 @@ async function handlePendingAddressConfirmation(
     
     // Resolve complaint type for category_id, type_id, is_urgent
     const typeConfig = await resolveComplaintTypeConfig(pendingConfirm.kategori, pendingConfirm.village_id);
-    const isUrgent = detectEmergencyComplaint(pendingConfirm.deskripsi, message, pendingConfirm.kategori);
+    const isUrgent = typeof typeConfig?.is_urgent === 'boolean' ? typeConfig.is_urgent : false;
     const profile = getProfile(userId);
     
     const complaintId = await createComplaint({

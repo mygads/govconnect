@@ -85,7 +85,12 @@ export type CallType =
   | 'unified_classify'
   | 'connection_test'
   | 'embedding_single'
-  | 'embedding_batch';
+  | 'embedding_batch'
+  | 'name_extraction'
+  | 'knowledge_subtype'
+  | 'address_analysis'
+  | 'contact_match'
+  | 'update_intent';
 
 export interface TokenUsageRecord {
   model: string;

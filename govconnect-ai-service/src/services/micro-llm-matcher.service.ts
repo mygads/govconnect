@@ -438,6 +438,369 @@ export async function classifyMessage(
   };
 }
 
+// ==================== NAME EXTRACTION (NLU) ====================
+// Replaces keyword-based extractNameFromText with semantic NLU understanding.
+
+const NAME_EXTRACTION_PROMPT = `Kamu adalah extractor nama untuk layanan publik Indonesia (GovConnect).
+
+TUGAS:
+Dari pesan user, tentukan apakah user menyebutkan NAMANYA SENDIRI. Jika ya, ekstrak nama tersebut.
+
+ATURAN:
+- Hanya ekstrak nama ORANG (bukan nama tempat/instansi/layanan).
+- Nama valid: minimal 2 karakter, huruf alfabet.
+- Hapus prefix "Pak/Bu/Bapak/Ibu" dari hasil.
+- Jika user menjawab pertanyaan "siapa nama Anda?", anggap jawaban sebagai nama.
+- "saya X" → X biasanya nama JIKA X bukan kata umum.
+- Salam ("halo", "assalamualaikum"), kata tanya, kata umum → bukan nama.
+- Harus jawaban singkat, bukan deskripsi panjang.
+
+OUTPUT (JSON saja):
+{
+  "name": "nama atau null",
+  "confidence": 0.0-1.0,
+  "is_name_statement": true/false
+}
+
+CONTOH:
+- "nama saya Yoga" → {"name":"Yoga","confidence":0.95,"is_name_statement":true}
+- "Budi Santoso" → {"name":"Budi Santoso","confidence":0.85,"is_name_statement":true}
+- "saya warga desa" → {"name":null,"confidence":0.9,"is_name_statement":false}
+- "halo" → {"name":null,"confidence":0.95,"is_name_statement":false}
+- "ya" → {"name":null,"confidence":0.95,"is_name_statement":false}
+
+KONTEKS ASISTEN TERAKHIR:
+{assistant_context}
+
+PESAN USER:
+{user_message}`;
+
+export interface NameExtractionResult {
+  name: string | null;
+  confidence: number;
+  is_name_statement: boolean;
+}
+
+export async function extractNameViaNLU(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string; last_assistant_message?: string }
+): Promise<NameExtractionResult | null> {
+  const assistantCtx = context?.last_assistant_message
+    ? `Asisten terakhir bertanya: "${context.last_assistant_message.substring(0, 150)}"`
+    : 'Tidak ada konteks sebelumnya.';
+
+  const prompt = NAME_EXTRACTION_PROMPT
+    .replace('{assistant_context}', assistantCtx)
+    .replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'name_extraction', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as NameExtractionResult | null;
+  if (!parsed || typeof parsed.confidence !== 'number') return null;
+
+  // Normalize name: capitalize first letter
+  if (parsed.name) {
+    parsed.name = parsed.name.trim();
+    if (parsed.name.length < 2) parsed.name = null;
+    else {
+      parsed.name = parsed.name
+        .split(/\s+/)
+        .slice(0, 3) // max 3 words
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ');
+    }
+  }
+
+  logger.info('Micro LLM extracted name', {
+    message: message.substring(0, 60),
+    name: parsed.name,
+    confidence: parsed.confidence,
+    is_name_statement: parsed.is_name_statement,
+  });
+
+  return parsed;
+}
+
+// ==================== KNOWLEDGE QUERY SUBTYPE CLASSIFIER ====================
+// Replaces regex-based isAskingAddress, isAskingHours, isAskingContact, etc.
+
+const KNOWLEDGE_SUBTYPE_PROMPT = `Kamu adalah router pertanyaan untuk layanan publik Indonesia (GovConnect).
+
+TUGAS:
+Tentukan jenis spesifik pertanyaan user untuk menentukan apakah jawaban harus dari DATA FAKTUAL (DB) atau dari knowledge base (RAG).
+
+JENIS PERTANYAAN:
+- address: Bertanya alamat/lokasi kantor/google maps
+- hours: Bertanya jam operasional/buka/tutup/hari kerja
+- contact: Bertanya nomor telepon/kontak/hotline/WA instansi
+- tracking: Menyebutkan nomor laporan/layanan (LAP-xxx, LAY-xxx) atau tanya status
+- photo_request: Ingin kirim/upload foto atau gambar
+- service_info: Bertanya tentang layanan/surat/persyaratan/prosedur
+- complaint_update: Ingin update/tambah informasi laporan yang sudah ada
+- general: Pertanyaan umum lainnya
+
+OUTPUT (JSON saja):
+{
+  "subtype": "address|hours|contact|tracking|photo_request|service_info|complaint_update|general",
+  "confidence": 0.0-1.0,
+  "contact_entity": "nama instansi/organisasi jika subtype=contact, null jika bukan"
+}
+
+CONTOH:
+- "dimana alamat kantor desa?" → {"subtype":"address","confidence":0.95,"contact_entity":null}
+- "jam berapa buka?" → {"subtype":"hours","confidence":0.95,"contact_entity":null}
+- "nomor telepon puskesmas?" → {"subtype":"contact","confidence":0.95,"contact_entity":"puskesmas"}
+- "LAP-20250115-001" → {"subtype":"tracking","confidence":0.95,"contact_entity":null}
+- "mau kirim foto" → {"subtype":"photo_request","confidence":0.90,"contact_entity":null}
+- "nomor polisi?" → {"subtype":"contact","confidence":0.90,"contact_entity":"polisi"}
+- "berapa biaya buat KTP?" → {"subtype":"service_info","confidence":0.85,"contact_entity":null}
+
+PESAN USER:
+{user_message}`;
+
+export type KnowledgeSubtype = 'address' | 'hours' | 'contact' | 'tracking' | 'photo_request' | 'service_info' | 'complaint_update' | 'general';
+
+export interface KnowledgeSubtypeResult {
+  subtype: KnowledgeSubtype;
+  confidence: number;
+  contact_entity: string | null;
+}
+
+export async function classifyKnowledgeSubtype(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<KnowledgeSubtypeResult | null> {
+  const prompt = KNOWLEDGE_SUBTYPE_PROMPT
+    .replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'knowledge_subtype', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as KnowledgeSubtypeResult | null;
+  if (!parsed?.subtype || typeof parsed.confidence !== 'number') return null;
+
+  const validSubtypes: KnowledgeSubtype[] = ['address', 'hours', 'contact', 'tracking', 'photo_request', 'service_info', 'complaint_update', 'general'];
+  if (!validSubtypes.includes(parsed.subtype)) parsed.subtype = 'general';
+
+  logger.info('Micro LLM classified knowledge subtype', {
+    message: message.substring(0, 60),
+    subtype: parsed.subtype,
+    confidence: parsed.confidence,
+    contact_entity: parsed.contact_entity,
+  });
+
+  return parsed;
+}
+
+// ==================== ADDRESS ANALYSIS (NLU) ====================
+// Replaces isVagueAddress, extractAddressFromMessage, extractAddressFromComplaintMessage.
+// Combined extraction + quality assessment in ONE call.
+
+const ADDRESS_ANALYSIS_PROMPT = `Kamu adalah analis alamat untuk layanan publik Indonesia (GovConnect).
+
+TUGAS:
+Dari pesan user, tentukan apakah ada ALAMAT atau LOKASI. Jika ada, ekstrak dan nilai kualitasnya.
+
+ATURAN:
+- Alamat SPESIFIK: ada nama jalan + nomor, atau RT/RW, atau nama tempat spesifik (Masjid Al-Ikhlas, SMAN 1 Bandung, dll)
+- Alamat VAGUE: terlalu umum ("di jalan raya", "di sini", "di desa")  
+- Kata pengaduan (rusak, mati, banjir, sampah, dll) → BUKAN bagian alamat, pisahkan
+- Landmark (masjid, sekolah, pasar, kantor, dll) = alamat VALID jika cukup spesifik
+- "di depan SMAN 1" = valid, "di jalan" = vague
+
+OUTPUT (JSON saja):
+{
+  "has_address": true/false,
+  "address": "alamat yang diekstrak atau null",
+  "quality": "specific|vague|not_address",
+  "confidence": 0.0-1.0
+}
+
+CONTOH:
+- "lampu mati di depan SMAN 1 Margahayu" → {"has_address":true,"address":"depan SMAN 1 Margahayu","quality":"specific","confidence":0.9}
+- "jalan rusak di jalan sudirman no 10" → {"has_address":true,"address":"Jalan Sudirman No 10","quality":"specific","confidence":0.95}
+- "sampah menumpuk di sini" → {"has_address":true,"address":"di sini","quality":"vague","confidence":0.8}
+- "jalan berlubang" → {"has_address":false,"address":null,"quality":"not_address","confidence":0.9}
+- "Jl Melati RT 03 RW 05" → {"has_address":true,"address":"Jl Melati RT 03 RW 05","quality":"specific","confidence":0.95}
+- "ya" → {"has_address":false,"address":null,"quality":"not_address","confidence":0.95}
+
+KONTEKS:
+{context_info}
+
+PESAN USER:
+{user_message}`;
+
+export type AddressQuality = 'specific' | 'vague' | 'not_address';
+
+export interface AddressAnalysisResult {
+  has_address: boolean;
+  address: string | null;
+  quality: AddressQuality;
+  confidence: number;
+}
+
+export async function analyzeAddress(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string; kategori?: string; is_complaint_context?: boolean }
+): Promise<AddressAnalysisResult | null> {
+  const contextInfo = context?.is_complaint_context
+    ? `User sedang membuat laporan pengaduan${context.kategori ? ` kategori: ${context.kategori}` : ''}.`
+    : 'User bisa saja memberikan alamat atau pesan biasa.';
+
+  const prompt = ADDRESS_ANALYSIS_PROMPT
+    .replace('{context_info}', contextInfo)
+    .replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'address_analysis', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as AddressAnalysisResult | null;
+  if (!parsed || typeof parsed.confidence !== 'number') return null;
+
+  const validQualities: AddressQuality[] = ['specific', 'vague', 'not_address'];
+  if (!validQualities.includes(parsed.quality)) parsed.quality = 'not_address';
+
+  // Ensure consistency
+  if (!parsed.has_address) {
+    parsed.address = null;
+    parsed.quality = 'not_address';
+  }
+
+  logger.info('Micro LLM analyzed address', {
+    message: message.substring(0, 60),
+    has_address: parsed.has_address,
+    address: parsed.address,
+    quality: parsed.quality,
+    confidence: parsed.confidence,
+  });
+
+  return parsed;
+}
+
+// ==================== CONTACT QUERY MATCHER (NLU) ====================
+// Replaces keywordTargets and queryStopWords with semantic contact matching.
+
+const CONTACT_MATCH_PROMPT = `Kamu adalah pencocokan kontak untuk layanan publik Indonesia.
+
+TUGAS:
+Diberikan pertanyaan user tentang kontak/nomor telepon dan DAFTAR KONTAK yang tersedia,
+tentukan kontak mana yang paling relevan dengan permintaan user.
+
+ATURAN:
+- Pahami MAKNA permintaan, bukan kecocokan kata literal.
+- User bisa pakai singkatan (damkar=pemadam, RS=rumah sakit, dll).
+- Kembalikan INDEX kontak yang cocok (0-based).
+- Jika tidak ada yang cocok, kembalikan array kosong.
+
+OUTPUT (JSON saja):
+{
+  "matched_indices": [0, 2],
+  "confidence": 0.0-1.0,
+  "query_description": "penjelasan singkat apa yang user cari"
+}
+
+DAFTAR KONTAK:
+{contacts_list}
+
+PERTANYAAN USER:
+{user_query}`;
+
+export interface ContactMatchResult {
+  matched_indices: number[];
+  confidence: number;
+  query_description?: string;
+}
+
+export async function matchContactQuery(
+  query: string,
+  contacts: Array<{ name: string; description?: string; category?: string }>,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<ContactMatchResult | null> {
+  if (!query || !contacts.length) return null;
+
+  const contactsList = contacts
+    .map((c, i) => `[${i}] Nama: "${c.name}"${c.description ? ` | Deskripsi: "${c.description}"` : ''}${c.category ? ` | Kategori: "${c.category}"` : ''}`)
+    .join('\n');
+
+  const prompt = CONTACT_MATCH_PROMPT
+    .replace('{contacts_list}', contactsList)
+    .replace('{user_query}', query);
+
+  const raw = await callMicroLLM(prompt, 'contact_match', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as ContactMatchResult | null;
+  if (!parsed || !Array.isArray(parsed.matched_indices)) return null;
+
+  // Validate indices
+  parsed.matched_indices = parsed.matched_indices.filter(i => typeof i === 'number' && i >= 0 && i < contacts.length);
+
+  logger.info('Micro LLM matched contacts', {
+    query: query.substring(0, 60),
+    matched_count: parsed.matched_indices.length,
+    confidence: parsed.confidence,
+  });
+
+  return parsed;
+}
+
+// ==================== UPDATE INTENT CLASSIFIER (NLU) ====================
+// Replaces wantsPhoto regex and other update intent detection.
+
+const UPDATE_INTENT_PROMPT = `Kamu adalah classifier intent update untuk layanan publik Indonesia.
+
+TUGAS:
+Tentukan apa yang ingin user lakukan terkait laporan/layanan yang sudah ada.
+
+JENIS INTENT:
+- send_photo: User ingin mengirim/upload foto atau gambar pendukung
+- update_info: User ingin menambah/mengubah informasi (alamat, deskripsi, dll)
+- check_status: User ingin cek status terbaru
+- cancel: User ingin membatalkan
+- other: Lainnya
+
+OUTPUT (JSON saja):
+{
+  "intent": "send_photo|update_info|check_status|cancel|other",
+  "confidence": 0.0-1.0
+}
+
+PESAN USER:
+{user_message}`;
+
+export type UpdateIntent = 'send_photo' | 'update_info' | 'check_status' | 'cancel' | 'other';
+
+export interface UpdateIntentResult {
+  intent: UpdateIntent;
+  confidence: number;
+}
+
+export async function classifyUpdateIntent(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<UpdateIntentResult | null> {
+  const prompt = UPDATE_INTENT_PROMPT
+    .replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'update_intent', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as UpdateIntentResult | null;
+  if (!parsed?.intent || typeof parsed.confidence !== 'number') return null;
+
+  const validIntents: UpdateIntent[] = ['send_photo', 'update_info', 'check_status', 'cancel', 'other'];
+  if (!validIntents.includes(parsed.intent)) parsed.intent = 'other';
+
+  logger.info('Micro LLM classified update intent', {
+    message: message.substring(0, 60),
+    intent: parsed.intent,
+    confidence: parsed.confidence,
+  });
+
+  return parsed;
+}
+
 // ==================== LEGACY WRAPPERS ====================
 // These wrap classifyMessage for backward compatibility.
 // They share a SINGLE cached result per call chain via classifyMessageCached().
