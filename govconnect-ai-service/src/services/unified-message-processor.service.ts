@@ -41,7 +41,7 @@ import {
   HistoryItem,
 } from './case-client.service';
 import { getImportantContacts } from './important-contacts.service';
-import { searchKnowledge, searchKnowledgeKeywordsOnly, getRAGContext, getKelurahanInfoContext, getVillageProfileSummary } from './knowledge.service';
+import { searchKnowledge, searchKnowledgeKeywordsOnly, getRAGContext, getKelurahanInfoContext, getVillageProfileSummary, reportKnowledgeGap } from './knowledge.service';
 import { shouldRetrieveContext, isSpamMessage } from './rag.service';
 import { detectLanguage, getLanguageContext } from './language-detection.service';
 import { analyzeSentiment, getSentimentContext, needsHumanEscalation } from './sentiment-analysis.service';
@@ -3992,12 +3992,54 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         break;
       
       case 'QUESTION':
+        // If LLM explicitly says needs_knowledge=true, or if RAG context was preloaded,
+        // route through knowledge handler for a more informed answer
+        if (effectiveLlmResponse.needs_knowledge && preloadedRAGContext && typeof preloadedRAGContext === 'object' && preloadedRAGContext.contextString) {
+          effectiveLlmResponse.fields = {
+            ...(effectiveLlmResponse.fields || {}),
+            _preloaded_knowledge_context: preloadedRAGContext.contextString,
+          } as any;
+          finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText);
+        }
+        // else: use LLM reply as-is (greeting, chitchat, etc.)
+        break;
+
       case 'UNKNOWN':
       default:
         // GREETING and other intents - use LLM reply as-is
         break;
     }
     
+    // Step 9.5: Track knowledge hit/miss for analytics
+    // Records whether the knowledge base had relevant content for this query
+    if (!isEvaluation) {
+      const knowledgeIntent = effectiveLlmResponse.intent;
+      const isKnowledgeSeeking = ['KNOWLEDGE_QUERY', 'QUESTION', 'SERVICE_INFO'].includes(knowledgeIntent);
+      if (isKnowledgeSeeking || effectiveLlmResponse.needs_knowledge) {
+        const ragConf = typeof preloadedRAGContext === 'object' ? preloadedRAGContext.confidence?.level : undefined;
+        const confLevel = (ragConf as any) || 'none';
+        aiAnalyticsService.recordKnowledge({
+          query: message.substring(0, 200),
+          intent: knowledgeIntent,
+          confidence: confLevel,
+          channel,
+          villageId: resolvedVillageId,
+          hasKnowledge: !!(preloadedRAGContext && typeof preloadedRAGContext === 'object' && preloadedRAGContext.contextString),
+        });
+
+        // Persist knowledge gaps to Dashboard DB (fire-and-forget) for admin visibility
+        if (confLevel === 'none' || confLevel === 'low') {
+          reportKnowledgeGap({
+            query: message.substring(0, 500),
+            intent: knowledgeIntent,
+            confidence: confLevel,
+            channel,
+            villageId: resolvedVillageId,
+          });
+        }
+      }
+    }
+
     // Step 10: Validate response
     const validatedReply = validateResponse(finalReplyText);
     const validatedGuidance = guidanceText ? validateResponse(guidanceText) : undefined;

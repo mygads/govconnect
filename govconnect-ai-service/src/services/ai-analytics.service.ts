@@ -62,11 +62,30 @@ interface AccuracyStats {
   confusionMatrix: Record<string, Record<string, number>>; // predicted -> actual
 }
 
+interface KnowledgeGapEntry {
+  query: string;
+  intent: string;
+  confidence: string; // 'none' | 'low' | 'medium' | 'high'
+  channel: string;
+  villageId?: string;
+  timestamp: string;
+  count: number; // How many times this query (normalized) was asked
+}
+
+interface KnowledgeStats {
+  hits: number;         // RAG confidence high/medium
+  misses: number;       // RAG confidence low/none
+  noKnowledge: number;  // No knowledge context at all
+  /** Top unanswered queries — capped at 100 entries, deduplicated by normalized text */
+  gaps: KnowledgeGapEntry[];
+}
+
 interface AnalyticsStorage {
   intents: Record<string, IntentStats>;
   conversationFlow: ConversationFlowStats;
   tokenUsage: TokenUsageStats;
   accuracy: AccuracyStats;
+  knowledge: KnowledgeStats;
   lastUpdated: string;
 }
 
@@ -108,6 +127,12 @@ class AIAnalyticsService {
         totalCostUSD: 0,
         byModel: {},
         byDay: {},
+      },
+      knowledge: {
+        hits: 0,
+        misses: 0,
+        noKnowledge: 0,
+        gaps: [],
       },
       accuracy: {
         totalClassifications: 0,
@@ -229,6 +254,76 @@ class AIAnalyticsService {
     this.data.accuracy.overallAccuracy = Math.round(
       (this.data.accuracy.correctClassifications / this.data.accuracy.totalClassifications) * 100
     );
+  }
+
+  /**
+   * Record knowledge retrieval result (hit/miss) and track gaps
+   */
+  recordKnowledge(opts: {
+    query: string;
+    intent: string;
+    confidence: 'none' | 'low' | 'medium' | 'high';
+    channel: string;
+    villageId?: string;
+    hasKnowledge: boolean;
+  }): void {
+    if (!opts.hasKnowledge) {
+      this.data.knowledge.noKnowledge++;
+    }
+    if (opts.confidence === 'high' || opts.confidence === 'medium') {
+      this.data.knowledge.hits++;
+    } else {
+      this.data.knowledge.misses++;
+
+      // Track gap — deduplicate by normalized query text
+      const normalized = opts.query.toLowerCase().replace(/[^a-z0-9\s]/gi, '').trim();
+      if (normalized.length < 3) return; // skip noise
+
+      const existing = this.data.knowledge.gaps.find(
+        g => g.query.toLowerCase().replace(/[^a-z0-9\s]/gi, '').trim() === normalized
+      );
+      if (existing) {
+        existing.count++;
+        existing.timestamp = new Date().toISOString(); // update last seen
+      } else {
+        this.data.knowledge.gaps.push({
+          query: opts.query.substring(0, 200), // cap length
+          intent: opts.intent,
+          confidence: opts.confidence,
+          channel: opts.channel,
+          villageId: opts.villageId,
+          timestamp: new Date().toISOString(),
+          count: 1,
+        });
+        // Keep max 100 gap entries, sorted by count desc
+        if (this.data.knowledge.gaps.length > 100) {
+          this.data.knowledge.gaps.sort((a, b) => b.count - a.count);
+          this.data.knowledge.gaps = this.data.knowledge.gaps.slice(0, 100);
+        }
+      }
+    }
+  }
+
+  /**
+   * Get knowledge analytics stats
+   */
+  getKnowledgeStats(): {
+    hits: number;
+    misses: number;
+    noKnowledge: number;
+    hitRate: number;
+    missRate: number;
+    topGaps: KnowledgeGapEntry[];
+  } {
+    const total = this.data.knowledge.hits + this.data.knowledge.misses;
+    return {
+      hits: this.data.knowledge.hits,
+      misses: this.data.knowledge.misses,
+      noKnowledge: this.data.knowledge.noKnowledge,
+      hitRate: total > 0 ? Math.round((this.data.knowledge.hits / total) * 100 * 10) / 10 : 0,
+      missRate: total > 0 ? Math.round((this.data.knowledge.misses / total) * 100 * 10) / 10 : 0,
+      topGaps: [...this.data.knowledge.gaps].sort((a, b) => b.count - a.count).slice(0, 20),
+    };
   }
 
   /**
@@ -467,6 +562,8 @@ class AIAnalyticsService {
     dropOffPoints: Array<{ intent: string; count: number }>;
     avgMessagesPerSession: number;
     totalSessions: number;
+    knowledge_hit: number;
+    knowledge_miss: number;
   } {
     return {
       patterns: Object.entries(this.data.conversationFlow.patterns)
@@ -478,6 +575,8 @@ class AIAnalyticsService {
         .sort((a, b) => b.count - a.count),
       avgMessagesPerSession: Math.round(this.data.conversationFlow.avgMessagesPerSession * 10) / 10,
       totalSessions: this.data.conversationFlow.totalSessions,
+      knowledge_hit: this.data.knowledge.hits,
+      knowledge_miss: this.data.knowledge.misses,
     };
   }
 

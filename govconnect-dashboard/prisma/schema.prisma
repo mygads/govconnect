@@ -106,6 +106,35 @@ model ai_golden_set_items {
   @@index([run_id])
 }
 
+// ==================== KNOWLEDGE GAPS ====================
+// Tracks questions the AI couldn't answer due to missing knowledge base content.
+// Admin can review gaps and create KB entries to fill them.
+
+model knowledge_gaps {
+  id               String    @id @default(cuid())
+  query_text       String    @db.Text          // The user's original question
+  query_hash       String                      // SHA-256 hash for dedup (normalized lowercase)
+  intent           String                      // LLM intent that triggered the gap
+  confidence_level String                      // RAG confidence: 'none' | 'low'
+  channel          String    @default("whatsapp") // 'whatsapp' | 'webchat'
+  village_id       String    @default("")        // Empty string when no village context
+  hit_count        Int       @default(1)       // How many times this query was asked
+  first_seen_at    DateTime  @default(now())
+  last_seen_at     DateTime  @default(now())
+  
+  // Resolution tracking
+  status           String    @default("open")  // 'open' | 'resolved' | 'ignored'
+  resolved_at      DateTime?
+  resolved_by      String?                     // admin_id who resolved
+  resolution_kb_id String?                     // ID of KB entry created to fill the gap
+
+  @@unique([query_hash, village_id])
+  @@index([village_id])
+  @@index([status])
+  @@index([hit_count])
+  @@index([last_seen_at])
+}
+
 // ==================== KNOWLEDGE BASE ====================
 // Note: Embeddings are now stored in AI Service vector database
 // Dashboard only stores metadata for admin management

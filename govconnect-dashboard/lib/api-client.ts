@@ -380,6 +380,15 @@ export const ai = {
     });
   },
 
+  /**
+   * Get analytics knowledge hit/miss/gaps
+   */
+  async getAnalyticsKnowledge() {
+    return apiFetch(buildUrl(ServicePath.AI, '/stats/analytics/knowledge'), {
+      headers: getHeaders(),
+    });
+  },
+
   // ==================== Token Usage (Real Gemini) ====================
 
   /**

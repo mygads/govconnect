@@ -553,6 +553,16 @@ app.post('/stats/analytics/fix', (req: Request, res: Response) => {
   }
 });
 
+// Knowledge analytics (hit/miss/gaps)
+app.get('/stats/analytics/knowledge', (req: Request, res: Response) => {
+  try {
+    const stats = aiAnalyticsService.getKnowledgeStats();
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get knowledge stats' });
+  }
+});
+
 // ===========================================
 // AI Token Usage Endpoints (real Gemini usageMetadata)
 

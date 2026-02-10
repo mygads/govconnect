@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { ai } from '@/lib/api-client'
+import prisma from '@/lib/prisma'
 
 // GET - Get knowledge analytics (intent stats, top queries, coverage gaps)
 export async function GET(request: NextRequest) {
@@ -36,15 +37,53 @@ export async function GET(request: NextRequest) {
       if (res.ok) flowData = await res.json()
     } catch (e) { console.log('AI flow unavailable') }
 
+    // Fetch real-time knowledge stats from AI service
+    let knowledgeData = null
+    try {
+      const res = await ai.getAnalyticsKnowledge()
+      if (res.ok) knowledgeData = await res.json()
+    } catch (e) { console.log('AI knowledge stats unavailable') }
+
     // Build analytics response
     const intents = intentData?.intents || intentData?.data || []
     const flow = flowData?.flow || flowData?.data || flowData || {}
 
     // Calculate knowledge coverage
     const totalQueries = analyticsData?.totalQueries || analyticsData?.total_queries || 0
-    const knowledgeHits = flow.knowledge_hit || flow.knowledgeHit || 0
-    const knowledgeMisses = flow.knowledge_miss || flow.knowledgeMiss || 0
+    const knowledgeHits = knowledgeData?.hits || flow.knowledge_hit || flow.knowledgeHit || 0
+    const knowledgeMisses = knowledgeData?.misses || flow.knowledge_miss || flow.knowledgeMiss || 0
     const fallbackCount = flow.fallback || flow.fallbackCount || 0
+
+    // Fetch persistent knowledge gaps from DB
+    let topGaps: any[] = []
+    let gapStatusCounts: Record<string, number> = { open: 0, resolved: 0, ignored: 0 }
+    try {
+      const [gaps, statusCounts] = await Promise.all([
+        prisma.knowledge_gaps.findMany({
+          where: { village_id: villageId, status: 'open' },
+          orderBy: [{ hit_count: 'desc' }, { last_seen_at: 'desc' }],
+          take: 20,
+        }),
+        prisma.knowledge_gaps.groupBy({
+          by: ['status'],
+          where: { village_id: villageId },
+          _count: true,
+        }),
+      ])
+      topGaps = gaps.map(g => ({
+        id: g.id,
+        query: g.query_text,
+        intent: g.intent,
+        confidence: g.confidence_level,
+        hitCount: g.hit_count,
+        firstSeen: g.first_seen_at,
+        lastSeen: g.last_seen_at,
+        channel: g.channel,
+      }))
+      for (const sc of statusCounts) {
+        gapStatusCounts[sc.status] = sc._count
+      }
+    } catch (e) { console.log('Knowledge gaps DB unavailable') }
 
     return NextResponse.json({
       overview: {
@@ -63,6 +102,11 @@ export async function GET(request: NextRequest) {
           }))
         : [],
       flow,
+      knowledgeGaps: {
+        topGaps,
+        statusCounts: gapStatusCounts,
+        totalOpen: gapStatusCounts.open,
+      },
       rawAnalytics: analyticsData,
     })
   } catch (error) {

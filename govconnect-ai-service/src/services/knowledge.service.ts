@@ -431,3 +431,35 @@ export async function getKelurahanInfoContext(villageId?: string): Promise<strin
     return '';
   }
 }
+
+/**
+ * Report a knowledge gap to the Dashboard for admin visibility.
+ * Fire-and-forget: errors are logged but never bubble up.
+ */
+export async function reportKnowledgeGap(opts: {
+  query: string;
+  intent: string;
+  confidence: string;
+  channel: string;
+  villageId?: string;
+}): Promise<void> {
+  try {
+    await axios.post(
+      `${config.dashboardServiceUrl}/api/internal/knowledge/gaps`,
+      {
+        query_text: opts.query.substring(0, 500),
+        intent: opts.intent,
+        confidence_level: opts.confidence,
+        channel: opts.channel,
+        village_id: opts.villageId,
+      },
+      {
+        headers: { 'x-internal-api-key': config.internalApiKey },
+        timeout: 3000,
+      },
+    );
+  } catch (error: any) {
+    // Fire-and-forget — don't disrupt the main flow
+    logger.debug('Failed to report knowledge gap to dashboard', { error: error.message });
+  }
+}
