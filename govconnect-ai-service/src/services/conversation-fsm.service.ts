@@ -215,7 +215,9 @@ const conversationContexts = new Map<string, ConversationContext>();
 // Cleanup expired contexts (older than 30 minutes)
 const CONTEXT_TTL = 30 * 60 * 1000; // 30 minutes
 
-setInterval(() => {
+import { registerInterval } from '../utils/timer-registry';
+
+registerInterval(() => {
   const now = Date.now();
   for (const [userId, ctx] of conversationContexts.entries()) {
     if (now - ctx.updatedAt > CONTEXT_TTL) {
@@ -223,7 +225,7 @@ setInterval(() => {
       logger.debug('[FSM] Cleaned up expired context', { userId });
     }
   }
-}, 5 * 60 * 1000); // Run every 5 minutes
+}, 5 * 60 * 1000, 'fsm-context-cleanup'); // Run every 5 minutes
 
 // ==================== CORE FUNCTIONS ====================
 

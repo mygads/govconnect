@@ -226,11 +226,12 @@ for (const relation of ALL_RELATIONS) {
 }
 
 // Periodic refresh from DB every 5 minutes to pick up admin changes
-setInterval(() => {
+import { registerInterval } from '../utils/timer-registry';
+registerInterval(() => {
   refreshFromDB().catch((err: any) =>
     logger.warn('[KnowledgeGraph] Periodic refresh failed', { error: err.message })
   );
-}, 5 * 60_000);
+}, 5 * 60_000, 'knowledge-graph-refresh');
 
 // ==================== GRAPH OPERATIONS ====================
 

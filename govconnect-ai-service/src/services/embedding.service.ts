@@ -199,7 +199,8 @@ function evictOldestIfNeeded(): void {
 }
 
 // Cleanup expired cache every 5 minutes
-setInterval(cleanupExpiredCache, 5 * 60 * 1000);
+import { registerInterval } from '../utils/timer-registry';
+registerInterval(cleanupExpiredCache, 5 * 60 * 1000, 'embedding-cache-cleanup');
 
 /**
  * Get embedding cache statistics

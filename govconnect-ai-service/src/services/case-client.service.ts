@@ -199,7 +199,7 @@ export interface ComplaintTypeInfo {
 export async function getComplaintTypes(villageId?: string): Promise<ComplaintTypeInfo[]> {
   try {
     const url = `${config.caseServiceUrl}/complaints/types`;
-    const response = await axios.get<{ data: ComplaintTypeInfo[] }>(url, {
+    const response = await resilientHttp.get<{ data: ComplaintTypeInfo[] }>(url, {
       headers: {
         'x-internal-api-key': config.internalApiKey,
         'Content-Type': 'application/json',
@@ -208,6 +208,7 @@ export async function getComplaintTypes(villageId?: string): Promise<ComplaintTy
       timeout: 10000,
     });
 
+    if (resilientHttp.isFallbackResponse(response)) return [];
     return response.data.data || [];
   } catch (error: any) {
     logger.warn('Failed to fetch complaint types', {
@@ -229,7 +230,7 @@ export async function getComplaintStatus(complaintId: string): Promise<Complaint
   
   try {
     const url = `${config.caseServiceUrl}/laporan/${complaintId}`;
-    const response = await axios.get<ComplaintStatusResponse>(
+    const response = await resilientHttp.get<ComplaintStatusResponse>(
       url,
       {
         headers: {
@@ -239,6 +240,8 @@ export async function getComplaintStatus(complaintId: string): Promise<Complaint
         timeout: 10000,
       }
     );
+
+    if (resilientHttp.isFallbackResponse(response)) return null;
     
     logger.info('✅ Complaint status fetched successfully', {
       complaint_id: complaintId,
@@ -280,7 +283,7 @@ export async function getComplaintStatusWithOwnership(
   
   try {
     const url = `${config.caseServiceUrl}/laporan/${complaintId}/check`;
-    const response = await axios.post(
+    const response = await resilientHttp.post<{ data: ComplaintStatusResponse['data'] }>(
       url,
       {
         wa_user_id: channel === 'WHATSAPP' ? params.wa_user_id : undefined,
@@ -295,6 +298,10 @@ export async function getComplaintStatusWithOwnership(
         timeout: 10000,
       }
     );
+
+    if (resilientHttp.isFallbackResponse(response)) {
+      return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
+    }
     
     logger.info('✅ Complaint status fetched successfully with ownership', {
       complaint_id: complaintId,
@@ -345,7 +352,7 @@ export async function getServiceRequestStatusWithOwnership(
 
   try {
     const url = `${config.caseServiceUrl}/service-requests`;
-    const response = await axios.get(
+    const response = await resilientHttp.get<{ data: any[] }>(
       url,
       {
         params: {
@@ -360,7 +367,11 @@ export async function getServiceRequestStatusWithOwnership(
       }
     );
 
-    const data = response.data?.data?.[0];
+    if (resilientHttp.isFallbackResponse(response)) {
+      return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
+    }
+
+    const data = (response.data as any)?.data?.[0];
 
     if (!data) {
       return { success: false, error: 'NOT_FOUND', message: 'Permohonan layanan tidak ditemukan' };
@@ -397,7 +408,7 @@ export async function cancelComplaint(
   
   try {
     const url = `${config.caseServiceUrl}/laporan/${complaintId}/cancel`;
-    const response = await axios.post<CancelResponse>(
+    const response = await resilientHttp.post<CancelResponse>(
       url,
       {
         wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
@@ -413,6 +424,10 @@ export async function cancelComplaint(
         timeout: 10000,
       }
     );
+
+    if (resilientHttp.isFallbackResponse(response)) {
+      return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
+    }
     
     logger.info('✅ Complaint cancelled successfully', {
       complaint_id: complaintId,
@@ -462,7 +477,7 @@ export async function cancelServiceRequest(
 
   try {
     const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/cancel`;
-    const response = await axios.post<CancelResponse>(
+    const response = await resilientHttp.post<CancelResponse>(
       url,
       {
         wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
@@ -478,6 +493,10 @@ export async function cancelServiceRequest(
         timeout: 10000,
       }
     );
+
+    if (resilientHttp.isFallbackResponse(response)) {
+      return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
+    }
 
     return {
       success: true,
@@ -528,7 +547,7 @@ export async function requestServiceRequestEditToken(
 
   try {
     const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/edit-token`;
-    const response = await axios.post(
+    const response = await resilientHttp.post<{ data: { request_number?: string; edit_token?: string; edit_token_expires_at?: string } }>(
       url,
       {
         wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
@@ -543,6 +562,10 @@ export async function requestServiceRequestEditToken(
         timeout: 10000,
       }
     );
+
+    if (resilientHttp.isFallbackResponse(response)) {
+      return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
+    }
 
     return {
       success: true,
@@ -594,7 +617,7 @@ export async function updateComplaintByUser(
 
   try {
     const url = `${config.caseServiceUrl}/laporan/${complaintId}/update`;
-    const response = await axios.patch(
+    const response = await resilientHttp.patch<{ data: any }>(
       url,
       {
         wa_user_id: channel === 'WHATSAPP' ? params.wa_user_id : undefined,
@@ -610,6 +633,10 @@ export async function updateComplaintByUser(
         timeout: 10000,
       }
     );
+
+    if (resilientHttp.isFallbackResponse(response)) {
+      return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
+    }
 
     return {
       success: true,
@@ -686,7 +713,7 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
 
   try {
     const url = `${config.caseServiceUrl}/services`;
-    const response = await axios.get<{ data: ServiceCatalogItem[] }>(url, {
+    const response = await resilientHttp.get<{ data: ServiceCatalogItem[] }>(url, {
       params: villageId ? { village_id: villageId } : undefined,
       headers: {
         'x-internal-api-key': config.internalApiKey,
@@ -694,6 +721,10 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
       },
       timeout: 10000,
     });
+
+    if (resilientHttp.isFallbackResponse(response)) {
+      return serviceCatalogCache || [];
+    }
 
     const services = Array.isArray(response.data?.data) ? response.data.data : [];
     serviceCatalogCache = services;
@@ -733,13 +764,15 @@ export async function getServiceRequirements(serviceId: string): Promise<Service
 
   try {
     const url = `${config.caseServiceUrl}/services/${serviceId}/requirements`;
-    const response = await axios.get<{ data: ServiceRequirementDefinition[] }>(url, {
+    const response = await resilientHttp.get<{ data: ServiceRequirementDefinition[] }>(url, {
       headers: {
         'x-internal-api-key': config.internalApiKey,
         'Content-Type': 'application/json',
       },
       timeout: 10000,
     });
+
+    if (resilientHttp.isFallbackResponse(response)) return [];
 
     return Array.isArray(response.data?.data) ? response.data.data : [];
   } catch (error: any) {
@@ -766,7 +799,7 @@ export async function getUserHistory(params: { wa_user_id?: string; channel?: 'W
   
   try {
     const url = `${config.caseServiceUrl}/user/${encodeURIComponent(identifier || '')}/history`;
-    const response = await axios.get<UserHistoryResponse>(
+    const response = await resilientHttp.get<UserHistoryResponse>(
       url,
       {
         params: {
@@ -780,6 +813,8 @@ export async function getUserHistory(params: { wa_user_id?: string; channel?: 'W
         timeout: 10000,
       }
     );
+
+    if (resilientHttp.isFallbackResponse(response)) return null;
     
     logger.info('✅ User history fetched successfully', {
       wa_user_id: params.wa_user_id,

@@ -49,7 +49,6 @@ import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { recordTokenUsage } from './token-usage.service';
 import { RAGContext } from '../types/embedding.types';
-import { preProcessMessage } from './ai-optimizer.service';
 import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile, clearProfile, deleteProfile } from './user-profile.service';
 import { updateConversationUserProfile } from './channel-client.service';
 import { getEnhancedContext, updateContext, recordDataCollected, recordCompletedAction, getContextForLLM } from './conversation-context.service';
@@ -291,7 +290,8 @@ const serviceSearchCache = new LRUCache<string, {
 }>({ maxSize: 500, ttlMs: 5 * 60 * 1000, name: 'serviceSearchCache' });
 
 // Cleanup expired entries from all LRU caches (TTL-based purge)
-setInterval(() => {
+import { registerInterval } from '../utils/timer-registry';
+registerInterval(() => {
   const caches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
     pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
@@ -305,7 +305,7 @@ setInterval(() => {
   if (totalPurged > 0) {
     logger.debug(`Purged ${totalPurged} expired cache entries`);
   }
-}, 60 * 1000);
+}, 60 * 1000, 'ump-lru-cache-purge');
 
 /**
  * Clear ALL in-memory caches (for admin cache management endpoint).
@@ -2116,6 +2116,19 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Update status: reading message
     tracker.reading();
     
+    // Step 0: Input length guard — reject absurdly long messages before any LLM work
+    const MAX_INPUT_LENGTH = 4000; // ~1000 tokens, well above any realistic user message
+    if (message.length > MAX_INPUT_LENGTH) {
+      logger.warn('🚫 [UnifiedProcessor] Message too long, rejected', { traceId, userId, channel, length: message.length });
+      _activeProcessingCount--;
+      return {
+        success: true,
+        response: 'Maaf, pesan Anda terlalu panjang. Mohon kirim pesan yang lebih singkat (maksimal beberapa paragraf).',
+        intent: 'UNKNOWN',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+      };
+    }
+
     // Step 1: Spam check
     if (isSpamMessage(message)) {
       logger.warn('🚫 [UnifiedProcessor] Spam detected', { userId, channel });
@@ -2858,8 +2871,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         };
       }
     }
-
-    const optimization = preProcessMessage(message, userId, historyString, templateContext);
     
     // Step 3: Sanitize and correct typos
     let sanitizedMessage = sanitizeUserInput(message);

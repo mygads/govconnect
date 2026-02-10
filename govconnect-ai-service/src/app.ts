@@ -104,9 +104,15 @@ app.get('/api-docs.json', (req, res) => {
 });
 
 app.get('/health', (req: Request, res: Response) => {
+  const cbStats = resilientHttp.getStats();
+  const rabbitConnected = isRabbitMQConnected();
+  // Liveness: always 200 (don't let Docker restart for downstream issues)
+  // Readiness: include downstream info for monitoring
   res.json({
-    status: 'ok',
+    status: rabbitConnected ? 'ok' : 'degraded',
     service: 'ai-orchestrator',
+    rabbitmq: rabbitConnected ? 'connected' : 'disconnected',
+    circuitBreaker: cbStats.state,
     timestamp: new Date().toISOString(),
   });
 });

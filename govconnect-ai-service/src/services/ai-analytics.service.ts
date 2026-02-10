@@ -10,6 +10,7 @@
 
 import logger from '../utils/logger';
 import { findPricing as getTokenPricing } from './token-usage.service';
+import { registerInterval } from '../utils/timer-registry';
 
 // Use token-usage.service as single source of truth for pricing
 // Estimated tokens per character (rough estimate for Indonesian text)
@@ -149,7 +150,7 @@ class AIAnalyticsService {
    * Start session cleanup (every 10 minutes)
    */
   private startSessionCleanup(): void {
-    setInterval(() => {
+    registerInterval(() => {
       const now = Date.now();
       let cleaned = 0;
       
@@ -165,7 +166,7 @@ class AIAnalyticsService {
       if (cleaned > 0) {
         logger.debug('🧹 Cleaned expired sessions', { count: cleaned });
       }
-    }, 10 * 60 * 1000);
+    }, 10 * 60 * 1000, 'ai-analytics-session-cleanup');
   }
 
   /**

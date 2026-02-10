@@ -9,6 +9,7 @@
 
 import logger from '../utils/logger';
 import { config } from '../config/env';
+import { registerInterval } from '../utils/timer-registry';
 
 interface UserRateData {
   wa_user_id: string;
@@ -74,7 +75,7 @@ class RateLimiterService {
    */
   private startDailyReset(): void {
     // Check every hour for new day
-    setInterval(() => {
+    registerInterval(() => {
       const today = this.getTodayString();
       let resetCount = 0;
       
@@ -93,7 +94,7 @@ class RateLimiterService {
       
       // Also clean up expired blacklist entries
       this.cleanupExpiredBlacklist();
-    }, 60 * 60 * 1000); // Every hour
+    }, 60 * 60 * 1000, 'rate-limiter-daily-reset'); // Every hour
   }
 
   /**

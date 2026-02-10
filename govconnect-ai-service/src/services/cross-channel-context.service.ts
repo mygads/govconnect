@@ -302,7 +302,8 @@ export function getCrossChannelContextForLLM(userId: string): string {
 // ==================== CLEANUP ====================
 
 // Cleanup old contexts (older than 7 days)
-setInterval(() => {
+import { registerInterval } from '../utils/timer-registry';
+registerInterval(() => {
   const now = Date.now();
   const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
   
@@ -318,7 +319,7 @@ setInterval(() => {
       }
     }
   }
-}, 60 * 60 * 1000); // Clean every hour
+}, 60 * 60 * 1000, 'cross-channel-cleanup'); // Clean every hour
 
 // ==================== EXPORTS ====================
 

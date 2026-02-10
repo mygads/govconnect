@@ -4,9 +4,9 @@ import logger from './utils/logger';
 import { config } from './config/env';
 import { connectRabbitMQ, startConsuming, disconnectRabbitMQ } from './services/rabbitmq.service';
 import { processMessage } from './services/ai-orchestrator.service';
-import { initializeOptimizer } from './services/ai-optimizer.service';
 import { drainActiveProcessing } from './services/unified-message-processor.service';
 import { apiKeyManager } from './services/api-key-manager.service';
+import { clearAllTimers } from './utils/timer-registry';
 
 // UNIFIED PROCESSOR - same architecture for WhatsApp and Webchat
 // No more pattern matching, full LLM understanding
@@ -22,9 +22,6 @@ async function startServer() {
     
     // Initialize BYOK API Key Manager (fetches keys from Dashboard)
     await apiKeyManager.init();
-
-    // Initialize AI Optimizer (cache pre-warming, etc.)
-    initializeOptimizer();
     
     // Connect to RabbitMQ
     await connectRabbitMQ();
@@ -79,6 +76,9 @@ async function gracefulShutdown() {
     
     // Cleanup API key manager (flush usage)
     apiKeyManager.destroy();
+    
+    // Clear all registered interval timers
+    clearAllTimers();
     
     logger.info('✅ Graceful shutdown completed');
     process.exit(0);

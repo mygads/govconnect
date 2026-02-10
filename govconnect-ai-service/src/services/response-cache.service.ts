@@ -307,7 +307,8 @@ function cleanupExpired(): void {
 }
 
 // Start cleanup interval
-setInterval(cleanupExpired, CACHE_CONFIG.cleanupInterval);
+import { registerInterval } from '../utils/timer-registry';
+registerInterval(cleanupExpired, CACHE_CONFIG.cleanupInterval, 'response-cache-cleanup');
 
 // ==================== STATS & MONITORING ====================
 

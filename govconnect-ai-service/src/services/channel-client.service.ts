@@ -1,6 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
+import { resilientHttp } from './circuit-breaker.service';
 
 /**
  * Send typing indicator to Channel Service
@@ -143,13 +144,15 @@ export async function isUserInTakeover(wa_user_id: string, village_id?: string):
   try {
     const url = `${config.channelServiceUrl}/internal/takeover/${encodeURIComponent(wa_user_id)}/status`;
     
-    const response = await axios.get(url, {
+    const response = await resilientHttp.get<{ is_takeover?: boolean }>(url, {
       headers: {
         'x-internal-api-key': config.internalApiKey,
       },
       params: village_id ? { village_id } : undefined,
       timeout: 5000,
     });
+
+    if (resilientHttp.isFallbackResponse(response)) return false;
     
     const isTakeover = response.data?.is_takeover === true;
     
