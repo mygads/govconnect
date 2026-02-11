@@ -290,7 +290,8 @@ export async function buildContextWithHistory(
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
   ragContext?: RAGContext | string,
   villageId?: string,
-  promptFocus?: string
+  promptFocus?: string,
+  villageName?: string
 ): Promise<{ systemPrompt: string; messageCount: number }> {
 
   const conversationHistory = await (async () => {
@@ -387,7 +388,8 @@ export async function buildContextWithHistory(
     .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate)
     .replace(/\{\{current_time\}\}/g, currentTime)
     .replace(/\{\{time_of_day\}\}/g, timeOfDay)
-    .replace(/\{\{complaint_categories\}\}/g, complaintCategoriesText);
+    .replace(/\{\{complaint_categories\}\}/g, complaintCategoriesText)
+    .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
 
   return { systemPrompt, messageCount: history.length };
 }

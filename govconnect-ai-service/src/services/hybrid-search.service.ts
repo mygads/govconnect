@@ -98,13 +98,10 @@ export async function searchKeywords(
       `;
 
       for (const row of knowledgeResults) {
-        // Filter by category if specified
-        if (categories && categories.length > 0 && !categories.includes(row.category)) {
-          continue;
-        }
-        if (villageId && row.village_id && row.village_id !== villageId) {
-          continue;
-        }
+        // village_id is already filtered in SQL WHERE clause
+        // Categories are NOT used for filtering — NLU category names (e.g. "informasi_umum")
+        // often don't match stored categories (e.g. "umum", "general"), causing false negatives.
+        // Vector/keyword similarity is the primary relevance signal.
 
         results.push({
           id: row.id,
@@ -157,13 +154,8 @@ export async function searchKeywords(
       `;
 
       for (const row of documentResults) {
-        // Filter by category if specified
-        if (categories && categories.length > 0 && !categories.includes(row.category)) {
-          continue;
-        }
-        if (villageId && row.village_id && row.village_id !== villageId) {
-          continue;
-        }
+        // village_id is already filtered in SQL WHERE clause
+        // Categories NOT used for filtering — see knowledge search comment above.
 
         results.push({
           id: row.id,

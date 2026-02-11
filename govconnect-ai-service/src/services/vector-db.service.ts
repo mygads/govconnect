@@ -255,7 +255,7 @@ export async function searchVectors(
   const {
     topK = 5,
     minScore = 0.7,
-    categories,
+    categories, // Used for post-retrieval soft boost only, NOT SQL filter
     sourceTypes = ['knowledge', 'document'],
     villageId,
   } = options;
@@ -266,72 +266,28 @@ export async function searchVectors(
 
   try {
     // Search knowledge vectors
+    // NOTE: Categories are NOT used in SQL WHERE because NLU category names
+    // (e.g. "informasi_umum") often don't match stored categories (e.g. "umum", "general").
+    // Using category as a hard filter causes 0 results. Vector similarity is the primary filter.
     if (sourceTypes.includes('knowledge')) {
-      let knowledgeQuery = Prisma.sql`
-        SELECT 
-          id,
-          content,
-          title,
-          category,
-          keywords,
-          1 - (embedding <=> ${embeddingStr}::vector) as similarity,
-          'knowledge' as source_type,
-          quality_score
-        FROM knowledge_vectors
-        WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-      `;
-
-      if (villageId) {
-        knowledgeQuery = Prisma.sql`
-          SELECT 
-            id,
-            content,
-            title,
-            category,
-            keywords,
-            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
-            'knowledge' as source_type,
-            quality_score
-          FROM knowledge_vectors
-          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-            AND (village_id = ${villageId} OR village_id IS NULL)
-        `;
-      }
-
-      if (categories && categories.length > 0) {
-        knowledgeQuery = Prisma.sql`
-          SELECT 
-            id,
-            content,
-            title,
-            category,
-            keywords,
-            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
-            'knowledge' as source_type,
-            quality_score
-          FROM knowledge_vectors
-          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-            AND category = ANY(${categories})
-        `;
-      }
-
-      if (villageId && categories && categories.length > 0) {
-        knowledgeQuery = Prisma.sql`
-          SELECT 
-            id,
-            content,
-            title,
-            category,
-            keywords,
-            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
-            'knowledge' as source_type,
-            quality_score
-          FROM knowledge_vectors
-          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-            AND category = ANY(${categories})
-            AND (village_id = ${villageId} OR village_id IS NULL)
-        `;
-      }
+      const knowledgeQuery = villageId
+        ? Prisma.sql`
+            SELECT 
+              id, content, title, category, keywords,
+              1 - (embedding <=> ${embeddingStr}::vector) as similarity,
+              'knowledge' as source_type, quality_score
+            FROM knowledge_vectors
+            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+              AND (village_id = ${villageId} OR village_id IS NULL)
+          `
+        : Prisma.sql`
+            SELECT 
+              id, content, title, category, keywords,
+              1 - (embedding <=> ${embeddingStr}::vector) as similarity,
+              'knowledge' as source_type, quality_score
+            FROM knowledge_vectors
+            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+          `;
 
       const knowledgeResults = await prisma.$queryRaw<VectorSearchRow[]>`
         ${knowledgeQuery}
@@ -341,10 +297,13 @@ export async function searchVectors(
 
       for (const row of knowledgeResults) {
         // Apply quality_score as a slight boost to similarity
-        // Admin-curated knowledge (quality=1.0) gets full score
-        // Lower quality entries get proportionally less
         const qualityBoost = (row.quality_score ?? 1.0) * 0.03; // max +3% boost
-        const adjustedScore = Math.min(1.0, row.similarity + qualityBoost);
+        // Soft boost if category matches NLU categories
+        const categoryBoost = categories?.length && row.category
+          && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
+            || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
+          ? 0.02 : 0;
+        const adjustedScore = Math.min(1.0, row.similarity + qualityBoost + categoryBoost);
 
         results.push({
           id: row.id,
@@ -363,79 +322,26 @@ export async function searchVectors(
 
     // Search document vectors
     if (sourceTypes.includes('document')) {
-      let documentQuery = Prisma.sql`
-        SELECT 
-          id,
-          content,
-          document_title as title,
-          category,
-          document_id,
-          chunk_index,
-          page_number,
-          section_title,
-          1 - (embedding <=> ${embeddingStr}::vector) as similarity,
-          'document' as source_type
-        FROM document_vectors
-        WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-      `;
-
-      if (villageId) {
-        documentQuery = Prisma.sql`
-          SELECT 
-            id,
-            content,
-            document_title as title,
-            category,
-            document_id,
-            chunk_index,
-            page_number,
-            section_title,
-            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
-            'document' as source_type
-          FROM document_vectors
-          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-            AND (village_id = ${villageId} OR village_id IS NULL)
-        `;
-      }
-
-      if (categories && categories.length > 0) {
-        documentQuery = Prisma.sql`
-          SELECT 
-            id,
-            content,
-            document_title as title,
-            category,
-            document_id,
-            chunk_index,
-            page_number,
-            section_title,
-            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
-            'document' as source_type
-          FROM document_vectors
-          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-            AND category = ANY(${categories})
-        `;
-      }
-
-      if (villageId && categories && categories.length > 0) {
-        documentQuery = Prisma.sql`
-          SELECT 
-            id,
-            content,
-            document_title as title,
-            category,
-            document_id,
-            chunk_index,
-            page_number,
-            section_title,
-            1 - (embedding <=> ${embeddingStr}::vector) as similarity,
-            'document' as source_type
-          FROM document_vectors
-          WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-            AND category = ANY(${categories})
-            AND (village_id = ${villageId} OR village_id IS NULL)
-        `;
-      }
+      const documentQuery = villageId
+        ? Prisma.sql`
+            SELECT 
+              id, content, document_title as title, category,
+              document_id, chunk_index, page_number, section_title,
+              1 - (embedding <=> ${embeddingStr}::vector) as similarity,
+              'document' as source_type
+            FROM document_vectors
+            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+              AND (village_id = ${villageId} OR village_id IS NULL)
+          `
+        : Prisma.sql`
+            SELECT 
+              id, content, document_title as title, category,
+              document_id, chunk_index, page_number, section_title,
+              1 - (embedding <=> ${embeddingStr}::vector) as similarity,
+              'document' as source_type
+            FROM document_vectors
+            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+          `;
 
       const documentResults = await prisma.$queryRaw<VectorSearchRow[]>`
         ${documentQuery}
@@ -444,10 +350,16 @@ export async function searchVectors(
       `;
 
       for (const row of documentResults) {
+        // Soft boost if category matches NLU categories
+        const categoryBoost = categories?.length && row.category
+          && categories.some((c: string) => row.category?.toLowerCase().includes(c.toLowerCase())
+            || c.toLowerCase().includes(row.category?.toLowerCase() ?? ''))
+          ? 0.02 : 0;
+
         results.push({
           id: row.id,
           content: row.content,
-          score: row.similarity,
+          score: row.similarity + categoryBoost,
           source: row.title || row.document_id || row.id,
           sourceType: 'document',
           metadata: {

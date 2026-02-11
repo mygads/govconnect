@@ -1069,7 +1069,9 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       // Build dynamic service code regex from DB-backed knowledge graph
       const serviceCodes = getAllServiceCodes();
       if (serviceCodes.length > 0) {
-        const codesPattern = new RegExp(`\\b(${serviceCodes.join('|')})\\b`, 'i');
+        // Escape regex special chars in service codes (some may contain parentheses like "SKKT(")
+        const escapedCodes = serviceCodes.map(code => code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const codesPattern = new RegExp(`\\b(${escapedCodes.join('|')})\\b`, 'i');
         const serviceCodeMatch = sanitizedMessage.match(codesPattern);
         if (serviceCodeMatch) {
           graphContext = await getGraphContextAsync(serviceCodeMatch[1].toUpperCase());
@@ -1159,7 +1161,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     let messageCount: number;
     
     if (channel === 'webchat' && resolvedHistory) {
-      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, resolvedHistory, preloadedRAGContext, resolvedVillageId, promptFocus);
+      const villageName = templateContext?.villageName || (await getVillageProfileSummary(resolvedVillageId))?.name || undefined;
+      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, resolvedHistory, preloadedRAGContext, resolvedVillageId, promptFocus, villageName);
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     } else {
