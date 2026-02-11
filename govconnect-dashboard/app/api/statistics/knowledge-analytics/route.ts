@@ -79,6 +79,40 @@ export async function GET(request: NextRequest) {
       }
     } catch (e) { console.log('Knowledge gaps DB unavailable') }
 
+    // Fetch knowledge conflicts from DB
+    let topConflicts: any[] = []
+    let conflictStatusCounts: Record<string, number> = { open: 0, resolved: 0, auto_resolved: 0, ignored: 0 }
+    try {
+      const [conflicts, conflictCounts] = await Promise.all([
+        prisma.knowledge_conflicts.findMany({
+          where: { village_id: villageId, status: { in: ['open', 'auto_resolved'] } },
+          orderBy: [{ hit_count: 'desc' }, { last_seen_at: 'desc' }],
+          take: 20,
+        }),
+        prisma.knowledge_conflicts.groupBy({
+          by: ['status'],
+          where: { village_id: villageId },
+          _count: true,
+        }),
+      ])
+      topConflicts = conflicts.map(c => ({
+        id: c.id,
+        source1: c.source1_title,
+        source2: c.source2_title,
+        summary: c.content_summary,
+        similarity: c.similarity_score,
+        hitCount: c.hit_count,
+        status: c.status,
+        autoResolved: c.auto_resolved,
+        firstSeen: c.first_seen_at,
+        lastSeen: c.last_seen_at,
+        query: c.query_text,
+      }))
+      for (const sc of conflictCounts) {
+        conflictStatusCounts[sc.status] = sc._count
+      }
+    } catch (e) { console.log('Knowledge conflicts DB unavailable') }
+
     // Calculate knowledge coverage
     // Prefer real-time AI stats; if AI service has reset (all zeros), use DB-based counts as fallback
     const aiTotalQueries = analyticsData?.totalQueries || analyticsData?.total_queries || 0
@@ -112,6 +146,12 @@ export async function GET(request: NextRequest) {
         topGaps,
         statusCounts: gapStatusCounts,
         totalOpen: gapStatusCounts.open,
+      },
+      knowledgeConflicts: {
+        topConflicts,
+        statusCounts: conflictStatusCounts,
+        totalOpen: conflictStatusCounts.open,
+        totalAutoResolved: conflictStatusCounts.auto_resolved,
       },
       rawAnalytics: analyticsData,
     })

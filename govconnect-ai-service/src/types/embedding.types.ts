@@ -124,6 +124,19 @@ export interface RAGContext {
   totalResults: number;
   searchTimeMs: number;
   confidence?: RAGConfidence; // Confidence scoring for the result
+  /** Detected conflicts between RAG sources (if any) */
+  conflicts?: RAGConflictInfo[];
+}
+
+/**
+ * Conflict info detected during RAG dedup
+ */
+export interface RAGConflictInfo {
+  source1: string;
+  source2: string;
+  similarityScore: number;
+  contentSnippet1: string;
+  contentSnippet2: string;
 }
 
 /**

@@ -288,6 +288,9 @@ export async function getRAGContext(query: string, categories?: string[], villag
     villageId,
   });
 
+  // Track whether DB data was injected for auto-resolution
+  let dbDataInjected = false;
+
   // DB-FIRST: Check if query relates to village profile data
   // If so, prepend authoritative DB data to the context string
   if (villageId && isProfileRelatedQuery(query)) {
@@ -304,6 +307,7 @@ export async function getRAGContext(query: string, categories?: string[], villag
           ragContext.totalResults = Math.max(ragContext.totalResults, 1);
         }
         
+        dbDataInjected = true;
         logger.info('DB-first: Prepended village profile to RAG context', {
           villageId, query: query.substring(0, 50),
         });
@@ -313,7 +317,55 @@ export async function getRAGContext(query: string, categories?: string[], villag
     }
   }
 
+  // CONFLICT HANDLING: Report conflicts to dashboard + auto-resolve when DB data is authoritative
+  if (ragContext.conflicts && ragContext.conflicts.length > 0) {
+    const isAutoResolved = dbDataInjected;
+
+    // Report each conflict to the Dashboard (fire-and-forget)
+    for (const conflict of ragContext.conflicts) {
+      reportKnowledgeConflict({
+        source1Title: conflict.source1,
+        source2Title: conflict.source2,
+        contentSummary: `Sumber 1: ${conflict.contentSnippet1}\n---\nSumber 2: ${conflict.contentSnippet2}`,
+        similarityScore: conflict.similarityScore,
+        query: query,
+        channel: 'system',
+        villageId,
+        autoResolved: isAutoResolved,
+      }).catch(() => {}); // fire-and-forget
+    }
+
+    // AUTO-RESOLUTION: If DB data was injected, strip conflict warnings from context
+    // because DB data is authoritative — no need to confuse user with conflicts
+    if (isAutoResolved) {
+      const resolvedCount = ragContext.conflicts?.length || 0;
+      ragContext.contextString = autoResolveConflicts(ragContext.contextString);
+      ragContext.conflicts = undefined; // Clear conflicts since they're resolved
+      logger.info('Auto-resolved conflicts: DB data is authoritative', {
+        conflictCount: resolvedCount,
+        villageId,
+        query: query.substring(0, 50),
+      });
+    }
+  }
+
   return ragContext;
+}
+
+/**
+ * Strip conflict warning markers from context string when auto-resolving.
+ * Keeps the content but removes ⚠️ KONFLIK markers so LLM treats all data normally,
+ * with DB data (already prepended) taking priority.
+ */
+function autoResolveConflicts(contextString: string): string {
+  let resolved = contextString;
+  // Remove the conflict PERHATIAN header
+  resolved = resolved.replace(/⚠️ PERHATIAN: Ditemukan \d+ kelompok data yang BERBEDA dari sumber berbeda\.\n.*?\n\n/g, '');
+  // Remove per-item conflict markers
+  resolved = resolved.replace(/⚠️ \[KONFLIK DATA - Ada \d+ sumber berbeda tentang topik ini\]\n/g, '');
+  // Remove [SUMBER: ...] labels that were added for conflicts
+  resolved = resolved.replace(/\[SUMBER: [^\]]+\] /g, '');
+  return resolved;
 }
 
 /**
@@ -536,5 +588,49 @@ export async function reportKnowledgeGap(opts: {
   } catch (error: any) {
     // Fire-and-forget — don't disrupt the main flow
     logger.debug('Failed to report knowledge gap to dashboard', { error: error.message });
+  }
+}
+
+/**
+ * Report a knowledge conflict to the Dashboard for admin visibility.
+ * Fire-and-forget: errors are logged but never bubble up.
+ * Called when RAG detects conflicting data from different sources.
+ */
+export async function reportKnowledgeConflict(opts: {
+  source1Title: string;
+  source2Title: string;
+  contentSummary: string;
+  similarityScore: number;
+  query?: string;
+  channel?: string;
+  villageId?: string;
+  autoResolved?: boolean;
+}): Promise<void> {
+  try {
+    await axios.post(
+      `${config.dashboardServiceUrl}/api/internal/knowledge/conflicts`,
+      {
+        source1_title: opts.source1Title.substring(0, 255),
+        source2_title: opts.source2Title.substring(0, 255),
+        content_summary: opts.contentSummary.substring(0, 2000),
+        similarity_score: opts.similarityScore,
+        query_text: opts.query?.substring(0, 500),
+        channel: opts.channel || 'system',
+        village_id: opts.villageId,
+        auto_resolved: opts.autoResolved || false,
+      },
+      {
+        headers: { 'x-internal-api-key': config.internalApiKey },
+        timeout: 3000,
+      },
+    );
+    logger.info('Reported knowledge conflict to dashboard', {
+      source1: opts.source1Title,
+      source2: opts.source2Title,
+      autoResolved: opts.autoResolved,
+    });
+  } catch (error: any) {
+    // Fire-and-forget — don't disrupt the main flow
+    logger.debug('Failed to report knowledge conflict to dashboard', { error: error.message });
   }
 }

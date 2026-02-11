@@ -135,6 +135,39 @@ model knowledge_gaps {
   @@index([last_seen_at])
 }
 
+// ==================== KNOWLEDGE CONFLICTS ====================
+// Tracks conflicting data detected in knowledge base (RAG results from different sources disagree).
+// Admin can review conflicts and resolve by editing/removing incorrect knowledge entries.
+
+model knowledge_conflicts {
+  id               String    @id @default(cuid())
+  conflict_hash    String                      // SHA-256 hash for dedup (source1+source2 normalized)
+  village_id       String    @default("")
+  source1_title    String                      // Title / filename of first source
+  source2_title    String                      // Title / filename of second source
+  content_summary  String    @db.Text          // Brief description of the conflicting data
+  similarity_score Float     @default(0)       // Jaccard similarity that triggered conflict (0.35-0.69)
+  query_text       String?   @db.Text          // The user query that triggered conflict detection
+  channel          String    @default("system")
+
+  // Resolution tracking
+  hit_count        Int       @default(1)       // How many times this conflict was detected
+  status           String    @default("open")  // 'open' | 'resolved' | 'auto_resolved' | 'ignored'
+  auto_resolved    Boolean   @default(false)   // Was this auto-resolved because DB data was authoritative?
+  resolution_note  String?   @db.Text          // Admin note on how it was resolved
+  resolved_at      DateTime?
+  resolved_by      String?                     // admin_id who resolved
+
+  first_seen_at    DateTime  @default(now())
+  last_seen_at     DateTime  @default(now())
+
+  @@unique([conflict_hash, village_id])
+  @@index([village_id])
+  @@index([status])
+  @@index([hit_count])
+  @@index([last_seen_at])
+}
+
 // ==================== KNOWLEDGE BASE ====================
 // Note: Embeddings are now stored in AI Service vector database
 // Dashboard only stores metadata for admin management

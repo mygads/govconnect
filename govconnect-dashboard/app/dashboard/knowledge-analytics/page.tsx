@@ -61,11 +61,33 @@ interface KnowledgeGapsData {
   totalOpen: number
 }
 
+interface KnowledgeConflictItem {
+  id: string
+  source1: string
+  source2: string
+  summary: string
+  similarity: number
+  hitCount: number
+  status: string
+  autoResolved: boolean
+  firstSeen: string
+  lastSeen: string
+  query: string | null
+}
+
+interface KnowledgeConflictsData {
+  topConflicts: KnowledgeConflictItem[]
+  statusCounts: Record<string, number>
+  totalOpen: number
+  totalAutoResolved: number
+}
+
 interface AnalyticsData {
   overview: OverviewStats
   intents: IntentItem[]
   flow: Record<string, any>
   knowledgeGaps?: KnowledgeGapsData
+  knowledgeConflicts?: KnowledgeConflictsData
   rawAnalytics: any
 }
 
@@ -141,6 +163,9 @@ export default function KnowledgeAnalyticsPage() {
   const knowledgeGaps = data?.knowledgeGaps
   const topGaps = knowledgeGaps?.topGaps || []
   const gapStatusCounts = knowledgeGaps?.statusCounts || { open: 0, resolved: 0, ignored: 0 }
+  const knowledgeConflicts = data?.knowledgeConflicts
+  const topConflicts = knowledgeConflicts?.topConflicts || []
+  const conflictStatusCounts = knowledgeConflicts?.statusCounts || { open: 0, resolved: 0, auto_resolved: 0, ignored: 0 }
   const hitRateNum = typeof overview.hitRate === "string" ? parseFloat(overview.hitRate) : overview.hitRate
 
   return (
@@ -157,6 +182,28 @@ export default function KnowledgeAnalyticsPage() {
           <RefreshCcw className="h-4 w-4 mr-2" /> Refresh
         </Button>
       </div>
+
+      {/* Conflict Alert Banner */}
+      {conflictStatusCounts.open > 0 && (
+        <Card className="border-orange-400 bg-orange-50 dark:bg-orange-950/20">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-6 w-6 text-orange-600 shrink-0" />
+              <div className="flex-1">
+                <p className="font-semibold text-orange-800 dark:text-orange-300">
+                  Ada {conflictStatusCounts.open} data berkonflik di knowledge base
+                </p>
+                <p className="text-sm text-orange-700 dark:text-orange-400 mt-0.5">
+                  AI mendeteksi informasi yang saling bertentangan dari sumber berbeda. Periksa dan selesaikan di tabel konflik di bawah.
+                </p>
+              </div>
+              <Badge className="bg-orange-200 text-orange-800 shrink-0">
+                {conflictStatusCounts.open} Konflik
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Overview Stats */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -368,6 +415,18 @@ export default function KnowledgeAnalyticsPage() {
                 </div>
               </li>
             )}
+            {conflictStatusCounts.open > 0 && (
+              <li className="flex items-start gap-2">
+                <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium text-sm">Ada {conflictStatusCounts.open} data berkonflik di knowledge base</p>
+                  <p className="text-xs text-muted-foreground">
+                    AI mendeteksi informasi yang saling bertentangan dari sumber berbeda. Periksa tabel &quot;Data Berkonflik&quot; di bawah dan perbaiki knowledge yang tidak akurat.
+                    {conflictStatusCounts.auto_resolved > 0 && ` (${conflictStatusCounts.auto_resolved} konflik sudah otomatis di-resolve karena ada data resmi di database)`}
+                  </p>
+                </div>
+              </li>
+            )}
             {overview.totalQueries === 0 && (
               <li className="flex items-start gap-2">
                 <HelpCircle className="h-5 w-5 text-blue-500 mt-0.5 shrink-0" />
@@ -380,6 +439,91 @@ export default function KnowledgeAnalyticsPage() {
               </li>
             )}
           </ul>
+        </CardContent>
+      </Card>
+
+      {/* Knowledge Conflicts Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-orange-600" /> Data Berkonflik
+          </CardTitle>
+          <CardDescription>
+            AI mendeteksi informasi yang saling bertentangan dari sumber knowledge yang berbeda.
+            Periksa dan perbaiki knowledge yang tidak akurat agar AI memberikan jawaban konsisten.
+          </CardDescription>
+          {(conflictStatusCounts.open > 0 || conflictStatusCounts.resolved > 0 || conflictStatusCounts.auto_resolved > 0) && (
+            <div className="flex gap-2 mt-2 flex-wrap">
+              <Badge className="bg-orange-100 text-orange-800">{conflictStatusCounts.open} Belum Ditangani</Badge>
+              <Badge className="bg-blue-100 text-blue-800">{conflictStatusCounts.auto_resolved} Auto-Resolved</Badge>
+              <Badge className="bg-green-100 text-green-800">{conflictStatusCounts.resolved} Sudah Diperbaiki</Badge>
+              {conflictStatusCounts.ignored > 0 && (
+                <Badge className="bg-gray-100 text-gray-600">{conflictStatusCounts.ignored} Diabaikan</Badge>
+              )}
+            </div>
+          )}
+        </CardHeader>
+        <CardContent>
+          {topConflicts.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <CheckCircle className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>Tidak ada konflik data yang terdeteksi</p>
+              <p className="text-xs mt-1">Semua knowledge base konsisten dan tidak saling bertentangan</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>#</TableHead>
+                  <TableHead>Sumber 1</TableHead>
+                  <TableHead>Sumber 2</TableHead>
+                  <TableHead>Deskripsi Konflik</TableHead>
+                  <TableHead>Frekuensi</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Terakhir</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {topConflicts.map((conflict, idx) => {
+                  const lastSeen = conflict.lastSeen ? new Date(conflict.lastSeen) : null
+                  const relativeTime = lastSeen ? formatRelativeTime(lastSeen) : "-"
+                  return (
+                    <TableRow key={conflict.id}>
+                      <TableCell className="font-mono text-sm">{idx + 1}</TableCell>
+                      <TableCell className="max-w-[120px] truncate text-xs" title={conflict.source1}>
+                        {conflict.source1}
+                      </TableCell>
+                      <TableCell className="max-w-[120px] truncate text-xs" title={conflict.source2}>
+                        {conflict.source2}
+                      </TableCell>
+                      <TableCell className="max-w-xs">
+                        <p className="text-xs text-muted-foreground truncate" title={conflict.summary}>
+                          {conflict.summary.length > 100 ? conflict.summary.substring(0, 100) + '...' : conflict.summary}
+                        </p>
+                      </TableCell>
+                      <TableCell>
+                        <span className={`font-medium ${conflict.hitCount >= 5 ? "text-red-600" : conflict.hitCount >= 3 ? "text-yellow-600" : ""}`}>
+                          {conflict.hitCount}×
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {conflict.status === 'open' ? (
+                          <Badge className="bg-orange-100 text-orange-800 text-xs">Belum Ditangani</Badge>
+                        ) : conflict.status === 'auto_resolved' ? (
+                          <Badge className="bg-blue-100 text-blue-800 text-xs">Auto-Resolved</Badge>
+                        ) : conflict.status === 'resolved' ? (
+                          <Badge className="bg-green-100 text-green-800 text-xs">Diperbaiki</Badge>
+                        ) : (
+                          <Badge className="bg-gray-100 text-gray-600 text-xs">Diabaikan</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{relativeTime}</TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 

@@ -15,6 +15,7 @@ import logger from '../utils/logger';
 import {
   RAGContext,
   RAGConfidence,
+  RAGConflictInfo,
   VectorSearchResult,
   VectorSearchOptions,
 } from '../types/embedding.types';
@@ -416,7 +417,7 @@ export async function retrieveContext(
     }
 
     // Step 6: Build context string for LLM
-    const contextString = buildContextString(filteredResults);
+    const { context: contextString, conflicts } = buildContextString(filteredResults);
 
     // Step 7: Calculate confidence score
     const confidence = calculateConfidence(filteredResults, query);
@@ -440,6 +441,7 @@ export async function retrieveContext(
       totalResults: filteredResults.length,
       searchTimeMs: endTime - startTime,
       confidence,
+      conflicts: conflicts.length > 0 ? conflicts : undefined,
     };
   } catch (error: any) {
     logger.error('RAG retrieval failed', {
@@ -634,11 +636,11 @@ function rerankResults(
  * DETECTS CONFLICTS and adds warnings when different sources disagree.
  * 
  * @param results - Search results to include in context
- * @returns Formatted context string
+ * @returns Object with formatted context string and detected conflicts
  */
-function buildContextString(results: VectorSearchResult[]): string {
+function buildContextString(results: VectorSearchResult[]): { context: string; conflicts: RAGConflictInfo[] } {
   if (results.length === 0) {
-    return '';
+    return { context: '', conflicts: [] };
   }
 
   // DEDUP + CONFLICT DETECTION: Remove true duplicates, flag potential conflicts
@@ -652,6 +654,20 @@ function buildContextString(results: VectorSearchResult[]): string {
         conflictGroups.set(r._conflictGroup, []);
       }
       conflictGroups.get(r._conflictGroup)!.push(r);
+    }
+  }
+
+  // Extract conflict metadata for reporting
+  const conflicts: RAGConflictInfo[] = [];
+  for (const [, groupItems] of conflictGroups) {
+    if (groupItems.length >= 2) {
+      conflicts.push({
+        source1: groupItems[0].source || 'tidak diketahui',
+        source2: groupItems[1].source || 'tidak diketahui',
+        similarityScore: 0, // Will be filled by dedup caller if needed
+        contentSnippet1: groupItems[0].content.substring(0, 200),
+        contentSnippet2: groupItems[1].content.substring(0, 200),
+      });
     }
   }
 
@@ -701,7 +717,7 @@ function buildContextString(results: VectorSearchResult[]): string {
     totalLength += entry.length;
   }
 
-  return context.trim();
+  return { context: context.trim(), conflicts };
 }
 
 /**
