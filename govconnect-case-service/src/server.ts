@@ -2,6 +2,7 @@ import 'dotenv/config';
 import app, { initializeApp } from './app';
 import { config } from './config/env';
 import { connectRabbitMQ, disconnectRabbitMQ } from './services/rabbitmq.service';
+import { startAutoPurgeScheduler, stopAutoPurgeScheduler } from './services/auto-purge.service';
 import prisma from './config/database';
 import logger from './utils/logger';
 
@@ -21,6 +22,9 @@ async function startServer() {
     
     // Initialize app (routes, services, etc.)
     await initializeApp();
+    
+    // Start auto-purge scheduler for soft-deleted records (30 days)
+    startAutoPurgeScheduler();
     
     // Start Express server
     const server = app.listen(PORT, () => {
@@ -55,6 +59,9 @@ async function gracefulShutdown(signal: string, server?: any) {
 
     // Disconnect RabbitMQ
     await disconnectRabbitMQ();
+    
+    // Stop auto-purge scheduler
+    stopAutoPurgeScheduler();
     
     // Disconnect database
     await prisma.$disconnect();

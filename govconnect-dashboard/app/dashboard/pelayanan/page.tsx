@@ -7,7 +7,15 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Search, RefreshCw, FileText, User, Phone, CreditCard, ChevronRight } from "lucide-react"
+import { Search, RefreshCw, FileText, User, Phone, CreditCard, ChevronRight, Trash2, Loader2, RotateCcw, Archive } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { useToast } from "@/hooks/use-toast"
 
 interface ServiceRequest {
   id: string
@@ -38,6 +46,12 @@ export default function ServiceRequestsPage() {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [showDeletedModal, setShowDeletedModal] = useState(false)
+  const [deletedItems, setDeletedItems] = useState<ServiceRequest[]>([])
+  const [loadingDeleted, setLoadingDeleted] = useState(false)
+  const [restoringId, setRestoringId] = useState<string | null>(null)
+  const { toast } = useToast()
 
   const fetchRequests = async () => {
     try {
@@ -98,6 +112,62 @@ export default function ServiceRequestsPage() {
     return map[status] || "bg-gray-100 text-gray-700"
   }
 
+  const handleSoftDelete = async (id: string) => {
+    try {
+      setDeletingId(id)
+      const res = await fetch(`/api/service-requests/${id}/soft-delete`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!res.ok) throw new Error("Gagal menghapus")
+      toast({ title: "Berhasil", description: "Permohonan dipindahkan ke sampah" })
+      fetchRequests()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const fetchDeletedItems = async () => {
+    try {
+      setLoadingDeleted(true)
+      const res = await fetch('/api/service-requests/deleted', {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!res.ok) throw new Error("Gagal memuat data")
+      const data = await res.json()
+      setDeletedItems(data.data || [])
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setLoadingDeleted(false)
+    }
+  }
+
+  const handleRestore = async (id: string) => {
+    try {
+      setRestoringId(id)
+      const res = await fetch(`/api/service-requests/${id}/restore`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!res.ok) throw new Error("Gagal memulihkan")
+      toast({ title: "Berhasil", description: "Permohonan berhasil dipulihkan" })
+      setDeletedItems(prev => prev.filter(item => item.id !== id))
+      fetchRequests()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
+  const openDeletedModal = () => {
+    setShowDeletedModal(true)
+    fetchDeletedItems()
+  }
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -128,10 +198,15 @@ export default function ServiceRequestsPage() {
           <h1 className="text-3xl font-bold text-foreground">Permohonan Layanan</h1>
           <p className="text-muted-foreground mt-2">Daftar permohonan layanan dari form publik.</p>
         </div>
-        <Button variant="outline" onClick={fetchRequests} className="gap-2">
-          <RefreshCw className="h-4 w-4" />
-          Muat Ulang
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={openDeletedModal}>
+            <Archive className="h-4 w-4 mr-2" /> Lihat yang Dihapus
+          </Button>
+          <Button variant="outline" onClick={fetchRequests} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Muat Ulang
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -205,12 +280,28 @@ export default function ServiceRequestsPage() {
                           {new Date(item.created_at).toLocaleString("id-ID")}
                         </p>
                       </div>
-                      <Link href={`/dashboard/pelayanan/${item.id}`}>
-                        <Button variant="outline" size="sm" className="gap-1.5 shrink-0">
-                          Lihat Detail
-                          <ChevronRight className="h-4 w-4" />
+                      <div className="flex flex-col gap-2 shrink-0">
+                        <Link href={`/dashboard/pelayanan/${item.id}`}>
+                          <Button variant="outline" size="sm" className="gap-1.5 w-full">
+                            Lihat Detail
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </Link>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSoftDelete(item.id)}
+                          disabled={deletingId === item.id}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5 w-full"
+                        >
+                          {deletingId === item.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                          Hapus
                         </Button>
-                      </Link>
+                      </div>
                     </div>
                   </div>
                 )
@@ -219,6 +310,62 @@ export default function ServiceRequestsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Deleted Items Modal */}
+      <Dialog open={showDeletedModal} onOpenChange={setShowDeletedModal}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Archive className="h-5 w-5" /> Permohonan yang Dihapus
+            </DialogTitle>
+            <DialogDescription>
+              Item yang dihapus akan otomatis terhapus permanen setelah 30 hari.
+            </DialogDescription>
+          </DialogHeader>
+          {loadingDeleted ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : deletedItems.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Trash2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
+              <p>Tidak ada permohonan yang dihapus</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {deletedItems.map((item) => (
+                <div key={item.id} className="border rounded-lg p-4 flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-sm">{item.request_number}</span>
+                      <Badge className={getStatusBadge(item.status)}>{item.status}</Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{item.service?.name || '-'}</p>
+                    <div className="flex gap-3 text-xs text-muted-foreground">
+                      <span>{item.citizen_data_json?.nama_lengkap || '-'}</span>
+                      <span>{new Date(item.created_at).toLocaleString("id-ID")}</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRestore(item.id)}
+                    disabled={restoringId === item.id}
+                    className="shrink-0"
+                  >
+                    {restoringId === item.id ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-4 w-4 mr-1" />
+                    )}
+                    Pulihkan
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -102,6 +102,22 @@ export const laporan = {
       body: JSON.stringify(data),
     });
   },
+
+  async softDelete(id: string) {
+    return fetchApi<{ success: boolean }>(`/api/laporan/${id}/soft-delete`, {
+      method: 'PATCH',
+    });
+  },
+
+  async restore(id: string) {
+    return fetchApi<{ success: boolean }>(`/api/laporan/${id}/restore`, {
+      method: 'PATCH',
+    });
+  },
+
+  async getDeleted() {
+    return fetchApi<{ data: any[] }>('/api/laporan/deleted');
+  },
 };
 
 // ==================== LAYANAN ====================

@@ -9,6 +9,9 @@ import {
   handleGetComplaintStatistics,
   handleCancelComplaint,
   handleUpdateComplaintByUser,
+  handleSoftDeleteComplaint,
+  handleRestoreComplaint,
+  handleGetDeletedComplaints,
 } from '../controllers/complaint.controller';
 import { internalAuth } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
@@ -68,6 +71,7 @@ router.post(
 
 router.get('/', internalAuth, handleGetComplaints);
 router.get('/statistics', internalAuth, handleGetComplaintStatistics);
+router.get('/deleted', internalAuth, handleGetDeletedComplaints);
 router.get('/:id', internalAuth, handleGetComplaintById);
 
 // Check complaint status with ownership validation (user via AI)
@@ -94,6 +98,9 @@ router.patch(
   validate,
   handleUpdateComplaintStatus
 );
+
+router.patch('/:id/soft-delete', internalAuth, handleSoftDeleteComplaint);
+router.patch('/:id/restore', internalAuth, handleRestoreComplaint);
 
 router.post(
   '/:id/cancel',

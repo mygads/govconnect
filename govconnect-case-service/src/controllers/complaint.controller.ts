@@ -11,6 +11,7 @@ import {
 import { checkDuplicateComplaint, checkGlobalDuplicate } from '../services/complaint-deduplication.service';
 import logger from '../utils/logger';
 import { getParam, getQuery, getQueryInt } from '../utils/http';
+import prisma from '../config/database';
 
 function resolveChannelFromRequest(req: Request): 'WHATSAPP' | 'WEBCHAT' {
   const raw = (req.body?.channel || getQuery(req, 'channel') || '').toString().toUpperCase();
@@ -366,6 +367,89 @@ export async function handleUpdateComplaintByUser(req: Request, res: Response) {
     return res.json({ data: result.data });
   } catch (error: any) {
     logger.error('Update complaint by user error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * PATCH /laporan/:id/soft-delete
+ * Soft delete a complaint (set deleted_at)
+ */
+export async function handleSoftDeleteComplaint(req: Request, res: Response) {
+  try {
+    const id = getParam(req, 'id');
+    if (!id) return res.status(400).json({ error: 'id is required' });
+
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) return res.status(400).json({ error: 'village_id is required' });
+
+    const complaint = await prisma.complaint.findFirst({
+      where: { OR: [{ id }, { complaint_id: id }] },
+    });
+    if (!complaint || complaint.village_id !== village_id) {
+      return res.status(404).json({ error: 'Complaint not found' });
+    }
+
+    await prisma.complaint.update({
+      where: { id: complaint.id },
+      data: { deleted_at: new Date() },
+    });
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Soft delete complaint error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * PATCH /laporan/:id/restore
+ * Restore a soft-deleted complaint
+ */
+export async function handleRestoreComplaint(req: Request, res: Response) {
+  try {
+    const id = getParam(req, 'id');
+    if (!id) return res.status(400).json({ error: 'id is required' });
+
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) return res.status(400).json({ error: 'village_id is required' });
+
+    const complaint = await prisma.complaint.findFirst({
+      where: { OR: [{ id }, { complaint_id: id }], deleted_at: { not: null } },
+    });
+    if (!complaint || complaint.village_id !== village_id) {
+      return res.status(404).json({ error: 'Deleted complaint not found' });
+    }
+
+    await prisma.complaint.update({
+      where: { id: complaint.id },
+      data: { deleted_at: null },
+    });
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Restore complaint error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * GET /laporan/deleted
+ * List soft-deleted complaints
+ */
+export async function handleGetDeletedComplaints(req: Request, res: Response) {
+  try {
+    const village_id = getQuery(req, 'village_id') || undefined;
+    if (!village_id) return res.status(400).json({ error: 'village_id is required' });
+
+    const data = await prisma.complaint.findMany({
+      where: { village_id, deleted_at: { not: null } },
+      orderBy: { deleted_at: 'desc' },
+    });
+
+    return res.json({ data });
+  } catch (error: any) {
+    logger.error('Get deleted complaints error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

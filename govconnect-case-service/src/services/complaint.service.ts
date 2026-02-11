@@ -358,6 +358,8 @@ export async function getComplaintsList(filters: ComplaintFilters) {
   if (village_id) where.village_id = village_id;
   if (category_id) where.category_id = category_id;
   if (type_id) where.type_id = type_id;
+  // Exclude soft-deleted records
+  where.deleted_at = null;
   
   const [data, total] = await Promise.all([
     prisma.complaint.findMany({

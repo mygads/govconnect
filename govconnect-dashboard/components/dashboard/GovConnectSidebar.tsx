@@ -89,50 +89,15 @@ export function GovConnectSidebar() {
         },
       ],
     },
-    // === VILLAGE ADMIN ONLY: Statistik ===
+
+    // === VILLAGE ADMIN ONLY: Layanan ===
     {
-      title: "Statistik",
-      items: [
-        {
-          title: "Statistik",
-          url: "/dashboard/statistik",
-          icon: BarChart3,
-          excludeRoles: ["superadmin"],
-        },
-        {
-          title: "Analisis Tren",
-          url: "/dashboard/statistik/analytics",
-          icon: TrendingUp,
-          excludeRoles: ["superadmin"],
-        },
-      ],
-    },
-    // === VILLAGE ADMIN ONLY: Pengaduan ===
-    {
-      title: "Pengaduan",
+      title: "Layanan Publik",
       items: [
         {
           title: "Daftar Pengaduan",
           url: "/dashboard/laporan",
           icon: FileText,
-          excludeRoles: ["superadmin"],
-        },
-        {
-          title: "Kategori & Jenis",
-          url: "/dashboard/pengaduan/kategori-jenis",
-          icon: Shield,
-          excludeRoles: ["superadmin"],
-        },
-      ],
-    },
-    // === VILLAGE ADMIN ONLY: Layanan ===
-    {
-      title: "Layanan",
-      items: [
-        {
-          title: "Katalog Layanan",
-          url: "/dashboard/layanan",
-          icon: Settings2,
           excludeRoles: ["superadmin"],
         },
         {
@@ -148,39 +113,9 @@ export function GovConnectSidebar() {
       title: "Channel",
       items: [
         {
-          title: "Pengaturan Channel",
-          url: "/dashboard/channel-settings",
-          icon: Smartphone,
-          excludeRoles: ["superadmin"],
-        },
-        {
-          title: "Live Chat & Ambil Alih",
+          title: "Pesan Masuk",
           url: "/dashboard/livechat",
           icon: MessageCircle,
-          excludeRoles: ["superadmin"],
-        },
-      ],
-    },
-    // === VILLAGE ADMIN ONLY: Basis Pengetahuan ===
-    {
-      title: "Basis Pengetahuan",
-      items: [
-        {
-          title: "Basis Pengetahuan",
-          url: "/dashboard/knowledge",
-          icon: Brain,
-          excludeRoles: ["superadmin"],
-        },
-        {
-          title: "Uji Pengetahuan",
-          url: "/dashboard/testing-knowledge",
-          icon: Activity,
-          excludeRoles: ["superadmin"],
-        },
-        {
-          title: "Analitik Knowledge",
-          url: "/dashboard/knowledge-analytics",
-          icon: Target,
           excludeRoles: ["superadmin"],
         },
       ],
@@ -202,6 +137,54 @@ export function GovConnectSidebar() {
           excludeRoles: ["superadmin"],
         },
         {
+          title: "Kategori Pengaduan",
+          url: "/dashboard/pengaduan/kategori-jenis",
+          icon: Shield,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Katalog Layanan",
+          url: "/dashboard/layanan",
+          icon: Settings2,
+          excludeRoles: ["superadmin"],
+        },
+
+        {
+          title: "Basis Pengetahuan",
+          url: "/dashboard/knowledge",
+          icon: Brain,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "WhatsApp",
+          url: "/dashboard/channel-settings",
+          icon: Smartphone,
+          excludeRoles: ["superadmin"],
+        },
+      ],
+    },
+        // === VILLAGE ADMIN ONLY: Statistik ===
+    {
+      title: "Statistik",
+      items: [
+        {
+          title: "Statistik",
+          url: "/dashboard/statistik",
+          icon: BarChart3,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Analisis Tren",
+          url: "/dashboard/statistik/analytics",
+          icon: TrendingUp,
+          excludeRoles: ["superadmin"],
+        },
+      ],
+    },
+    {
+      title: "Pengaturan Lanjutan",
+      items: [
+        {
           title: "Pengaturan Notifikasi",
           url: "/dashboard/settings/notifications",
           icon: Bell,
@@ -211,6 +194,18 @@ export function GovConnectSidebar() {
           title: "Rate Limit & Blacklist",
           url: "/dashboard/settings/rate-limit",
           icon: Shield,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Analitik Knowledge",
+          url: "/dashboard/knowledge-analytics",
+          icon: Target,
+          excludeRoles: ["superadmin"],
+        },
+        {
+          title: "Uji Pengetahuan",
+          url: "/dashboard/testing-knowledge",
+          icon: Activity,
           excludeRoles: ["superadmin"],
         },
       ],

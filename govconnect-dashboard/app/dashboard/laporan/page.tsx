@@ -29,11 +29,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe, Download, FileSpreadsheet, FileText as FilePdf, CheckSquare, Trash2, Loader2 } from "lucide-react"
+import { AlertCircle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe, Download, FileSpreadsheet, FileText as FilePdf, CheckSquare, Trash2, Loader2, RotateCcw, Archive } from "lucide-react"
 import { laporan } from "@/lib/frontend-api"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
 import { exportToExcel, exportToPDF } from "@/lib/export-utils"
 import { useToast } from "@/hooks/use-toast"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 interface Complaint {
   id: string
@@ -59,6 +66,11 @@ export default function LaporanListPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkUpdating, setBulkUpdating] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [showDeletedModal, setShowDeletedModal] = useState(false)
+  const [deletedItems, setDeletedItems] = useState<Complaint[]>([])
+  const [loadingDeleted, setLoadingDeleted] = useState(false)
+  const [restoringId, setRestoringId] = useState<string | null>(null)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -144,6 +156,69 @@ export default function LaporanListPage() {
     toast({ title: "Export Berhasil", description: `${dataToExport.length} data diekspor ke PDF` })
   }
 
+  const handleSoftDelete = async (id: string) => {
+    try {
+      setDeletingId(id)
+      await laporan.softDelete(id)
+      toast({ title: "Berhasil", description: "Pengaduan dipindahkan ke sampah" })
+      fetchComplaints()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const handleBulkSoftDelete = async () => {
+    if (selectedIds.size === 0) return
+    setBulkUpdating(true)
+    let success = 0, failed = 0
+    for (const id of selectedIds) {
+      try {
+        await laporan.softDelete(id)
+        success++
+      } catch { failed++ }
+    }
+    toast({
+      title: "Bulk Delete Selesai",
+      description: `${success} berhasil dihapus, ${failed} gagal`,
+    })
+    setSelectedIds(new Set())
+    setBulkUpdating(false)
+    fetchComplaints()
+  }
+
+  const fetchDeletedItems = async () => {
+    try {
+      setLoadingDeleted(true)
+      const data = await laporan.getDeleted()
+      setDeletedItems(data.data || [])
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setLoadingDeleted(false)
+    }
+  }
+
+  const handleRestore = async (id: string) => {
+    try {
+      setRestoringId(id)
+      await laporan.restore(id)
+      toast({ title: "Berhasil", description: "Pengaduan berhasil dipulihkan" })
+      setDeletedItems(prev => prev.filter(item => item.id !== id))
+      fetchComplaints()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
+  const openDeletedModal = () => {
+    setShowDeletedModal(true)
+    fetchDeletedItems()
+  }
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -196,6 +271,9 @@ export default function LaporanListPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={openDeletedModal}>
+            <Archive className="h-4 w-4 mr-2" /> Lihat yang Dihapus
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline">
@@ -240,6 +318,10 @@ export default function LaporanListPage() {
                   <DropdownMenuItem onClick={() => handleBulkStatusUpdate("CANCELED")}>Tandai Dibatalkan</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <Button size="sm" variant="outline" onClick={handleBulkSoftDelete} disabled={bulkUpdating} className="text-destructive hover:text-destructive">
+                {bulkUpdating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
+                Hapus
+              </Button>
               <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
                 Batal
               </Button>
@@ -396,12 +478,27 @@ export default function LaporanListPage() {
                       </TableCell>
                       <TableCell>{formatDate(complaint.created_at)}</TableCell>
                       <TableCell className="text-right">
-                        <Link href={`/dashboard/laporan/${complaint.id}`}>
-                          <Button variant="ghost" size="sm">
-                            <Eye className="h-4 w-4 mr-1" />
-                            Detail
+                        <div className="flex items-center justify-end gap-1">
+                          <Link href={`/dashboard/laporan/${complaint.id}`}>
+                            <Button variant="ghost" size="sm">
+                              <Eye className="h-4 w-4 mr-1" />
+                              Detail
+                            </Button>
+                          </Link>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleSoftDelete(complaint.id)}
+                            disabled={deletingId === complaint.id}
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          >
+                            {deletingId === complaint.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
                           </Button>
-                        </Link>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -414,6 +511,62 @@ export default function LaporanListPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Deleted Items Modal */}
+      <Dialog open={showDeletedModal} onOpenChange={setShowDeletedModal}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Archive className="h-5 w-5" /> Pengaduan yang Dihapus
+            </DialogTitle>
+            <DialogDescription>
+              Item yang dihapus akan otomatis terhapus permanen setelah 30 hari.
+            </DialogDescription>
+          </DialogHeader>
+          {loadingDeleted ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : deletedItems.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Trash2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
+              <p>Tidak ada pengaduan yang dihapus</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {deletedItems.map((item) => (
+                <div key={item.id} className="border rounded-lg p-4 flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-sm">{item.complaint_id}</span>
+                      <Badge className={getStatusColor(item.status)} >{formatStatus(item.status)}</Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground truncate">{item.deskripsi}</p>
+                    <div className="flex gap-3 text-xs text-muted-foreground">
+                      <span>{item.kategori.replace(/_/g, " ")}</span>
+                      <span>{formatDate(item.created_at)}</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRestore(item.id)}
+                    disabled={restoringId === item.id}
+                    className="shrink-0"
+                  >
+                    {restoringId === item.id ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-4 w-4 mr-1" />
+                    )}
+                    Pulihkan
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

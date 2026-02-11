@@ -26,6 +26,9 @@ import {
   handleGenerateServiceRequestEditToken,
   handleGetServiceRequestByToken,
   handleUpdateServiceRequestByToken,
+  handleSoftDeleteServiceRequest,
+  handleRestoreServiceRequest,
+  handleGetDeletedServiceRequests,
 } from '../controllers/service-catalog.controller';
 
 const router: ExpressRouter = Router();
@@ -67,9 +70,12 @@ router.get(
   handleGetServiceRequests
 );
 router.post('/service-requests', handleCreateServiceRequest);
+router.get('/service-requests/deleted', internalAuth, handleGetDeletedServiceRequests);
 router.get('/service-requests/:id', handleGetServiceRequestById);
 router.get('/service-requests/by-token', handleGetServiceRequestByToken);
 router.patch('/service-requests/:id/status', internalAuth, handleUpdateServiceRequestStatus);
+router.patch('/service-requests/:id/soft-delete', internalAuth, handleSoftDeleteServiceRequest);
+router.patch('/service-requests/:id/restore', internalAuth, handleRestoreServiceRequest);
 router.post('/service-requests/:id/cancel', internalAuth, handleCancelServiceRequest);
 router.post('/service-requests/:id/edit-token', internalAuth, handleGenerateServiceRequestEditToken);
 router.patch('/service-requests/:id/by-token', handleUpdateServiceRequestByToken);

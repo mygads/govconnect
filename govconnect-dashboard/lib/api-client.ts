@@ -165,6 +165,76 @@ export const caseService = {
   },
 
   /**
+   * Soft delete laporan
+   */
+  async softDeleteLaporan(id: string, village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, `/laporan/${id}/soft-delete`));
+    if (village_id) url.searchParams.set('village_id', village_id);
+    return apiFetch(url.toString(), {
+      method: 'PATCH',
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Restore soft-deleted laporan
+   */
+  async restoreLaporan(id: string, village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, `/laporan/${id}/restore`));
+    if (village_id) url.searchParams.set('village_id', village_id);
+    return apiFetch(url.toString(), {
+      method: 'PATCH',
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get deleted laporan
+   */
+  async getDeletedLaporan(village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, '/laporan/deleted'));
+    if (village_id) url.searchParams.set('village_id', village_id);
+    return apiFetch(url.toString(), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Soft delete service request
+   */
+  async softDeleteServiceRequest(id: string, village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}/soft-delete`));
+    if (village_id) url.searchParams.set('village_id', village_id);
+    return apiFetch(url.toString(), {
+      method: 'PATCH',
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Restore soft-deleted service request
+   */
+  async restoreServiceRequest(id: string, village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}/restore`));
+    if (village_id) url.searchParams.set('village_id', village_id);
+    return apiFetch(url.toString(), {
+      method: 'PATCH',
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get deleted service requests
+   */
+  async getDeletedServiceRequests(village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, '/service-requests/deleted'));
+    if (village_id) url.searchParams.set('village_id', village_id);
+    return apiFetch(url.toString(), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
    * Get service request list
    */
   async getServiceRequests(params?: { status?: string; limit?: string; offset?: string; village_id?: string }) {

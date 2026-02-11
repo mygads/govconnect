@@ -329,6 +329,7 @@ export async function handleGetServiceRequests(req: Request, res: Response) {
         ...(status ? { status } : {}),
         ...(request_number ? { request_number } : {}),
         ...(village_id ? { service: { village_id } } : {}),
+        deleted_at: null, // Exclude soft-deleted
       },
       include: { service: true },
       orderBy: { created_at: 'desc' }
@@ -782,6 +783,95 @@ export async function handleGetServiceHistory(req: Request, res: Response) {
     return res.json({ data });
   } catch (error: any) {
     logger.error('Get service history error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * PATCH /service-requests/:id/soft-delete
+ * Soft delete a service request
+ */
+export async function handleSoftDeleteServiceRequest(req: Request, res: Response) {
+  try {
+    const id = getParam(req, 'id');
+    if (!id) return res.status(400).json({ error: 'id is required' });
+
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) return res.status(400).json({ error: 'village_id is required' });
+
+    const sr = await prisma.serviceRequest.findFirst({
+      where: { OR: [{ id }, { request_number: id }] },
+      include: { service: true },
+    });
+    if (!sr || sr.service?.village_id !== village_id) {
+      return res.status(404).json({ error: 'Service request not found' });
+    }
+
+    await prisma.serviceRequest.update({
+      where: { id: sr.id },
+      data: { deleted_at: new Date() },
+    });
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Soft delete service request error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * PATCH /service-requests/:id/restore
+ * Restore a soft-deleted service request
+ */
+export async function handleRestoreServiceRequest(req: Request, res: Response) {
+  try {
+    const id = getParam(req, 'id');
+    if (!id) return res.status(400).json({ error: 'id is required' });
+
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) return res.status(400).json({ error: 'village_id is required' });
+
+    const sr = await prisma.serviceRequest.findFirst({
+      where: { OR: [{ id }, { request_number: id }], deleted_at: { not: null } },
+      include: { service: true },
+    });
+    if (!sr || sr.service?.village_id !== village_id) {
+      return res.status(404).json({ error: 'Deleted service request not found' });
+    }
+
+    await prisma.serviceRequest.update({
+      where: { id: sr.id },
+      data: { deleted_at: null },
+    });
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Restore service request error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * GET /service-requests/deleted
+ * List soft-deleted service requests
+ */
+export async function handleGetDeletedServiceRequests(req: Request, res: Response) {
+  try {
+    const village_id = getQuery(req, 'village_id') || undefined;
+    if (!village_id) return res.status(400).json({ error: 'village_id is required' });
+
+    const data = await prisma.serviceRequest.findMany({
+      where: {
+        deleted_at: { not: null },
+        service: { village_id },
+      },
+      include: { service: true },
+      orderBy: { deleted_at: 'desc' },
+    });
+
+    return res.json({ data });
+  } catch (error: any) {
+    logger.error('Get deleted service requests error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

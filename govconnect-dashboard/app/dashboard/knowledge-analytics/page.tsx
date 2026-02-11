@@ -10,9 +10,10 @@ import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Brain, RefreshCcw, TrendingUp, TrendingDown, AlertTriangle,
-  CheckCircle, XCircle, HelpCircle, BarChart3, Target, MessageSquareWarning
+  CheckCircle, XCircle, HelpCircle, BarChart3, Target, MessageSquareWarning, Trash2, Loader2
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
+import { useToast } from "@/hooks/use-toast"
 
 /** Format a date into a simple relative time string (no external deps). */
 function formatRelativeTime(date: Date): string {
@@ -96,6 +97,8 @@ export default function KnowledgeAnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [deletingGapId, setDeletingGapId] = useState<string | null>(null)
+  const { toast } = useToast()
 
   // Only village admin can access this page
   useEffect(() => {
@@ -119,6 +122,23 @@ export default function KnowledgeAnalyticsPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  const handleDeleteGap = async (id: string) => {
+    try {
+      setDeletingGapId(id)
+      const res = await fetch(`/api/knowledge-gaps/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!res.ok) throw new Error("Gagal menghapus")
+      toast({ title: "Berhasil", description: "Pertanyaan berhasil dihapus" })
+      fetchData()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setDeletingGapId(null)
+    }
+  }
 
   if (loading) {
     return (
@@ -560,10 +580,10 @@ export default function KnowledgeAnalyticsPage() {
                 <TableRow>
                   <TableHead>#</TableHead>
                   <TableHead>Pertanyaan</TableHead>
-                  <TableHead>Intent</TableHead>
                   <TableHead>Frekuensi</TableHead>
                   <TableHead>Channel</TableHead>
                   <TableHead>Terakhir</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -579,15 +599,27 @@ export default function KnowledgeAnalyticsPage() {
                         {gap.query}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="text-xs">{gap.intent}</Badge>
-                      </TableCell>
-                      <TableCell>
                         <span className={`font-medium ${gap.hitCount >= 5 ? "text-red-600" : gap.hitCount >= 3 ? "text-yellow-600" : ""}`}>
                           {gap.hitCount}×
                         </span>
                       </TableCell>
                       <TableCell className="capitalize text-xs">{gap.channel}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{relativeTime}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteGap(gap.id)}
+                          disabled={deletingGapId === gap.id}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          {deletingGapId === gap.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   )
                 })}

@@ -32,6 +32,7 @@ model Complaint {
   village_id   String   // Required: multi-tenancy isolation
   status       String   @default("OPEN") // OPEN, PROCESS, DONE, CANCELED, REJECT
   admin_notes  String?  @db.Text
+  deleted_at   DateTime? // Soft delete: null = active, set = deleted
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
 
@@ -48,6 +49,7 @@ model Complaint {
   @@index([village_id])
   @@index([created_at])
   @@index([rt_rw])
+  @@index([deleted_at])
   @@map("complaints")
 }
 
@@ -184,6 +186,7 @@ model ServiceRequest {
   edit_token            String?  @unique
   edit_token_expires_at DateTime?
   edit_token_used_at    DateTime?
+  deleted_at            DateTime? // Soft delete: null = active, set = deleted
   created_at            DateTime @default(now())
   updated_at            DateTime @updatedAt
 
@@ -195,6 +198,7 @@ model ServiceRequest {
   @@index([status])
   @@index([village_id])
   @@index([created_at])
+  @@index([deleted_at])
   @@map("service_requests")
 }
 
