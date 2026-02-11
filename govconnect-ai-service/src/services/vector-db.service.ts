@@ -291,7 +291,7 @@ export async function searchVectors(
             quality_score
           FROM knowledge_vectors
           WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-            AND village_id = ${villageId}
+            AND (village_id = ${villageId} OR village_id IS NULL)
         `;
       }
 
@@ -326,7 +326,7 @@ export async function searchVectors(
           FROM knowledge_vectors
           WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
             AND category = ANY(${categories})
-            AND village_id = ${villageId}
+            AND (village_id = ${villageId} OR village_id IS NULL)
         `;
       }
 
@@ -385,7 +385,7 @@ export async function searchVectors(
             'document' as source_type
           FROM document_vectors
           WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
-            AND village_id = ${villageId}
+            AND (village_id = ${villageId} OR village_id IS NULL)
         `;
       }
 
@@ -424,7 +424,7 @@ export async function searchVectors(
           FROM document_vectors
           WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
             AND category = ANY(${categories})
-            AND village_id = ${villageId}
+            AND (village_id = ${villageId} OR village_id IS NULL)
         `;
       }
 

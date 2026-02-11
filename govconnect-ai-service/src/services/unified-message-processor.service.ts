@@ -435,12 +435,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     // Hard gate: wajib tahu nama sebelum proses apa pun
+    // SKIP for isEvaluation (testing-knowledge) — fokus jawab pertanyaan, tidak perlu tanya nama
+    let knownName: string | null = null;
+    let currentName: string | null = null;
+
+    if (!isEvaluation) {
     const profileName = getProfile(userId).nama_lengkap || null;
     const nluContext = { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel };
     const lastAssistantMsg = getLastAssistantMessage(resolvedHistory);
     const historyName = await extractNameFromHistoryNLU(resolvedHistory, nluContext);
-    const knownName = historyName || profileName;
-    const currentName = await extractNameFromTextNLU(message, { ...nluContext, last_assistant_message: lastAssistantMsg });
+    knownName = historyName || profileName;
+    currentName = await extractNameFromTextNLU(message, { ...nluContext, last_assistant_message: lastAssistantMsg });
 
     // If we found a name from chat history but it's not persisted in profile yet,
     // persist it now and sync to Channel Service (fixes livechat showing phone only)
@@ -505,7 +510,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     if (knownName && currentName && knownName.toLowerCase() !== currentName.toLowerCase()) {
       try {
         const nameUpdateResult = await withMicroNluBudget(
-          () => classifyNameUpdate(message, knownName, {
+          () => classifyNameUpdate(message, knownName!, {
             village_id: resolvedVillageId,
             wa_user_id: userId,
             session_id: userId,
@@ -529,6 +534,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         logger.warn('[UnifiedProcessor] Name update NLU failed, continuing normal flow', { error: error.message });
       }
     }
+    } // end if (!isEvaluation) — skip name gate for testing-knowledge
     
     // Step 1.9: Farewell detection — uses unified classifier (shares same LLM call as greeting/RAG check)
     if (message.trim().length < 80) {

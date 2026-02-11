@@ -194,14 +194,17 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
     }
     
     // Update conversation
-    const userName = resolvedChannel === 'WEBCHAT' ? `Web User ${resolvedIdentifier.substring(4, 12)}` : undefined;
+    // Don't pass a hardcoded "Web User xxx" name — it would overwrite
+    // the real name synced via /internal/conversations/user-profile.
+    // The conversation create (upsert) in takeover.service already
+    // keeps the existing user_name when the update value is undefined.
     // For incoming messages: increment unread count
     // For outgoing messages (AI/admin reply): reset unread count to 0 (message processed)
     const unreadAction = direction === 'IN' ? true : 'reset';
     await updateConversation(
       resolvedIdentifier,
       message_text.substring(0, 100),
-      userName,
+      undefined,
       unreadAction,
       village_id,
       resolvedChannel

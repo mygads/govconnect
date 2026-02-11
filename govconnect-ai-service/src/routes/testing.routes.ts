@@ -167,12 +167,14 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
     });
 
     // Use SAME unified processor as WhatsApp for consistent results
+    // isEvaluation=true skips name gate, profile writes, analytics — testing focuses on knowledge answers
     const result = await processUnifiedMessage({
       userId,
       message,
       channel: 'webchat',
       villageId: resolvedVillageId,
       conversationHistory: [],
+      isEvaluation: true,
     });
 
     return res.json({
