@@ -22,7 +22,6 @@ import { getEmbeddingStats, getEmbeddingCacheStats } from './services/embedding.
 import { getVectorDbStats } from './services/vector-db.service';
 import { resilientHttp } from './services/circuit-breaker.service';
 import { getTopCachedQueries, getCacheStats, clearCache as clearResponseCache } from './services/response-cache.service';
-import { getRoutingStats, analyzeComplexity } from './services/smart-router.service';
 import { getFSMStats, getAllActiveContexts } from './services/conversation-fsm.service';
 import knowledgeRoutes from './routes/knowledge.routes';
 import searchRoutes from './routes/search.routes';
@@ -1050,7 +1049,6 @@ app.get('/stats/conversation-fsm', (req: Request, res: Response) => {
 app.get('/stats/dashboard', async (req: Request, res: Response) => {
   try {
     const cacheStats = getCacheStats();
-    const routingStats = getRoutingStats();
     const fsmStats = getFSMStats();
     const modelStats = modelStatsService.getAllStats();
     const analyticsData = aiAnalyticsService.getSummary();
@@ -1076,7 +1074,7 @@ app.get('/stats/dashboard', async (req: Request, res: Response) => {
         totalMisses: cacheStats.totalMisses,
         cacheSize: cacheStats.cacheSize,
       },
-      routing: routingStats,
+      routing: { architecture: 'NLU-based with Micro NLU' },
       conversationFSM: {
         activeContexts: fsmStats.activeContexts || 0,
         avgMessageCount: fsmStats.avgMessageCount || 0,
@@ -1091,45 +1089,7 @@ app.get('/stats/dashboard', async (req: Request, res: Response) => {
   }
 });
 
-// Analyze message complexity (for testing smart router)
-app.post('/stats/analyze-complexity', (req: Request, res: Response) => {
-  try {
-    const { message, conversationHistory } = req.body;
 
-    if (!message) {
-      res.status(400).json({ error: 'message is required' });
-      return;
-    }
-
-    const analysis = analyzeComplexity(message, conversationHistory);
-
-    res.json({
-      message: message.substring(0, 100),
-      analysis,
-    });
-  } catch (error: any) {
-    res.status(500).json({
-      error: 'Failed to analyze complexity',
-    });
-  }
-});
-
-// Smart Routing Stats
-app.get('/stats/routing', (req: Request, res: Response) => {
-  try {
-    const stats = getRoutingStats();
-
-    res.json({
-      description: 'Message processing statistics',
-      stats,
-      architecture: 'NLU-based with Micro NLU',
-    });
-  } catch (error: any) {
-    res.status(500).json({
-      error: 'Failed to get routing stats',
-    });
-  }
-});
 
 // ===========================================
 // Circuit Breaker Endpoints
