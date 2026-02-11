@@ -34,15 +34,18 @@ function buildOperatingHoursText(operatingHours: Record<string, { open?: string;
 function buildProfileKnowledgeContent(profile: { name?: string; address?: string; gmaps_url?: string | null; short_name?: string; operating_hours?: Record<string, { open?: string; close?: string }> | null }) {
   const hoursText = buildOperatingHoursText(profile.operating_hours)
 
-  return [
+  const lines = [
     `Nama Desa/Kelurahan: ${profile.name || '-'}`,
     `Nama Singkat (Slug Form): ${profile.short_name || '-'}`,
+  ]
+  lines.push(
     `Alamat Kantor: ${profile.address || '-'}`,
     `Google Maps: ${profile.gmaps_url || '-'}`,
     'Jam Operasional Kantor:',
     '(Catatan: "-" atau "Libur" berarti hari tersebut libur/tutup, "Belum diatur" berarti data belum diisi)',
     hoursText,
-  ].join('\n')
+  )
+  return lines.join('\n')
 }
 
 function buildProfileKeywords(profile: { name?: string; short_name?: string; address?: string }) {

@@ -90,7 +90,8 @@ export type CallType =
   | 'knowledge_subtype'
   | 'address_analysis'
   | 'contact_match'
-  | 'update_intent';
+  | 'update_intent'
+  | 'profile_query_classify';
 
 export interface TokenUsageRecord {
   model: string;

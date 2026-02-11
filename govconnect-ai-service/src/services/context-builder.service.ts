@@ -166,8 +166,9 @@ INSTRUKSI: Knowledge mungkin hanya sebagian relevan. Gunakan dengan hati-hati, b
   let dbPriorityInstruction = '';
   if (contextStr.includes('[SUMBER: DATABASE RESMI')) {
     dbPriorityInstruction = `\n\n[PRIORITAS DATA]
-ATURAN: Jika ada data dari DATABASE RESMI dan data serupa dari knowledge base/dokumen, SELALU gunakan data DATABASE RESMI.
-Data DATABASE RESMI bersifat otoritatif (langsung dari database profil desa). Data knowledge base/dokumen mungkin sudah usang.`;
+ATURAN: Untuk field yang tercantum di DATABASE RESMI (nama desa, alamat, jam operasional, kepala desa, dll), SELALU gunakan data DATABASE RESMI karena bersifat otoritatif.
+Untuk informasi yang TIDAK tercantum di DATABASE RESMI (misalnya struktur organisasi, sejarah desa, dll), gunakan data dari knowledge base/dokumen.
+JANGAN katakan "belum memiliki informasi" jika data tersedia di knowledge base/dokumen meskipun tidak ada di DATABASE RESMI.`;
   }
 
   // CONFLICT DETECTION instruction — only added when conflicts are detected
@@ -212,8 +213,9 @@ ATURAN ANTI-HALUSINASI (KRITIS):
 - Jika informasi tidak ada di KNOWLEDGE_CONTEXT, reply_text harus menyatakan data belum tersedia untuk desa/kelurahan ini dan (opsional) menyarankan hubungi kantor pada jam kerja.
 
 PRIORITAS DATA:
-- Jika ada data bertanda [SUMBER: DATABASE RESMI], SELALU gunakan data tersebut karena bersifat otoritatif dan paling terbaru.
-- Jika ada data dari knowledge base/dokumen yang bertentangan dengan DATABASE RESMI, abaikan data knowledge base dan gunakan DATABASE RESMI.
+- Jika ada data bertanda [SUMBER: DATABASE RESMI], gunakan data tersebut untuk field yang tercantum di dalamnya karena bersifat otoritatif.
+- Untuk informasi yang TIDAK tercantum di DATABASE RESMI, gunakan data dari knowledge base/dokumen.
+- JANGAN katakan "belum memiliki informasi" jika data tersedia di knowledge base/dokumen meskipun tidak ada di DATABASE RESMI.
 
 PENANGANAN DATA BERBEDA:
 - Jika ditemukan data yang BERBEDA dari sumber berbeda (ditandai ⚠️ KONFLIK DATA), tampilkan SEMUA versi dan beri tahu user bahwa ada perbedaan data dari beberapa sumber.

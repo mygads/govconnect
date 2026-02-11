@@ -801,6 +801,89 @@ export async function classifyUpdateIntent(
   return parsed;
 }
 
+// ==================== PROFILE QUERY CLASSIFIER ====================
+// Replaces keyword-based isProfileRelatedQuery with semantic NLU.
+// Determines if a query needs authoritative DB profile data (nama desa, alamat, jam operasional)
+// vs RAG knowledge data. DB-stored fields are limited — only classify as DB-needed for fields
+// that actually exist in village_profiles table.
+
+const PROFILE_QUERY_CLASSIFY_PROMPT = `Kamu adalah classifier untuk menentukan apakah pertanyaan user membutuhkan DATA RESMI dari database profil desa.
+
+DATA YANG ADA DI DATABASE (village_profiles):
+- Nama desa/kelurahan (name, short_name)
+- Alamat kantor desa/kelurahan (address)
+- Link Google Maps (gmaps_url)
+- Jam operasional/jam kerja kantor (operating_hours)
+
+DATA YANG TIDAK ADA DI DATABASE (harus dari knowledge base/RAG):
+- Kepala desa/lurah, perangkat desa, struktur organisasi
+- Sejarah desa, visi misi, luas wilayah, jumlah penduduk
+- Prosedur layanan, persyaratan, biaya
+- Program desa, kegiatan, berita
+- Kontak pejabat, nomor telepon selain kantor
+
+TUGAS:
+Tentukan apakah pertanyaan user membutuhkan data dari DATABASE profil desa.
+
+OUTPUT (JSON saja):
+{
+  "needs_db_profile": true/false,
+  "confidence": 0.0-1.0,
+  "reason": "penjelasan singkat"
+}
+
+CONTOH:
+- "jam buka kantor?" → {"needs_db_profile":true,"confidence":0.95,"reason":"jam operasional ada di DB"}
+- "alamat kantor desa dimana?" → {"needs_db_profile":true,"confidence":0.95,"reason":"alamat ada di DB"}
+- "nama desanya apa?" → {"needs_db_profile":true,"confidence":0.90,"reason":"nama desa ada di DB"}
+- "siapa kepala desanya?" → {"needs_db_profile":false,"confidence":0.90,"reason":"kepala desa tidak ada di DB, harus dari RAG"}
+- "struktur organisasi desa" → {"needs_db_profile":false,"confidence":0.90,"reason":"struktur organisasi tidak ada di DB"}
+- "syarat buat SKTM?" → {"needs_db_profile":false,"confidence":0.95,"reason":"prosedur layanan bukan data profil DB"}
+- "dimana lokasi kantor kelurahan?" → {"needs_db_profile":true,"confidence":0.90,"reason":"lokasi/alamat ada di DB"}
+- "visi misi desa apa?" → {"needs_db_profile":false,"confidence":0.85,"reason":"visi misi tidak ada di DB profil"}
+
+PESAN USER:
+{user_message}`;
+
+export interface ProfileQueryResult {
+  needs_db_profile: boolean;
+  confidence: number;
+  reason?: string;
+}
+
+/**
+ * Classify whether a query needs authoritative DB profile data.
+ * Replaces pattern-based isProfileRelatedQuery with semantic NLU.
+ * Only returns true for fields actually stored in village_profiles table:
+ * name, short_name, address, gmaps_url, operating_hours.
+ */
+export async function classifyProfileQuery(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<ProfileQueryResult | null> {
+  const prompt = PROFILE_QUERY_CLASSIFY_PROMPT
+    .replace('{user_message}', message || '');
+
+  const raw = await callMicroLLM(prompt, 'profile_query_classify', context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as ProfileQueryResult | null;
+  if (!parsed || typeof parsed.needs_db_profile !== 'boolean' || typeof parsed.confidence !== 'number') return null;
+
+  logger.info('Micro LLM classified profile query', {
+    message: message.substring(0, 60),
+    needs_db_profile: parsed.needs_db_profile,
+    confidence: parsed.confidence,
+    reason: parsed.reason,
+  });
+
+  return {
+    needs_db_profile: parsed.needs_db_profile,
+    confidence: Math.max(0, Math.min(1, parsed.confidence)),
+    reason: parsed.reason,
+  };
+}
+
 // ==================== LEGACY WRAPPERS ====================
 // These wrap classifyMessage for backward compatibility.
 // They share a SINGLE cached result per call chain via classifyMessageCached().

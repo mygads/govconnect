@@ -6,6 +6,7 @@ import {
   inferCategories,
 } from './rag.service';
 import { RAGContext } from '../types/embedding.types';
+import { classifyProfileQuery } from './micro-llm-matcher.service';
 
 interface KnowledgeItem {
   id: string;
@@ -291,29 +292,39 @@ export async function getRAGContext(query: string, categories?: string[], villag
   // Track whether DB data was injected for auto-resolution
   let dbDataInjected = false;
 
-  // DB-FIRST: Check if query relates to village profile data
-  // If so, prepend authoritative DB data to the context string
-  if (villageId && isProfileRelatedQuery(query)) {
+  // DB-FIRST: Use micro-LLM to determine if query needs DB profile data
+  // Replaces keyword-based isProfileRelatedQuery with semantic NLU classifier
+  if (villageId) {
+    let needsDbProfile = false;
     try {
-      const profile = await getVillageProfileSummary(villageId);
-      if (profile?.name) {
-        const dbContext = formatProfileAsContext(profile);
-        
-        // Prepend DB data BEFORE RAG results so LLM sees it first
-        if (ragContext.contextString) {
-          ragContext.contextString = `${dbContext}\n\n${ragContext.contextString}`;
-        } else {
-          ragContext.contextString = dbContext;
-          ragContext.totalResults = Math.max(ragContext.totalResults, 1);
-        }
-        
-        dbDataInjected = true;
-        logger.info('DB-first: Prepended village profile to RAG context', {
-          villageId, query: query.substring(0, 50),
-        });
-      }
+      const profileResult = await classifyProfileQuery(query, { village_id: villageId });
+      needsDbProfile = !!(profileResult?.needs_db_profile && profileResult.confidence >= 0.7);
     } catch (error: any) {
-      logger.warn('DB-first: Failed to fetch village profile', { error: error.message });
+      logger.warn('Profile query classifier failed, skipping DB-first', { error: error.message });
+    }
+
+    if (needsDbProfile) {
+      try {
+        const profile = await getVillageProfileSummary(villageId);
+        if (profile?.name) {
+          const dbContext = formatProfileAsContext(profile);
+          
+          // Prepend DB data BEFORE RAG results so LLM sees it first
+          if (ragContext.contextString) {
+            ragContext.contextString = `${dbContext}\n\n${ragContext.contextString}`;
+          } else {
+            ragContext.contextString = dbContext;
+            ragContext.totalResults = Math.max(ragContext.totalResults, 1);
+          }
+          
+          dbDataInjected = true;
+          logger.info('DB-first: Prepended village profile to RAG context', {
+            villageId, query: query.substring(0, 50),
+          });
+        }
+      } catch (error: any) {
+        logger.warn('DB-first: Failed to fetch village profile', { error: error.message });
+      }
     }
   }
 
@@ -368,45 +379,37 @@ function autoResolveConflicts(contextString: string): string {
   return resolved;
 }
 
-/**
- * Check if a query is related to village profile / structured DB data.
- * These keywords indicate the user is asking about info that lives in
- * the village_profile table (jam buka, alamat, kepala desa, dll).
- */
-function isProfileRelatedQuery(query: string): boolean {
-  const queryLower = query.toLowerCase();
-  const profileKeywords = [
-    'jam buka', 'jam operasional', 'jam kerja', 'buka jam', 'tutup jam',
-    'jam pelayanan', 'jadwal buka', 'jadwal operasional', 'jadwal pelayanan',
-    'hari kerja', 'hari buka', 'hari libur',
-    'nama desa', 'nama kelurahan', 'nama kantor',
-    'alamat', 'lokasi', 'dimana', 'di mana', 'tempat',
-    'google maps', 'gmaps', 'peta', 'maps',
-    'kepala desa', 'lurah', 'kades', 'nama kepala',
-    'profil desa', 'profil kelurahan', 'info desa', 'info kelurahan',
-    'tentang desa', 'tentang kelurahan',
-  ];
-  return profileKeywords.some(kw => queryLower.includes(kw));
-}
 
 /**
  * Format village profile DB data as authoritative context block.
  * Marked with [SUMBER: DATABASE RESMI] so LLM knows to prioritize it.
+ *
+ * IMPORTANT: Only claims authority over fields that are actually present.
+ * If a field is not available in the DB, it is NOT listed — this lets
+ * the RAG knowledge base fill in the gap without conflict.
  */
 function formatProfileAsContext(profile: VillageProfileSummary): string {
+  const dataFields: string[] = [];
+  
+  if (profile.name) dataFields.push(`Nama Desa/Kelurahan: ${profile.name}`);
+  if (profile.short_name) dataFields.push(`Nama Singkat: ${profile.short_name}`);
+  if (profile.address) dataFields.push(`Alamat: ${profile.address}`);
+  if (profile.gmaps_url) dataFields.push(`Google Maps: ${profile.gmaps_url}`);
+  if (profile.operating_hours) {
+    dataFields.push(`Jam Operasional: ${typeof profile.operating_hours === 'string' ? profile.operating_hours : JSON.stringify(profile.operating_hours)}`);
+  }
+  
+  // If no meaningful data, don't generate DB context block
+  if (dataFields.length === 0) return '';
+
+  const fieldList = dataFields.map(f => f.split(':')[0]).join(', ');
   const lines = [
     '=== DATA RESMI DARI DATABASE ===',
-    '[SUMBER: DATABASE RESMI - Data ini LEBIH AKURAT daripada knowledge base]',
+    `[SUMBER: DATABASE RESMI - Data berikut (${fieldList}) bersifat otoritatif. Untuk informasi LAIN yang tidak tercantum di sini, gunakan data dari knowledge base/dokumen.]`,
     '',
-    `Nama Desa/Kelurahan: ${profile.name || '-'}`,
+    ...dataFields,
+    '=== AKHIR DATA DATABASE ===',
   ];
-  if (profile.short_name) lines.push(`Nama Singkat: ${profile.short_name}`);
-  if (profile.address) lines.push(`Alamat: ${profile.address}`);
-  if (profile.gmaps_url) lines.push(`Google Maps: ${profile.gmaps_url}`);
-  if (profile.operating_hours) {
-    lines.push(`Jam Operasional: ${typeof profile.operating_hours === 'string' ? profile.operating_hours : JSON.stringify(profile.operating_hours)}`);
-  }
-  lines.push('=== AKHIR DATA DATABASE ===');
   return lines.join('\n');
 }
 
@@ -490,13 +493,16 @@ export async function getKelurahanInfoContext(villageId?: string): Promise<strin
 
     const profile = await getVillageProfileSummary(villageId);
     if (profile?.name) {
-      const profileContext = [
+      const profileLines = [
         `Nama Desa/Kelurahan: ${profile.name || '-'}`,
         `Nama Singkat: ${profile.short_name || '-'}`,
+      ];
+      profileLines.push(
         `Alamat: ${profile.address || '-'}`,
         `Google Maps: ${profile.gmaps_url || '-'}`,
         `Jam Operasional: ${profile.operating_hours ? JSON.stringify(profile.operating_hours) : '-'}`,
-      ].join('\n');
+      );
+      const profileContext = profileLines.join('\n');
 
       logger.info('Using village profile for greeting context', {
         villageId,
