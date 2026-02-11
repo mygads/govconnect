@@ -114,7 +114,13 @@ export async function buildContext(
 }
 
 /**
- * Build knowledge section with confidence-aware instructions
+ * Build knowledge section with confidence-aware instructions.
+ * 
+ * Includes:
+ * - DB-FIRST PRIORITY: If context contains "[SUMBER: DATABASE RESMI]", instruct LLM
+ *   to prioritize that data over RAG knowledge base results.
+ * - CONFLICT HANDLING: If context contains "⚠️ [KONFLIK DATA", instruct LLM to show
+ *   all conflicting versions and tell the user about the discrepancy.
  */
 function buildKnowledgeSection(ragContext?: RAGContext | string): string {
   if (!ragContext) {
@@ -131,6 +137,8 @@ function buildKnowledgeSection(ragContext?: RAGContext | string): string {
   if (ragContext.totalResults === 0 || !ragContext.contextString) {
     return '';
   }
+
+  const contextStr = sanitizeKnowledgeContext(ragContext.contextString);
   
   const confidence = ragContext.confidence;
   let confidenceInstruction = '';
@@ -153,10 +161,31 @@ INSTRUKSI: Knowledge mungkin hanya sebagian relevan. Gunakan dengan hati-hati, b
         confidenceInstruction = '';
     }
   }
+
+  // DB-FIRST PRIORITY instruction — only added when DB data is present
+  let dbPriorityInstruction = '';
+  if (contextStr.includes('[SUMBER: DATABASE RESMI')) {
+    dbPriorityInstruction = `\n\n[PRIORITAS DATA]
+ATURAN: Jika ada data dari DATABASE RESMI dan data serupa dari knowledge base/dokumen, SELALU gunakan data DATABASE RESMI.
+Data DATABASE RESMI bersifat otoritatif (langsung dari database profil desa). Data knowledge base/dokumen mungkin sudah usang.`;
+  }
+
+  // CONFLICT DETECTION instruction — only added when conflicts are detected
+  let conflictInstruction = '';
+  if (contextStr.includes('KONFLIK DATA')) {
+    conflictInstruction = `\n\n[PENANGANAN DATA BERBEDA]
+ATURAN: Jika ditemukan data yang BERBEDA dari sumber berbeda tentang topik yang sama (ditandai ⚠️ KONFLIK DATA):
+1. Tampilkan SEMUA versi data yang ditemukan.
+2. Beri tahu user: "Kami menemukan beberapa data yang berbeda mengenai topik ini dari sumber yang berbeda:"
+3. Sebutkan sumber masing-masing data.
+4. Sarankan user untuk mengonfirmasi ke kantor desa/kelurahan untuk data yang paling terbaru.
+5. JANGAN pilih salah satu — biarkan user yang menentukan mana yang benar.
+KECUALI: Jika salah satu sumber adalah DATABASE RESMI, maka prioritaskan data DATABASE RESMI dan jelaskan bahwa sumber lain mungkin sudah tidak berlaku.`;
+  }
   
   return `\n\nKNOWLEDGE BASE YANG TERSEDIA:
-${sanitizeKnowledgeContext(ragContext.contextString)}
-${confidenceInstruction}`;
+${contextStr}
+${confidenceInstruction}${dbPriorityInstruction}${conflictInstruction}`;
 }
 
 /**
@@ -181,6 +210,15 @@ ATURAN ANTI-HALUSINASI (KRITIS):
 - DILARANG mengarang alamat, jam operasional, nomor telepon, tautan, biaya, atau prosedur yang tidak ada di KNOWLEDGE_CONTEXT.
 - DILARANG mengarahkan user untuk mengisi form publik / mengirim link layanan, kecuali link tersebut benar-benar ada di KNOWLEDGE_CONTEXT.
 - Jika informasi tidak ada di KNOWLEDGE_CONTEXT, reply_text harus menyatakan data belum tersedia untuk desa/kelurahan ini dan (opsional) menyarankan hubungi kantor pada jam kerja.
+
+PRIORITAS DATA:
+- Jika ada data bertanda [SUMBER: DATABASE RESMI], SELALU gunakan data tersebut karena bersifat otoritatif dan paling terbaru.
+- Jika ada data dari knowledge base/dokumen yang bertentangan dengan DATABASE RESMI, abaikan data knowledge base dan gunakan DATABASE RESMI.
+
+PENANGANAN DATA BERBEDA:
+- Jika ditemukan data yang BERBEDA dari sumber berbeda (ditandai ⚠️ KONFLIK DATA), tampilkan SEMUA versi dan beri tahu user bahwa ada perbedaan data dari beberapa sumber.
+- Sarankan user untuk mengonfirmasi ke kantor desa/kelurahan untuk data terbaru.
+- KECUALI jika salah satu sumber adalah DATABASE RESMI — gunakan DATABASE RESMI dan jelaskan bahwa sumber lain mungkin sudah tidak berlaku.
 
 KNOWLEDGE_CONTEXT:
 {knowledge_context}

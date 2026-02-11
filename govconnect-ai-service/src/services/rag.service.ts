@@ -25,10 +25,10 @@ import { hybridSearch, HybridSearchResult } from './hybrid-search.service';
 /**
  * Default RAG configuration
  */
-const DEFAULT_TOP_K = 5;
+const DEFAULT_TOP_K = 8;            // Fetch more so dedup still leaves enough useful results
 const DEFAULT_MIN_SCORE = 0.65;
 const MIN_EFFECTIVE_SCORE = 0.45; // Floor to prevent noise from cascading threshold reductions
-const MAX_CONTEXT_LENGTH = 4000; // Characters to avoid token limit
+const MAX_CONTEXT_LENGTH = 5000; // Increased from 4000 — dedup removes waste, so we can include more
 
 /**
  * ==================== QUERY INTENT CLASSIFICATION ====================
@@ -629,7 +629,9 @@ function rerankResults(
 
 /**
  * Build context string from search results for LLM prompt
- * Uses contextual compression to prioritize most relevant sentences
+ * Uses contextual compression to prioritize most relevant sentences.
+ * DEDUPLICATES near-identical content to avoid wasting context window.
+ * DETECTS CONFLICTS and adds warnings when different sources disagree.
  * 
  * @param results - Search results to include in context
  * @returns Formatted context string
@@ -639,24 +641,59 @@ function buildContextString(results: VectorSearchResult[]): string {
     return '';
   }
 
-  let context = 'RELEVANT KNOWLEDGE:\n\n';
-  let totalLength = context.length;
+  // DEDUP + CONFLICT DETECTION: Remove true duplicates, flag potential conflicts
+  const dedupedResults = deduplicateResults(results);
 
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
+  // Collect conflict groups for warning injection
+  const conflictGroups = new Map<number, DedupResult[]>();
+  for (const r of dedupedResults) {
+    if (r._conflictGroup) {
+      if (!conflictGroups.has(r._conflictGroup)) {
+        conflictGroups.set(r._conflictGroup, []);
+      }
+      conflictGroups.get(r._conflictGroup)!.push(r);
+    }
+  }
+
+  let context = 'RELEVANT KNOWLEDGE:\n\n';
+
+  // If conflicts exist, prepend a conflict warning header
+  if (conflictGroups.size > 0) {
+    context += `⚠️ PERHATIAN: Ditemukan ${conflictGroups.size} kelompok data yang BERBEDA dari sumber berbeda.\n`;
+    context += `Jika ada perbedaan data, tampilkan SEMUA versi dan beri tahu user bahwa ada perbedaan.\n\n`;
+  }
+
+  let totalLength = context.length;
+  let entryIndex = 0;
+  const renderedConflictGroups = new Set<number>();
+
+  for (let i = 0; i < dedupedResults.length; i++) {
+    const result = dedupedResults[i];
     const sourceLabel = result.sourceType === 'knowledge' 
       ? `[${result.metadata?.category?.toUpperCase() || 'INFO'}]`
-      : `[DOC: ${result.source}]`;
+      : `[DOC: ${result.metadata?.sectionTitle || result.source}]`;
+
+    // Add conflict marker if this result is part of a conflict group
+    let conflictMarker = '';
+    if (result._conflictGroup) {
+      // Only show the conflict intro once per group
+      if (!renderedConflictGroups.has(result._conflictGroup)) {
+        renderedConflictGroups.add(result._conflictGroup);
+        conflictMarker = `⚠️ [KONFLIK DATA - Ada ${conflictGroups.get(result._conflictGroup)!.length} sumber berbeda tentang topik ini]\n`;
+      }
+      // Mark each conflicting item with its source
+      conflictMarker += `[SUMBER: ${result.source || 'tidak diketahui'}] `;
+    }
 
     // Compress long content by keeping first N sentences
-    const compressedContent = compressContent(result.content, 500);
+    const compressedContent = compressContent(result.content, 600);
 
-    const entry = `${i + 1}. ${sourceLabel}\n${compressedContent}\n\n`;
+    entryIndex++;
+    const entry = `${conflictMarker}${entryIndex}. ${sourceLabel}\n${compressedContent}\n\n`;
 
     // Check if adding this entry exceeds max length
     if (totalLength + entry.length > MAX_CONTEXT_LENGTH) {
-      // Add truncation notice
-      context += `... (${results.length - i} more results truncated)\n`;
+      context += `... (${dedupedResults.length - i} more results truncated)\n`;
       break;
     }
 
@@ -665,6 +702,99 @@ function buildContextString(results: VectorSearchResult[]): string {
   }
 
   return context.trim();
+}
+
+/**
+ * Deduplicate search results by content similarity AND detect conflicts.
+ * 
+ * Three tiers of similarity:
+ * - Jaccard >= 0.70 → TRUE DUPLICATE: same info repeated. Remove the lower-scored one.
+ * - Jaccard 0.35–0.69 → POTENTIAL CONFLICT: similar topic but different data.
+ *   Keep BOTH and mark them with _conflictGroup so buildContextString can warn the user.
+ * - Jaccard < 0.35 → UNRELATED: different topics. Keep both as-is.
+ * 
+ * This prevents duplicate noise while ensuring conflicting data (e.g., different
+ * kepala desa names across two files) is shown to the user with a disclaimer.
+ */
+interface DedupResult extends VectorSearchResult {
+  /** If set, results sharing the same _conflictGroup discuss the same topic but contain different data */
+  _conflictGroup?: number;
+}
+
+function deduplicateResults(results: VectorSearchResult[]): DedupResult[] {
+  if (results.length <= 1) return results;
+
+  const DUPLICATE_THRESHOLD = 0.70;  // ≥70% overlap = true duplicate (remove)
+  const CONFLICT_THRESHOLD = 0.35;   // 35-69% overlap = potential conflict (keep + flag)
+  const deduped: DedupResult[] = [];
+  const wordSets: Set<string>[] = [];
+  let nextConflictGroup = 1;
+
+  for (const result of results) {
+    const words = new Set(
+      result.content.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(w => w.length > 2)
+    );
+
+    // Check against all already-accepted results
+    let isDuplicate = false;
+    let conflictIndex = -1;
+    let maxJaccard = 0;
+
+    for (let j = 0; j < wordSets.length; j++) {
+      const existingWords = wordSets[j];
+      const intersection = new Set([...words].filter(w => existingWords.has(w)));
+      const union = new Set([...words, ...existingWords]);
+      const jaccard = union.size > 0 ? intersection.size / union.size : 0;
+
+      if (jaccard >= DUPLICATE_THRESHOLD) {
+        // True duplicate — skip this result entirely
+        isDuplicate = true;
+        break;
+      }
+
+      if (jaccard >= CONFLICT_THRESHOLD && jaccard > maxJaccard) {
+        // Potential conflict — same topic, different data
+        conflictIndex = j;
+        maxJaccard = jaccard;
+      }
+    }
+
+    if (isDuplicate) continue;
+
+    // If conflict detected with an existing result, assign them the same conflict group
+    if (conflictIndex >= 0) {
+      const existingResult = deduped[conflictIndex];
+      if (!existingResult._conflictGroup) {
+        existingResult._conflictGroup = nextConflictGroup++;
+      }
+      const conflictResult: DedupResult = { ...result, _conflictGroup: existingResult._conflictGroup };
+      deduped.push(conflictResult);
+      wordSets.push(words);
+
+      logger.info('Conflict detected between RAG results', {
+        group: existingResult._conflictGroup,
+        source1: existingResult.source,
+        source2: result.source,
+        jaccard: maxJaccard.toFixed(2),
+      });
+    } else {
+      deduped.push(result);
+      wordSets.push(words);
+    }
+  }
+
+  const removed = results.length - deduped.length;
+  const conflicts = deduped.filter(r => r._conflictGroup).length;
+  if (removed > 0 || conflicts > 0) {
+    logger.debug('Dedup + conflict detection complete', {
+      before: results.length,
+      after: deduped.length,
+      removed,
+      conflictingItems: conflicts,
+    });
+  }
+
+  return deduped;
 }
 
 /**

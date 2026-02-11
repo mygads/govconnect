@@ -340,10 +340,16 @@ export async function searchVectors(
       `;
 
       for (const row of knowledgeResults) {
+        // Apply quality_score as a slight boost to similarity
+        // Admin-curated knowledge (quality=1.0) gets full score
+        // Lower quality entries get proportionally less
+        const qualityBoost = (row.quality_score ?? 1.0) * 0.03; // max +3% boost
+        const adjustedScore = Math.min(1.0, row.similarity + qualityBoost);
+
         results.push({
           id: row.id,
           content: row.content,
-          score: row.similarity,
+          score: adjustedScore,
           source: row.title,
           sourceType: 'knowledge',
           metadata: {

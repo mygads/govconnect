@@ -269,18 +269,93 @@ export async function getAllKnowledge(villageId?: string): Promise<KnowledgeItem
  * Get RAG context directly for a query
  * Use this when you need the full RAG context object
  * 
+ * DB-FIRST PRIORITY: If the query relates to village profile data (jam buka,
+ * nama desa, alamat, kepala desa, etc.), the authoritative DB data is fetched
+ * and prepended to the context string as [SUMBER: DATABASE RESMI].
+ * LLM is instructed to prioritize DB data over RAG results.
+ * 
  * NOTE: minScore tuned to 0.55 for better recall with Indonesian language
  */
 export async function getRAGContext(query: string, categories?: string[], villageId?: string): Promise<RAGContext> {
   const inferredCategories = categories || inferCategories(query);
   
-  return retrieveContext(query, {
+  // Fetch RAG context
+  const ragContext = await retrieveContext(query, {
     topK: 5,
-    minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
+    minScore: 0.55,
     categories: inferredCategories.length > 0 ? inferredCategories : undefined,
     sourceTypes: ['knowledge', 'document'],
     villageId,
   });
+
+  // DB-FIRST: Check if query relates to village profile data
+  // If so, prepend authoritative DB data to the context string
+  if (villageId && isProfileRelatedQuery(query)) {
+    try {
+      const profile = await getVillageProfileSummary(villageId);
+      if (profile?.name) {
+        const dbContext = formatProfileAsContext(profile);
+        
+        // Prepend DB data BEFORE RAG results so LLM sees it first
+        if (ragContext.contextString) {
+          ragContext.contextString = `${dbContext}\n\n${ragContext.contextString}`;
+        } else {
+          ragContext.contextString = dbContext;
+          ragContext.totalResults = Math.max(ragContext.totalResults, 1);
+        }
+        
+        logger.info('DB-first: Prepended village profile to RAG context', {
+          villageId, query: query.substring(0, 50),
+        });
+      }
+    } catch (error: any) {
+      logger.warn('DB-first: Failed to fetch village profile', { error: error.message });
+    }
+  }
+
+  return ragContext;
+}
+
+/**
+ * Check if a query is related to village profile / structured DB data.
+ * These keywords indicate the user is asking about info that lives in
+ * the village_profile table (jam buka, alamat, kepala desa, dll).
+ */
+function isProfileRelatedQuery(query: string): boolean {
+  const queryLower = query.toLowerCase();
+  const profileKeywords = [
+    'jam buka', 'jam operasional', 'jam kerja', 'buka jam', 'tutup jam',
+    'jam pelayanan', 'jadwal buka', 'jadwal operasional', 'jadwal pelayanan',
+    'hari kerja', 'hari buka', 'hari libur',
+    'nama desa', 'nama kelurahan', 'nama kantor',
+    'alamat', 'lokasi', 'dimana', 'di mana', 'tempat',
+    'google maps', 'gmaps', 'peta', 'maps',
+    'kepala desa', 'lurah', 'kades', 'nama kepala',
+    'profil desa', 'profil kelurahan', 'info desa', 'info kelurahan',
+    'tentang desa', 'tentang kelurahan',
+  ];
+  return profileKeywords.some(kw => queryLower.includes(kw));
+}
+
+/**
+ * Format village profile DB data as authoritative context block.
+ * Marked with [SUMBER: DATABASE RESMI] so LLM knows to prioritize it.
+ */
+function formatProfileAsContext(profile: VillageProfileSummary): string {
+  const lines = [
+    '=== DATA RESMI DARI DATABASE ===',
+    '[SUMBER: DATABASE RESMI - Data ini LEBIH AKURAT daripada knowledge base]',
+    '',
+    `Nama Desa/Kelurahan: ${profile.name || '-'}`,
+  ];
+  if (profile.short_name) lines.push(`Nama Singkat: ${profile.short_name}`);
+  if (profile.address) lines.push(`Alamat: ${profile.address}`);
+  if (profile.gmaps_url) lines.push(`Google Maps: ${profile.gmaps_url}`);
+  if (profile.operating_hours) {
+    lines.push(`Jam Operasional: ${typeof profile.operating_hours === 'string' ? profile.operating_hours : JSON.stringify(profile.operating_hours)}`);
+  }
+  lines.push('=== AKHIR DATA DATABASE ===');
+  return lines.join('\n');
 }
 
 /**

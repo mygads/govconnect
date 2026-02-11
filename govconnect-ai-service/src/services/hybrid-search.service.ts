@@ -136,9 +136,10 @@ export async function searchKeywords(
           (
             CASE WHEN LOWER(content) LIKE ${ilikeTerm} THEN 2.0 ELSE 0 END +
             CASE WHEN LOWER(document_title) LIKE ${ilikeTerm} THEN 1.5 ELSE 0 END +
+            CASE WHEN LOWER(COALESCE(section_title, '')) LIKE ${ilikeTerm} THEN 2.5 ELSE 0 END +
             COALESCE(
               ts_rank(
-                to_tsvector('indonesian', COALESCE(content, '')),
+                to_tsvector('indonesian', COALESCE(section_title, '') || ' ' || COALESCE(content, '')),
                 plainto_tsquery('indonesian', ${query})
               ),
               0
@@ -147,7 +148,8 @@ export async function searchKeywords(
         FROM document_vectors
         WHERE 
           (LOWER(content) LIKE ${ilikeTerm}
-          OR to_tsvector('indonesian', COALESCE(content, '')) 
+          OR LOWER(COALESCE(section_title, '')) LIKE ${ilikeTerm}
+          OR to_tsvector('indonesian', COALESCE(section_title, '') || ' ' || COALESCE(content, '')) 
              @@ plainto_tsquery('indonesian', ${query}))
           ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
         ORDER BY relevance_score DESC

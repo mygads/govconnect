@@ -344,7 +344,20 @@ export async function buildContextWithHistory(
           case 'low': confidenceInstruction = `\n[CONFIDENCE: RENDAH - ${confidence.reason}]`; break;
         }
       }
-      knowledgeSection = `\n\nKNOWLEDGE BASE YANG TERSEDIA:\n${ragContext.contextString}${confidenceInstruction}`;
+
+      // DB-FIRST PRIORITY instruction
+      let dbPriorityInstruction = '';
+      if (ragContext.contextString.includes('[SUMBER: DATABASE RESMI')) {
+        dbPriorityInstruction = `\n[PRIORITAS DATA] Jika ada data dari DATABASE RESMI dan data serupa dari knowledge base/dokumen, SELALU gunakan data DATABASE RESMI (otoritatif).`;
+      }
+
+      // CONFLICT DETECTION instruction
+      let conflictInstruction = '';
+      if (ragContext.contextString.includes('KONFLIK DATA')) {
+        conflictInstruction = `\n[PENANGANAN DATA BERBEDA] Tampilkan SEMUA versi data yang berbeda dan beri tahu user: "Kami menemukan beberapa data yang berbeda dari sumber berbeda." Sarankan konfirmasi ke kantor desa. Jika salah satu sumber adalah DATABASE RESMI, prioritaskan itu.`;
+      }
+
+      knowledgeSection = `\n\nKNOWLEDGE BASE YANG TERSEDIA:\n${ragContext.contextString}${confidenceInstruction}${dbPriorityInstruction}${conflictInstruction}`;
     }
   }
 
