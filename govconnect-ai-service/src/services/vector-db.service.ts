@@ -84,16 +84,19 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
 }
 
 /**
- * Delete a knowledge vector
- * Used when admin deletes knowledge from Dashboard
+ * Delete a knowledge vector (and all its AI-generated sub-chunks)
+ * When AI splits a long knowledge entry into multiple chunks,
+ * they are stored as id, id_1, id_2, etc.
+ * This deletes all of them.
  */
 export async function deleteKnowledgeVector(id: string): Promise<boolean> {
   try {
+    const likePattern = `${id}_%`;
     const result = await prisma.$executeRaw`
-      DELETE FROM knowledge_vectors WHERE id = ${id}
+      DELETE FROM knowledge_vectors WHERE id = ${id} OR id LIKE ${likePattern}
     `;
     
-    logger.info('Knowledge vector deleted', { id, deleted: result > 0 });
+    logger.info('Knowledge vector(s) deleted', { id, deletedCount: result });
     return result > 0;
   } catch (error: any) {
     logger.error('Failed to delete knowledge vector', { id, error: error.message });

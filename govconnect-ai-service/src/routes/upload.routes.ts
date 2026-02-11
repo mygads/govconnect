@@ -16,7 +16,9 @@ import path from 'path';
 import fs from 'fs/promises';
 import { existsSync, mkdirSync } from 'fs';
 import logger from '../utils/logger';
-import { processDocumentWithEmbeddings } from '../services/document-processor.service';
+import { processDocumentSemanticChunking } from '../services/document-processor.service';
+import { smartChunkDocument } from '../services/ai-chunking.service';
+import { generateBatchEmbeddings } from '../services/embedding.service';
 import { addDocumentChunks } from '../services/vector-db.service';
 import { config } from '../config/env';
 import { firstHeader, getParam } from '../utils/http';
@@ -263,28 +265,97 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       contentLength: content.length,
     });
     
-    // Process document with embeddings
-    const embeddedChunks = await processDocumentWithEmbeddings(content, documentId, {
-      chunkSize: 1000,
-      chunkOverlap: 200,
-    });
+    // Process document with AI-DRIVEN SMART CHUNKING
+    // The AI reads the entire document and decides:
+    //  - How to split it (by topic/context, not by character count)
+    //  - What title each chunk should have
+    //  - What category each chunk belongs to
+    // Falls back to semantic chunking if AI fails
+    const docTitle = title || file.originalname;
     
-    if (embeddedChunks.length === 0) {
+    let smartChunks;
+    let usedAiChunking = false;
+    
+    try {
+      smartChunks = await smartChunkDocument(content, docTitle);
+      usedAiChunking = true;
+      logger.info('AI smart chunking succeeded', {
+        documentId,
+        chunksCount: smartChunks.length,
+      });
+    } catch (aiErr: any) {
+      logger.warn('AI chunking failed, falling back to semantic chunking', {
+        documentId,
+        error: aiErr.message,
+      });
+      // Fallback to semantic chunking (non-AI, rule-based)
+      const fallbackChunks = await processDocumentSemanticChunking(content, documentId, 1500);
+      smartChunks = fallbackChunks.map((c, idx) => ({
+        title: c.sectionTitle || c.metadata?.sectionTitle || docTitle,
+        category: category || 'umum',
+        content: c.content,
+        paragraphRange: [idx + 1, idx + 1] as [number, number],
+        _embedding: c.embedding,
+        _embeddingModel: c.embeddingModel,
+        _embeddingDimensions: c.embeddingDimensions,
+      }));
+    }
+    
+    if (smartChunks.length === 0) {
       await fs.unlink(file.path).catch(() => {});
       return res.status(400).json({ error: 'No chunks generated from document' });
     }
+
+    // Generate embeddings for AI chunks (fallback chunks already have embeddings)
+    let chunksWithEmbeddings: Array<{
+      title: string;
+      category: string;
+      content: string;
+      embedding: number[];
+      embeddingModel: string;
+      embeddingDimensions: number;
+    }>;
+    
+    if (usedAiChunking) {
+      // Prepend AI-assigned title to embedding input for better retrieval
+      const texts = smartChunks.map(c => `${c.title}\n${c.content}`);
+      
+      const batchResult = await generateBatchEmbeddings(texts, {
+        taskType: 'RETRIEVAL_DOCUMENT',
+        outputDimensionality: 768,
+      });
+      
+      chunksWithEmbeddings = smartChunks.map((chunk, idx) => ({
+        title: chunk.title,
+        category: chunk.category,
+        content: chunk.content,
+        embedding: batchResult.embeddings[idx].values,
+        embeddingModel: batchResult.embeddings[idx].model,
+        embeddingDimensions: batchResult.embeddings[idx].dimensions,
+      }));
+    } else {
+      // Fallback chunks already have embeddings from processDocumentSemanticChunking
+      chunksWithEmbeddings = smartChunks.map((c: any) => ({
+        title: c.title,
+        category: c.category,
+        content: c.content,
+        embedding: c._embedding,
+        embeddingModel: c._embeddingModel,
+        embeddingDimensions: c._embeddingDimensions,
+      }));
+    }
     
     // Store chunks with embeddings to vector DB
-    await addDocumentChunks(embeddedChunks.map((chunk, idx) => ({
+    // Each chunk gets its AI-assigned title and category
+    await addDocumentChunks(chunksWithEmbeddings.map((chunk, idx) => ({
       documentId,
       villageId: resolvedVillageId,
       chunkIndex: idx,
       content: chunk.content,
       embedding: chunk.embedding,
-      documentTitle: title || file.originalname,
-      category: category || 'general',
-      pageNumber: chunk.pageNumber,
-      sectionTitle: chunk.sectionTitle,
+      documentTitle: docTitle,
+      category: chunk.category, // AI-assigned per-chunk category
+      sectionTitle: chunk.title, // AI-assigned per-chunk title
     })));
     
     // Build the file URL for viewing
@@ -293,9 +364,10 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
     
     logger.info('Document processing completed', {
       documentId,
-      chunksCount: embeddedChunks.length,
+      chunksCount: chunksWithEmbeddings.length,
       filename: file.filename,
       fileUrl,
+      aiChunking: usedAiChunking,
     });
     
     return res.json({
@@ -306,7 +378,8 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       originalName: file.originalname,
       fileSize: file.size,
       mimeType: file.mimetype,
-      chunksCount: embeddedChunks.length,
+      chunksCount: chunksWithEmbeddings.length,
+      aiChunking: usedAiChunking,
       message: 'Document uploaded and processed successfully',
     });
   } catch (error: any) {

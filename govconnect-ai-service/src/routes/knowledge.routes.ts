@@ -15,7 +15,8 @@
 import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { generateEmbedding } from '../services/embedding.service';
+import { generateEmbedding, generateBatchEmbeddings } from '../services/embedding.service';
+import { smartChunkKnowledge } from '../services/ai-chunking.service';
 import {
   upsertKnowledgeVector,
   deleteKnowledgeVector,
@@ -53,10 +54,110 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    logger.info('Adding knowledge vector', { id, category });
+    const resolvedVillageId = village_id || villageId || null;
 
-    // Generate embedding
-    const embeddingResult = await generateEmbedding(content, {
+    logger.info('Adding knowledge vector', { id, category, contentLength: content.length });
+
+    // AI SMART CHUNKING for long text entries
+    // Short text (< 1500 chars): single vector with AI-assigned title
+    // Long text (>= 1500 chars): AI splits into multiple chunks, each with its own title+category
+    const AI_CHUNK_THRESHOLD = 1500;
+
+    if (content.length >= AI_CHUNK_THRESHOLD) {
+      logger.info('Long knowledge entry detected, using AI smart chunking', { id, contentLength: content.length });
+
+      try {
+        const smartChunks = await smartChunkKnowledge(content, title);
+
+        if (smartChunks.length > 1) {
+          // Multi-chunk: generate batch embeddings with title-prepended input
+          const texts = smartChunks.map(c => `${c.title}\n${c.content}`);
+          const batchResult = await generateBatchEmbeddings(texts, {
+            taskType: 'RETRIEVAL_DOCUMENT',
+            outputDimensionality: 768,
+          });
+
+          // Store each chunk as a separate knowledge vector
+          // IDs: original id, id_1, id_2, ...
+          for (let i = 0; i < smartChunks.length; i++) {
+            const chunkId = i === 0 ? id : `${id}_${i}`;
+            await upsertKnowledgeVector({
+              id: chunkId,
+              villageId: resolvedVillageId,
+              title: smartChunks[i].title,  // AI-assigned title
+              content: smartChunks[i].content,
+              category: smartChunks[i].category, // AI-assigned category
+              keywords: keywords || [],
+              embedding: batchResult.embeddings[i].values,
+              embeddingModel: batchResult.embeddings[i].model,
+              qualityScore: qualityScore || 1.0,
+            });
+          }
+
+          logger.info('Knowledge entry split into multiple chunks', {
+            id,
+            chunksCount: smartChunks.length,
+            titles: smartChunks.map(c => c.title),
+          });
+
+          return res.status(201).json({
+            status: 'success',
+            data: {
+              id,
+              chunksCount: smartChunks.length,
+              chunks: smartChunks.map((c, i) => ({
+                chunkId: i === 0 ? id : `${id}_${i}`,
+                title: c.title,
+                category: c.category,
+              })),
+              embeddingModel: batchResult.embeddings[0].model,
+            },
+          });
+        }
+        // If AI returned only 1 chunk, fall through to single-vector path below
+        // but use AI-assigned title and category
+        if (smartChunks.length === 1) {
+          const chunk = smartChunks[0];
+          const embeddingResult = await generateEmbedding(`${chunk.title}\n${chunk.content}`, {
+            taskType: 'RETRIEVAL_DOCUMENT',
+            outputDimensionality: 768,
+          });
+
+          await upsertKnowledgeVector({
+            id,
+            villageId: resolvedVillageId,
+            title: chunk.title,
+            content: chunk.content,
+            category: chunk.category,
+            keywords: keywords || [],
+            embedding: embeddingResult.values,
+            embeddingModel: embeddingResult.model,
+            qualityScore: qualityScore || 1.0,
+          });
+
+          return res.status(201).json({
+            status: 'success',
+            data: {
+              id,
+              chunksCount: 1,
+              aiTitle: chunk.title,
+              aiCategory: chunk.category,
+              embeddingDimensions: embeddingResult.dimensions,
+              embeddingModel: embeddingResult.model,
+            },
+          });
+        }
+      } catch (chunkErr: any) {
+        logger.warn('AI chunking failed for knowledge, falling back to single embedding', {
+          id,
+          error: chunkErr.message,
+        });
+        // Fall through to single-vector path
+      }
+    }
+
+    // SHORT TEXT or FALLBACK: Single vector with title-prepended embedding
+    const embeddingResult = await generateEmbedding(`${title}\n${content}`, {
       taskType: 'RETRIEVAL_DOCUMENT',
       outputDimensionality: 768,
     });
@@ -64,7 +165,7 @@ router.post('/', async (req: Request, res: Response) => {
     // Store in vector DB
     await upsertKnowledgeVector({
       id,
-      villageId: village_id || villageId || null,
+      villageId: resolvedVillageId,
       title,
       content,
       category,
@@ -106,18 +207,86 @@ router.put('/:id', async (req: Request, res: Response) => {
       });
     }
 
-    logger.info('Updating knowledge vector', { id, category });
+    const resolvedVillageId = village_id || villageId || null;
 
-    // Generate new embedding
-    const embeddingResult = await generateEmbedding(content, {
+    logger.info('Updating knowledge vector', { id, category, contentLength: content.length });
+
+    // First delete all old chunks (id + id_1, id_2, etc.)
+    await deleteKnowledgeVector(id);
+
+    // Re-use the same AI chunking logic as POST
+    const AI_CHUNK_THRESHOLD = 1500;
+
+    if (content.length >= AI_CHUNK_THRESHOLD) {
+      try {
+        const smartChunks = await smartChunkKnowledge(content, title);
+
+        if (smartChunks.length > 1) {
+          const texts = smartChunks.map(c => `${c.title}\n${c.content}`);
+          const batchResult = await generateBatchEmbeddings(texts, {
+            taskType: 'RETRIEVAL_DOCUMENT',
+            outputDimensionality: 768,
+          });
+
+          for (let i = 0; i < smartChunks.length; i++) {
+            const chunkId = i === 0 ? id : `${id}_${i}`;
+            await upsertKnowledgeVector({
+              id: chunkId,
+              villageId: resolvedVillageId,
+              title: smartChunks[i].title,
+              content: smartChunks[i].content,
+              category: smartChunks[i].category,
+              keywords: keywords || [],
+              embedding: batchResult.embeddings[i].values,
+              embeddingModel: batchResult.embeddings[i].model,
+              qualityScore: qualityScore || 1.0,
+            });
+          }
+
+          return res.json({
+            status: 'success',
+            data: { id, chunksCount: smartChunks.length, embeddingModel: batchResult.embeddings[0].model },
+          });
+        }
+
+        if (smartChunks.length === 1) {
+          const chunk = smartChunks[0];
+          const embeddingResult = await generateEmbedding(`${chunk.title}\n${chunk.content}`, {
+            taskType: 'RETRIEVAL_DOCUMENT',
+            outputDimensionality: 768,
+          });
+
+          await upsertKnowledgeVector({
+            id,
+            villageId: resolvedVillageId,
+            title: chunk.title,
+            content: chunk.content,
+            category: chunk.category,
+            keywords: keywords || [],
+            embedding: embeddingResult.values,
+            embeddingModel: embeddingResult.model,
+            qualityScore: qualityScore || 1.0,
+          });
+
+          return res.json({
+            status: 'success',
+            data: { id, aiTitle: chunk.title, aiCategory: chunk.category, embeddingModel: embeddingResult.model },
+          });
+        }
+      } catch (chunkErr: any) {
+        logger.warn('AI chunking failed on update, falling back', { id, error: chunkErr.message });
+      }
+    }
+
+    // Short text or fallback: single vector with title-prepended embedding
+    const embeddingResult = await generateEmbedding(`${title}\n${content}`, {
       taskType: 'RETRIEVAL_DOCUMENT',
       outputDimensionality: 768,
     });
 
-    // Upsert will replace the old vector
     await upsertKnowledgeVector({
       id,
-      villageId: village_id || villageId || null,
+      villageId: resolvedVillageId,
       title,
       content,
       category,

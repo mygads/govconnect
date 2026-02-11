@@ -22,7 +22,7 @@ import { generateBatchEmbeddings } from './embedding.service';
 // Default chunking configuration
 const DEFAULT_CHUNK_SIZE = 1000;      // ~200-250 words
 const DEFAULT_CHUNK_OVERLAP = 200;    // ~50 words overlap
-const DEFAULT_MIN_CHUNK_SIZE = 100;   // Minimum chunk size
+const DEFAULT_MIN_CHUNK_SIZE = 200;   // Minimum chunk size (raised from 100 — very short chunks produce weak embeddings)
 const MAX_SEMANTIC_CHUNK_SIZE = 1500; // Max size for semantic chunks
 
 /**
@@ -657,7 +657,14 @@ export async function processDocumentSemanticChunking(
   });
 
   // Extract texts for batch embedding
-  const texts = chunks.map(c => c.content);
+  // BEST PRACTICE: Prepend section title to each chunk's embedding input.
+  // This gives the embedding model more context about what the chunk is about,
+  // dramatically improving retrieval accuracy for section-specific queries.
+  // The stored content remains unchanged — only the embedding input is enriched.
+  const texts = chunks.map(c => {
+    const prefix = c.sectionTitle || c.metadata?.sectionTitle;
+    return prefix ? `${prefix}\n${c.content}` : c.content;
+  });
 
   // Generate embeddings in batch
   const batchResult = await generateBatchEmbeddings(texts, {

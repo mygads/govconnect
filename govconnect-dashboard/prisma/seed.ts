@@ -137,6 +137,7 @@ async function main() {
       'Data RT/RW',
       'Layanan Administrasi',
       'Panduan/SOP',
+      'Custom',
     ]
 
     await prisma.knowledge_categories.createMany({
