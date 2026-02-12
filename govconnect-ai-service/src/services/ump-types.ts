@@ -38,6 +38,13 @@ export interface ProcessMessageResult {
   intent: string;
   /** Extracted fields from NLU */
   fields?: Record<string, any>;
+  /** Contacts to send as separate vCard messages (WhatsApp only) */
+  contacts?: Array<{
+    name: string;
+    phone: string;
+    organization?: string;
+    title?: string;
+  }>;
   /** Processing metadata */
   metadata: {
     processingTimeMs: number;

@@ -345,8 +345,22 @@ export async function classifyNameUpdate(
 // ==================== UNIFIED MESSAGE CLASSIFIER ====================
 // Replaces 3 separate LLM calls (RAG intent + greeting + farewell) with ONE.
 // Also infers knowledge categories for smarter RAG retrieval.
+// Categories are now DYNAMIC — fetched from Dashboard DB per village.
 
-const UNIFIED_CLASSIFY_PROMPT = `Kamu adalah classifier pesan untuk sistem layanan publik Indonesia (GovConnect).
+import { getCategoryListForPrompt } from './dynamic-categories.service';
+
+/**
+ * Build the unified classify prompt with dynamic categories.
+ * Categories are fetched from Dashboard DB (cached 10 min per village).
+ * "kontak" is always included as a virtual category for emergency routing.
+ */
+async function buildUnifiedClassifyPrompt(villageId?: string): Promise<string> {
+  const dynamicCategories = await getCategoryListForPrompt(villageId);
+  // Always include "kontak" as virtual category (for emergency/contact routing logic)
+  const hasKontak = dynamicCategories.includes('"kontak"');
+  const categoryList = hasKontak ? dynamicCategories : `${dynamicCategories}, "kontak"`;
+
+  return `Kamu adalah classifier pesan untuk sistem layanan publik Indonesia (GovConnect).
 
 TUGAS:
 Analisis pesan user dan tentukan SEMUA aspek berikut dalam SATU jawaban:
@@ -354,31 +368,45 @@ Analisis pesan user dan tentukan SEMUA aspek berikut dalam SATU jawaban:
 1. **message_type**: Jenis pesan utama
    - GREETING: Salam murni tanpa permintaan ("halo", "selamat pagi", "assalamualaikum")
    - FAREWELL: Ingin mengakhiri percakapan ("bye", "udah cukup", "gak ada lagi", "makasih udah cukup")
-   - QUESTION: Pertanyaan atau permintaan informasi faktual
+   - QUESTION: Pertanyaan atau permintaan informasi/layanan administratif
    - DATA_INPUT: Menjawab pertanyaan bot / memberikan data ("nama saya Budi", "alamat di Jl. Merdeka", "RT 02 RW 01")
-   - COMPLAINT: Laporan/keluhan ("jalan rusak", "lampu mati", "sampah menumpuk")
+   - COMPLAINT: Laporan keluhan INFRASTRUKTUR/LINGKUNGAN yang perlu diperbaiki ("jalan rusak", "lampu mati", "sampah menumpuk", "got mampet")
    - CONFIRMATION: Konfirmasi singkat ("ya", "ok", "baik", "tidak", "batal")
    - SOCIAL: Percakapan sosial ("apa kabar?", "kamu siapa?", "siapa namamu?")
 
+⚠️ ATURAN PENTING — BEDAKAN "LAPOR" KELUHAN vs LAYANAN ADMINISTRATIF:
+- "lapor" + MASALAH INFRASTRUKTUR (jalan rusak, lampu mati, banjir, sampah, kebakaran) → COMPLAINT
+- "lapor" + PERISTIWA KEPENDUDUKAN (meninggal, lahir, pindah, cerai, nikah) → QUESTION (ini layanan surat/administrasi, BUKAN pengaduan)
+- "lapor" + DARURAT + BUTUH BANTUAN (orang sakit, kecelakaan, kebakaran) → QUESTION dengan rag_needed: true, categories: ["kontak"] (prioritas: berikan nomor darurat)
+- Jika TIDAK JELAS apakah keluhan atau layanan → QUESTION (lebih aman, biar AI tanya lagi)
+
+⚠️ ATURAN PENTING — PERMINTAAN KONTAK/NOMOR DARURAT:
+- Jika user minta nomor telepon, kontak, damkar, ambulan, polisi, RS, puskesmas → QUESTION dengan rag_needed: true, categories: ["kontak"]
+- Jika user menyebut situasi darurat (sakit keras, kebakaran, kecelakaan) → QUESTION dengan rag_needed: true, categories: ["kontak"]
+
 2. **rag_needed**: Apakah perlu cari di knowledge base?
-   - true: Pertanyaan tentang prosedur/SOP, syarat, biaya, jadwal, lokasi, pejabat/personil, layanan, dokumen, info desa, program, regulasi
-   - false: Salam, konfirmasi, data input, keluhan (handled by complaint flow), percakapan sosial, farewell
+   - true: Pertanyaan tentang prosedur/SOP, syarat, biaya, jadwal, lokasi, pejabat/personil, layanan, dokumen, info desa, program, regulasi, KONTAK/NOMOR PENTING
+   - false: Salam, konfirmasi, data input, keluhan infrastruktur (handled by complaint flow), percakapan sosial, farewell
 
 3. **categories**: Kategori knowledge yang relevan (array, bisa kosong jika rag_needed=false)
-   Pilih dari: "jadwal", "kontak", "prosedur", "layanan", "informasi_umum", "faq", "profil_desa", "pengaduan", "struktur_desa"
-   Boleh lebih dari satu jika relevan.
+   Pilih dari: ${categoryList}
+   Boleh lebih dari satu jika relevan. Pilih kategori yang paling cocok dengan isi knowledge base.
 
 CONTOH:
 - "halo" → GREETING, rag_needed: false, categories: []
-- "jam buka kantor?" → QUESTION, rag_needed: true, categories: ["jadwal"]
-- "siapa kepala desanya?" → QUESTION, rag_needed: true, categories: ["informasi_umum", "struktur_desa"]
-- "cara buat KTP gimana?" → QUESTION, rag_needed: true, categories: ["prosedur", "layanan"]
+- "jam buka kantor?" → QUESTION, rag_needed: true, categories: ["faq"]
+- "siapa kepala desanya?" → QUESTION, rag_needed: true, categories: ["profil_desa", "struktur_desa"]
+- "cara buat KTP gimana?" → QUESTION, rag_needed: true, categories: ["panduan-sop", "layanan_administrasi"]
 - "udah cukup makasih" → FAREWELL, rag_needed: false, categories: []
 - "jalan rusak depan masjid" → COMPLAINT, rag_needed: false, categories: []
 - "nama saya Yoga" → DATA_INPUT, rag_needed: false, categories: []
 - "ya" → CONFIRMATION, rag_needed: false, categories: []
-- "layanan apa aja yang ada?" → QUESTION, rag_needed: true, categories: ["layanan"]
-- "alamat kantor desa dimana?" → QUESTION, rag_needed: true, categories: ["kontak", "informasi_umum"]
+- "layanan apa aja yang ada?" → QUESTION, rag_needed: true, categories: ["layanan_administrasi"]
+- "alamat kantor desa dimana?" → QUESTION, rag_needed: true, categories: ["kontak", "profil_desa"]
+- "mau lapor meninggal" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"]
+- "ada orang sakit keras butuh bantuan cepat" → QUESTION, rag_needed: true, categories: ["kontak"]
+- "minta nomor damkar sekarang" → QUESTION, rag_needed: true, categories: ["kontak"]
+- "sampah menumpuk di jalan" → COMPLAINT, rag_needed: false, categories: []
 
 OUTPUT (JSON saja, tanpa markdown):
 {
@@ -391,6 +419,7 @@ OUTPUT (JSON saja, tanpa markdown):
 
 PESAN USER:
 {user_message}`;
+}
 
 export type MessageType = 'GREETING' | 'FAREWELL' | 'QUESTION' | 'DATA_INPUT' | 'COMPLAINT' | 'CONFIRMATION' | 'SOCIAL';
 
@@ -406,7 +435,8 @@ export async function classifyMessage(
   message: string,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<UnifiedClassifyResult | null> {
-  const prompt = UNIFIED_CLASSIFY_PROMPT.replace('{user_message}', message || '');
+  const promptTemplate = await buildUnifiedClassifyPrompt(context?.village_id);
+  const prompt = promptTemplate.replace('{user_message}', message || '');
 
   const raw = await callMicroLLM(prompt, 'unified_classify', context);
   if (!raw) return null;
@@ -529,6 +559,7 @@ const KNOWLEDGE_SUBTYPE_PROMPT = `Kamu adalah router pertanyaan untuk layanan pu
 
 TUGAS:
 Tentukan jenis spesifik pertanyaan user untuk menentukan apakah jawaban harus dari DATA FAKTUAL (DB) atau dari knowledge base (RAG).
+Tentukan juga apakah situasinya DARURAT yang membutuhkan penanganan segera.
 
 JENIS PERTANYAAN:
 - address: Bertanya alamat/lokasi kantor/google maps
@@ -540,21 +571,35 @@ JENIS PERTANYAAN:
 - complaint_update: Ingin update/tambah informasi laporan yang sudah ada
 - general: Pertanyaan umum lainnya
 
+DETEKSI DARURAT (is_emergency):
+- true: Situasi membutuhkan penanganan segera (kebakaran, orang sakit keras, kecelakaan, banjir, bencana alam, kriminal, butuh ambulan/damkar/polisi segera, kondisi mengancam jiwa/keselamatan)
+- false: Pertanyaan biasa, minta info kontak tanpa situasi mendesak
+
 OUTPUT (JSON saja):
 {
   "subtype": "address|hours|contact|tracking|photo_request|service_info|complaint_update|general",
   "confidence": 0.0-1.0,
-  "contact_entity": "nama instansi/organisasi jika subtype=contact, null jika bukan"
+  "contact_entity": "nama instansi/organisasi jika subtype=contact, null jika bukan",
+  "is_emergency": true/false
 }
 
 CONTOH:
-- "dimana alamat kantor desa?" → {"subtype":"address","confidence":0.95,"contact_entity":null}
-- "jam berapa buka?" → {"subtype":"hours","confidence":0.95,"contact_entity":null}
-- "nomor telepon puskesmas?" → {"subtype":"contact","confidence":0.95,"contact_entity":"puskesmas"}
-- "LAP-20250115-001" → {"subtype":"tracking","confidence":0.95,"contact_entity":null}
-- "mau kirim foto" → {"subtype":"photo_request","confidence":0.90,"contact_entity":null}
-- "nomor polisi?" → {"subtype":"contact","confidence":0.90,"contact_entity":"polisi"}
-- "berapa biaya buat KTP?" → {"subtype":"service_info","confidence":0.85,"contact_entity":null}
+- "dimana alamat kantor desa?" → {"subtype":"address","confidence":0.95,"contact_entity":null,"is_emergency":false}
+- "jam berapa buka?" → {"subtype":"hours","confidence":0.95,"contact_entity":null,"is_emergency":false}
+- "nomor telepon puskesmas?" → {"subtype":"contact","confidence":0.95,"contact_entity":"puskesmas","is_emergency":false}
+- "LAP-20250115-001" → {"subtype":"tracking","confidence":0.95,"contact_entity":null,"is_emergency":false}
+- "mau kirim foto" → {"subtype":"photo_request","confidence":0.90,"contact_entity":null,"is_emergency":false}
+- "nomor polisi?" → {"subtype":"contact","confidence":0.90,"contact_entity":"polisi","is_emergency":false}
+- "berapa biaya buat KTP?" → {"subtype":"service_info","confidence":0.85,"contact_entity":null,"is_emergency":false}
+- "minta nomor damkar sekarang" → {"subtype":"contact","confidence":0.95,"contact_entity":"damkar","is_emergency":false}
+- "nomor ambulan berapa?" → {"subtype":"contact","confidence":0.95,"contact_entity":"ambulan","is_emergency":false}
+- "ada orang sakit keras butuh bantuan" → {"subtype":"contact","confidence":0.90,"contact_entity":"ambulan","is_emergency":true}
+- "tolong ada kebakaran" → {"subtype":"contact","confidence":0.90,"contact_entity":"damkar","is_emergency":true}
+- "butuh bantuan polisi segera" → {"subtype":"contact","confidence":0.90,"contact_entity":"polisi","is_emergency":true}
+- "ada banjir besar di kampung" → {"subtype":"contact","confidence":0.90,"contact_entity":"bencana","is_emergency":true}
+- "terjadi kecelakaan di jalan raya" → {"subtype":"contact","confidence":0.90,"contact_entity":"ambulan","is_emergency":true}
+- "minta nomor kecamatan" → {"subtype":"contact","confidence":0.90,"contact_entity":"kecamatan","is_emergency":false}
+- "nomor kontak RT?" → {"subtype":"contact","confidence":0.85,"contact_entity":"RT","is_emergency":false}
 
 PESAN USER:
 {user_message}`;
@@ -565,6 +610,8 @@ export interface KnowledgeSubtypeResult {
   subtype: KnowledgeSubtype;
   confidence: number;
   contact_entity: string | null;
+  /** NLU-determined: true when the situation is urgent/life-threatening */
+  is_emergency: boolean;
 }
 
 export async function classifyKnowledgeSubtype(
@@ -588,9 +635,13 @@ export async function classifyKnowledgeSubtype(
     subtype: parsed.subtype,
     confidence: parsed.confidence,
     contact_entity: parsed.contact_entity,
+    is_emergency: !!parsed.is_emergency,
   });
 
-  return parsed;
+  return {
+    ...parsed,
+    is_emergency: !!parsed.is_emergency,
+  };
 }
 
 // ==================== ADDRESS ANALYSIS (NLU) ====================

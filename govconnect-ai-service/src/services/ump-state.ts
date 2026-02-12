@@ -56,6 +56,13 @@ export const pendingServiceFormOffer = new LRUCache<string, {
   timestamp: number;
 }>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingServiceFormOffer' });
 
+/** Emergency complaint offer state cache (after emergency contact lookup) */
+export const pendingEmergencyComplaintOffer = new LRUCache<string, {
+  contact_entity?: string;
+  village_id?: string;
+  timestamp: number;
+}>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingEmergencyComplaintOffer' });
+
 /** Pending complaint data cache (waiting for name/phone before creating complaint) */
 export const pendingComplaintData = new LRUCache<string, {
   kategori: string;
@@ -98,7 +105,8 @@ export const serviceSearchCache = new LRUCache<string, {
 registerInterval(() => {
   const caches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
+    pendingNameConfirmation, pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
     serviceSearchCache,
   ];
@@ -176,6 +184,7 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
     { cache: pendingCancelConfirmation, name: 'pendingCancelConfirmation' },
     { cache: pendingNameConfirmation, name: 'pendingNameConfirmation' },
     { cache: pendingServiceFormOffer, name: 'pendingServiceFormOffer' },
+    { cache: pendingEmergencyComplaintOffer, name: 'pendingEmergencyComplaintOffer' },
     { cache: pendingComplaintData, name: 'pendingComplaintData' },
     { cache: pendingPhotos, name: 'pendingPhotos' },
     { cache: complaintTypeCache, name: 'complaintTypeCache' },
@@ -203,7 +212,8 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
 export function clearUserCaches(userId: string): { cleared: number } {
   const userCaches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
+    pendingNameConfirmation, pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingComplaintData,
     pendingPhotos, conversationHistoryCache,
   ];
   let cleared = 0;
@@ -245,7 +255,8 @@ export function syncNameToChannelService(
 export function getUMPCacheStats() {
   return [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingNameConfirmation, pendingServiceFormOffer, pendingComplaintData,
+    pendingNameConfirmation, pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
     serviceSearchCache,
   ].map(c => c.getStats());
@@ -333,6 +344,21 @@ export function setPendingServiceFormOffer(userId: string, data: {
   timestamp: number;
 }) {
   pendingServiceFormOffer.set(userId, data);
+}
+
+// --- Emergency Complaint Offer ---
+export function getPendingEmergencyComplaintOffer(userId: string) {
+  return pendingEmergencyComplaintOffer.get(userId);
+}
+export function clearPendingEmergencyComplaintOffer(userId: string) {
+  pendingEmergencyComplaintOffer.delete(userId);
+}
+export function setPendingEmergencyComplaintOffer(userId: string, data: {
+  contact_entity?: string;
+  village_id?: string;
+  timestamp: number;
+}) {
+  pendingEmergencyComplaintOffer.set(userId, data);
 }
 
 // --- Address Request ---

@@ -40,6 +40,15 @@ Tanggal: {{current_date}} | Jam: {{current_time}} WIB | Waktu: {{time_of_day}}
    Jika informasi tidak tersedia → nyatakan belum tersedia dan arahkan ke kantor desa/kelurahan
 6. Tidak ada delete. Cancel hanya ubah status
 7. Semua respons wajib Bahasa Indonesia, sopan, jelas, mudah dipahami
+8. JIKA RAGU atau pesan AMBIGU → TANYA KLARIFIKASI ke masyarakat. Jangan menebak intent.
+   Contoh: "mau lapor" (ambigu) → tanya apakah pengaduan infrastruktur atau layanan surat.
+   Jangan langsung buat laporan pengaduan jika user belum jelas menyebut masalah infrastruktur.
+
+=== ATURAN PENTING: "LAPOR" BUKAN SELALU PENGADUAN ===
+Kata "lapor" punya 2 makna:
+1. **Pengaduan infrastruktur**: "lapor jalan rusak", "lapor lampu mati" → CREATE_COMPLAINT
+2. **Layanan administrasi**: "lapor meninggal" (SK Kematian), "lapor pindah" (Surat Pindah), "lapor kelahiran" (Akta Lahir) → SERVICE_INFO
+WAJIB bedakan berdasarkan KONTEKS setelah kata "lapor".
 
 === BATAS WILAYAH DESA (MULTI-TENANCY) ===
 Anda HANYA melayani warga dari desa/kelurahan {{village_name}}.
@@ -189,6 +198,8 @@ export const PART3_COMPLAINT_INTENTS = `
 - CREATE_COMPLAINT: Proses via chat. Tanyakan data yang diperlukan sesuai kategori.
   Foto pendukung boleh dikirim via chat (max 5 foto).
   JANGAN kirim link web untuk laporan.
+  ⚠️ HANYA untuk keluhan INFRASTRUKTUR/LINGKUNGAN (jalan rusak, lampu mati, sampah, banjir, dll).
+  BUKAN untuk peristiwa kependudukan (meninggal, lahir, pindah, nikah) — itu SERVICE_INFO.
 - UPDATE_COMPLAINT: Proses via chat. User bisa tambah keterangan atau kirim foto tambahan.
 - CANCEL_COMPLAINT: SELALU minta konfirmasi "Balas YA untuk konfirmasi" sebelum membatalkan.
 `;
@@ -290,9 +301,37 @@ CASE 5.13 — USER TANYA NOMOR KONTAK YANG TIDAK ADA DI KNOWLEDGE
 Input: "berapa nomor telepon kantor desa?"
 Output: {"intent": "KNOWLEDGE_QUERY", "confidence": 0.9, "fields": {"knowledge_category": "kontak"}, "reply_text": "", "guidance_text": "", "needs_knowledge": true}
 
+CASE 5.14 — USER MINTA NOMOR DARURAT (DAMKAR/AMBULAN/POLISI)
+Input: "minta nomor damkar sekarang"
+Output: {"intent": "KNOWLEDGE_QUERY", "confidence": 0.95, "fields": {"knowledge_category": "kontak"}, "reply_text": "", "guidance_text": "", "needs_knowledge": true}
+
+CASE 5.14b — SITUASI DARURAT BUTUH BANTUAN
+Input: "ada orang sakit keras butuh bantuan cepat"
+Output: {"intent": "KNOWLEDGE_QUERY", "confidence": 0.95, "fields": {"knowledge_category": "kontak"}, "reply_text": "", "guidance_text": "", "needs_knowledge": true}
+
 CASE 5.15 — MULTIPLE REQUESTS SEKALIGUS
 Input: "mau buat KTP sama KK sekalian"
 Output: {"intent": "QUESTION", "confidence": 0.85, "fields": {}, "reply_text": "Baik Pak/Bu, untuk pembuatan KTP dan KK prosesnya terpisah. Mari kita proses satu per satu ya.\\n\\nApakah kita mulai dari KTP dulu atau KK?", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.16 — "LAPOR" KEPENDUDUKAN (BUKAN PENGADUAN!)
+Input: "mau lapor meninggal"
+Output: {"intent": "SERVICE_INFO", "confidence": 0.9, "fields": {"service_slug": "surat-kematian"}, "reply_text": "Baik Pak/Bu, turut berduka cita. Untuk pengurusan Surat Keterangan Kematian, berikut informasi layanan yang tersedia.", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.16b — "LAPOR" PINDAH (BUKAN PENGADUAN!)
+Input: "mau lapor pindah domisili"
+Output: {"intent": "SERVICE_INFO", "confidence": 0.9, "fields": {"service_slug": "surat-pindah"}, "reply_text": "Baik Pak/Bu, untuk pengurusan Surat Pindah Domisili, berikut informasi yang tersedia.", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.16c — "LAPOR" KELAHIRAN (BUKAN PENGADUAN!)
+Input: "lapor kelahiran anak"
+Output: {"intent": "SERVICE_INFO", "confidence": 0.9, "fields": {"service_slug": "akta-kelahiran"}, "reply_text": "Selamat Pak/Bu! Untuk pengurusan Akta Kelahiran, berikut informasi layanan yang tersedia.", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.17 — PESAN AMBIGU, PERLU KLARIFIKASI
+Input: "mau lapor"
+Output: {"intent": "QUESTION", "confidence": 0.5, "fields": {}, "reply_text": "Baik Pak/Bu, ingin melapor tentang apa ya?\\n\\n1. *Pengaduan* — keluhan infrastruktur/lingkungan (jalan rusak, lampu mati, dll)\\n2. *Layanan surat* — pengurusan dokumen (SKTM, KTP, surat pindah, dll)\\n\\nMohon jelaskan agar kami bisa membantu.", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.17b — PESAN KURANG JELAS, AI TANYA BALIK
+Input: "saya butuh bantuan"
+Output: {"intent": "QUESTION", "confidence": 0.5, "fields": {}, "reply_text": "Siap Pak/Bu, kami siap membantu. Bisa dijelaskan keperluannya? Misalnya:\\n- Buat laporan pengaduan\\n- Informasi layanan surat\\n- Cek status laporan/layanan\\n- Tanya informasi umum", "guidance_text": "", "needs_knowledge": false}
 `;
 
 // Backward-compatible: full CASES_GREETING
@@ -301,7 +340,7 @@ export const CASES_GREETING = [CASES_GREETING_CORE, CASES_EDGE].join('\n');
 export const CASES_KNOWLEDGE = `
 CASE 2.1 — JAM OPERASIONAL (DARI KB)
 Input: "jam buka kantor desa"
-Output: {"intent": "KNOWLEDGE_QUERY", "confidence": 0.95, "fields": {"knowledge_category": "jadwal"}, "reply_text": "(Jawab berdasarkan data di KNOWLEDGE BASE — jangan mengarang jadwal)", "guidance_text": "", "needs_knowledge": true}
+Output: {"intent": "KNOWLEDGE_QUERY", "confidence": 0.95, "fields": {"knowledge_category": "faq"}, "reply_text": "(Jawab berdasarkan data di KNOWLEDGE BASE — jangan mengarang jadwal)", "guidance_text": "", "needs_knowledge": true}
 `;
 
 export const CASES_SERVICE = `
@@ -514,10 +553,11 @@ export const JSON_SCHEMA_FOR_GEMINI = {
         service_id: { type: 'string' },
         service_slug: { type: 'string' },
         request_number: { type: 'string' },
-        // For KNOWLEDGE_QUERY
+        // For KNOWLEDGE_QUERY — no hardcoded enum; categories are dynamic from Dashboard DB.
+        // The micro-NLU classifier (buildUnifiedClassifyPrompt) provides category suggestions
+        // and knowledge-handler routes to the correct sub-handler based on the category slug.
         knowledge_category: { 
           type: 'string',
-          enum: ['informasi_umum', 'layanan', 'prosedur', 'jadwal', 'kontak', 'faq']
         },
         // For CHECK_STATUS / CANCEL
         complaint_id: { type: 'string' },

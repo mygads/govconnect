@@ -67,7 +67,7 @@ router.post('/', async (req: Request, res: Response) => {
       logger.info('Long knowledge entry detected, using AI smart chunking', { id, contentLength: content.length });
 
       try {
-        const smartChunks = await smartChunkKnowledge(content, title);
+        const smartChunks = await smartChunkKnowledge(content, title, resolvedVillageId || undefined);
 
         if (smartChunks.length > 1) {
           // Multi-chunk: generate batch embeddings with title-prepended input
@@ -219,7 +219,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     if (content.length >= AI_CHUNK_THRESHOLD) {
       try {
-        const smartChunks = await smartChunkKnowledge(content, title);
+        const smartChunks = await smartChunkKnowledge(content, title, resolvedVillageId || undefined);
 
         if (smartChunks.length > 1) {
           const texts = smartChunks.map(c => `${c.title}\n${c.content}`);
@@ -499,7 +499,7 @@ router.post('/embed-all', async (_req: Request, res: Response) => {
               villageId: batch[j].village_id || null,
               title: batch[j].title || '',
               content: batch[j].content,
-              category: batch[j].category || 'informasi_umum',
+              category: batch[j].category || 'custom',
               keywords: batch[j].keywords || [],
               embedding: embeddings.embeddings[j].values,
               embeddingModel: embeddings.embeddings[j].model,
@@ -539,7 +539,7 @@ router.post('/embed-all', async (_req: Request, res: Response) => {
                 villageId: retryBatch[j].village_id || null,
                 title: retryBatch[j].title || '',
                 content: retryBatch[j].content,
-                category: retryBatch[j].category || 'informasi_umum',
+                category: retryBatch[j].category || 'custom',
                 keywords: retryBatch[j].keywords || [],
                 embedding: retryEmbeddings.embeddings[j].values,
                 embeddingModel: retryEmbeddings.embeddings[j].model,

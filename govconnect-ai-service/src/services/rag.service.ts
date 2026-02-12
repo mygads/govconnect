@@ -854,33 +854,17 @@ export async function shouldRetrieveContext(query: string): Promise<boolean> {
 }
 
 /**
- * Get relevant categories based on query content.
- * Kept as lightweight keyword-based fallback when NLU categories are unavailable.
- * The primary path now uses NLU-inferred categories from classifyQueryIntent().
- * 
- * @param query - User's message
- * @returns Array of relevant category names
+ * @deprecated Category inference is now handled entirely by NLU via classifyQueryIntent().
+ * retrieveContext() calls classifyQueryIntent() internally and uses its NLU-inferred categories.
+ * Callers should pass categories=undefined to let NLU decide, or pass explicit NLU categories.
+ *
+ * Returns empty array — forces retrieveContext() to use its own NLU categories instead of
+ * overriding them with stale hardcoded keyword matches.
+ *
+ * This function is kept for API compatibility; will be removed in a future cleanup.
  */
-export function inferCategories(query: string): string[] {
-  const queryLower = query.toLowerCase();
-  const categories: string[] = [];
-
-  const categoryKeywords: Record<string, string[]> = {
-    'jadwal': ['jam', 'buka', 'tutup', 'jadwal', 'operasional', 'libur'],
-    'kontak': ['telepon', 'nomor', 'hubungi', 'kontak', 'alamat', 'lokasi', 'dimana'],
-    'prosedur': ['cara', 'proses', 'prosedur', 'bagaimana', 'langkah', 'tahap'],
-    'layanan': ['layanan', 'pelayanan', 'apa saja', 'tersedia', 'jenis'],
-    'informasi_umum': ['kelurahan', 'desa', 'wilayah', 'kecamatan'],
-    'faq': ['tanya', 'pertanyaan', 'sering', 'umum'],
-  };
-
-  for (const [category, keywords] of Object.entries(categoryKeywords)) {
-    if (keywords.some(kw => queryLower.includes(kw))) {
-      categories.push(category);
-    }
-  }
-
-  return categories;
+export function inferCategories(_query: string): string[] {
+  return [];
 }
 
 // Export classifyQueryIntent for external use (e.g., analytics, debugging)

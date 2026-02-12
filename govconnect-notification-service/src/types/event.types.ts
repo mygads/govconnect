@@ -11,6 +11,15 @@ export interface BaseChannelEvent {
 
 export interface AIReplyEvent extends BaseChannelEvent {
   reply_text: string;
+  guidance_text?: string;
+  contacts?: Array<{
+    name: string;
+    phone: string;
+    organization?: string;
+    title?: string;
+  }>;
+  message_id?: string;
+  batched_message_ids?: string[];
 }
 
 export interface ComplaintCreatedEvent extends BaseChannelEvent {

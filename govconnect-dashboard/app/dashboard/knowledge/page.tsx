@@ -173,6 +173,11 @@ export default function KnowledgePage() {
   // ==================== EMBEDDING STATE ====================
   const [embeddingLoading, setEmbeddingLoading] = useState(false)
 
+  // ==================== CATEGORY MANAGEMENT STATE ====================
+  const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [addCategoryLoading, setAddCategoryLoading] = useState(false)
+
   // ==================== FETCH FUNCTIONS ====================
   const fetchCategories = async () => {
     setCategoriesLoading(true)
@@ -240,6 +245,47 @@ export default function KnowledgePage() {
       toast({ title: "Error", description: "Gagal mengambil dokumen", variant: "destructive" })
     } finally {
       setDocumentsLoading(false)
+    }
+  }
+
+  // ==================== CATEGORY MANAGEMENT ====================
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim()) {
+      toast({ title: "Error", description: "Nama kategori tidak boleh kosong", variant: "destructive" })
+      return
+    }
+
+    // Check for duplicates
+    const duplicate = categories.find(c => c.name.toLowerCase() === newCategoryName.trim().toLowerCase())
+    if (duplicate) {
+      toast({ title: "Error", description: "Kategori dengan nama ini sudah ada", variant: "destructive" })
+      return
+    }
+
+    setAddCategoryLoading(true)
+    try {
+      const response = await fetch('/api/knowledge/categories', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ name: newCategoryName.trim() }),
+      })
+
+      if (response.ok) {
+        toast({ title: "Berhasil", description: `Kategori "${newCategoryName.trim()}" berhasil ditambahkan` })
+        setNewCategoryName('')
+        setIsAddCategoryOpen(false)
+        await fetchCategories()
+      } else {
+        const err = await response.json().catch(() => ({}))
+        toast({ title: "Error", description: err.error || "Gagal menambahkan kategori", variant: "destructive" })
+      }
+    } catch (error) {
+      toast({ title: "Error", description: "Gagal menambahkan kategori", variant: "destructive" })
+    } finally {
+      setAddCategoryLoading(false)
     }
   }
 
@@ -719,6 +765,9 @@ export default function KnowledgePage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <Button type="button" variant="outline" size="icon" onClick={() => setIsAddCategoryOpen(true)} title="Tambah Kategori">
+                  <Plus className="h-4 w-4" />
+                </Button>
                 <Button type="submit" variant="secondary">
                   <Search className="h-4 w-4 mr-2" />
                   Cari
@@ -1186,6 +1235,53 @@ export default function KnowledgePage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ==================== ADD CATEGORY DIALOG ==================== */}
+      <Dialog open={isAddCategoryOpen} onOpenChange={setIsAddCategoryOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Tambah Kategori Baru</DialogTitle>
+            <DialogDescription>
+              Tambahkan kategori kustom untuk mengorganisir basis pengetahuan.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="category-name">Nama Kategori</Label>
+              <Input
+                id="category-name"
+                placeholder="Masukkan nama kategori..."
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleAddCategory()
+                  }
+                }}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setNewCategoryName(''); setIsAddCategoryOpen(false) }}>
+              Batal
+            </Button>
+            <Button onClick={handleAddCategory} disabled={addCategoryLoading || !newCategoryName.trim()}>
+              {addCategoryLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Menyimpan...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Simpan
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

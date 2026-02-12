@@ -19,13 +19,14 @@ import { classifyConfirmation } from './confirmation-classifier.service';
 import { analyzeAddress, classifyUpdateIntent } from './micro-llm-matcher.service';
 import { saveDefaultAddress, getProfile, recordServiceUsage } from './user-profile.service';
 import { recordCompletedAction, recordDataCollected } from './conversation-context.service';
-import type { ChannelType, HandlerResult } from './ump-formatters';
+import type { ChannelType, HandlerResult, ContactInfo } from './ump-formatters';
 import {
   buildChannelParams,
   buildImportantContactsMessage,
   buildCancelSuccessResponse,
   buildCancelErrorResponse,
   buildHistoryResponse,
+  toVCardContacts,
 } from './ump-formatters';
 import {
   pendingAddressConfirmation,
@@ -98,7 +99,7 @@ export async function handleComplaintCreation(
   llmResponse: any,
   currentMessage: string,
   mediaUrl?: string
-): Promise<string> {
+): Promise<HandlerResult> {
   const { kategori, rt_rw } = llmResponse.fields || {};
   let { alamat, deskripsi } = llmResponse.fields || {};
   const villageId = llmResponse.fields?.village_id;
@@ -281,6 +282,7 @@ export async function handleComplaintCreation(
 
     // ==================== IMPORTANT CONTACTS ====================
     let importantContactsMessage = '';
+    let vcardContacts: ContactInfo[] = [];
 
     if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
       const contacts = await getImportantContacts(
@@ -289,28 +291,38 @@ export async function handleComplaintCreation(
         undefined
       );
       importantContactsMessage = buildImportantContactsMessage(contacts, channel);
+      vcardContacts = toVCardContacts(contacts);
     } else if (isEmergency) {
-      const emergencyContactMap: Record<string, string> = {
-        'banjir': 'Bencana',
-        'kebakaran': 'Darurat',
-        'pohon_tumbang': 'Bencana',
-        'bencana': 'Bencana',
-        'kecelakaan': 'Darurat',
-      };
+      // Dynamic emergency contact resolution:
+      // Instead of a hardcoded kategori→category map, try the kategori label
+      // as a contact category name directly (case-insensitive match in Dashboard DB),
+      // then fall back to 'Darurat', then fall back to all contacts.
+      const kategoriLabel = String(kategori || '').replace(/_/g, ' ');
+      logger.info('Emergency complaint: searching contacts dynamically', { kategori, kategoriLabel });
 
-      const fallbackCategory = emergencyContactMap[kategori] || 'Darurat';
-      logger.warn('Emergency contact fallback map used (no config)', { kategori, fallbackCategory });
-      const contacts = await getImportantContacts(villageId, fallbackCategory, undefined);
+      // Step 1: Try matching by kategori label (e.g., 'banjir' → contact category 'Banjir' or 'Bencana')
+      let contacts = await getImportantContacts(villageId, kategoriLabel, undefined);
 
+      // Step 2: Fallback — try 'Darurat' category
       if (!contacts || contacts.length === 0) {
-        const genericContacts = await getImportantContacts(villageId, undefined, undefined);
-        importantContactsMessage = buildImportantContactsMessage(genericContacts, channel);
-      } else {
-        importantContactsMessage = buildImportantContactsMessage(contacts, channel);
+        contacts = await getImportantContacts(villageId, 'Darurat', undefined);
       }
 
-      logger.info('Emergency complaint: sending fallback contacts', {
-        userId, kategori, fallbackCategory, hasContacts: !!importantContactsMessage,
+      // Step 3: Fallback — try 'Bencana' category (common in village setups)
+      if (!contacts || contacts.length === 0) {
+        contacts = await getImportantContacts(villageId, 'Bencana', undefined);
+      }
+
+      // Step 4: Last resort — get ALL contacts
+      if (!contacts || contacts.length === 0) {
+        contacts = await getImportantContacts(villageId, undefined, undefined);
+      }
+
+      importantContactsMessage = buildImportantContactsMessage(contacts, channel);
+      vcardContacts = toVCardContacts(contacts);
+
+      logger.info('Emergency complaint: contacts resolved', {
+        userId, kategori, hasContacts: contacts.length > 0,
       });
     }
 
@@ -323,7 +335,13 @@ export async function handleComplaintCreation(
       ? '\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.'
       : '';
     const multiComplaintHint = '\n\nJika ada laporan lain, silakan langsung sampaikan.';
-    return `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${statusLine}${withPhotoNote}${photoReminder}${importantContactsMessage}${multiComplaintHint}`;
+    const replyText = `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${statusLine}${withPhotoNote}${photoReminder}${importantContactsMessage}${multiComplaintHint}`;
+    
+    // Return structured result with vCard contacts if available
+    if (vcardContacts.length > 0) {
+      return { replyText, contacts: vcardContacts };
+    }
+    return replyText;
   }
 
   aiAnalyticsService.recordFailure('CREATE_COMPLAINT');

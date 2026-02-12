@@ -167,6 +167,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       wa_user_id,
       reply_text: result.response,
       guidance_text: result.guidanceText,
+      contacts: result.contacts,
       message_id: is_batched ? undefined : message_id,
       batched_message_ids: is_batched ? batched_message_ids : undefined,
     });

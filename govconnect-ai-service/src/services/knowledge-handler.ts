@@ -21,8 +21,10 @@ import {
 import {
   getPublicFormBaseUrl,
   buildPublicServiceFormUrl,
+  toVCardContacts,
 } from './ump-formatters';
-import { setPendingServiceFormOffer } from './ump-state';
+import type { ContactInfo, HandlerResult } from './ump-formatters';
+import { setPendingServiceFormOffer, setPendingEmergencyComplaintOffer } from './ump-state';
 import { resolveVillageSlugForPublicForm } from './ump-utils';
 
 // ──────────────── helpers (local) ────────────────
@@ -52,7 +54,7 @@ export async function handleKnowledgeQuery(
   llmResponse: any,
   mainLlmReplyText?: string,
   channel: string = 'whatsapp',
-): Promise<string> {
+): Promise<HandlerResult> {
   logger.info('Handling knowledge query', { userId, knowledgeCategory: llmResponse.fields?.knowledge_category });
 
   try {
@@ -95,6 +97,7 @@ export async function handleKnowledgeQuery(
         userId,
         channel,
         categories,
+        knowledgeSubtype?.is_emergency ?? false,
       );
     }
 
@@ -284,7 +287,8 @@ async function answerContact(
   userId: string,
   channel: string,
   categories?: string[],
-): Promise<string> {
+  isEmergencyFromNLU: boolean = false,
+): Promise<HandlerResult> {
   let contacts = await getImportantContacts(villageId || '');
 
   // Micro-NLU semantic matching
@@ -358,7 +362,28 @@ async function answerContact(
     }
   }
 
-  return lines.join('\n');
+  // Emergency follow-up: offer to create a complaint/report
+  // Uses NLU-determined is_emergency flag instead of hardcoded keyword matching.
+  // The micro-LLM (classifyKnowledgeSubtype) already understands emergency semantics
+  // like "ada orang sakit keras", "kebakaran", "kecelakaan", etc.
+  if (isEmergencyFromNLU) {
+    lines.push('\n⚠️ Jika ada situasi darurat, segera hubungi nomor di atas.');
+    lines.push('Apakah Bapak/Ibu juga ingin *dibuatkan laporan pengaduan* terkait situasi ini?');
+
+    // Store pending state so UMP can intercept "yes" reply
+    setPendingEmergencyComplaintOffer(userId, {
+      contact_entity: contactEntity || undefined,
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+  }
+
+  const replyText = lines.join('\n');
+  const vcardContacts = toVCardContacts(top);
+  if (vcardContacts.length > 0) {
+    return { replyText, contacts: vcardContacts };
+  }
+  return replyText;
 }
 
 // ════════════════ Service catalog ════════════════

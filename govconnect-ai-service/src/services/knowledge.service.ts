@@ -3,7 +3,6 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import {
   retrieveContext,
-  inferCategories,
 } from './rag.service';
 import { RAGContext } from '../types/embedding.types';
 import { classifyProfileQuery } from './micro-llm-matcher.service';
@@ -156,22 +155,24 @@ function mergeKnowledgeResults(a: KnowledgeSearchResult, b: KnowledgeSearchResul
  * Higher scores (0.65+) were too strict and missed relevant results
  */
 async function searchKnowledgeWithRAG(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
-  const inferredCategories = categories || inferCategories(query);
+  // Let retrieveContext() handle category inference via its internal NLU (classifyQueryIntent).
+  // Only pass explicit categories if the caller already knows them (e.g. from a prior NLU call).
+  const effectiveCategories = categories && categories.length > 0 ? categories : undefined;
 
-  // First attempt: use inferred categories (better precision when correct)
+  // First attempt: use NLU-inferred categories (better precision when correct)
   let ragContext = await retrieveContext(query, {
     topK: 5,
     minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
-    categories: inferredCategories.length > 0 ? inferredCategories : undefined,
+    categories: effectiveCategories,
     sourceTypes: ['knowledge', 'document'], // Search both knowledge and documents
     villageId,
   });
 
-  // Fallback: if category inference is wrong, do a second attempt WITHOUT category filtering.
-  // This improves recall for generic KB (e.g., glossary/5W1H) that may not match inferred categories.
-  if (ragContext.totalResults === 0 && inferredCategories.length > 0) {
+  // Fallback: if NLU category filtering is too strict, retry WITHOUT category filter.
+  // This improves recall for generic KB (e.g., glossary/5W1H) that may not match NLU categories.
+  if (ragContext.totalResults === 0 && effectiveCategories && effectiveCategories.length > 0) {
     logger.debug('RAG search fallback: retrying without category filter', {
-      inferredCategories,
+      effectiveCategories,
     });
 
     ragContext = await retrieveContext(query, {
@@ -278,13 +279,15 @@ export async function getAllKnowledge(villageId?: string): Promise<KnowledgeItem
  * NOTE: minScore tuned to 0.55 for better recall with Indonesian language
  */
 export async function getRAGContext(query: string, categories?: string[], villageId?: string): Promise<RAGContext> {
-  const inferredCategories = categories || inferCategories(query);
+  // Let retrieveContext() handle category inference via its internal NLU (classifyQueryIntent).
+  // Only pass explicit categories if the caller already knows them.
+  const effectiveCategories = categories && categories.length > 0 ? categories : undefined;
   
   // Fetch RAG context
   const ragContext = await retrieveContext(query, {
     topK: 5,
     minScore: 0.55,
-    categories: inferredCategories.length > 0 ? inferredCategories : undefined,
+    categories: effectiveCategories,
     sourceTypes: ['knowledge', 'document'],
     villageId,
   });
@@ -516,7 +519,7 @@ export async function getKelurahanInfoContext(villageId?: string): Promise<strin
     const ragContext = await retrieveContext('informasi kelurahan nama alamat', {
       topK: 3,
       minScore: 0.5, // Lower threshold to get basic info
-      categories: ['informasi_umum', 'kontak'],
+      categories: ['profil_desa', 'kontak'],
       sourceTypes: ['knowledge'],
       villageId,
     });
@@ -533,7 +536,7 @@ export async function getKelurahanInfoContext(villageId?: string): Promise<strin
       `${config.dashboardServiceUrl}/api/internal/knowledge`,
       {
         params: { 
-          category: 'informasi_umum',
+          category: 'profil_desa',
           limit: 5,
           village_id: villageId,
         },

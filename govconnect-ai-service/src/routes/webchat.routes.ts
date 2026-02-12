@@ -359,11 +359,30 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       processingTimeMs: processingTime,
     });
     
+    // Format contacts for webchat: clickable WA links instead of vCard
+    let webchatContacts: Array<{ name: string; phone: string; waLink: string; organization?: string; title?: string }> | undefined;
+    if (result.contacts && result.contacts.length > 0) {
+      webchatContacts = result.contacts.map(c => {
+        const digits = (c.phone || '').replace(/\D/g, '');
+        let normalized = digits;
+        if (digits.startsWith('0')) normalized = `62${digits.slice(1)}`;
+        else if (digits.startsWith('8')) normalized = `62${digits}`;
+        return {
+          name: c.name,
+          phone: c.phone,
+          waLink: `https://wa.me/${normalized}`,
+          organization: c.organization,
+          title: c.title,
+        };
+      });
+    }
+
     res.json({
       success: true,
       response: result.response,
       guidanceText: result.guidanceText,
       intent: result.intent,
+      contacts: webchatContacts,
       metadata: {
         session_id,
         processingTimeMs: result.metadata.processingTimeMs,

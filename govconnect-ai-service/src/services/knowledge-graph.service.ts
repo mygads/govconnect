@@ -38,7 +38,7 @@ export interface KnowledgeNode {
   id: string;
   code: string;       // e.g., 'SKD', 'SKTM'
   name: string;
-  category: string;   // 'layanan'
+  category: string;   // 'layanan_administrasi'
   keywords: string[];
   relations: KnowledgeRelation[];
 }
@@ -81,14 +81,14 @@ const ALL_RELATIONS: KnowledgeRelation[] = SERVICE_RELATIONS;
  * These will be overwritten by DB data on successful refresh.
  */
 const FALLBACK_SERVICE_NODES: [string, KnowledgeNode][] = [
-  ['SKD', { id: 'SKD', code: 'SKD', name: 'Surat Keterangan Domisili', category: 'layanan', keywords: ['domisili', 'tempat tinggal', 'alamat'], relations: [] }],
-  ['SKTM', { id: 'SKTM', code: 'SKTM', name: 'Surat Keterangan Tidak Mampu', category: 'layanan', keywords: ['tidak mampu', 'miskin', 'kurang mampu'], relations: [] }],
-  ['SKU', { id: 'SKU', code: 'SKU', name: 'Surat Keterangan Usaha', category: 'layanan', keywords: ['usaha', 'bisnis', 'dagang'], relations: [] }],
-  ['SPKTP', { id: 'SPKTP', code: 'SPKTP', name: 'Surat Pengantar KTP', category: 'layanan', keywords: ['ktp', 'identitas', 'kartu'], relations: [] }],
-  ['SPKK', { id: 'SPKK', code: 'SPKK', name: 'Surat Pengantar KK', category: 'layanan', keywords: ['kk', 'kartu keluarga', 'keluarga'], relations: [] }],
-  ['SPSKCK', { id: 'SPSKCK', code: 'SPSKCK', name: 'Surat Pengantar SKCK', category: 'layanan', keywords: ['skck', 'kelakuan baik', 'polisi'], relations: [] }],
-  ['SPAKTA', { id: 'SPAKTA', code: 'SPAKTA', name: 'Surat Pengantar Akta', category: 'layanan', keywords: ['akta', 'kelahiran', 'kematian', 'nikah'], relations: [] }],
-  ['IKR', { id: 'IKR', code: 'IKR', name: 'Izin Keramaian', category: 'layanan', keywords: ['keramaian', 'acara', 'hajatan', 'pesta'], relations: [] }],
+  ['SKD', { id: 'SKD', code: 'SKD', name: 'Surat Keterangan Domisili', category: 'layanan_administrasi', keywords: ['domisili', 'tempat tinggal', 'alamat'], relations: [] }],
+  ['SKTM', { id: 'SKTM', code: 'SKTM', name: 'Surat Keterangan Tidak Mampu', category: 'layanan_administrasi', keywords: ['tidak mampu', 'miskin', 'kurang mampu'], relations: [] }],
+  ['SKU', { id: 'SKU', code: 'SKU', name: 'Surat Keterangan Usaha', category: 'layanan_administrasi', keywords: ['usaha', 'bisnis', 'dagang'], relations: [] }],
+  ['SPKTP', { id: 'SPKTP', code: 'SPKTP', name: 'Surat Pengantar KTP', category: 'layanan_administrasi', keywords: ['ktp', 'identitas', 'kartu'], relations: [] }],
+  ['SPKK', { id: 'SPKK', code: 'SPKK', name: 'Surat Pengantar KK', category: 'layanan_administrasi', keywords: ['kk', 'kartu keluarga', 'keluarga'], relations: [] }],
+  ['SPSKCK', { id: 'SPSKCK', code: 'SPSKCK', name: 'Surat Pengantar SKCK', category: 'layanan_administrasi', keywords: ['skck', 'kelakuan baik', 'polisi'], relations: [] }],
+  ['SPAKTA', { id: 'SPAKTA', code: 'SPAKTA', name: 'Surat Pengantar Akta', category: 'layanan_administrasi', keywords: ['akta', 'kelahiran', 'kematian', 'nikah'], relations: [] }],
+  ['IKR', { id: 'IKR', code: 'IKR', name: 'Izin Keramaian', category: 'layanan_administrasi', keywords: ['keramaian', 'acara', 'hajatan', 'pesta'], relations: [] }],
 ];
 
 /**
@@ -159,9 +159,9 @@ export async function refreshFromDB(): Promise<void> {
       return;
     }
 
-    // Remove old service nodes (category === 'layanan')
+    // Remove old service nodes (category === 'layanan_administrasi')
     for (const [key, node] of KNOWLEDGE_NODES) {
-      if (node.category === 'layanan') {
+      if (node.category === 'layanan_administrasi') {
         KNOWLEDGE_NODES.delete(key);
       }
     }
@@ -177,7 +177,7 @@ export async function refreshFromDB(): Promise<void> {
         id: svc.id || code,
         code,
         name: svc.name,
-        category: 'layanan',
+        category: 'layanan_administrasi',
         keywords,
         relations: [],
       };
@@ -199,7 +199,7 @@ export async function refreshFromDB(): Promise<void> {
     dbInitialized = true;
     logger.info('[KnowledgeGraph] ✅ Refreshed service nodes from DB', {
       totalNodes: KNOWLEDGE_NODES.size,
-      serviceNodes: [...KNOWLEDGE_NODES.values()].filter(n => n.category === 'layanan').length,
+      serviceNodes: [...KNOWLEDGE_NODES.values()].filter(n => n.category === 'layanan_administrasi').length,
     });
   } catch (error: any) {
     logger.warn('[KnowledgeGraph] Failed to refresh from DB, using existing data', { error: error.message });
@@ -249,7 +249,7 @@ export function getNode(code: string): KnowledgeNode | undefined {
 export function getAllServiceCodes(): string[] {
   const codes: string[] = [];
   for (const node of KNOWLEDGE_NODES.values()) {
-    if (node.category === 'layanan') {
+    if (node.category === 'layanan_administrasi') {
       codes.push(node.code);
     }
   }
@@ -263,7 +263,7 @@ export function getAllServiceCodes(): string[] {
 export function getAllServiceKeywords(): { keyword: string; code: string }[] {
   const result: { keyword: string; code: string }[] = [];
   for (const node of KNOWLEDGE_NODES.values()) {
-    if (node.category === 'layanan') {
+    if (node.category === 'layanan_administrasi') {
       for (const kw of node.keywords) {
         result.push({ keyword: kw, code: node.code });
       }

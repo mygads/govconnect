@@ -13,16 +13,41 @@ import type { ServiceRequirementDefinition } from './case-client.service';
 
 export type ChannelType = 'whatsapp' | 'webchat' | 'other';
 
-export type HandlerResult = string | { replyText: string; guidanceText?: string };
+export interface ContactInfo {
+  name: string;
+  phone: string;
+  organization?: string;
+  title?: string;
+}
 
-export function normalizeHandlerResult(result: HandlerResult): { replyText: string; guidanceText?: string } {
+export type HandlerResult = string | { replyText: string; guidanceText?: string; contacts?: ContactInfo[] };
+
+export function normalizeHandlerResult(result: HandlerResult): { replyText: string; guidanceText?: string; contacts?: ContactInfo[] } {
   if (typeof result === 'string') {
     return { replyText: result };
   }
   return {
     replyText: result.replyText,
     guidanceText: result.guidanceText,
+    contacts: result.contacts,
   };
+}
+
+/**
+ * Convert ImportantContact[] (from DB) to ContactInfo[] for vCard sending.
+ * Category name is used as organization field.
+ */
+export function toVCardContacts(
+  contacts: Array<{ name: string; phone: string; description?: string | null; category?: { name: string } | null }>,
+): ContactInfo[] {
+  return contacts
+    .filter(c => c.phone)
+    .map(c => ({
+      name: c.name,
+      phone: c.phone.replace(/\D/g, ''),
+      organization: c.category?.name || undefined,
+      title: c.description || undefined,
+    }));
 }
 
 // ==================== STATUS MAPS ====================

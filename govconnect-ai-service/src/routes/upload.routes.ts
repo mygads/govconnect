@@ -277,7 +277,7 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
     let usedAiChunking = false;
     
     try {
-      smartChunks = await smartChunkDocument(content, docTitle);
+      smartChunks = await smartChunkDocument(content, docTitle, resolvedVillageId || undefined);
       usedAiChunking = true;
       logger.info('AI smart chunking succeeded', {
         documentId,

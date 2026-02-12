@@ -23,6 +23,7 @@ import logger from '../utils/logger';
 import { apiKeyManager, isRateLimitError } from './api-key-manager.service';
 import { config } from '../config/env';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getCategorySlugs, FALLBACK_CATEGORY_SLUGS } from './dynamic-categories.service';
 
 // ==================== TYPES ====================
 
@@ -45,11 +46,19 @@ interface ChunkDefinition {
 
 // ==================== CONSTANTS ====================
 
-const VALID_CATEGORIES = [
-  'regulasi', 'sop', 'layanan', 'kependudukan', 'perizinan',
-  'infrastruktur', 'kesehatan', 'pendidikan', 'sosial', 'keuangan',
-  'pertanian', 'lingkungan', 'umum', 'faq', 'custom',
-] as const;
+/**
+ * Fallback categories are now imported from the single source of truth.
+ * Dynamic categories from getCategorySlugs() are preferred.
+ */
+
+/** Resolve valid categories: dynamic from DB, or fallback */
+async function resolveCategories(villageId?: string): Promise<string[]> {
+  try {
+    const slugs = await getCategorySlugs(villageId);
+    if (slugs.length > 0) return slugs;
+  } catch { /* fallback */ }
+  return [...FALLBACK_CATEGORY_SLUGS];
+}
 
 /** Max paragraphs per LLM call to stay within context window */
 const MAX_PARAGRAPHS_PER_BATCH = 150;
@@ -66,6 +75,7 @@ function buildChunkingPrompt(
   numberedParagraphs: string,
   documentTitle: string,
   totalParagraphs: number,
+  validCategories: string[],
 ): string {
   return `Kamu adalah document analyzer untuk sistem layanan pemerintah desa/kelurahan (GovConnect).
 
@@ -85,7 +95,7 @@ ATURAN TITLE:
 - Contoh BURUK: "Bagian 1", "Informasi", "Data"
 
 KATEGORI YANG TERSEDIA:
-${VALID_CATEGORIES.map(c => `- ${c}`).join('\n')}
+${validCategories.map(c => `- ${c}`).join('\n')}
 
 Pilih "custom" jika tidak cocok dengan kategori lainnya.
 
@@ -113,6 +123,7 @@ function buildKnowledgeChunkingPrompt(
   numberedParagraphs: string,
   knowledgeTitle: string,
   totalParagraphs: number,
+  validCategories: string[],
 ): string {
   return `Kamu adalah knowledge base analyzer untuk sistem layanan pemerintah desa/kelurahan (GovConnect).
 
@@ -128,7 +139,7 @@ ATURAN CHUNKING:
 5. Beri judul yang SPESIFIK dan DESKRIPTIF untuk setiap chunk
 
 KATEGORI YANG TERSEDIA:
-${VALID_CATEGORIES.map(c => `- ${c}`).join('\n')}
+${validCategories.map(c => `- ${c}`).join('\n')}
 
 TOTAL PARAGRAF: ${totalParagraphs}
 
@@ -169,6 +180,7 @@ function formatNumberedParagraphs(paragraphs: string[]): string {
 async function callLLMForChunking(
   prompt: string,
   timeout: number = 60_000,
+  validCategories?: string[],
 ): Promise<ChunkDefinition[]> {
   // Use flash model for smart chunking (needs to be smart enough)
   const preferredModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
@@ -237,7 +249,7 @@ async function callLLMForChunking(
 
         // Normalize category
         const rawCategory = (def.category || 'custom').toLowerCase().trim();
-        const category = VALID_CATEGORIES.includes(rawCategory as any) ? rawCategory : 'custom';
+        const category = (validCategories || [...FALLBACK_CATEGORY_SLUGS]).includes(rawCategory) ? rawCategory : 'custom';
 
         return {
           paragraphs: def.paragraphs.map((n: any) => Number(n)),
@@ -336,7 +348,7 @@ function validateCoverage(
         validated.push({
           paragraphs: group,
           title: 'Informasi Tambahan',
-          category: 'umum',
+          category: 'custom',
         });
         group = [uncovered[i]];
       }
@@ -344,7 +356,7 @@ function validateCoverage(
     validated.push({
       paragraphs: group,
       title: 'Informasi Tambahan',
-      category: 'umum',
+      category: 'custom',
     });
   }
 
@@ -370,8 +382,10 @@ function validateCoverage(
 export async function smartChunkDocument(
   fullText: string,
   documentTitle: string,
+  villageId?: string,
 ): Promise<SmartChunk[]> {
   const startTime = Date.now();
+  const validCategories = await resolveCategories(villageId);
 
   // Step 1: Split into paragraphs
   const paragraphs = splitIntoParagraphs(fullText);
@@ -383,7 +397,7 @@ export async function smartChunkDocument(
 
   // Very short document (1-2 paragraphs): single chunk, still ask AI for title+category
   if (paragraphs.length <= 2) {
-    return await smartChunkShortDocument(paragraphs, documentTitle);
+    return await smartChunkShortDocument(paragraphs, documentTitle, validCategories);
   }
 
   logger.info('[SmartChunk] Starting AI-driven chunking', {
@@ -397,11 +411,11 @@ export async function smartChunkDocument(
   if (paragraphs.length <= MAX_PARAGRAPHS_PER_BATCH) {
     // Small/medium document: single LLM call
     const numbered = formatNumberedParagraphs(paragraphs);
-    const prompt = buildChunkingPrompt(numbered, documentTitle, paragraphs.length);
-    chunkDefs = await callLLMForChunking(prompt);
+    const prompt = buildChunkingPrompt(numbered, documentTitle, paragraphs.length, validCategories);
+    chunkDefs = await callLLMForChunking(prompt, 60_000, validCategories);
   } else {
     // Large document: process in overlapping batches
-    chunkDefs = await batchChunkDocument(paragraphs, documentTitle);
+    chunkDefs = await batchChunkDocument(paragraphs, documentTitle, validCategories);
   }
 
   // Validate coverage
@@ -434,7 +448,9 @@ export async function smartChunkDocument(
 export async function smartChunkKnowledge(
   content: string,
   title: string,
+  villageId?: string,
 ): Promise<SmartChunk[]> {
+  const validCategories = await resolveCategories(villageId);
   const paragraphs = splitIntoParagraphs(content);
 
   if (paragraphs.length === 0) {
@@ -443,7 +459,7 @@ export async function smartChunkKnowledge(
 
   // Short text: single chunk, ask AI for title+category only
   if (paragraphs.length <= 3) {
-    return await smartChunkShortDocument(paragraphs, title);
+    return await smartChunkShortDocument(paragraphs, title, validCategories);
   }
 
   logger.info('[SmartChunk] Chunking knowledge entry', {
@@ -452,10 +468,10 @@ export async function smartChunkKnowledge(
   });
 
   const numbered = formatNumberedParagraphs(paragraphs);
-  const prompt = buildKnowledgeChunkingPrompt(numbered, title, paragraphs.length);
+  const prompt = buildKnowledgeChunkingPrompt(numbered, title, paragraphs.length, validCategories);
 
   try {
-    const chunkDefs = await callLLMForChunking(prompt, 30_000);
+    const chunkDefs = await callLLMForChunking(prompt, 30_000, validCategories);
     const validated = validateCoverage(chunkDefs, paragraphs.length);
     return reconstructChunks(paragraphs, validated);
   } catch (err: any) {
@@ -480,7 +496,9 @@ export async function smartChunkKnowledge(
 async function smartChunkShortDocument(
   paragraphs: string[],
   documentTitle: string,
+  validCategories?: string[],
 ): Promise<SmartChunk[]> {
+  const cats = validCategories || [...FALLBACK_CATEGORY_SLUGS];
   const content = paragraphs.join('\n\n');
 
   // Quick AI call just for title + category
@@ -494,7 +512,7 @@ Judul dokumen: "${documentTitle}"
 Teks:
 ${content.substring(0, 3000)}
 
-KATEGORI: ${VALID_CATEGORIES.join(', ')}
+KATEGORI: ${cats.join(', ')}
 
 Jawab HANYA JSON (tanpa markdown):
 {"title": "Judul Deskriptif", "category": "kategori"}`;
@@ -532,7 +550,7 @@ Jawab HANYA JSON (tanpa markdown):
 
         const parsed = JSON.parse(result.response.text().trim());
         const rawCat = (parsed.category || 'custom').toLowerCase().trim();
-        const category = VALID_CATEGORIES.includes(rawCat as any) ? rawCat : 'custom';
+        const category = cats.includes(rawCat) ? rawCat : 'custom';
 
         return [{
           title: parsed.title || documentTitle,
@@ -562,6 +580,7 @@ Jawab HANYA JSON (tanpa markdown):
 async function batchChunkDocument(
   paragraphs: string[],
   documentTitle: string,
+  validCategories?: string[],
 ): Promise<ChunkDefinition[]> {
   const allChunkDefs: ChunkDefinition[] = [];
   const totalBatches = Math.ceil(paragraphs.length / (MAX_PARAGRAPHS_PER_BATCH - BATCH_OVERLAP));
@@ -586,10 +605,11 @@ async function batchChunkDocument(
     });
 
     const numbered = formatNumberedParagraphs(batchParagraphs);
-    const prompt = buildChunkingPrompt(numbered, documentTitle, batchParagraphs.length);
+    const cats = validCategories || [...FALLBACK_CATEGORY_SLUGS];
+    const prompt = buildChunkingPrompt(numbered, documentTitle, batchParagraphs.length, cats);
 
     try {
-      const batchDefs = await callLLMForChunking(prompt);
+      const batchDefs = await callLLMForChunking(prompt, 60_000, validCategories);
 
       // Adjust paragraph numbers to global scope (batch-local → document-global)
       const adjusted = batchDefs.map(def => ({

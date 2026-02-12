@@ -5,6 +5,7 @@ import { config } from '../config/env';
 import { getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '../prompts/system-prompt';
 import { RAGContext } from '../types/embedding.types';
 import { summarizeConversation } from './micro-llm-matcher.service';
+import { buildComplaintCategoriesText } from './complaint-handler';
 
 interface Message {
   id: string;
@@ -51,8 +52,8 @@ export async function buildContext(
     const currentTime = wib.time;
     const timeOfDay = wib.timeOfDay;
 
-    // Default complaint categories fallback
-    const categoriesText = complaintCategoriesText || 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya';
+    // Default complaint categories: use dynamic DB-driven list when available
+    const categoriesText = complaintCategoriesText || await buildComplaintCategoriesText(undefined);
     
     // Build full prompt using adaptive system prompt (filters by focus)
     // Pass hasKnowledge to skip PART5_KNOWLEDGE block when RAG returned no results (~400 tokens saved)
@@ -103,7 +104,7 @@ export async function buildContext(
       .replace(/\{\{tomorrow_date\}\}/g, wibFallback.tomorrow)
       .replace(/\{\{current_time\}\}/g, wibFallback.time)
       .replace(/\{\{time_of_day\}\}/g, wibFallback.timeOfDay)
-      .replace(/\{\{complaint_categories\}\}/g, 'jalan_rusak, lampu_mati, sampah, drainase, pohon_tumbang, fasilitas_rusak, banjir, tindakan_kriminal, kebakaran, lainnya')
+      .replace(/\{\{complaint_categories\}\}/g, await buildComplaintCategoriesText(undefined))
       .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
     
     return {

@@ -111,6 +111,7 @@ import {
   pendingCancelConfirmation,
   pendingNameConfirmation,
   pendingServiceFormOffer,
+  pendingEmergencyComplaintOffer,
   pendingComplaintData,
   pendingPhotos,
   addPendingPhoto,
@@ -122,6 +123,7 @@ import {
   decrementActiveProcessing,
   clearPendingServiceFormOffer,
   clearPendingCancelConfirmation,
+  clearPendingEmergencyComplaintOffer,
 } from './ump-state';
 import {
   extractNameFromTextNLU,
@@ -166,6 +168,15 @@ export { handleComplaintCreation, handleComplaintUpdate, handleCancellationReque
 export { handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEditLink } from './service-handler';
 export { handleStatusCheck } from './status-handler';
 export { handleKnowledgeQuery } from './knowledge-handler';
+
+/**
+ * Unwrap a HandlerResult (string or { replyText, guidanceText?, contacts? })
+ * into separate fields for ProcessMessageResult.
+ */
+function unwrapHandler(result: HandlerResult): { response: string; guidanceText?: string; contacts?: ProcessMessageResult['contacts'] } {
+  const n = normalizeHandlerResult(result);
+  return { response: n.replyText, guidanceText: n.guidanceText, contacts: n.contacts };
+}
 
 /**
  * Process message from any channel
@@ -434,6 +445,57 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       };
     }
 
+    // Step 2.3: Check pending emergency complaint offer
+    const pendingEmergency = pendingEmergencyComplaintOffer.get(userId);
+    if (pendingEmergency) {
+      const confirmationResult = await withMicroNluBudget(
+        () => classifyConfirmation(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
+        null
+      );
+      const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
+      const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
+
+      if (isLikelyConfirm) {
+        clearPendingEmergencyComplaintOffer(userId);
+        // Route to complaint creation with the emergency context
+        const llmLike = {
+          intent: 'CREATE_COMPLAINT',
+          fields: {
+            kategori: pendingEmergency.contact_entity || 'darurat',
+            ...(pendingEmergency.village_id ? { village_id: pendingEmergency.village_id } : {}),
+          },
+          reply_text: '',
+        };
+        const complaintResult = await handleComplaintCreation(userId, channel, llmLike, message);
+        const unwrapped = unwrapHandler(complaintResult);
+        return {
+          success: true,
+          response: unwrapped.response,
+          contacts: unwrapped.contacts,
+          intent: 'CREATE_COMPLAINT',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+        };
+      }
+
+      if (isLikelyReject) {
+        clearPendingEmergencyComplaintOffer(userId);
+        return {
+          success: true,
+          response: 'Baik Pak/Bu. Semoga situasinya segera tertangani. Jangan ragu hubungi kami jika butuh bantuan lagi.',
+          intent: 'KNOWLEDGE_QUERY',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+        };
+      }
+
+      // Ambiguous → re-prompt
+      return {
+        success: true,
+        response: 'Apakah Bapak/Ibu ingin kami *buatkan laporan pengaduan* terkait situasi darurat ini? Balas *iya* atau *tidak*.',
+        intent: 'KNOWLEDGE_QUERY',
+        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+      };
+    }
+
     // Hard gate: wajib tahu nama sebelum proses apa pun
     // SKIP for isEvaluation (testing-knowledge) — fokus jawab pertanyaan, tidak perlu tanya nama
     let knownName: string | null = null;
@@ -601,6 +663,67 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // No pre-LLM keyword matching — the LLM handles intent classification,
     // and is_urgent comes from complaintTypeConfig in the DB.
 
+    // Step 1.98: Pre-LLM contact/emergency interceptor — uses micro-NLU to detect
+    // contact requests (damkar, ambulan, polisi, kecamatan) and emergency situations
+    // that need immediate contact numbers. Bypasses LLM for faster response.
+    {
+      const unified = await getUnifiedClassification();
+      const isContactRequest = unified?.categories?.includes('kontak');
+      const isEmergencyLike = unified?.message_type === 'QUESTION' && isContactRequest;
+
+      if (isEmergencyLike || isContactRequest) {
+        try {
+          const contactSubtype = await withMicroNluBudget(
+            () => classifyKnowledgeSubtype(message.trim(), {
+              village_id: resolvedVillageId,
+              wa_user_id: userId,
+              session_id: userId,
+              channel,
+            }),
+            null
+          );
+
+          if (contactSubtype?.subtype === 'contact' && contactSubtype.confidence >= 0.7) {
+            logger.info('🚨 [UnifiedProcessor] Pre-LLM contact interceptor triggered', {
+              traceId, userId, channel,
+              contactEntity: contactSubtype.contact_entity,
+              confidence: contactSubtype.confidence,
+            });
+
+            // Build a synthetic KNOWLEDGE_QUERY response to route through knowledge handler
+            const syntheticLlm = {
+              intent: 'KNOWLEDGE_QUERY',
+              fields: {
+                village_id: resolvedVillageId,
+                knowledge_category: 'kontak',
+              },
+              reply_text: '',
+            };
+
+            tracker.preparing();
+            const contactReply = await handleKnowledgeQuery(
+              userId, message, syntheticLlm, undefined, channel
+            );
+            const contactUnwrapped = unwrapHandler(contactReply);
+
+            tracker.complete();
+            if (channel === 'whatsapp') {
+              appendToHistoryCache(userId, 'assistant', contactUnwrapped.response);
+            }
+            return {
+              success: true,
+              response: contactUnwrapped.response,
+              contacts: contactUnwrapped.contacts,
+              intent: 'KNOWLEDGE_QUERY',
+              metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: true, traceId },
+            };
+          }
+        } catch (error: any) {
+          logger.warn('[UnifiedProcessor] Contact interceptor NLU failed, continuing to LLM', { error: error.message });
+        }
+      }
+    }
+
     // Step 2: Check pending address confirmation (for vague addresses)
     const pendingConfirm = pendingAddressConfirmation.get(userId);
     if (pendingConfirm) {
@@ -649,10 +772,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           message, 
           undefined // Photos tracked in pendingPhotos cache
         );
+        const unwrapped = unwrapHandler(complaintResult);
         
         return {
           success: true,
-          response: complaintResult,
+          response: unwrapped.response,
+          contacts: unwrapped.contacts,
           intent: 'CREATE_COMPLAINT',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
@@ -685,10 +810,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           message, 
           undefined // Photos tracked in pendingPhotos cache
         );
+        const unwrapped = unwrapHandler(complaintResult);
         
         return {
           success: true,
-          response: complaintResult,
+          response: unwrapped.response,
+          contacts: unwrapped.contacts,
           intent: 'CREATE_COMPLAINT',
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
@@ -751,10 +878,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             message, 
             undefined // Photos tracked in pendingPhotos cache
           );
+          const unwrapped = unwrapHandler(complaintResult);
           
           return {
             success: true,
-            response: complaintResult,
+            response: unwrapped.response,
+            contacts: unwrapped.contacts,
             intent: 'CREATE_COMPLAINT',
             metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
           };
@@ -807,10 +936,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             message, 
             undefined // Photos tracked in pendingPhotos cache
           );
+          const unwrapped = unwrapHandler(complaintResult);
           
           return {
             success: true,
-            response: complaintResult,
+            response: unwrapped.response,
+            contacts: unwrapped.contacts,
             intent: 'CREATE_COMPLAINT',
             metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
           };
@@ -1132,7 +1263,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           break;
         case 'QUESTION':
           // Questions could be service or knowledge — use RAG categories to decide
-          if (nluCategories.some(c => ['layanan', 'prosedur'].includes(c))) {
+          if (nluCategories.some(c => ['layanan_administrasi', 'panduan-sop'].includes(c))) {
             promptFocus = 'service';
           } else if (nluCategories.length > 0) {
             promptFocus = 'knowledge';
@@ -1381,15 +1512,16 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     let finalReplyText = effectiveLlmResponse.reply_text;
     let guidanceText = effectiveLlmResponse.guidance_text || '';
+    let resultContacts: ProcessMessageResult['contacts'] | undefined;
 
     // Emergency auto-category removed — LLM handles intent and category classification.
     // is_urgent flag comes from DB complaintTypeConfig after LLM determines kategori.
 
     // ── Confidence-based intent validation ──
-    // If LLM reports low confidence (<0.4), fall back to QUESTION to ask for clarification
+    // If LLM reports low confidence (<0.5), fall back to QUESTION to ask for clarification
     // rather than risk processing a wrong intent (e.g., creating a complaint for a question).
     const llmConfidence = typeof effectiveLlmResponse.confidence === 'number' ? effectiveLlmResponse.confidence : 0.8;
-    if (llmConfidence < 0.4 && effectiveLlmResponse.intent !== 'QUESTION' && effectiveLlmResponse.intent !== 'UNKNOWN') {
+    if (llmConfidence < 0.5 && effectiveLlmResponse.intent !== 'QUESTION' && effectiveLlmResponse.intent !== 'UNKNOWN') {
       logger.info('[UnifiedProcessor] Low LLM confidence, demoting to QUESTION', {
         userId, originalIntent: effectiveLlmResponse.intent, confidence: llmConfidence,
       });
@@ -1421,7 +1553,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         if (!rateLimitCheck.allowed) {
           finalReplyText = rateLimitCheck.message || 'Anda telah mencapai batas laporan hari ini.';
         } else {
-          finalReplyText = await handleComplaintCreation(userId, channel, effectiveLlmResponse, message, mediaUrl);
+          const complaintHandlerResult = normalizeHandlerResult(await handleComplaintCreation(userId, channel, effectiveLlmResponse, message, mediaUrl));
+          finalReplyText = complaintHandlerResult.replyText;
+          if (complaintHandlerResult.contacts?.length) {
+            resultContacts = complaintHandlerResult.contacts;
+          }
         }
         break;
       
@@ -1470,7 +1606,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             _preloaded_knowledge_context: preloadedRAGContext.contextString,
           } as any;
         }
-        finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel);
+        {
+          const kqResult = normalizeHandlerResult(await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel));
+          finalReplyText = kqResult.replyText;
+          if (kqResult.contacts?.length) resultContacts = kqResult.contacts;
+        }
         break;
       
       case 'QUESTION':
@@ -1481,7 +1621,21 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             ...(effectiveLlmResponse.fields || {}),
             _preloaded_knowledge_context: preloadedRAGContext.contextString,
           } as any;
-          finalReplyText = await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel);
+          const kqResult2 = normalizeHandlerResult(await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel));
+          finalReplyText = kqResult2.replyText;
+          if (kqResult2.contacts?.length) resultContacts = kqResult2.contacts;
+        } else if (unified?.categories?.includes('kontak')) {
+          // NLU detected contact category — force route to knowledge handler for contact lookup
+          // This catches cases where LLM classified as QUESTION but user is asking for contacts
+          logger.info('[UnifiedProcessor] QUESTION with contact category, routing to knowledge handler', { userId });
+          effectiveLlmResponse.fields = {
+            ...(effectiveLlmResponse.fields || {}),
+            village_id: resolvedVillageId,
+            knowledge_category: 'kontak',
+          } as any;
+          const kqResult3 = normalizeHandlerResult(await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel));
+          finalReplyText = kqResult3.replyText;
+          if (kqResult3.contacts?.length) resultContacts = kqResult3.contacts;
         }
         // else: use LLM reply as-is (greeting, chitchat, etc.)
         break;
@@ -1565,6 +1719,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       success: true,
       response: finalResponse,
       guidanceText: finalGuidance,
+      contacts: resultContacts,
       intent: llmResponse.intent,
       fields: llmResponse.fields,
       metadata: {
