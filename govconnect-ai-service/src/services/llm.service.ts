@@ -27,6 +27,63 @@ const MAX_RETRY_DELAY_MS = 5000;
 const JSON_RETRY_EXTRA_DELAY_MS = 500;
 
 /**
+ * Repair truncated JSON by closing all open structures.
+ * Handles truncated strings, arrays, and objects.
+ */
+function repairTruncatedJson(text: string): string {
+  let result = text.trim();
+  
+  // Track open structures
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+  
+  for (let i = 0; i < result.length; i++) {
+    const ch = result[i];
+    
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    
+    if (!inString) {
+      if (ch === '{') stack.push('}');
+      else if (ch === '[') stack.push(']');
+      else if (ch === '}' || ch === ']') {
+        if (stack.length > 0 && stack[stack.length - 1] === ch) {
+          stack.pop();
+        }
+      }
+    }
+  }
+  
+  // Close unterminated string
+  if (inString) {
+    result += '"';
+  }
+  
+  // Handle trailing comma before closing (common in truncated JSON)
+  result = result.replace(/,\s*$/, '');
+  
+  // Close all open structures in reverse order
+  while (stack.length > 0) {
+    result += stack.pop();
+  }
+  
+  return result;
+}
+
+/**
  * Sleep for specified milliseconds
  */
 function sleep(ms: number): Promise<void> {
@@ -236,89 +293,63 @@ async function callGeminiWithModel(
     try {
       parsedResponse = JSON.parse(responseText);
     } catch (jsonError: any) {
-      // Try to fix common JSON issues
+      // Try to fix common JSON issues (typically truncated output from maxOutputTokens)
+      logger.warn('🔧 Attempting JSON recovery', {
+        model: modelName,
+        originalLength: responseText.length,
+        error: jsonError.message,
+      });
+
       let fixedText = responseText;
-      
-      // Fix unterminated strings by finding and closing them
-      if (jsonError.message.includes('Unterminated string')) {
-        logger.warn('🔧 Attempting to fix unterminated string in JSON', {
-          model: modelName,
-          originalLength: responseText.length,
-          error: jsonError.message,
-        });
-        
-        // Find the last quote and add closing quote if needed
-        const lastQuoteIndex = fixedText.lastIndexOf('"');
-        const lastBraceIndex = fixedText.lastIndexOf('}');
-        
-        if (lastQuoteIndex > lastBraceIndex) {
-          // There's an unterminated string, try to close it
-          fixedText = fixedText + '"';
-          
-          // Also ensure proper JSON structure
-          if (!fixedText.endsWith('}')) {
-            fixedText = fixedText + '}';
-          }
-        }
-        
-        // Try parsing the fixed text
-        try {
-          parsedResponse = JSON.parse(fixedText);
-          logger.info('✅ Successfully fixed unterminated string', {
-            model: modelName,
-            fixedLength: fixedText.length,
-          });
-        } catch (secondError: any) {
-          // If still fails, try more aggressive fixes
-          logger.warn('🔧 Attempting more aggressive JSON fixes', {
-            model: modelName,
-            secondError: secondError.message,
-          });
-          
-          // Try to extract just the JSON part if there's extra text
-          const jsonMatch = fixedText.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
+      let recovered = false;
+
+      // Strategy 1: Try to repair truncated JSON by closing open structures
+      try {
+        fixedText = repairTruncatedJson(responseText);
+        parsedResponse = JSON.parse(fixedText);
+        recovered = true;
+        logger.info('✅ JSON repaired via structure closing', { model: modelName });
+      } catch (_e1) {
+        // Strategy 2: Extract the largest valid JSON object
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            parsedResponse = JSON.parse(jsonMatch[0]);
+            recovered = true;
+            logger.info('✅ JSON extracted from response', { model: modelName });
+          } catch (_e2) {
+            // Try repairing the extracted JSON
             try {
-              parsedResponse = JSON.parse(jsonMatch[0]);
-              logger.info('✅ Successfully extracted and parsed JSON', {
-                model: modelName,
-              });
-            } catch (thirdError: any) {
-              // Last resort: create a fallback response
-              logger.error('❌ All JSON fixes failed, creating fallback response', {
-                model: modelName,
-                originalError: jsonError.message,
-                secondError: secondError.message,
-                thirdError: thirdError.message,
-              });
-              
-              parsedResponse = {
-                intent: 'UNKNOWN',
-                fields: {},
-                reply_text: 'Maaf, terjadi kesalahan teknis. Silakan ulangi pertanyaan Anda.',
-                guidance_text: '',
-                needs_knowledge: false,
-              };
+              fixedText = repairTruncatedJson(jsonMatch[0]);
+              parsedResponse = JSON.parse(fixedText);
+              recovered = true;
+              logger.info('✅ Extracted JSON repaired', { model: modelName });
+            } catch (_e3) {
+              // Strategy 3: Try to extract key fields with regex
+              const intentMatch = responseText.match(/"intent"\s*:\s*"([^"]+)"/);
+              const replyMatch = responseText.match(/"reply_text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+              if (intentMatch) {
+                parsedResponse = {
+                  intent: intentMatch[1],
+                  fields: {},
+                  reply_text: replyMatch ? replyMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : 'Maaf, terjadi kesalahan teknis. Silakan ulangi pertanyaan Anda.',
+                  guidance_text: '',
+                  needs_knowledge: false,
+                };
+                recovered = true;
+                logger.info('✅ Key fields extracted via regex', { model: modelName, intent: intentMatch[1] });
+              }
             }
-          } else {
-            // No JSON found, create fallback
-            parsedResponse = {
-              intent: 'UNKNOWN',
-              fields: {},
-              reply_text: 'Maaf, terjadi kesalahan teknis. Silakan ulangi pertanyaan Anda.',
-              guidance_text: '',
-              needs_knowledge: false,
-            };
           }
         }
-      } else {
-        // Other JSON errors, create fallback response
-        logger.error('❌ JSON parsing failed, creating fallback response', {
+      }
+
+      if (!recovered) {
+        logger.error('❌ All JSON fixes failed, creating fallback response', {
           model: modelName,
           error: jsonError.message,
-          responsePreview: responseText.substring(0, 200),
+          responsePreview: responseText.substring(0, 300),
         });
-        
         parsedResponse = {
           intent: 'UNKNOWN',
           fields: {},

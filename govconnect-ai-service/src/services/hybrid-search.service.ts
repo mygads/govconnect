@@ -59,11 +59,22 @@ export async function searchKeywords(
   // Prepare search terms
   const searchTerms = prepareSearchTerms(query);
   const tsQuery = searchTerms.join(' | '); // OR search
+  // Build individual term ILIKE patterns for better partial matching
+  // instead of matching the entire query string at once
+  const ilikeTerms = searchTerms.length > 0 ? searchTerms.map(t => `%${t}%`) : [`%${query.toLowerCase()}%`];
   const ilikeTerm = `%${query.toLowerCase()}%`;
 
   try {
     // Search knowledge base with full-text search
     if (sourceTypes.includes('knowledge')) {
+      // Build dynamic ILIKE conditions for individual search terms
+      const termConditions = ilikeTerms.map(term => 
+        Prisma.sql`LOWER(content) LIKE ${term} OR LOWER(title) LIKE ${term}`
+      );
+      const combinedTermCondition = termConditions.length > 0
+        ? Prisma.sql`(${Prisma.join(termConditions, ' OR ')})`
+        : Prisma.sql`FALSE`;
+
       const knowledgeResults = await prisma.$queryRaw<any[]>`
         SELECT 
           id,
@@ -80,18 +91,17 @@ export async function searchKeywords(
             CASE WHEN ${query.toLowerCase()} = ANY(LOWER(keywords::text)::text[]) THEN 2.5 ELSE 0 END +
             COALESCE(
               ts_rank(
-                to_tsvector('indonesian', COALESCE(title, '') || ' ' || COALESCE(content, '')),
-                plainto_tsquery('indonesian', ${query})
+                to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(content, '')),
+                plainto_tsquery('simple', ${query})
               ),
               0
             )
           ) as relevance_score
         FROM knowledge_vectors
         WHERE 
-          (LOWER(title) LIKE ${ilikeTerm}
-          OR LOWER(content) LIKE ${ilikeTerm}
-          OR to_tsvector('indonesian', COALESCE(title, '') || ' ' || COALESCE(content, '')) 
-             @@ plainto_tsquery('indonesian', ${query}))
+          (${combinedTermCondition}
+          OR to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(content, '')) 
+             @@ plainto_tsquery('simple', ${query}))
           ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
         ORDER BY relevance_score DESC
         LIMIT ${topK}
@@ -120,6 +130,14 @@ export async function searchKeywords(
 
     // Search document chunks
     if (sourceTypes.includes('document')) {
+      // Build dynamic ILIKE conditions for individual search terms
+      const docTermConditions = ilikeTerms.map(term =>
+        Prisma.sql`LOWER(content) LIKE ${term} OR LOWER(COALESCE(section_title, '')) LIKE ${term} OR LOWER(COALESCE(document_title, '')) LIKE ${term}`
+      );
+      const combinedDocTermCondition = docTermConditions.length > 0
+        ? Prisma.sql`(${Prisma.join(docTermConditions, ' OR ')})`
+        : Prisma.sql`FALSE`;
+
       const documentResults = await prisma.$queryRaw<any[]>`
         SELECT 
           id,
@@ -136,18 +154,17 @@ export async function searchKeywords(
             CASE WHEN LOWER(COALESCE(section_title, '')) LIKE ${ilikeTerm} THEN 2.5 ELSE 0 END +
             COALESCE(
               ts_rank(
-                to_tsvector('indonesian', COALESCE(section_title, '') || ' ' || COALESCE(content, '')),
-                plainto_tsquery('indonesian', ${query})
+                to_tsvector('simple', COALESCE(section_title, '') || ' ' || COALESCE(content, '')),
+                plainto_tsquery('simple', ${query})
               ),
               0
             )
           ) as relevance_score
         FROM document_vectors
         WHERE 
-          (LOWER(content) LIKE ${ilikeTerm}
-          OR LOWER(COALESCE(section_title, '')) LIKE ${ilikeTerm}
-          OR to_tsvector('indonesian', COALESCE(section_title, '') || ' ' || COALESCE(content, '')) 
-             @@ plainto_tsquery('indonesian', ${query}))
+          (${combinedDocTermCondition}
+          OR to_tsvector('simple', COALESCE(section_title, '') || ' ' || COALESCE(content, '')) 
+             @@ plainto_tsquery('simple', ${query}))
           ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
         ORDER BY relevance_score DESC
         LIMIT ${topK}
@@ -190,11 +207,13 @@ export async function searchKeywords(
  * Handles Indonesian language specifics
  */
 function prepareSearchTerms(query: string): string[] {
+  // Indonesian stop words to exclude from keyword search
+  const stopWords = new Set(['di', 'ke', 'ya', 'yg', 'apa', 'ini', 'itu', 'dan', 'atau', 'yang', 'dari']);
   const terms = query
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
-    .filter(t => t.length > 2);
+    .filter(t => t.length > 1 && !stopWords.has(t));
 
   // Instead of a hardcoded synonym map, use lightweight algorithmic expansion:
   // 1. Keep all original terms

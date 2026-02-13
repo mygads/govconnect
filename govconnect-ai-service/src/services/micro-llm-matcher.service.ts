@@ -380,12 +380,15 @@ Analisis pesan user dan tentukan SEMUA aspek berikut dalam SATU jawaban:
 ⚠️ ATURAN PENTING — BEDAKAN "LAPOR" KELUHAN vs LAYANAN ADMINISTRATIF:
 - "lapor" + MASALAH INFRASTRUKTUR (jalan rusak, lampu mati, banjir, sampah, kebakaran) → COMPLAINT
 - "lapor" + PERISTIWA KEPENDUDUKAN (meninggal, lahir, pindah, cerai, nikah) → QUESTION (ini layanan surat/administrasi, BUKAN pengaduan)
-- "lapor" + DARURAT + BUTUH BANTUAN (orang sakit, kecelakaan, kebakaran) → QUESTION dengan rag_needed: true, categories: ["kontak"] (prioritas: berikan nomor darurat)
+- "lapor" + DARURAT + BUTUH BANTUAN SEGERA (misal "tolong ada orang sakit keras", "kebakaran sekarang") → QUESTION dengan rag_needed: true, categories: ["kontak"] (prioritas: berikan nomor darurat)
+- "lapor" + DARURAT + INGIN BUAT LAPORAN (misal "mau lapor ada kecelakaan", "buat laporan kebakaran") → COMPLAINT (user ingin membuat laporan, bukan minta nomor darurat)
+- Jika user secara EKSPLISIT minta "buat laporan" atau "mau lapor" → COMPLAINT (meskipun topiknya darurat)
+- Jika user PANIK minta tolong tanpa menyebut "lapor/laporan" → QUESTION dengan categories: ["kontak"]
 - Jika TIDAK JELAS apakah keluhan atau layanan → QUESTION (lebih aman, biar AI tanya lagi)
 
 ⚠️ ATURAN PENTING — PERMINTAAN KONTAK/NOMOR DARURAT:
 - Jika user minta nomor telepon, kontak, damkar, ambulan, polisi, RS, puskesmas → QUESTION dengan rag_needed: true, categories: ["kontak"]
-- Jika user menyebut situasi darurat (sakit keras, kebakaran, kecelakaan) → QUESTION dengan rag_needed: true, categories: ["kontak"]
+- Jika user menyebut situasi darurat tanpa minta buat laporan (sakit keras, kebakaran, kecelakaan) → QUESTION dengan rag_needed: true, categories: ["kontak"]
 
 2. **rag_needed**: Apakah perlu cari di knowledge base?
    - true: Pertanyaan tentang prosedur/SOP, syarat, biaya, jadwal, lokasi, pejabat/personil, layanan, dokumen, info desa, program, regulasi, KONTAK/NOMOR PENTING
@@ -410,6 +413,9 @@ CONTOH:
 - "ada orang sakit keras butuh bantuan cepat" → QUESTION, rag_needed: true, categories: ["kontak"]
 - "minta nomor damkar sekarang" → QUESTION, rag_needed: true, categories: ["kontak"]
 - "sampah menumpuk di jalan" → COMPLAINT, rag_needed: false, categories: []
+- "saya mau buat laporan tadi ada kecelakaan" → COMPLAINT, rag_needed: false, categories: []
+- "mau lapor kebakaran di kampung" → COMPLAINT, rag_needed: false, categories: []
+- "tolong ada kebakaran cepat" → QUESTION, rag_needed: true, categories: ["kontak"]
 
 OUTPUT (JSON saja, tanpa markdown):
 {
@@ -571,9 +577,16 @@ JENIS PERTANYAAN:
 - tracking: Menyebutkan nomor laporan/layanan (LAP-xxx, LAY-xxx) atau tanya status
 - photo_request: Ingin kirim/upload foto atau gambar
 - service_info: Bertanya tentang layanan/surat/persyaratan/prosedur TERTENTU (spesifik 1 layanan)
-- service_listing: Bertanya DAFTAR/LIST semua layanan yang tersedia (bukan layanan spesifik)
+- service_listing: Bertanya DAFTAR/LIST semua LAYANAN ADMINISTRASI yang tersedia (bukan info umum tentang desa)
 - complaint_update: Ingin update/tambah informasi laporan yang sudah ada
-- general: Pertanyaan umum lainnya
+- general: Pertanyaan umum lainnya (termasuk info tentang desa, profil desa, data kependudukan, pejabat, sejarah, geografi, dll)
+
+⚠️ ATURAN PENTING — BEDAKAN service_listing vs general:
+- "layanan apa saja" / "surat apa saja" / "apa yang bisa diurus" → service_listing (bertanya tentang layanan administrasi)
+- "data apa saja yang ada di desa" / "info tentang desa" / "apa saja yang ada di desa" → general (bertanya tentang informasi umum desa, bukan layanan)
+- Jika pertanyaan menyebut "desa" + "data/info/informasi" → general
+- Jika pertanyaan tentang pejabat (kepala desa, camat, lurah, sekretaris) → general
+- Jika pertanyaan tentang kependudukan (penduduk, warga, jumlah, populasi) → general
 
 DETEKSI DARURAT (is_emergency):
 - true: Situasi membutuhkan penanganan segera (kebakaran, orang sakit keras, kecelakaan, banjir, bencana alam, kriminal, butuh ambulan/damkar/polisi segera, kondisi mengancam jiwa/keselamatan)
@@ -599,6 +612,11 @@ CONTOH:
 - "daftar layanan yang tersedia" → {"subtype":"service_listing","confidence":0.95,"contact_entity":null,"is_emergency":false}
 - "layanan apa yang bisa diurus online?" → {"subtype":"service_listing","confidence":0.90,"contact_entity":null,"is_emergency":false}
 - "surat apa saja yang bisa dibuat?" → {"subtype":"service_listing","confidence":0.90,"contact_entity":null,"is_emergency":false}
+- "data apa saja yang ada di desa?" → {"subtype":"general","confidence":0.90,"contact_entity":null,"is_emergency":false}
+- "info tentang desa ini" → {"subtype":"general","confidence":0.90,"contact_entity":null,"is_emergency":false}
+- "siapa kepala desa?" → {"subtype":"general","confidence":0.95,"contact_entity":null,"is_emergency":false}
+- "jumlah penduduk berapa?" → {"subtype":"general","confidence":0.90,"contact_entity":null,"is_emergency":false}
+- "siapa camat di sini?" → {"subtype":"general","confidence":0.90,"contact_entity":null,"is_emergency":false}
 - "minta nomor damkar sekarang" → {"subtype":"contact","confidence":0.95,"contact_entity":"damkar","is_emergency":false}
 - "nomor ambulan berapa?" → {"subtype":"contact","confidence":0.95,"contact_entity":"ambulan","is_emergency":false}
 - "ada orang sakit keras butuh bantuan" → {"subtype":"contact","confidence":0.90,"contact_entity":"ambulan","is_emergency":true}
