@@ -9,7 +9,13 @@ const CHANNEL_SERVICE_URL = process.env.CHANNEL_SERVICE_URL || 'http://localhost
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || ''
 
 const MAX_SIZE = 5 * 1024 * 1024
-const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png'])
+const ALLOWED_FILE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+])
 
 async function getSession(request: NextRequest) {
   const token =
@@ -34,8 +40,8 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null
 
     if (!file) return NextResponse.json({ error: 'File wajib diunggah' }, { status: 400 })
-    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
-      return NextResponse.json({ error: 'Tipe file tidak didukung. Gunakan JPG/PNG.' }, { status: 400 })
+    if (!ALLOWED_FILE_TYPES.has(file.type)) {
+      return NextResponse.json({ error: 'Tipe file tidak didukung. Gunakan JPG/PNG/PDF/DOC/DOCX.' }, { status: 400 })
     }
     if (file.size > MAX_SIZE) {
       return NextResponse.json({ error: 'Ukuran file maksimal 5MB' }, { status: 400 })
@@ -52,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     const result = await response.json().catch(() => null)
     if (!response.ok) {
-      return NextResponse.json({ error: result?.error || 'Gagal mengunggah foto' }, { status: response.status })
+      return NextResponse.json({ error: result?.error || 'Gagal mengunggah file' }, { status: response.status })
     }
 
     return NextResponse.json({

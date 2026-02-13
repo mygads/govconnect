@@ -570,7 +570,8 @@ JENIS PERTANYAAN:
 - contact: Bertanya nomor telepon/kontak/hotline/WA instansi
 - tracking: Menyebutkan nomor laporan/layanan (LAP-xxx, LAY-xxx) atau tanya status
 - photo_request: Ingin kirim/upload foto atau gambar
-- service_info: Bertanya tentang layanan/surat/persyaratan/prosedur
+- service_info: Bertanya tentang layanan/surat/persyaratan/prosedur TERTENTU (spesifik 1 layanan)
+- service_listing: Bertanya DAFTAR/LIST semua layanan yang tersedia (bukan layanan spesifik)
 - complaint_update: Ingin update/tambah informasi laporan yang sudah ada
 - general: Pertanyaan umum lainnya
 
@@ -580,7 +581,7 @@ DETEKSI DARURAT (is_emergency):
 
 OUTPUT (JSON saja):
 {
-  "subtype": "address|hours|contact|tracking|photo_request|service_info|complaint_update|general",
+  "subtype": "address|hours|contact|tracking|photo_request|service_info|service_listing|complaint_update|general",
   "confidence": 0.0-1.0,
   "contact_entity": "nama instansi/organisasi jika subtype=contact, null jika bukan",
   "is_emergency": true/false
@@ -594,6 +595,10 @@ CONTOH:
 - "mau kirim foto" → {"subtype":"photo_request","confidence":0.90,"contact_entity":null,"is_emergency":false}
 - "nomor polisi?" → {"subtype":"contact","confidence":0.90,"contact_entity":"polisi","is_emergency":false}
 - "berapa biaya buat KTP?" → {"subtype":"service_info","confidence":0.85,"contact_entity":null,"is_emergency":false}
+- "ada layanan apa saja?" → {"subtype":"service_listing","confidence":0.95,"contact_entity":null,"is_emergency":false}
+- "daftar layanan yang tersedia" → {"subtype":"service_listing","confidence":0.95,"contact_entity":null,"is_emergency":false}
+- "layanan apa yang bisa diurus online?" → {"subtype":"service_listing","confidence":0.90,"contact_entity":null,"is_emergency":false}
+- "surat apa saja yang bisa dibuat?" → {"subtype":"service_listing","confidence":0.90,"contact_entity":null,"is_emergency":false}
 - "minta nomor damkar sekarang" → {"subtype":"contact","confidence":0.95,"contact_entity":"damkar","is_emergency":false}
 - "nomor ambulan berapa?" → {"subtype":"contact","confidence":0.95,"contact_entity":"ambulan","is_emergency":false}
 - "ada orang sakit keras butuh bantuan" → {"subtype":"contact","confidence":0.90,"contact_entity":"ambulan","is_emergency":true}
@@ -607,7 +612,7 @@ CONTOH:
 PESAN USER:
 {user_message}`;
 
-export type KnowledgeSubtype = 'address' | 'hours' | 'contact' | 'tracking' | 'photo_request' | 'service_info' | 'complaint_update' | 'general';
+export type KnowledgeSubtype = 'address' | 'hours' | 'contact' | 'tracking' | 'photo_request' | 'service_info' | 'service_listing' | 'complaint_update' | 'general';
 
 export interface KnowledgeSubtypeResult {
   subtype: KnowledgeSubtype;
@@ -630,7 +635,7 @@ export async function classifyKnowledgeSubtype(
   const parsed = parseJSON(raw) as KnowledgeSubtypeResult | null;
   if (!parsed?.subtype || typeof parsed.confidence !== 'number') return null;
 
-  const validSubtypes: KnowledgeSubtype[] = ['address', 'hours', 'contact', 'tracking', 'photo_request', 'service_info', 'complaint_update', 'general'];
+  const validSubtypes: KnowledgeSubtype[] = ['address', 'hours', 'contact', 'tracking', 'photo_request', 'service_info', 'service_listing', 'complaint_update', 'general'];
   if (!validSubtypes.includes(parsed.subtype)) parsed.subtype = 'general';
 
   logger.info('Micro LLM classified knowledge subtype', {

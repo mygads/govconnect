@@ -313,7 +313,7 @@ export default function ServiceRequestsPage() {
 
       {/* Deleted Items Modal */}
       <Dialog open={showDeletedModal} onOpenChange={setShowDeletedModal}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Archive className="h-5 w-5" /> Permohonan yang Dihapus

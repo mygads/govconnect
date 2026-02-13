@@ -26,9 +26,11 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams
     const categoryId = searchParams.get('category_id') || undefined
+    const isUrgent = searchParams.get('is_urgent') || undefined
 
     const url = new URL(buildUrl(ServicePath.CASE, '/complaints/types'))
     if (categoryId) url.searchParams.set('category_id', categoryId)
+    if (isUrgent) url.searchParams.set('is_urgent', isUrgent)
     if (session.admin.village_id) url.searchParams.set('village_id', session.admin.village_id)
 
     const response = await apiFetch(url.toString(), {

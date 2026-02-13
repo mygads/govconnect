@@ -263,10 +263,6 @@ export default function RateLimitPage() {
               <p className="text-2xl font-bold">{data?.config.autoBlacklistViolations || 10} pelanggaran</p>
             </div>
           </div>
-          
-          <p className="text-sm text-muted-foreground mt-4">
-            💡 Ubah konfigurasi melalui environment variables: <code>RATE_LIMIT_ENABLED</code>, <code>MAX_REPORTS_PER_DAY</code>, <code>COOLDOWN_SECONDS</code>
-          </p>
         </CardContent>
       </Card>
 

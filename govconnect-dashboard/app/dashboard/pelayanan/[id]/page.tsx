@@ -191,7 +191,6 @@ export default function ServiceRequestDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState("")
   const [adminNotes, setAdminNotes] = useState("")
-  const [resultDescription, setResultDescription] = useState("")
   const [resultFile, setResultFile] = useState<File | null>(null)
   const [resultFileUrl, setResultFileUrl] = useState("")
   const [resultFileName, setResultFileName] = useState("")
@@ -276,7 +275,6 @@ export default function ServiceRequestDetailPage() {
       setRequest(payload)
       setStatus(payload.status || "OPEN")
       setAdminNotes(payload.admin_notes || "")
-      setResultDescription(payload.result_description || "")
       setResultFileUrl(payload.result_file_url || "")
       setResultFileName(payload.result_file_name || "")
       setError(null)
@@ -299,7 +297,7 @@ export default function ServiceRequestDetailPage() {
       const formData = new FormData()
       formData.append("file", file)
 
-      const response = await fetch("/api/upload", {
+      const response = await fetch("/api/uploads", {
         method: "POST",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         body: formData,
@@ -310,7 +308,11 @@ export default function ServiceRequestDetailPage() {
       }
 
       const data = await response.json()
-      setResultFileUrl(data.url || data.file_url)
+      const fileUrl = data?.data?.url || data?.url || data?.file_url
+      if (!fileUrl) {
+        throw new Error("URL file tidak ditemukan dalam response")
+      }
+      setResultFileUrl(fileUrl)
       setResultFileName(file.name)
       setResultFile(null)
       toast({ title: "File berhasil diupload" })
@@ -340,7 +342,6 @@ export default function ServiceRequestDetailPage() {
           admin_notes: adminNotes,
           result_file_url: resultFileUrl || null,
           result_file_name: resultFileName || null,
-          result_description: resultDescription || null,
         }),
       })
 
@@ -681,7 +682,7 @@ export default function ServiceRequestDetailPage() {
                 <Textarea
                   value={adminNotes}
                   onChange={(e) => setAdminNotes(e.target.value)}
-                  placeholder="Catatan untuk warga (opsional)"
+                  placeholder="Catatan untuk warga, misal: Surat domisili sudah jadi, silakan diambil di kantor desa"
                   rows={3}
                   className="resize-none placeholder:text-muted-foreground/40"
                 />
@@ -740,14 +741,6 @@ export default function ServiceRequestDetailPage() {
                     {uploading && <Loader2 className="h-4 w-4 animate-spin" />}
                   </div>
                 )}
-                
-                <Textarea
-                  value={resultDescription}
-                  onChange={(e) => setResultDescription(e.target.value)}
-                  placeholder="Deskripsi hasil layanan (misal: Surat domisili sudah jadi, silakan diambil atau download file di atas)"
-                  rows={2}
-                  className="resize-none placeholder:text-muted-foreground/40"
-                />
               </div>
               
               <Button onClick={handleSave} disabled={saving || uploading} className="w-full gap-2">

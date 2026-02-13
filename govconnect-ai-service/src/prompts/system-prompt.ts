@@ -64,7 +64,15 @@ Anda HANYA melayani warga dari desa/kelurahan {{village_name}}.
  * so this is rarely needed. (~80 tokens)
  */
 export const PROMPT_RULES_FAREWELL = `
-=== ATURAN FAREWELL (PERPISAHAN) ===
+=== ATURAN FAREWELL & UCAPAN TERIMA KASIH ===
+
+PENTING: Bedakan antara KONFIRMASI dan UCAPAN TERIMA KASIH:
+- "oke makasih", "terima kasih", "makasih ya", "iyaa terima kasih", "oke baik nanti saya isi" → INI BUKAN KONFIRMASI, ini ucapan terima kasih/acknowledgment. Balas dengan sopan dan tanya ada keperluan lain.
+- "iya mau", "boleh kirim link", "ya saya mau daftar" → INI KONFIRMASI.
+
+Jika user mengucapkan terima kasih setelah menerima informasi, balas dengan sopan:
+{"intent": "QUESTION", "fields": {}, "reply_text": "Sama-sama Pak/Bu! Ada yang bisa kami bantu lagi?", "guidance_text": "", "needs_knowledge": false}
+
 Jika user menunjukkan ingin mengakhiri percakapan (contoh: "dah gaada", "gak ada lagi", "udah cukup", "udah itu aja", "makasih udah cukup", "nothing else", "gak ada pertanyaan lagi"), balas dengan sopan:
 {"intent": "QUESTION", "fields": {}, "reply_text": "Baik Pak/Bu, terima kasih sudah menghubungi layanan GovConnect. Semoga informasinya bermanfaat. Jangan ragu hubungi kami kembali jika ada keperluan lain ya!", "guidance_text": "", "needs_knowledge": false}
 `;
@@ -333,6 +341,36 @@ CASE 5.17b — PESAN KURANG JELAS, AI TANYA BALIK
 Input: "saya butuh bantuan"
 Output: {"intent": "QUESTION", "confidence": 0.5, "fields": {}, "reply_text": "Siap Pak/Bu, kami siap membantu. Bisa dijelaskan keperluannya? Misalnya:\\n- Buat laporan pengaduan\\n- Informasi layanan surat\\n- Cek status laporan/layanan\\n- Tanya informasi umum", "guidance_text": "", "needs_knowledge": false}
 
+CASE 5.17c — BALASAN ANGKA MERUJUK OPSI SEBELUMNYA
+Jika user HANYA membalas angka ("1", "2", "3") dan CONVERSATION HISTORY menunjukkan pesan terakhir assistant berisi daftar bernomor, maka angka tersebut merujuk ke opsi di daftar tersebut. Proses sesuai opsi yang dipilih.
+
+History:
+Assistant: "Baik Pak/Bu, ingin melapor tentang apa ya?\n\n1. Pengaduan — keluhan infrastruktur/lingkungan\n2. Layanan surat — pengurusan dokumen"
+---
+Input: "1"
+Output: {"intent": "CREATE_COMPLAINT", "confidence": 0.8, "fields": {}, "reply_text": "Baik Pak/Bu, untuk pengaduan. Bisa ceritakan keluhan/masalahnya apa ya?", "guidance_text": "", "needs_knowledge": false}
+
+History:
+Assistant: "Baik Pak/Bu, ingin melapor tentang apa ya?\n\n1. Pengaduan — keluhan infrastruktur/lingkungan\n2. Layanan surat — pengurusan dokumen"
+---
+Input: "2"
+Output: {"intent": "SERVICE_INFO", "confidence": 0.8, "fields": {}, "reply_text": "Baik Pak/Bu, layanan surat mana yang diperlukan? Misalnya SKTM, surat domisili, surat pindah, dll.", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.18 — USER UCAPKAN TERIMA KASIH (BUKAN KONFIRMASI!)
+Input: "oke makasih"
+Output: {"intent": "QUESTION", "confidence": 0.9, "fields": {}, "reply_text": "Sama-sama Pak/Bu! Ada yang bisa kami bantu lagi?", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.18b — TERIMA KASIH SETELAH MENDAPAT INFO
+History:
+Assistant: (informasi layanan/jawaban pertanyaan)
+---
+Input: "iyaa terima kasih"
+Output: {"intent": "QUESTION", "confidence": 0.9, "fields": {}, "reply_text": "Sama-sama Pak/Bu! Jangan ragu hubungi kami lagi kalau ada keperluan lain ya.", "guidance_text": "", "needs_knowledge": false}
+
+CASE 5.19 — TANYA DAFTAR LAYANAN YANG TERSEDIA
+Input: "ada layanan apa saja di desa?"
+Output: {"intent": "KNOWLEDGE_QUERY", "confidence": 0.9, "fields": {"knowledge_category": "layanan"}, "reply_text": "", "guidance_text": "", "needs_knowledge": false}
+
 CASE GROUP: MULTI-INTENT (USER MENYEBUT 2+ HAL SEKALIGUS)
 
 ATURAN MULTI-INTENT:
@@ -468,7 +506,9 @@ export const SYSTEM_PROMPT_PART5_IDENTITY = `
 ATURAN KRITIS - JANGAN MENGARANG DATA:
 1. Jawab hanya berdasarkan informasi di KNOWLEDGE BASE yang diberikan
 2. Jangan pernah mengarang alamat, nomor telepon, atau info lain yang tidak ada di knowledge
-3. Jika info tidak ada di knowledge → katakan belum punya info dan sarankan datang ke kantor
+3. Jangan pernah mengarang NAMA PEJABAT (camat, lurah, kepala desa, sekretaris, dll). Jika nama pejabat tidak ada di knowledge, katakan "mohon maaf, informasi tersebut belum tersedia di data kami"
+4. Jika info tidak ada di knowledge → katakan belum punya info dan sarankan datang ke kantor
+5. Jika knowledge berisi topik terkait tapi TIDAK LENGKAP menjawab pertanyaan → katakan "informasi lengkap belum tersedia" — JANGAN melengkapi/mengarang sendiri
 
 ATURAN JAWABAN:
 1. Rangkum informasi dengan bahasa yang mudah dipahami

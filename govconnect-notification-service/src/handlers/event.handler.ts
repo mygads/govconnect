@@ -143,7 +143,9 @@ async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
     complaint_id: event.complaint_id,
     request_number: event.request_number,
     status: event.status,
-    admin_notes: event.admin_notes
+    admin_notes: event.admin_notes,
+    result_file_url: event.result_file_url,
+    result_file_name: event.result_file_name,
   });
 
   await sendNotification({

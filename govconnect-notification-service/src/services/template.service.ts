@@ -35,18 +35,22 @@ export function buildStatusUpdatedMessage(data: {
   request_number?: string;
   status: string;
   admin_notes?: string;
+  result_file_url?: string;
+  result_file_name?: string;
 }): string {
   const id = data.complaint_id || data.request_number;
   const isComplaint = !!data.complaint_id;
   
-  return buildNaturalStatusMessage(id!, data.status, data.admin_notes, isComplaint);
+  return buildNaturalStatusMessage(id!, data.status, data.admin_notes, isComplaint, data.result_file_url, data.result_file_name);
 }
 
 function buildNaturalStatusMessage(
   id: string, 
   status: string, 
   adminNotes?: string,
-  isComplaint: boolean = true
+  isComplaint: boolean = true,
+  resultFileUrl?: string,
+  resultFileName?: string,
 ): string {
   const type = isComplaint ? 'Laporan' : 'Layanan';
   
@@ -55,6 +59,10 @@ function buildNaturalStatusMessage(
       let selesaiMsg = `✅ *${type} Selesai*\n\n*${id}* telah selesai ditangani.`;
       if (adminNotes) {
         selesaiMsg += `\n\n📝 _${adminNotes}_`;
+      }
+      if (resultFileUrl) {
+        const fileName = resultFileName || 'Dokumen Hasil';
+        selesaiMsg += `\n\n📎 *${fileName}*\nUnduh file hasil di sini:\n${resultFileUrl}`;
       }
       selesaiMsg += `\n\nTerima kasih telah menggunakan layanan kami.`;
       return selesaiMsg;

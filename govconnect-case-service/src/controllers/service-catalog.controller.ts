@@ -479,6 +479,8 @@ export async function handleUpdateServiceRequestStatus(req: Request, res: Respon
         request_number: data.request_number,
         status: normalizedStatus,
         admin_notes: admin_notes ?? undefined,
+        result_file_url: data.result_file_url ?? undefined,
+        result_file_name: data.result_file_name ?? undefined,
       }).catch((err: any) => {
         logger.warn('Failed to publish status.updated event', { error: err.message });
       });

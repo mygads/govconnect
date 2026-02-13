@@ -98,6 +98,8 @@ export default function KnowledgeAnalyticsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deletingGapId, setDeletingGapId] = useState<string | null>(null)
+  const [deletingAllGaps, setDeletingAllGaps] = useState(false)
+  const [deletingAllConflicts, setDeletingAllConflicts] = useState(false)
   const { toast } = useToast()
 
   // Only village admin can access this page
@@ -137,6 +139,44 @@ export default function KnowledgeAnalyticsPage() {
       toast({ title: "Gagal", description: err.message, variant: "destructive" })
     } finally {
       setDeletingGapId(null)
+    }
+  }
+
+  const handleDeleteAllGaps = async () => {
+    if (!confirm('Hapus semua pertanyaan belum terjawab? Data analytics akan di-reset.')) return
+    try {
+      setDeletingAllGaps(true)
+      const res = await fetch('/api/knowledge-gaps/batch', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!res.ok) throw new Error("Gagal menghapus")
+      const data = await res.json()
+      toast({ title: "Berhasil", description: `${data.deleted} pertanyaan berhasil dihapus` })
+      fetchData()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setDeletingAllGaps(false)
+    }
+  }
+
+  const handleDeleteAllConflicts = async () => {
+    if (!confirm('Hapus semua data konflik? Data analytics akan di-reset.')) return
+    try {
+      setDeletingAllConflicts(true)
+      const res = await fetch('/api/knowledge-conflicts/batch', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!res.ok) throw new Error("Gagal menghapus")
+      const data = await res.json()
+      toast({ title: "Berhasil", description: `${data.deleted} konflik berhasil dihapus` })
+      fetchData()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+    } finally {
+      setDeletingAllConflicts(false)
     }
   }
 
@@ -465,13 +505,32 @@ export default function KnowledgeAnalyticsPage() {
       {/* Knowledge Conflicts Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-orange-600" /> Data Berkonflik
-          </CardTitle>
-          <CardDescription>
-            AI mendeteksi informasi yang saling bertentangan dari sumber knowledge yang berbeda.
-            Periksa dan perbaiki knowledge yang tidak akurat agar AI memberikan jawaban konsisten.
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-orange-600" /> Data Berkonflik
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                AI mendeteksi informasi yang saling bertentangan dari sumber knowledge yang berbeda.
+                Periksa dan perbaiki knowledge yang tidak akurat agar AI memberikan jawaban konsisten.
+              </CardDescription>
+            </div>
+            {topConflicts.length > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDeleteAllConflicts}
+                disabled={deletingAllConflicts}
+              >
+                {deletingAllConflicts ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                Hapus Semua
+              </Button>
+            )}
+          </div>
           {(conflictStatusCounts.open > 0 || conflictStatusCounts.resolved > 0 || conflictStatusCounts.auto_resolved > 0) && (
             <div className="flex gap-2 mt-2 flex-wrap">
               <Badge className="bg-orange-100 text-orange-800">{conflictStatusCounts.open} Belum Ditangani</Badge>
@@ -550,13 +609,32 @@ export default function KnowledgeAnalyticsPage() {
       {/* Knowledge Gaps Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MessageSquareWarning className="h-5 w-5 text-orange-600" /> Pertanyaan Belum Terjawab
-          </CardTitle>
-          <CardDescription>
-            Pertanyaan warga yang tidak ditemukan jawabannya di knowledge base — tambahkan
-            knowledge untuk topik ini agar AI dapat menjawab dengan lebih baik.
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquareWarning className="h-5 w-5 text-orange-600" /> Pertanyaan Belum Terjawab
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                Pertanyaan warga yang tidak ditemukan jawabannya di knowledge base — tambahkan
+                knowledge untuk topik ini agar AI dapat menjawab dengan lebih baik.
+              </CardDescription>
+            </div>
+            {topGaps.length > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDeleteAllGaps}
+                disabled={deletingAllGaps}
+              >
+                {deletingAllGaps ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                Hapus Semua
+              </Button>
+            )}
+          </div>
           {(gapStatusCounts.open > 0 || gapStatusCounts.resolved > 0) && (
             <div className="flex gap-2 mt-2">
               <Badge className="bg-orange-100 text-orange-800">{gapStatusCounts.open} Belum Ditangani</Badge>

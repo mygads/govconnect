@@ -435,6 +435,28 @@ export default function ChannelSettingsPage() {
     fetchSessionStatus()
   }, [selectedVillageId, withVillage, fetchSessionStatus])
 
+  // Auto-refresh session status every 15 seconds (outside QR dialog)
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  useEffect(() => {
+    // Only auto-poll when not in QR dialog (QR dialog has its own faster polling)
+    if (showQrDialog || !selectedVillageId) {
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current)
+        autoRefreshRef.current = null
+      }
+      return
+    }
+    autoRefreshRef.current = setInterval(() => {
+      fetchSessionStatus()
+    }, 15_000)
+    return () => {
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current)
+        autoRefreshRef.current = null
+      }
+    }
+  }, [selectedVillageId, showQrDialog, fetchSessionStatus])
+
   const handleCreateSession = async () => {
     try {
       setSessionLoading(true)

@@ -19,13 +19,10 @@ import {
   matchContactQuery,
 } from './micro-llm-matcher.service';
 import {
-  getPublicFormBaseUrl,
-  buildPublicServiceFormUrl,
   toVCardContacts,
 } from './ump-formatters';
 import type { ContactInfo, HandlerResult } from './ump-formatters';
 import { setPendingServiceFormOffer, setPendingEmergencyComplaintOffer } from './ump-state';
-import { resolveVillageSlugForPublicForm } from './ump-utils';
 
 // ──────────────── helpers (local) ────────────────
 
@@ -99,6 +96,20 @@ export async function handleKnowledgeQuery(
         categories,
         knowledgeSubtype?.is_emergency ?? false,
       );
+    }
+
+    // ─── Deterministic: Service listing (micro-NLU detected) ───
+    if (subtypeResult === 'service_listing') {
+      const listingAnswer = await answerServiceListing(villageId, userId);
+      if (listingAnswer) return listingAnswer;
+      // Fall through to general RAG if listing fails
+    }
+
+    // ─── Deterministic: Photo request (user asking how to send photo) ───
+    if (subtypeResult === 'photo_request') {
+      return `Untuk mengirim foto, Bapak/Ibu cukup kirim langsung fotonya melalui chat ini ya.\n\n`
+        + `Foto akan otomatis kami terima dan dilampirkan ke laporan pengaduan Bapak/Ibu. `
+        + `Bapak/Ibu bisa mengirim hingga 5 foto per laporan.`;
     }
 
     // ─── Service-catalog match (micro-LLM) ───
@@ -300,16 +311,11 @@ async function answerContact(
     (contacts || []).map((c) => normalizePhoneNumber(c.phone || '')).filter(Boolean),
   );
 
-  let kbPhoneCandidates: string[] = [];
-  if (villageId) {
-    const knowledgeResult = await searchKnowledge(message, categories, villageId);
-    const kbContext = knowledgeResult?.context || '';
-    kbPhoneCandidates = extractPhoneNumbers(kbContext);
-  }
+  // KB phone extraction REMOVED: extracting phone-like patterns from RAG text
+  // caused hallucinated "Nomor tambahan (KB)" numbers that don't exist in the DB.
+  // Only DB-backed important contacts are shown.
 
-  const kbUnique = kbPhoneCandidates.filter((phone) => !dbPhoneSet.has(phone));
-
-  if ((!contacts || contacts.length === 0) && kbUnique.length === 0) {
+  if (!contacts || contacts.length === 0) {
     const entityHint = contactEntity ? ` untuk ${contactEntity}` : '';
     return `Mohon maaf Pak/Bu, informasi nomor penting${entityHint} di ${officeName} belum tersedia.`;
   }
@@ -342,14 +348,6 @@ async function answerContact(
     lines.push(`- ${c.name}: ${formatPhone(c.phone || '')}${extra}`);
   }
 
-  if (kbUnique.length > 0) {
-    if (hasDbContacts) lines.push('\nNomor tambahan (KB):');
-    for (const phone of kbUnique.slice(0, 3)) {
-      const display = channel === 'whatsapp' && phone.startsWith('62') ? `wa.me/${phone}` : phone;
-      lines.push(`- ${display}`);
-    }
-  }
-
   // Emergency follow-up: offer to create a complaint/report
   // Uses NLU-determined is_emergency flag instead of hardcoded keyword matching.
   // The micro-LLM (classifyKnowledgeSubtype) already understands emergency semantics
@@ -372,6 +370,38 @@ async function answerContact(
     return { replyText, contacts: vcardContacts };
   }
   return replyText;
+}
+
+// ════════════════ Service listing ════════════════
+
+async function answerServiceListing(
+  villageId: string | undefined,
+  userId: string,
+): Promise<string | null> {
+  try {
+    const response = await axios.get(`${config.caseServiceUrl}/services`, {
+      params: { village_id: villageId },
+      headers: { 'x-internal-api-key': config.internalApiKey },
+      timeout: 5000,
+    });
+
+    const services = Array.isArray(response.data?.data) ? response.data.data : [];
+    const activeServices = services.filter((s: any) => s.is_active !== false);
+    if (!activeServices.length) return null;
+
+    const serviceNames = activeServices.map((s: any) => s.name || s.slug);
+    const lines: string[] = [`Berikut layanan yang tersedia saat ini:`];
+    serviceNames.forEach((name: string, i: number) => {
+      lines.push(`${i + 1}. ${name}`);
+    });
+    lines.push('\nSilakan sebutkan layanan mana yang Bapak/Ibu butuhkan untuk informasi lebih lanjut.');
+
+    logger.info('[KnowledgeQuery] Listing all services (NLU)', { userId, count: serviceNames.length });
+    return lines.join('\n');
+  } catch (error: any) {
+    logger.warn('Service listing lookup failed', { error: error.message });
+    return null;
+  }
 }
 
 // ════════════════ Service catalog ════════════════
@@ -452,10 +482,7 @@ async function tryAnswerFromServiceCatalog(
         village_id: villageId,
         timestamp: Date.now(),
       });
-      const baseUrl = getPublicFormBaseUrl();
-      const villageSlug = await resolveVillageSlugForPublicForm(villageId || '');
-      const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, best.slug, userId, 'whatsapp');
-      replyText += `Jika ingin mengajukan layanan ini secara online, silakan klik link berikut:\n${formUrl}`;
+      replyText += 'Layanan ini bisa diajukan secara online. Apakah Bapak/Ibu ingin kami kirim link formulirnya?';
     } else {
       replyText += 'Layanan ini diproses secara offline di kantor kelurahan/desa.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
     }

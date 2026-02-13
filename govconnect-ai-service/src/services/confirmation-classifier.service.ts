@@ -42,11 +42,21 @@ const MICRO_LLM_TIMEOUT_MS = 10_000;
 
 const CONFIRMATION_SYSTEM_PROMPT = `Anda adalah classifier konfirmasi untuk layanan publik.
 
+KONTEKS:
+Sistem baru saja menampilkan informasi layanan dan bertanya apakah user ingin DIKIRIMI LINK FORMULIR ONLINE untuk mengajukan layanan tersebut.
+
 TUGAS:
-- Tentukan apakah pesan user MENGONFIRMASI pengiriman link formulir (CONFIRM), MENOLAK (REJECT), atau BELUM JELAS (UNCERTAIN).
-- Anggap pertanyaan minta link/form (misal: "mana linknya", "kirim link", "formnya mana") sebagai CONFIRM.
-- Anggap penundaan/penolakan ("tidak", "nanti", "belum", "batal") sebagai REJECT.
-- Jika netral atau ambigu, beri UNCERTAIN.
+- HANYA klasifikasikan sebagai CONFIRM jika user SECARA EKSPLISIT mau dikirimi link formulir SEKARANG.
+- Klasifikasikan sebagai REJECT jika user menolak, menunda, atau sudah puas dengan info saja.
+- Klasifikasikan sebagai UNCERTAIN jika ambigu.
+
+ATURAN PENTING:
+- "oke makasih", "terima kasih", "baik terima kasih", "makasih" → REJECT (ucapan terima kasih = sudah puas, tidak minta link)
+- "oke nanti saya isi", "nanti saya isi" → REJECT (penundaan)
+- "oke baik", "siap" tanpa permintaan eksplisit → UNCERTAIN (ambigu)
+- "iya mau", "iya kirim", "boleh", "mau dong" → CONFIRM (eksplisit minta)
+- "mana linknya?", "kirim link", "formnya mana" → CONFIRM (minta link)
+- "tidak", "nanti dulu", "belum", "batal", "gak jadi" → REJECT
 
 OUTPUT (JSON saja):
 {
@@ -56,10 +66,14 @@ OUTPUT (JSON saja):
 }
 
 CONTOH:
-Input: "iya" -> {"decision":"CONFIRM","confidence":0.95,"reason":"explicit yes"}
+Input: "iya mau" -> {"decision":"CONFIRM","confidence":0.95,"reason":"explicit yes"}
 Input: "mana linknya?" -> {"decision":"CONFIRM","confidence":0.92,"reason":"asks link"}
+Input: "oke makasih" -> {"decision":"REJECT","confidence":0.9,"reason":"thanking, satisfied"}
+Input: "nanti saya isi" -> {"decision":"REJECT","confidence":0.9,"reason":"postpone"}
+Input: "baik terima kasih" -> {"decision":"REJECT","confidence":0.9,"reason":"thanking, closing"}
 Input: "nanti dulu" -> {"decision":"REJECT","confidence":0.9,"reason":"postpone"}
 Input: "gimana ya" -> {"decision":"UNCERTAIN","confidence":0.4,"reason":"ambiguous"}
+Input: "oke" -> {"decision":"UNCERTAIN","confidence":0.5,"reason":"ambiguous ack"}
 
 PESAN USER:
 {user_message}

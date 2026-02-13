@@ -38,6 +38,8 @@ export interface StatusUpdatedEvent extends BaseChannelEvent {
   request_number?: string;
   status: string;
   admin_notes?: string;
+  result_file_url?: string;
+  result_file_name?: string;
 }
 
 export interface UrgentAlertEvent {

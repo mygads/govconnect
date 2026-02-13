@@ -400,49 +400,59 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 2.2: Check pending online service form offer
     const pendingOffer = pendingServiceFormOffer.get(userId);
     if (pendingOffer) {
-      const confirmationResult = await withMicroNluBudget(
-        () => classifyConfirmation(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
-        null
-      );
-      const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
-      const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
-
-      if (isLikelyConfirm) {
+      // If the message contains a LAP/LAY code, clear the pending offer and let it fall through
+      // to Step 2.45 where the code will be detected and handled as a status check.
+      const hasLapLayCode = /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(message);
+      if (hasLapLayCode) {
+        logger.info('[UnifiedProcessor] LAP/LAY code detected while pendingServiceFormOffer active, clearing offer', { userId });
         clearPendingServiceFormOffer(userId);
-        const llmLike = {
-          intent: 'CREATE_SERVICE_REQUEST',
-          fields: {
-            service_slug: pendingOffer.service_slug,
-            ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
-          },
-          reply_text: '',
-        };
+        // fall through to Step 2.45
+      } else {
+        const confirmationResult = await withMicroNluBudget(
+          () => classifyConfirmation(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
+          null
+        );
+        const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
+        const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
 
-        const linkReply = await handleServiceRequestCreation(userId, channel, llmLike);
-        return {
-          success: true,
-          response: linkReply,
-          intent: 'CREATE_SERVICE_REQUEST',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
+        if (isLikelyConfirm) {
+          clearPendingServiceFormOffer(userId);
+          const llmLike = {
+            intent: 'CREATE_SERVICE_REQUEST',
+            fields: {
+              service_slug: pendingOffer.service_slug,
+              ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
+            },
+            reply_text: '',
+          };
 
-      if (isLikelyReject) {
+          const linkReply = await handleServiceRequestCreation(userId, channel, llmLike);
+          return {
+            success: true,
+            response: linkReply,
+            intent: 'CREATE_SERVICE_REQUEST',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+          };
+        }
+
+        if (isLikelyReject) {
+          clearPendingServiceFormOffer(userId);
+          return {
+            success: true,
+            response: 'Baik Pak/Bu, siap. Kalau Bapak/Ibu mau proses nanti, kabari kami ya.',
+            intent: 'QUESTION',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+          };
+        }
+
+        // UNCERTAIN: The user's message is neither a clear YES nor NO.
+        // This means the user is likely talking about something else entirely.
+        // Clear the pending offer and let normal processing handle the message,
+        // regardless of length — the micro NLU already determined it's not a confirmation.
+        logger.info('[UnifiedProcessor] Clearing pendingServiceFormOffer — confirmation is UNCERTAIN, treating as new intent', { userId, messageLength: message.length });
         clearPendingServiceFormOffer(userId);
-        return {
-          success: true,
-          response: 'Baik Pak/Bu, siap. Kalau Bapak/Ibu mau proses nanti, kabari kami ya.',
-          intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
+        // fall through to normal processing
       }
-
-      return {
-        success: true,
-        response: 'Apakah Bapak/Ibu ingin kami kirim link formulirnya sekarang? Balas *iya* atau *tidak* ya.',
-        intent: 'CREATE_SERVICE_REQUEST',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-      };
     }
 
     // Step 2.3: Check pending emergency complaint offer
@@ -1683,11 +1693,15 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     // Step 9.5: Track knowledge hit/miss for analytics
-    // Records whether the knowledge base had relevant content for this query
+    // Records whether the knowledge base had relevant content for this query.
+    // QUESTION intent is excluded — it covers greetings, names, acknowledgments,
+    // and generic replies that are NOT real knowledge-seeking queries.
+    // Only KNOWLEDGE_QUERY and SERVICE_INFO represent actual knowledge needs.
     if (!isEvaluation) {
       const knowledgeIntent = effectiveLlmResponse.intent;
-      const isKnowledgeSeeking = ['KNOWLEDGE_QUERY', 'QUESTION', 'SERVICE_INFO'].includes(knowledgeIntent);
-      if (isKnowledgeSeeking || effectiveLlmResponse.needs_knowledge) {
+      const isKnowledgeSeeking = ['KNOWLEDGE_QUERY', 'SERVICE_INFO'].includes(knowledgeIntent)
+        || effectiveLlmResponse.needs_knowledge === true;
+      if (isKnowledgeSeeking) {
         const ragConf = typeof preloadedRAGContext === 'object' ? preloadedRAGContext.confidence?.level : undefined;
         const confLevel = (ragConf as any) || 'none';
         aiAnalyticsService.recordKnowledge({

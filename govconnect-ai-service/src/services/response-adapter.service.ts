@@ -56,14 +56,6 @@ const EMPATHY_PREFIXES: Record<string, string[]> = {
   ],
 };
 
-// ==================== HUMAN HELP OFFERS ====================
-
-const HUMAN_HELP_OFFERS: string[] = [
-  '\n\n💬 Jika Bapak/Ibu ingin berbicara langsung dengan petugas, ketik "hubungi petugas" ya.',
-  '\n\n👤 Bapak/Ibu juga bisa minta bantuan petugas langsung dengan ketik "minta bantuan".',
-  '\n\n📞 Kalau mau lebih cepat, Bapak/Ibu bisa ketik "bicara dengan admin" untuk dihubungkan dengan petugas.',
-];
-
 // ==================== STYLE ADAPTATIONS ====================
 
 const FORMAL_REPLACEMENTS: [RegExp, string][] = [
@@ -151,12 +143,8 @@ export function adaptResponse(
     adaptationsApplied.push('style_informal');
   }
   
-  // 5. Add human help offer if needed
-  if (shouldOfferHumanHelp && !response.includes('petugas') && !response.includes('admin')) {
-    const helpOffer = getRandomItem(HUMAN_HELP_OFFERS);
-    response = response + helpOffer;
-    adaptationsApplied.push('human_help_offer');
-  }
+  // 5. Human help offer removed — AI behaves as human CS, no handoff suggestion
+  // shouldOfferHumanHelp is still tracked for logging/analytics but not acted upon.
   
   // 6. Adjust response length based on preference
   if (profile.response_detail === 'brief' && response.length > 500) {
@@ -247,21 +235,6 @@ function getRandomItem<T>(items: T[]): T {
 // ==================== SPECIAL RESPONSES ====================
 
 /**
- * Generate human takeover offer response
- */
-export function generateHumanTakeoverOffer(userId: string, reason: string): string {
-  const profile = getProfile(userId);
-  const isInformal = profile.communication_style === 'informal';
-  
-  if (isInformal) {
-    return `Kak, sepertinya ${reason}. Mau saya hubungkan dengan petugas langsung? Ketik "ya" untuk bicara dengan admin, atau lanjut chat dengan saya juga boleh 😊`;
-  }
-
-  
-  return `Bapak/Ibu, ${reason}. Apakah Anda ingin saya hubungkan dengan petugas untuk bantuan lebih lanjut? Ketik "ya" untuk berbicara dengan admin, atau silakan lanjutkan percakapan dengan saya.`;
-}
-
-/**
  * Generate apology response for repeated issues
  */
 export function generateApologyResponse(userId: string, issue: string): string {
@@ -320,12 +293,7 @@ export function buildAdaptationContext(
   
   // Frustration warning
   if (conversationContext.isStuck) {
-    parts.push(`[⚠️ USER KESULITAN] User sudah ${conversationContext.clarificationCount}x clarification. Coba pendekatan berbeda atau tawarkan bantuan manual.`);
-  }
-  
-  // Escalation warning
-  if (escalationStatus.needsEscalation) {
-    parts.push('[🚨 ESKALASI] User menunjukkan frustasi berulang. Tawarkan untuk dihubungkan dengan petugas.');
+    parts.push(`[⚠️ USER KESULITAN] User sudah ${conversationContext.clarificationCount}x clarification. Coba pendekatan berbeda, jelaskan lebih sederhana.`);
   }
   
   // Returning user context
@@ -344,7 +312,6 @@ export function buildAdaptationContext(
 
 export default {
   adaptResponse,
-  generateHumanTakeoverOffer,
   generateApologyResponse,
   generateUrgentAcknowledgment,
   buildAdaptationContext,
