@@ -135,9 +135,9 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   ],
   
   'UNKNOWN': [
-    'Mohon maaf Pak/Bu, bisa dijelaskan lebih detail? Kami siap bantu untuk:\n\n• Lapor masalah (jalan rusak, lampu mati, dll)\n• Ajukan layanan (surat keterangan, pengantar, dll)\n• Info kelurahan',
+    'Mohon maaf Pak/Bu, bisa dijelaskan lebih detail? Kami siap bantu untuk:\n\n• Lapor masalah/pengaduan\n• Ajukan layanan administrasi\n• Info desa/kelurahan',
     'Mohon maaf Pak/Bu, kami kurang paham. Bapak/Ibu ingin:\n\n1) Lapor masalah\n2) Urus surat/layanan\n3) Cek status\n\nSilakan pilih atau jelaskan lebih detail.',
-    'Mohon maaf Pak/Bu, silakan jelaskan lagi. Kami bisa bantu:\n\n• Laporan keluhan/aduan\n• Ajukan layanan\n• Informasi kelurahan',
+    'Mohon maaf Pak/Bu, silakan jelaskan lagi. Kami bisa bantu:\n\n• Laporan keluhan/aduan\n• Ajukan layanan\n• Informasi desa/kelurahan',
   ],
   
   'ERROR': [
@@ -152,8 +152,8 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
 export const MISSING_FIELD_PROMPTS: Record<string, string[]> = {
   // Complaint fields
   'kategori': [
-    'Jenis masalah apa yang ingin dilaporkan Pak/Bu? (jalan rusak, lampu mati, sampah, dll)',
-    'Masalahnya tentang apa Pak/Bu? Jalan rusak, lampu mati, atau yang lain?',
+    'Jenis masalah apa yang ingin dilaporkan Pak/Bu? Ceritakan saja, kami siap membantu.',
+    'Masalahnya tentang apa Pak/Bu? Silakan jelaskan secara singkat.',
   ],
   'alamat': [
     'Di mana lokasi masalahnya Pak/Bu? Sebutkan alamat atau patokan terdekat.',

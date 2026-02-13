@@ -853,20 +853,6 @@ export async function shouldRetrieveContext(query: string): Promise<boolean> {
   return result.intent !== 'skip';
 }
 
-/**
- * @deprecated Category inference is now handled entirely by NLU via classifyQueryIntent().
- * retrieveContext() calls classifyQueryIntent() internally and uses its NLU-inferred categories.
- * Callers should pass categories=undefined to let NLU decide, or pass explicit NLU categories.
- *
- * Returns empty array — forces retrieveContext() to use its own NLU categories instead of
- * overriding them with stale hardcoded keyword matches.
- *
- * This function is kept for API compatibility; will be removed in a future cleanup.
- */
-export function inferCategories(_query: string): string[] {
-  return [];
-}
-
 // Export classifyQueryIntent for external use (e.g., analytics, debugging)
 export { classifyQueryIntent };
 

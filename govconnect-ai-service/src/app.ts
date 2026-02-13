@@ -536,6 +536,17 @@ app.get('/stats/analytics/full', (req: Request, res: Response) => {
   }
 });
 
+app.get('/stats/analytics/categories', (req: Request, res: Response) => {
+  try {
+    const stats = aiAnalyticsService.getCategoryUsageStats();
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get category usage stats',
+    });
+  }
+});
+
 app.post('/stats/analytics/reset', (req: Request, res: Response) => {
   try {
     aiAnalyticsService.resetAnalytics();

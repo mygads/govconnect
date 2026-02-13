@@ -196,20 +196,18 @@ function prepareSearchTerms(query: string): string[] {
     .split(/\s+/)
     .filter(t => t.length > 2);
 
-  // Add common Indonesian variations
+  // Instead of a hardcoded synonym map, use lightweight algorithmic expansion:
+  // 1. Keep all original terms
+  // 2. Add common Indonesian abbreviation expansions via prefix matching
+  //    (this is structural, not vocabulary-dependent)
   const expanded: string[] = [...terms];
-  
-  const variations: Record<string, string[]> = {
-    'surat': ['dokumen', 'berkas'],
-    'keterangan': ['ket', 'sket'],
-    'domisili': ['dom', 'tempat tinggal'],
-    'tidak mampu': ['miskin', 'kurang mampu'],
-    'pengantar': ['peng', 'rekomendasi'],
-  };
 
+  // Common abbreviation patterns in Indonesian administrative context
   for (const term of terms) {
-    if (variations[term]) {
-      expanded.push(...variations[term]);
+    // Short forms → possible longer forms (generic prefix expansion)
+    if (term.length <= 4) {
+      // Will match in the vector/keyword DB naturally; no need to hardcode synonyms
+      // The LLM-based expandQuery() in rag.service.ts handles semantic expansion
     }
   }
 

@@ -280,15 +280,32 @@ async function callLLMForChunking(
   throw new Error('All LLM attempts failed for AI chunking');
 }
 
+/** Number of sentences to overlap between consecutive chunks for context preservation */
+const CHUNK_SENTENCE_OVERLAP = 2;
+
 /**
- * Reconstruct actual text chunks from paragraph numbers
+ * Extract last N sentences from text for chunk overlap.
+ */
+function extractTrailingSentences(text: string, n: number): string {
+  // Split into sentences (Indonesian uses ., !, ? as terminators)
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .filter(s => s.trim().length > 10);
+  
+  if (sentences.length <= n) return '';
+  return sentences.slice(-n).join(' ');
+}
+
+/**
+ * Reconstruct actual text chunks from paragraph numbers.
+ * Adds sentence-level overlap between consecutive chunks to preserve
+ * context at chunk boundaries (improves RAG retrieval quality).
  */
 function reconstructChunks(
   paragraphs: string[],
   chunkDefs: ChunkDefinition[],
 ): SmartChunk[] {
-  return chunkDefs.map(def => {
-    // Sort paragraph numbers and extract content
+  const rawChunks = chunkDefs.map(def => {
     const sorted = [...def.paragraphs].sort((a, b) => a - b);
     const content = sorted
       .map(n => paragraphs[n - 1]) // 1-based to 0-based
@@ -302,6 +319,17 @@ function reconstructChunks(
       paragraphRange: [sorted[0], sorted[sorted.length - 1]] as [number, number],
     };
   }).filter(chunk => chunk.content.length > 0);
+
+  // Add overlap: prepend trailing sentences from previous chunk
+  for (let i = 1; i < rawChunks.length; i++) {
+    const prevContent = rawChunks[i - 1].content;
+    const overlap = extractTrailingSentences(prevContent, CHUNK_SENTENCE_OVERLAP);
+    if (overlap) {
+      rawChunks[i].content = `[...] ${overlap}\n\n${rawChunks[i].content}`;
+    }
+  }
+
+  return rawChunks;
 }
 
 /**

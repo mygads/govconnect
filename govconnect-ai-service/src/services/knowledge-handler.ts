@@ -141,22 +141,10 @@ export async function handleKnowledgeQuery(
       );
     }
 
-    // Force keyword-only KB lookup for specific anchored terms
-    const wants5w1h = /\b5w1h\b/i.test(normalizedQuery);
-    const wantsPriority = /prioritas/i.test(normalizedQuery);
-    const wantsEmbedding = /\bembedding\b/i.test(normalizedQuery);
-    const wantsDataPurpose =
-      /\bdata\b/i.test(normalizedQuery) && /(digunakan|tujuan)/i.test(normalizedQuery);
-    if (wants5w1h || wantsPriority || wantsEmbedding || wantsDataPurpose) {
-      const forcedQuery = wants5w1h
-        ? '5W1H What Where When Who Why How'
-        : wantsPriority
-          ? 'Prioritas Penanganan Tinggi Sedang Rendah'
-          : wantsEmbedding
-            ? 'Embedding vektor pencarian'
-            : 'Tujuan Penggunaan Data proses layanan pengaduan diakses admin';
-
-      const kw = await searchKnowledgeKeywordsOnly(forcedQuery, undefined, villageId);
+    // If RAG context is empty or very sparse, supplement with keyword search
+    // using the original user query — no hardcoded forced queries needed.
+    if (!contextString || contextString.length < 100) {
+      const kw = await searchKnowledgeKeywordsOnly(normalizedQuery, undefined, villageId);
       if (kw?.context) {
         const deterministicFromKeyword = tryExtractDeterministicKbAnswer(normalizedQuery, kw.context);
         if (deterministicFromKeyword) return deterministicFromKeyword;

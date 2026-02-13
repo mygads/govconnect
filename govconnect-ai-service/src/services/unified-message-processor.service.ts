@@ -44,7 +44,7 @@ import { getImportantContacts } from './important-contacts.service';
 import { searchKnowledge, searchKnowledgeKeywordsOnly, getRAGContext, getKelurahanInfoContext, getVillageProfileSummary, reportKnowledgeGap } from './knowledge.service';
 import { shouldRetrieveContext, isSpamMessage } from './rag.service';
 import { detectLanguage, getLanguageContext } from './language-detection.service';
-import { analyzeSentiment, getSentimentContext, needsHumanEscalation } from './sentiment-analysis.service';
+import { analyzeSentiment, analyzeSentimentWithLLM, getSentimentContext, needsHumanEscalation } from './sentiment-analysis.service';
 import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { recordTokenUsage } from './token-usage.service';
@@ -1105,8 +1105,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const languageDetection = detectLanguage(sanitizedMessage);
     const languageContext = getLanguageContext(languageDetection);
     
-    // Step 5: Sentiment analysis
-    const sentiment = analyzeSentiment(sanitizedMessage, userId);
+    // Step 5: Sentiment analysis (regex pre-filter + micro-LLM for urgent/angry)
+    const sentiment = await analyzeSentimentWithLLM(sanitizedMessage, userId, {
+      village_id: resolvedVillageId,
+      wa_user_id: userId,
+      session_id: userId,
+      channel,
+    });
     const sentimentContext = getSentimentContext(sentiment);
     
     // Step 5.5: User Profile & Context Enhancement
@@ -1517,16 +1522,32 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Emergency auto-category removed — LLM handles intent and category classification.
     // is_urgent flag comes from DB complaintTypeConfig after LLM determines kategori.
 
-    // ── Confidence-based intent validation ──
-    // If LLM reports low confidence (<0.5), fall back to QUESTION to ask for clarification
-    // rather than risk processing a wrong intent (e.g., creating a complaint for a question).
+    // ── Confidence-based intent validation (3-tier) ──
+    // Tier 1: confidence < 0.4 → demote to QUESTION (ask clarification)
+    // Tier 2: confidence 0.4-0.6 → proceed but add clarification prompt to guidance_text
+    // Tier 3: confidence > 0.6 → proceed normally
     const llmConfidence = typeof effectiveLlmResponse.confidence === 'number' ? effectiveLlmResponse.confidence : 0.8;
-    if (llmConfidence < 0.5 && effectiveLlmResponse.intent !== 'QUESTION' && effectiveLlmResponse.intent !== 'UNKNOWN') {
-      logger.info('[UnifiedProcessor] Low LLM confidence, demoting to QUESTION', {
+    const isActionIntent = !['QUESTION', 'UNKNOWN', 'KNOWLEDGE_QUERY'].includes(effectiveLlmResponse.intent);
+    
+    if (llmConfidence < 0.4 && isActionIntent) {
+      logger.info('[UnifiedProcessor] Very low LLM confidence, demoting to QUESTION', {
         userId, originalIntent: effectiveLlmResponse.intent, confidence: llmConfidence,
       });
-      // Keep the reply_text (LLM already generated a clarification) but override intent
+      // Override intent, but keep LLM's reply_text if it looks like a clarification question
       effectiveLlmResponse.intent = 'QUESTION' as any;
+      // Ensure reply_text asks for clarification
+      if (!effectiveLlmResponse.reply_text || effectiveLlmResponse.reply_text.length < 10) {
+        effectiveLlmResponse.reply_text = 'Mohon maaf, bisa dijelaskan lebih detail apa yang Bapak/Ibu butuhkan? Kami ingin memastikan bisa membantu dengan tepat.';
+      }
+    } else if (llmConfidence < 0.6 && isActionIntent) {
+      // Medium confidence: proceed but add a soft confirmation in guidance_text
+      logger.info('[UnifiedProcessor] Medium LLM confidence, adding clarification prompt', {
+        userId, intent: effectiveLlmResponse.intent, confidence: llmConfidence,
+      });
+      const existingGuidance = effectiveLlmResponse.guidance_text || '';
+      effectiveLlmResponse.guidance_text = existingGuidance 
+        ? `${existingGuidance}\n\nJika ini bukan yang Bapak/Ibu maksud, mohon jelaskan kembali ya.`
+        : 'Jika ini bukan yang Bapak/Ibu maksud, mohon jelaskan kembali ya.';
     }
 
     // Service slug resolution: when LLM detected SERVICE_INFO/CREATE_SERVICE_REQUEST
@@ -1646,6 +1667,21 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         break;
     }
     
+    // Step 9.4: Track category usage analytics
+    if (!isEvaluation) {
+      const intent = effectiveLlmResponse.intent;
+      if (intent === 'CREATE_COMPLAINT' || intent === 'UPDATE_COMPLAINT') {
+        const kategori = (effectiveLlmResponse.fields as any)?.kategori || (effectiveLlmResponse.fields as any)?.category;
+        if (kategori) aiAnalyticsService.recordCategoryUsage('complaint', String(kategori));
+      } else if (intent === 'SERVICE_INFO' || intent === 'CREATE_SERVICE_REQUEST' || intent === 'UPDATE_SERVICE_REQUEST') {
+        const serviceSlug = (effectiveLlmResponse.fields as any)?.service_slug || (effectiveLlmResponse.fields as any)?.service_name;
+        if (serviceSlug) aiAnalyticsService.recordCategoryUsage('service', String(serviceSlug));
+      } else if (intent === 'KNOWLEDGE_QUERY') {
+        const knowledgeCat = (effectiveLlmResponse.fields as any)?.knowledge_category || 'general';
+        aiAnalyticsService.recordCategoryUsage('knowledge', String(knowledgeCat));
+      }
+    }
+
     // Step 9.5: Track knowledge hit/miss for analytics
     // Records whether the knowledge base had relevant content for this query
     if (!isEvaluation) {

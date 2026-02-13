@@ -352,11 +352,14 @@ import { getCategoryListForPrompt } from './dynamic-categories.service';
 /**
  * Build the unified classify prompt with dynamic categories.
  * Categories are fetched from Dashboard DB (cached 10 min per village).
- * "kontak" is always included as a virtual category for emergency routing.
+ * "kontak" is included as a virtual category only when village has contact data
+ * (always included since most villages have emergency contacts configured).
  */
 async function buildUnifiedClassifyPrompt(villageId?: string): Promise<string> {
   const dynamicCategories = await getCategoryListForPrompt(villageId);
-  // Always include "kontak" as virtual category (for emergency/contact routing logic)
+  // Include "kontak" as virtual category — the LLM decides when to route here.
+  // Even if no contact data exists, the knowledge handler will gracefully return
+  // "no contact info available" instead of silently failing.
   const hasKontak = dynamicCategories.includes('"kontak"');
   const categoryList = hasKontak ? dynamicCategories : `${dynamicCategories}, "kontak"`;
 
@@ -1166,4 +1169,64 @@ export async function classifyGreeting(
     confidence: unified.confidence,
     reason: unified.reason,
   };
+}
+
+// ==================== SENTIMENT / URGENCY MICRO-LLM ====================
+
+const SENTIMENT_URGENCY_PROMPT = `Kamu adalah analisis sentimen pesan warga Indonesia ke chatbot layanan pemerintah desa/kelurahan.
+
+TUGAS: Analisis sentimen dan urgensi pesan berikut.
+
+ATURAN:
+- Pahami bahasa informal, singkatan, typo, bahasa daerah, dan emosi tersirat
+- Urgency 0 = normal, 1 = sedikit mendesak, 2 = mendesak, 3 = darurat/emergency
+- Sentiment: "angry", "negative", "neutral", "positive", "urgent"
+- Jika ada masalah keselamatan, bencana, atau darurat → urgency = 3
+
+OUTPUT (JSON saja, tanpa markdown):
+{
+  "sentiment": "angry|negative|neutral|positive|urgent",
+  "urgency": 0-3,
+  "confidence": 0.0-1.0,
+  "reason": "penjelasan singkat"
+}
+
+PESAN:
+{message}`;
+
+export interface SentimentLLMResult {
+  sentiment: 'angry' | 'negative' | 'neutral' | 'positive' | 'urgent';
+  urgency: number;
+  confidence: number;
+  reason: string;
+}
+
+/**
+ * Micro-LLM sentiment analysis for messages pre-flagged by regex as urgent/angry.
+ * Used to confirm or override regex-based urgency scoring.
+ */
+export async function classifySentimentUrgency(
+  message: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<SentimentLLMResult | null> {
+  if (!message || message.trim().length < 5) return null;
+
+  const prompt = SENTIMENT_URGENCY_PROMPT.replace('{message}', message);
+  const raw = await callMicroLLM(prompt, 'sentiment_urgency' as CallType, context);
+  if (!raw) return null;
+
+  const parsed = parseJSON(raw) as SentimentLLMResult | null;
+  if (!parsed || typeof parsed.urgency !== 'number') return null;
+
+  // Clamp values
+  parsed.urgency = Math.max(0, Math.min(3, parsed.urgency));
+  parsed.confidence = Math.max(0, Math.min(1, parsed.confidence));
+
+  logger.info('[MicroLLM] Sentiment/urgency classified', {
+    sentiment: parsed.sentiment,
+    urgency: parsed.urgency,
+    confidence: parsed.confidence,
+  });
+
+  return parsed;
 }

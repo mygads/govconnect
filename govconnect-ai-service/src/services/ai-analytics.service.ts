@@ -81,12 +81,28 @@ interface KnowledgeStats {
   gaps: KnowledgeGapEntry[];
 }
 
+interface CategoryUsageEntry {
+  category: string;
+  count: number;
+  lastUsed: string;
+}
+
+interface CategoryUsageStats {
+  /** Complaint categories used (e.g., "infrastruktur_jalan": 42) */
+  complaint: Record<string, CategoryUsageEntry>;
+  /** Knowledge categories queried (e.g., "jadwal": 15) */
+  knowledge: Record<string, CategoryUsageEntry>;
+  /** Service slugs requested (e.g., "ktp": 30) */
+  service: Record<string, CategoryUsageEntry>;
+}
+
 interface AnalyticsStorage {
   intents: Record<string, IntentStats>;
   conversationFlow: ConversationFlowStats;
   tokenUsage: TokenUsageStats;
   accuracy: AccuracyStats;
   knowledge: KnowledgeStats;
+  categoryUsage: CategoryUsageStats;
   lastUpdated: string;
 }
 
@@ -134,6 +150,11 @@ class AIAnalyticsService {
         misses: 0,
         noKnowledge: 0,
         gaps: [],
+      },
+      categoryUsage: {
+        complaint: {},
+        knowledge: {},
+        service: {},
       },
       accuracy: {
         totalClassifications: 0,
@@ -623,6 +644,65 @@ class AIAnalyticsService {
         }))
         .sort((a, b) => b.calls - a.calls),
       last30Days,
+    };
+  }
+
+  /**
+   * Record category usage for tracking popular vs rare categories
+   */
+  recordCategoryUsage(type: 'complaint' | 'knowledge' | 'service', category: string): void {
+    if (!category || category.length === 0) return;
+    
+    const normalized = category.toLowerCase().trim();
+    const bucket = this.data.categoryUsage[type];
+    
+    if (!bucket[normalized]) {
+      bucket[normalized] = {
+        category: normalized,
+        count: 0,
+        lastUsed: new Date().toISOString(),
+      };
+    }
+    
+    bucket[normalized].count++;
+    bucket[normalized].lastUsed = new Date().toISOString();
+  }
+
+  /**
+   * Get category usage statistics
+   */
+  getCategoryUsageStats(): {
+    complaint: Array<{ category: string; count: number; lastUsed: string }>;
+    knowledge: Array<{ category: string; count: number; lastUsed: string }>;
+    service: Array<{ category: string; count: number; lastUsed: string }>;
+    summary: {
+      totalComplaintCategories: number;
+      totalKnowledgeCategories: number;
+      totalServiceCategories: number;
+      topComplaint: string | null;
+      topKnowledge: string | null;
+      topService: string | null;
+    };
+  } {
+    const sortByCount = (entries: CategoryUsageEntry[]) => 
+      entries.sort((a, b) => b.count - a.count);
+
+    const complaintArr = sortByCount(Object.values(this.data.categoryUsage.complaint));
+    const knowledgeArr = sortByCount(Object.values(this.data.categoryUsage.knowledge));
+    const serviceArr = sortByCount(Object.values(this.data.categoryUsage.service));
+
+    return {
+      complaint: complaintArr,
+      knowledge: knowledgeArr,
+      service: serviceArr,
+      summary: {
+        totalComplaintCategories: complaintArr.length,
+        totalKnowledgeCategories: knowledgeArr.length,
+        totalServiceCategories: serviceArr.length,
+        topComplaint: complaintArr[0]?.category || null,
+        topKnowledge: knowledgeArr[0]?.category || null,
+        topService: serviceArr[0]?.category || null,
+      },
     };
   }
 

@@ -1,15 +1,19 @@
 /**
  * Knowledge Graph Service
  * 
- * Dynamic DB-backed knowledge graph for service relationships.
+ * Dynamic DB-backed knowledge graph for service nodes.
  * 
  * Features:
  * - Service nodes loaded from DB via case-service API
- * - Service relationship traversal (prerequisites, related, follow-ups)
  * - Keyword-based node lookup
  * - Fallback data only when DB is unreachable
  * 
- * NOTE: Complaint categories and info categories are handled by micro LLM
+ * NOTE: Service relationships (prerequisites, related services) are handled
+ * by RAG + LLM. The knowledge base documents (KB SOP files) contain info about
+ * required documents (e.g. "SKD memerlukan KTP dan KK"). The LLM reads this
+ * from RAG context and advises users accordingly — no hardcoded relation map needed.
+ * 
+ * Complaint categories and info categories are handled by micro LLM
  * and RAG — they do NOT need to be in the knowledge graph.
  */
 
@@ -50,54 +54,18 @@ export interface GraphTraversalResult {
   alternatives: KnowledgeNode[];
 }
 
-// ==================== SERVICE RELATIONSHIPS ====================
-// These describe document/process relationships between services.
-// They are valid structural knowledge (e.g., "SKD requires KTP") that
-// supplements what LLM already knows — kept intentionally for graph traversal.
-
-const SERVICE_RELATIONS: KnowledgeRelation[] = [
-  { from: 'SKD', to: 'SPKTP', type: 'related', weight: 0.8, description: 'Sering diurus bersamaan' },
-  { from: 'SKD', to: 'SPKK', type: 'related', weight: 0.7, description: 'Untuk keperluan keluarga' },
-  { from: 'SKD', to: 'KTP', type: 'requires', weight: 1.0, description: 'Memerlukan KTP' },
-  { from: 'SKD', to: 'KK', type: 'requires', weight: 1.0, description: 'Memerlukan KK' },
-  { from: 'SKTM', to: 'SKD', type: 'related', weight: 0.6, description: 'Sering diurus bersamaan' },
-  { from: 'SKTM', to: 'KTP', type: 'requires', weight: 1.0, description: 'Memerlukan KTP' },
-  { from: 'SKTM', to: 'KK', type: 'requires', weight: 1.0, description: 'Memerlukan KK' },
-  { from: 'SKU', to: 'SKD', type: 'related', weight: 0.5, description: 'Domisili usaha' },
-  { from: 'SKU', to: 'KTP', type: 'requires', weight: 1.0, description: 'Memerlukan KTP' },
-  { from: 'SPKTP', to: 'KK', type: 'requires', weight: 1.0, description: 'Memerlukan KK' },
-  { from: 'SPSKCK', to: 'KTP', type: 'requires', weight: 1.0, description: 'Memerlukan KTP' },
-  { from: 'SPAKTA', to: 'KK', type: 'requires', weight: 1.0, description: 'Memerlukan KK' },
-  { from: 'IKR', to: 'KTP', type: 'requires', weight: 1.0, description: 'Memerlukan KTP' },
-];
-
-// Service relations only — complaint and info categories are handled by micro LLM + RAG
-const ALL_RELATIONS: KnowledgeRelation[] = SERVICE_RELATIONS;
-
 // ==================== KNOWLEDGE NODES ====================
 
 /**
- * Fallback service nodes — used ONLY when DB fetch fails.
- * These will be overwritten by DB data on successful refresh.
+ * The live knowledge node map — populated dynamically from DB data.
+ * Starts empty — `ensureInitialized()` populates it via `refreshFromDB()`.
+ * 
+ * NO hardcoded fallback nodes: each village admin configures their own
+ * services in the DB, so hardcoded data would be inaccurate.
+ * If DB is temporarily unreachable, the LLM + RAG can still handle
+ * service queries using knowledge base documents.
  */
-const FALLBACK_SERVICE_NODES: [string, KnowledgeNode][] = [
-  ['SKD', { id: 'SKD', code: 'SKD', name: 'Surat Keterangan Domisili', category: 'layanan_administrasi', keywords: ['domisili', 'tempat tinggal', 'alamat'], relations: [] }],
-  ['SKTM', { id: 'SKTM', code: 'SKTM', name: 'Surat Keterangan Tidak Mampu', category: 'layanan_administrasi', keywords: ['tidak mampu', 'miskin', 'kurang mampu'], relations: [] }],
-  ['SKU', { id: 'SKU', code: 'SKU', name: 'Surat Keterangan Usaha', category: 'layanan_administrasi', keywords: ['usaha', 'bisnis', 'dagang'], relations: [] }],
-  ['SPKTP', { id: 'SPKTP', code: 'SPKTP', name: 'Surat Pengantar KTP', category: 'layanan_administrasi', keywords: ['ktp', 'identitas', 'kartu'], relations: [] }],
-  ['SPKK', { id: 'SPKK', code: 'SPKK', name: 'Surat Pengantar KK', category: 'layanan_administrasi', keywords: ['kk', 'kartu keluarga', 'keluarga'], relations: [] }],
-  ['SPSKCK', { id: 'SPSKCK', code: 'SPSKCK', name: 'Surat Pengantar SKCK', category: 'layanan_administrasi', keywords: ['skck', 'kelakuan baik', 'polisi'], relations: [] }],
-  ['SPAKTA', { id: 'SPAKTA', code: 'SPAKTA', name: 'Surat Pengantar Akta', category: 'layanan_administrasi', keywords: ['akta', 'kelahiran', 'kematian', 'nikah'], relations: [] }],
-  ['IKR', { id: 'IKR', code: 'IKR', name: 'Izin Keramaian', category: 'layanan_administrasi', keywords: ['keramaian', 'acara', 'hajatan', 'pesta'], relations: [] }],
-];
-
-/**
- * The live knowledge node map — rebuilt dynamically from DB data.
- * Only contains service nodes (no hardcoded complaint/info categories).
- */
-const KNOWLEDGE_NODES: Map<string, KnowledgeNode> = new Map([
-  ...FALLBACK_SERVICE_NODES,
-]);
+const KNOWLEDGE_NODES: Map<string, KnowledgeNode> = new Map();
 
 let dbInitialized = false;
 let dbInitPromise: Promise<void> | null = null;
@@ -150,6 +118,9 @@ function deriveCode(slug: string, name: string): string {
 /**
  * Refresh service nodes from the database (via case-service API).
  * Keeps static nodes (complaints, info) intact, replaces service nodes.
+ * 
+ * Service relationships (prerequisites, related services) are NOT maintained here.
+ * The LLM + RAG handles relationship discovery via KB SOP documents.
  */
 export async function refreshFromDB(): Promise<void> {
   try {
@@ -185,17 +156,6 @@ export async function refreshFromDB(): Promise<void> {
       KNOWLEDGE_NODES.set(code, node);
     }
 
-    // Re-populate relations for service nodes
-    for (const relation of ALL_RELATIONS) {
-      const node = KNOWLEDGE_NODES.get(relation.from);
-      if (node) {
-        // Avoid duplicating relations
-        if (!node.relations.some(r => r.from === relation.from && r.to === relation.to && r.type === relation.type)) {
-          node.relations.push(relation);
-        }
-      }
-    }
-
     dbInitialized = true;
     logger.info('[KnowledgeGraph] ✅ Refreshed service nodes from DB', {
       totalNodes: KNOWLEDGE_NODES.size,
@@ -215,14 +175,6 @@ async function ensureInitialized(): Promise<void> {
   if (dbInitPromise) return dbInitPromise;
   dbInitPromise = refreshFromDB().finally(() => { dbInitPromise = null; });
   return dbInitPromise;
-}
-
-// Populate relations in nodes
-for (const relation of ALL_RELATIONS) {
-  const node = KNOWLEDGE_NODES.get(relation.from);
-  if (node) {
-    node.relations.push(relation);
-  }
 }
 
 // Periodic refresh from DB every 5 minutes to pick up admin changes
@@ -402,5 +354,4 @@ export default {
   getAllServiceKeywords,
   refreshFromDB,
   KNOWLEDGE_NODES,
-  ALL_RELATIONS,
 };

@@ -420,70 +420,31 @@ async function formatConversationHistory(messages: Message[], wa_user_id?: strin
 }
 
 /**
- * Extract key information from older messages for context
+ * Extract key information from older messages for context.
+ * This is only the fallback when micro-LLM summarization fails.
+ * 
+ * Instead of using hardcoded regex patterns for address/topic extraction,
+ * we keep it minimal — only the user's name. The LLM handles topic/address
+ * extraction via its structured JSON output (fields.alamat, fields.kategori, etc.).
  */
 function extractKeyInfo(messages: Message[]): string {
   const info: string[] = [];
   
-  // First, try to extract user's name
+  // Extract user's name (structural pattern — not classification)
   const userName = extractUserName(messages);
   if (userName) {
     info.push(`- Nama user: ${userName} (GUNAKAN nama ini!)`);
   }
   
-  // Look for addresses mentioned
-  const addressPatterns = [
-    /(?:di|alamat|lokasi)\s+([a-zA-Z0-9\s,.-]+(?:gang|jalan|jln|jl|rt|rw|no|blok)[a-zA-Z0-9\s,.-]*)/gi,
-    /(?:depan|dekat|belakang|samping)\s+([a-zA-Z0-9\s]+)/gi,
-  ];
+  // Include a raw excerpt of recent user messages so LLM has context.
+  // No regex extraction — let the LLM interpret the content.
+  const userMessages = messages
+    .filter(m => m.direction === 'IN')
+    .slice(-5)  // Last 5 user messages
+    .map(m => m.message_text.substring(0, 100));
   
-  // Look for complaint types
-  const complaintKeywords = ['rusak', 'mati', 'sampah', 'banjir', 'tumbang', 'tersumbat'];
-  
-  // Look for service types
-  const serviceKeywords = ['surat', 'domisili', 'pengantar', 'izin', 'skck'];
-  
-  const mentionedAddresses: string[] = [];
-  const mentionedProblems: string[] = [];
-  const mentionedServices: string[] = [];
-  
-  for (const msg of messages) {
-    if (msg.direction !== 'IN') continue;
-    const text = msg.message_text.toLowerCase();
-    
-    // Check for complaints
-    for (const keyword of complaintKeywords) {
-      if (text.includes(keyword) && !mentionedProblems.includes(keyword)) {
-        mentionedProblems.push(keyword);
-      }
-    }
-    
-    // Check for services
-    for (const keyword of serviceKeywords) {
-      if (text.includes(keyword) && !mentionedServices.includes(keyword)) {
-        mentionedServices.push(keyword);
-      }
-    }
-    
-    // Extract addresses (simplified)
-    for (const pattern of addressPatterns) {
-      const matches = text.matchAll(pattern);
-      for (const match of matches) {
-        if (match[1] && match[1].length > 3 && !mentionedAddresses.includes(match[1].trim())) {
-          mentionedAddresses.push(match[1].trim());
-        }
-      }
-    }
-  }
-  
-  if (mentionedProblems.length > 0) {
-    info.push(`- Masalah disebutkan: ${mentionedProblems.join(', ')}`);
-  }
-  if (mentionedServices.length > 0) {
-    info.push(`- Layanan diminta: ${mentionedServices.join(', ')}`);
-  }
-  if (mentionedAddresses.length > 0) {
-    info.push(`- Alamat disebutkan: ${mentionedAddresses.slice(0, 2).join(', ')}`);
+  if (userMessages.length > 0) {
+    info.push(`- Pesan user sebelumnya: ${userMessages.join(' | ')}`);
   }
   
   return info.length > 0 ? info.join('\n') : '';

@@ -103,30 +103,32 @@ export async function searchKnowledgeKeywordsOnly(query: string, categories?: st
   }
 }
 
+/**
+ * Determine whether RAG results should be augmented with keyword search.
+ * Uses a confidence-threshold approach instead of hardcoded keyword checks.
+ *
+ * If the RAG context is too short or sparse relative to the query, we supplement
+ * with keyword search for better coverage — no fixed vocabulary needed.
+ */
 function shouldAugmentRagWithKeywordSearch(query: string, ragContext: string): boolean {
-  const q = (query || '').toLowerCase();
-  const ctx = (ragContext || '').toLowerCase();
+  const q = (query || '').trim();
+  const ctx = (ragContext || '').trim();
 
-  if (q.includes('5w1h') && !(ctx.includes('5w1h') || ctx.includes('what:') || ctx.includes('where:') || ctx.includes('when:'))) {
+  // If query is substantial but RAG returned very little context, augment
+  if (q.length > 10 && ctx.length < 100) {
     return true;
   }
 
-  if (q.includes('prioritas') && !(ctx.includes('tinggi') || ctx.includes('sedang') || ctx.includes('rendah'))) {
+  // If query contains a technical term / abbreviation (2-6 uppercase chars) that
+  // doesn't appear in the context, keyword search may find an exact match
+  const techTerms = q.match(/\b[A-Z]{2,6}\b/g);
+  if (techTerms && techTerms.some(t => !ctx.toUpperCase().includes(t))) {
     return true;
   }
 
-  if (q.includes('embedding') && !(ctx.includes('embedding') || ctx.includes('vektor') || ctx.includes('vector'))) {
-    return true;
-  }
-
-  if (q.includes('cek status') && !ctx.includes('cek status')) {
-    return true;
-  }
-
-  if (
-    (q.includes('data') && (q.includes('digunakan') || q.includes('tujuan'))) &&
-    !(ctx.includes('proses layanan') || ctx.includes('pengaduan') || ctx.includes('diakses'))
-  ) {
+  // If query asks for a specific numbered/coded item not found in context
+  const codedRef = q.match(/\b\d{3,}\b/);
+  if (codedRef && !ctx.includes(codedRef[0])) {
     return true;
   }
 

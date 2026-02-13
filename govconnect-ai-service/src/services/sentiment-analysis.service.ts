@@ -1,12 +1,17 @@
 /**
  * Sentiment Analysis Service
  * 
- * Detects user mood/sentiment for escalation and adaptive responses
- * Tracks consecutive negative sentiment for auto-escalation to human agent
+ * Detects user mood/sentiment for escalation and adaptive responses.
+ * Uses micro-LLM (Gemini Flash Lite) for all sentiment classification.
+ * 
+ * No hardcoded regex patterns — the LLM understands Indonesian sentiment,
+ * slang, abbreviations, urgency, and conversational context far better
+ * than any fixed keyword list.
  */
 
 import logger from '../utils/logger';
 import { LRUCache } from '../utils/lru-cache';
+import { classifySentimentUrgency } from './micro-llm-matcher.service';
 
 export type SentimentLevel = 'positive' | 'neutral' | 'negative' | 'angry' | 'urgent';
 
@@ -19,111 +24,13 @@ export interface SentimentResult {
   suggestedTone: string; // Hint for AI response tone
 }
 
-// Bounded LRU cache replaces unbounded Map + setInterval cleanup.
-// TTL = 1 hour (same as previous), max 500 users.
+// Bounded LRU cache for tracking consecutive sentiment per user.
+// TTL = 1 hour, max 500 users.
 const sentimentHistory = new LRUCache<string, { score: number; timestamp: number }[]>({
   maxSize: 500,
   ttlMs: 60 * 60 * 1000,
   name: 'sentiment-history',
 });
-
-/**
- * Sentiment patterns
- */
-const SENTIMENT_PATTERNS = {
-  // ANGRY patterns - strong negative emotions
-  angry: {
-    patterns: [
-      // Explicit anger/frustration
-      /\b(kesal|marah|emosi|jengkel|sebel|sebal|bete|bt|muak|geram|dongkol|murka)\b/gi,
-      /\b(parah|payah|buruk|jelek|ancur|hancur|berantakan|kacau|bobrok)\b/gi,
-      /\b(gila|sinting|edan|stress|frustasi|frustrasi)\b/gi,
-      // Complaints about service
-      /\b(ga\s*beres|gak\s*beres|tidak\s*beres|berantakan)\b/gi,
-      /\b(gimana\s*sih|apa-apaan|apaan\s*ini|apa\s*ini)\b/gi,
-      // Strong negatives
-      /\b(sampah|busuk|brengsek|sialan|bangsat)\b/gi,
-      // Capitalized (shouting) - weighted less but still counts
-      /[A-Z]{4,}/g,
-      // Multiple exclamation/question marks
-      /[!?]{2,}/g,
-    ],
-    weight: -0.8,
-    urgency: 1,
-  },
-  
-  // NEGATIVE patterns - general dissatisfaction  
-  negative: {
-    patterns: [
-      // Waiting/delay complaints
-      /\b(lama|lambat|lemot|telat|terlambat)\b.*\b(banget|sekali|bgt|amat)/gi,
-      /\b(sudah|udah|udeh)\s*(berapa|brp)?\s*(lama|hari|minggu|bulan)/gi,
-      /\b(kapan|sampe\s*kapan|sampai\s*kapan)\b/gi,
-      /\b(belum|blm)\s*(ada|di|jadi|selesai|kelar)/gi,
-      // Dissatisfaction
-      /\b(kecewa|kurang|tidak\s*puas|gak\s*puas)\b/gi,
-      /\b(tidak\s*jelas|gak\s*jelas|membingungkan|bingung)\b/gi,
-      /\b(susah|sulit|ribet|repot)\b/gi,
-      /\b(gagal|error|salah|keliru)\b/gi,
-      // Questions with negative tone
-      /\b(kenapa|mengapa)\b.*\b(lama|susah|sulit|tidak|gak)/gi,
-      /\b(masa|masak|kok)\b.*\b(gitu|begitu|gini|begini)/gi,
-    ],
-    weight: -0.5,
-    urgency: 0,
-  },
-  
-  // URGENT patterns - time-sensitive or emergency situations
-  urgent: {
-    patterns: [
-      // Emergency keywords
-      /\b(darurat|emergency|urgent|segera|cepat|buru-buru)\b/gi,
-      /\b(bahaya|berbahaya|mencelakakan|membahayakan)\b/gi,
-      /\b(kebakaran|banjir\s*besar|longsor|gempa|kecelakaan)\b/gi,
-      /\b(tolong|tolongin|bantuin|help)\b.*\b(segera|cepat|sekarang)/gi,
-      // Safety concerns
-      /\b(anak|balita|bayi|lansia|orang\s*tua)\b.*\b(bahaya|terjebak|sakit)/gi,
-      /\b(terjebak|terperangkap|tenggelam|hanyut)\b/gi,
-      // Infrastructure emergencies
-      /\b(putus|terputus|rubuh|roboh|ambruk)\b/gi,
-      /\b(listrik\s*mati|air\s*mati)\b.*\b(sudah|udah)\s*\d+/gi,
-    ],
-    weight: 0,  // Neutral sentiment but high urgency
-    urgency: 3,
-  },
-  
-  // POSITIVE patterns
-  positive: {
-    patterns: [
-      // Thanks and appreciation
-      /\b(terima\s*kasih|makasih|thanks|thx|tq|tengkyu|hatur\s*nuhun|matur\s*nuwun)\b/gi,
-      /\b(bagus|mantap|keren|hebat|top|jos|oke|baik|good|great)\b/gi,
-      /\b(senang|suka|puas|appreciate|apresiasi)\b/gi,
-      /\b(cepat|responsif|tanggap|sigap)\b.*\b(banget|sekali)/gi,
-      // Satisfied expressions
-      /\b(sudah|udah)\s*(beres|selesai|kelar|solved|fix)/gi,
-      /\b(berhasil|sukses|lancar)\b/gi,
-      // Emojis (basic detection)
-      /[😊🙏👍✅💯🎉😃]/g,
-    ],
-    weight: 0.6,
-    urgency: 0,
-  },
-  
-  // NEUTRAL patterns (reduce sentiment impact)
-  neutral: {
-    patterns: [
-      // Questions without negative tone
-      /^(apa|siapa|dimana|kapan|bagaimana|berapa)\b/gi,
-      // Simple requests
-      /\b(mau|ingin|tolong|mohon|bisa)\b.*\b(tanya|info|bantu)/gi,
-      // Greetings
-      /^(halo|hai|hi|selamat|assalamualaikum|permisi)\b/gi,
-    ],
-    weight: 0,
-    urgency: 0,
-  },
-};
 
 /**
  * Response tone suggestions based on sentiment
@@ -136,10 +43,46 @@ const TONE_SUGGESTIONS: Record<SentimentLevel, string> = {
   urgent: 'Prioritaskan urgensi, tunjukkan bahwa masalah ini serius dan akan ditangani segera. Berikan langkah darurat jika ada.',
 };
 
+/** Score mapping from sentiment level */
+const SCORE_MAP: Record<SentimentLevel, number> = {
+  angry: -0.8,
+  negative: -0.4,
+  neutral: 0,
+  positive: 0.6,
+  urgent: -0.2,
+};
+
 /**
- * Analyze sentiment of a message
+ * Analyze sentiment of a message (sync fallback — returns neutral).
+ * Kept for backward compat; prefer analyzeSentimentWithLLM() in async contexts.
  */
-export function analyzeSentiment(message: string, wa_user_id?: string): SentimentResult {
+export function analyzeSentiment(message: string, _wa_user_id?: string): SentimentResult {
+  // Sync path cannot call LLM. Return neutral — the async path handles real analysis.
+  return {
+    level: 'neutral',
+    score: 0,
+    triggers: [],
+    isEscalationCandidate: false,
+    urgencyLevel: 0,
+    suggestedTone: TONE_SUGGESTIONS.neutral,
+  };
+}
+
+/**
+ * Full sentiment analysis via micro-LLM.
+ * 
+ * The LLM handles all sentiment/urgency classification in a single call:
+ * - Detects anger, frustration, satisfaction, urgency
+ * - Understands Indonesian slang, abbreviations, and context
+ * - Returns structured { sentiment, urgency, confidence, reason }
+ * 
+ * Falls back to neutral if LLM is unavailable (graceful degradation).
+ */
+export async function analyzeSentimentWithLLM(
+  message: string,
+  wa_user_id?: string,
+  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
+): Promise<SentimentResult> {
   if (!message || message.trim().length < 2) {
     return {
       level: 'neutral',
@@ -151,91 +94,84 @@ export function analyzeSentiment(message: string, wa_user_id?: string): Sentimen
     };
   }
 
-  let totalScore = 0;
-  let maxUrgency = 0;
-  const triggers: string[] = [];
+  try {
+    const llmResult = await classifySentimentUrgency(message, context);
+    
+    if (!llmResult) {
+      // LLM unavailable — return neutral (graceful degradation)
+      return {
+        level: 'neutral',
+        score: 0,
+        triggers: [],
+        isEscalationCandidate: false,
+        urgencyLevel: 0,
+        suggestedTone: TONE_SUGGESTIONS.neutral,
+      };
+    }
 
-  // Check each sentiment category
-  for (const [category, config] of Object.entries(SENTIMENT_PATTERNS)) {
-    for (const pattern of config.patterns) {
-      const matches = message.match(pattern);
-      if (matches) {
-        totalScore += matches.length * config.weight;
-        maxUrgency = Math.max(maxUrgency, config.urgency);
-        triggers.push(...matches.slice(0, 3)); // Limit triggers per category
+    // Map LLM result to SentimentResult
+    const level: SentimentLevel = llmResult.sentiment;
+    const urgencyLevel = llmResult.urgency;
+    const score = SCORE_MAP[level] ?? 0;
+
+    // Check escalation based on history
+    let isEscalationCandidate = false;
+    
+    if (wa_user_id) {
+      const history = sentimentHistory.get(wa_user_id) || [];
+      history.push({ score, timestamp: Date.now() });
+      if (history.length > 10) history.shift();
+      sentimentHistory.set(wa_user_id, history);
+
+      // 3+ consecutive negative → escalation candidate
+      const recentNegative = history.slice(-3).filter(h => h.score < -0.3);
+      if (recentNegative.length >= 3) {
+        isEscalationCandidate = true;
+        logger.warn('🚨 User showing consecutive negative sentiment - escalation candidate', {
+          wa_user_id,
+          recentScores: history.slice(-3).map(h => h.score.toFixed(2)),
+        });
+      }
+
+      // Also escalate on angry + high urgency
+      if (level === 'angry' && urgencyLevel >= 2) {
+        isEscalationCandidate = true;
       }
     }
-  }
 
-  // Normalize score to -1 to 1 range
-  const normalizedScore = Math.max(-1, Math.min(1, totalScore / 3));
+    const result: SentimentResult = {
+      level,
+      score,
+      triggers: llmResult.reason ? [llmResult.reason] : [],
+      isEscalationCandidate,
+      urgencyLevel,
+      suggestedTone: TONE_SUGGESTIONS[level],
+    };
 
-  // Determine sentiment level
-  let level: SentimentLevel;
-  if (maxUrgency >= 2) {
-    level = 'urgent';
-  } else if (normalizedScore <= -0.6) {
-    level = 'angry';
-  } else if (normalizedScore <= -0.2) {
-    level = 'negative';
-  } else if (normalizedScore >= 0.3) {
-    level = 'positive';
-  } else {
-    level = 'neutral';
-  }
-
-  // Check escalation based on history
-  let isEscalationCandidate = false;
-  
-  if (wa_user_id) {
-    // Update sentiment history
-    const history = sentimentHistory.get(wa_user_id) || [];
-    history.push({ score: normalizedScore, timestamp: Date.now() });
-    
-    // Keep only last 10 messages
-    if (history.length > 10) {
-      history.shift();
-    }
-    sentimentHistory.set(wa_user_id, history);
-
-    // Check for consecutive negative sentiment (3+ in a row)
-    const recentNegative = history.slice(-3).filter(h => h.score < -0.3);
-    if (recentNegative.length >= 3) {
-      isEscalationCandidate = true;
-      logger.warn('🚨 User showing consecutive negative sentiment - escalation candidate', {
+    // Log significant sentiment
+    if (level === 'angry' || level === 'urgent' || isEscalationCandidate) {
+      logger.info('😤 Significant sentiment detected', {
         wa_user_id,
-        recentScores: history.slice(-3).map(h => h.score.toFixed(2)),
+        level,
+        score: score.toFixed(2),
+        urgency: urgencyLevel,
+        escalation: isEscalationCandidate,
+        reason: llmResult.reason,
       });
     }
 
-    // Also escalate on single angry + urgent
-    if (level === 'angry' && maxUrgency >= 2) {
-      isEscalationCandidate = true;
-    }
+    return result;
+  } catch (err: any) {
+    logger.debug('[Sentiment] LLM analysis failed, returning neutral', { error: err.message });
+    return {
+      level: 'neutral',
+      score: 0,
+      triggers: [],
+      isEscalationCandidate: false,
+      urgencyLevel: 0,
+      suggestedTone: TONE_SUGGESTIONS.neutral,
+    };
   }
-
-  const result: SentimentResult = {
-    level,
-    score: normalizedScore,
-    triggers: [...new Set(triggers)].slice(0, 5), // Unique triggers, max 5
-    isEscalationCandidate,
-    urgencyLevel: maxUrgency,
-    suggestedTone: TONE_SUGGESTIONS[level],
-  };
-
-  // Log significant sentiment
-  if (level === 'angry' || level === 'urgent' || isEscalationCandidate) {
-    logger.info('😤 Significant sentiment detected', {
-      wa_user_id,
-      level,
-      score: normalizedScore.toFixed(2),
-      urgency: maxUrgency,
-      escalation: isEscalationCandidate,
-      triggers: result.triggers,
-    });
-  }
-
-  return result;
 }
 
 /**

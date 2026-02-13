@@ -209,14 +209,18 @@ const SERVICE_REQUEST_OPTIONAL_FIELDS = ['service_id'];
 
 // ==================== STORAGE ====================
 
-// In-memory storage (use Redis in production)
-const conversationContexts = new Map<string, ConversationContext>();
-
-// Cleanup expired contexts (older than 30 minutes)
-const CONTEXT_TTL = 30 * 60 * 1000; // 30 minutes
-
 import { registerInterval } from '../utils/timer-registry';
 
+/**
+ * In-memory Map storage for conversation contexts.
+ * Contexts are ephemeral with a 30-minute TTL — if the container restarts,
+ * users simply start a new conversation flow (acceptable for a STATELESS service).
+ */
+const conversationContexts = new Map<string, ConversationContext>();
+
+const CONTEXT_TTL = 30 * 60 * 1000; // 30 minutes
+
+// Cleanup expired contexts from in-memory Map every 5 minutes
 registerInterval(() => {
   const now = Date.now();
   for (const [userId, ctx] of conversationContexts.entries()) {
@@ -225,12 +229,12 @@ registerInterval(() => {
       logger.debug('[FSM] Cleaned up expired context', { userId });
     }
   }
-}, 5 * 60 * 1000, 'fsm-context-cleanup'); // Run every 5 minutes
+}, 5 * 60 * 1000, 'fsm-context-cleanup');
 
 // ==================== CORE FUNCTIONS ====================
 
 /**
- * Get or create conversation context for a user
+ * Get or create conversation context for a user.
  */
 export function getContext(userId: string): ConversationContext {
   let ctx = conversationContexts.get(userId);
@@ -387,7 +391,7 @@ export function getNextQuestion(userId: string): string | null {
   
   const questionMap: Record<string, string> = {
     // Complaint fields
-    'kategori': 'Jenis masalah apa yang ingin dilaporkan? (jalan rusak, lampu mati, sampah, dll)',
+    'kategori': 'Jenis masalah apa yang ingin dilaporkan? Ceritakan saja masalahnya.',
     'alamat': 'Di mana lokasi masalahnya? Sebutkan alamat atau patokan terdekat.',
     'deskripsi': 'Bisa jelaskan lebih detail masalahnya?',
     

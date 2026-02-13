@@ -5,10 +5,9 @@
  * Categories are cached per village with a configurable TTL.
  *
  * This replaces ALL hardcoded category lists throughout the AI service:
- *   - UNIFIED_CLASSIFY_PROMPT categories
+ *   - UNIFIED_CLASSIFY_PROMPT categories (micro-llm-matcher.service.ts)
  *   - ai-chunking.service.ts VALID_CATEGORIES
  *   - document-category.service.ts VALID_CATEGORIES
- *   - rag.service.ts inferCategories() keyword map
  *
  * The Dashboard DB `knowledge_categories` table is the single source of truth.
  * Admin can add/remove categories per village, and the AI service adapts automatically.
@@ -53,9 +52,9 @@ const FALLBACK_CATEGORIES: KnowledgeCategory[] = [
   { id: 'fb-1', name: 'Profil Desa', slug: 'profil_desa', is_default: true },
   { id: 'fb-2', name: 'FAQ', slug: 'faq', is_default: true },
   { id: 'fb-3', name: 'Struktur Desa', slug: 'struktur_desa', is_default: true },
-  { id: 'fb-4', name: 'Data RT/RW', slug: 'data_rt-rw', is_default: true },
+  { id: 'fb-4', name: 'Data RT/RW', slug: 'data_rt_rw', is_default: true },
   { id: 'fb-5', name: 'Layanan Administrasi', slug: 'layanan_administrasi', is_default: true },
-  { id: 'fb-6', name: 'Panduan/SOP', slug: 'panduan-sop', is_default: true },
+  { id: 'fb-6', name: 'Panduan/SOP', slug: 'panduan_sop', is_default: true },
   { id: 'fb-7', name: 'Custom', slug: 'custom', is_default: true },
 ];
 
@@ -171,31 +170,44 @@ export async function getCategoryBulletList(villageId?: string): Promise<string>
  */
 export async function isValidCategory(category: string, villageId?: string): Promise<boolean> {
   const categories = await getKnowledgeCategories(villageId);
-  const lower = category.toLowerCase().trim();
+  const canonical = toCanonicalSlug(category);
   return categories.some(c =>
-    c.slug === lower ||
-    c.name.toLowerCase() === lower
+    c.slug === canonical ||
+    toCanonicalSlug(c.slug) === canonical ||
+    toCanonicalSlug(c.name) === canonical
   );
 }
 
 /**
+ * Normalize a slug string to canonical form (lowercase, spaces→underscores, hyphens→underscores).
+ */
+function toCanonicalSlug(s: string): string {
+  return s.toLowerCase().trim().replace(/[\s-]+/g, '_');
+}
+
+/**
  * Normalize a raw category string to its canonical slug.
- * Returns the slug if an exact match is found, or the original string if not.
+ * Handles both hyphen and underscore formats (e.g., "panduan-sop" → "panduan_sop").
+ * Returns the slug if a match is found, or the canonical form if not.
  */
 export async function normalizeCategoryToSlug(raw: string, villageId?: string): Promise<string> {
   const categories = await getKnowledgeCategories(villageId);
-  const lower = raw.toLowerCase().trim();
+  const canonical = toCanonicalSlug(raw);
 
   // Exact slug match
-  const exactSlug = categories.find(c => c.slug === lower);
+  const exactSlug = categories.find(c => c.slug === canonical);
   if (exactSlug) return exactSlug.slug;
 
+  // Canonical form match (handles hyphens vs underscores)
+  const fuzzySlug = categories.find(c => toCanonicalSlug(c.slug) === canonical);
+  if (fuzzySlug) return fuzzySlug.slug;
+
   // Exact name match
-  const exactName = categories.find(c => c.name.toLowerCase() === lower);
+  const exactName = categories.find(c => toCanonicalSlug(c.name) === canonical);
   if (exactName) return exactName.slug;
 
-  // No match — return as-is (category is display-only, LLM handles chunk categorization)
-  return lower;
+  // No match — return canonical form
+  return canonical;
 }
 
 /**

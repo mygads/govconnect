@@ -332,6 +332,25 @@ Output: {"intent": "QUESTION", "confidence": 0.5, "fields": {}, "reply_text": "B
 CASE 5.17b — PESAN KURANG JELAS, AI TANYA BALIK
 Input: "saya butuh bantuan"
 Output: {"intent": "QUESTION", "confidence": 0.5, "fields": {}, "reply_text": "Siap Pak/Bu, kami siap membantu. Bisa dijelaskan keperluannya? Misalnya:\\n- Buat laporan pengaduan\\n- Informasi layanan surat\\n- Cek status laporan/layanan\\n- Tanya informasi umum", "guidance_text": "", "needs_knowledge": false}
+
+CASE GROUP: MULTI-INTENT (USER MENYEBUT 2+ HAL SEKALIGUS)
+
+ATURAN MULTI-INTENT:
+1. Jika user menyebut 2 hal BERBEDA dalam satu pesan, gunakan "secondary_intent" di fields untuk menandai intent kedua
+2. Proses INTENT UTAMA terlebih dahulu, lalu sebutkan hal kedua akan dibantu setelahnya
+3. Prioritas: complaint > service request > knowledge query > question
+
+CASE 6.1 — DUA LAYANAN SEKALIGUS
+Input: "mau buat KTP sama KK sekalian"
+Output: {"intent": "SERVICE_INFO", "confidence": 0.85, "fields": {"service_slug": "ktp", "secondary_intent": "SERVICE_INFO", "secondary_service_slug": "kk"}, "reply_text": "Baik Pak/Bu, untuk pembuatan KTP dan KK prosesnya terpisah. Mari kita proses satu per satu ya.\\n\\nKita mulai dari KTP dulu, berikut informasinya:", "guidance_text": "Setelah KTP selesai, kita lanjut ke KK ya.", "needs_knowledge": false}
+
+CASE 6.2 — PENGADUAN + TANYA LAYANAN
+Input: "jalan depan rumah rusak, oh iya sekalian mau tanya syarat buat KTP"
+Output: {"intent": "CREATE_COMPLAINT", "confidence": 0.85, "fields": {"kategori": "infrastruktur_jalan", "deskripsi": "jalan depan rumah rusak", "secondary_intent": "SERVICE_INFO", "secondary_service_slug": "ktp"}, "reply_text": "Baik Pak/Bu, saya catat laporan tentang jalan rusak.\\n\\nUntuk membuat laporan, bisa sebutkan alamat lengkap lokasinya?\\n\\n(Setelah laporan ini selesai, saya juga akan bantu informasi syarat KTP ya.)", "guidance_text": "", "needs_knowledge": false}
+
+CASE 6.3 — CEK STATUS + TANYA INFO
+Input: "cek status laporan LAP-001 sama mau tanya jadwal kantor desa"
+Output: {"intent": "CHECK_STATUS", "confidence": 0.9, "fields": {"complaint_id": "LAP-001", "secondary_intent": "KNOWLEDGE_QUERY", "secondary_knowledge_category": "jadwal"}, "reply_text": "", "guidance_text": "Setelah cek status, saya juga akan bantu informasi jadwal kantor desa.", "needs_knowledge": false}
 `;
 
 // Backward-compatible: full CASES_GREETING
@@ -567,6 +586,10 @@ export const JSON_SCHEMA_FOR_GEMINI = {
           type: 'array',
           items: { type: 'string' },
         },
+        // Multi-intent: when user mentions 2 things at once
+        secondary_intent: { type: 'string', description: 'Second intent when user mentions 2 things in one message' },
+        secondary_service_slug: { type: 'string', description: 'Service slug for the secondary intent' },
+        secondary_knowledge_category: { type: 'string', description: 'Knowledge category for the secondary intent' },
       },
     },
     reply_text: { type: 'string' },
