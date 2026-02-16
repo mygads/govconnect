@@ -7,6 +7,7 @@
 
 import { Request, Response } from 'express';
 import { waSupportClient } from '../clients/wa-support.client';
+import { ensureWaSupportUser } from '../services/wa.service';
 import prisma from '../config/database';
 import logger from '../utils/logger';
 import { getQuery } from '../utils/http';
@@ -217,5 +218,40 @@ export async function checkWaSupportHealth(_req: Request, res: Response): Promis
         detail: error.message,
       },
     });
+  }
+}
+
+/**
+ * POST /internal/wa-support/provision
+ * Auto-create wa-support-v2 user for a village (used during registration or migration).
+ * Body: { village_id: string }
+ */
+export async function provisionWaSupportUser(req: Request, res: Response): Promise<void> {
+  try {
+    if (!waSupportClient.isConfigured()) {
+      res.status(503).json({ success: false, error: 'WA Support V2 not configured' });
+      return;
+    }
+
+    const villageId = req.body?.village_id;
+    if (!villageId || typeof villageId !== 'string') {
+      res.status(400).json({ success: false, error: 'village_id is required' });
+      return;
+    }
+
+    const result = await ensureWaSupportUser(villageId);
+
+    logger.info('WA Support user provisioned', { village_id: villageId, user_id: result.userId });
+
+    res.json({
+      success: true,
+      data: {
+        user_id: result.userId,
+        provisioned: true,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Failed to provision wa-support user', { error: error.message, village_id: req.body?.village_id });
+    res.status(500).json({ success: false, error: error.message });
   }
 }

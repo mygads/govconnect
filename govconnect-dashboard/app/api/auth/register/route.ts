@@ -96,6 +96,18 @@ export async function POST(request: NextRequest) {
       // Non-fatal - village can still be created without channel account
     }
 
+    // Auto-provision wa-support-v2 user for this village
+    try {
+      await apiFetch(buildUrl(ServicePath.CHANNEL, '/internal/wa-support/provision'), {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ village_id: village.id }),
+      })
+    } catch (waProvisionError) {
+      console.warn('Failed to provision wa-support user (non-fatal):', waProvisionError)
+      // Non-fatal - wa-support user will be created when admin creates a WA session
+    }
+
     const password_hash = await hashPassword(password)
     const admin = await prisma.admin_users.create({
       data: {

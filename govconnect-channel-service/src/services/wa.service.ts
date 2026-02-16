@@ -120,7 +120,7 @@ function getPublicWhatsAppWebhookUrl(): string {
  * Creates (upsert) via internal API. Returns api_key if newly created,
  * otherwise retrieves stored key from DB or rotates.
  */
-async function ensureWaSupportUser(villageId: string): Promise<{ userId: string; apiKey: string }> {
+export async function ensureWaSupportUser(villageId: string): Promise<{ userId: string; apiKey: string }> {
   if (!waSupportClient.isConfigured()) {
     throw new Error('WA_SUPPORT_URL / WA_SUPPORT_INTERNAL_API_KEY not configured');
   }
@@ -447,7 +447,25 @@ export async function createSessionForVillage(params: {
   villageSlug?: string;
 }) {
   const existing = await getSessionByVillageId(params.villageId);
-  if (existing) {
+
+  // Migration handling: if session exists but has no wa-support user,
+  // it means the village migrated from old WA system. Clean up old session
+  // and create a fresh one via wa-support-v2.
+  if (existing && !existing.wa_support_user_id && waSupportClient.isConfigured()) {
+    logger.info('Migration detected: existing session without wa-support user, recreating', {
+      village_id: params.villageId,
+    });
+
+    // Try to logout old session gracefully
+    try {
+      await logoutSession(existing.wa_token);
+    } catch (e: any) {
+      logger.debug('Old session logout skipped', { error: e?.message });
+    }
+
+    // Delete old session row so we can create a new one
+    await prisma.wa_sessions.delete({ where: { village_id: params.villageId } });
+  } else if (existing) {
     return { existing: true };
   }
 

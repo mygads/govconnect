@@ -40,6 +40,7 @@ import {
   getWaSupportSessionSettings,
   getWaSupportSummary,
   checkWaSupportHealth,
+  provisionWaSupportUser,
 } from '../controllers/wa-support.controller';
 import { internalAuth } from '../middleware/auth.middleware';
 import { uploadPublicMedia } from '../middleware/upload.middleware';
@@ -98,6 +99,7 @@ router.get('/wa-support/summary', getWaSupportSummary);
 router.get('/wa-support/users', listWaSupportUsers);
 router.get('/wa-support/users/:user_id', getWaSupportUser);
 router.get('/wa-support/users/:user_id/sessions/:session_id/settings', getWaSupportSessionSettings);
+router.post('/wa-support/provision', provisionWaSupportUser);
 
 // Media upload (used by Dashboard public form & admin updates)
 // Wrap multer in error handler to return JSON on upload errors
