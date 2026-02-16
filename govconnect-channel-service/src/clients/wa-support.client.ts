@@ -150,7 +150,11 @@ class WaSupportClient {
 
   constructor() {
     this.baseUrl = (process.env.WA_SUPPORT_URL || '').replace(/\/$/, '');
-    this.internalApiKey = process.env.WA_SUPPORT_INTERNAL_API_KEY || '';
+
+    // WA_SUPPORT_INTERNAL_API_KEY may be in "source:actualKey" format (e.g. "govconnect:govconnect2026").
+    // The wa-support middleware expects only the actualKey portion in the header.
+    const rawKey = process.env.WA_SUPPORT_INTERNAL_API_KEY || '';
+    this.internalApiKey = rawKey.includes(':') ? rawKey.split(':').slice(1).join(':') : rawKey;
 
     this.http = axios.create({
       timeout: 30000,
