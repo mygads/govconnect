@@ -273,7 +273,7 @@ export function generateReceiptHTML(complaint: Complaint): string {
         <div class="receipt">
         <div class="header">
           <h1>TANDA TERIMA LAPORAN</h1>
-          <p class="subtitle">Sistem Pengaduan Masyarakat - GovConnect</p>
+          <p class="subtitle">Sistem Pengaduan Masyarakat - Tanggapin AI</p>
         </div>
         
           <div class="receipt-number">

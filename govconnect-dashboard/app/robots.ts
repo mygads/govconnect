@@ -2,11 +2,11 @@ import { MetadataRoute } from 'next'
 
 // ============================================
 // ROBOTS.TS - Optimized for Search Engine Crawling
-// GovConnect - Platform Layanan Pemerintahan Digital
+// Tanggapin AI - Platform Layanan Pemerintahan Digital
 // ============================================
 
 export default function robots(): MetadataRoute.Robots {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.my.id'
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://tanggapin.ai'
 
   return {
     rules: [

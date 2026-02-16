@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: GovConnect API
+  title: Tanggapin AI API
   description: |
-    Complete API documentation for GovConnect microservices platform.
+    Complete API documentation for Tanggapin AI microservices platform.
     
     ## Services
     - **Case Service** - Complaints & Service Requests management
@@ -19,17 +19,17 @@ info:
     Layanan diakses langsung per service (tanpa gateway agregasi).
   version: 1.0.0
   contact:
-    name: GovConnect Team
-    url: https://govconnect.my.id
+    name: Tanggapin AI Team
+    url: https://tanggapin.ai
   license:
     name: MIT
 
 servers:
-  - url: https://case.govconnect.my.id
+  - url: https://case.tanggapin.ai
     description: Case Service (Production)
-  - url: https://channel.govconnect.my.id
+  - url: https://channel.tanggapin.ai
     description: Channel Service (Production)
-  - url: https://ai.govconnect.my.id
+  - url: https://ai.tanggapin.ai
     description: AI Service (Production)
 
 tags:

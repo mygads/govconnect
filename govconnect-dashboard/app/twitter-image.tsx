@@ -2,7 +2,7 @@ import { ImageResponse } from 'next/og'
 
 export const runtime = 'edge'
 
-export const alt = 'GovConnect - Platform Layanan Pemerintahan Digital Berbasis AI Indonesia | Smart Government Solution by Genfity Digital Solution'
+export const alt = 'Tanggapin AI - Sistem AI Agent khusus Pemerintah Berbasis Large Language Model'
 export const size = {
   width: 1200,
   height: 630,
@@ -20,8 +20,8 @@ export default async function Image() {
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: '#ffffff',
-          backgroundImage: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 50%, #bbf7d0 100%)',
+          backgroundColor: '#F9F7F7',
+          backgroundImage: 'linear-gradient(135deg, #F9F7F7 0%, #DBE2EF 60%, #3F72AF 100%)',
         }}
       >
         {/* Background Pattern */}
@@ -32,7 +32,7 @@ export default async function Image() {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundImage: 'radial-gradient(circle at 25% 25%, rgba(22, 163, 74, 0.1) 0%, transparent 50%)',
+            backgroundImage: 'radial-gradient(circle at 25% 25%, rgba(63, 114, 175, 0.2) 0%, transparent 50%)',
           }}
         />
         
@@ -55,9 +55,9 @@ export default async function Image() {
               width: '100px',
               height: '100px',
               borderRadius: '20px',
-              backgroundColor: '#16a34a',
+              backgroundColor: '#112D4E',
               marginBottom: '24px',
-              boxShadow: '0 16px 32px rgba(22, 163, 74, 0.3)',
+              boxShadow: '0 16px 32px rgba(17, 45, 78, 0.35)',
             }}
           >
             <svg
@@ -82,11 +82,11 @@ export default async function Image() {
               display: 'flex',
               fontSize: '56px',
               fontWeight: 'bold',
-              color: '#16a34a',
+              color: '#112D4E',
               marginBottom: '12px',
             }}
           >
-            GovConnect
+            Tanggapin AI
           </div>
 
           {/* Subtitle */}
@@ -94,12 +94,12 @@ export default async function Image() {
             style={{
               display: 'flex',
               fontSize: '24px',
-              color: '#374151',
+              color: '#112D4E',
               textAlign: 'center',
               maxWidth: '700px',
             }}
           >
-            Platform Layanan Pemerintahan Digital Berbasis AI
+            AI Agent Pemerintah Berbasis LLM
           </div>
 
           {/* Features */}
@@ -110,18 +110,18 @@ export default async function Image() {
               marginTop: '32px',
             }}
           >
-            {['24/7 Online', 'AI-Powered', 'Multi-Channel'].map((feature) => (
+            {['Lama Balas', 'Data', 'Pengaduan'].map((feature) => (
               <div
                 key={feature}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
-                  backgroundColor: 'rgba(22, 163, 74, 0.1)',
+                  backgroundColor: 'rgba(219, 226, 239, 0.9)',
                   padding: '10px 20px',
                   borderRadius: '100px',
                   fontSize: '16px',
-                  color: '#16a34a',
+                  color: '#112D4E',
                   fontWeight: '600',
                 }}
               >
@@ -146,10 +146,10 @@ export default async function Image() {
             style={{
               fontSize: '16px',
               fontWeight: '600',
-              color: '#16a34a',
+              color: '#3F72AF',
             }}
           >
-            govconnect.id
+            tanggapin.ai
           </div>
           <div
             style={{

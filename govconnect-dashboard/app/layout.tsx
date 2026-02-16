@@ -11,7 +11,9 @@ import { HomePageJsonLd } from "@/components/seo/JsonLd";
 // SEO Metadata
 export const metadata: Metadata = {
   ...defaultMetadata,
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.id'),
+  title: "Tanggapin AI - Platform AI Agent Untuk Layanan Pemerintahan Digital Indonesia",
+  description: "Tanggapin AI adalah Platform AI Agent untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan layanan administrasi, dan dapatkan informasi pemerintah langsung melalui WhatsApp dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://tanggapin.ai'),
 };
 
 // Viewport Configuration
@@ -21,8 +23,8 @@ export const viewport: Viewport = {
   maximumScale: 5,
   userScalable: true,
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#16a34a' },
-    { media: '(prefers-color-scheme: dark)', color: '#15803d' },
+    { media: '(prefers-color-scheme: light)', color: '#3F72AF' },
+    { media: '(prefers-color-scheme: dark)', color: '#000000' },
   ],
 };
 
@@ -52,7 +54,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-title" content={siteConfig.name} />
         <meta name="format-detection" content="telephone=no" />
         <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="msapplication-TileColor" content="#16a34a" />
+        <meta name="msapplication-TileColor" content="#3F72AF" />
         <meta name="msapplication-tap-highlight" content="no" />
         
         {/* Geo Tags untuk Local SEO Indonesia */}

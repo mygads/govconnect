@@ -1,7 +1,7 @@
 # ============================================
-# ROBOTS.TXT - GovConnect
+# ROBOTS.TXT - Tanggapin AI
 # Platform Layanan Pemerintahan Digital Berbasis AI
-# https://govconnect.id
+# https://tanggapin.id
 # Developed by Genfity Digital Solution
 # ============================================
 
@@ -144,10 +144,10 @@ Disallow: /
 # SITEMAP
 # ============================================
 
-Sitemap: https://govconnect.id/sitemap.xml
+Sitemap: https://tanggapin.ai/sitemap.xml
 
 # ============================================
 # HOST
 # ============================================
 
-Host: https://govconnect.id
+Host: https://tanggapin.ai

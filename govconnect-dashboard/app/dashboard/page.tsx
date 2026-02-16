@@ -17,7 +17,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground">Ringkasan Dashboard</h1>
-        <p className="text-muted-foreground mt-2">Selamat datang di Dashboard Admin GovConnect</p>
+        <p className="text-muted-foreground mt-2">Selamat datang di Dashboard Admin Tanggapin AI</p>
       </div>
 
       {/* Real-time Stats Grid */}

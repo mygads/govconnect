@@ -36,9 +36,9 @@ export const SolutionAnimation = () => {
   }, []);
 
   const services: Service[] = [
-    { icon: MessageCircle, label: "Lapor", color: "bg-blue-500" },
-    { icon: FileText, label: "Surat", color: "bg-green-500" },
-    { icon: Bell, label: "Info", color: "bg-orange-500" },
+    { icon: MessageCircle, label: "Pengaduan", color: "bg-blue-500" },
+    { icon: FileText, label: "Laporan", color: "bg-green-500" },
+    { icon: Bell, label: "Layanan", color: "bg-orange-500" },
   ];
 
   return (
@@ -152,7 +152,7 @@ export const SolutionAnimation = () => {
           <div className="absolute inset-2 top-4 bg-white dark:bg-slate-800 rounded-lg overflow-hidden">
             {/* App Header */}
             <div className="bg-secondary h-6 flex items-center justify-center">
-              <span className="text-white text-[8px] font-semibold">GovConnect</span>
+              <span className="text-white text-[8px] font-semibold">Tanggapin</span>
             </div>
 
             {/* Service Icons Display */}

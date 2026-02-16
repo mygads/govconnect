@@ -89,7 +89,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex">
       {/* Left Side - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-linear-to-br from-primary via-primary/90 to-secondary relative overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-[#112D4E] to-[#3F72AF] relative overflow-hidden">
         {/* Background Pattern */}
         <div className="absolute inset-0 opacity-10">
           <div className="absolute top-20 left-20 w-64 h-64 border border-white/30 rounded-full" />
@@ -104,10 +104,20 @@ export default function LoginPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
+            <div className="mb-8">
+               <Image 
+                 src="/logo-dashboard-dark.png" 
+                 alt="Tanggapin AI Logo" 
+                 width={200} 
+                 height={60} 
+                 className="object-contain"
+                 priority
+               />
+            </div>
             <h1 className="text-4xl xl:text-5xl font-bold text-white mb-6 leading-tight">
               Selamat Datang di
               <br />
-              <span className="text-white/90">GovConnect Dashboard</span>
+              <span className="text-white/90">Tanggapin AI Dashboard</span>
             </h1>
             <p className="text-lg text-white/80 mb-8 max-w-md leading-relaxed">
               Platform administrasi untuk mengelola layanan kelurahan digital.
@@ -179,7 +189,7 @@ export default function LoginPage() {
                 <div className="relative h-12 w-40">
                   <Image
                     src={logoSrc}
-                    alt="GovConnect Logo"
+                    alt="Tanggapin AI Logo"
                     fill
                     className="object-contain"
                     priority
@@ -209,7 +219,7 @@ export default function LoginPage() {
                     onChange={(e) => setUsername(e.target.value)}
                     disabled={isSubmitting}
                     required
-                    className="h-12 px-4"
+                    className="h-10 px-3"
                   />
                 </div>
                 <div className="space-y-2">
@@ -225,17 +235,17 @@ export default function LoginPage() {
                       onChange={(e) => setPassword(e.target.value)}
                       disabled={isSubmitting}
                       required
-                      className="h-12 px-4 pr-12"
+                      className="h-10 px-3 pr-10"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       {showPassword ? (
-                        <EyeOff className="w-5 h-5" />
+                        <EyeOff className="w-4 h-4" />
                       ) : (
-                        <Eye className="w-5 h-5" />
+                        <Eye className="w-4 h-4" />
                       )}
                     </button>
                   </div>
@@ -253,17 +263,17 @@ export default function LoginPage() {
 
                 <Button
                   type="submit"
-                  className="w-full h-12 text-base font-semibold bg-secondary hover:bg-secondary/90"
+                  className="w-full h-10 text-sm font-semibold bg-[#112D4E] hover:bg-[#112D4E]/90 text-white shadow-lg shadow-blue-900/20"
                   disabled={isSubmitting}
                 >
                   {isSubmitting ? (
                     <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Memproses...
                     </>
                   ) : (
                     <>
-                      <LogIn className="mr-2 h-5 w-5" />
+                      <LogIn className="mr-2 h-4 w-4" />
                       Masuk
                     </>
                   )}
@@ -276,7 +286,7 @@ export default function LoginPage() {
 
           {/* Footer */}
           <p className="text-center text-xs text-muted-foreground mt-8">
-            &copy; {new Date().getFullYear()} GovConnect. Didukung oleh{" "}
+            &copy; {new Date().getFullYear()} Tanggapin AI. Didukung oleh{" "}
             <a
               href="https://genfity.com"
               target="_blank"

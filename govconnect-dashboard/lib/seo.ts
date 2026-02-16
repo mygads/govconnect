@@ -1,18 +1,18 @@
 import { Metadata } from 'next'
 
 // ============================================
-// SEO CONFIGURATION - GovConnect
+// SEO CONFIGURATION - Tanggapin AI
 // Platform Layanan Pemerintahan Digital Berbasis AI
 // Developed by Genfity Digital Solution
 // ============================================
 
 export const siteConfig = {
   // Basic Info
-  name: 'GovConnect',
-  title: 'GovConnect - Platform Layanan Pemerintahan Digital Berbasis AI Indonesia | Smart Government Solution',
-  description: 'GovConnect adalah platform AI terdepan untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan surat keterangan, ajukan layanan publik, dan dapatkan informasi pemerintah langsung melalui WhatsApp dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah. Dikembangkan oleh Genfity Digital Solution.',
-  shortDescription: 'Platform AI untuk layanan pemerintahan digital Indonesia - Smart Government Solution 24/7',
-  url: process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.id',
+  name: 'Tanggapin AI',
+  title: 'Tanggapin AI - Sistem AI Agent khusus Pemerintah Berbasis Large Language Model',
+  description: 'Tanggapin AI adalah sistem AI Agent khusus Pemerintah Berbasis Large Language Model untuk meningkatkan kecepatan respons pelayanan dan pengaduan publik melalui WhatsApp.',
+  shortDescription: 'AI Agent pemerintah untuk respons cepat pelayanan publik dan pengaduan warga.',
+  url: process.env.NEXT_PUBLIC_APP_URL || 'https://tanggapin.ai',
   ogImage: '/dashboard.png',
   logo: '/logo-dashboard.png',
   locale: 'id_ID',
@@ -20,9 +20,9 @@ export const siteConfig = {
   
   // Contact Info - Genfity Digital Solution
   email: 'genfity@gmail.com',
-  phone: '+6285174314023',
-  phoneDisplay: '0851-7431-4023',
-  whatsapp: 'https://wa.me/6285174314023',
+  phone: '+6281233784490',
+  phoneDisplay: '0812-3378-4490',
+  whatsapp: 'https://wa.me/6281233784490',
   address: 'Indonesia',
   
   // Brand Info
@@ -42,22 +42,22 @@ export const siteConfig = {
   
   // Social Media
   social: {
-    twitter: '@govconnect_id',
-    instagram: '@govconnect.id',
-    facebook: 'govconnect.id',
+    twitter: '@tanggapin_ai',
+    instagram: '@tanggapin.ai',
+    facebook: 'tanggapin.ai',
     linkedin: 'company/genfity-digital-solution',
-    youtube: '@govconnect',
-    tiktok: '@govconnect.id',
+    youtube: '@tanggapinai',
+    tiktok: '@tanggapin.ai',
     github: 'genfity',
   },
   
   // Comprehensive Keywords untuk SEO (100+ keywords)
   keywords: [
     // Brand Keywords
-    'govconnect',
-    'govconnect indonesia',
-    'govconnect id',
-    'gov connect',
+    'tanggapin ai',
+    'tanggapin ai indonesia',
+    'tanggapin ai id',
+    'tanggapin',
     'genfity',
     'genfity digital solution',
     
@@ -376,7 +376,7 @@ export function generateOrganizationSchema() {
     '@type': 'Organization',
     '@id': `${siteConfig.url}/#organization`,
     name: siteConfig.name,
-    alternateName: ['GovConnect Indonesia', 'GovConnect ID', 'Gov Connect'],
+    alternateName: ['Tanggapin AI Indonesia', 'Tanggapin AI ID', 'Tanggapin AI'],
     url: siteConfig.url,
     logo: {
       '@type': 'ImageObject',
@@ -491,7 +491,7 @@ export function generateWebsiteSchema() {
     '@type': 'WebSite',
     '@id': `${siteConfig.url}/#website`,
     name: siteConfig.name,
-    alternateName: ['GovConnect - Layanan Pemerintahan Digital', 'GovConnect Indonesia', 'Smart Government Platform'],
+    alternateName: ['Tanggapin AI - Layanan Pemerintahan Digital', 'Tanggapin AI Indonesia', 'Smart Government Platform'],
     url: siteConfig.url,
     description: siteConfig.description,
     inLanguage: siteConfig.language,
@@ -556,7 +556,7 @@ export function generateSoftwareApplicationSchema() {
     '@type': 'SoftwareApplication',
     '@id': `${siteConfig.url}/#software`,
     name: siteConfig.name,
-    alternateName: 'GovConnect - Smart Government Platform',
+    alternateName: 'Tanggapin AI - Smart Government Platform',
     description: siteConfig.description,
     url: siteConfig.url,
     applicationCategory: 'GovernmentApplication',
@@ -624,13 +624,13 @@ export function generateSoftwareApplicationSchema() {
       {
         '@type': 'ImageObject',
         url: `${siteConfig.url}${siteConfig.ogImage}`,
-        caption: 'Pratinjau Dashboard GovConnect',
+        caption: 'Pratinjau Dashboard Tanggapin AI',
       },
     ],
     softwareHelp: {
       '@type': 'CreativeWork',
       url: `${siteConfig.url}/#faq`,
-      name: 'FAQ & Pusat Bantuan GovConnect',
+      name: 'FAQ & Pusat Bantuan Tanggapin AI',
     },
     permissions: 'Tidak memerlukan izin khusus',
     memoryRequirements: 'Minimal 2GB RAM',
@@ -751,7 +751,7 @@ export function generatePageMetadata(
 // ADDITIONAL SCHEMAS FOR RICH SNIPPETS
 // ============================================
 
-// Product Schema untuk fitur-fitur GovConnect
+// Product Schema untuk fitur-fitur Tanggapin AI
 export function generateProductSchema() {
   return {
     '@context': 'https://schema.org',
@@ -812,7 +812,7 @@ export function generateProductSchema() {
           '@type': 'Organization',
           name: 'Kecamatan Smart City',
         },
-        reviewBody: 'Solusi terbaik untuk transformasi digital pemerintahan. Antrian berkurang drastis sejak menggunakan GovConnect.',
+        reviewBody: 'Solusi terbaik untuk transformasi digital pemerintahan. Antrian berkurang drastis sejak menggunakan Tanggapin AI.',
       },
     ],
   }
@@ -824,7 +824,7 @@ export function generateServiceSchema() {
     '@context': 'https://schema.org',
     '@type': 'Service',
     '@id': `${siteConfig.url}/#service`,
-    name: 'Layanan Platform GovConnect',
+    name: 'Layanan Platform Tanggapin AI',
     description: 'Platform layanan pemerintahan digital berbasis AI untuk kelurahan, kecamatan, dan instansi pemerintah Indonesia',
     provider: {
       '@type': 'Organization',
@@ -838,7 +838,7 @@ export function generateServiceSchema() {
     },
     hasOfferCatalog: {
       '@type': 'OfferCatalog',
-      name: 'Layanan GovConnect',
+      name: 'Layanan Tanggapin AI',
       itemListElement: [
         {
           '@type': 'Offer',
@@ -899,8 +899,8 @@ export function generateHowToSchema() {
   return {
     '@context': 'https://schema.org',
     '@type': 'HowTo',
-    name: 'Cara Menggunakan GovConnect untuk Layanan Pemerintahan',
-    description: 'Panduan lengkap menggunakan platform GovConnect untuk mengakses layanan pemerintahan digital',
+    name: 'Cara Menggunakan Tanggapin AI untuk Layanan Pemerintahan',
+    description: 'Panduan lengkap menggunakan platform Tanggapin AI untuk mengakses layanan pemerintahan digital',
     image: `${siteConfig.url}${siteConfig.ogImage}`,
     totalTime: 'PT5M',
     estimatedCost: {
@@ -912,7 +912,7 @@ export function generateHowToSchema() {
       {
         '@type': 'HowToStep',
         name: 'Akses Platform',
-        text: 'Buka website GovConnect atau hubungi melalui WhatsApp/Webchat',
+        text: 'Buka website Tanggapin AI atau hubungi melalui WhatsApp/Webchat',
         position: 1,
       },
       {
@@ -948,8 +948,8 @@ export function generateVideoSchema(videoUrl?: string) {
   return {
     '@context': 'https://schema.org',
     '@type': 'VideoObject',
-    name: 'Demo Platform GovConnect - Layanan Pemerintahan Digital',
-    description: 'Video demo penggunaan platform GovConnect untuk layanan pemerintahan digital berbasis AI',
+    name: 'Demo Platform Tanggapin AI - Layanan Pemerintahan Digital',
+    description: 'Video demo penggunaan platform Tanggapin AI untuk layanan pemerintahan digital berbasis AI',
     thumbnailUrl: `${siteConfig.url}${siteConfig.ogImage}`,
     uploadDate: '2024-01-01',
     duration: 'PT3M',
@@ -1006,36 +1006,36 @@ export function generateArticleSchema(article: {
 // Default FAQ untuk homepage
 export const defaultFAQs = [
   {
-    question: 'Apa itu GovConnect?',
-    answer: 'GovConnect adalah platform layanan pemerintahan digital berbasis AI yang memungkinkan masyarakat mengakses layanan kelurahan, kecamatan, dan instansi pemerintah melalui WhatsApp dan webchat secara 24/7.',
+    question: 'Apa itu Tanggapin AI?',
+    answer: 'Tanggapin AI adalah platform layanan pemerintahan digital berbasis AI yang memungkinkan masyarakat mengakses layanan kelurahan, kecamatan, dan instansi pemerintah melalui WhatsApp dan webchat secara 24/7.',
   },
   {
-    question: 'Bagaimana cara menggunakan GovConnect?',
-    answer: 'Anda dapat mengakses GovConnect melalui website resmi, WhatsApp, atau webchat. Cukup sampaikan kebutuhan Anda dan chatbot AI akan membantu memproses permintaan Anda.',
+    question: 'Bagaimana cara menggunakan Tanggapin AI?',
+    answer: 'Anda dapat mengakses Tanggapin AI melalui website resmi, WhatsApp, atau webchat. Cukup sampaikan kebutuhan Anda dan chatbot AI akan membantu memproses permintaan Anda.',
   },
   {
-    question: 'Apakah GovConnect gratis?',
-    answer: 'Ya, layanan GovConnect untuk masyarakat sepenuhnya gratis. Platform ini disediakan untuk memudahkan akses layanan pemerintahan.',
+    question: 'Apakah Tanggapin AI gratis?',
+    answer: 'Ya, layanan Tanggapin AI untuk masyarakat sepenuhnya gratis. Platform ini disediakan untuk memudahkan akses layanan pemerintahan.',
   },
   {
-    question: 'Layanan apa saja yang tersedia di GovConnect?',
-    answer: 'GovConnect menyediakan layanan pengaduan masyarakat, pengajuan surat keterangan online, permohonan layanan melalui form publik, informasi pemerintah, dan live chat dengan petugas.',
+    question: 'Layanan apa saja yang tersedia di Tanggapin AI?',
+    answer: 'Tanggapin AI menyediakan layanan pengaduan masyarakat, pengajuan surat keterangan online, permohonan layanan melalui form publik, informasi pemerintah, dan live chat dengan petugas.',
   },
   {
-    question: 'Apakah data saya aman di GovConnect?',
-    answer: 'Ya, GovConnect menggunakan enkripsi dan standar keamanan tinggi untuk melindungi data pengguna. Kami berkomitmen menjaga privasi dan keamanan informasi Anda.',
+    question: 'Apakah data saya aman di Tanggapin AI?',
+    answer: 'Ya, Tanggapin AI menggunakan enkripsi dan standar keamanan tinggi untuk melindungi data pengguna. Kami berkomitmen menjaga privasi dan keamanan informasi Anda.',
   },
   {
     question: 'Bagaimana cara melacak status pengaduan?',
     answer: 'Anda dapat melacak status pengaduan melalui nomor laporan yang diberikan saat pengajuan. Cek status melalui website atau tanyakan langsung ke chatbot.',
   },
   {
-    question: 'Siapa yang mengembangkan GovConnect?',
-    answer: 'GovConnect dikembangkan oleh Genfity Digital Solution, perusahaan teknologi yang fokus pada transformasi digital pemerintahan Indonesia.',
+    question: 'Siapa yang mengembangkan Tanggapin AI?',
+    answer: 'Tanggapin AI dikembangkan oleh Genfity Digital Solution, perusahaan teknologi yang fokus pada transformasi digital pemerintahan Indonesia.',
   },
   {
-    question: 'Apakah GovConnect tersedia 24 jam?',
-    answer: 'Ya, layanan chatbot AI GovConnect tersedia 24 jam sehari, 7 hari seminggu. Untuk layanan yang memerlukan petugas, akan diproses pada jam kerja.',
+    question: 'Apakah Tanggapin AI tersedia 24 jam?',
+    answer: 'Ya, layanan chatbot AI Tanggapin AI tersedia 24 jam sehari, 7 hari seminggu. Untuk layanan yang memerlukan petugas, akan diproses pada jam kerja.',
   },
 ]
 

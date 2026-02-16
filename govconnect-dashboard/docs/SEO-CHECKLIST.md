@@ -1,4 +1,4 @@
-# ✅ SEO Checklist GovConnect
+# ✅ SEO Checklist Tanggapin AI
 
 Gunakan checklist ini untuk memastikan semua aspek SEO sudah diimplementasi.
 
@@ -48,14 +48,14 @@ Gunakan checklist ini untuk memastikan semua aspek SEO sudah diimplementasi.
 
 - [ ] Google Search Console
   - [ ] Buka search.google.com/search-console
-  - [ ] Add property: https://govconnect.id
+  - [ ] Add property: https://tanggapin.ai
   - [ ] Verifikasi dengan HTML tag
   - [ ] Update `lib/seo.ts` dengan verification code
   - [ ] Submit sitemap: /sitemap.xml
 
 - [ ] Bing Webmaster Tools
   - [ ] Buka bing.com/webmasters
-  - [ ] Add site: https://govconnect.id
+  - [ ] Add site: https://tanggapin.ai
   - [ ] Verifikasi dengan meta tag
   - [ ] Update `lib/seo.ts` dengan verification code
   - [ ] Submit sitemap
@@ -68,7 +68,7 @@ Gunakan checklist ini untuk memastikan semua aspek SEO sudah diimplementasi.
 ## 🌐 Domain & Hosting
 
 - [ ] SSL Certificate (HTTPS) aktif
-- [ ] Domain govconnect.id terdaftar
+- [ ] Domain tanggapin.ai terdaftar
 - [ ] DNS configured properly
 - [ ] CDN aktif (opsional tapi recommended)
 - [ ] Gzip/Brotli compression enabled
@@ -78,11 +78,11 @@ Gunakan checklist ini untuk memastikan semua aspek SEO sudah diimplementasi.
 
 ## 📱 Social Media Presence
 
-- [ ] Instagram: @govconnect.id
-- [ ] Twitter/X: @govconnect
-- [ ] Facebook Page: govconnect.id
-- [ ] LinkedIn Company: govconnect
-- [ ] YouTube Channel: @govconnect
+- [ ] Instagram: @tanggapin.ai
+- [ ] Twitter/X: @tanggapin_ai
+- [ ] Facebook Page: tanggapin.ai
+- [ ] LinkedIn Company: tanggapin-ai
+- [ ] YouTube Channel: @tanggapinai
 
 ---
 
@@ -148,7 +148,7 @@ Gunakan checklist ini untuk memastikan semua aspek SEO sudah diimplementasi.
 ### Primary (Target Top 5)
 | Keyword | Status |
 |---------|--------|
-| govconnect | [ ] |
+| tanggapin ai | [ ] |
 | layanan pemerintahan digital | [ ] |
 | e-government indonesia | [ ] |
 | chatbot pemerintah | [ ] |

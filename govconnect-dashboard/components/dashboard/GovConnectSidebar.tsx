@@ -289,7 +289,7 @@ export function GovConnectSidebar() {
             <div className="relative h-10 w-40 shrink-0">
               <Image
                 src={logoSrc}
-                alt="GovConnect Logo"
+                alt="Tanggapin AI Logo"
                 fill
                 className="object-contain object-left"
                 priority
@@ -299,7 +299,7 @@ export function GovConnectSidebar() {
             <div className="relative h-8 w-8 mx-auto">
               <Image
                 src="/logo.png"
-                alt="GovConnect Logo"
+                alt="Tanggapin AI Logo"
                 fill
                 className="object-contain"
                 priority

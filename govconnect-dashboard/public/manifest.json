@@ -1,13 +1,13 @@
 {
-  "name": "GovConnect - Platform Layanan Pemerintahan Digital Berbasis AI Indonesia",
-  "short_name": "GovConnect",
-  "description": "Platform AI terdepan untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan layanan administrasi, dan dapatkan informasi pemerintah langsung melalui WhatsApp dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah. Dikembangkan oleh Genfity Digital Solution.",
+  "name": "Tanggapin AI - Platform AI Agent untuk Layanan Pemerintahan Digital Indonesia",
+  "short_name": "Tanggapin AI",
+  "description": "Tanggapin AI adalah Platform AI Agent untuk layanan pemerintahan digital Indonesia. Laporkan keluhan, ajukan layanan administrasi, dan dapatkan informasi pemerintah langsung melalui WhatsApp dan webchat. Solusi smart government 24/7 untuk kelurahan, kecamatan, dan instansi pemerintah. Dikembangkan oleh Genfity Digital Solution",
   "start_url": "/",
   "id": "/",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "browser"],
-  "background_color": "#ffffff",
-  "theme_color": "#16a34a",
+  "background_color": "#F9F7F7",
+  "theme_color": "#3F72AF",
   "orientation": "portrait-primary",
   "scope": "/",
   "lang": "id",
@@ -57,14 +57,14 @@
       "sizes": "1200x630",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "GovConnect Dashboard - Platform Layanan Pemerintahan Digital"
+      "label": "Tanggapin AI Dashboard - Platform Layanan Pemerintahan Digital"
     },
     {
       "src": "/dashboard.png",
       "sizes": "1200x630",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "GovConnect Mobile View"
+      "label": "Tanggapin AI Mobile View"
     }
   ],
   "shortcuts": [
@@ -120,7 +120,7 @@
   "related_applications": [
     {
       "platform": "webapp",
-      "url": "https://govconnect.id/manifest.json"
+      "url": "https://tanggapin.ai/manifest.json"
     }
   ],
   "prefer_related_applications": false,
@@ -143,7 +143,7 @@
   },
   "protocol_handlers": [
     {
-      "protocol": "web+govconnect",
+      "protocol": "web+tanggapin",
       "url": "/?action=%s"
     }
   ]

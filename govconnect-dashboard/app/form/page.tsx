@@ -59,7 +59,7 @@ export default function FormLandingPage() {
                         </div>
 
                         <div className="rounded-xl bg-secondary/10 border border-secondary/20 p-3 text-[10px] text-muted-foreground">
-                            Contoh tautan: govconnect.my.id/form/slug-desa/slug-layanan?user=628xxx
+                            Contoh tautan: tanggapin.ai/form/slug-desa/slug-layanan?user=628xxx
                         </div>
                     </CardContent>
                 </Card>

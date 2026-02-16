@@ -1,7 +1,7 @@
-# 🚀 Panduan Setup SEO Lengkap - GovConnect
+# 🚀 Panduan Setup SEO Lengkap - Tanggapin AI
 
 ## Informasi Project
-- **Website**: https://govconnect.id
+- **Website**: https://tanggapin.ai
 - **Author**: Muhammad Yoga Adi Saputra
 - **Brand**: Genfity Digital Solution
 - **Website Brand**: https://www.genfity.com
@@ -34,7 +34,7 @@
 ### Langkah-langkah:
 1. Buka https://search.google.com/search-console
 2. Klik "Add Property"
-3. Pilih "URL prefix" dan masukkan: `https://govconnect.id`
+3. Pilih "URL prefix" dan masukkan: `https://tanggapin.ai`
 4. Pilih metode verifikasi "HTML tag"
 5. Copy kode verifikasi (contoh: `abc123xyz`)
 6. Update file `lib/seo.ts`:
@@ -48,7 +48,7 @@ verification: {
 
 7. Deploy perubahan
 8. Klik "Verify" di Google Search Console
-9. Submit sitemap: `https://govconnect.id/sitemap.xml`
+9. Submit sitemap: `https://tanggapin.ai/sitemap.xml`
 
 ### Setelah Terverifikasi:
 - Klik "Sitemaps" di sidebar
@@ -65,11 +65,11 @@ verification: {
 2. Klik "Admin" (gear icon)
 3. Klik "Create Property"
 4. Isi detail:
-   - Property name: `GovConnect`
+   - Property name: `Tanggapin AI`
    - Reporting time zone: `Indonesia`
    - Currency: `Indonesian Rupiah (IDR)`
 5. Pilih "Web" sebagai platform
-6. Masukkan URL: `https://govconnect.id`
+6. Masukkan URL: `https://tanggapin.ai`
 7. Copy Measurement ID (format: `G-XXXXXXXXXX`)
 8. Tambahkan ke file `.env`:
 
@@ -94,7 +94,7 @@ NEXT_PUBLIC_GA_MEASUREMENT_ID=G-XXXXXXXXXX
 2. Klik "Create Account"
 3. Isi detail:
    - Account Name: `Genfity Digital Solution`
-   - Container Name: `GovConnect`
+   - Container Name: `Tanggapin AI`
    - Target Platform: `Web`
 4. Copy Container ID (format: `GTM-XXXXXXX`)
 5. Tambahkan ke file `.env`:
@@ -119,9 +119,9 @@ NEXT_PUBLIC_GTM_ID=GTM-XXXXXXX
 1. Buka https://www.bing.com/webmasters
 2. Sign in dengan Microsoft account
 3. Klik "Add Site"
-4. Masukkan: `https://govconnect.id`
+4. Masukkan: `https://tanggapin.ai`
 5. Pilih "Add XML Sitemap"
-6. Masukkan: `https://govconnect.id/sitemap.xml`
+6. Masukkan: `https://tanggapin.ai/sitemap.xml`
 7. Pilih verifikasi "Meta tag"
 8. Copy kode verifikasi
 9. Update file `lib/seo.ts`:
@@ -144,7 +144,7 @@ verification: {
 ### Langkah-langkah:
 1. Buka https://business.facebook.com/settings/owned-domains
 2. Klik "Add" untuk menambah domain
-3. Masukkan: `govconnect.id`
+3. Masukkan: `tanggapin.ai`
 4. Pilih "Add a meta-tag to your HTML source code"
 5. Copy kode verifikasi
 6. Update file `lib/seo.ts`:
@@ -168,7 +168,7 @@ Tambahkan semua environment variables berikut ke file `.env`:
 
 ```env
 # App URL
-NEXT_PUBLIC_APP_URL=https://govconnect.id
+NEXT_PUBLIC_APP_URL=https://tanggapin.ai
 
 # Google Analytics 4
 NEXT_PUBLIC_GA_MEASUREMENT_ID=G-XXXXXXXXXX
@@ -186,7 +186,7 @@ NEXT_PUBLIC_FB_PIXEL_ID=XXXXXXXXXX
 
 ### Wajib Ditest:
 1. **Google Rich Results Test**: https://search.google.com/test/rich-results
-   - Test URL: `https://govconnect.id`
+   - Test URL: `https://tanggapin.ai`
    - Pastikan semua structured data valid
 
 2. **Google PageSpeed Insights**: https://pagespeed.web.dev
@@ -319,4 +319,4 @@ Setelah semua setup selesai:
 
 ---
 
-*Dokumen ini dibuat oleh Kiro untuk GovConnect - Genfity Digital Solution*
+*Dokumen ini dibuat oleh Kiro untuk Tanggapin AI - Genfity Digital Solution*

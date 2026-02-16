@@ -10,9 +10,9 @@ Website: https://www.genfity.com
 Description: Transformasi Digital untuk Indonesia
 
 /* PROJECT */
-Name: GovConnect
+Name: Tanggapin AI
 Description: Platform Layanan Pemerintahan Digital Berbasis AI
-URL: https://govconnect.id
+URL: https://tanggapin.ai
 Language: Indonesian (id)
 Doctype: HTML5
 

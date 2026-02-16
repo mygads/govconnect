@@ -214,7 +214,7 @@ export default function RegisterPage() {
             <h1 className="text-4xl xl:text-5xl font-bold text-white mb-6 leading-tight">
               Mulai Gunakan
               <br />
-              <span className="text-white/90">GovConnect Dashboard</span>
+              <span className="text-white/90">Tanggapin AI Dashboard</span>
             </h1>
             <p className="text-lg text-white/80 mb-8 max-w-md leading-relaxed">
               Daftarkan desa/kelurahan Anda untuk mengelola layanan, pengaduan, dan komunikasi warga.
@@ -281,7 +281,7 @@ export default function RegisterPage() {
                 <div className="relative h-12 w-40">
                   <Image
                     src={logoSrc}
-                    alt="GovConnect Logo"
+                    alt="Tanggapin AI Logo"
                     fill
                     className="object-contain"
                     priority

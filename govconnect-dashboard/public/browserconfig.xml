@@ -6,10 +6,10 @@
       <square150x150logo src="/logo-dashboard.png"/>
       <square310x310logo src="/logo-dashboard.png"/>
       <wide310x150logo src="/logo-dashboard.png"/>
-      <TileColor>#16a34a</TileColor>
+      <TileColor>#3F72AF</TileColor>
     </tile>
     <notification>
-      <polling-uri src="https://govconnect.id/notifications/tile"/>
+      <polling-uri src="https://tanggapin.ai/notifications/tile"/>
       <frequency>30</frequency>
       <cycle>1</cycle>
     </notification>

@@ -8,10 +8,10 @@ export interface WhatsAppConfig {
   defaultMessage: string;
 }
 
-// Default WhatsApp configuration for GovConnect
+// Default WhatsApp configuration for Tanggapin AI
 export const WHATSAPP_CONFIG: WhatsAppConfig = {
-  phoneNumber: "6289668176764",
-  defaultMessage: "Halo, saya ingin bertanya tentang GovConnect",
+  phoneNumber: "6281233784490",
+  defaultMessage: "Halo, saya ingin bertanya tentang Tanggapin AI",
 };
 
 /**

@@ -40,26 +40,26 @@ export const HowItWorksAnimation = () => {
   const steps: Step[] = [
     {
       icon: Globe,
-      title: "Buka Website",
-      desc: "Klik 'Mulai Sekarang'",
+      title: "Akses Tanggapin",
+      desc: "Buka webchat atau WhatsApp",
       color: "bg-blue-500",
     },
     {
       icon: MessageCircle,
-      title: "Kirim Keluhan",
-      desc: "Via WhatsApp",
+      title: "Sampaikan Kebutuhan",
+      desc: "Informasi, layanan, atau aduan",
       color: "bg-green-500",
     },
     {
       icon: Clock,
-      title: "Admin Proses",
-      desc: "Sedang ditangani...",
+      title: "Tanggapin AI Memproses",
+      desc: "Memahami konteks & data layanan",
       color: "bg-orange-500",
     },
     {
       icon: CheckCircle,
-      title: "Selesai!",
-      desc: "Laporan ditindaklanjuti",
+      title: "Selesai & Terpantau",
+      desc: "Status layanan/laporan terbarui",
       color: "bg-secondary",
     },
   ];
@@ -81,8 +81,8 @@ export const HowItWorksAnimation = () => {
               <MessageCircle className="h-5 w-5 text-white" />
             </div>
             <div>
-              <p className="font-semibold text-sm">GovConnect</p>
-              <p className="text-xs text-muted-foreground">Layanan Kelurahan Digital</p>
+              <p className="font-semibold text-sm">Tanggapin</p>
+              <p className="text-xs text-muted-foreground">Agent: Tanggapin AI</p>
             </div>
           </div>
 

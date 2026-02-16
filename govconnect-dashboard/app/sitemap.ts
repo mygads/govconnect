@@ -2,11 +2,11 @@ import { MetadataRoute } from 'next'
 
 // ============================================
 // SITEMAP - Optimized for Google Crawling
-// GovConnect - Platform Layanan Pemerintahan Digital
+// Tanggapin AI - Platform Layanan Pemerintahan Digital
 // ============================================
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://govconnect.my.id'
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://tanggapin.ai'
   const currentDate = new Date()
 
   // Main pages dengan prioritas tinggi

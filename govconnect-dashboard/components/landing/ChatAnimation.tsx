@@ -10,17 +10,17 @@ import { MessageCircle, Send, Paperclip, Smile, Image as ImageIcon, FileText, Ch
  * Shows a sequence of messages with auto-scroll and typing indicators
  */
 
-interface Message {
-  id: number;
-  type: "bot" | "user";
-  text: string;
-  isImage?: boolean;
-  isDocument?: boolean;
-}
+type Message = {
+    id: number;
+    type: "bot" | "user";
+    text: string;
+    isImage?: boolean;
+    isDocument?: boolean;
+};
 
 const allMessages: Omit<Message, "id">[] = [
   // Conversation 1: Laporan Jalan Rusak
-  { type: "bot", text: "Halo! 👋 Selamat datang di GovConnect. Saya siap membantu Anda dengan layanan kelurahan. Ada yang bisa saya bantu?" },
+  { type: "bot", text: "Halo! 👋 Selamat datang di Tanggapin. Saya Tanggapin AI dan siap membantu layanan kelurahan. Ada yang bisa saya bantu?" },
   { type: "user", text: "Saya mau lapor jalan rusak di RT 05" },
   { type: "bot", text: "Baik, saya akan bantu proses laporan Anda. Mohon kirimkan foto lokasi kerusakan jalan 📸" },
   { type: "user", text: "📷 Foto jalan berlubang", isImage: true },
@@ -41,224 +41,155 @@ const allMessages: Omit<Message, "id">[] = [
   { type: "user", text: "Jam operasional kelurahan kapan ya?" },
   { type: "bot", text: "🕐 Jam Operasional Kelurahan:\n\nSenin - Kamis: 08.00 - 16.00\nJumat: 08.00 - 11.30\nSabtu - Minggu: Libur\n\n📞 Hotline: 021-12345678\n📍 Jl. Raya Kelurahan No. 1" },
   { type: "user", text: "Terima kasih banyak! 🙏" },
-  { type: "bot", text: "Sama-sama! 😊 Senang bisa membantu.\n\nJika ada pertanyaan lain, jangan ragu untuk menghubungi saya kapan saja. GovConnect siap melayani 24/7! 💪" },
+  { type: "bot", text: "Sama-sama! 😊 Senang bisa membantu.\n\nJika ada pertanyaan lain, jangan ragu untuk menghubungi saya kapan saja. Tanggapin siap melayani 24/7 melalui Tanggapin AI! 💪" },
 ];
 
+
 export const ChatAnimation = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new message arrives
   useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTo({
-        top: chatContainerRef.current.scrollHeight,
-        behavior: "smooth",
-      });
+    let timeout: NodeJS.Timeout;
+    let isMounted = true;
+
+    const playSequence = async () => {
+      if (!isMounted) return;
+
+      if (currentIndex >= allMessages.length) {
+        timeout = setTimeout(() => {
+          if (isMounted) {
+            setMessages([]);
+            setCurrentIndex(0);
+          }
+        }, 5000);
+        return;
+      }
+
+      const nextMsg = allMessages[currentIndex];
+      
+      if (nextMsg.type === "bot") {
+        if (isMounted) setIsTyping(true);
+        await new Promise(r => setTimeout(r, 1000)); 
+        if (isMounted) setIsTyping(false);
+      } else {
+        await new Promise(r => setTimeout(r, 800));
+      }
+
+      if (isMounted) {
+        setMessages(prev => [...prev, { ...nextMsg, id: Date.now() }]);
+        setCurrentIndex(prev => prev + 1);
+      }
+    };
+
+    timeout = setTimeout(playSequence, 500);
+    
+    return () => {
+      isMounted = false;
+      clearTimeout(timeout);
+    };
+  }, [currentIndex]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, isTyping]);
 
-  // Add messages one by one with delays
-  useEffect(() => {
-    if (currentIndex >= allMessages.length) {
-      // Reset after all messages shown
-      const resetTimeout = setTimeout(() => {
-        setMessages([]);
-        setCurrentIndex(0);
-      }, 5000);
-      return () => clearTimeout(resetTimeout);
-    }
-
-    const currentMessage = allMessages[currentIndex];
-    const delay = currentMessage.type === "bot" ? 2000 : 1500;
-
-    // Show typing indicator for bot messages
-    if (currentMessage.type === "bot") {
-      setIsTyping(true);
-      const typingTimeout = setTimeout(() => {
-        setIsTyping(false);
-        setMessages((prev) => [...prev, { ...currentMessage, id: currentIndex }]);
-        setCurrentIndex((prev) => prev + 1);
-      }, 1500);
-      return () => clearTimeout(typingTimeout);
-    } else {
-      const messageTimeout = setTimeout(() => {
-        setMessages((prev) => [...prev, { ...currentMessage, id: currentIndex }]);
-        setCurrentIndex((prev) => prev + 1);
-      }, delay);
-      return () => clearTimeout(messageTimeout);
-    }
-  }, [currentIndex]);
-
   return (
-    <motion.div
-      className="relative w-full max-w-md mx-auto"
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-    >
-      {/* Phone Frame */}
-      <div className="relative bg-card border-2 border-border/50 rounded-[2.5rem] shadow-2xl overflow-hidden p-2">
-        {/* Phone Notch */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-background rounded-b-2xl z-10" />
+    <div className="relative w-full max-w-sm mx-auto">
+      {/* Phone Mockup Frame */}
+      <div className="relative bg-[#111] rounded-[2.5rem] p-3 shadow-2xl border-4 border-[#333]">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-[#111] rounded-b-xl z-20"></div>
+        
+        {/* Screen Content */}
+        <div className="bg-[#0b141a] h-[600px] rounded-4xl overflow-hidden flex flex-col relative">
+           {/* WhatsApp Header */}
+           <div className="bg-[#202c33] p-4 pt-8 flex items-center gap-3 shadow-sm z-10 sticky top-0">
+             <div className="w-8 h-8 rounded-full bg-[#112D4E] flex items-center justify-center text-white font-bold text-xs ring-1 ring-white/10">T</div>
+             <div className="flex-1">
+               <div className="text-white font-bold text-sm">Tanggapin</div>
+               <div className="text-[#8696a0] text-xs">Akun Terverifikasi AI • Online 24/7</div>
+             </div>
+           </div>
 
-        {/* Inner Screen */}
-        <div className="bg-background rounded-[2rem] overflow-hidden">
-          {/* Chat Header */}
-          <div className="bg-gradient-to-r from-secondary to-secondary/80 px-4 py-4 pt-8 flex items-center gap-3">
-            <motion.div
-              className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center ring-2 ring-white/30"
-              animate={{ scale: [1, 1.05, 1] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            >
-              <MessageCircle className="h-5 w-5 text-white" />
-            </motion.div>
-            <div className="flex-1">
-              <p className="text-white font-semibold">GovConnect Bot</p>
-              <div className="flex items-center gap-1.5">
-                <motion.div
-                  className="w-2 h-2 rounded-full bg-green-400"
-                  animate={{ opacity: [1, 0.5, 1] }}
-                  transition={{ duration: 1.5, repeat: Infinity }}
-                />
-                <p className="text-white/80 text-xs">Online • Siap membantu 24/7</p>
-              </div>
-            </div>
-          </div>
+           {/* Chat Area */}
+           <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-[url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d986a26d40.png')] bg-repeat opacity-90" ref={scrollRef}>
+             <AnimatePresence mode="popLayout">
+               {messages.map((msg) => (
+                 <motion.div
+                   key={msg.id}
+                   initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                   animate={{ opacity: 1, y: 0, scale: 1 }}
+                   transition={{ duration: 0.2 }}
+                   className={`flex ${msg.type === "user" ? "justify-end" : "justify-start"}`}
+                 >
+                   <div 
+                     className={`max-w-[85%] rounded-2xl p-3 text-sm shadow-sm relative ${
+                       msg.type === "user" 
+                         ? "bg-[#005c4b] text-white rounded-tr-none" 
+                         : "bg-[#202c33] text-white rounded-tl-none border border-white/5"
+                     }`}
+                   >
+                     {/* Triangle pointer */}
+                     <span className={`absolute top-0 w-0 h-0 border-[6px] border-transparent ${
+                        msg.type === "user" 
+                        ? "-right-2 border-t-[#005c4b] border-l-[#005c4b]" 
+                        : "-left-2 border-t-[#202c33] border-r-[#202c33]"
+                     }`}></span>
 
-          {/* Chat Messages */}
-          <div
-            ref={chatContainerRef}
-            className="p-4 space-y-3 bg-gradient-to-b from-muted/50 to-muted/20 h-[340px] overflow-y-auto scroll-smooth"
-            style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-          >
-            <AnimatePresence mode="popLayout">
-              {messages.map((msg) => (
-                <motion.div
-                  key={msg.id}
-                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.3, ease: "easeOut" }}
-                  className={`flex ${msg.type === "user" ? "justify-end" : "gap-2"}`}
-                >
-                  {msg.type === "bot" && (
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-secondary to-secondary/70 flex items-center justify-center shrink-0 shadow-md">
-                      <MessageCircle className="h-3.5 w-3.5 text-white" />
-                    </div>
-                  )}
-                  <div
-                    className={`rounded-2xl px-3 py-2 max-w-[85%] shadow-sm ${
-                      msg.type === "user"
-                        ? "bg-secondary text-secondary-foreground rounded-br-sm"
-                        : "bg-card border border-border/50 rounded-bl-sm"
-                    }`}
-                  >
-                    {msg.isImage && (
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-16 h-12 bg-muted rounded-lg flex items-center justify-center">
-                          <ImageIcon className="w-5 h-5 text-muted-foreground" />
-                        </div>
-                      </div>
-                    )}
-                    {msg.isDocument && (
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                          <FileText className="w-5 h-5 text-blue-500" />
-                        </div>
-                      </div>
-                    )}
-                    <p className="text-xs leading-relaxed whitespace-pre-line">{msg.text}</p>
-                    <div className={`flex items-center gap-1 mt-1 ${msg.type === "user" ? "justify-end" : ""}`}>
-                      <p className={`text-[9px] ${msg.type === "user" ? "text-white/60" : "text-muted-foreground"}`}>
-                        {new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
-                      </p>
-                      {msg.type === "user" && <CheckCircle className="w-3 h-3 text-white/60" />}
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
+                     {msg.isImage && (
+                       <div className="mb-2 rounded-lg bg-black/20 h-32 flex items-center justify-center border border-white/10">
+                         <ImageIcon className="w-8 h-8 text-white/50" />
+                       </div>
+                     )}
+                     
+                     {msg.isDocument && (
+                       <div className="mb-2 p-3 rounded-lg bg-black/20 flex items-center gap-3 border border-white/10">
+                         <FileText className="w-8 h-8 text-red-400" />
+                         <div className="text-xs truncate max-w-[120px]">
+                            <div className="font-bold">file.pdf</div>
+                            <div className="opacity-60">120 KB</div>
+                         </div>
+                       </div>
+                     )}
 
-            {/* Typing Indicator */}
-            <AnimatePresence>
-              {isTyping && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="flex gap-2"
-                >
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-secondary to-secondary/70 flex items-center justify-center shrink-0 shadow-md">
-                    <MessageCircle className="h-3.5 w-3.5 text-white" />
-                  </div>
-                  <div className="bg-card border border-border/50 rounded-2xl rounded-bl-sm px-3 py-2.5 shadow-sm">
-                    <div className="flex gap-1">
-                      <motion.div
-                        className="w-1.5 h-1.5 rounded-full bg-secondary/60"
-                        animate={{ y: [0, -4, 0] }}
-                        transition={{ duration: 0.5, repeat: Infinity, delay: 0 }}
-                      />
-                      <motion.div
-                        className="w-1.5 h-1.5 rounded-full bg-secondary/60"
-                        animate={{ y: [0, -4, 0] }}
-                        transition={{ duration: 0.5, repeat: Infinity, delay: 0.1 }}
-                      />
-                      <motion.div
-                        className="w-1.5 h-1.5 rounded-full bg-secondary/60"
-                        animate={{ y: [0, -4, 0] }}
-                        transition={{ duration: 0.5, repeat: Infinity, delay: 0.2 }}
-                      />
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+                     <div className="whitespace-pre-line leading-relaxed">{msg.text}</div>
+                     <div className={`text-[10px] text-right mt-1 ${msg.type === "user" ? "text-white/60" : "text-white/40"}`}>
+                       Now <CheckCircle className={`inline w-3 h-3 ml-0.5 ${msg.type === "user" ? "text-[#53bdeb]" : ""}`} />
+                     </div>
+                   </div>
+                 </motion.div>
+               ))}
+             </AnimatePresence>
+             
+             {isTyping && (
+               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
+                 <div className="bg-[#202c33] px-4 py-3 rounded-2xl rounded-tl-none border border-white/5 flex gap-1.5 items-center">
+                   <span className="w-1.5 h-1.5 bg-[#8696a0] rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                   <span className="w-1.5 h-1.5 bg-[#8696a0] rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                   <span className="w-1.5 h-1.5 bg-[#8696a0] rounded-full animate-bounce"></span>
+                 </div>
+               </motion.div>
+             )}
+           </div>
 
-          {/* Chat Input */}
-          <div className="p-3 border-t border-border/50 bg-card/80 backdrop-blur-sm">
-            <div className="flex items-center gap-2">
-              <button className="p-1.5 text-muted-foreground hover:text-foreground transition-colors">
-                <Smile className="h-5 w-5" />
-              </button>
-              <button className="p-1.5 text-muted-foreground hover:text-foreground transition-colors">
-                <Paperclip className="h-5 w-5" />
-              </button>
-              <div className="flex-1 bg-muted/50 rounded-full px-4 py-2">
-                <motion.p
-                  className="text-xs text-muted-foreground"
-                  animate={{ opacity: [0.5, 1, 0.5] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                >
-                  Ketik pesan...
-                </motion.p>
-              </div>
-              <motion.button
-                className="p-2 bg-secondary rounded-full text-white shadow-md"
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <Send className="h-4 w-4" />
-              </motion.button>
-            </div>
-          </div>
+           {/* Input Bar */}
+           <div className="bg-[#202c33] p-3 flex items-center gap-2 z-10 sticky bottom-0">
+             <div className="p-2 text-[#8696a0]"><Smile className="w-5 h-5"/></div>
+             <div className="p-2 text-[#8696a0]"><Paperclip className="w-5 h-5"/></div>
+             <div className="flex-1 bg-[#2a3942] rounded-lg px-4 py-2 text-sm text-[#8696a0]">
+               Ketik pesan...
+             </div>
+             <div className="p-2 bg-[#00a884] rounded-full text-white">
+               <Send className="w-4 h-4" />
+             </div>
+           </div>
         </div>
       </div>
-
-      {/* Floating Notification Badge */}
-      <motion.div
-        className="absolute -top-3 -right-3 bg-red-500 text-white text-xs font-bold w-7 h-7 rounded-full flex items-center justify-center shadow-lg ring-4 ring-background"
-        animate={{ scale: [1, 1.15, 1] }}
-        transition={{ duration: 1.5, repeat: Infinity }}
-      >
-        {Math.min(messages.length, 9)}+
-      </motion.div>
-
-      {/* Decorative Glow */}
-      <div className="absolute -inset-4 bg-gradient-to-r from-secondary/20 to-primary/20 rounded-[3rem] blur-2xl -z-10 opacity-60" />
-    </motion.div>
+      
+    </div>
   );
 };

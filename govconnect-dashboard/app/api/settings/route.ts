@@ -5,7 +5,7 @@ import prisma from '@/lib/prisma'
 // Default settings (tanpa konfigurasi model AI di UI)
 const DEFAULT_SETTINGS = {
   ai_chatbot_enabled: 'true',
-  welcome_message: 'Selamat datang di GovConnect! Saya siap membantu Anda dengan laporan dan layanan pemerintah.',
+  welcome_message: 'Selamat datang di Tanggapin AI! Saya siap membantu Anda dengan laporan dan layanan pemerintah.',
 }
 
 const DISALLOWED_KEYS = ['ai_model_primary', 'ai_model_fallback', 'ai_model'];

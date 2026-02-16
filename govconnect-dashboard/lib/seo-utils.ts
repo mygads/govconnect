@@ -164,43 +164,43 @@ export const pageMetadataPresets = {
   }),
   
   about: createPageMetadata({
-    title: 'Tentang GovConnect',
-    description: 'GovConnect adalah platform layanan pemerintahan digital berbasis AI yang dikembangkan oleh Genfity Digital Solution untuk transformasi digital Indonesia.',
+    title: 'Tentang Tanggapin AI',
+    description: 'Tanggapin AI adalah sistem AI Agent khusus pemerintah berbasis LLM untuk mempercepat pelayanan publik dan pengaduan warga.',
     path: '/#tentang',
-    keywords: ['tentang govconnect', 'genfity digital solution', 'transformasi digital'],
+    keywords: ['tentang tanggapin ai', 'ai pemerintah', 'transformasi digital'],
   }),
   
   features: createPageMetadata({
-    title: 'Fitur GovConnect',
-    description: 'Fitur lengkap GovConnect: AI Chatbot 24/7, Pengaduan Online, Pengajuan Surat Digital, Permohonan Layanan, dan Dashboard Analytics.',
+    title: 'Fitur Tanggapin AI',
+    description: 'Fitur utama Tanggapin AI: respons cepat layanan warga, akurasi data layanan, dan pengelolaan laporan/pengaduan terintegrasi.',
     path: '/#fitur',
-    keywords: ['fitur govconnect', 'chatbot pemerintah', 'layanan digital'],
+    keywords: ['fitur tanggapin ai', 'chatbot pemerintah', 'layanan digital'],
   }),
   
   faq: createPageMetadata({
     title: 'FAQ - Pertanyaan Umum',
-    description: 'Pertanyaan yang sering diajukan tentang GovConnect - Platform Layanan Pemerintahan Digital.',
+    description: 'Pertanyaan yang sering diajukan tentang Tanggapin AI - Platform Layanan Pemerintahan Digital.',
     path: '/#faq',
-    keywords: ['faq govconnect', 'pertanyaan umum', 'bantuan'],
+    keywords: ['faq tanggapin ai', 'pertanyaan umum', 'bantuan'],
   }),
   
   contact: createPageMetadata({
     title: 'Hubungi Kami',
-    description: 'Hubungi tim GovConnect untuk informasi lebih lanjut. WhatsApp: 0851-7431-4023, Email: genfity@gmail.com',
+    description: 'Hubungi tim Tanggapin AI untuk informasi lebih lanjut. WhatsApp: 0812-3378-4490, Email: genfity@gmail.com',
     path: '/#kontak',
-    keywords: ['kontak govconnect', 'hubungi kami', 'customer service'],
+    keywords: ['kontak tanggapin ai', 'hubungi kami', 'customer service'],
   }),
   
   login: createPageMetadata({
     title: 'Masuk Dashboard',
-    description: 'Login ke dashboard GovConnect untuk mengelola layanan pemerintahan digital.',
+    description: 'Login ke dashboard Tanggapin AI untuk mengelola layanan pemerintahan digital.',
     path: '/login',
     noIndex: true,
   }),
   
   dashboard: createPageMetadata({
     title: 'Dashboard',
-    description: 'Dashboard pengelolaan layanan GovConnect.',
+    description: 'Dashboard pengelolaan layanan Tanggapin AI.',
     path: '/dashboard',
     noIndex: true,
   }),

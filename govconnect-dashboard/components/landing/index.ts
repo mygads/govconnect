@@ -17,3 +17,9 @@ export {
   PhoneServicesAnimation,
 } from "./BenefitAnimations";
 export { LiveChatWidget } from "./LiveChatWidget";
+export { UseCaseChat } from "./UseCaseChat";
+export { UseCaseSection } from "./UseCaseSection";
+export * from "./SectionTitle";
+export * from "./MoreComponents";
+export { FeatureComparison, CustomTrainAnimation } from "./MoreComponents";
+export { FAQSection } from "./FAQSection";

@@ -170,7 +170,7 @@ interface ProcessingStatus {
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-2 px-4 py-3">
-      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-secondary to-primary flex items-center justify-center">
+      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#112D4E] to-[#3F72AF] flex items-center justify-center">
         <Bot className="w-4 h-4 text-white" />
       </div>
       <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-2.5">
@@ -215,7 +215,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
     >
       {/* Avatar */}
       {!isUser && (
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-secondary to-primary flex items-center justify-center shrink-0">
+        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#112D4E] to-[#3F72AF] flex items-center justify-center shrink-0">
           <Bot className="w-4 h-4 text-white" />
         </div>
       )}
@@ -228,15 +228,15 @@ function ChatBubble({ message }: { message: ChatMessage }) {
       {/* Message bubble */}
       <div className={`max-w-[75%] ${isUser ? "items-end" : "items-start"}`}>
         <div
-          className={`px-4 py-2.5 rounded-2xl ${
+          className={`px-4 py-2.5 rounded-2xl shadow-sm ${
             isUser
-              ? "bg-gradient-to-br from-secondary to-secondary/90 text-secondary-foreground rounded-br-md"
-              : "bg-muted rounded-bl-md"
+              ? "bg-gradient-to-br from-[#112D4E] to-[#3F72AF] text-white rounded-br-none"
+              : "bg-muted/50 border border-border text-foreground rounded-bl-none"
           }`}
         >
-          <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+          <div className={`text-sm whitespace-pre-wrap break-words leading-relaxed ${isUser ? "text-white/95" : ""}`}>
             <RichMessageContent content={message.content} />
-          </p>
+          </div>
         </div>
         
         {/* Time and status */}
@@ -262,7 +262,7 @@ function WelcomeMessage() {
       </div>
       <h3 className="font-semibold text-lg mb-2">Selamat Datang! 👋</h3>
       <p className="text-sm text-muted-foreground max-w-xs">
-        Saya asisten virtual GovConnect. Silakan tanyakan informasi seputar layanan kelurahan, 
+        Selamat datang di Tanggapin. Saya asisten virtual Tanggapin AI. Silakan tanyakan informasi seputar layanan kelurahan, 
         pengajuan surat, atau laporan keluhan.
       </p>
       <div className="flex flex-wrap gap-2 mt-4 justify-center">
@@ -407,7 +407,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
           >
             <Button
               onClick={isMinimized ? maximizeChat : openChat}
-              className="relative w-14 h-14 rounded-full bg-gradient-to-br from-secondary to-primary hover:from-secondary/90 hover:to-primary/90 shadow-lg shadow-secondary/25 hover:shadow-xl hover:shadow-secondary/30 transition-all duration-300"
+              className="relative w-14 h-14 rounded-full bg-gradient-to-br from-[#112D4E] to-[#3F72AF] hover:from-[#112D4E]/90 hover:to-[#3F72AF]/90 shadow-lg shadow-blue-900/25 hover:shadow-xl hover:shadow-blue-900/30 transition-all duration-300"
             >
               <MessageCircle className="w-6 h-6 text-white" />
               
@@ -423,7 +423,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
               )}
               
               {/* Pulse animation */}
-              <span className="absolute inset-0 rounded-full bg-secondary/30 animate-ping" />
+              <span className="absolute inset-0 rounded-full bg-[#112D4E]/30 animate-ping" />
             </Button>
             
             {/* Tooltip - Left Side - Hidden on mobile */}
@@ -452,13 +452,13 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
             className="fixed bottom-6 right-6 z-50 w-[380px] max-w-[calc(100vw-48px)] h-[600px] max-h-[calc(100vh-100px)] bg-card border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col"
           >
             {/* Header */}
-            <div className="bg-gradient-to-r from-secondary to-primary p-4 text-white">
+            <div className="bg-gradient-to-r from-[#112D4E] to-[#3F72AF] p-4 text-white">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     <Image
                       src={"/logo.png"}
-                      alt="GovConnect"
+                      alt="Tanggapin"
                       width={32}
                       height={32}
                       className=""
@@ -467,7 +467,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                   </div>
                   <div>
                     <h3 className="font-semibold text-sm">
-                      {isTakeover ? (adminName || 'Admin') : 'Asisten GovConnect'}
+                      {isTakeover ? (adminName || 'Admin') : 'Asisten Tanggapin AI (Tanggapin)'}
                     </h3>
                     <p className="text-xs text-white/80">
                       {isTakeover ? '🟢 Admin sedang membantu Anda' : 'Online • Siap membantu'}
@@ -648,7 +648,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
                 <Button
                   onClick={handleSend}
                   disabled={!canChat || !inputValue.trim() || isTyping}
-                  className="w-11 h-11 rounded-xl bg-gradient-to-br from-secondary to-primary hover:from-secondary/90 hover:to-primary/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#112D4E] to-[#3F72AF] hover:from-[#112D4E]/90 hover:to-[#3F72AF]/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 >
                   <Send className="w-5 h-5 text-white" />
                 </Button>
@@ -656,7 +656,7 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
               
               {/* Footer */}
               <p className="text-[10px] text-muted-foreground text-center mt-2">
-                Didukung oleh GovConnect AI • Tekan Enter untuk kirim
+                Tanggapin • Ditenagai <a href="https://genfity.com" target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-[#3F72AF] transition-colors">Tanggapin AI</a> • Tekan Enter untuk kirim
               </p>
             </div>
           </motion.div>

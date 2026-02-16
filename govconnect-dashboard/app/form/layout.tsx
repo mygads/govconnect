@@ -33,7 +33,7 @@ export default function FormLayout({
                         <Link href="/" className="flex items-center shrink-0">
                             <Image
                                 src={isDark ? "/logo-dashboard-dark.png" : "/logo-dashboard.png"}
-                                alt="GovConnect"
+                                alt="Tanggapin AI"
                                 width={100}
                                 height={100}
                                 className="object-contain"
@@ -106,7 +106,7 @@ export default function FormLayout({
                         <div className="flex items-center gap-2">
                             <Image
                                 src={isDark ? "/logo-dashboard-dark.png" : "/logo-dashboard.png"}
-                                alt="GovConnect"
+                                alt="Tanggapin AI"
                                 width={80}
                                 height={80}
                                 className="object-contain"
@@ -114,7 +114,7 @@ export default function FormLayout({
                             <span className="text-xs text-muted-foreground">Layanan Publik Online</span>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                            © 2024 GovConnect. Platform Digital untuk Layanan Pemerintahan.
+                            © 2026 Tanggapin AI. Platform Digital untuk Layanan Pemerintahan.
                         </p>
                     </div>
                 </div>

@@ -85,7 +85,7 @@ export default function NotificationSettingsPage() {
 
   const handleTestNotification = () => {
     playNotificationSound('normal')
-    showBrowserNotification('Test Notifikasi', 'Ini adalah test notifikasi dari GovConnect', { urgent: false })
+    showBrowserNotification('Test Notifikasi', 'Ini adalah test notifikasi dari Tanggapin AI', { urgent: false })
   }
 
   const handleTestUrgent = () => {

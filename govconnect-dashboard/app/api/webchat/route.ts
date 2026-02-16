@@ -87,7 +87,7 @@ function getFallbackResponse(message: string): string {
   const lowerMessage = message.toLowerCase();
   
   if (lowerMessage.includes('halo') || lowerMessage.includes('hai') || lowerMessage.includes('hi')) {
-    return 'Halo! Selamat datang di GovConnect. Saat ini sistem AI sedang dalam pemeliharaan. Untuk layanan lebih cepat, silakan hubungi kami via WhatsApp. Terima kasih! 🙏';
+    return 'Halo! Selamat datang di Tanggapin AI. Saat ini sistem AI sedang dalam pemeliharaan. Untuk layanan lebih cepat, silakan hubungi kami via WhatsApp. Terima kasih! 🙏';
   }
   
   if (lowerMessage.includes('surat') || lowerMessage.includes('dokumen')) {
@@ -102,7 +102,7 @@ function getFallbackResponse(message: string): string {
     return 'Jam operasional kantor kelurahan: Senin-Jumat pukul 08:00-16:00 WIB. Untuk informasi lebih lanjut, silakan hubungi via WhatsApp.';
   }
   
-  return 'Terima kasih telah menghubungi GovConnect. Sistem AI sedang dalam pemeliharaan. Untuk layanan lebih cepat, silakan hubungi kami via WhatsApp. 🙏';
+  return 'Terima kasih telah menghubungi Tanggapin AI. Sistem AI sedang dalam pemeliharaan. Untuk layanan lebih cepat, silakan hubungi kami via WhatsApp. 🙏';
 }
 
 // Health check
