@@ -18,6 +18,8 @@ interface WaSupportUser {
   source_service: string
   status: string
   created_at: string
+  village_name?: string | null
+  village_slug?: string | null
   subscription: {
     id: number
     provider: string
@@ -95,8 +97,12 @@ export default function WaSupportPage() {
         return <Badge className="bg-green-100 text-green-800 border-green-200"><CheckCircle2 className="w-3 h-3 mr-1" />Connected</Badge>
       case "disconnected":
         return <Badge className="bg-red-100 text-red-800 border-red-200"><XCircle className="w-3 h-3 mr-1" />Disconnected</Badge>
+      case "created":
+        return <Badge className="bg-blue-100 text-blue-800 border-blue-200">Created</Badge>
+      case "qr_waiting":
+        return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Waiting QR</Badge>
       default:
-        return <Badge variant="secondary">{status || "Unknown"}</Badge>
+        return <Badge variant="secondary">{status || "No Session"}</Badge>
     }
   }
 
@@ -145,34 +151,34 @@ export default function WaSupportPage() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Users</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Desa</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{summary?.total || 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">Registered on wa-support-v2</p>
+            <p className="text-xs text-muted-foreground mt-1">Desa terdaftar di WA Support</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Active Sessions</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Aktif / Terhubung</CardTitle>
             <Wifi className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-green-600">{connectedCount}</div>
-            <p className="text-xs text-muted-foreground mt-1">of {totalSessions} total sessions</p>
+            <p className="text-xs text-muted-foreground mt-1">dari {summary?.total || 0} desa</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Sessions</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Session</CardTitle>
             <MessageSquare className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{totalSessions}</div>
-            <p className="text-xs text-muted-foreground mt-1">Across all villages</p>
+            <p className="text-xs text-muted-foreground mt-1">Session WA di semua desa</p>
           </CardContent>
         </Card>
       </div>
@@ -182,10 +188,10 @@ export default function WaSupportPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5" />
-            WA Support Users
+            Daftar WhatsApp Desa
           </CardTitle>
           <CardDescription>
-            Daftar user govconnect yang terdaftar di wa-support-v2 beserta status session
+            Status session WhatsApp untuk setiap desa yang terdaftar
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -199,39 +205,74 @@ export default function WaSupportPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User ID (Village)</TableHead>
-                  <TableHead>Instance Name</TableHead>
-                  <TableHead>WA Number</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>Desa</TableHead>
+                  <TableHead>Instance</TableHead>
+                  <TableHead>No. WhatsApp</TableHead>
+                  <TableHead>Status Session</TableHead>
                   <TableHead>Sessions</TableHead>
                   <TableHead>Subscription</TableHead>
-                  <TableHead>Last Connected</TableHead>
+                  <TableHead>Terdaftar</TableHead>
+                  <TableHead>Terakhir Online</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {items.map((item) => (
                   <TableRow key={item.id}>
-                    <TableCell className="font-mono text-sm">{item.id}</TableCell>
-                    <TableCell>{item.local_session?.instance_name || "-"}</TableCell>
-                    <TableCell className="font-mono">
-                      {item.local_session?.wa_number || "-"}
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="font-medium">
+                          {item.village_name || item.local_session?.instance_name || "-"}
+                        </span>
+                        {item.village_slug && (
+                          <span className="text-xs text-muted-foreground">{item.village_slug}</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm text-muted-foreground">
+                        {item.local_session?.instance_name || "-"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {item.local_session?.wa_number ? (
+                        <span className="font-mono text-sm">{item.local_session.wa_number}</span>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">-</span>
+                      )}
                     </TableCell>
                     <TableCell>{getStatusBadge(item.local_session?.status || null)}</TableCell>
                     <TableCell>
-                      <Badge variant="outline">{item.session_count} / {item.subscription?.max_sessions || "∞"}</Badge>
+                      <Badge variant="outline">
+                        {item.session_count} / {item.subscription?.max_sessions || "∞"}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       {item.subscription ? (
-                        <Badge className={
-                          item.subscription.status === "active"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-yellow-100 text-yellow-800"
-                        }>
-                          {item.subscription.status}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge className={
+                            item.subscription.status === "active"
+                              ? "bg-green-100 text-green-800"
+                              : "bg-yellow-100 text-yellow-800"
+                          }>
+                            {item.subscription.status}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            s/d {new Date(item.subscription.expires_at).toLocaleDateString("id-ID", {
+                              day: "2-digit", month: "short", year: "numeric"
+                            })}
+                          </span>
+                        </div>
                       ) : (
                         <Badge variant="secondary">No sub</Badge>
                       )}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleDateString("id-ID", {
+                            day: "2-digit", month: "short", year: "numeric"
+                          })
+                        : "-"
+                      }
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {item.local_session?.last_connected_at

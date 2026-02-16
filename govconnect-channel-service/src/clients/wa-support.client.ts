@@ -54,8 +54,6 @@ export interface WaSupportSession {
   session_name: string;
   session_token: string;
   webhook_url: string;
-  auto_read_enabled: boolean;
-  typing_enabled: boolean;
   connected: boolean;
   logged_in: boolean;
   jid: string;
@@ -70,8 +68,6 @@ export interface WaSupportSession {
 
 export interface WaSupportSessionSettings {
   session_id: string;
-  auto_read_enabled: boolean;
-  typing_enabled: boolean;
   webhook_url: string;
   message_stat_sent: number;
   message_stat_failed: number;
@@ -118,8 +114,6 @@ export interface CreateSessionRequest {
   events?: string;
   expiration_sec?: number;
   auto_connect?: boolean;
-  auto_read_enabled?: boolean;
-  typing_enabled?: boolean;
   history?: boolean;
 }
 
@@ -128,14 +122,10 @@ export interface UpdateSessionRequest {
   webhook_url?: string;
   events?: string;
   expiration_sec?: number;
-  auto_read_enabled?: boolean;
-  typing_enabled?: boolean;
   history?: boolean;
 }
 
 export interface UpdateSessionSettingsRequest {
-  auto_read_enabled?: boolean;
-  typing_enabled?: boolean;
   webhook_url?: string;
 }
 

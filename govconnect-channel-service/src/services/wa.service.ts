@@ -5,9 +5,9 @@ import prisma from '../config/database';
 import { waSupportClient } from '../clients/wa-support.client';
 
 // In-memory settings cache (since we're using single session)
-// Default typingIndicator to true so AI shows "typing..." while processing
+// Both default to true — govconnect always reads and shows typing
 let sessionSettings = {
-  autoReadMessages: false,
+  autoReadMessages: true,
   typingIndicator: true,
 };
 
@@ -197,8 +197,6 @@ async function createSessionViaWaSupport(params: {
     webhook_url: params.webhook || '',
     events: 'All',
     auto_connect: true,
-    auto_read_enabled: true,
-    typing_enabled: true,
   });
 
   if (!result.success) {
@@ -514,17 +512,6 @@ export async function createSessionForVillage(params: {
     waSupportSessionId: sessionId || undefined,
   });
 
-  // Auto-read is already enabled via createSessionViaWaSupport (auto_read_enabled: true)
-  // But also try enabling via WA provider for backward compat
-  if (!waSupportClient.isConfigured()) {
-    await enableAutoReadForSession(token).catch((err) => {
-      logger.warn('Failed to enable auto_read for session', { 
-        village_id: params.villageId, 
-        error: err.message 
-      });
-    });
-  }
-
   if (!webhook) {
     logger.warn('PUBLIC_CHANNEL_BASE_URL/PUBLIC_BASE_URL not set; webhook not configured during session creation', {
       village_id: params.villageId,
@@ -533,46 +520,6 @@ export async function createSessionForVillage(params: {
   }
 
   return { existing: false, session_id: sessionId };
-}
-
-/**
- * Enable auto_read_enabled setting for a WA session via genfity-wa-support
- * Uses session token header for authentication (no admin token needed)
- */
-async function enableAutoReadForSession(sessionToken: string) {
-  const waApiUrl = (config.WA_API_URL || '').replace(/\/$/, '');
-  if (!waApiUrl) {
-    logger.warn('WA_API_URL not configured, skipping auto_read enable');
-    return;
-  }
-
-  // genfity-wa-support endpoint: PUT /session/settings
-  // Authenticated by session token in header
-  const url = `${waApiUrl}/session/settings`;
-  
-  try {
-    await axios.put(
-      url,
-      {
-        auto_read_enabled: true,
-        chat_log_enabled: true,
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'token': sessionToken,
-        },
-        timeout: 10000,
-      }
-    );
-    logger.info('Auto read enabled for session', { token: sessionToken.substring(0, 8) + '...' });
-  } catch (error: any) {
-    // Log but don't fail - this is not critical for session creation
-    logger.warn('Failed to enable auto_read via genfity-wa-support', { 
-      error: error.message,
-      status: error.response?.status,
-    });
-  }
 }
 
 export async function updateStoredSessionStatus(params: {
