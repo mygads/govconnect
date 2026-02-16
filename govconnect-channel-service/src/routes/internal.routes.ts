@@ -34,6 +34,13 @@ import {
   handleUpsertChannelAccount,
 } from '../controllers/channel-account.controller';
 import { handleUploadMedia } from '../controllers/media-upload.controller';
+import {
+  listWaSupportUsers,
+  getWaSupportUser,
+  getWaSupportSessionSettings,
+  getWaSupportSummary,
+  checkWaSupportHealth,
+} from '../controllers/wa-support.controller';
 import { internalAuth } from '../middleware/auth.middleware';
 import { uploadPublicMedia } from '../middleware/upload.middleware';
 import {
@@ -84,6 +91,13 @@ router.delete('/conversations/:wa_user_id', handleDeleteConversation);
 router.get('/channel-accounts', handleListChannelAccounts);
 router.get('/channel-accounts/:village_id', handleGetChannelAccount);
 router.put('/channel-accounts/:village_id', handleUpsertChannelAccount);
+
+// WA Support V2 Superadmin Routes
+router.get('/wa-support/health', checkWaSupportHealth);
+router.get('/wa-support/summary', getWaSupportSummary);
+router.get('/wa-support/users', listWaSupportUsers);
+router.get('/wa-support/users/:user_id', getWaSupportUser);
+router.get('/wa-support/users/:user_id/sessions/:session_id/settings', getWaSupportSessionSettings);
 
 // Media upload (used by Dashboard public form & admin updates)
 // Wrap multer in error handler to return JSON on upload errors

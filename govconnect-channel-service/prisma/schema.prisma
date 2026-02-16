@@ -70,6 +70,9 @@ model wa_sessions {
   wa_token         String
   wa_number        String?
   status           String?
+  wa_support_user_id  String?  // user_id on wa-support-v2
+  wa_support_api_key  String?  // customer api_key for wa-support-v2
+  wa_support_session_id String? // session identifier on wa-support-v2
   last_connected_at DateTime?
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
