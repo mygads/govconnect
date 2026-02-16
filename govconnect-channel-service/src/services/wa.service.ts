@@ -2,6 +2,7 @@ import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import prisma from '../config/database';
+import { waSupportClient } from '../clients/wa-support.client';
 
 // In-memory settings cache (since we're using single session)
 // Default typingIndicator to true so AI shows "typing..." while processing
@@ -62,6 +63,9 @@ async function upsertSession(params: {
   status?: string;
   waNumber?: string | null;
   instanceName?: string;
+  waSupportUserId?: string;
+  waSupportApiKey?: string;
+  waSupportSessionId?: string;
 }) {
   return prisma.wa_sessions.upsert({
     where: { village_id: params.villageId },
@@ -72,6 +76,9 @@ async function upsertSession(params: {
       wa_token: params.token,
       status: params.status || null,
       wa_number: params.waNumber || null,
+      wa_support_user_id: params.waSupportUserId || null,
+      wa_support_api_key: params.waSupportApiKey || null,
+      wa_support_session_id: params.waSupportSessionId || null,
       last_connected_at: params.status === 'connected' ? new Date() : null,
     },
     update: {
@@ -80,6 +87,9 @@ async function upsertSession(params: {
       status: params.status || null,
       wa_number: params.waNumber || null,
       instance_name: params.instanceName || undefined,
+      wa_support_user_id: params.waSupportUserId || undefined,
+      wa_support_api_key: params.waSupportApiKey || undefined,
+      wa_support_session_id: params.waSupportSessionId || undefined,
       last_connected_at: params.status === 'connected' ? new Date() : undefined,
     },
   });
@@ -105,83 +115,126 @@ function getPublicWhatsAppWebhookUrl(): string {
   return base ? `${base}/webhook` : '';
 }
 
-async function createSessionViaGenfityApp(params: { villageId: string; villageSlug?: string; webhook: string }) {
-  if (!config.GENFITY_APP_API_URL || !config.GENFITY_APP_CUSTOMER_API_KEY) {
-    throw new Error('Genfity customer-api config missing (GENFITY_APP_API_URL / GENFITY_APP_CUSTOMER_API_KEY)');
+/**
+ * Ensure a wa-support-v2 user exists for this village.
+ * Creates (upsert) via internal API. Returns api_key if newly created,
+ * otherwise retrieves stored key from DB or rotates.
+ */
+async function ensureWaSupportUser(villageId: string): Promise<{ userId: string; apiKey: string }> {
+  if (!waSupportClient.isConfigured()) {
+    throw new Error('WA_SUPPORT_URL / WA_SUPPORT_INTERNAL_API_KEY not configured');
   }
 
-  const base = config.GENFITY_APP_API_URL.replace(/\/$/, '');
-  const customerApiBase = /\/api\/customer-api$/.test(base) ? base : `${base}/api/customer-api`;
-  const url = `${customerApiBase}/whatsapp/sessions`;
+  // Check if we already have the api_key stored locally
+  const existingSession = await prisma.wa_sessions.findUnique({
+    where: { village_id: villageId },
+    select: { wa_support_user_id: true, wa_support_api_key: true },
+  });
 
-  // Session name: use villageSlug if provided, otherwise fallback to villageId
-  const sessionName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  if (existingSession?.wa_support_api_key) {
+    return {
+      userId: existingSession.wa_support_user_id || villageId,
+      apiKey: existingSession.wa_support_api_key,
+    };
+  }
 
-  const response = await axios.post(
-    url,
-    {
-      name: sessionName,
-      webhook: params.webhook || '',
-      events: 'All',
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${config.GENFITY_APP_CUSTOMER_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      timeout: 15000,
+  // Create / upsert user on wa-support-v2
+  const createResult = await waSupportClient.createUser({
+    user_id: villageId,
+    source: 'govconnect',
+    expires_at: '2099-12-31T23:59:59Z',
+    max_sessions: 1,
+    max_messages: 0, // unlimited
+    provider: 'genfity-wa',
+    created_by: 'govconnect-channel-service',
+  });
+
+  if (!createResult.success) {
+    throw new Error(`Failed to create wa-support user: ${createResult.error?.message}`);
+  }
+
+  // api_key is only returned on first creation
+  let apiKey = createResult.data?.api_key;
+
+  if (!apiKey) {
+    // User already existed, api_key not returned — rotate to get a new one
+    logger.info('wa-support user already exists, rotating API key', { userId: villageId });
+    const rotateResult = await waSupportClient.rotateUserApiKey(villageId);
+    if (!rotateResult.success || !rotateResult.data?.api_key) {
+      throw new Error(`Failed to rotate api_key for wa-support user: ${rotateResult.error?.message}`);
     }
-  );
-
-  const payload = response.data;
-  if (!payload?.success) {
-    const err = payload?.error || 'Failed to create session via genfity-app';
-    throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
+    apiKey = rotateResult.data.api_key;
   }
 
-  const token = payload?.data?.token;
-  if (!token) {
-    throw new Error('Token sesi tidak ditemukan dari genfity-app');
+  // Store api_key in local DB (update existing row if any, or it will be saved during upsertSession)
+  if (existingSession) {
+    await prisma.wa_sessions.update({
+      where: { village_id: villageId },
+      data: {
+        wa_support_user_id: villageId,
+        wa_support_api_key: apiKey,
+      },
+    });
   }
 
-  return { token, sessionId: payload?.data?.sessionId || payload?.data?.id || null };
+  return { userId: villageId, apiKey };
 }
 
 /**
- * Delete session from genfity-app via customer-api
- * Uses session token to identify the session
+ * Create a WA session via wa-support-v2 customer API.
+ * Requires user api_key from ensureWaSupportUser.
  */
-async function deleteSessionFromGenfityApp(sessionToken: string) {
-  if (!config.GENFITY_APP_API_URL || !config.GENFITY_APP_CUSTOMER_API_KEY) {
+async function createSessionViaWaSupport(params: {
+  apiKey: string;
+  villageId: string;
+  villageSlug?: string;
+  webhook: string;
+}): Promise<{ token: string; sessionId: string }> {
+  const sessionName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+  const result = await waSupportClient.createCustomerSession(params.apiKey, {
+    session_name: sessionName,
+    webhook_url: params.webhook || '',
+    events: 'All',
+    auto_connect: true,
+    auto_read_enabled: true,
+    typing_enabled: true,
+  });
+
+  if (!result.success) {
+    throw new Error(`Failed to create session via wa-support: ${result.error?.message}`);
+  }
+
+  const session = result.data?.session;
+  if (!session?.session_token) {
+    throw new Error('Token sesi tidak ditemukan dari wa-support-v2');
+  }
+
+  return {
+    token: session.session_token,
+    sessionId: session.session_id || String(session.id),
+  };
+}
+
+/**
+ * Delete a session from wa-support-v2 via customer API.
+ */
+async function deleteSessionFromWaSupport(apiKey: string, sessionId: string): Promise<void> {
+  if (!waSupportClient.isConfigured() || !apiKey || !sessionId) {
     return;
   }
 
-  const base = config.GENFITY_APP_API_URL.replace(/\/$/, '');
-  const customerApiBase = /\/api\/customer-api$/.test(base) ? base : `${base}/api/customer-api`;
-  
-  // The genfity-app customer-api allows deletion by sessionId, sessionName, or token
-  // We use the token as identifier
-  const url = `${customerApiBase}/whatsapp/sessions/${encodeURIComponent(sessionToken)}`;
-
   try {
-    const response = await axios.delete(url, {
-      headers: {
-        Authorization: `Bearer ${config.GENFITY_APP_CUSTOMER_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      timeout: 15000,
-    });
-
-    if (response.data?.success) {
-      logger.info('Session deleted from genfity-app', { token: sessionToken.substring(0, 8) + '...' });
+    const result = await waSupportClient.deleteCustomerSession(apiKey, sessionId);
+    if (result.success) {
+      logger.info('Session deleted from wa-support-v2', { sessionId });
+    } else if (result.error?.statusCode === 404) {
+      logger.debug('Session not found in wa-support-v2, skipping deletion');
+    } else {
+      throw new Error(result.error?.message || 'Unknown error');
     }
   } catch (error: any) {
-    // 404 is ok - session might not exist in genfity-app
-    if (error.response?.status === 404) {
-      logger.debug('Session not found in genfity-app, skipping deletion');
-      return;
-    }
-    throw error;
+    logger.warn('Failed to delete session from wa-support-v2', { sessionId, error: error.message });
   }
 }
 
@@ -401,39 +454,36 @@ export async function createSessionForVillage(params: {
   const webhook = getPublicWhatsAppWebhookUrl();
   let token: string;
   let sessionId: string | null = null;
+  let waSupportApiKey: string | undefined;
 
-  // Preferred path: create session via genfity-app customer-api so it consumes the admin subscription quota.
-  if (config.GENFITY_APP_API_URL && config.GENFITY_APP_CUSTOMER_API_KEY) {
-    const created = await createSessionViaGenfityApp({ villageId: params.villageId, villageSlug: params.villageSlug, webhook });
+  if (waSupportClient.isConfigured()) {
+    // Primary path: create session via wa-support-v2
+    const user = await ensureWaSupportUser(params.villageId);
+    waSupportApiKey = user.apiKey;
+
+    const created = await createSessionViaWaSupport({
+      apiKey: user.apiKey,
+      villageId: params.villageId,
+      villageSlug: params.villageSlug,
+      webhook,
+    });
     token = created.token;
     sessionId = created.sessionId;
+  } else if (isDryRun()) {
+    token = `dryrun_${params.villageId}_${Date.now()}`;
   } else {
-    if (isDryRun()) {
-      token = `dryrun_${params.villageId}_${Date.now()}`;
-    } else {
-    // Backward-compatible fallback: create directly on WA provider.
+    // Fallback: create directly on WA provider (legacy)
     const url = `${config.WA_API_URL}/session/create`;
-
-    const response = await axios.post(
-      url,
-      {
-        Name: params.villageId,
-      },
-      {
-        timeout: 15000,
-      }
-    );
-
+    const response = await axios.post(url, { Name: params.villageId }, { timeout: 15000 });
     const data = response.data?.data || response.data;
     const extracted = extractSessionToken(data);
     if (!extracted) {
       throw new Error('Token sesi tidak ditemukan dari server WA');
     }
     token = extracted;
-    }
   }
 
-  // Compute the instance_name (session name on WA provider) — same logic as createSessionViaGenfityApp
+  // Compute the instance_name (session name on WA provider)
   const instanceName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
   await upsertSession({
@@ -441,20 +491,26 @@ export async function createSessionForVillage(params: {
     adminId: params.adminId,
     token,
     instanceName,
+    waSupportUserId: params.villageId,
+    waSupportApiKey: waSupportApiKey,
+    waSupportSessionId: sessionId || undefined,
   });
 
-  // Enable auto_read and chat_log on genfity-wa-support after session is created
-  await enableAutoReadForSession(token).catch((err) => {
-    logger.warn('Failed to enable auto_read for session', { 
-      village_id: params.villageId, 
-      error: err.message 
+  // Auto-read is already enabled via createSessionViaWaSupport (auto_read_enabled: true)
+  // But also try enabling via WA provider for backward compat
+  if (!waSupportClient.isConfigured()) {
+    await enableAutoReadForSession(token).catch((err) => {
+      logger.warn('Failed to enable auto_read for session', { 
+        village_id: params.villageId, 
+        error: err.message 
+      });
     });
-  });
+  }
 
   if (!webhook) {
     logger.warn('PUBLIC_CHANNEL_BASE_URL/PUBLIC_BASE_URL not set; webhook not configured during session creation', {
       village_id: params.villageId,
-      via: config.GENFITY_APP_API_URL && config.GENFITY_APP_CUSTOMER_API_KEY ? 'genfity-app' : 'wa-provider',
+      via: waSupportClient.isConfigured() ? 'wa-support-v2' : 'wa-provider',
     });
   }
 
@@ -526,10 +582,10 @@ export async function deleteSessionForVillage(villageId: string) {
     logger.warn('Logout session before delete failed', { error: error.message });
   }
 
-  // Delete session from genfity-app if configured
-  if (config.GENFITY_APP_API_URL && config.GENFITY_APP_CUSTOMER_API_KEY) {
-    await deleteSessionFromGenfityApp(session.wa_token).catch((err) => {
-      logger.warn('Failed to delete session from genfity-app', { 
+  // Delete session from wa-support-v2 if configured
+  if (waSupportClient.isConfigured() && session.wa_support_api_key && session.wa_support_session_id) {
+    await deleteSessionFromWaSupport(session.wa_support_api_key, session.wa_support_session_id).catch((err) => {
+      logger.warn('Failed to delete session from wa-support-v2', { 
         village_id: villageId, 
         error: err.message 
       });

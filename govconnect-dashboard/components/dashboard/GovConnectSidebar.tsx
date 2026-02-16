@@ -25,6 +25,7 @@ import {
   HeartPulse,
   Plug,
   KeyRound,
+  MessageSquare,
 } from "lucide-react"
 
 import {
@@ -260,6 +261,12 @@ export function GovConnectSidebar() {
           title: "Gemini BYOK Keys",
           url: "/dashboard/superadmin/gemini-keys",
           icon: KeyRound,
+          roles: ["superadmin"],
+        },
+        {
+          title: "WA Support V2",
+          url: "/dashboard/superadmin/whatsapp",
+          icon: MessageSquare,
           roles: ["superadmin"],
         },
       ],

@@ -17,6 +17,7 @@ const SUPERADMIN_ONLY_RULES: RouteRule[] = [
   { path: '/dashboard/superadmin/system-health', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/llm-check', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/gemini-keys', roles: ['superadmin'] },
+  { path: '/dashboard/superadmin/whatsapp', roles: ['superadmin'] },
 ]
 
 // Routes that only village admins can access (superadmin should NOT access these)
