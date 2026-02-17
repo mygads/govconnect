@@ -36,6 +36,8 @@ import {
   Trash2,
   Plus,
   Settings,
+  MessageSquareWarning,
+  Timer,
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
 
@@ -70,10 +72,38 @@ interface RateLimitData {
   stats: RateLimitStats
 }
 
+interface SpamBan {
+  wa_user_id: string
+  reason: string
+  bannedAt: number
+  expiresAt: number
+  identicalText: string
+  messageCount: number
+  banType?: 'identical' | 'rate'
+}
+
+interface SpamGuardStats {
+  enabled: boolean
+  maxIdentical: number
+  banDurationMs: number
+  rateMaxMessages?: number
+  rateWindowMs?: number
+  activeTrackers: number
+  activeBans: number
+  supersededMessages: number
+  bans: SpamBan[]
+}
+
+interface SpamGuardData {
+  stats: SpamGuardStats
+  channelBans: { total: number; bans: SpamBan[] }
+}
+
 export default function RateLimitPage() {
   const { user } = useAuth()
   const [data, setData] = useState<RateLimitData | null>(null)
   const [blacklist, setBlacklist] = useState<{ total: number; entries: BlacklistEntry[] } | null>(null)
+  const [spamGuard, setSpamGuard] = useState<SpamGuardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -88,13 +118,15 @@ export default function RateLimitPage() {
       const token = localStorage.getItem('token')
       const headers = { 'Authorization': `Bearer ${token}` }
 
-      const [rateLimitRes, blacklistRes] = await Promise.all([
+      const [rateLimitRes, blacklistRes, spamGuardRes] = await Promise.all([
         fetch('/api/rate-limit', { headers }),
         fetch('/api/rate-limit/blacklist', { headers }),
+        fetch('/api/spam-guard', { headers }),
       ])
 
       if (rateLimitRes.ok) setData(await rateLimitRes.json())
       if (blacklistRes.ok) setBlacklist(await blacklistRes.json())
+      if (spamGuardRes.ok) setSpamGuard(await spamGuardRes.json())
     } catch (err: any) {
       setError(err.message || 'Gagal memuat data')
     } finally {
@@ -157,6 +189,25 @@ export default function RateLimitPage() {
     }
   }
 
+  const handleRemoveSpamBan = async (wa_user_id: string) => {
+    if (!confirm(`Hapus spam ban untuk ${wa_user_id}?`)) return
+    
+    try {
+      const token = localStorage.getItem('token')
+      
+      const response = await fetch(`/api/spam-guard?wa_user_id=${wa_user_id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
+
+      if (response.ok) {
+        fetchData()
+      }
+    } catch (err) {
+      console.error('Failed to remove spam ban:', err)
+    }
+  }
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('id-ID', {
       day: 'numeric',
@@ -174,6 +225,15 @@ export default function RateLimitPage() {
       return `+62 ${rest.slice(0, 3)}-${rest.slice(3, 7)}-${rest.slice(7)}`
     }
     return phone
+  }
+
+  const formatRemainingTime = (expiresAt: number) => {
+    const remaining = expiresAt - Date.now()
+    if (remaining <= 0) return 'Kedaluwarsa'
+    const seconds = Math.ceil(remaining / 1000)
+    if (seconds < 60) return `${seconds} detik`
+    const minutes = Math.ceil(seconds / 60)
+    return `${minutes} menit`
   }
 
   if (loading) {
@@ -357,6 +417,145 @@ export default function RateLimitPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Spam Guard Section */}
+      <Card className={spamGuard?.stats.enabled ? 'border-orange-200 dark:border-orange-900' : 'border-gray-200 dark:border-gray-800'}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquareWarning className="h-5 w-5 text-orange-500" />
+            Spam Guard
+          </CardTitle>
+          <CardDescription>
+            Deteksi pesan identik berulang (ban per-teks), rate spam ({spamGuard?.stats.rateMaxMessages || 10} pesan berbeda dalam {Math.round((spamGuard?.stats.rateWindowMs || 10000) / 1000)}s = ban semua), dan bubble chat superseding. Pesan spam TIDAK disimpan ke history.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-4 mb-6">
+            <div className="p-4 bg-muted rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                {spamGuard?.stats.enabled ? (
+                  <Shield className="h-4 w-4 text-green-500" />
+                ) : (
+                  <ShieldOff className="h-4 w-4 text-yellow-500" />
+                )}
+                <span className="text-sm font-medium">Status</span>
+              </div>
+              <Badge variant={spamGuard?.stats.enabled ? "default" : "secondary"}>
+                {spamGuard?.stats.enabled ? 'AKTIF' : 'NONAKTIF'}
+              </Badge>
+            </div>
+            
+            <div className="p-4 bg-muted rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className="h-4 w-4 text-orange-500" />
+                <span className="text-sm font-medium">Maks Pesan Identik</span>
+              </div>
+              <p className="text-2xl font-bold">{spamGuard?.stats.maxIdentical || 5}</p>
+            </div>
+            
+            <div className="p-4 bg-muted rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <Timer className="h-4 w-4 text-blue-500" />
+                <span className="text-sm font-medium">Durasi Ban</span>
+              </div>
+              <p className="text-2xl font-bold">{Math.round((spamGuard?.stats.banDurationMs || 60000) / 1000)}s</p>
+            </div>
+            
+            <div className="p-4 bg-muted rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <Ban className="h-4 w-4 text-red-500" />
+                <span className="text-sm font-medium">Ban Aktif</span>
+              </div>
+              <p className="text-2xl font-bold">{spamGuard?.stats.activeBans || 0}</p>
+            </div>
+          </div>
+
+          {/* Rate Spam Config */}
+          <div className="grid gap-4 md:grid-cols-2 mb-6">
+            <div className="p-3 bg-muted/50 rounded-lg border">
+              <span className="text-xs text-muted-foreground">Rate Spam Limit</span>
+              <p className="text-sm font-medium">&gt;{spamGuard?.stats.rateMaxMessages || 10} pesan berbeda dalam {Math.round((spamGuard?.stats.rateWindowMs || 10000) / 1000)}s = ban 1 menit (semua pesan)</p>
+            </div>
+            <div className="p-3 bg-muted/50 rounded-lg border">
+              <span className="text-xs text-muted-foreground">Identical Spam Limit</span>
+              <p className="text-sm font-medium">&gt;{spamGuard?.stats.maxIdentical || 5} pesan identik = ban teks itu saja selama {Math.round((spamGuard?.stats.banDurationMs || 60000) / 1000)}s</p>
+            </div>
+          </div>
+
+          {/* Spam Ban List */}
+          {(() => {
+            const allBans = [
+              ...(spamGuard?.stats.bans || []),
+              ...(spamGuard?.channelBans.bans || []),
+            ]
+            // Deduplicate by wa_user_id + banType + identicalText
+            const uniqueBans = allBans.filter((ban, index, self) =>
+              index === self.findIndex(b => b.wa_user_id === ban.wa_user_id && b.identicalText === ban.identicalText && (b.banType || 'identical') === (ban.banType || 'identical'))
+            )
+
+            if (uniqueBans.length === 0) {
+              return (
+                <div className="text-center py-6 text-muted-foreground">
+                  <MessageSquareWarning className="h-10 w-10 mx-auto mb-3 opacity-50" />
+                  <p>Tidak ada nomor yang sedang di-ban karena spam</p>
+                </div>
+              )
+            }
+
+            return (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nomor WhatsApp</TableHead>
+                    <TableHead>Tipe Ban</TableHead>
+                    <TableHead>Detail</TableHead>
+                    <TableHead className="text-center">Jumlah Pesan</TableHead>
+                    <TableHead>Sisa Ban</TableHead>
+                    <TableHead className="text-center">Aksi</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {uniqueBans.map((ban) => (
+                    <TableRow key={ban.wa_user_id}>
+                      <TableCell className="font-mono">{formatPhoneNumber(ban.wa_user_id)}</TableCell>
+                      <TableCell>
+                        <Badge variant={ban.banType === 'rate' ? 'destructive' : 'secondary'}>
+                          {ban.banType === 'rate' ? '⚡ Rate' : '📝 Identik'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="max-w-[200px] truncate text-sm text-muted-foreground" title={ban.identicalText || ban.reason}>
+                        {ban.banType === 'rate' 
+                          ? `Semua pesan diblokir` 
+                          : <>&#x201C;{(ban.identicalText || '').substring(0, 50)}{(ban.identicalText || '').length > 50 ? '...' : ''}&#x201D;</>
+                        }
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant="destructive">{ban.messageCount}x</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Clock className="h-3 w-3 text-orange-500" />
+                          <span className="text-sm">{formatRemainingTime(ban.expiresAt)}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleRemoveSpamBan(ban.wa_user_id)}
+                          title="Hapus ban spam"
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )
+          })()}
+        </CardContent>
+      </Card>
 
       {/* Blacklist Management */}
       <Card>

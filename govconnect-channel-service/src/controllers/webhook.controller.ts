@@ -9,6 +9,7 @@ import { processMediaFromWebhook, MediaInfo } from '../services/media.service';
 import { updateConversation, isUserInTakeover, setAIProcessing } from '../services/takeover.service';
 import { addPendingMessage } from '../services/pending-message.service';
 import { addMessageToBatch, cancelBatch } from '../services/message-batcher.service';
+import { checkSpamGuard } from '../services/spam-guard.service';
 import { resolveVillageIdFromInstanceName } from '../services/wa.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
@@ -205,8 +206,34 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // This gives user feedback that their message is being worked on
 
     // ============================================
+    // STEP 1.5: SPAM GUARD CHECK (BEFORE saving to DB)
+    // ============================================
+    // Check spam FIRST so spam messages are never saved to chat history.
+    // This prevents AI from seeing spam in history and keeps chat clean.
+    const spamResult = checkSpamGuard(villageId, waUserId, messageId, message, timestamp.toISOString());
+
+    if (spamResult.isSpam) {
+      // Message is SPAM → do NOT save to messages DB, do NOT process
+      logger.warn('🚫 Message rejected by spam guard (not saved to history)', {
+        wa_user_id: waUserId,
+        message_id: messageId,
+        reason: spamResult.reason,
+        isBanned: spamResult.isBanned,
+        isDuplicate: spamResult.isDuplicate,
+      });
+      res.json({
+        status: 'ok',
+        message_id: messageId,
+        mode: 'spam_blocked',
+        reason: spamResult.reason,
+      });
+      return;
+    }
+
+    // ============================================
     // STEP 2: SAVE TO DATABASE (parallel with media processing)
     // ============================================
+    // Only reaches here if message is NOT spam
     
     // Process media if present (non-blocking)
     let mediaInfo: MediaInfo = { hasMedia: false };
@@ -229,7 +256,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
         });
       });
 
-    // Save message to database
+    // Save message to database (only non-spam messages reach here)
     await saveIncomingMessage({
       village_id: villageId,
       wa_user_id: waUserId,
@@ -294,9 +321,8 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     await setAIProcessing(waUserId, messageId, villageId, 'WHATSAPP');
 
     // Add to message batcher
-    // The batcher will wait for more messages before sending to AI
-    // This prevents spam and combines multiple messages into one AI request
-    const { isNewBatch, batchSize } = addMessageToBatch(
+    // The batcher forwards immediately with spam guard context
+    addMessageToBatch(
       villageId,
       waUserId,
       messageId,
@@ -307,15 +333,14 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
         media_type: mediaInfo.mediaType,
         media_url: mediaInfo.mediaUrl,
         media_public_url: mediaInfo.mediaPublicUrl,
-      }
+      },
+      spamResult,
     );
     
-    logger.info('Message added to batch for AI processing', {
+    logger.info('Message forwarded to AI for processing', {
       village_id: villageId,
       wa_user_id: waUserId,
       message_id: messageId,
-      is_new_batch: isNewBatch,
-      batch_size: batchSize,
     });
 
     logger.info('Webhook processed successfully', {

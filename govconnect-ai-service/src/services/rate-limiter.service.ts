@@ -260,11 +260,16 @@ class RateLimiterService {
     wa_user_id: string, 
     reason: string, 
     addedBy: string = 'admin',
-    expiresInDays?: number
+    expiresInDays?: number,
+    expiresInMs?: number,
   ): void {
-    const expiresAt = expiresInDays 
-      ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString()
-      : undefined;
+    let expiresAt: string | undefined;
+    
+    if (expiresInMs) {
+      expiresAt = new Date(Date.now() + expiresInMs).toISOString();
+    } else if (expiresInDays) {
+      expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString();
+    }
     
     this.data.blacklist[wa_user_id] = {
       wa_user_id,

@@ -18,10 +18,8 @@ export interface MessageReceivedEvent {
   media_caption?: string;
   media_mime_type?: string;
   media_file_name?: string;
-  // Batched messages (when multiple messages are combined)
-  is_batched?: boolean;
+  // Message IDs for tracking (single message per event)
   batched_message_ids?: string[];  // All message IDs in this batch
-  original_messages?: string[];    // Original messages before combining
 }
 
 export interface AIReplyEvent {
