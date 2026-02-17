@@ -701,7 +701,7 @@ export async function startConsuming(
       routingKey: RABBITMQ_CONFIG.ROUTING_KEY_CONSUME,
     });
     
-    // Set prefetch - process 1 message at a time
+    // Set prefetch - allow concurrent message processing for bubble chat dedup
     await channel.prefetch(RABBITMQ_CONFIG.PREFETCH);
     
     // Start consuming

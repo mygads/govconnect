@@ -162,11 +162,14 @@ export function registerProcessing(
 
 /**
  * Check if a response for this message should actually be sent to the user.
- * Called AFTER AI processing completes, before publishing the reply.
+ * Called BEFORE and AFTER AI processing, before publishing the reply.
+ * 
+ * This is a READ-ONLY check — it does NOT modify state.
+ * Use completeProcessing() to clean up after sending or suppressing.
  * 
  * Returns false if:
  * - This message has been superseded by a newer message (bubble chat)
- * - A newer message is being processed
+ * - A newer message is being processed (this is not the latest)
  */
 export function shouldSendResponse(
   villageId: string | undefined,
@@ -193,8 +196,6 @@ export function shouldSendResponse(
       superseded_by: flight.supersededBy,
     });
 
-    state.inFlight.delete(messageId);
-
     return {
       send: false,
       reason: `superseded_by_${flight.supersededBy}`,
@@ -210,8 +211,6 @@ export function shouldSendResponse(
       latest_id: state.latestMessageId,
     });
 
-    state.inFlight.delete(messageId);
-
     return {
       send: false,
       reason: `not_latest (latest: ${state.latestMessageId})`,
@@ -221,8 +220,6 @@ export function shouldSendResponse(
 
   // This IS the latest message → send response, mark ALL bubble messages as replied
   const allIds = [...state.bubbleMessageIds];
-
-  state.inFlight.delete(messageId);
 
   return {
     send: true,

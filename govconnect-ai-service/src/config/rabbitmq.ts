@@ -21,6 +21,11 @@ export const RABBITMQ_CONFIG = {
     noAck: false, // Manual acknowledgment
   },
 
-  // Prefetch: process 1 message at a time per consumer
-  PREFETCH: 1,
+  // Prefetch: allow multiple messages to be consumed concurrently
+  // This is CRITICAL for bubble chat — with prefetch=1, messages are serialized,
+  // so each message becomes "latest" when it's processed, causing double responses.
+  // With prefetch=5, when msg10 arrives while msg9 is being processed by AI,
+  // msg10's registerProcessing() supersedes msg9, and shouldSendResponse()
+  // correctly suppresses msg9's response.
+  PREFETCH: 5,
 };

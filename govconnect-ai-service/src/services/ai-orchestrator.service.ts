@@ -101,6 +101,8 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
   });
 
   // Register with spam guard (tracks in-flight processing for dedup)
+  // With prefetch > 1, multiple messages are consumed concurrently.
+  // registerProcessing() marks all previous in-flight messages as superseded.
   const spamRegistration = registerProcessing(village_id, wa_user_id, message_id, message, spamGuardInfo);
   
   // Mark message as read in WhatsApp
@@ -132,6 +134,23 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       return;
     }
     
+    // ============================================
+    // PRE-CHECK: Skip AI processing if already superseded
+    // With prefetch > 1, a newer message may have already registered
+    // and superseded this one before we even start AI processing.
+    // This saves LLM tokens by not processing messages that will be suppressed.
+    // ============================================
+    const preCheck = shouldSendResponse(village_id, wa_user_id, message_id);
+    if (!preCheck.send) {
+      logger.info('⏭️ Skipping AI processing (already superseded)', {
+        wa_user_id,
+        message_id,
+        reason: preCheck.reason,
+      });
+      completeProcessing(village_id, wa_user_id, message_id);
+      return;
+    }
+
     // Start typing indicator
     await startTyping(wa_user_id, village_id);
     
@@ -192,43 +211,38 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       villageId: village_id,
     });
     
-    // Stop typing indicator
-    await stopTyping(wa_user_id, village_id);
-    
     if (!result.success && result.error === 'Spam message detected') {
+      await stopTyping(wa_user_id, village_id);
       completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
     
     // ============================================
     // SPAM GUARD: Check if response should be sent
+    // Re-check after AI processing — a newer message may have arrived
+    // during the AI LLM call and superseded this one.
     // ============================================
     const sendCheck = shouldSendResponse(village_id, wa_user_id, message_id);
     
     if (!sendCheck.send) {
       // This message was superseded - don't send response to user
-      logger.info('🔄 Response suppressed by spam guard', {
+      // DON'T stop typing — the latest message is still being processed
+      // and its handler will manage the typing indicator
+      logger.info('🔄 Response suppressed by spam guard (bubble superseded)', {
         wa_user_id,
         message_id,
         reason: sendCheck.reason,
         allMessageIds: sendCheck.allMessageIds,
       });
       
-      // Mark ALL identical messages as completed (including this one)
-      if (sendCheck.allMessageIds.length > 0) {
-        await publishMessageStatus({
-          village_id,
-          wa_user_id,
-          message_ids: sendCheck.allMessageIds,
-          status: 'completed',
-        });
-      }
-      
       completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
     
     // This is the latest message - send the response
+    // Stop typing ONLY when we're about to send the actual reply
+    await stopTyping(wa_user_id, village_id);
+
     // Use allMessageIds to mark ALL identical messages as replied
     const allBatchedIds = sendCheck.allMessageIds.length > 0
       ? sendCheck.allMessageIds
