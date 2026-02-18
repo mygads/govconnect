@@ -40,6 +40,7 @@ import {
   getWaSupportSessionSettings,
   getWaSupportSummary,
   checkWaSupportHealth,
+  provisionWaSupportUser,
 } from '../controllers/wa-support.controller';
 import { internalAuth } from '../middleware/auth.middleware';
 import { uploadPublicMedia } from '../middleware/upload.middleware';
@@ -47,6 +48,11 @@ import {
   validateGetMessages,
   validateSendMessage,
 } from '../middleware/validation.middleware';
+import {
+  getSpamGuardStats,
+  getActiveSpamBans,
+  removeSpamBan,
+} from '../services/spam-guard.service';
 
 const router: ExpressRouter = Router();
 
@@ -98,6 +104,30 @@ router.get('/wa-support/summary', getWaSupportSummary);
 router.get('/wa-support/users', listWaSupportUsers);
 router.get('/wa-support/users/:user_id', getWaSupportUser);
 router.get('/wa-support/users/:user_id/sessions/:session_id/settings', getWaSupportSessionSettings);
+router.post('/wa-support/provision', provisionWaSupportUser);
+
+// Spam Guard Routes
+router.get('/spam-guard/stats', (req: Request, res: Response) => {
+  void req;
+  res.json(getSpamGuardStats());
+});
+
+router.get('/spam-guard/bans', (req: Request, res: Response) => {
+  void req;
+  const bans = getActiveSpamBans();
+  res.json({ total: bans.length, bans });
+});
+
+router.delete('/spam-guard/bans/:wa_user_id', (req: Request, res: Response) => {
+  const { wa_user_id } = req.params;
+  const village_id = req.query.village_id as string | undefined;
+  const removed = removeSpamBan(village_id, wa_user_id);
+  if (removed) {
+    res.json({ success: true, message: `Spam ban removed for ${wa_user_id}` });
+  } else {
+    res.status(404).json({ success: false, error: 'No active spam ban found' });
+  }
+});
 
 // Media upload (used by Dashboard public form & admin updates)
 // Wrap multer in error handler to return JSON on upload errors

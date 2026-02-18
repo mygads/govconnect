@@ -9,7 +9,6 @@ import {
   getRetryQueueStatus,
   getAIRetryQueueStatus,
   getFailedMessages,
-  getFailedMessage,
   retryFailedMessage,
   retryAllFailedMessages,
   clearFailedMessages,
@@ -17,6 +16,7 @@ import {
 import { checkCaseServiceHealth } from './services/case-client.service';
 import { modelStatsService } from './services/model-stats.service';
 import { rateLimiterService } from './services/rate-limiter.service';
+import { getSpamGuardStats as getAISpamGuardStats } from './services/spam-guard.service';
 import { aiAnalyticsService } from './services/ai-analytics.service';
 import { getEmbeddingStats, getEmbeddingCacheStats } from './services/embedding.service';
 import { getVectorDbStats } from './services/vector-db.service';
@@ -193,9 +193,7 @@ app.get('/admin/failed-messages', (req: Request, res: Response) => {
         firstAttempt: new Date(msg.firstAttempt).toISOString(),
         lastAttempt: new Date(msg.lastAttempt).toISOString(),
         failedAt: new Date(msg.failedAt).toISOString(),
-        originalMessage: msg.event.is_batched
-          ? `[Batched: ${msg.event.batched_message_ids?.length || 0} messages]`
-          : msg.event.message?.substring(0, 100),
+        originalMessage: msg.event.message?.substring(0, 100),
       })),
     });
   } catch (error: any) {
@@ -868,6 +866,17 @@ app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) =>
     res.status(500).json({
       error: 'Failed to remove from blacklist',
     });
+  }
+});
+
+// ===========================================
+// Spam Guard Endpoints
+app.get('/spam-guard/stats', (req: Request, res: Response) => {
+  try {
+    const stats = getAISpamGuardStats();
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get spam guard stats' });
   }
 });
 

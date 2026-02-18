@@ -54,8 +54,6 @@ export interface WaSupportSession {
   session_name: string;
   session_token: string;
   webhook_url: string;
-  auto_read_enabled: boolean;
-  typing_enabled: boolean;
   connected: boolean;
   logged_in: boolean;
   jid: string;
@@ -70,8 +68,6 @@ export interface WaSupportSession {
 
 export interface WaSupportSessionSettings {
   session_id: string;
-  auto_read_enabled: boolean;
-  typing_enabled: boolean;
   webhook_url: string;
   message_stat_sent: number;
   message_stat_failed: number;
@@ -118,8 +114,6 @@ export interface CreateSessionRequest {
   events?: string;
   expiration_sec?: number;
   auto_connect?: boolean;
-  auto_read_enabled?: boolean;
-  typing_enabled?: boolean;
   history?: boolean;
 }
 
@@ -128,14 +122,10 @@ export interface UpdateSessionRequest {
   webhook_url?: string;
   events?: string;
   expiration_sec?: number;
-  auto_read_enabled?: boolean;
-  typing_enabled?: boolean;
   history?: boolean;
 }
 
 export interface UpdateSessionSettingsRequest {
-  auto_read_enabled?: boolean;
-  typing_enabled?: boolean;
   webhook_url?: string;
 }
 
@@ -150,7 +140,11 @@ class WaSupportClient {
 
   constructor() {
     this.baseUrl = (process.env.WA_SUPPORT_URL || '').replace(/\/$/, '');
-    this.internalApiKey = process.env.WA_SUPPORT_INTERNAL_API_KEY || '';
+
+    // WA_SUPPORT_INTERNAL_API_KEY may be in "source:actualKey" format (e.g. "govconnect:govconnect2026").
+    // The wa-support middleware expects only the actualKey portion in the header.
+    const rawKey = process.env.WA_SUPPORT_INTERNAL_API_KEY || '';
+    this.internalApiKey = rawKey.includes(':') ? rawKey.split(':').slice(1).join(':') : rawKey;
 
     this.http = axios.create({
       timeout: 30000,

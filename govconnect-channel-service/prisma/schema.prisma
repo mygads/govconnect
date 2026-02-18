@@ -54,8 +54,8 @@ model SendLog {
 
 model wa_settings {
   id                 String   @id @default("default")
-  auto_read_messages Boolean  @default(false)
-  typing_indicator   Boolean  @default(false)
+  auto_read_messages Boolean  @default(true)
+  typing_indicator   Boolean  @default(true)
   created_at         DateTime @default(now())
   updated_at         DateTime @default(now()) @updatedAt
   

@@ -60,11 +60,13 @@ const SPAM_PATTERNS = [
 ];
 
 /**
- * Check if message is spam or malicious
+ * Check if message is spam or malicious.
+ * NOTE: Short messages (1-2 chars) are NOT spam — they're common Indonesian greetings (p, y, k, ok).
+ * Length-based spam filtering is handled by channel-service spam-guard (identical/rate).
  */
 export function isSpamMessage(message: string): boolean {
-  if (!message || message.length < 2) return true;
-  if (message.length > 3000) return true; // Increased from 2000 to 3000 (more lenient)
+  if (!message) return true;
+  if (message.length > 3000) return true;
   
   for (const pattern of SPAM_PATTERNS) {
     if (pattern.test(message)) {

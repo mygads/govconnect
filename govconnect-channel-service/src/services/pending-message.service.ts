@@ -69,41 +69,6 @@ export async function addPendingMessage(data: PendingMessageData): Promise<Pendi
 }
 
 /**
- * Get all pending messages for a user (for batching)
- */
-export async function getPendingMessagesForUser(
-  channel_identifier: string,
-  village_id?: string,
-  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
-): Promise<PendingMessage[]> {
-  return prisma.pendingMessage.findMany({
-    where: {
-      village_id: resolveVillageId(village_id),
-      channel,
-      channel_identifier,
-      status: 'pending',
-    } as any,
-    orderBy: {
-      created_at: 'asc', // Oldest first
-    },
-  }) as unknown as PendingMessage[];
-}
-
-/**
- * Get oldest pending message across all users
- */
-export async function getNextPendingMessage(): Promise<PendingMessage | null> {
-  return prisma.pendingMessage.findFirst({
-    where: {
-      status: 'pending',
-    },
-    orderBy: {
-      created_at: 'asc',
-    },
-  }) as unknown as PendingMessage | null;
-}
-
-/**
  * Mark messages as processing
  */
 export async function markMessagesAsProcessing(messageIds: string[]): Promise<void> {
@@ -186,35 +151,6 @@ export async function markMessageAsFailed(
       error_msg,
     });
   }
-}
-
-/**
- * Get pending messages count per user (for monitoring)
- */
-export async function getPendingMessagesStats(): Promise<{
-  total: number;
-  byUser: { wa_user_id: string; count: number }[];
-}> {
-  const total = await prisma.pendingMessage.count({
-    where: { status: 'pending' },
-  });
-  
-  const byUser = await prisma.$queryRaw<{ wa_user_id: string; count: bigint }[]>`
-    SELECT wa_user_id, COUNT(*) as count 
-    FROM pending_messages 
-    WHERE status = 'pending' 
-    GROUP BY wa_user_id 
-    ORDER BY count DESC 
-    LIMIT 20
-  `;
-  
-  return {
-    total,
-    byUser: byUser.map((r: { wa_user_id: string; count: bigint }) => ({
-      wa_user_id: r.wa_user_id,
-      count: Number(r.count),
-    })),
-  };
 }
 
 /**

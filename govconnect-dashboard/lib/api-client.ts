@@ -619,6 +619,35 @@ export const ai = {
       headers: getHeaders(),
     });
   },
+
+  /**
+   * Get spam guard stats from AI service
+   */
+  async getSpamGuardStats() {
+    return apiFetch(buildUrl(ServicePath.AI, '/spam-guard/stats'), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get spam guard bans from channel service
+   */
+  async getSpamGuardBans() {
+    return apiFetch(buildUrl(ServicePath.CHANNEL, '/internal/spam-guard/bans'), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Remove a spam ban
+   */
+  async removeSpamBan(waUserId: string, villageId?: string) {
+    const query = villageId ? `?village_id=${encodeURIComponent(villageId)}` : '';
+    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/spam-guard/bans/${waUserId}${query}`), {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+  },
 };
 
 // ==================== LIVECHAT (Channel Service) ====================

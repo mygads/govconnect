@@ -20,12 +20,12 @@ export const RABBITMQ_CONFIG = {
   CONSUME_OPTIONS: {
     noAck: false, // Manual acknowledgment
   },
-  
-  // Message batching configuration
-  BATCHING: {
-    ENABLED: true,
-    MAX_WAIT_MS: 3000,          // Wait up to 3 seconds to batch messages
-    MAX_MESSAGES_PER_BATCH: 10, // Max messages to combine
-    BATCH_WINDOW_MS: 5000,      // Time window to collect messages for same user
-  },
+
+  // Prefetch: allow multiple messages to be consumed concurrently
+  // This is CRITICAL for bubble chat — with prefetch=1, messages are serialized,
+  // so each message becomes "latest" when it's processed, causing double responses.
+  // With prefetch=5, when msg10 arrives while msg9 is being processed by AI,
+  // msg10's registerProcessing() supersedes msg9, and shouldSendResponse()
+  // correctly suppresses msg9's response.
+  PREFETCH: 5,
 };

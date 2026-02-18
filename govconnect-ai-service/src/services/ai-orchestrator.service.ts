@@ -9,7 +9,7 @@
  * - Message status (read receipts)
  * - Takeover mode
  * - RabbitMQ publishing
- * - Batched messages
+ * - Spam guard (bubble chat + duplicate suppression)
  * 
  * Core AI logic (NLU, intent detection, RAG, handlers) is in unified-message-processor.service.ts
  */
@@ -20,6 +20,11 @@ import { publishAIReply, publishMessageStatus, addToAIRetryQueue } from './rabbi
 import { isAIChatbotEnabled } from './settings.service';
 import { startTyping, stopTyping, isUserInTakeover, markMessagesAsRead } from './channel-client.service';
 import { isSpamMessage } from './rag.service';
+import {
+  registerProcessing,
+  shouldSendResponse,
+  completeProcessing,
+} from './spam-guard.service';
 
 // Re-export all handlers from unified processor for backward compatibility
 export {
@@ -65,9 +70,15 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     media_url, 
     media_public_url, 
     media_type, 
-    is_batched, 
-    batched_message_ids 
   } = event;
+
+  // Extract spam_guard info from event (sent by channel service)
+  const spamGuardInfo = (event as any).spam_guard as {
+    isDuplicate?: boolean;
+    supersedePrevious?: boolean;
+    suppressedMessageIds?: string[];
+    contextMessages?: Array<{ messageId: string; text: string; receivedAt: string }>;
+  } | undefined;
   
   // Validate required fields
   if (!wa_user_id || !message || !message_id) {
@@ -86,34 +97,25 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     messageLength: message.length,
     hasMedia: has_media,
     mediaType: media_type,
-    isBatched: is_batched,
-    batchCount: batched_message_ids?.length,
+    spamGuard: spamGuardInfo,
   });
+
+  // Register with spam guard (tracks in-flight processing for dedup)
+  // With prefetch > 1, multiple messages are consumed concurrently.
+  // registerProcessing() marks all previous in-flight messages as superseded.
+  const spamRegistration = registerProcessing(village_id, wa_user_id, message_id, message, spamGuardInfo);
   
-  // Mark messages as read in WhatsApp
-  const messageIdsToRead = is_batched && batched_message_ids ? batched_message_ids : [message_id];
-  markMessagesAsRead(wa_user_id, messageIdsToRead, village_id).catch((err) => {
+  // Mark message as read in WhatsApp
+  markMessagesAsRead(wa_user_id, [message_id], village_id).catch((err) => {
     logger.warn('Failed to mark messages as read', { error: err.message });
   });
-  
-  // Notify that we're processing
-  if (is_batched && batched_message_ids) {
-    await publishMessageStatus({
-      village_id,
-      wa_user_id,
-      message_ids: batched_message_ids,
-      status: 'processing',
-    });
-  }
   
   try {
     // Check if AI chatbot is enabled
     const aiEnabled = await isAIChatbotEnabled();
     if (!aiEnabled) {
       logger.info('⏸️ AI chatbot is disabled', { wa_user_id, message_id });
-      if (is_batched && batched_message_ids) {
-        await publishMessageStatus({ village_id, wa_user_id, message_ids: batched_message_ids, status: 'completed' });
-      }
+      completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
     
@@ -121,45 +123,130 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     const takeover = await isUserInTakeover(wa_user_id, village_id);
     if (takeover) {
       logger.info('👤 User is in takeover mode', { wa_user_id, message_id });
-      if (is_batched && batched_message_ids) {
-        await publishMessageStatus({ village_id, wa_user_id, message_ids: batched_message_ids, status: 'completed' });
-      }
+      completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
     
-    // Spam check
+    // Spam check (content-based: gambling, urls, etc.)
     if (isSpamMessage(message)) {
       logger.warn('🚫 Spam message detected', { wa_user_id, message_id });
-      if (is_batched && batched_message_ids) {
-        await publishMessageStatus({ village_id, wa_user_id, message_ids: batched_message_ids, status: 'completed' });
-      }
+      completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
     
+    // ============================================
+    // PRE-CHECK: Skip AI processing if already superseded
+    // With prefetch > 1, a newer message may have already registered
+    // and superseded this one before we even start AI processing.
+    // This saves LLM tokens by not processing messages that will be suppressed.
+    // ============================================
+    const preCheck = shouldSendResponse(village_id, wa_user_id, message_id);
+    if (!preCheck.send) {
+      logger.info('⏭️ Skipping AI processing (already superseded)', {
+        wa_user_id,
+        message_id,
+        reason: preCheck.reason,
+      });
+      completeProcessing(village_id, wa_user_id, message_id);
+      return;
+    }
+
     // Start typing indicator
     await startTyping(wa_user_id, village_id);
+    
+    // ============================================
+    // BUBBLE CHAT: Combine context from all bubble messages
+    // If multiple messages arrived while AI was processing,
+    // combine them into one message for AI to understand full context.
+    // ============================================
+    let aiMessage = message;
+    
+    if (spamGuardInfo?.contextMessages && spamGuardInfo.contextMessages.length > 1) {
+      // Multiple messages in bubble - combine for AI context
+      // Filter out identical duplicates (keep unique texts), but preserve order
+      const seen = new Set<string>();
+      const uniqueContexts: Array<{ text: string; receivedAt: string }> = [];
+      
+      for (const ctx of spamGuardInfo.contextMessages) {
+        const normalized = ctx.text.trim();
+        if (!seen.has(normalized)) {
+          seen.add(normalized);
+          uniqueContexts.push(ctx);
+        }
+      }
+      
+      if (uniqueContexts.length > 1) {
+        // Build combined message with timestamps so AI understands the sequence
+        const parts = uniqueContexts.map((ctx, i) => {
+          const time = new Date(ctx.receivedAt).toLocaleTimeString('id-ID', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          });
+          return `[${time}] ${ctx.text}`;
+        });
+        
+        aiMessage = parts.join('\n');
+        
+        logger.info('💬 Bubble chat combined context', {
+          wa_user_id,
+          message_id,
+          originalMessages: spamGuardInfo.contextMessages.length,
+          uniqueMessages: uniqueContexts.length,
+          combinedLength: aiMessage.length,
+        });
+      }
+      // If only 1 unique text (all identical), just use the original message
+    }
     
     // ============================================
     // DELEGATE TO UNIFIED MESSAGE PROCESSOR
     // ============================================
     const result = await processUnifiedMessage({
       userId: wa_user_id,
-      message: message,
+      message: aiMessage,
       channel: 'whatsapp',
       mediaUrl: media_public_url || media_url,
       mediaType: media_type,
       villageId: village_id,
     });
     
-    // Stop typing indicator
-    await stopTyping(wa_user_id, village_id);
-    
     if (!result.success && result.error === 'Spam message detected') {
-      if (is_batched && batched_message_ids) {
-        await publishMessageStatus({ village_id, wa_user_id, message_ids: batched_message_ids, status: 'completed' });
-      }
+      await stopTyping(wa_user_id, village_id);
+      completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
+    
+    // ============================================
+    // SPAM GUARD: Check if response should be sent
+    // Re-check after AI processing — a newer message may have arrived
+    // during the AI LLM call and superseded this one.
+    // ============================================
+    const sendCheck = shouldSendResponse(village_id, wa_user_id, message_id);
+    
+    if (!sendCheck.send) {
+      // This message was superseded - don't send response to user
+      // DON'T stop typing — the latest message is still being processed
+      // and its handler will manage the typing indicator
+      logger.info('🔄 Response suppressed by spam guard (bubble superseded)', {
+        wa_user_id,
+        message_id,
+        reason: sendCheck.reason,
+        allMessageIds: sendCheck.allMessageIds,
+      });
+      
+      completeProcessing(village_id, wa_user_id, message_id);
+      return;
+    }
+    
+    // This is the latest message - send the response
+    // Stop typing ONLY when we're about to send the actual reply
+    await stopTyping(wa_user_id, village_id);
+
+    // Use allMessageIds to mark ALL identical messages as replied
+    const allBatchedIds = sendCheck.allMessageIds.length > 0
+      ? sendCheck.allMessageIds
+      : [message_id];
     
     // Publish AI reply
     await publishAIReply({
@@ -168,25 +255,29 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       reply_text: result.response,
       guidance_text: result.guidanceText,
       contacts: result.contacts,
-      message_id: is_batched ? undefined : message_id,
-      batched_message_ids: is_batched ? batched_message_ids : undefined,
+      message_id: message_id,
+      batched_message_ids: allBatchedIds,
     });
     
-    // Mark messages as completed
-    if (is_batched && batched_message_ids) {
+    // Mark all messages (including bubble/spam duplicates) as completed
+    if (allBatchedIds && allBatchedIds.length > 0) {
       await publishMessageStatus({
         village_id,
         wa_user_id,
-        message_ids: batched_message_ids,
+        message_ids: allBatchedIds,
         status: 'completed',
       });
     }
+    
+    completeProcessing(village_id, wa_user_id, message_id);
     
     logger.info('✅ WhatsApp message processed successfully', {
       wa_user_id,
       message_id,
       intent: result.intent,
       processingTimeMs: result.metadata.processingTimeMs,
+      spamGuardSendCheck: sendCheck.reason,
+      totalMarkedComplete: allBatchedIds?.length,
     });
     
   } catch (error: any) {
@@ -197,8 +288,10 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       wa_user_id,
       message_id,
       error: error.message,
-      isBatched: is_batched,
     });
+    
+    // Clean up spam guard state
+    completeProcessing(village_id, wa_user_id, message_id);
     
     // Add to AI retry queue
     addToAIRetryQueue(event, error.message || 'Unknown error');

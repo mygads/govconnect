@@ -8,6 +8,7 @@ import { sendTextMessage, sendContactMessage } from './wa.service';
 // This prevents duplicate messages in live chat dashboard
 import { updateConversation, clearAIStatus, setAIError } from './takeover.service';
 import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.service';
+import { clearUserBubble } from './spam-guard.service';
 
 let connection: any = null;
 let channel: any = null;
@@ -254,18 +255,6 @@ export function isConnected(): boolean {
 }
 
 /**
- * Force reconnection (for manual trigger)
- */
-export async function forceReconnect(): Promise<void> {
-  logger.info('🔄 Force reconnection triggered');
-  connection = null;
-  channel = null;
-  isReconnecting = false;
-  reconnectAttempts = 0;
-  await handleReconnect();
-}
-
-/**
  * AI Reply Event payload interface
  */
 interface AIReplyEvent {
@@ -428,6 +417,9 @@ export async function startConsumingAIReply(): Promise<void> {
           // Update conversation summary with AI response and reset unread count (AI handled it)
           await updateConversation(payload.wa_user_id, replyText, undefined, 'reset', payload.village_id, 'WHATSAPP');
           await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
+
+          // Clear bubble state so next messages start fresh (not superseded)
+          clearUserBubble(payload.village_id, payload.wa_user_id);
           
           // Mark messages as completed - handle both single and batched messages
           const messageIdsToComplete: string[] = [];

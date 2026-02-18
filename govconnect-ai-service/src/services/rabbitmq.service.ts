@@ -135,157 +135,6 @@ async function handleReconnect(): Promise<void> {
 }
 
 /**
- * ==================== MESSAGE BATCHING ====================
- * Collect multiple messages from same user and combine them
- */
-
-interface PendingBatch {
-  messages: MessageReceivedEvent[];
-  timer: NodeJS.Timeout | null;
-  firstMessageTime: number;
-}
-
-// Pending batches per user
-const pendingBatches: Map<string, PendingBatch> = new Map();
-
-/**
- * Add message to batch and process when ready
- */
-async function addToBatch(
-  event: MessageReceivedEvent,
-  onProcess: (batchedEvent: MessageReceivedEvent) => Promise<void>,
-  ackCallback: () => void
-): Promise<void> {
-  const { wa_user_id } = event;
-  
-  let batch = pendingBatches.get(wa_user_id);
-  
-  if (!batch) {
-    // Create new batch
-    batch = {
-      messages: [],
-      timer: null,
-      firstMessageTime: Date.now(),
-    };
-    pendingBatches.set(wa_user_id, batch);
-  }
-  
-  // Add message to batch
-  batch.messages.push(event);
-  
-  // Clear existing timer
-  if (batch.timer) {
-    clearTimeout(batch.timer);
-  }
-  
-  // Check if we should process immediately
-  const shouldProcessNow = 
-    batch.messages.length >= RABBITMQ_CONFIG.BATCHING.MAX_MESSAGES_PER_BATCH ||
-    Date.now() - batch.firstMessageTime > RABBITMQ_CONFIG.BATCHING.BATCH_WINDOW_MS;
-  
-  if (shouldProcessNow) {
-    await processBatch(wa_user_id, onProcess, ackCallback);
-  } else {
-    // Set timer to process batch after max wait time
-    batch.timer = setTimeout(async () => {
-      await processBatch(wa_user_id, onProcess, ackCallback);
-    }, RABBITMQ_CONFIG.BATCHING.MAX_WAIT_MS);
-  }
-}
-
-/**
- * Process a batch of messages for a user
- */
-async function processBatch(
-  wa_user_id: string,
-  onProcess: (event: MessageReceivedEvent) => Promise<void>,
-  ackCallback: () => void
-): Promise<void> {
-  const batch = pendingBatches.get(wa_user_id);
-  if (!batch || batch.messages.length === 0) return;
-  
-  // Clear timer and remove from pending
-  if (batch.timer) {
-    clearTimeout(batch.timer);
-  }
-  pendingBatches.delete(wa_user_id);
-  
-  const messages = batch.messages;
-  
-  if (messages.length === 1) {
-    // Single message - process normally
-    logger.info('📨 Processing single message', {
-      wa_user_id,
-      message_id: messages[0].message_id,
-    });
-    await onProcess(messages[0]);
-  } else {
-    // Multiple messages - combine them
-    logger.info('📦 Batching multiple messages', {
-      wa_user_id,
-      count: messages.length,
-      message_ids: messages.map(m => m.message_id),
-    });
-    
-    // Combine messages with context
-    const combinedMessage = combineMessages(messages);
-    
-    // Create batched event
-    const batchedEvent: MessageReceivedEvent = {
-      wa_user_id,
-      message: combinedMessage,
-      message_id: messages[messages.length - 1].message_id, // Use latest message ID
-      received_at: messages[messages.length - 1].received_at,
-      is_batched: true,
-      batched_message_ids: messages.map(m => m.message_id),
-      original_messages: messages.map(m => m.message),
-      // Take media from any message that has it
-      has_media: messages.some(m => m.has_media),
-      media_type: messages.find(m => m.has_media)?.media_type,
-      media_url: messages.find(m => m.has_media)?.media_url,
-      media_public_url: messages.find(m => m.has_media)?.media_public_url,
-      media_caption: messages.find(m => m.has_media)?.media_caption,
-    };
-    
-    await onProcess(batchedEvent);
-  }
-  
-  // Acknowledge all messages in batch
-  ackCallback();
-}
-
-/**
- * Combine multiple messages into a single message with context
- */
-function combineMessages(messages: MessageReceivedEvent[]): string {
-  if (messages.length === 1) {
-    return messages[0].message;
-  }
-  
-  // Format combined message
-  const parts: string[] = [];
-  
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i].message.trim();
-    if (msg) {
-      // Add message with numbering if multiple
-      if (messages.length > 2) {
-        parts.push(`${i + 1}. ${msg}`);
-      } else {
-        parts.push(msg);
-      }
-    }
-  }
-  
-  // Join messages naturally
-  if (parts.length === 2) {
-    return parts.join(' dan ');
-  } else {
-    return parts.join('\n');
-  }
-}
-
-/**
  * ==================== RETRY QUEUE CONFIGURATION ====================
  */
 
@@ -365,13 +214,6 @@ function addToFailedMessages(item: AIMessageRetry): void {
  */
 export function getFailedMessages(): FailedMessage[] {
   return Array.from(failedMessages.values()).sort((a, b) => b.failedAt - a.failedAt);
-}
-
-/**
- * Get failed message by ID
- */
-export function getFailedMessage(messageId: string): FailedMessage | undefined {
-  return failedMessages.get(messageId);
 }
 
 /**
@@ -557,7 +399,7 @@ function startAIRetryWorker(onMessage: (event: MessageReceivedEvent) => Promise<
             wa_user_id: item.event.wa_user_id,
             error_message: `FAILED after ${AI_MAX_RETRY_ATTEMPTS} retries: ${item.lastError}`,
             pending_message_id: item.event.message_id,
-            batched_message_ids: item.event.is_batched ? item.event.batched_message_ids : undefined,
+            batched_message_ids: item.event.batched_message_ids,
             can_retry: true, // Flag for dashboard to show retry button
           });
         }
@@ -859,11 +701,8 @@ export async function startConsuming(
       routingKey: RABBITMQ_CONFIG.ROUTING_KEY_CONSUME,
     });
     
-    // Set prefetch - allow more messages for batching
-    await channel.prefetch(RABBITMQ_CONFIG.BATCHING.MAX_MESSAGES_PER_BATCH);
-    
-    // Store ack callbacks for batching
-    const pendingAcks: Map<string, amqplib.ConsumeMessage[]> = new Map();
+    // Set prefetch - allow concurrent message processing for bubble chat dedup
+    await channel.prefetch(RABBITMQ_CONFIG.PREFETCH);
     
     // Start consuming
     await channel.consume(
@@ -880,35 +719,13 @@ export async function startConsuming(
             message_id: event.message_id,
           });
           
-          if (RABBITMQ_CONFIG.BATCHING.ENABLED) {
-            // Track pending acks for this user
-            const userAcks = pendingAcks.get(event.wa_user_id) || [];
-            userAcks.push(msg);
-            pendingAcks.set(event.wa_user_id, userAcks);
-            
-            // Add to batch
-            await addToBatch(event, onMessage, () => {
-              // Ack all messages for this user
-              const acks = pendingAcks.get(event.wa_user_id) || [];
-              for (const ack of acks) {
-                channel!.ack(ack);
-              }
-              pendingAcks.delete(event.wa_user_id);
-              
-              logger.debug('✅ Batch acknowledged', {
-                wa_user_id: event.wa_user_id,
-                count: acks.length,
-              });
-            });
-          } else {
-            // Process immediately without batching
-            await onMessage(event);
-            channel!.ack(msg);
-            
-            logger.debug('✅ Message acknowledged', {
-              message_id: event.message_id,
-            });
-          }
+          // Process immediately — bubble chat & spam guard handled at channel level
+          await onMessage(event);
+          channel!.ack(msg);
+          
+          logger.debug('✅ Message acknowledged', {
+            message_id: event.message_id,
+          });
         } catch (error: any) {
           logger.error('❌ Error processing message', {
             error: error.message,
@@ -1227,12 +1044,6 @@ export function isConnected(): boolean {
   return true;
 }
 
-/**
- * Check if we're in shutdown mode
- */
-export function isShuttingDownRabbitMQ(): boolean {
-  return isShuttingDown;
-}
 
 
 
