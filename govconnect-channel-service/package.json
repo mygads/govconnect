@@ -9,10 +9,14 @@
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:seed": "tsx prisma/seed.ts",
     "prisma:studio": "prisma studio",
     "test": "echo \"Tests will be added\"",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write \"src/**/*.ts\""
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "keywords": [
     "govconnect",
