@@ -282,15 +282,15 @@ TUGAS:
 Tentukan apakah user BERMAKSUD mengubah/mengoreksi namanya, atau nama tersebut hanya disebut dalam konteks lain (misalnya menyebut nama orang lain, nama tempat, dll).
 
 UPDATE_NAME — user ingin namanya diperbarui:
-- Klarifikasi nama: "nama saya Yoga", "saya Yoga bukan Wonyoung"
-- Koreksi nama: "nama saya salah, yang benar Yoga"
-- Permintaan ganti: "tolong ubah nama saya jadi Yoga", "ganti nama ke Yoga"
-- Menyatakan identitas berbeda: "bukan, saya Yoga"
+- Klarifikasi nama: "nama saya Clara", "saya Clara bukan Wonyoung"
+- Koreksi nama: "nama saya salah, yang benar Clara"
+- Permintaan ganti: "tolong ubah nama saya jadi Clara", "ganti nama ke Clara"
+- Menyatakan identitas berbeda: "bukan, saya Clara"
 
 NO_UPDATE — nama disebut tapi bukan untuk mengubah identitas user:
-- Menyebut nama orang lain: "saya mau tanya soal Pak Yoga"
-- Nama tempat/instansi: "kantor kelurahan Yoga"
-- Konteks pelaporan: "yang bermasalah atas nama Yoga"
+- Menyebut nama orang lain: "saya mau tanya soal Pak Clara"
+- Nama tempat/instansi: "kantor kelurahan Clara"
+- Konteks pelaporan: "yang bermasalah atas nama Clara"
 - Nama dalam percakapan umum tanpa intent mengubah identitas
 
 OUTPUT (JSON saja, tanpa markdown):
@@ -380,6 +380,7 @@ Analisis pesan user dan tentukan SEMUA aspek berikut dalam SATU jawaban:
 ⚠️ ATURAN PENTING — BEDAKAN "LAPOR" KELUHAN vs LAYANAN ADMINISTRATIF:
 - "lapor" + MASALAH INFRASTRUKTUR (jalan rusak, lampu mati, banjir, sampah, kebakaran) → COMPLAINT
 - "lapor" + PERISTIWA KEPENDUDUKAN (meninggal, lahir, pindah, cerai, nikah) → QUESTION (ini layanan surat/administrasi, BUKAN pengaduan)
+- "lapor" + NAMA LAYANAN SURAT/ADMINISTRASI (KTP, KK, SKTM, SKD, akta, surat, domisili) → QUESTION (ini layanan surat, BUKAN pengaduan)
 - "lapor" + DARURAT + BUTUH BANTUAN SEGERA (misal "tolong ada orang sakit keras", "kebakaran sekarang") → QUESTION dengan rag_needed: true, categories: ["kontak"] (prioritas: berikan nomor darurat)
 - "lapor" + DARURAT + INGIN BUAT LAPORAN (misal "mau lapor ada kecelakaan", "buat laporan kebakaran") → COMPLAINT (user ingin membuat laporan, bukan minta nomor darurat)
 - Jika user secara EKSPLISIT minta "buat laporan" atau "mau lapor" → COMPLAINT (meskipun topiknya darurat)
@@ -405,11 +406,13 @@ CONTOH:
 - "cara buat KTP gimana?" → QUESTION, rag_needed: true, categories: ["panduan-sop", "layanan_administrasi"]
 - "udah cukup makasih" → FAREWELL, rag_needed: false, categories: []
 - "jalan rusak depan masjid" → COMPLAINT, rag_needed: false, categories: []
-- "nama saya Yoga" → DATA_INPUT, rag_needed: false, categories: []
+- "nama saya Clara" → DATA_INPUT, rag_needed: false, categories: []
 - "ya" → CONFIRMATION, rag_needed: false, categories: []
 - "layanan apa aja yang ada?" → QUESTION, rag_needed: true, categories: ["layanan_administrasi"]
 - "alamat kantor desa dimana?" → QUESTION, rag_needed: true, categories: ["kontak", "profil_desa"]
 - "mau lapor meninggal" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"]
+- "mau lapor pembuatan KTP" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"]
+- "lapor urus surat pindah" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"]
 - "ada orang sakit keras butuh bantuan cepat" → QUESTION, rag_needed: true, categories: ["kontak"]
 - "minta nomor damkar sekarang" → QUESTION, rag_needed: true, categories: ["kontak"]
 - "sampah menumpuk di jalan" → COMPLAINT, rag_needed: false, categories: []
@@ -502,7 +505,7 @@ OUTPUT (JSON saja):
 }
 
 CONTOH:
-- "nama saya Yoga" → {"name":"Yoga","confidence":0.95,"is_name_statement":true}
+- "nama saya Clara" → {"name":"Clara","confidence":0.95,"is_name_statement":true}
 - "Budi Santoso" → {"name":"Budi Santoso","confidence":0.85,"is_name_statement":true}
 - "saya warga desa" → {"name":null,"confidence":0.9,"is_name_statement":false}
 - "halo" → {"name":null,"confidence":0.95,"is_name_statement":false}

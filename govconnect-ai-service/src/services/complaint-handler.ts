@@ -155,7 +155,7 @@ export async function handleComplaintCreation(
     });
 
     if (!kategori) {
-      return 'Mohon jelaskan jenis masalah yang ingin dilaporkan (contoh: jalan rusak, lampu mati, sampah, dll).';
+      return 'Mohon jelaskan jenis masalah yang ingin dilaporkan agar kami bisa membantu menindaklanjuti.';
     }
     if (!alamat) {
       // Store pending address request so we can continue when user provides address

@@ -106,12 +106,12 @@ const CACHEABLE_PATTERNS = [
   // Location questions
   /\b(dimana|di\s+mana|lokasi|alamat)\s+(kantor|kelurahan)\b/i,
   
-  // Requirement questions (generic)
-  /\b(syarat|persyaratan)\s+(buat|bikin|urus)\s+(skd|sktm|sku|surat)\b/i,
-  /\b(biaya|tarif)\s+(skd|sktm|sku|surat)\b/i,
+  // Requirement questions (service-agnostic — actual service names vary per village)
+  /\b(syarat|persyaratan)\s+(buat|bikin|urus)\s+\S+/i,
+  /\b(biaya|tarif)\s+(buat|bikin|urus|untuk)\s+\S+/i,
   
-  // Process questions (generic)
-  /\b(cara|proses)\s+(buat|bikin|urus)\s+(skd|sktm|sku|surat)\b/i,
+  // Process questions (service-agnostic)
+  /\b(cara|proses|prosedur)\s+(buat|bikin|urus)\s+\S+/i,
   /\b(berapa\s+lama)\s+(proses|buat|bikin)\b/i,
   
   // Contact questions

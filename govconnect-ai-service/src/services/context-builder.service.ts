@@ -6,6 +6,7 @@ import { getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '
 import { RAGContext } from '../types/embedding.types';
 import { summarizeConversation } from './micro-llm-matcher.service';
 import { buildComplaintCategoriesText } from './complaint-handler';
+import { buildServiceCatalogText } from './service-handler';
 
 interface Message {
   id: string;
@@ -30,7 +31,8 @@ export async function buildContext(
   ragContext?: RAGContext | string,
   complaintCategoriesText?: string,
   promptFocus?: PromptFocus,
-  villageName?: string
+  villageName?: string,
+  serviceCatalogText?: string
 ) {
   logger.info('Building context for LLM', { wa_user_id, promptFocus: promptFocus || 'full' });
 
@@ -54,6 +56,8 @@ export async function buildContext(
 
     // Default complaint categories: use dynamic DB-driven list when available
     const categoriesText = complaintCategoriesText || await buildComplaintCategoriesText(undefined);
+    // Default service catalog: use dynamic DB-driven list when available
+    const servicesText = serviceCatalogText || await buildServiceCatalogText(undefined);
     
     // Build full prompt using adaptive system prompt (filters by focus)
     // Pass hasKnowledge to skip PART5_KNOWLEDGE block when RAG returned no results (~400 tokens saved)
@@ -66,6 +70,7 @@ export async function buildContext(
       .replace(/\{\{current_time\}\}/g, currentTime)
       .replace(/\{\{time_of_day\}\}/g, timeOfDay)
       .replace(/\{\{complaint_categories\}\}/g, categoriesText)
+      .replace(/\{\{service_catalog\}\}/g, servicesText)
       .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
     
     // Log the formatted history for debugging
@@ -105,6 +110,7 @@ export async function buildContext(
       .replace(/\{\{current_time\}\}/g, wibFallback.time)
       .replace(/\{\{time_of_day\}\}/g, wibFallback.timeOfDay)
       .replace(/\{\{complaint_categories\}\}/g, await buildComplaintCategoriesText(undefined))
+      .replace(/\{\{service_catalog\}\}/g, await buildServiceCatalogText(undefined))
       .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
     
     return {
@@ -214,6 +220,13 @@ ATURAN ANTI-HALUSINASI (KRITIS):
 - DILARANG mengarahkan user untuk mengisi form publik / mengirim link layanan, kecuali link tersebut benar-benar ada di KNOWLEDGE_CONTEXT.
 - Jika informasi tidak ada di KNOWLEDGE_CONTEXT, reply_text harus menyatakan data belum tersedia untuk desa/kelurahan ini dan (opsional) menyarankan hubungi kantor pada jam kerja.
 - Jika KNOWLEDGE_CONTEXT berisi informasi terkait tapi TIDAK LENGKAP menjawab pertanyaan user, katakan "informasi lengkap belum tersedia" — JANGAN melengkapi sendiri.
+
+ATURAN KELENGKAPAN JAWABAN (WAJIB):
+- Tampilkan SEMUA poin, item, persyaratan, langkah, atau prosedur yang tersedia di KNOWLEDGE_CONTEXT — JANGAN diringkas.
+- JANGAN memotong daftar. Jika ada 10 item, tampilkan 10 item. JANGAN gunakan "dll", "dsb", "dan lain-lain", atau "...".
+- Lebih baik jawaban panjang tapi LENGKAP daripada ringkas tapi TERPOTONG.
+- Gunakan format numbered list atau bullet points agar mudah dibaca.
+- Jika ada sub-detail (deskripsi, catatan, keterangan) pada tiap item, sertakan juga.
 
 PRIORITAS DATA:
 - Jika ada data bertanda [SUMBER: DATABASE RESMI], gunakan data tersebut untuk field yang tercantum di dalamnya karena bersifat otoritatif.

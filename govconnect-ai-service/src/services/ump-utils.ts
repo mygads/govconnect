@@ -18,6 +18,7 @@ import { getVillageProfileSummary } from './knowledge.service';
 import { getComplaintTypes } from './case-client.service';
 import type { ChannelType } from './ump-formatters';
 import { buildComplaintCategoriesText } from './complaint-handler';
+import { buildServiceCatalogText } from './service-handler';
 import { conversationHistoryCache, complaintTypeCache } from './ump-state';
 import { RAGContext } from '../types/embedding.types';
 
@@ -371,6 +372,8 @@ export async function buildContextWithHistory(
 
   // Build dynamic complaint categories from DB
   const complaintCategoriesText = await buildComplaintCategoriesText(villageId);
+  // Build dynamic service catalog from DB
+  const serviceCatalogText = await buildServiceCatalogText(villageId);
 
   // Determine if knowledge exists for conditional prompt inclusion
   const hasKnowledge = !!knowledgeSection.trim();
@@ -389,7 +392,7 @@ export async function buildContextWithHistory(
     .replace(/\{\{current_time\}\}/g, currentTime)
     .replace(/\{\{time_of_day\}\}/g, timeOfDay)
     .replace(/\{\{complaint_categories\}\}/g, complaintCategoriesText)
-    .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
+      .replace(/\{\{service_catalog\}\}/g, serviceCatalogText)
 
   return { systemPrompt, messageCount: history.length };
 }

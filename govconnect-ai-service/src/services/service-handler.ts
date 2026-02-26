@@ -6,7 +6,7 @@
 import logger from '../utils/logger';
 import axios from 'axios';
 import { config } from '../config/env';
-import { requestServiceRequestEditToken } from './case-client.service';
+import { requestServiceRequestEditToken, getServiceCatalog } from './case-client.service';
 import { matchServiceSlug } from './micro-llm-matcher.service';
 import type { ChannelType, HandlerResult } from './ump-formatters';
 import {
@@ -18,6 +18,42 @@ import {
 } from './ump-formatters';
 import { serviceSearchCache, setPendingServiceFormOffer } from './ump-state';
 import { resolveVillageSlugForPublicForm } from './ump-utils';
+
+// ==================== SERVICE CATALOG TEXT FOR PROMPT ====================
+
+/**
+ * Build a brief service catalog summary for injection into LLM prompt.
+ * Fetches active services from Case Service DB and formats as a concise list
+ * so the LLM knows what services are ACTUALLY available for this village.
+ *
+ * Similar pattern to `buildComplaintCategoriesText()` in complaint-handler.ts.
+ */
+export async function buildServiceCatalogText(villageId?: string): Promise<string> {
+  try {
+    const services = await getServiceCatalog(villageId);
+    const active = services.filter(s => s.is_active);
+    if (!active.length) {
+      return '(Belum ada layanan yang terdaftar di sistem untuk desa ini)';
+    }
+
+    // Group by category
+    const categoryMap = new Map<string, string[]>();
+    for (const svc of active) {
+      const catName = svc.category?.name || 'Umum';
+      if (!categoryMap.has(catName)) categoryMap.set(catName, []);
+      categoryMap.get(catName)!.push(`${svc.name} [${svc.slug}]`);
+    }
+
+    const lines: string[] = [];
+    for (const [category, items] of categoryMap) {
+      lines.push(`- ${category}: ${items.join(', ')}`);
+    }
+    return lines.join('\n');
+  } catch (error: any) {
+    logger.warn('Failed to build service catalog text', { error: error.message });
+    return '(Daftar layanan tidak tersedia saat ini — sistem tetap bisa mencocokkan layanan secara otomatis)';
+  }
+}
 
 // ==================== SERVICE SLUG RESOLUTION ====================
 

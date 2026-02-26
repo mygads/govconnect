@@ -34,7 +34,7 @@ async function runTests() {
   const sessionId = "web_memory_test_" + Date.now();
   
   console.log("=== Test 1: Greeting dengan nama ===");
-  let r = await test(sessionId, "halo saya yoga");
+  let r = await test(sessionId, "halo saya Clara");
   console.log("Response:", r.response);
   console.log("Intent:", r.intent);
   console.log("");

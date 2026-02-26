@@ -48,7 +48,7 @@ function validateEnv(): Config {
     dashboardServiceUrl: process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:3000',
     internalApiKey: process.env.INTERNAL_API_KEY!,
     llmTemperature: parseFloat(process.env.LLM_TEMPERATURE || '0.3'),
-    llmMaxTokens: parseInt(process.env.LLM_MAX_TOKENS || '2048', 10),
+    llmMaxTokens: parseInt(process.env.LLM_MAX_TOKENS || '3072', 10),
     llmTimeoutMs: parseInt(process.env.LLM_TIMEOUT_MS || '30000', 10),
     maxHistoryMessages: parseInt(process.env.MAX_HISTORY_MESSAGES || '30', 10),
     // Rate limiting - defaults: enabled with 5 reports/day, 30s cooldown

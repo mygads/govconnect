@@ -169,13 +169,17 @@ export async function handleKnowledgeQuery(
     }
 
     // Skip second LLM call when main LLM already produced a substantive answer
+    // BUT only if the main reply looks detailed enough (contains bullet/numbered lists).
+    // Short or narrative-style answers are likely summaries → always use dedicated knowledge LLM.
     const hasPreloaded = !!preloadedContext;
-    if (hasPreloaded && mainLlmReplyText && mainLlmReplyText.length > 50) {
+    if (hasPreloaded && mainLlmReplyText && mainLlmReplyText.length > 120) {
       const isGeneric =
         /(saya akan|saya cari|mencari informasi|berikut informasi yang saya|sedang mencari)/i.test(
           mainLlmReplyText,
         );
-      if (!isGeneric) {
+      // Only reuse if reply is structured (has list markers) suggesting completeness
+      const isStructured = /(\n[-*•]\s|\n\d+[.)]\s)/.test(mainLlmReplyText);
+      if (!isGeneric && isStructured) {
         logger.info('[KnowledgeQuery] Reusing main LLM reply, skipping second callGemini', {
           userId,
           replyLength: mainLlmReplyText.length,

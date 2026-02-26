@@ -69,11 +69,11 @@ export async function handleStatusCheck(
     if (!detailMode) {
       const isExplicitCheck = /(cek|status|cek\s+laporan|cek\s+lagi)/i.test(currentMessage || '');
       const statusInfo = getStatusInfo(result.data.status);
-      if (!isExplicitCheck && statusInfo.text === 'PROCESS') {
-        return `Mohon maaf Pak/Bu, laporan ${cId} masih dalam proses penanganan oleh petugas desa.`;
+      if (!isExplicitCheck && statusInfo.key === 'PROCESS') {
+        return `Mohon maaf Pak/Bu, laporan ${cId} masih *Sedang Diproses* oleh petugas desa.`;
       }
-      if (!isExplicitCheck && statusInfo.text === 'OPEN') {
-        return `Mohon maaf Pak/Bu, laporan ${cId} masih menunggu untuk diproses oleh petugas desa.`;
+      if (!isExplicitCheck && statusInfo.key === 'OPEN') {
+        return `Mohon maaf Pak/Bu, laporan ${cId} masih *Menunggu Diproses* oleh petugas desa.`;
       }
     }
     return detailMode ? buildComplaintDetailResponse(result.data) : buildNaturalStatusResponse(result.data);
