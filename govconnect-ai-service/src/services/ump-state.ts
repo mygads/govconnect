@@ -12,6 +12,7 @@ import { LRUCache } from '../utils/lru-cache';
 import { registerInterval } from '../utils/timer-registry';
 import { updateConversationUserProfile } from './channel-client.service';
 import { deleteProfile } from './user-profile.service';
+import { persistState, deleteState, loadState, deleteAllUserStates } from './state-persistence.service';
 import type { ChannelType } from './ump-formatters';
 
 // ==================== LRU CACHES ====================
@@ -75,6 +76,26 @@ export const pendingComplaintData = new LRUCache<string, {
   timestamp: number;
   waitingFor: 'nama' | 'no_hp';
 }>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingComplaintData' });
+
+// --- Pending Complaint Data accessors with DB persistence (Temuan 7) ---
+export function setPendingComplaintData(userId: string, data: Parameters<typeof pendingComplaintData.set>[1]) {
+  pendingComplaintData.set(userId, data);
+  persistState(userId, 'pendingComplaintData', data);
+}
+export function getPendingComplaintData(userId: string) {
+  return pendingComplaintData.get(userId);
+}
+export async function getPendingComplaintDataWithFallback(userId: string) {
+  const cached = pendingComplaintData.get(userId);
+  if (cached) return cached;
+  const persisted = await loadState<NonNullable<ReturnType<typeof pendingComplaintData.get>>>(userId, 'pendingComplaintData');
+  if (persisted) pendingComplaintData.set(userId, persisted);
+  return persisted;
+}
+export function clearPendingComplaintData(userId: string) {
+  pendingComplaintData.delete(userId);
+  deleteState(userId, 'pendingComplaintData');
+}
 
 /** Accumulated photos cache (for multi-photo complaint support, max 5 per user) */
 export const pendingPhotos = new LRUCache<string, {
@@ -225,6 +246,8 @@ export function clearUserCaches(userId: string): { cleared: number } {
   }
   // Fully delete user profile so AI has zero memory of this user
   deleteProfile(userId);
+  // Also clear persisted state from DB (Temuan 7)
+  deleteAllUserStates(userId);
   logger.info(`[Admin] Cleared caches for user: ${userId}`, { cleared });
   return { cleared };
 }
@@ -304,8 +327,17 @@ export async function drainActiveProcessing(maxWaitMs: number = 15_000): Promise
 export function getPendingAddressConfirmation(userId: string) {
   return pendingAddressConfirmation.get(userId);
 }
+export async function getPendingAddressConfirmationWithFallback(userId: string) {
+  const cached = pendingAddressConfirmation.get(userId);
+  if (cached) return cached;
+  // Lazy hydrate from DB (Temuan 7)
+  const persisted = await loadState<typeof cached>(userId, 'pendingAddressConfirmation');
+  if (persisted) pendingAddressConfirmation.set(userId, persisted);
+  return persisted;
+}
 export function clearPendingAddressConfirmation(userId: string) {
   pendingAddressConfirmation.delete(userId);
+  deleteState(userId, 'pendingAddressConfirmation');
 }
 export function setPendingAddressConfirmation(userId: string, data: {
   alamat: string;
@@ -316,6 +348,7 @@ export function setPendingAddressConfirmation(userId: string, data: {
   foto_url?: string;
 }) {
   pendingAddressConfirmation.set(userId, data);
+  persistState(userId, 'pendingAddressConfirmation', data);
 }
 
 // --- Cancel Confirmation ---
@@ -365,8 +398,16 @@ export function setPendingEmergencyComplaintOffer(userId: string, data: {
 export function getPendingAddressRequest(userId: string) {
   return pendingAddressRequest.get(userId);
 }
+export async function getPendingAddressRequestWithFallback(userId: string) {
+  const cached = pendingAddressRequest.get(userId);
+  if (cached) return cached;
+  const persisted = await loadState<typeof cached>(userId, 'pendingAddressRequest');
+  if (persisted) pendingAddressRequest.set(userId, persisted);
+  return persisted;
+}
 export function clearPendingAddressRequest(userId: string) {
   pendingAddressRequest.delete(userId);
+  deleteState(userId, 'pendingAddressRequest');
 }
 export function setPendingAddressRequest(userId: string, data: {
   kategori: string;
@@ -376,4 +417,5 @@ export function setPendingAddressRequest(userId: string, data: {
   foto_url?: string;
 }) {
   pendingAddressRequest.set(userId, data);
+  persistState(userId, 'pendingAddressRequest', data);
 }

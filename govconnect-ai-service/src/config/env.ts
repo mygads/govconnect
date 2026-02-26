@@ -20,6 +20,8 @@ interface Config {
   autoBlacklistViolations: number;
   // Testing mode
   testingMode: boolean;
+  // PII encryption
+  profileEncryptionKey: string; // AES-256-GCM key (hex). Empty = encryption disabled
 }
 
 function validateEnv(): Config {
@@ -58,7 +60,13 @@ function validateEnv(): Config {
     autoBlacklistViolations: parseInt(process.env.AUTO_BLACKLIST_VIOLATIONS || '10', 10),
     // Testing mode - defaults: false (production mode)
     testingMode: process.env.TESTING_MODE === 'true', // Default: false
+    // PII encryption key — empty means encryption disabled
+    profileEncryptionKey: process.env.PROFILE_ENCRYPTION_KEY || '',
   };
+
+  if (config.nodeEnv === 'production' && !config.profileEncryptionKey) {
+    logger.warn('⚠️  PROFILE_ENCRYPTION_KEY not set — PII encryption disabled in production');
+  }
 
   logger.info('✅ Environment configuration validated', {
     port: config.port,

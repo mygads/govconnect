@@ -17,6 +17,7 @@ interface EnvConfig {
   CASE_SERVICE_URL: string;
   NOTIFICATION_SERVICE_URL: string;
   AI_SERVICE_URL: string;
+  WEBHOOK_ALLOWED_IPS: string; // Comma-separated IP allowlist for webhook origin verification
 }
 
 function validateEnv(): EnvConfig {
@@ -52,6 +53,7 @@ function validateEnv(): EnvConfig {
     CASE_SERVICE_URL: process.env.CASE_SERVICE_URL || 'http://localhost:3003',
     NOTIFICATION_SERVICE_URL: process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004',
     AI_SERVICE_URL: process.env.AI_SERVICE_URL || 'http://localhost:3002',
+    WEBHOOK_ALLOWED_IPS: process.env.WEBHOOK_ALLOWED_IPS || '',
   };
 }
 

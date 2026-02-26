@@ -10,6 +10,7 @@
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { registerInterval } from '../utils/timer-registry';
+import prisma from '../lib/prisma';
 
 interface UserRateData {
   wa_user_id: string;
@@ -63,11 +64,83 @@ class RateLimiterService {
       lastUpdated: new Date().toISOString(),
     };
     this.startDailyReset();
-    logger.info('🛡️ Rate Limiter Service initialized (in-memory)', {
+    this.loadBlacklistFromDB(); // Temuan 8: hydrate from DB on startup
+    logger.info('🛡️ Rate Limiter Service initialized (in-memory + DB blacklist)', {
       enabled: config.rateLimitEnabled,
       maxReportsPerDay: config.maxReportsPerDay,
       cooldownSeconds: config.cooldownSeconds,
     });
+  }
+
+  /**
+   * Load blacklist from PostgreSQL on startup (Temuan 8)
+   */
+  private async loadBlacklistFromDB(): Promise<void> {
+    try {
+      const rows = await prisma.rate_limit_blacklist.findMany({
+        where: {
+          OR: [
+            { expires_at: null },
+            { expires_at: { gt: new Date() } },
+          ],
+        },
+      });
+
+      for (const row of rows) {
+        this.data.blacklist[row.wa_user_id] = {
+          wa_user_id: row.wa_user_id,
+          reason: row.reason,
+          addedAt: row.blocked_at.toISOString(),
+          addedBy: 'system',
+          expiresAt: row.expires_at?.toISOString(),
+        };
+      }
+
+      if (rows.length > 0) {
+        logger.info(`🛡️ Loaded ${rows.length} blacklist entries from DB`);
+      }
+    } catch (err) {
+      logger.warn('Failed to load blacklist from DB (will use empty)', {
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  /**
+   * Persist blacklist entry to DB (fire-and-forget, Temuan 8)
+   */
+  private persistBlacklistEntry(wa_user_id: string, entry: BlacklistEntry): void {
+    prisma.rate_limit_blacklist
+      .upsert({
+        where: { wa_user_id },
+        update: {
+          reason: entry.reason,
+          expires_at: entry.expiresAt ? new Date(entry.expiresAt) : null,
+          violation_count: this.data.users[wa_user_id]?.violations || 0,
+        },
+        create: {
+          wa_user_id,
+          reason: entry.reason,
+          blocked_at: new Date(entry.addedAt),
+          expires_at: entry.expiresAt ? new Date(entry.expiresAt) : null,
+          violation_count: this.data.users[wa_user_id]?.violations || 0,
+        },
+      })
+      .catch((err) => {
+        logger.warn('Failed to persist blacklist entry', {
+          wa_user_id,
+          error: (err as Error).message,
+        });
+      });
+  }
+
+  /**
+   * Remove blacklist entry from DB (fire-and-forget, Temuan 8)
+   */
+  private removeBlacklistFromDB(wa_user_id: string): void {
+    prisma.rate_limit_blacklist
+      .delete({ where: { wa_user_id } })
+      .catch(() => {}); // Ignore if not found
   }
 
   /**
@@ -278,6 +351,9 @@ class RateLimiterService {
       addedBy,
       expiresAt,
     };
+
+    // Persist to DB (Temuan 8)
+    this.persistBlacklistEntry(wa_user_id, this.data.blacklist[wa_user_id]);
     
     logger.warn('🚫 User added to blacklist', {
       wa_user_id,
@@ -293,6 +369,7 @@ class RateLimiterService {
   removeFromBlacklist(wa_user_id: string): boolean {
     if (this.data.blacklist[wa_user_id]) {
       delete this.data.blacklist[wa_user_id];
+      this.removeBlacklistFromDB(wa_user_id); // Temuan 8
       logger.info('✅ User removed from blacklist', { wa_user_id });
       return true;
     }

@@ -484,7 +484,7 @@ function getRelativeTime(timestamp: string): string {
 }
 
 /**
- * Sanitize user input to prevent prompt injection
+ * Sanitize user input to prevent prompt injection (Temuan 41 — strengthened)
  * Removes potentially harmful patterns while preserving valid content
  */
 export function sanitizeUserInput(input: string): string {
@@ -496,6 +496,9 @@ export function sanitizeUserInput(input: string): string {
   // Remove control characters (except newlines)
   sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   
+  // Remove zero-width / invisible unicode characters used to bypass filters
+  sanitized = sanitized.replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD]/g, '');
+  
   // Limit length to prevent context overflow
   if (sanitized.length > 1000) {
     sanitized = sanitized.substring(0, 1000) + '...';
@@ -503,18 +506,42 @@ export function sanitizeUserInput(input: string): string {
   
   // Remove potential prompt injection patterns
   const injectionPatterns = [
-    /ignore\s+(previous|all|above)\s+instructions?/gi,
-    /you\s+are\s+(now|a)\s+/gi,
+    // English injection patterns
+    /ignore\s+(previous|all|above|prior|earlier|system)\s+instructions?/gi,
+    /disregard\s+(previous|all|above|prior)\s+instructions?/gi,
+    /forget\s+(previous|all|above|prior|your)\s+instructions?/gi,
+    /you\s+are\s+(now|a|no\s+longer)\s+/gi,
+    /pretend\s+(you\s+are|to\s+be|you're)/gi,
+    /act\s+as\s+(if|a|an|though)/gi,
+    /role\s*play\s+as/gi,
+    /new\s+instructions?\s*:/gi,
+    /override\s+(previous|all|your|system)/gi,
     /system\s*:\s*/gi,
     /\[\s*INST\s*\]/gi,
+    /\[\s*SYS(TEM)?\s*\]/gi,
     /<\/?system>/gi,
+    /<\/?instruction>/gi,
     /\{\{[^}]+\}\}/g,  // Template injection
+    /\$\{[^}]+\}/g,    // Template literal injection
+    // Special token attacks
+    /<<\s*SYS\s*>>/gi,
+    /<\|im_start\|>/gi,
+    /<\|im_end\|>/gi,
+    /<\|endoftext\|>/gi,
     // Indonesian prompt injection patterns
-    /abaikan\s+(instruksi|perintah|aturan)\s+(sebelumnya|di\s*atas|semua)/gi,
-    /lupakan\s+(instruksi|perintah|aturan)/gi,
-    /kamu\s+(sekarang|adalah)\s+(seorang|menjadi)/gi,
+    /abaikan\s+(instruksi|perintah|aturan|semua)\s*(sebelumnya|di\s*atas|semua)?/gi,
+    /lupakan\s+(instruksi|perintah|aturan|semua)/gi,
+    /kamu\s+(sekarang|adalah|bukan\s+lagi)\s+(seorang|menjadi)/gi,
+    /berpura[-\s]?pura\s+(menjadi|jadi|sebagai)/gi,
+    /instruksi\s+baru\s*:/gi,
+    /ganti\s+(peran|role|instruksi)/gi,
+    /timpa\s+(instruksi|aturan|perintah)/gi,
     // Role injection prevention (could trick LLM via conversation history)
-    /^(assistant|system)\s*:/gmi,
+    /^(assistant|system|human|user)\s*:/gmi,
+    // DAN / jailbreak patterns
+    /\bDAN\b.*\bmode\b/gi,
+    /\bjailbreak\b/gi,
+    /\bdev(eloper)?\s+mode\b/gi,
   ];
   
   for (const pattern of injectionPatterns) {
@@ -528,6 +555,7 @@ export function sanitizeUserInput(input: string): string {
  * Sanitize knowledge context retrieved from RAG before injecting into prompts.
  * Lighter than sanitizeUserInput — knowledge is admin-managed but could still
  * contain injection patterns if malicious content was uploaded to KB.
+ * (Temuan 41 — strengthened)
  */
 function sanitizeKnowledgeContext(context: string): string {
   if (!context) return '';
@@ -536,17 +564,31 @@ function sanitizeKnowledgeContext(context: string): string {
 
   // Remove control characters (except \n, \r, \t for formatting)
   sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  
+  // Remove zero-width / invisible unicode characters
+  sanitized = sanitized.replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD]/g, '');
 
   // Strip prompt injection patterns that could override system instructions
   const injectionPatterns = [
-    /ignore\s+(previous|all|above)\s+instructions?/gi,
-    /you\s+are\s+(now|a)\s+/gi,
+    /ignore\s+(previous|all|above|prior|system)\s+instructions?/gi,
+    /disregard\s+(previous|all|above|prior)\s+instructions?/gi,
+    /you\s+are\s+(now|a|no\s+longer)\s+/gi,
+    /pretend\s+(you\s+are|to\s+be)/gi,
+    /act\s+as\s+(if|a|an)/gi,
+    /new\s+instructions?\s*:/gi,
+    /override\s+(previous|all|your|system)/gi,
     /\[\s*INST\s*\]/gi,
+    /\[\s*SYS(TEM)?\s*\]/gi,
     /<\/?system>/gi,
+    /<\/?instruction>/gi,
     /\{\{[^}]+\}\}/g,
-    /abaikan\s+(instruksi|perintah|aturan)\s+(sebelumnya|di\s*atas|semua)/gi,
-    /lupakan\s+(instruksi|perintah|aturan)/gi,
-    /^(assistant|system)\s*:/gmi,
+    /\$\{[^}]+\}/g,
+    /<<\s*SYS\s*>>/gi,
+    /<\|im_start\|>/gi,
+    /<\|im_end\|>/gi,
+    /abaikan\s+(instruksi|perintah|aturan|semua)\s*(sebelumnya|di\s*atas|semua)?/gi,
+    /lupakan\s+(instruksi|perintah|aturan|semua)/gi,
+    /^(assistant|system|human|user)\s*:/gmi,
   ];
 
   for (const pattern of injectionPatterns) {
