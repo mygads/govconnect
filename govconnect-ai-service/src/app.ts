@@ -72,10 +72,10 @@ const internalAuthMiddleware = (req: Request, res: Response, next: any) => {
   next();
 };
 
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
-// Prometheus Metrics endpoint
-app.get('/metrics', async (req: Request, res: Response) => {
+// Prometheus Metrics endpoint (protected — Temuan 3)
+app.get('/metrics', internalAuthMiddleware, async (req: Request, res: Response) => {
   try {
     res.set('Content-Type', promClient.register.contentType);
     const metrics = await promClient.register.metrics();
@@ -84,29 +84,48 @@ app.get('/metrics', async (req: Request, res: Response) => {
     res.status(500).send('Error collecting metrics');
   }
 });
-// Swagger API Documentation
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-  explorer: true,
-  customSiteTitle: 'GovConnect AI Service API',
-  customCss: '.swagger-ui .topbar { display: none }',
-  swaggerOptions: {
-    persistAuthorization: true,
-    displayRequestDuration: true,
-    docExpansion: 'list',
-  },
-}));
+// Swagger API Documentation (protected in production — Temuan 4)
+if (config.nodeEnv !== 'production') {
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    explorer: true,
+    customSiteTitle: 'GovConnect AI Service API',
+    customCss: '.swagger-ui .topbar { display: none }',
+    swaggerOptions: {
+      persistAuthorization: true,
+      displayRequestDuration: true,
+      docExpansion: 'list',
+    },
+  }));
+  app.get('/api-docs.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(swaggerSpec);
+  });
+} else {
+  app.use('/api-docs', internalAuthMiddleware, swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    explorer: true,
+    customSiteTitle: 'GovConnect AI Service API',
+    customCss: '.swagger-ui .topbar { display: none }',
+    swaggerOptions: {
+      persistAuthorization: true,
+      displayRequestDuration: true,
+      docExpansion: 'list',
+    },
+  }));
+  app.get('/api-docs.json', internalAuthMiddleware, (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(swaggerSpec);
+  });
+}
 
-// OpenAPI spec as JSON
-app.get('/api-docs.json', (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.send(swaggerSpec);
+// Minimal health endpoint for Docker/K8s liveness probe (Temuan 12)
+app.get('/health', (req: Request, res: Response) => {
+  res.json({ status: 'ok', service: 'ai-orchestrator', timestamp: new Date().toISOString() });
 });
 
-app.get('/health', (req: Request, res: Response) => {
+// Detailed health endpoint — protected (Temuan 12)
+app.get('/admin/health/detailed', internalAuthMiddleware, (req: Request, res: Response) => {
   const cbStats = resilientHttp.getStats();
   const rabbitConnected = isRabbitMQConnected();
-  // Liveness: always 200 (don't let Docker restart for downstream issues)
-  // Readiness: include downstream info for monitoring
   res.json({
     status: rabbitConnected ? 'ok' : 'degraded',
     service: 'ai-orchestrator',
@@ -116,7 +135,7 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
-app.get('/health/rabbitmq', (req: Request, res: Response) => {
+app.get('/admin/health/rabbitmq', internalAuthMiddleware, (req: Request, res: Response) => {
   const connected = isRabbitMQConnected();
   const publishRetryQueue = getRetryQueueStatus();
   const aiRetryQueue = getAIRetryQueueStatus();
@@ -946,7 +965,7 @@ app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/webchat', webchatRoutes);
-app.use('/api/status', statusRoutes);
+app.use('/api/status', internalAuthMiddleware, statusRoutes);
 app.use('/api/testing', testingRoutes);
 
 /**
@@ -1195,8 +1214,17 @@ function getCircuitBreakerDescription(state: string): string {
   }
 }
 
-// Root endpoint
+// Root endpoint — minimal info only (Temuan 32)
 app.get('/', (req: Request, res: Response) => {
+  res.json({
+    service: 'GovConnect AI Orchestrator',
+    version: '1.0.0',
+    status: 'running',
+  });
+});
+
+// Full endpoint map — protected (Temuan 32)
+app.get('/admin/routes', internalAuthMiddleware, (req: Request, res: Response) => {
   res.json({
     service: 'GovConnect AI Orchestrator',
     version: '1.0.0',
@@ -1205,7 +1233,8 @@ app.get('/', (req: Request, res: Response) => {
     description: 'Stateless AI service for processing WhatsApp messages',
     endpoints: {
       health: '/health',
-      // Dashboard & Analytics
+      healthDetailed: '/admin/health/detailed',
+      healthRabbitmq: '/admin/health/rabbitmq',
       dashboard: '/stats/dashboard',
       routing: '/stats/routing',
       analyzeComplexity: 'POST /stats/analyze-complexity',
@@ -1224,14 +1253,11 @@ app.get('/', (req: Request, res: Response) => {
       rateLimit: '/rate-limit',
       rateLimitCheck: '/rate-limit/check/:wa_user_id',
       blacklist: '/rate-limit/blacklist',
-      // Vector API
       knowledgeVectors: '/api/knowledge',
       knowledgeEmbedAll: '/api/knowledge/embed-all',
       vectorSearch: '/api/search',
       documentUpload: '/api/upload',
-      // Web Chat API
       webchat: '/api/webchat',
-      // Processing Status API
       processingStatus: '/api/status/:userId',
       processingStatusSummary: '/api/status/summary',
       processingStatusActive: '/api/status/active',
@@ -1252,7 +1278,7 @@ app.use((req: Request, res: Response) => {
   });
 });
 
-// Error handler
+// Error handler (Temuan 19 — hide details in production)
 app.use((err: Error, req: Request, res: Response, next: any) => {
   logger.error('Unhandled error', {
     error: err.message,
@@ -1260,7 +1286,9 @@ app.use((err: Error, req: Request, res: Response, next: any) => {
   });
   res.status(500).json({
     error: 'Internal server error',
-    message: err.message,
+    message: config.nodeEnv === 'production'
+      ? 'Terjadi kesalahan pada server'
+      : err.message,
   });
 });
 

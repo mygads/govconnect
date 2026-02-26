@@ -374,8 +374,8 @@ DATABASE_URL="postgresql://user:pass@localhost:5432/gc_channel_db"
 RABBITMQ_URL="amqp://user:pass@localhost:5672"
 
 # WA Provider (genfity-wa / whatsapp-api)
-# WA_API_URL harus mengarah ke prefix `/wa`
-WA_API_URL="https://wa-api.genfity.com/wa"
+# WA_API_URL harus mengarah ke prefix `/v1/wa`
+WA_API_URL="https://api-wa.genfity.com/v1/wa"
 
 # Token fallback (opsional). Umumnya token sesi disimpan otomatis di DB internal.
 WA_ACCESS_TOKEN=""

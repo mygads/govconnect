@@ -17,6 +17,7 @@ interface EnvConfig {
   CASE_SERVICE_URL: string;
   NOTIFICATION_SERVICE_URL: string;
   AI_SERVICE_URL: string;
+  WEBHOOK_ALLOWED_IPS: string; // Comma-separated IP allowlist for webhook origin verification
 }
 
 function validateEnv(): EnvConfig {
@@ -42,9 +43,9 @@ function validateEnv(): EnvConfig {
     // WA Support V2 service (direct integration, replaces genfity-app middleman)
     WA_SUPPORT_URL: process.env.WA_SUPPORT_URL || '',
     WA_SUPPORT_INTERNAL_API_KEY: process.env.WA_SUPPORT_INTERNAL_API_KEY || '',
-    // WA_API_URL: WhatsApp provider base URL (includes /wa prefix)
+    // WA_API_URL: WhatsApp provider base URL (includes /v1/wa prefix)
     // Now used only as fallback; primary path goes through wa-support-v2
-    WA_API_URL: process.env.WA_API_URL || 'https://wa-api.genfity.com/wa',
+    WA_API_URL: process.env.WA_API_URL || 'https://api-wa.genfity.com/v1/wa',
     // WA_WEBHOOK_VERIFY_TOKEN: Optional - if empty, accepts any webhook without verification
     WA_WEBHOOK_VERIFY_TOKEN: process.env.WA_WEBHOOK_VERIFY_TOKEN || '',
     LOG_LEVEL: process.env.LOG_LEVEL || 'info',
@@ -52,6 +53,7 @@ function validateEnv(): EnvConfig {
     CASE_SERVICE_URL: process.env.CASE_SERVICE_URL || 'http://localhost:3003',
     NOTIFICATION_SERVICE_URL: process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004',
     AI_SERVICE_URL: process.env.AI_SERVICE_URL || 'http://localhost:3002',
+    WEBHOOK_ALLOWED_IPS: process.env.WEBHOOK_ALLOWED_IPS || '',
   };
 }
 

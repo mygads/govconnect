@@ -1,4 +1,4 @@
-# GovConnect Case Service
+# Tanggapin AI Case Service
 
 <!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix -->
 

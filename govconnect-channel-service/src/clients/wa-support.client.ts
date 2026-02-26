@@ -393,7 +393,7 @@ class WaSupportClient {
   /** Generic WA gateway request */
   async waGateway(sessionToken: string, path: string, method: string = 'GET', body?: any): Promise<WaSupportResult> {
     try {
-      const url = `${this.baseUrl}/wa${path.startsWith('/') ? path : `/${path}`}`;
+      const url = `${this.baseUrl}/v1/wa${path.startsWith('/') ? path : `/${path}`}`;
       const res = await this.http.request({
         url,
         method,

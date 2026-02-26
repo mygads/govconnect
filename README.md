@@ -1,10 +1,10 @@
-# 🟩 GovConnect - AI-Powered Government Services Platform
+# 🟩 Tanggapin AI - AI-Powered Government Services Platform
 
 Sistem layanan pemerintah berbasis WhatsApp dengan AI orchestrator untuk menangani laporan warga dan permohonan layanan (form publik).
 
 ## 🏗️ Architecture
 
-GovConnect menggunakan **microservices architecture** dengan 5 services utama:
+Tanggapin AI menggunakan **microservices architecture** dengan 5 services utama:
 
 ```
 ┌─────────────┐

@@ -20,6 +20,8 @@ interface Config {
   autoBlacklistViolations: number;
   // Testing mode
   testingMode: boolean;
+  // PII encryption
+  profileEncryptionKey: string; // AES-256-GCM key (hex). Empty = encryption disabled
 }
 
 function validateEnv(): Config {
@@ -48,7 +50,7 @@ function validateEnv(): Config {
     dashboardServiceUrl: process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:3000',
     internalApiKey: process.env.INTERNAL_API_KEY!,
     llmTemperature: parseFloat(process.env.LLM_TEMPERATURE || '0.3'),
-    llmMaxTokens: parseInt(process.env.LLM_MAX_TOKENS || '2048', 10),
+    llmMaxTokens: parseInt(process.env.LLM_MAX_TOKENS || '3072', 10),
     llmTimeoutMs: parseInt(process.env.LLM_TIMEOUT_MS || '30000', 10),
     maxHistoryMessages: parseInt(process.env.MAX_HISTORY_MESSAGES || '30', 10),
     // Rate limiting - defaults: enabled with 5 reports/day, 30s cooldown
@@ -58,7 +60,13 @@ function validateEnv(): Config {
     autoBlacklistViolations: parseInt(process.env.AUTO_BLACKLIST_VIOLATIONS || '10', 10),
     // Testing mode - defaults: false (production mode)
     testingMode: process.env.TESTING_MODE === 'true', // Default: false
+    // PII encryption key — empty means encryption disabled
+    profileEncryptionKey: process.env.PROFILE_ENCRYPTION_KEY || '',
   };
+
+  if (config.nodeEnv === 'production' && !config.profileEncryptionKey) {
+    logger.warn('⚠️  PROFILE_ENCRYPTION_KEY not set — PII encryption disabled in production');
+  }
 
   logger.info('✅ Environment configuration validated', {
     port: config.port,

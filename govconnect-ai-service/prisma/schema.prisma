@@ -143,3 +143,38 @@ model ai_token_usage {
   @@index([channel, created_at])
   @@index([key_source])
 }
+
+// ==================== CONVERSATION SESSIONS (Temuan 7) ====================
+// Persists critical in-memory conversation state to survive restarts
+// Fire-and-forget writes — stale data is acceptable, lost data is not
+
+model conversation_sessions {
+  id              String   @id @default(cuid())
+  wa_user_id      String
+  session_key     String   // e.g. "pendingComplaintData", "pendingAddressConfirmation"
+  state_json      String   @db.Text // JSON-serialized state
+  expires_at      DateTime // Auto-cleanup expired sessions
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@unique([wa_user_id, session_key])
+  @@index([wa_user_id])
+  @@index([expires_at])
+}
+
+// ==================== RATE LIMIT BLACKLIST (Temuan 8) ====================
+// Persists rate limiter blacklist entries so they survive service restarts
+
+model rate_limit_blacklist {
+  id              String   @id @default(cuid())
+  wa_user_id      String   @unique
+  reason          String
+  blocked_at      DateTime @default(now())
+  expires_at      DateTime? // null = permanent
+  violation_count Int      @default(0)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@index([wa_user_id])
+  @@index([expires_at])
+}

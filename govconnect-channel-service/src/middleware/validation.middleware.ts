@@ -2,6 +2,59 @@ import { Request, Response, NextFunction } from 'express';
 import { body, query, validationResult } from 'express-validator';
 import logger from '../utils/logger';
 
+// ==================== WEBHOOK ORIGIN VERIFICATION (Temuan 10) ====================
+
+/**
+ * IP Allowlist untuk webhook — hanya terima request dari IP Genfity-WA yang dikenal.
+ *
+ * Catatan arsitektur:
+ * Genfity-WA (wa-support-v2) TIDAK mengirim header HMAC signature dan
+ * CreateSessionRequest TIDAK punya field webhook_secret, sehingga HMAC
+ * tidak bisa diterapkan tanpa modifikasi sisi server WA.
+ *
+ * Strategi pengganti (defense-in-depth):
+ * 1. IP allowlist — hanya terima webhook dari IP yang dikenali (layer ini)
+ * 2. instanceName validation — payload harus berisi instanceName yang match session di DB
+ *    (sudah ada di webhook controller via resolveVillageIdFromInstanceName)
+ * 3. WA_WEBHOOK_VERIFY_TOKEN — untuk GET verification challenge (sudah ada)
+ *
+ * Env var: WEBHOOK_ALLOWED_IPS (comma-separated, opsional)
+ * Jika kosong → verifikasi IP dilewati (dev mode / trust reverse proxy).
+ */
+const ALLOWED_IPS = (process.env.WEBHOOK_ALLOWED_IPS || '')
+  .split(',')
+  .map(ip => ip.trim())
+  .filter(Boolean);
+
+export function verifyWebhookOrigin(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  // Skip if no allowlist configured (development / behind trusted reverse proxy)
+  if (ALLOWED_IPS.length === 0) {
+    return next();
+  }
+
+  // Extract client IP — support reverse proxy (X-Forwarded-For) and direct connection
+  const forwardedFor = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim();
+  const clientIp = forwardedFor || req.ip || req.socket?.remoteAddress || '';
+
+  // Normalize IPv6-mapped IPv4 (::ffff:1.2.3.4 → 1.2.3.4)
+  const normalizedIp = clientIp.replace(/^::ffff:/, '');
+
+  if (!ALLOWED_IPS.includes(normalizedIp)) {
+    logger.warn('Webhook rejected: IP not in allowlist', {
+      clientIp: normalizedIp,
+      allowedIps: ALLOWED_IPS,
+    });
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+
+  next();
+}
+
 /**
  * Handle validation errors
  */

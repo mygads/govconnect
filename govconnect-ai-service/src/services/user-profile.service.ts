@@ -12,6 +12,69 @@
 
 import logger from '../utils/logger';
 import { LRUCache } from '../utils/lru-cache';
+import crypto from 'crypto';
+
+// ==================== PII ENCRYPTION (Temuan 5) ====================
+
+const PII_ENCRYPTION_KEY = process.env.PROFILE_ENCRYPTION_KEY || '';
+const ENCRYPTION_ALGO = 'aes-256-gcm';
+const IV_LENGTH = 12;
+const AUTH_TAG_LENGTH = 16;
+
+function getPiiKey(): Buffer | null {
+  if (!PII_ENCRYPTION_KEY || PII_ENCRYPTION_KEY.length < 32) {
+    return null; // Encryption disabled if no key set
+  }
+  // Use first 32 bytes of hex-decoded key, or raw string padded/truncated
+  return crypto.createHash('sha256').update(PII_ENCRYPTION_KEY).digest();
+}
+
+function encryptPii(plaintext: string): string {
+  const key = getPiiKey();
+  if (!key) return plaintext; // Fallback: store plain if key not configured
+
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ENCRYPTION_ALGO, key, iv, { authTagLength: AUTH_TAG_LENGTH });
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  // Format: base64(iv + authTag + ciphertext)
+  return 'enc:' + Buffer.concat([iv, authTag, encrypted]).toString('base64');
+}
+
+function decryptPii(ciphertext: string): string {
+  if (!ciphertext.startsWith('enc:')) return ciphertext; // Not encrypted
+
+  const key = getPiiKey();
+  if (!key) return ciphertext; // Can't decrypt without key
+
+  try {
+    const data = Buffer.from(ciphertext.slice(4), 'base64');
+    const iv = data.subarray(0, IV_LENGTH);
+    const authTag = data.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+    const encrypted = data.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+
+    const decipher = crypto.createDecipheriv(ENCRYPTION_ALGO, key, iv, { authTagLength: AUTH_TAG_LENGTH });
+    decipher.setAuthTag(authTag);
+    return decipher.update(encrypted) + decipher.final('utf8');
+  } catch (err) {
+    logger.warn('PII decryption failed, returning raw value', { error: (err as Error).message });
+    return ciphertext;
+  }
+}
+
+// ==================== NAME MASKING (Temuan 6) ====================
+
+/**
+ * Mask full name: show first name only, replace rest with ***
+ * "Ahmad Sudirman" → "Ahmad S***"
+ * "Siti" → "Siti"
+ */
+function maskName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length <= 1) return parts[0] || fullName;
+  return `${parts[0]} ${parts[1][0]}***`;
+}
 
 // ==================== TYPES ====================
 
@@ -164,8 +227,8 @@ export function updateProfile(wa_user_id: string, updates: ProfileUpdate): UserP
   if (updates.default_rt_rw !== undefined) profile.default_rt_rw = updates.default_rt_rw;
   if (updates.default_kelurahan !== undefined) profile.default_kelurahan = updates.default_kelurahan;
   if (updates.nama_lengkap !== undefined) profile.nama_lengkap = updates.nama_lengkap;
-  if (updates.nik !== undefined) profile.nik = updates.nik;
-  if (updates.no_hp !== undefined) profile.no_hp = updates.no_hp;
+  if (updates.nik !== undefined) profile.nik = encryptPii(updates.nik);
+  if (updates.no_hp !== undefined) profile.no_hp = encryptPii(updates.no_hp);
   
   profile.updated_at = new Date();
   
@@ -236,9 +299,9 @@ export function learnFromMessage(wa_user_id: string, message: string): void {
   if (!profile.no_hp) {
     const phoneMatch = message.match(/\b(08\d{8,12})\b/);
     if (phoneMatch) {
-      profile.no_hp = phoneMatch[1];
+      profile.no_hp = encryptPii(phoneMatch[1]);
       updated = true;
-      logger.debug('👤 Learned phone from message', { wa_user_id });
+      logger.debug('👤 Learned phone from message (encrypted)', { wa_user_id });
     }
   }
   
@@ -313,9 +376,10 @@ export function getProfileContext(wa_user_id: string): string {
     parts.push('⚠️ User ini pernah menunjukkan frustasi. Berikan response yang lebih empati dan helpful.');
   }
   
-  // Known data
+  // Known data (Temuan 6: mask full name before sending to LLM)
   if (profile.nama_lengkap) {
-    parts.push(`Nama user: ${profile.nama_lengkap}`);
+    const masked = maskName(profile.nama_lengkap);
+    parts.push(`Nama user: ${masked}`);
   }
   
   if (parts.length === 0) {
@@ -341,8 +405,8 @@ export function getAutoFillSuggestions(wa_user_id: string): {
     alamat: profile.default_address,
     rt_rw: profile.default_rt_rw,
     nama_lengkap: profile.nama_lengkap,
-    nik: profile.nik,
-    no_hp: profile.no_hp,
+    nik: profile.nik ? decryptPii(profile.nik) : undefined,
+    no_hp: profile.no_hp ? decryptPii(profile.no_hp) : undefined,
   };
 }
 

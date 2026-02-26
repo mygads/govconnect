@@ -1,10 +1,10 @@
-# GovConnect Channel Service
+# Tanggapin AI Channel Service
 
 <!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix X-->
 
 ## OverviewS
 
-Channel Service handles communication channels for the GovConnect platform, including:
+Channel Service handles communication channels for the Tanggapin AI platform, including:
 - WhatsApp message handling
 - Webchat support
 - Live chat admin interface

@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -370,8 +372,33 @@ const COMPLAINT_SEEDS = [
   },
 ];
 
+type DummyCitizen = {
+  name: string;
+  wa: string;
+  webchatSession: string;
+  address: string;
+  rtRw: string;
+};
+
+const DUMMY_CITIZENS: DummyCitizen[] = [
+  { name: 'Andi Saputra', wa: '6281200001001', webchatSession: 'webchat-sanreseng-001', address: 'Dusun A, Desa Sanreseng Ade', rtRw: '001/001' },
+  { name: 'Siti Rahma', wa: '6281200001002', webchatSession: 'webchat-sanreseng-002', address: 'Dusun A, Desa Sanreseng Ade', rtRw: '001/002' },
+  { name: 'Budi Hartono', wa: '6281200001003', webchatSession: 'webchat-sanreseng-003', address: 'Dusun B, Desa Sanreseng Ade', rtRw: '002/001' },
+  { name: 'Nur Aisyah', wa: '6281200001004', webchatSession: 'webchat-sanreseng-004', address: 'Dusun B, Desa Sanreseng Ade', rtRw: '002/002' },
+  { name: 'Rian Pratama', wa: '6281200001005', webchatSession: 'webchat-sanreseng-005', address: 'Dusun C, Desa Sanreseng Ade', rtRw: '003/001' },
+  { name: 'Maya Lestari', wa: '6281200001006', webchatSession: 'webchat-sanreseng-006', address: 'Dusun C, Desa Sanreseng Ade', rtRw: '003/002' },
+  { name: 'Dedi Kurniawan', wa: '6281200001007', webchatSession: 'webchat-sanreseng-007', address: 'Dusun D, Desa Sanreseng Ade', rtRw: '004/001' },
+  { name: 'Intan Permata', wa: '6281200001008', webchatSession: 'webchat-sanreseng-008', address: 'Dusun D, Desa Sanreseng Ade', rtRw: '004/002' },
+  { name: 'Fajar Hidayat', wa: '6281200001009', webchatSession: 'webchat-sanreseng-009', address: 'Dusun E, Desa Sanreseng Ade', rtRw: '005/001' },
+  { name: 'Lina Marlina', wa: '6281200001010', webchatSession: 'webchat-sanreseng-010', address: 'Dusun E, Desa Sanreseng Ade', rtRw: '005/002' },
+];
+
+function formatSequence(num: number): string {
+  return String(num).padStart(3, '0');
+}
+
 async function main() {
-  const villageId = process.env.VILLAGE_ID;
+  const villageId = process.env.VILLAGE_ID || 'desa-sanreseng-ade';
   if (!villageId) {
     throw new Error('VILLAGE_ID is required for seeding Desa Sanreseng Ade data');
   }
@@ -466,12 +493,14 @@ async function main() {
 
     for (const type of category.types) {
       const typeKey = `${complaintCategory.id}-${slugify(type.name)}`;
+      const typeDescription = (type as { description?: string }).description ?? null;
+
       await prisma.complaintType.upsert({
         where: { id: typeKey },
         update: {
           category_id: complaintCategory.id,
           name: type.name,
-          description: type.description ?? null,
+          description: typeDescription,
           is_urgent: type.is_urgent,
           require_address: type.require_address,
           send_important_contacts: type.send_important_contacts ?? false,
@@ -481,7 +510,7 @@ async function main() {
           id: typeKey,
           category_id: complaintCategory.id,
           name: type.name,
-          description: type.description ?? null,
+          description: typeDescription,
           is_urgent: type.is_urgent,
           require_address: type.require_address,
           send_important_contacts: type.send_important_contacts ?? false,
@@ -489,6 +518,162 @@ async function main() {
         },
       });
     }
+  }
+
+  const complaintTypes = await prisma.complaintType.findMany({
+    where: {
+      category: {
+        village_id: villageId,
+      },
+    },
+    include: {
+      category: true,
+    },
+    orderBy: {
+      created_at: 'asc',
+    },
+  });
+
+  const services = await prisma.serviceItem.findMany({
+    where: {
+      village_id: villageId,
+      is_active: true,
+    },
+    orderBy: {
+      created_at: 'asc',
+    },
+  });
+
+  if (complaintTypes.length === 0) {
+    throw new Error('Tidak ada complaint type untuk village ini. Seed master pengaduan gagal/ belum tersedia.');
+  }
+
+  if (services.length === 0) {
+    throw new Error('Tidak ada service item untuk village ini. Seed master layanan gagal/ belum tersedia.');
+  }
+
+  console.log('🧪 Seeding 10 data pengaduan masuk + 10 data layanan masuk...');
+
+  const yyyymmdd = '20260218';
+
+  for (let i = 0; i < DUMMY_CITIZENS.length; i++) {
+    const citizen = DUMMY_CITIZENS[i];
+    const seq = formatSequence(i + 1);
+
+    const complaintType = complaintTypes[i % complaintTypes.length];
+    const complaintId = `LAP-${yyyymmdd}-${seq}`;
+    const isWebchatComplaint = i % 2 === 1;
+
+    const complaint = await prisma.complaint.upsert({
+      where: { complaint_id: complaintId },
+      update: {
+        wa_user_id: isWebchatComplaint ? null : citizen.wa,
+        channel: isWebchatComplaint ? 'WEBCHAT' : 'WHATSAPP',
+        channel_identifier: isWebchatComplaint ? citizen.webchatSession : citizen.wa,
+        kategori: complaintType.name,
+        category_id: complaintType.category_id,
+        type_id: complaintType.id,
+        deskripsi: `Laporan dari ${citizen.name}: ${complaintType.name} di sekitar ${citizen.address}.`,
+        alamat: complaintType.require_address ? citizen.address : null,
+        rt_rw: complaintType.require_address ? citizen.rtRw : null,
+        is_urgent: complaintType.is_urgent,
+        require_address: complaintType.require_address,
+        reporter_name: citizen.name,
+        reporter_phone: citizen.wa,
+        village_id: villageId,
+        status: i % 3 === 0 ? 'PROCESS' : 'OPEN',
+        admin_notes: 'Dummy seed data untuk pengujian dashboard dan AI flow.',
+        deleted_at: null,
+      },
+      create: {
+        complaint_id: complaintId,
+        wa_user_id: isWebchatComplaint ? null : citizen.wa,
+        channel: isWebchatComplaint ? 'WEBCHAT' : 'WHATSAPP',
+        channel_identifier: isWebchatComplaint ? citizen.webchatSession : citizen.wa,
+        kategori: complaintType.name,
+        category_id: complaintType.category_id,
+        type_id: complaintType.id,
+        deskripsi: `Laporan dari ${citizen.name}: ${complaintType.name} di sekitar ${citizen.address}.`,
+        alamat: complaintType.require_address ? citizen.address : null,
+        rt_rw: complaintType.require_address ? citizen.rtRw : null,
+        is_urgent: complaintType.is_urgent,
+        require_address: complaintType.require_address,
+        reporter_name: citizen.name,
+        reporter_phone: citizen.wa,
+        village_id: villageId,
+        status: i % 3 === 0 ? 'PROCESS' : 'OPEN',
+        admin_notes: 'Dummy seed data untuk pengujian dashboard dan AI flow.',
+      },
+    });
+
+    const updateCount = await prisma.complaintUpdate.count({
+      where: { complaint_id: complaint.id },
+    });
+
+    if (updateCount === 0) {
+      await prisma.complaintUpdate.create({
+        data: {
+          complaint_id: complaint.id,
+          admin_id: 'seed-admin',
+          note_text: `Tindak lanjut awal untuk laporan ${complaint.complaint_id}.`,
+          image_url: null,
+        },
+      });
+    }
+
+    const service = services[i % services.length];
+    const requestNumber = `LAY-${yyyymmdd}-${seq}`;
+    const isWebchatService = i % 2 === 0;
+
+    await prisma.serviceRequest.upsert({
+      where: { request_number: requestNumber },
+      update: {
+        service_id: service.id,
+        village_id: villageId,
+        wa_user_id: isWebchatService ? null : citizen.wa,
+        channel: isWebchatService ? 'WEBCHAT' : 'WHATSAPP',
+        channel_identifier: isWebchatService ? citizen.webchatSession : citizen.wa,
+        citizen_data_json: {
+          name: citizen.name,
+          phone: citizen.wa,
+          address: citizen.address,
+          rt_rw: citizen.rtRw,
+        },
+        requirement_data_json: {
+          tujuan_pengajuan: `Pengajuan ${service.name}`,
+          catatan: 'Data dummy untuk simulasi layanan masuk.',
+        },
+        status: i % 4 === 0 ? 'DONE' : i % 2 === 0 ? 'PROCESS' : 'OPEN',
+        admin_notes: 'Dummy request seeded otomatis.',
+        result_file_url: i % 4 === 0 ? `https://dummy.govconnect.local/result/${requestNumber}.pdf` : null,
+        result_file_name: i % 4 === 0 ? `${requestNumber}.pdf` : null,
+        result_description: i % 4 === 0 ? 'Dokumen layanan sudah selesai diproses.' : null,
+        deleted_at: null,
+      },
+      create: {
+        request_number: requestNumber,
+        service_id: service.id,
+        village_id: villageId,
+        wa_user_id: isWebchatService ? null : citizen.wa,
+        channel: isWebchatService ? 'WEBCHAT' : 'WHATSAPP',
+        channel_identifier: isWebchatService ? citizen.webchatSession : citizen.wa,
+        citizen_data_json: {
+          name: citizen.name,
+          phone: citizen.wa,
+          address: citizen.address,
+          rt_rw: citizen.rtRw,
+        },
+        requirement_data_json: {
+          tujuan_pengajuan: `Pengajuan ${service.name}`,
+          catatan: 'Data dummy untuk simulasi layanan masuk.',
+        },
+        status: i % 4 === 0 ? 'DONE' : i % 2 === 0 ? 'PROCESS' : 'OPEN',
+        admin_notes: 'Dummy request seeded otomatis.',
+        result_file_url: i % 4 === 0 ? `https://dummy.govconnect.local/result/${requestNumber}.pdf` : null,
+        result_file_name: i % 4 === 0 ? `${requestNumber}.pdf` : null,
+        result_description: i % 4 === 0 ? 'Dokumen layanan sudah selesai diproses.' : null,
+      },
+    });
   }
 
   console.log('✅ Case Service dummy data seeded');

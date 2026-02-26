@@ -55,28 +55,28 @@ export function toVCardContacts(
 /**
  * Status display maps — shared across complaint and service request formatters.
  */
-export const COMPLAINT_STATUS_MAP: Record<string, { emoji: string; text: string; description: string }> = {
-  'OPEN': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
-  'PROCESS': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
-  'DONE': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
-  'CANCELED': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
-  'REJECT': { emoji: '❌', text: 'REJECT', description: 'Laporan ditolak oleh petugas desa.' },
-  'baru': { emoji: '🆕', text: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
-  'proses': { emoji: '🔄', text: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
-  'selesai': { emoji: '✅', text: 'DONE', description: 'Laporan sudah selesai ditangani.' },
-  'dibatalkan': { emoji: '🔴', text: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
+export const COMPLAINT_STATUS_MAP: Record<string, { emoji: string; text: string; key: string; description: string }> = {
+  'OPEN': { emoji: '🆕', text: 'Menunggu Diproses', key: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
+  'PROCESS': { emoji: '🔄', text: 'Sedang Diproses', key: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
+  'DONE': { emoji: '✅', text: 'Selesai', key: 'DONE', description: 'Laporan sudah selesai ditangani.' },
+  'CANCELED': { emoji: '🔴', text: 'Dibatalkan', key: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
+  'REJECT': { emoji: '❌', text: 'Ditolak', key: 'REJECT', description: 'Laporan ditolak oleh petugas desa.' },
+  'baru': { emoji: '🆕', text: 'Menunggu Diproses', key: 'OPEN', description: 'Laporan baru diterima dan menunggu diproses.' },
+  'proses': { emoji: '🔄', text: 'Sedang Diproses', key: 'PROCESS', description: 'Laporan sedang diproses oleh petugas desa.' },
+  'selesai': { emoji: '✅', text: 'Selesai', key: 'DONE', description: 'Laporan sudah selesai ditangani.' },
+  'dibatalkan': { emoji: '🔴', text: 'Dibatalkan', key: 'CANCELED', description: 'Laporan dibatalkan sesuai keterangan.' },
 };
 
-export const SERVICE_STATUS_MAP: Record<string, { emoji: string; text: string }> = {
-  'OPEN': { emoji: '🆕', text: 'OPEN' },
-  'PROCESS': { emoji: '🔄', text: 'PROCESS' },
-  'DONE': { emoji: '✅', text: 'DONE' },
-  'CANCELED': { emoji: '🔴', text: 'CANCELED' },
-  'REJECT': { emoji: '❌', text: 'REJECT' },
-  'baru': { emoji: '🆕', text: 'OPEN' },
-  'proses': { emoji: '🔄', text: 'PROCESS' },
-  'selesai': { emoji: '✅', text: 'DONE' },
-  'dibatalkan': { emoji: '🔴', text: 'CANCELED' },
+export const SERVICE_STATUS_MAP: Record<string, { emoji: string; text: string; key: string }> = {
+  'OPEN': { emoji: '🆕', text: 'Menunggu Diproses', key: 'OPEN' },
+  'PROCESS': { emoji: '🔄', text: 'Sedang Diproses', key: 'PROCESS' },
+  'DONE': { emoji: '✅', text: 'Selesai', key: 'DONE' },
+  'CANCELED': { emoji: '🔴', text: 'Dibatalkan', key: 'CANCELED' },
+  'REJECT': { emoji: '❌', text: 'Ditolak', key: 'REJECT' },
+  'baru': { emoji: '🆕', text: 'Menunggu Diproses', key: 'OPEN' },
+  'proses': { emoji: '🔄', text: 'Sedang Diproses', key: 'PROCESS' },
+  'selesai': { emoji: '✅', text: 'Selesai', key: 'DONE' },
+  'dibatalkan': { emoji: '🔴', text: 'Dibatalkan', key: 'CANCELED' },
 };
 
 // ==================== RESPONSE VALIDATION ====================
@@ -202,8 +202,8 @@ export function formatKategori(kategori: string): string {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
-export function getStatusInfo(status: string): { emoji: string; text: string; description: string } {
-  return COMPLAINT_STATUS_MAP[status] || { emoji: '📋', text: status, description: 'Silakan tunggu update selanjutnya ya!' };
+export function getStatusInfo(status: string): { emoji: string; text: string; key: string; description: string } {
+  return COMPLAINT_STATUS_MAP[status] || { emoji: '📋', text: status, key: status, description: 'Silakan tunggu update selanjutnya ya!' };
 }
 
 // ==================== RESPONSE BUILDERS ====================
@@ -228,42 +228,39 @@ export function buildNaturalStatusResponse(complaint: any): string {
   const statusInfo = getStatusInfo(complaint.status);
   const complaintId = complaint.complaint_id;
 
-  if (statusInfo.text === 'DONE') {
+  if (statusInfo.key === 'DONE') {
     const note = complaint.admin_notes || '-';
-    return `Laporan ${complaintId} telah SELESAI.\nCatatan penanganan: ${note}`;
+    return `Laporan ${complaintId} telah *${statusInfo.text}*.\nCatatan penanganan: ${note}`;
   }
-  if (statusInfo.text === 'REJECT') {
-    return `Laporan ${complaintId} DITOLAK.\nAlasan penolakan: ${complaint.admin_notes || '-'}`;
+  if (statusInfo.key === 'REJECT') {
+    return `Laporan ${complaintId} *${statusInfo.text}*.\nAlasan penolakan: ${complaint.admin_notes || '-'}`;
   }
-  if (statusInfo.text === 'CANCELED') {
-    return `Laporan ${complaintId} telah DIBATALKAN.\nKeterangan: ${complaint.admin_notes || 'Dibatalkan oleh masyarakat'}`;
+  if (statusInfo.key === 'CANCELED') {
+    return `Laporan ${complaintId} telah *${statusInfo.text}*.\nKeterangan: ${complaint.admin_notes || 'Dibatalkan oleh masyarakat'}`;
   }
-  if (statusInfo.text === 'PROCESS') {
-    return `Status laporan ${complaintId} saat ini adalah PROCESS.`;
-  }
-  return `Status laporan ${complaintId} saat ini adalah ${statusInfo.text}.`;
+  return `Status laporan ${complaintId} saat ini: *${statusInfo.text}*.`;
 }
 
 export function buildNaturalServiceStatusResponse(serviceRequest: any): string {
-  const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
+  const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status, key: serviceRequest.status };
 
-  let message = `Baik Pak/Bu, status layanan ${serviceRequest.request_number} saat ini adalah ${statusInfo.text}.`;
+  let message = `Baik Pak/Bu, status layanan ${serviceRequest.request_number} saat ini: *${statusInfo.text}*.`;
 
-  if (statusInfo.text === 'OPEN') {
+  if (statusInfo.key === 'OPEN') {
     message += `\nPermohonan sedang menunggu untuk diproses.`;
   }
-  if (statusInfo.text === 'PROCESS') {
+  if (statusInfo.key === 'PROCESS') {
     message += `\nPermohonan Anda sedang diproses oleh petugas desa.`;
   }
-  if (statusInfo.text === 'DONE') {
+  if (statusInfo.key === 'DONE') {
     if (serviceRequest.admin_notes) {
       message += `\n\nCatatan dari petugas desa:\n${serviceRequest.admin_notes}`;
     }
   }
-  if (statusInfo.text === 'REJECT') {
+  if (statusInfo.key === 'REJECT') {
     message += `\n\nAlasan penolakan:\n${serviceRequest.admin_notes || '-'}`;
   }
-  if (statusInfo.text === 'CANCELED') {
+  if (statusInfo.key === 'CANCELED') {
     message += `\n\nKeterangan: ${serviceRequest.admin_notes || 'Dibatalkan'}`;
   }
   return message;
@@ -296,7 +293,7 @@ export function buildComplaintDetailResponse(complaint: any): string {
 }
 
 export function buildServiceRequestDetailResponse(serviceRequest: any, requirementDefs: ServiceRequirementDefinition[] = []): string {
-  const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status };
+  const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status, key: serviceRequest.status };
   const createdAt = toSafeDate(serviceRequest.created_at || serviceRequest.createdAt);
   const updatedAt = toSafeDate(serviceRequest.updated_at || serviceRequest.updatedAt);
   const adminNoteSection = buildAdminNoteSection(serviceRequest.status, serviceRequest.admin_notes);
@@ -441,8 +438,8 @@ export function getStatusLabel(status: string): string {
   const entry = COMPLAINT_STATUS_MAP[status] || COMPLAINT_STATUS_MAP[normalized];
   if (entry) return entry.text;
   const fallback: Record<string, string> = {
-    BARU: 'OPEN', PENDING: 'OPEN', PROSES: 'PROCESS',
-    SELESAI: 'SELESAI', DIBATALKAN: 'DIBATALKAN', DITOLAK: 'DITOLAK',
+    BARU: 'Menunggu Diproses', PENDING: 'Menunggu Diproses', PROSES: 'Sedang Diproses',
+    SELESAI: 'Selesai', DIBATALKAN: 'Dibatalkan', DITOLAK: 'Ditolak',
   };
   return fallback[normalized] || normalized || 'UNKNOWN';
 }

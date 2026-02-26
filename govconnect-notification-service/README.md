@@ -1,10 +1,10 @@
-# GovConnect Notification Service
+# Tanggapin AI Notification Service
 
 <!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix -->
 
 ## OverviewS
 
-Notification Service handles outbound notifications for the GovConnect platform:
+Notification Service handles outbound notifications for the Tanggapin AI platform:
 - WhatsApp notifications
 - Email notifications (future)
 - SMS notifications (future)

@@ -1,6 +1,6 @@
-# GovConnect Shared Libraries
+# Tanggapin AI Shared Libraries
 
-Shared utilities untuk semua GovConnect services dengan fokus pada resilience dan observability.
+Shared utilities untuk semua layanan Tanggapin AI dengan fokus pada resilience dan observability.
 
 ## 📦 Components
 

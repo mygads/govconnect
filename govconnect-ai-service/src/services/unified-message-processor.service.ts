@@ -137,7 +137,7 @@ import {
   buildContextWithHistory,
 } from './ump-utils';
 import { buildComplaintCategoriesText, handleComplaintCreation, handleComplaintUpdate, handleCancellationRequest, handleHistory, handlePendingAddressConfirmation } from './complaint-handler';
-import { resolveServiceSlugFromSearch, handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEditLink } from './service-handler';
+import { resolveServiceSlugFromSearch, handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEditLink, buildServiceCatalogText } from './service-handler';
 import { handleStatusCheck } from './status-handler';
 import { handleKnowledgeQuery } from './knowledge-handler';
 
@@ -528,12 +528,25 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     if (!knownName && !currentName) {
       const askedNameBefore = wasNamePrompted(resolvedHistory);
       if (askedNameBefore) {
-        return {
-          success: true,
-          response: 'Maaf Pak/Bu, saya belum menangkap nama Anda. Mohon tuliskan nama Anda, misalnya: "Nama saya Yoga".',
-          intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
+        // Escape detection: if user's message is clearly a new question/intent (not providing their name),
+        // skip name insistence and let the message flow to normal LLM processing.
+        // Example: AI asked for name, but user asks "siapa nama pak camatnya" (knowledge query).
+        const unifiedNameEscape = await getUnifiedClassification();
+        const isNewQuestion = unifiedNameEscape?.message_type === 'QUESTION' && unifiedNameEscape.confidence >= 0.7;
+        const isComplaint = unifiedNameEscape?.message_type === 'COMPLAINT' && unifiedNameEscape.confidence >= 0.7;
+        if (isNewQuestion || isComplaint) {
+          logger.info('[UnifiedProcessor] User asked question/complaint while name pending, skipping name insistence', {
+            userId, nluType: unifiedNameEscape?.message_type, confidence: unifiedNameEscape?.confidence,
+          });
+          // Fall through to normal processing without name
+        } else {
+          return {
+            success: true,
+            response: 'Maaf Pak/Bu, saya belum menangkap nama Anda. Mohon tuliskan nama Anda, misalnya: "Nama saya Andi".',
+            intent: 'QUESTION',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+          };
+        }
       }
 
       if (await checkGreeting()) {
@@ -637,15 +650,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return {
         success: true,
         response: `Halo Pak/Bu${nameGreeting}! Berikut layanan yang tersedia di GovConnect:\n\n` +
-          `📋 *Pengaduan* — Laporkan keluhan infrastruktur, lingkungan, dll\n` +
-          `📄 *Layanan Surat* — Ajukan pembuatan surat (SKTM, domisili, dll)\n` +
-          `🔍 *Cek Status* — Cek status pengaduan atau permohonan surat\n` +
+          `📋 *Pengaduan* — Laporkan keluhan di lingkungan Anda\n` +
+          `📄 *Layanan Surat* — Ajukan pembuatan surat/dokumen\n` +
+          `🔍 *Cek Status* — Cek status pengaduan atau permohonan\n` +
           `❌ *Batalkan* — Batalkan pengaduan atau permohonan\n` +
           `ℹ️ *Informasi* — Tanya syarat, prosedur, jam layanan, dll\n\n` +
-          `Silakan ketik keperluan Bapak/Ibu, misalnya:\n` +
-          `• "Saya mau lapor jalan rusak"\n` +
-          `• "Syarat buat SKTM apa?"\n` +
-          `• "Cek status laporan LAP-xxx"`,
+          `Silakan sampaikan keperluan Bapak/Ibu.`,
         intent: 'QUESTION',
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
@@ -751,6 +761,25 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 2.05: Check pending address request (for missing required addresses)
     const pendingAddr = pendingAddressRequest.get(userId);
     if (pendingAddr) {
+      // Escape detection: if user's message looks like a new intent (service, knowledge, status),
+      // clear the pending state and let the message flow to the LLM for fresh classification.
+      const unified205 = await getUnifiedClassification();
+      const isNewIntent205 = unified205?.message_type === 'QUESTION' && unified205.confidence >= 0.7;
+      const isComplaint205 = unified205?.message_type === 'COMPLAINT' && unified205.confidence >= 0.7;
+      const isGreeting205 = unified205?.message_type === 'GREETING';
+      const isFarewell205 = unified205?.message_type === 'FAREWELL';
+      // Fully NLU-driven topic change detection — no hardcoded keyword regex.
+      // classifyMessage() already distinguishes DATA_INPUT (user providing address)
+      // from QUESTION (user changing topic) and COMPLAINT (new report).
+      // rag_needed=true means user is asking a knowledge question, not giving an address.
+      const needsRAG205 = unified205?.rag_needed === true && isNewIntent205;
+      if (isNewIntent205 || isComplaint205 || isGreeting205 || isFarewell205 || needsRAG205) {
+        logger.info('[UnifiedProcessor] User changed topic during pending address, clearing state', {
+          userId, nluType: unified205?.message_type, confidence: unified205?.confidence,
+        });
+        pendingAddressRequest.delete(userId);
+        // Fall through to normal processing
+      } else {
       // Try to extract address from user's message via NLU
       const extractedAddr = await extractAddressFromMessage(message, userId, { village_id: pendingAddr.village_id });
       if (extractedAddr && extractedAddr.length >= 5) {
@@ -792,7 +821,19 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       } else if (message.trim().length > 10) {
-        // User might have provided address in free text, use their message as address
+        // User might have provided address in free text — validate with NLU first
+        const addrAnalysis = await analyzeAddress(message.trim(), { village_id: pendingAddr.village_id, is_complaint_context: true, kategori: pendingAddr.kategori });
+        if (addrAnalysis?.quality === 'not_address') {
+          // Message is NOT an address — ask again with guidance
+          logger.info('[UnifiedProcessor] Message not recognized as address, asking again', { userId, quality: addrAnalysis.quality });
+          return {
+            success: true,
+            response: 'Mohon maaf Pak/Bu, saya belum bisa mengenali lokasi dari pesan tersebut. Bisa disebutkan alamat lengkapnya? Misalnya nama jalan, RT/RW, atau patokan terdekat.',
+            intent: 'CREATE_COMPLAINT',
+            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+          };
+        }
+        // Address detected (specific or vague) — proceed
         pendingAddressRequest.delete(userId);
         
         const llmLike = {
@@ -830,11 +871,28 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
+      } // end else (not new intent — continue complaint address flow)
     }
 
     // Step 2.07: Check pending complaint data (waiting for name/phone)
     const pendingComplaint = pendingComplaintData.get(userId);
     if (pendingComplaint) {
+      // Escape detection: if user's message looks like a new intent (service, knowledge, status),
+      // clear the pending state and let the message flow to the LLM for fresh classification.
+      const unified207 = await getUnifiedClassification();
+      const isNewIntent207 = unified207?.message_type === 'QUESTION' && unified207.confidence >= 0.7;
+      const isComplaint207 = unified207?.message_type === 'COMPLAINT' && unified207.confidence >= 0.7;
+      const isGreeting207 = unified207?.message_type === 'GREETING';
+      const isFarewell207 = unified207?.message_type === 'FAREWELL';
+      // Fully NLU-driven — same logic as Step 2.05
+      const needsRAG207 = unified207?.rag_needed === true && isNewIntent207;
+      if (isNewIntent207 || isComplaint207 || isGreeting207 || isFarewell207 || needsRAG207) {
+        logger.info('[UnifiedProcessor] User changed topic during pending complaint data, clearing state', {
+          userId, nluType: unified207?.message_type, confidence: unified207?.confidence,
+        });
+        pendingComplaintData.delete(userId);
+        // Fall through to normal processing
+      } else {
       const userProfile = getProfile(userId);
       
       if (pendingComplaint.waitingFor === 'nama') {
@@ -965,6 +1023,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         };
       }
+      } // end else (not new intent — continue complaint data flow)
     }
 
     // Step 2.08: Photo-only message during active complaint flow
@@ -1001,8 +1060,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return {
         success: true,
         response: `Terima kasih Pak/Bu${nameGreeting}, foto sudah kami terima. ` +
-          `Jika ingin melaporkan pengaduan, silakan jelaskan masalahnya dan foto akan kami lampirkan otomatis.\n\n` +
-          `Contoh: "Jalan rusak di depan kantor kelurahan"`,
+          `Jika ingin melaporkan pengaduan, silakan jelaskan masalahnya dan foto akan kami lampirkan otomatis.`,
         intent: 'QUESTION',
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
       };
@@ -1069,17 +1127,22 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     // Step 2.5: AI Optimization - Pre-process message
     // Step 2.45: Direct LAP/LAY code detection — bypass LLM for direct status check
-    const lapMatch = message.match(/\b(LAP-\d{8}-\d{3})\b/i);
-    const layMatch = message.match(/\b(LAY-\d{8}-\d{3})\b/i);
+    // Flexible regex: handles LAP-20260226-001, LAP-20260226001, LAP20260226001, etc.
+    const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
+    const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
     if (lapMatch || layMatch) {
-      const code = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase();
-      const isLap = code.startsWith('LAP-');
+      // Normalize to standard format: LAP-YYYYMMDD-NNN or LAY-YYYYMMDD-NNN
+      const rawCode = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase().replace(/\s/g, '');
+      const prefix = rawCode.startsWith('LAP') ? 'LAP' : 'LAY';
+      const digitsOnly = rawCode.replace(/^(LAP|LAY)-?/, '').replace(/-/g, '');
+      const code = `${prefix}-${digitsOnly.slice(0, 8)}-${digitsOnly.slice(8)}`;
+      const isLap = prefix === 'LAP';
       const directCheckLlm = {
         intent: 'CHECK_STATUS',
         fields: isLap ? { complaint_id: code } : { request_number: code },
         reply_text: '',
       };
-      logger.info('[UnifiedProcessor] Direct LAP/LAY code detected, bypassing LLM', { userId, code });
+      logger.info('[UnifiedProcessor] Direct LAP/LAY code detected, bypassing LLM', { userId, rawCode, normalizedCode: code });
       tracker.preparing();
       const statusReply = await handleStatusCheck(userId, channel, directCheckLlm, message);
       tracker.complete();
@@ -1312,10 +1375,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     } else {
-      // Build complaint categories text for WhatsApp channel too
+      // Build complaint categories and service catalog text for WhatsApp channel too
       const complaintCategoriesText = await buildComplaintCategoriesText(resolvedVillageId);
+      const serviceCatalogText = await buildServiceCatalogText(resolvedVillageId);
       const villageName = templateContext?.villageName || (await getVillageProfileSummary(resolvedVillageId))?.name || undefined;
-      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText, promptFocus, villageName);
+      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText, promptFocus, villageName, serviceCatalogText);
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     }
@@ -1673,7 +1737,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
       case 'UNKNOWN':
       default:
-        // GREETING and other intents - use LLM reply as-is
+        // If UNKNOWN and reply is empty/generic, provide smart clarification
+        if (!finalReplyText || finalReplyText.length < 10) {
+          finalReplyText = 'Mohon maaf Pak/Bu, saya kurang mengerti maksudnya. Bisa dijelaskan lebih detail?\n\nSaya bisa membantu:\n1. Layanan surat/dokumen\n2. Pengaduan/laporan masalah\n3. Cek status layanan/pengaduan\n4. Informasi desa (jadwal, kontak, prosedur)';
+        }
         break;
     }
     

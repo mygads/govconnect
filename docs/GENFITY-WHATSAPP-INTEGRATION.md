@@ -16,7 +16,7 @@ govconnect-dashboard /api/whatsapp/*
   ↓ (x-internal-api-key)
 Channel Service /internal/whatsapp/*
   ↓ (WA_API_URL = genfity-wa-support gateway)
-genfity-wa-support /wa/*
+genfity-wa-support /v1/wa/*
   ↓ (backend)
 genfity-wa (WA server)
   ↓ (webhook)
@@ -50,9 +50,9 @@ Mapping tenant dilakukan dari `instanceName` sehingga pesan dari 2 desa dengan W
 Isi di `govconnect/.env` (lihat juga `.env.example`):
 
 ```env
-# Base URL WhatsApp gateway (wajib mengarah ke prefix `/wa`)
+# Base URL WhatsApp gateway (wajib mengarah ke prefix `/v1/wa`)
 # Direkomendasikan: genfity-wa-support agar semua request tervalidasi via token.
-WA_API_URL=https://wa-api.genfity.com/wa
+WA_API_URL=https://api-wa.genfity.com/v1/wa
 
 # Shared secret untuk antar-service auth
 INTERNAL_API_KEY=your_internal_api_key

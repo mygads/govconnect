@@ -20,9 +20,9 @@ GENFITY_APP_API_URL=https://genfity.com/api/customer-api
 # API key (format: gf_...) dipakai sebagai Authorization: Bearer <apiKey>
 GENFITY_APP_CUSTOMER_API_KEY=gf_xxxxxxxxxxxxxxxxx
 
-# WA Gateway base URL (wajib mengarah ke prefix `/wa`)
+# WA Gateway base URL (wajib mengarah ke prefix `/v1/wa`)
 # Direkomendasikan: public gateway (genfity-wa-support)
-WA_API_URL=https://wa-api.genfity.com/wa
+WA_API_URL=https://api-wa.genfity.com/v1/wa
 
 # Shared secret untuk internal calls antar service
 INTERNAL_API_KEY=your_internal_api_key
@@ -64,7 +64,7 @@ docker compose up -d --build
 - Buat sesi dulu di menu WhatsApp untuk desa yang ingin dihubungkan.
 
 **QR tidak muncul**
-- Pastikan WA Provider up dan `WA_API_URL` benar (harus include `/wa`).
+- Pastikan WA Provider up dan `WA_API_URL` benar (harus include `/v1/wa`).
 - Cek log `govconnect-channel-service`.
 
 **Create session gagal saat pakai genfity-app**
