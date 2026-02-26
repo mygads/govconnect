@@ -88,6 +88,12 @@ export async function GET(request: NextRequest) {
             villageWaNumber = null;
         }
 
+        // Defense-in-depth: strip JID device suffix (:N) if present in wa_number
+        // JID format from WhatsApp: 628xxx:N@s.whatsapp.net → stored as 628xxx:N
+        if (villageWaNumber) {
+            villageWaNumber = villageWaNumber.replace(/:\d+$/, '');
+        }
+
         return NextResponse.json({
             data: result.data,
             village: {

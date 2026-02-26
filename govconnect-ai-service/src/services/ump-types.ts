@@ -26,6 +26,12 @@ export interface ProcessMessageInput {
   /** When true, skip side effects (profile writes, analytics, rate limits, cache writes).
    *  Used by golden-set evaluation to avoid polluting production data. */
   isEvaluation?: boolean;
+  /**
+   * Optional callback fired when the processing stage changes.
+   * Used by the WhatsApp orchestrator to send typing indicators at the right moment.
+   * Stages: 'reading' → 'searching' → 'thinking' → 'preparing' → 'sending'
+   */
+  onStageChange?: (stage: string, progress: number) => void;
 }
 
 export interface ProcessMessageResult {

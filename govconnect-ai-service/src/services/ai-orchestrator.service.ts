@@ -5,11 +5,17 @@
  * Uses unified-message-processor.service.ts for core AI logic.
  * 
  * This file handles WhatsApp-specific concerns:
- * - Typing indicators
- * - Message status (read receipts)
+ * - Typing indicators (smart: triggered at 60-80% processing completion)
+ * - Message status (read receipts with 1s human-like delay)
  * - Takeover mode
  * - RabbitMQ publishing
  * - Spam guard (bubble chat + duplicate suppression)
+ * - Fast greeting template (bypasses AI for common greetings from new users)
+ * 
+ * Human-like behavior:
+ * - Read receipt: sent 1 second after message received (simulates reading)
+ * - Typing indicator: starts when AI is ~60-80% done (simulates thinking → typing)
+ * - Typing stops: just before sending the reply message
  * 
  * Core AI logic (NLU, intent detection, RAG, handlers) is in unified-message-processor.service.ts
  */
@@ -49,16 +55,27 @@ export {
 
 import { processUnifiedMessage } from './unified-message-processor.service';
 
+// ============================================
+// CONSTANTS
+// ============================================
+
+/** Delay before sending read receipt (simulates human reading) */
+const READ_RECEIPT_DELAY_MS = 1000;
+
+/** 
+ * Minimum progress (0-100) before starting the typing indicator.
+ * 'thinking' = 60, 'preparing' = 80. Start at 'thinking' stage.
+ */
+const TYPING_START_MIN_PROGRESS = 60;
+
 /**
  * Main orchestration logic - processes incoming WhatsApp messages
  * 
- * This function handles WhatsApp-specific concerns:
- * - Typing indicators
- * - Message status (read receipts)
- * - Takeover mode
- * - RabbitMQ publishing
- * 
- * Core AI logic is delegated to unified-message-processor.service.ts
+ * Human-like timing flow:
+ * 1. Message received → AI processing starts IMMEDIATELY (no waiting)
+ * 2. After 1 second delay → read receipt (blue ticks) sent
+ * 3. When AI is ~60-80% done → typing indicator ("composing") starts
+ * 4. AI finishes → typing stops → reply sent
  */
 export async function processMessage(event: MessageReceivedEvent): Promise<void> {
   const { 
@@ -105,10 +122,15 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
   // registerProcessing() marks all previous in-flight messages as superseded.
   const spamRegistration = registerProcessing(village_id, wa_user_id, message_id, message, spamGuardInfo);
   
-  // Mark message as read in WhatsApp
-  markMessagesAsRead(wa_user_id, [message_id], village_id).catch((err) => {
-    logger.warn('Failed to mark messages as read', { error: err.message });
-  });
+  // ============================================
+  // DELAYED READ RECEIPT (human-like: 1 second delay)
+  // Fire-and-forget — don't block AI processing
+  // ============================================
+  setTimeout(() => {
+    markMessagesAsRead(wa_user_id, [message_id], village_id).catch((err) => {
+      logger.warn('Failed to mark messages as read', { error: err.message });
+    });
+  }, READ_RECEIPT_DELAY_MS);
   
   try {
     // Check if AI chatbot is enabled
@@ -151,8 +173,29 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       return;
     }
 
-    // Start typing indicator
-    await startTyping(wa_user_id, village_id);
+    // ============================================
+    // SMART TYPING: Start typing when AI is ~60-80% done
+    // Instead of starting typing immediately (feels robotic),
+    // we use the onStageChange callback from UMP to start typing
+    // when AI processing reaches the 'thinking' or 'preparing' stage.
+    // This simulates: receive → read → think → start typing → send
+    // ============================================
+    let typingStarted = false;
+    const onStageChange = (stage: string, progress: number) => {
+      // Start typing when processing reaches 60%+ (thinking/preparing stage)
+      if (!typingStarted && progress >= TYPING_START_MIN_PROGRESS) {
+        typingStarted = true;
+        startTyping(wa_user_id, village_id).catch((err) => {
+          logger.warn('Failed to start typing indicator', { error: err.message });
+        });
+        logger.debug('⌨️ Smart typing started', {
+          wa_user_id,
+          message_id,
+          stage,
+          progress,
+        });
+      }
+    };
     
     // ============================================
     // BUBBLE CHAT: Combine context from all bubble messages
@@ -201,6 +244,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     
     // ============================================
     // DELEGATE TO UNIFIED MESSAGE PROCESSOR
+    // Pass onStageChange callback for smart typing triggers
     // ============================================
     const result = await processUnifiedMessage({
       userId: wa_user_id,
@@ -209,10 +253,11 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       mediaUrl: media_public_url || media_url,
       mediaType: media_type,
       villageId: village_id,
+      onStageChange,
     });
     
     if (!result.success && result.error === 'Spam message detected') {
-      await stopTyping(wa_user_id, village_id);
+      if (typingStarted) await stopTyping(wa_user_id, village_id);
       completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
@@ -240,15 +285,16 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     }
     
     // This is the latest message - send the response
-    // Stop typing ONLY when we're about to send the actual reply
-    await stopTyping(wa_user_id, village_id);
+    // Stop typing just before sending the actual reply (human-like gap)
+    if (typingStarted) {
+      await stopTyping(wa_user_id, village_id);
+    }
 
     // Use allMessageIds to mark ALL identical messages as replied
     const allBatchedIds = sendCheck.allMessageIds.length > 0
       ? sendCheck.allMessageIds
       : [message_id];
-    
-    // Publish AI reply
+
     await publishAIReply({
       village_id,
       wa_user_id,

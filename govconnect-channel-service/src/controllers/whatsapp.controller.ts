@@ -67,7 +67,10 @@ async function syncSessionState(villageId: string): Promise<{
   }
 
   const status = await getSessionStatus(session.wa_token);
-  const waNumber = status.jid ? status.jid.replace(/@s\.whatsapp\.net$/i, '') : session.wa_number;
+  // Strip :N device identifier and @s.whatsapp.net from JID
+  const waNumber = status.jid
+    ? status.jid.replace(/@s\.whatsapp\.net$/i, '').replace(/:\d+$/, '')
+    : (session.wa_number ? session.wa_number.replace(/:\d+$/, '') : session.wa_number);
 
   await updateStoredSessionStatus({
     villageId,
@@ -111,7 +114,11 @@ export async function getStatus(_req: Request, res: Response): Promise<void> {
     }
 
     const status = await getSessionStatus(session.wa_token);
-    const waNumber = status.jid ? status.jid.replace(/@s\.whatsapp\.net$/i, '') : session.wa_number;
+    // JID format: 628xxx:N@s.whatsapp.net where :N is the device identifier
+    // Strip both the @s.whatsapp.net suffix AND the :N device part to get clean phone number
+    const waNumber = status.jid
+      ? status.jid.replace(/@s\.whatsapp\.net$/i, '').replace(/:\d+$/, '')
+      : (session.wa_number ? session.wa_number.replace(/:\d+$/, '') : session.wa_number);
 
     await updateStoredSessionStatus({
       villageId,

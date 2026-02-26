@@ -194,13 +194,21 @@ function unwrapHandler(result: HandlerResult): { response: string; guidanceText?
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   incrementActiveProcessing();
   const startTime = Date.now();
-  const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation } = input;
+  const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, onStageChange } = input;
   let resolvedHistory = conversationHistory;
   
   // Generate trace ID for correlating all logs in this request
   const traceId = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   
   const tracker = createProcessingTracker(userId);
+  
+  // Wire up onStageChange callback so the caller (e.g. WhatsApp orchestrator)
+  // can react to processing stage transitions (e.g. start typing at 80%).
+  const notifyStage = (stage: string, progress: number) => {
+    if (onStageChange) {
+      try { onStageChange(stage, progress); } catch (_) { /* non-critical */ }
+    }
+  };
   
   logger.info('🎯 [UnifiedProcessor] Processing message', {
     traceId,
@@ -214,6 +222,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   try {
     // Update status: reading message
     tracker.reading();
+    notifyStage('reading', 20);
     
     // Step 0: Input length guard — reject absurdly long messages before any LLM work
     const MAX_INPUT_LENGTH = 4000; // ~1000 tokens, well above any realistic user message
@@ -506,6 +515,37 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       };
     }
 
+    // ============================================
+    // FAST GREETING TEMPLATE — regex-based, zero LLM cost
+    // For obvious greetings from users without a known name and no pending state,
+    // respond immediately with a template. This avoids NLU/LLM entirely.
+    // Patterns: halo, hai, hi, hello, selamat pagi/siang/sore/malam, assalamualaikum, p, permisi, min
+    // Only triggers for SHORT messages (≤30 chars) to avoid false positives on
+    // messages like "halo mau tanya..." which should go to full processing.
+    // ============================================
+    const GREETING_REGEX = /^(h(alo+|ai|i|elo+)|hello|selamat\s+(pagi|siang|sore|malam)|ass?alam(u'?alaikum)?|w[a']?alaikumuss?alam|p|permisi|min|kak|bang|bu|pak|mba[k]?|om)[\s.,!?]*$/i;
+    if (!isEvaluation && message.trim().length <= 30 && GREETING_REGEX.test(message.trim())) {
+      const profileName = getProfile(userId).nama_lengkap || null;
+      if (!profileName) {
+        // New user sending a greeting → fast template, no LLM
+        const profile = await getVillageProfileSummary(resolvedVillageId);
+        const villageLabel = profile?.name ? profile.name : 'Desa/Kelurahan';
+        logger.info('⚡ [UnifiedProcessor] Fast greeting template (no LLM)', {
+          traceId, userId, channel, message: message.trim(), processingTimeMs: Date.now() - startTime,
+        });
+        notifyStage('preparing', 80);
+        decrementActiveProcessing();
+        return {
+          success: true,
+          response: `Selamat datang di layanan GovConnect ${villageLabel}.\nBoleh kami tahu nama Bapak/Ibu terlebih dahulu?`,
+          intent: 'QUESTION',
+          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+        };
+      }
+      // If user already has a name, let the greeting fall through to normal processing
+      // so AI can give a personalized, context-aware greeting response
+    }
+
     // Hard gate: wajib tahu nama sebelum proses apa pun
     // SKIP for isEvaluation (testing-knowledge) — fokus jawab pertanyaan, tidak perlu tanya nama
     let knownName: string | null = null;
@@ -721,6 +761,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             };
 
             tracker.preparing();
+            notifyStage('preparing', 80);
             const contactReply = await handleKnowledgeQuery(
               userId, message, syntheticLlm, undefined, channel
             );
@@ -1144,6 +1185,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       };
       logger.info('[UnifiedProcessor] Direct LAP/LAY code detected, bypassing LLM', { userId, rawCode, normalizedCode: code });
       tracker.preparing();
+      notifyStage('preparing', 80);
       const statusReply = await handleStatusCheck(userId, channel, directCheckLlm, message);
       tracker.complete();
       if (channel === 'whatsapp') {
@@ -1245,6 +1287,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Uses unified NLU classifier result for intelligent RAG skip/fetch decision
     // This avoids a separate shouldRetrieveContext() call that would invoke classifyRAGIntent again
     tracker.searching();
+    notifyStage('searching', 40);
     
     let preloadedRAGContext: RAGContext | string | undefined;
     let graphContext = '';
@@ -1404,6 +1447,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 8: Call LLM
     // Update status: thinking
     tracker.thinking();
+    notifyStage('thinking', 60);
     const llmResult = await callGemini(systemPrompt);
     
     if (!llmResult) {
@@ -1572,6 +1616,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     // Update status: preparing response
     tracker.preparing();
+    notifyStage('preparing', 80);
     
     // Step 9: Handle intent
     const effectiveLlmResponse = llmResult.response;
