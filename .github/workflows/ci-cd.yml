@@ -432,6 +432,15 @@ jobs:
           
           ssh $VPS_USER@$VPS_HOST "bash -s" << EOF
             set -e
+            
+            # Ensure directory exists and is a git repo
+            if [ ! -d ~/genfity/govconnect/.git ]; then
+              echo "📂 Directory is not a git repo, cloning..."
+              mkdir -p ~/genfity
+              rm -rf ~/genfity/govconnect
+              git clone https://x-access-token:${GHCR_TOKEN}@github.com/${{ github.repository }}.git ~/genfity/govconnect
+            fi
+            
             cd ~/genfity/govconnect
             
             SERVICES_TO_PULL="$SERVICES_TO_RECREATE"
