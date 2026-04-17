@@ -199,3 +199,57 @@ model rate_limit_blacklist {
   @@index([wa_user_id])
   @@index([expires_at])
 }
+
+// ==================== DURABLE USER PROFILE MEMORY ====================
+// Long-term structured memory for reusable user facts/preferences.
+
+model durable_user_profiles {
+  wa_user_id              String   @id
+  preferred_language      String   @default("auto")
+  communication_style     String   @default("auto")
+  response_detail         String   @default("auto")
+  data_consent            Boolean  @default(false)
+  data_consent_at         DateTime?
+  data_consent_version    String?
+  default_address         String?  @db.Text
+  default_rt_rw           String?
+  default_kelurahan       String?
+  nama_lengkap            String?
+  nik                     String?  @db.Text
+  no_hp                   String?  @db.Text
+  frequent_services       String[]
+  total_complaints        Int      @default(0)
+  total_service_requests  Int      @default(0)
+  first_interaction       DateTime @default(now())
+  last_interaction        DateTime @default(now())
+  total_messages          Int      @default(0)
+  avg_sentiment_score     Float    @default(0)
+  frustration_count       Int      @default(0)
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+
+  @@index([last_interaction])
+  @@index([updated_at])
+}
+
+// ==================== EPISODIC USER MEMORY ====================
+// Query-relevant action memory used as the long-term layer in hybrid memory.
+
+model user_memory_entries {
+  id                String   @id @default(cuid())
+  wa_user_id        String
+  village_id        String?
+  memory_type       String
+  memory_key        String?
+  content           String   @db.Text
+  metadata_json     Json?
+  importance        Float    @default(0.5)
+  last_accessed_at  DateTime?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([wa_user_id])
+  @@index([wa_user_id, created_at])
+  @@index([wa_user_id, memory_type])
+  @@index([village_id])
+}

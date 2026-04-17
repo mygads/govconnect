@@ -345,8 +345,19 @@ export function setPendingAddressConfirmation(userId: string, data: {
 }
 
 // --- Cancel Confirmation ---
+export function getPendingCancelConfirmation(userId: string) {
+  return pendingCancelConfirmation.get(userId);
+}
+export async function getPendingCancelConfirmationWithFallback(userId: string) {
+  const cached = pendingCancelConfirmation.get(userId);
+  if (cached) return cached;
+  const persisted = await loadState<typeof cached>(userId, 'pendingCancelConfirmation');
+  if (persisted) pendingCancelConfirmation.set(userId, persisted);
+  return persisted;
+}
 export function clearPendingCancelConfirmation(userId: string) {
   pendingCancelConfirmation.delete(userId);
+  deleteState(userId, 'pendingCancelConfirmation');
 }
 export function setPendingCancelConfirmation(userId: string, data: {
   type: 'laporan' | 'layanan';
@@ -355,14 +366,23 @@ export function setPendingCancelConfirmation(userId: string, data: {
   timestamp: number;
 }) {
   pendingCancelConfirmation.set(userId, data);
+  persistState(userId, 'pendingCancelConfirmation', data);
 }
 
 // --- Service Form Offer ---
 export function getPendingServiceFormOffer(userId: string) {
   return pendingServiceFormOffer.get(userId);
 }
+export async function getPendingServiceFormOfferWithFallback(userId: string) {
+  const cached = pendingServiceFormOffer.get(userId);
+  if (cached) return cached;
+  const persisted = await loadState<typeof cached>(userId, 'pendingServiceFormOffer');
+  if (persisted) pendingServiceFormOffer.set(userId, persisted);
+  return persisted;
+}
 export function clearPendingServiceFormOffer(userId: string) {
   pendingServiceFormOffer.delete(userId);
+  deleteState(userId, 'pendingServiceFormOffer');
 }
 export function setPendingServiceFormOffer(userId: string, data: {
   service_slug: string;
@@ -370,14 +390,23 @@ export function setPendingServiceFormOffer(userId: string, data: {
   timestamp: number;
 }) {
   pendingServiceFormOffer.set(userId, data);
+  persistState(userId, 'pendingServiceFormOffer', data);
 }
 
 // --- Emergency Complaint Offer ---
 export function getPendingEmergencyComplaintOffer(userId: string) {
   return pendingEmergencyComplaintOffer.get(userId);
 }
+export async function getPendingEmergencyComplaintOfferWithFallback(userId: string) {
+  const cached = pendingEmergencyComplaintOffer.get(userId);
+  if (cached) return cached;
+  const persisted = await loadState<typeof cached>(userId, 'pendingEmergencyComplaintOffer');
+  if (persisted) pendingEmergencyComplaintOffer.set(userId, persisted);
+  return persisted;
+}
 export function clearPendingEmergencyComplaintOffer(userId: string) {
   pendingEmergencyComplaintOffer.delete(userId);
+  deleteState(userId, 'pendingEmergencyComplaintOffer');
 }
 export function setPendingEmergencyComplaintOffer(userId: string, data: {
   contact_entity?: string;
@@ -385,6 +414,7 @@ export function setPendingEmergencyComplaintOffer(userId: string, data: {
   timestamp: number;
 }) {
   pendingEmergencyComplaintOffer.set(userId, data);
+  persistState(userId, 'pendingEmergencyComplaintOffer', data);
 }
 
 // --- Address Request ---

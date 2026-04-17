@@ -13,21 +13,35 @@ import {
   createComplaint,
   getComplaintStatusWithOwnership,
   getComplaintTypes,
+  requestServiceRequestEditToken,
   getServiceCatalog,
   getServiceRequestStatusWithOwnership,
   getServiceRequirements,
   getUserHistory,
+  updateComplaintByUser,
   type ServiceCatalogItem,
 } from '../case-client.service';
+import { rememberMemoryEvent } from '../hybrid-memory.service';
 import { searchDocuments, searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
 import { resolveServiceSlugFromSearch } from '../service-handler';
 import { resolveVillageSlugForPublicForm } from '../ump-utils';
-import { buildPublicServiceFormUrl, getPublicFormBaseUrl, getStatusLabel } from '../ump-formatters';
+import {
+  buildEditServiceFormUrl,
+  buildPublicServiceFormUrl,
+  getPublicFormBaseUrl,
+  getStatusLabel,
+} from '../ump-formatters';
 import {
   setPendingCancelConfirmation,
   setPendingComplaintData,
 } from '../ump-state';
-import { getAutoFillSuggestions, saveDefaultAddress, updateProfile } from '../user-profile.service';
+import {
+  getAutoFillSuggestionsWithFallback,
+  recordComplaintCreated,
+  recordServiceUsage,
+  saveDefaultAddress,
+  updateProfile,
+} from '../user-profile.service';
 import { updateConversationUserProfile } from '../channel-client.service';
 import type { AgentToolName } from './tool-definitions';
 
@@ -178,6 +192,10 @@ async function dispatchTool(
       return toolCreateComplaint(args, ctx);
     case 'create_service_request':
       return toolCreateServiceRequest(args, ctx);
+    case 'update_complaint':
+      return toolUpdateComplaint(args, ctx);
+    case 'get_service_request_edit_link':
+      return toolGetServiceRequestEditLink(args, ctx);
     case 'get_my_history':
       return toolGetMyHistory(ctx);
     case 'check_status':
@@ -529,7 +547,7 @@ async function toolCreateComplaint(
     };
   }
 
-  const profile = getAutoFillSuggestions(ctx.userId);
+  const profile = await getAutoFillSuggestionsWithFallback(ctx.userId);
   const reporterName = namaPelapor || profile.nama_lengkap;
   const reporterPhone = ctx.channel === 'webchat' ? (noHp || profile.no_hp) : ctx.userId;
 
@@ -627,6 +645,23 @@ async function toolCreateComplaint(
     };
   }
 
+  recordComplaintCreated(ctx.userId, slugifyCategory(categoryConfig?.name || kategori));
+  void rememberMemoryEvent({
+    wa_user_id: ctx.userId,
+    village_id: ctx.villageId,
+    memory_type: 'complaint',
+    memory_key: complaintId,
+    importance: categoryConfig?.is_urgent === true ? 0.95 : 0.86,
+    content: `Laporan ${complaintId} dibuat untuk kategori ${categoryConfig?.name || kategori}${alamat ? ` di ${alamat}` : ''}.`,
+    metadata_json: {
+      reference_number: complaintId,
+      kategori: categoryConfig?.name || kategori,
+      alamat,
+      rt_rw: rtRw,
+      is_urgent: categoryConfig?.is_urgent === true,
+    },
+  });
+
   return {
     success: true,
     data: {
@@ -708,6 +743,20 @@ async function toolCreateServiceRequest(
     ctx.userId,
     ctx.channel,
   );
+  recordServiceUsage(ctx.userId, service.slug);
+  void rememberMemoryEvent({
+    wa_user_id: ctx.userId,
+    village_id: ctx.villageId,
+    memory_type: 'service_request',
+    memory_key: service.slug,
+    importance: 0.72,
+    content: `Link formulir layanan ${service.name} disiapkan untuk user.`,
+    metadata_json: {
+      service_slug: service.slug,
+      service_name: service.name,
+      form_url: formUrl,
+    },
+  });
 
   return {
     success: true,
@@ -722,6 +771,146 @@ async function toolCreateServiceRequest(
     meta: {
       trustLevel: 'action_result',
       sourceKind: 'service_request_link',
+    },
+  };
+}
+
+async function toolUpdateComplaint(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolCallResult> {
+  const referenceNumber = normalizeReferenceNumber(args.reference_number);
+  const alamat = typeof args.alamat === 'string' && args.alamat.trim() ? args.alamat.trim() : undefined;
+  const deskripsiRaw = typeof args.deskripsi === 'string' && args.deskripsi.trim() ? args.deskripsi.trim() : undefined;
+  const rtRw = typeof args.rt_rw === 'string' && args.rt_rw.trim() ? args.rt_rw.trim() : undefined;
+
+  if (!referenceNumber) {
+    return { success: false, error: 'Nomor laporan harus diisi.' };
+  }
+
+  if (inferReferenceKind(referenceNumber) !== 'complaint') {
+    return { success: false, error: 'Gunakan nomor laporan dengan format LAP-xxx.' };
+  }
+
+  if (!alamat && !deskripsiRaw && !rtRw) {
+    return {
+      success: false,
+      error: 'Sertakan minimal satu perubahan: alamat, deskripsi, atau RT/RW.',
+    };
+  }
+
+  const deskripsi = deskripsiRaw ? `[Update] ${deskripsiRaw}` : undefined;
+  const result = await updateComplaintByUser(referenceNumber, {
+    wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
+    channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
+    channel_identifier: ctx.channel === 'webchat' ? ctx.userId : undefined,
+  }, {
+    alamat,
+    deskripsi,
+    rt_rw: rtRw,
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.message || 'Gagal memperbarui laporan.',
+    };
+  }
+
+  if (alamat) {
+    saveDefaultAddress(ctx.userId, alamat, rtRw);
+  }
+
+  void rememberMemoryEvent({
+    wa_user_id: ctx.userId,
+    village_id: ctx.villageId,
+    memory_type: 'complaint',
+    memory_key: referenceNumber,
+    importance: 0.8,
+    content: `Laporan ${referenceNumber} diperbarui${alamat ? `, alamat: ${alamat}` : ''}${rtRw ? `, RT/RW: ${rtRw}` : ''}${deskripsiRaw ? `, catatan: ${deskripsiRaw}` : ''}.`,
+    metadata_json: {
+      reference_number: referenceNumber,
+      alamat,
+      rt_rw: rtRw,
+      deskripsi: deskripsiRaw,
+    },
+  });
+
+  return {
+    success: true,
+    data: {
+      updated: true,
+      reference_number: referenceNumber,
+      message: result.message || 'Laporan berhasil diperbarui.',
+      details: result.data || null,
+    },
+    meta: {
+      trustLevel: 'action_result',
+      sourceKind: 'complaint_update',
+    },
+  };
+}
+
+async function toolGetServiceRequestEditLink(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolCallResult> {
+  const referenceNumber = normalizeReferenceNumber(args.reference_number);
+  if (!referenceNumber) {
+    return { success: false, error: 'Nomor permohonan layanan harus diisi.' };
+  }
+
+  if (inferReferenceKind(referenceNumber) !== 'service_request') {
+    return { success: false, error: 'Gunakan nomor layanan dengan format LAY-xxx.' };
+  }
+
+  const tokenResult = await requestServiceRequestEditToken(referenceNumber, {
+    wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
+    channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
+    channel_identifier: ctx.channel === 'webchat' ? ctx.userId : undefined,
+  });
+
+  if (!tokenResult.success) {
+    return {
+      success: false,
+      error: tokenResult.message || 'Gagal menyiapkan link edit layanan.',
+    };
+  }
+
+  const editUrl = buildEditServiceFormUrl(
+    getPublicFormBaseUrl(),
+    referenceNumber,
+    tokenResult.edit_token || '',
+    ctx.userId,
+    ctx.channel,
+  );
+
+  void rememberMemoryEvent({
+    wa_user_id: ctx.userId,
+    village_id: ctx.villageId,
+    memory_type: 'service_edit',
+    memory_key: referenceNumber,
+    importance: 0.78,
+    content: `Link edit layanan ${referenceNumber} disiapkan.`,
+    metadata_json: {
+      reference_number: referenceNumber,
+      edit_url: editUrl,
+      expires_at: tokenResult.edit_token_expires_at,
+    },
+  });
+
+  return {
+    success: true,
+    data: {
+      ready: true,
+      reference_number: referenceNumber,
+      edit_url: editUrl,
+      expires_at: tokenResult.edit_token_expires_at || null,
+      message: `Link edit untuk permohonan ${referenceNumber} siap dikirim.`,
+    },
+    meta: {
+      trustLevel: 'action_result',
+      sourceKind: 'service_request_edit_link',
     },
   };
 }
@@ -745,6 +934,19 @@ async function toolCheckStatus(
     });
 
     if (complaint.success && complaint.data) {
+      void rememberMemoryEvent({
+        wa_user_id: ctx.userId,
+        village_id: ctx.villageId,
+        memory_type: 'status_lookup',
+        memory_key: referenceNumber,
+        importance: 0.68,
+        content: `Status laporan ${referenceNumber} terakhir adalah ${complaint.data.status}.`,
+        metadata_json: {
+          reference_number: referenceNumber,
+          status: complaint.data.status,
+          reference_type: 'complaint',
+        },
+      });
       return {
         success: true,
         data: {
@@ -771,6 +973,19 @@ async function toolCheckStatus(
     });
 
     if (service.success && service.data) {
+      void rememberMemoryEvent({
+        wa_user_id: ctx.userId,
+        village_id: ctx.villageId,
+        memory_type: 'status_lookup',
+        memory_key: referenceNumber,
+        importance: 0.68,
+        content: `Status layanan ${referenceNumber} terakhir adalah ${service.data.status}.`,
+        metadata_json: {
+          reference_number: referenceNumber,
+          status: service.data.status,
+          reference_type: 'service_request',
+        },
+      });
       return {
         success: true,
         data: {
@@ -881,6 +1096,20 @@ async function toolCancelRequest(
       return { success: false, error: result.message || 'Gagal membatalkan laporan.' };
     }
 
+    void rememberMemoryEvent({
+      wa_user_id: ctx.userId,
+      village_id: ctx.villageId,
+      memory_type: 'cancellation',
+      memory_key: referenceNumber,
+      importance: 0.82,
+      content: `Laporan ${referenceNumber} dibatalkan user.`,
+      metadata_json: {
+        reference_number: referenceNumber,
+        reference_type: 'complaint',
+        reason: cancelReason,
+      },
+    });
+
     return {
       success: true,
       data: {
@@ -905,6 +1134,20 @@ async function toolCancelRequest(
   if (!result.success) {
     return { success: false, error: result.message || 'Gagal membatalkan layanan.' };
   }
+
+  void rememberMemoryEvent({
+    wa_user_id: ctx.userId,
+    village_id: ctx.villageId,
+    memory_type: 'cancellation',
+    memory_key: referenceNumber,
+    importance: 0.82,
+    content: `Permohonan layanan ${referenceNumber} dibatalkan user.`,
+    metadata_json: {
+      reference_number: referenceNumber,
+      reference_type: 'service_request',
+      reason: cancelReason,
+    },
+  });
 
   return {
     success: true,

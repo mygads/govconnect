@@ -23,7 +23,7 @@ import { getWIBDateTime } from '../utils/wib-datetime';
 import { sanitizeUserInput } from './context-builder.service';
 import { getVillageProfileSummary } from './knowledge.service';
 import { isSpamMessage } from './rag.service';
-import { getAutoFillSuggestions } from './user-profile.service';
+import { getAutoFillSuggestionsWithFallback } from './user-profile.service';
 import { normalizeText } from './text-normalizer.service';
 import { classifyMessage } from './micro-llm-matcher.service';
 import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
@@ -32,6 +32,7 @@ import { getSmartFallback, getErrorFallback } from './fallback-response.service'
 import { validateResponse } from './ump-formatters';
 import type { ChannelType } from './ump-formatters';
 import { getCachedResponse, setCachedResponse } from './response-cache.service';
+import { buildHybridMemorySummary } from './hybrid-memory.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
@@ -100,6 +101,7 @@ interface AgentProcessInput {
   channel: 'whatsapp' | 'webchat';
   villageId?: string;
   conversationHistory: string;
+  memorySummary?: string;
   villageName?: string;
   userName?: string | null;
   traceId: string;
@@ -133,6 +135,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     channel,
     villageId,
     conversationHistory,
+    memorySummary,
     villageName,
     userName,
     traceId,
@@ -150,6 +153,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
       {
         villageName: villageName ?? undefined,
         conversationHistory,
+        memorySummary,
         currentDatetime: String(getWIBDateTime()),
         userMessage: message,
         userName,
@@ -374,7 +378,19 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       ? await buildCompactConversationHistory(userId, resolvedHistory)
       : '';
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
-    const savedProfile = getAutoFillSuggestions(userId);
+
+    // Step 3: Sanitize and correct typos
+    let sanitizedMessage = sanitizeUserInput(message);
+    sanitizedMessage = normalizeText(sanitizedMessage);
+
+    const [savedProfile, memorySummary] = await Promise.all([
+      getAutoFillSuggestionsWithFallback(userId),
+      buildHybridMemorySummary({
+        wa_user_id: userId,
+        query: sanitizedMessage,
+        village_id: resolvedVillageId,
+      }),
+    ]);
 
     if (resolvedVillageId) {
       const profile = await getVillageProfileSummary(resolvedVillageId);
@@ -385,10 +401,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         };
       }
     }
-    
-    // Step 3: Sanitize and correct typos
-    let sanitizedMessage = sanitizeUserInput(message);
-    sanitizedMessage = normalizeText(sanitizedMessage);
 
     const cachedKnowledge = !isEvaluation
       ? getCachedResponse(sanitizedMessage, 'KNOWLEDGE_QUERY', resolvedVillageId)
@@ -421,6 +433,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       channel: channel as 'whatsapp' | 'webchat',
       villageId: resolvedVillageId,
       conversationHistory: historyString,
+      memorySummary,
       villageName: templateContext?.villageName ?? undefined,
       userName: savedProfile.nama_lengkap ?? null,
       traceId,

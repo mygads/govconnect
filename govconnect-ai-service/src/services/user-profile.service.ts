@@ -7,13 +7,16 @@
  * - Layanan yang sering digunakan
  * - Riwayat interaksi
  * 
- * Saat ini disimpan di in-memory LRU cache.
- * Ini cukup untuk personalisasi ringan, tetapi bukan long-term memory yang durable.
+ * Hybrid memory:
+ * - Hot path: in-memory LRU cache untuk akses cepat
+ * - Long-term: durable_user_profiles di PostgreSQL untuk survive restart
  */
 
 import logger from '../utils/logger';
 import { LRUCache } from '../utils/lru-cache';
 import crypto from 'crypto';
+import prisma from '../lib/prisma';
+import { deleteAllMemories } from './hybrid-memory.service';
 
 // ==================== PII ENCRYPTION (Temuan 5) ====================
 
@@ -142,14 +145,224 @@ export interface ProfileUpdate {
   no_hp?: string;
 }
 
-// In-memory LRU cache (bounded, no file persistence — AI service is stateless)
+// Hot-path memory cache. Durable backing lives in PostgreSQL.
 const profileCache = new LRUCache<string, UserProfile>({
   maxSize: 2000,
   ttlMs: 24 * 60 * 60 * 1000, // 24 hours
   name: 'user-profiles',
 });
 
-logger.info('👤 User Profile Service initialized (in-memory LRU)');
+const profilePersistTimers = new Map<string, NodeJS.Timeout>();
+const profileHydrationInFlight = new Map<string, Promise<void>>();
+const PROFILE_PERSIST_DEBOUNCE_MS = 500;
+
+logger.info('👤 User Profile Service initialized (hybrid cache + durable store)');
+
+function mergeDistinctServices(primary: string[], secondary: string[]): string[] {
+  const merged = [...secondary, ...primary].filter(Boolean);
+  return Array.from(new Set(merged)).slice(-10);
+}
+
+function mergeProfiles(local: UserProfile, durable: UserProfile | null): UserProfile {
+  if (!durable) {
+    return local;
+  }
+
+  return {
+    wa_user_id: local.wa_user_id,
+    preferred_language: local.preferred_language !== 'auto' ? local.preferred_language : durable.preferred_language,
+    communication_style: local.communication_style !== 'auto' ? local.communication_style : durable.communication_style,
+    response_detail: local.response_detail !== 'auto' ? local.response_detail : durable.response_detail,
+    data_consent: local.data_consent || durable.data_consent,
+    data_consent_at: local.data_consent_at ?? durable.data_consent_at,
+    data_consent_version: local.data_consent_version ?? durable.data_consent_version,
+    default_address: local.default_address ?? durable.default_address,
+    default_rt_rw: local.default_rt_rw ?? durable.default_rt_rw,
+    default_kelurahan: local.default_kelurahan ?? durable.default_kelurahan,
+    nama_lengkap: local.nama_lengkap ?? durable.nama_lengkap,
+    nik: local.nik ?? durable.nik,
+    no_hp: local.no_hp ?? durable.no_hp,
+    frequent_services: mergeDistinctServices(local.frequent_services, durable.frequent_services),
+    total_complaints: Math.max(local.total_complaints, durable.total_complaints),
+    total_service_requests: Math.max(local.total_service_requests, durable.total_service_requests),
+    first_interaction: new Date(Math.min(local.first_interaction.getTime(), durable.first_interaction.getTime())),
+    last_interaction: new Date(Math.max(local.last_interaction.getTime(), durable.last_interaction.getTime())),
+    total_messages: Math.max(local.total_messages, durable.total_messages),
+    avg_sentiment_score: local.total_messages >= durable.total_messages
+      ? local.avg_sentiment_score
+      : durable.avg_sentiment_score,
+    frustration_count: Math.max(local.frustration_count, durable.frustration_count),
+    created_at: new Date(Math.min(local.created_at.getTime(), durable.created_at.getTime())),
+    updated_at: new Date(Math.max(local.updated_at.getTime(), durable.updated_at.getTime())),
+  };
+}
+
+function scheduleProfilePersist(wa_user_id: string): void {
+  const existing = profilePersistTimers.get(wa_user_id);
+  if (existing) {
+    clearTimeout(existing);
+  }
+
+  const timer = setTimeout(() => {
+    profilePersistTimers.delete(wa_user_id);
+    persistProfileToDurableStore(wa_user_id).catch((error: any) => {
+      logger.warn('Failed to persist durable user profile', {
+        wa_user_id,
+        error: error.message,
+      });
+    });
+  }, PROFILE_PERSIST_DEBOUNCE_MS);
+
+  profilePersistTimers.set(wa_user_id, timer);
+}
+
+async function persistProfileToDurableStore(wa_user_id: string): Promise<void> {
+  const localProfile = profileCache.get(wa_user_id);
+  if (!localProfile) {
+    return;
+  }
+
+  const profile = mergeProfiles(
+    localProfile,
+    await loadProfileFromDurableStore(wa_user_id, { cacheResult: false }),
+  );
+  profileCache.set(wa_user_id, profile);
+
+  await prisma.durable_user_profiles.upsert({
+    where: { wa_user_id },
+    update: {
+      preferred_language: profile.preferred_language,
+      communication_style: profile.communication_style,
+      response_detail: profile.response_detail,
+      data_consent: profile.data_consent,
+      data_consent_at: profile.data_consent_at ?? null,
+      data_consent_version: profile.data_consent_version ?? null,
+      default_address: profile.default_address ?? null,
+      default_rt_rw: profile.default_rt_rw ?? null,
+      default_kelurahan: profile.default_kelurahan ?? null,
+      nama_lengkap: profile.nama_lengkap ?? null,
+      nik: profile.nik ?? null,
+      no_hp: profile.no_hp ?? null,
+      frequent_services: profile.frequent_services,
+      total_complaints: profile.total_complaints,
+      total_service_requests: profile.total_service_requests,
+      first_interaction: profile.first_interaction,
+      last_interaction: profile.last_interaction,
+      total_messages: profile.total_messages,
+      avg_sentiment_score: profile.avg_sentiment_score,
+      frustration_count: profile.frustration_count,
+      created_at: profile.created_at,
+    },
+    create: {
+      wa_user_id,
+      preferred_language: profile.preferred_language,
+      communication_style: profile.communication_style,
+      response_detail: profile.response_detail,
+      data_consent: profile.data_consent,
+      data_consent_at: profile.data_consent_at ?? null,
+      data_consent_version: profile.data_consent_version ?? null,
+      default_address: profile.default_address ?? null,
+      default_rt_rw: profile.default_rt_rw ?? null,
+      default_kelurahan: profile.default_kelurahan ?? null,
+      nama_lengkap: profile.nama_lengkap ?? null,
+      nik: profile.nik ?? null,
+      no_hp: profile.no_hp ?? null,
+      frequent_services: profile.frequent_services,
+      total_complaints: profile.total_complaints,
+      total_service_requests: profile.total_service_requests,
+      first_interaction: profile.first_interaction,
+      last_interaction: profile.last_interaction,
+      total_messages: profile.total_messages,
+      avg_sentiment_score: profile.avg_sentiment_score,
+      frustration_count: profile.frustration_count,
+      created_at: profile.created_at,
+    },
+  });
+}
+
+async function loadProfileFromDurableStore(
+  wa_user_id: string,
+  options: { cacheResult?: boolean } = {},
+): Promise<UserProfile | null> {
+  try {
+    const stored = await prisma.durable_user_profiles.findUnique({
+      where: { wa_user_id },
+    });
+
+    if (!stored) {
+      return null;
+    }
+
+    const profile: UserProfile = {
+      wa_user_id: stored.wa_user_id,
+      preferred_language: stored.preferred_language as PreferredLanguage,
+      communication_style: stored.communication_style as CommunicationStyle,
+      response_detail: stored.response_detail as 'brief' | 'detailed' | 'auto',
+      data_consent: stored.data_consent,
+      data_consent_at: stored.data_consent_at ?? undefined,
+      data_consent_version: stored.data_consent_version ?? undefined,
+      default_address: stored.default_address ?? undefined,
+      default_rt_rw: stored.default_rt_rw ?? undefined,
+      default_kelurahan: stored.default_kelurahan ?? undefined,
+      nama_lengkap: stored.nama_lengkap ?? undefined,
+      nik: stored.nik ?? undefined,
+      no_hp: stored.no_hp ?? undefined,
+      frequent_services: stored.frequent_services || [],
+      total_complaints: stored.total_complaints,
+      total_service_requests: stored.total_service_requests,
+      first_interaction: stored.first_interaction,
+      last_interaction: stored.last_interaction,
+      total_messages: stored.total_messages,
+      avg_sentiment_score: stored.avg_sentiment_score,
+      frustration_count: stored.frustration_count,
+      created_at: stored.created_at,
+      updated_at: stored.updated_at,
+    };
+
+    if (options.cacheResult !== false) {
+      profileCache.set(wa_user_id, profile);
+    }
+    return profile;
+  } catch (error: any) {
+    logger.warn('Failed to load durable user profile', {
+      wa_user_id,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+function maybeHydrateProfileCache(wa_user_id: string): void {
+  if (profileHydrationInFlight.has(wa_user_id)) {
+    return;
+  }
+
+  const loadPromise = loadProfileFromDurableStore(wa_user_id, { cacheResult: false })
+    .then((durableProfile) => {
+      if (!durableProfile) {
+        return;
+      }
+
+      const cached = profileCache.get(wa_user_id);
+      if (!cached) {
+        profileCache.set(wa_user_id, durableProfile);
+        return;
+      }
+
+      profileCache.set(wa_user_id, mergeProfiles(cached, durableProfile));
+    })
+    .catch((error: any) => {
+      logger.debug('Durable profile hydration skipped', {
+        wa_user_id,
+        error: error.message,
+      });
+    })
+    .finally(() => {
+      profileHydrationInFlight.delete(wa_user_id);
+    });
+
+  profileHydrationInFlight.set(wa_user_id, loadPromise);
+}
 
 // ==================== CORE FUNCTIONS ====================
 
@@ -162,10 +375,27 @@ export function getProfile(wa_user_id: string): UserProfile {
   if (!profile) {
     profile = createDefaultProfile(wa_user_id);
     profileCache.set(wa_user_id, profile);
+    maybeHydrateProfileCache(wa_user_id);
     
     logger.info('👤 New user profile created', { wa_user_id });
   }
   
+  return profile;
+}
+
+export async function getProfileWithFallback(wa_user_id: string): Promise<UserProfile> {
+  const cached = profileCache.get(wa_user_id);
+  if (cached) {
+    return cached;
+  }
+
+  const durable = await loadProfileFromDurableStore(wa_user_id);
+  if (durable) {
+    return durable;
+  }
+
+  const profile = createDefaultProfile(wa_user_id);
+  profileCache.set(wa_user_id, profile);
   return profile;
 }
 
@@ -209,6 +439,7 @@ export function clearProfile(wa_user_id: string): void {
     existing.default_rt_rw = undefined;
     existing.default_kelurahan = undefined;
     existing.updated_at = new Date();
+    scheduleProfilePersist(wa_user_id);
     logger.info('👤 Profile cleared (personal data reset)', { wa_user_id });
   }
 }
@@ -219,11 +450,45 @@ export function clearProfile(wa_user_id: string): void {
  * Tidak ada persistence durable di layer ini; penghapusan hanya membersihkan cache aktif.
  */
 export function deleteProfile(wa_user_id: string): boolean {
+  const existingTimer = profilePersistTimers.get(wa_user_id);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    profilePersistTimers.delete(wa_user_id);
+  }
+
   const existed = profileCache.delete(wa_user_id);
   if (existed) {
     logger.info('🗑️ Profile fully deleted', { wa_user_id });
   }
+
+  prisma.durable_user_profiles.deleteMany({
+    where: { wa_user_id },
+  }).catch(() => {});
+  deleteAllMemories(wa_user_id).catch(() => {});
+
   return existed;
+}
+
+export function recordComplaintCreated(wa_user_id: string, category?: string): UserProfile {
+  const profile = getProfile(wa_user_id);
+  profile.total_complaints += 1;
+  profile.last_interaction = new Date();
+  profile.updated_at = new Date();
+
+  if (category) {
+    if (!profile.frequent_services.includes(category)) {
+      profile.frequent_services.push(category);
+      if (profile.frequent_services.length > 10) {
+        profile.frequent_services.shift();
+      }
+    } else {
+      profile.frequent_services = profile.frequent_services.filter((item) => item !== category);
+      profile.frequent_services.push(category);
+    }
+  }
+
+  scheduleProfilePersist(wa_user_id);
+  return profile;
 }
 
 /**
@@ -244,6 +509,7 @@ export function updateProfile(wa_user_id: string, updates: ProfileUpdate): UserP
   if (updates.no_hp !== undefined) profile.no_hp = encryptPii(updates.no_hp);
   
   profile.updated_at = new Date();
+  scheduleProfilePersist(wa_user_id);
   
   logger.debug('👤 Profile updated', { wa_user_id, updates: Object.keys(updates) });
   
@@ -272,6 +538,8 @@ export function recordInteraction(
   if (sentimentScore < -0.5) {
     profile.frustration_count++;
   }
+
+  scheduleProfilePersist(wa_user_id);
 }
 
 /**
@@ -295,6 +563,7 @@ export function recordServiceUsage(wa_user_id: string, serviceCode: string): voi
   }
   
   profile.updated_at = new Date();
+  scheduleProfilePersist(wa_user_id);
 }
 
 /**
@@ -334,6 +603,7 @@ export function learnFromMessage(wa_user_id: string, message: string): void {
   
   if (updated) {
     profile.updated_at = new Date();
+    scheduleProfilePersist(wa_user_id);
   }
 }
 
@@ -350,8 +620,9 @@ export function saveDefaultAddress(wa_user_id: string, alamat: string, rt_rw?: s
       profile.default_rt_rw = rt_rw;
     }
     profile.updated_at = new Date();
-  
-  logger.debug('👤 Saved default address', { wa_user_id, alamat: alamat.substring(0, 30) });
+    scheduleProfilePersist(wa_user_id);
+
+    logger.debug('👤 Saved default address', { wa_user_id, alamat: alamat.substring(0, 30) });
   }
 }
 
@@ -423,6 +694,24 @@ export function getAutoFillSuggestions(wa_user_id: string): {
   };
 }
 
+export async function getAutoFillSuggestionsWithFallback(wa_user_id: string): Promise<{
+  alamat?: string;
+  rt_rw?: string;
+  nama_lengkap?: string;
+  nik?: string;
+  no_hp?: string;
+}> {
+  const profile = await getProfileWithFallback(wa_user_id);
+
+  return {
+    alamat: profile.default_address,
+    rt_rw: profile.default_rt_rw,
+    nama_lengkap: profile.nama_lengkap,
+    nik: profile.nik ? decryptPii(profile.nik) : undefined,
+    no_hp: profile.no_hp ? decryptPii(profile.no_hp) : undefined,
+  };
+}
+
 /**
  * Check if user is a returning user
  */
@@ -459,6 +748,7 @@ export function recordConsent(wa_user_id: string): UserProfile {
   profile.data_consent_version = CONSENT_VERSION;
   profile.updated_at = new Date();
   profileCache.set(wa_user_id, profile);
+  scheduleProfilePersist(wa_user_id);
   logger.info('📋 User data consent recorded', { wa_user_id, version: CONSENT_VERSION });
   return profile;
 }
@@ -475,6 +765,7 @@ export function revokeConsent(wa_user_id: string): void {
   profile.no_hp = undefined;
   profile.updated_at = new Date();
   profileCache.set(wa_user_id, profile);
+  scheduleProfilePersist(wa_user_id);
   logger.info('📋 User consent revoked, PII deleted', { wa_user_id });
 }
 
@@ -490,14 +781,17 @@ export function hasConsent(wa_user_id: string): boolean {
 
 export default {
   getProfile,
+  getProfileWithFallback,
   updateProfile,
   deleteProfile,
   recordInteraction,
+  recordComplaintCreated,
   recordServiceUsage,
   learnFromMessage,
   saveDefaultAddress,
   getProfileContext,
   getAutoFillSuggestions,
+  getAutoFillSuggestionsWithFallback,
   isReturningUser,
   getMostFrequentService,
   recordConsent,

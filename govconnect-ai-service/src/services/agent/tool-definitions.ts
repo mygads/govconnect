@@ -174,6 +174,54 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'update_complaint',
+      description:
+        'Perbarui laporan pengaduan milik user. Gunakan jika user ingin menambah detail, mengubah alamat, atau memperbarui RT/RW pada laporan yang masih aktif.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reference_number: {
+            type: 'string',
+            description: 'Nomor laporan. Contoh: "LAP-20260101-001".',
+          },
+          alamat: {
+            type: 'string',
+            description: 'Alamat terbaru jika user ingin memperbarui lokasi.',
+          },
+          deskripsi: {
+            type: 'string',
+            description: 'Keterangan tambahan atau revisi deskripsi laporan.',
+          },
+          rt_rw: {
+            type: 'string',
+            description: 'RT/RW terbaru bila user menyebutkannya.',
+          },
+        },
+        required: ['reference_number'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_service_request_edit_link',
+      description:
+        'Siapkan link edit aman untuk permohonan layanan milik user agar perubahan data dilakukan di website, bukan lewat chat.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reference_number: {
+            type: 'string',
+            description: 'Nomor permohonan layanan. Contoh: "LAY-20260101-001".',
+          },
+        },
+        required: ['reference_number'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_my_history',
       description:
         'Ambil riwayat laporan dan permohonan layanan milik user yang sedang berbicara.',
@@ -239,6 +287,8 @@ export type AgentToolName =
   | 'search_documents'
   | 'create_complaint'
   | 'create_service_request'
+  | 'update_complaint'
+  | 'get_service_request_edit_link'
   | 'get_my_history'
   | 'check_status'
   | 'cancel_request';

@@ -3,6 +3,7 @@ import {
   cancelServiceRequest,
 } from './case-client.service';
 import { updateConversationUserProfile } from './channel-client.service';
+import { rememberMemoryEvent } from './hybrid-memory.service';
 import { handleComplaintCreation, handlePendingAddressConfirmation } from './complaint-handler';
 import { classifyConfirmation } from './confirmation-classifier.service';
 import {
@@ -25,13 +26,13 @@ import {
   clearPendingComplaintData,
   clearPendingEmergencyComplaintOffer,
   clearPendingServiceFormOffer,
+  getPendingAddressConfirmationWithFallback,
+  getPendingAddressRequestWithFallback,
+  getPendingCancelConfirmationWithFallback,
+  getPendingComplaintDataWithFallback,
+  getPendingEmergencyComplaintOfferWithFallback,
   getPendingPhotoCount,
-  pendingAddressConfirmation,
-  pendingAddressRequest,
-  pendingCancelConfirmation,
-  pendingComplaintData,
-  pendingEmergencyComplaintOffer,
-  pendingServiceFormOffer,
+  getPendingServiceFormOfferWithFallback,
   setPendingComplaintData,
   syncNameToChannelService,
 } from './ump-state';
@@ -40,7 +41,7 @@ import {
   extractAddressFromMessage,
   extractNameFromTextNLU,
 } from './ump-utils';
-import { getProfile, updateProfile } from './user-profile.service';
+import { getAutoFillSuggestionsWithFallback, updateProfile } from './user-profile.service';
 
 type MicroBudgetRunner = <T>(task: () => Promise<T>, fallback: T) => Promise<T>;
 type TrackerLike = {
@@ -131,7 +132,7 @@ export async function tryHandlePendingOffers(
     runWithMicroBudget,
   } = input;
 
-  const pendingOffer = pendingServiceFormOffer.get(userId);
+  const pendingOffer = await getPendingServiceFormOfferWithFallback(userId);
   if (pendingOffer) {
     const hasLapLayCode = /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(message);
     if (hasLapLayCode) {
@@ -180,7 +181,7 @@ export async function tryHandlePendingOffers(
     }
   }
 
-  const pendingEmergency = pendingEmergencyComplaintOffer.get(userId);
+  const pendingEmergency = await getPendingEmergencyComplaintOfferWithFallback(userId);
   if (!pendingEmergency) {
     return null;
   }
@@ -265,7 +266,7 @@ export async function tryHandleLatePreAgentState(
     notifyStage,
   } = input;
 
-  const pendingConfirm = pendingAddressConfirmation.get(userId);
+  const pendingConfirm = await getPendingAddressConfirmationWithFallback(userId);
   if (pendingConfirm) {
     const confirmResult = await handlePendingAddressConfirmation(
       userId,
@@ -284,7 +285,7 @@ export async function tryHandleLatePreAgentState(
     }
   }
 
-  const pendingAddr = pendingAddressRequest.get(userId);
+  const pendingAddr = await getPendingAddressRequestWithFallback(userId);
   if (pendingAddr) {
     const unified = await getUnifiedClassification();
     const isNewIntent = unified?.message_type === 'QUESTION' && unified.confidence >= 0.7;
@@ -357,7 +358,7 @@ export async function tryHandleLatePreAgentState(
     }
   }
 
-  const pendingComplaint = pendingComplaintData.get(userId);
+  const pendingComplaint = await getPendingComplaintDataWithFallback(userId);
   if (pendingComplaint) {
     const unified = await getUnifiedClassification();
     const isNewIntent = unified?.message_type === 'QUESTION' && unified.confidence >= 0.7;
@@ -369,7 +370,7 @@ export async function tryHandleLatePreAgentState(
     if (isNewIntent || isComplaint || isGreeting || isFarewell || needsRAG) {
       clearPendingComplaintData(userId);
     } else {
-      const userProfile = getProfile(userId);
+      const userProfile = await getAutoFillSuggestionsWithFallback(userId);
 
       if (pendingComplaint.waitingFor === 'nama') {
         const extractedName = await extractNameFromTextNLU(message, {
@@ -462,9 +463,7 @@ export async function tryHandleLatePreAgentState(
   }
 
   if (mediaUrl && message.trim().length < 5) {
-    const hasActiveComplaintFlow = pendingAddressRequest.get(userId)
-      || pendingAddressConfirmation.get(userId)
-      || pendingComplaintData.get(userId);
+    const hasActiveComplaintFlow = pendingAddr || pendingConfirm || pendingComplaint;
 
     if (hasActiveComplaintFlow) {
       const photoCount = getPendingPhotoCount(userId);
@@ -489,7 +488,8 @@ export async function tryHandleLatePreAgentState(
     }
 
     addPendingPhoto(userId, mediaUrl);
-    const userName = getProfile(userId).nama_lengkap;
+    const savedProfile = await getAutoFillSuggestionsWithFallback(userId);
+    const userName = savedProfile.nama_lengkap;
     const nameGreeting = userName ? ` ${userName}` : '';
     tracker.complete();
     return buildGuardResult({
@@ -500,7 +500,7 @@ export async function tryHandleLatePreAgentState(
     });
   }
 
-  const pendingCancel = pendingCancelConfirmation.get(userId);
+  const pendingCancel = await getPendingCancelConfirmationWithFallback(userId);
   if (pendingCancel) {
     const cancelResult = await runWithMicroBudget(
       () => classifyConfirmation(message.trim(), {
@@ -521,6 +521,21 @@ export async function tryHandleLatePreAgentState(
           buildChannelParams(channel, userId),
           pendingCancel.reason,
         );
+        if (result.success) {
+          void rememberMemoryEvent({
+            wa_user_id: userId,
+            village_id: villageId,
+            memory_type: 'cancellation',
+            memory_key: pendingCancel.id,
+            importance: 0.82,
+            content: `Laporan ${pendingCancel.id} dibatalkan user.`,
+            metadata_json: {
+              reference_number: pendingCancel.id,
+              reference_type: 'complaint',
+              reason: pendingCancel.reason,
+            },
+          });
+        }
         return buildGuardResult({
           startTime,
           traceId,
@@ -536,6 +551,21 @@ export async function tryHandleLatePreAgentState(
         buildChannelParams(channel, userId),
         pendingCancel.reason,
       );
+      if (serviceResult.success) {
+        void rememberMemoryEvent({
+          wa_user_id: userId,
+          village_id: villageId,
+          memory_type: 'cancellation',
+          memory_key: pendingCancel.id,
+          importance: 0.82,
+          content: `Permohonan layanan ${pendingCancel.id} dibatalkan user.`,
+          metadata_json: {
+            reference_number: pendingCancel.id,
+            reference_type: 'service_request',
+            reason: pendingCancel.reason,
+          },
+        });
+      }
       return buildGuardResult({
         startTime,
         traceId,

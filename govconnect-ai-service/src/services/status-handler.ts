@@ -19,6 +19,7 @@ import {
   buildServiceRequestDetailResponse,
 } from './ump-formatters';
 import { getEnhancedContext } from './conversation-context.service';
+import { rememberMemoryEvent } from './hybrid-memory.service';
 
 /**
  * Handle status check for complaints and service requests.
@@ -66,6 +67,18 @@ export async function handleStatusCheck(
       return 'Mohon maaf Pak/Bu, ada kendala saat menampilkan detail laporan. Silakan coba lagi.';
     }
 
+    void rememberMemoryEvent({
+      wa_user_id: userId,
+      memory_type: 'status_lookup',
+      memory_key: cId,
+      importance: 0.68,
+      content: `Status laporan ${cId} terakhir adalah ${result.data.status}.`,
+      metadata_json: {
+        reference_number: cId,
+        status: result.data.status,
+      },
+    });
+
     if (!detailMode) {
       const isExplicitCheck = /(cek|status|cek\s+laporan|cek\s+lagi)/i.test(currentMessage || '');
       const statusInfo = getStatusInfo(result.data.status);
@@ -95,6 +108,18 @@ export async function handleStatusCheck(
     if (!result.data) {
       return 'Mohon maaf Pak/Bu, ada kendala saat menampilkan detail layanan. Silakan coba lagi.';
     }
+
+    void rememberMemoryEvent({
+      wa_user_id: userId,
+      memory_type: 'status_lookup',
+      memory_key: request_number,
+      importance: 0.68,
+      content: `Status layanan ${request_number} terakhir adalah ${result.data.status}.`,
+      metadata_json: {
+        reference_number: request_number,
+        status: result.data.status,
+      },
+    });
 
     if (!detailMode) return buildNaturalServiceStatusResponse(result.data);
 

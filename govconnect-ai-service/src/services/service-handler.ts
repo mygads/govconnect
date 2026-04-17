@@ -16,8 +16,10 @@ import {
   buildPublicServiceFormUrl,
   buildEditServiceFormUrl,
 } from './ump-formatters';
+import { rememberMemoryEvent } from './hybrid-memory.service';
 import { serviceSearchCache, setPendingServiceFormOffer } from './ump-state';
 import { resolveVillageSlugForPublicForm } from './ump-utils';
+import { recordServiceUsage } from './user-profile.service';
 
 // ==================== SERVICE CATALOG TEXT FOR PROMPT ====================
 
@@ -320,6 +322,20 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
     const baseUrl = getPublicFormBaseUrl();
     const villageSlug = await resolveVillageSlugForPublicForm(villageId);
     const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug || service_slug, userId, channel === 'webchat' ? 'webchat' : 'whatsapp');
+    recordServiceUsage(userId, service.slug || service_slug);
+    void rememberMemoryEvent({
+      wa_user_id: userId,
+      village_id: villageId || service.village_id || service.villageId,
+      memory_type: 'service_request',
+      memory_key: service.slug || service_slug,
+      importance: 0.72,
+      content: `Link formulir layanan ${service.name} disiapkan untuk user.`,
+      metadata_json: {
+        service_slug: service.slug || service_slug,
+        service_name: service.name,
+        form_url: formUrl,
+      },
+    });
 
     const clickableUrl = formatClickableLink(formUrl, channel, 'Link Formulir Layanan');
     return `Baik Pak/Bu, silakan mengisi permohonan melalui link berikut:\n${clickableUrl}\n\nSetelah dikirim, Bapak/Ibu akan mendapatkan nomor layanan.\n⚠️ Mohon simpan nomor layanan dengan baik.\nUntuk cek status, ketik: *status <kode layanan>*\n(Contoh: status LAY-20250209-001)`;
@@ -361,6 +377,18 @@ export async function handleServiceRequestEditLink(userId: string, channel: Chan
     userId,
     channel === 'webchat' ? 'webchat' : 'whatsapp'
   );
+  void rememberMemoryEvent({
+    wa_user_id: userId,
+    memory_type: 'service_edit',
+    memory_key: request_number,
+    importance: 0.78,
+    content: `Link edit permohonan layanan ${request_number} disiapkan.`,
+    metadata_json: {
+      reference_number: request_number,
+      edit_url: editUrl,
+      expires_at: tokenResult.edit_token_expires_at,
+    },
+  });
 
   const clickableEditUrl = formatClickableLink(editUrl, channel, 'Link Edit Permohonan');
   return `Baik Pak/Bu, perubahan data layanan hanya dapat dilakukan melalui website.\n\nSilakan lakukan pembaruan melalui link berikut:\n${clickableEditUrl}\n\nLink ini hanya berlaku satu kali.`;

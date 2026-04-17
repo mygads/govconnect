@@ -17,7 +17,8 @@ import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { classifyConfirmation } from './confirmation-classifier.service';
 import { analyzeAddress, classifyUpdateIntent } from './micro-llm-matcher.service';
-import { saveDefaultAddress, getProfile, recordServiceUsage } from './user-profile.service';
+import { rememberMemoryEvent } from './hybrid-memory.service';
+import { saveDefaultAddress, getProfile, recordComplaintCreated } from './user-profile.service';
 import { recordCompletedAction, recordDataCollected } from './conversation-context.service';
 import type { ChannelType, HandlerResult, ContactInfo } from './ump-formatters';
 import {
@@ -270,12 +271,27 @@ export async function handleComplaintCreation(
     rateLimiterService.recordReport(userId);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
     saveDefaultAddress(userId, alamat, rt_rw);
-    recordServiceUsage(userId, kategori);
+    recordComplaintCreated(userId, kategori);
     recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
     recordDataCollected(userId, 'kategori', kategori);
     if (alamat) {
       recordDataCollected(userId, 'alamat', alamat);
     }
+    void rememberMemoryEvent({
+      wa_user_id: userId,
+      village_id: villageId,
+      memory_type: 'complaint',
+      memory_key: complaintId,
+      importance: isEmergency ? 0.95 : 0.85,
+      content: `Laporan ${complaintId} dibuat untuk kategori ${kategori}${alamat ? ` di ${alamat}` : ''}.`,
+      metadata_json: {
+        reference_number: complaintId,
+        kategori,
+        alamat,
+        rt_rw,
+        is_urgent: isEmergency,
+      },
+    });
 
     const hasRtRw = Boolean(rt_rw) || /\brt\b|\brw\b/i.test(alamat || '');
     const photoCount = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
@@ -401,6 +417,20 @@ export async function handleComplaintUpdate(userId: string, channel: ChannelType
     return result.message || 'Maaf, terjadi kendala saat memperbarui laporan.';
   }
 
+  void rememberMemoryEvent({
+    wa_user_id: userId,
+    memory_type: 'complaint',
+    memory_key: complaint_id,
+    importance: 0.8,
+    content: `Laporan ${complaint_id} diperbarui${alamat ? `, alamat: ${alamat}` : ''}${rt_rw ? `, RT/RW: ${rt_rw}` : ''}${deskripsi ? `, catatan tambahan: ${deskripsi}` : ''}.`,
+    metadata_json: {
+      reference_number: complaint_id,
+      alamat,
+      rt_rw,
+      deskripsi,
+    },
+  });
+
   return `Terima kasih.\nKeterangan laporan ${complaint_id} telah diperbarui.`;
 }
 
@@ -505,8 +535,22 @@ export async function handlePendingAddressConfirmation(
     rateLimiterService.recordReport(userId);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
     saveDefaultAddress(userId, pendingConfirm.alamat, '');
-    recordServiceUsage(userId, pendingConfirm.kategori);
+    recordComplaintCreated(userId, pendingConfirm.kategori);
     recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
+    void rememberMemoryEvent({
+      wa_user_id: userId,
+      village_id: pendingConfirm.village_id,
+      memory_type: 'complaint',
+      memory_key: complaintId,
+      importance: isEmergency ? 0.95 : 0.85,
+      content: `Laporan ${complaintId} dibuat untuk kategori ${pendingConfirm.kategori} di ${pendingConfirm.alamat}.`,
+      metadata_json: {
+        reference_number: complaintId,
+        kategori: pendingConfirm.kategori,
+        alamat: pendingConfirm.alamat,
+        is_urgent: isEmergency,
+      },
+    });
 
     const photoCount = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
     const withPhotoNote = photoCount > 0 ? `\n${photoCount > 1 ? photoCount + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
@@ -560,8 +604,22 @@ export async function handlePendingAddressConfirmation(
     rateLimiterService.recordReport(userId);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
     saveDefaultAddress(userId, message.trim(), '');
-    recordServiceUsage(userId, pendingConfirm.kategori);
+    recordComplaintCreated(userId, pendingConfirm.kategori);
     recordCompletedAction(userId, 'CREATE_COMPLAINT', complaintId);
+    void rememberMemoryEvent({
+      wa_user_id: userId,
+      village_id: pendingConfirm.village_id,
+      memory_type: 'complaint',
+      memory_key: complaintId,
+      importance: isUrgent ? 0.95 : 0.85,
+      content: `Laporan ${complaintId} dibuat untuk kategori ${pendingConfirm.kategori} di ${message.trim()}.`,
+      metadata_json: {
+        reference_number: complaintId,
+        kategori: pendingConfirm.kategori,
+        alamat: message.trim(),
+        is_urgent: isUrgent,
+      },
+    });
 
     const photoCount2 = combinedFotoUrl ? (combinedFotoUrl.startsWith('[') ? JSON.parse(combinedFotoUrl).length : 1) : 0;
     const withPhotoNote = photoCount2 > 0 ? `\n${photoCount2 > 1 ? photoCount2 + ' foto' : 'Foto'} pendukung sudah kami terima.` : '';
