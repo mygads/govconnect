@@ -26,12 +26,24 @@ export function createApp(): Application {
   }));
   app.use(cors());
 
+  // Correlation ID middleware — must be before routes
+  const { correlationMiddleware } = require('./shared/correlation-context');
+  app.use(correlationMiddleware);
+
   // Body parser
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Legacy local media serving for backward compatibility with older records.
-  app.use('/uploads', express.static(LEGACY_MEDIA_UPLOADS_PATH, {
+  // SEC-05 fix: require internal API key for uploaded media
+  const internalAuthGuard = (req: any, res: any, next: any) => {
+    const apiKey = req.headers['x-internal-api-key'];
+    if (!apiKey || apiKey !== process.env.INTERNAL_API_KEY) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    next();
+  };
+  app.use('/uploads', internalAuthGuard, express.static(LEGACY_MEDIA_UPLOADS_PATH, {
     maxAge: '7d', // Cache for 7 days
     etag: true,
   }));
@@ -47,8 +59,8 @@ export function createApp(): Application {
     next();
   });
 
-  // Prometheus Metrics endpoint (before metricsMiddleware to avoid tracking itself)
-  app.get('/metrics', metricsHandler);
+  // Prometheus Metrics endpoint (Fase 1.7: protected with internal auth)
+  app.get('/metrics', internalAuthGuard, metricsHandler);
 
   // Metrics middleware — MUST be before routes to track all requests
   app.use(metricsMiddleware('channel-service'));
@@ -58,8 +70,9 @@ export function createApp(): Application {
   app.use('/internal', internalRoutes);
   app.use('/health', healthRoutes);
 
-  // Swagger API Documentation
-  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  // Swagger API Documentation (Fase 1.7: protected — disabled in production, auth-gated otherwise)
+  if (process.env.NODE_ENV !== 'production') {
+    app.use('/api-docs', internalAuthGuard, swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
     explorer: true,
     customSiteTitle: 'GovConnect Channel Service API',
     customCss: '.swagger-ui .topbar { display: none }',
@@ -72,11 +85,12 @@ export function createApp(): Application {
   }));
 
   // OpenAPI spec as JSON
-  app.get('/api-docs.json', (req, res) => {
+  app.get('/api-docs.json', internalAuthGuard, (req, res) => {
     void req;
     res.setHeader('Content-Type', 'application/json');
     res.send(swaggerSpec);
   });
+  } // end if NODE_ENV !== 'production'
 
   // Root endpoint
   app.get('/', (req, res) => {

@@ -63,8 +63,26 @@ promClient.collectDefaultMetrics({
 
 const app = express();
 
-app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') || '*' }));
+// SEC-02 fix: fail-closed CORS — reject if ALLOWED_ORIGINS not configured
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean);
+if (!allowedOrigins || allowedOrigins.length === 0) {
+  logger.warn('⚠️  ALLOWED_ORIGINS not set — CORS will reject all cross-origin requests');
+}
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (server-to-server, curl, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins && allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
+}));
 app.use(helmet());
+
+// Correlation ID middleware — must be before routes
+import { correlationMiddleware } from './shared/correlation-context';
+app.use(correlationMiddleware);
 
 const internalAuthMiddleware = (req: Request, res: Response, next: any) => {
   const apiKey = req.headers['x-internal-api-key'];
@@ -946,9 +964,10 @@ app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
 // ===========================================
 
 // Legacy local document serving for backward compatibility with older records.
+// SEC-05 fix: require internal auth for uploaded documents
 import path from 'path';
 const uploadsDir = path.join(process.cwd(), 'uploads', 'documents');
-app.use('/uploads/documents', express.static(uploadsDir, {
+app.use('/uploads/documents', internalAuthMiddleware, express.static(uploadsDir, {
   setHeaders: (res, filePath) => {
     // Set appropriate content-type based on file extension
     const ext = path.extname(filePath).toLowerCase();

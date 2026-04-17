@@ -193,16 +193,31 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Sync to AI Service vector database (fire and forget)
-    addKnowledgeVector({
-      id: knowledge.id,
-      village_id: knowledge.village_id || undefined,
-      title: knowledge.title,
-      content: knowledge.content,
-      category: knowledge.category,
-      keywords: knowledge.keywords,
-    }).catch(err => {
+    // Fase 1.6: Observable knowledge ingestion lifecycle
+    // Mark as processing, then update status on completion/failure
+    prisma.knowledge_base.update({
+      where: { id: knowledge.id },
+      data: { embedding_status: 'processing' },
+    }).then(() =>
+      addKnowledgeVector({
+        id: knowledge.id,
+        village_id: knowledge.village_id || undefined,
+        title: knowledge.title,
+        content: knowledge.content,
+        category: knowledge.category,
+        keywords: knowledge.keywords,
+      })
+    ).then(() =>
+      prisma.knowledge_base.update({
+        where: { id: knowledge.id },
+        data: { embedding_status: 'completed', last_embedded_at: new Date(), embedding_error: null },
+      })
+    ).catch(async (err) => {
       console.error('Failed to sync knowledge to AI Service:', err)
+      await prisma.knowledge_base.update({
+        where: { id: knowledge.id },
+        data: { embedding_status: 'failed', embedding_error: String(err?.message || err) },
+      }).catch(() => {})
     })
 
     return NextResponse.json({

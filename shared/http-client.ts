@@ -10,6 +10,7 @@
 
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { CircuitBreaker, createCircuitBreaker } from './circuit-breaker';
+import { getCorrelationId } from './correlation-context';
 
 export interface HttpClientOptions {
   baseURL: string;
@@ -51,9 +52,15 @@ export class ResilientHttpClient {
       ...options.circuitBreakerOptions,
     });
 
-    // Add request interceptor for logging
+    // Add request interceptor for correlation ID propagation + logging
     this.axiosInstance.interceptors.request.use(
       (config) => {
+        // Propagate correlation ID from AsyncLocalStorage
+        const correlationId = getCorrelationId();
+        if (correlationId) {
+          config.headers = config.headers || {};
+          config.headers['x-correlation-id'] = correlationId;
+        }
         console.debug(`[HttpClient:${serviceName}] ${config.method?.toUpperCase()} ${config.url}`);
         return config;
       },

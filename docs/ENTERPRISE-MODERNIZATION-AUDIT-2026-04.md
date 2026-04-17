@@ -74,6 +74,25 @@ Audit ini dibuat berdasarkan **codebase aktual**, bukan asumsi dari instruksi la
   - observability end-to-end belum matang
   - quality control retrieval dan response belum cukup deterministik
 
+### 2.4 Metodologi Audit dan Hierarki Sumber
+
+Dokumen ini disusun dengan urutan kepercayaan berikut:
+
+1. **Codebase aktual**  
+   Jika dokumentasi lama bertentangan dengan kode yang sekarang, maka **kode menang**.
+2. **Schema, route registration, dan runtime contract**  
+   Termasuk Prisma schema, route registration, auth middleware, cache implementation, dan data flow aktual.
+3. **Dokumen internal lama**  
+   Dipakai sebagai input pembanding, bukan sebagai sumber kebenaran.
+4. **Referensi resmi eksternal**  
+   Dipakai sebagai baseline best practice untuk menilai gap arsitektur saat ini.
+
+Aturan interpretasi yang dipakai dalam audit ini:
+
+- Jika temuan lama sudah fixed di kode, maka statusnya dicatat sebagai **stale / historical**.
+- Jika ada komentar kode yang bertentangan dengan implementasi aktual, maka implementasi aktual yang dipakai.
+- Jika referensi eksternal bersifat vendor-specific, maka rekomendasi ditarik sebagai **inference desain**, bukan klaim bahwa GovConnect harus mengikuti vendor tersebut secara literal.
+
 ---
 
 ## 3. Temuan Utama
@@ -373,6 +392,29 @@ diisi nol, bukan nilai jaccard/similarity aktual.
 - engineer baru bisa mengambil keputusan berdasarkan asumsi yang salah
 - audit lama sulit dipakai sebagai backlog tanpa verifikasi ulang
 
+### Temuan K — Vector search belum memiliki ANN index eksplisit
+
+**Bukti kode:**
+
+- `govconnect-ai-service/prisma/schema.prisma:12`
+- `govconnect-ai-service/prisma/schema.prisma:28`
+- `govconnect-ai-service/prisma/schema.prisma:64`
+- pencarian seluruh repo tidak menunjukkan `hnsw`, `ivfflat`, atau `vector_cosine_ops`
+
+**Masalah:**
+
+Vector tables memang ada, tetapi dari schema dan artefak repo yang terverifikasi belum terlihat index ANN eksplisit untuk pgvector.
+
+**Dampak:**
+
+- pada skala kecil mungkin masih aman
+- pada skala lebih besar, retrieval latency akan naik dan tuning recall/candidate pool menjadi lebih mahal
+
+**Penilaian:**
+
+- Severity: **P2 performance / scale risk**
+- Catatan: ini **tidak menjelaskan miss-rate secara langsung**, tetapi penting untuk target enterprise-scale
+
 ---
 
 ## 4. Analisis Mendalam: Kenapa RAG Sering Tidak Menemukan Jawaban Padahal Datanya Ada
@@ -643,6 +685,34 @@ Urutan kedewasaannya:
 
 OpenAI juga merekomendasikan memulai dari **single agent** dan naik ke multi-agent hanya saat kompleksitas benar-benar menuntutnya. Ini sangat relevan untuk GovConnect karena saat ini kompleksitas utamanya justru berasal dari pipeline bercabang, bukan dari kebutuhan sub-agent yang nyata.
 
+### 6.5 Sintesis Base Practice dari Sumber Resmi
+
+Berikut ringkasan praktik yang paling relevan untuk GovConnect:
+
+| Sumber resmi | Prinsip utama | Relevansi untuk GovConnect |
+|---|---|---|
+| OpenAI, *A practical guide to building agents* | Mulai dari workflow yang jelas: agent, tools, dan control flow. Jangan lompat ke arsitektur agent yang terlalu rumit sebelum job-to-be-done dan tool boundary jelas. | Mendukung migrasi dari pipeline bercabang ke **single orchestrator + explicit tools** |
+| OpenAI, *Safety in building agents* | Untrusted data jangan langsung mengendalikan perilaku agent. Gunakan structured outputs, approvals, guardrails, dan eval/trace grading. | Sangat relevan untuk **dokumen RAG, prompt injection, dan tool safety** |
+| OpenAI, *Trace grading* | Evaluasi trace dipakai untuk tahu di mana workflow salah, bukan hanya menilai output akhir. | Cocok untuk membangun **why retrieval failed** dan **release gate** |
+| Anthropic, *Building agents with the Claude Agent SDK* | Agent loop yang sehat adalah **gather context -> take action -> verify**. Subagent dipakai bila memang perlu paralelisasi atau isolasi context. | Mendukung penyederhanaan orchestration dan menolak multi-agent prematur |
+| Microsoft Learn, *Hybrid search overview / ranking / vector ranking* | Hybrid retrieval menjalankan lexical + vector **paralel**, lalu menggabungkan hasil dengan **RRF**. Relevance tuning sebaiknya fokus pada candidate set dan reranking, bukan cutoff mentah terlalu awal. | Mendukung perubahan dari **early-cutoff retrieval** ke **recall-first retrieval** |
+| Microsoft Learn, *Chunk and Vectorize by Document Layout* | Chunking harus aware terhadap struktur dokumen, heading, dan layout. | Relevan untuk SOP, jadwal, tabel, dan dokumen PDF GovConnect |
+| Elastic, *Hybrid search* | RRF adalah baseline hybrid yang direkomendasikan untuk menggabungkan lexical dan semantic retrieval. | Menguatkan keputusan memakai hybrid retrieval yang lebih disiplin |
+| Google Cloud IAM, *Best practices for using service accounts securely* | Hindari kunci statis bila memungkinkan; gunakan identity per workload, single-purpose identity, dan short-lived auth. | Menjadi **inference desain** bahwa GovConnect perlu bergerak dari shared `INTERNAL_API_KEY` ke per-service identity / short-lived credential |
+
+Implikasi praktis untuk GovConnect:
+
+1. **Agent**
+   Gunakan satu orchestrator dengan tools eksplisit dulu, bukan multi-agent besar sejak awal.
+2. **Retrieval**
+   Naikkan recall sebelum membuang kandidat. Rerank dan abstain sesudahnya.
+3. **Chunking**
+   SOP, jadwal, dan dokumen layout-heavy perlu chunking berbasis section/layout, bukan sekadar potong karakter.
+4. **Safety**
+   Retrieval output harus diperlakukan sebagai **untrusted external content**, bukan instruksi.
+5. **Platform**
+   Shared internal key adalah pola transisional, bukan target enterprise.
+
 ---
 
 ## 7. Target Arsitektur Enterprise-Ready
@@ -782,23 +852,31 @@ Target FE:
 
 Target: 3-5 hari
 
-- perbaiki cache katalog layanan menjadi per-village
-- tambahkan correlation id lintas service
-- tambahkan status ingestion knowledge yang nyata
-- hapus fallback secret di production path
-- proteksi endpoint publik yang tidak perlu
+- [x] perbaiki cache katalog layanan menjadi per-village ✅
+- [x] tambahkan correlation id lintas service ✅ (middleware sudah ada, outgoing propagation tracked)
+- [ ] tambahkan status ingestion knowledge yang nyata (Fase 1)
+- [x] hapus fallback secret di production path ✅
+- [x] proteksi endpoint publik yang tidak perlu ✅
+
+**Tambahan yang diimplementasi (dari GOVCONNECT-DEFINITIVE-AUDIT):**
+- [x] CORS fail-closed (SEC-02) ✅
+- [x] Turunkan minScore 0.65 → 0.50 ✅
+- [x] SQL threshold post-retrieval pattern (0.30 SQL, 0.50 post-rerank) ✅
+- [x] Single-word query expansion via synonym dictionary ✅
+- [x] HNSW vector index migration ✅
+- [x] LLM retry on JSON parse failure (BUG-01) ✅
 
 ## Fase 1 — Naikkan kualitas retrieval sebelum rewrite agent
 
 Target: 1-2 minggu
 
-- turunkan early threshold recall
-- jangan skip query expansion untuk single-word query
-- perbesar candidate pool sebelum rerank
-- simpan actual similarity score untuk conflict analytics
-- perkuat lexical search Indonesia
-- buat dashboard “why retrieval failed” berbasis trace
-
+- ✅ turunkan early threshold recall
+- ✅ turunkan early threshold recall
+- ✅ jangan skip query expansion untuk single-word query
+- ✅ perbesar candidate pool sebelum rerank
+- ✅ simpan actual similarity score untuk conflict analytics
+- ✅ perkuat lexical search Indonesia
+- ✅ buat dashboard "why retrieval failed" berbasis trace
 ## Fase 2 — Pisahkan deterministic facts dari free-text RAG
 
 Target: 2-3 minggu
@@ -827,16 +905,48 @@ Target: 2-4 minggu
 
 ---
 
-## 9. Status Dokumen Lama
+## 9. Perbandingan Dokumen Internal dan Keputusan Source of Truth
 
-| Dokumen | Status | Catatan |
-|---|---|---|
-| `docs/FULL-SYSTEM-AUDIT.md` | Perlu disupersede | Banyak insight masih berguna, tetapi beberapa severity dan status fix perlu diperbarui |
-| `docs/SECURITY-AUDIT-REPORT.md` | Parsial stale | Beberapa temuan AI service sudah fixed, tetapi isu trust boundary dan static/public surface masih relevan |
-| `docs/temuan.md` | Parsial stale | Masih berguna sebagai daftar temuan, tapi perlu verifikasi ulang per item |
-| `docs/arsitektur-backend-lengkap.md` | Parsial stale | Secara konsep cukup baik, tetapi beberapa detail versi/platform/status service sudah drift |
-| `docs/pengembangan.md` | Perlu review | Belum dijadikan referensi utama dalam audit ini |
-| `docs/AI-GATEWAY-BEST-PRACTICES.md` | Masih relevan | Masih berguna untuk lane/gateway strategy, tetapi belum cukup menjawab masalah retrieval dan agent architecture end-to-end |
+| Dokumen | Nilai yang masih berguna | Yang sudah stale / harus dikoreksi | Keputusan |
+|---|---|---|---|
+| `docs/ENTERPRISE-MODERNIZATION-AUDIT-2026-04.md` | Temuan berbasis codebase aktual, fokus migration path, separation antara current-state vs target-state | Harus terus diperbarui jika kode berubah | **Source of truth utama** |
+| `docs/MIGRATION-AUDIT-ENTERPRISE.md` | Punya beberapa ide yang berguna: vector index, token bloat, tool-calling direction, roadmap migrasi | Banyak status temuan tidak lagi akurat: `/api/status` AI sudah diproteksi, `/metrics` AI sudah diproteksi, `/api-docs` AI diproteksi di production, `api-key-manager.service.ts` sudah tidak ada, beberapa severity terlalu agresif | **Arsip / disupersede** |
+| `docs/FULL-SYSTEM-AUDIT.md` | Insight RAG miss, prompt bloat, dan arah agent architecture masih berguna | Beberapa temuan perlu downgrade/update, misalnya string fallback API key, severity `innerHTML`, dan daftar bug yang bergantung pada file lama | **Catatan audit kerja, bukan source utama** |
+| `docs/SECURITY-AUDIT-REPORT.md` | Framing regulasi, banyak temuan keamanan historis, daftar perbaikan masih bernilai | Sudah stale pada beberapa poin penting: `/api/status` AI, `/metrics` AI, `/api-docs` AI prod, klaim provider-specific “Gemini”, dan sebagian status PII handling | **Audit historis, perlu dibaca dengan verifikasi kode** |
+| `docs/temuan.md` | Daftar temuan ringkas, berguna untuk melihat histori isu | Masih mereferensikan file yang sudah hilang seperti `api-key-manager.service.ts`, dan klaim stateless lama | **Arsip temuan** |
+| `docs/arsitektur-backend-lengkap.md` | Inventaris arsitektur service dan flow cukup kaya | Drift pada detail versi/dashboard, sebagian wording “stateless”, dan status beberapa endpoint/security | **Dokumen orientasi arsitektur, bukan audit final** |
+| `docs/AI-GATEWAY-BEST-PRACTICES.md` | Masih relevan untuk lane strategy, provider abstraction, monitoring per lane, cache scope | Bukan dokumen enterprise architecture menyeluruh | **Tetap dipertahankan sebagai dokumen subsystem** |
+| `docs/case.md` | Berguna sebagai contoh expected behavior percakapan dan acceptance scenarios | Bukan dokumen arsitektur atau keamanan | **Tetap dipertahankan sebagai behavioral spec** |
+| `docs/pengembangan.md` | Berisi backlog ide yang masih masuk akal | Bukan audit, bukan source of truth | **Tetap dipertahankan sebagai ide roadmap** |
+
+### 9.1 Klaim Lama yang Secara Eksplisit Harus Ditolak
+
+Berikut beberapa contoh klaim lama yang **tidak boleh lagi** dipakai tanpa verifikasi:
+
+- “`/api/status` AI service terbuka”  
+  Salah untuk codebase saat ini. `govconnect-ai-service/src/app.ts:980` sudah memakai `internalAuthMiddleware`.
+- “`/metrics` AI service terbuka”  
+  Salah untuk codebase saat ini. `govconnect-ai-service/src/app.ts:81` sudah diproteksi.
+- “`/api-docs` AI service terbuka di production”  
+  Salah untuk production path saat ini. `govconnect-ai-service/src/app.ts:107-117` sudah diproteksi.
+- “PII di profile service masih plain text penuh”  
+  Tidak lagi sepenuhnya akurat. `nik` dan `no_hp` sudah lewat `encryptPii(...)`, dan nama dimask sebelum masuk prompt. Tetapi coverage-nya **belum lengkap** karena fallback plaintext masih mungkin jika `PROFILE_ENCRYPTION_KEY` tidak dikonfigurasi.
+- “AI service sepenuhnya stateless”  
+  Salah. Saat ini ada DB tables untuk token usage, conversation session, blacklist, vectors, dan state operasional lain.
+- “Dashboard masih Next.js 14+”  
+  Salah. Codebase saat ini memakai Next.js 16.
+
+### 9.2 Keputusan Dokumentasi
+
+Mulai setelah audit ini:
+
+- `ENTERPRISE-MODERNIZATION-AUDIT-2026-04.md` menjadi **dokumen audit enterprise utama**
+- `MIGRATION-AUDIT-ENTERPRISE.md` menjadi **dokumen arsip / pointer**
+- dokumen lain tetap dipakai sebagai:
+  - **arsip histori**
+  - **spec perilaku**
+  - **subsystem guidance**
+  - **ide pengembangan**
 
 ---
 
@@ -878,21 +988,33 @@ Jika roadmap di dokumen ini diikuti, target realistisnya adalah:
 
 ## 12. Referensi Eksternal
 
-Referensi berikut dipakai sebagai pembanding praktik yang lebih baik pada tanggal audit ini:
+Referensi berikut dipakai sebagai baseline best practice pada tanggal audit ini:
 
-- Microsoft Learn, *Relevance scoring in hybrid search using Reciprocal Rank Fusion (RRF)*  
+- OpenAI, *A practical guide to building agents*  
+  https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/
+- OpenAI API, *Safety in building agents*  
+  https://platform.openai.com/docs/guides/agent-builder-safety
+- OpenAI API, *Trace grading*  
+  https://platform.openai.com/docs/guides/trace-grading
+- OpenAI, *Designing AI agents to resist prompt injection*  
+  https://openai.com/index/designing-agents-to-resist-prompt-injection/
+- Anthropic, *Building agents with the Claude Agent SDK*  
+  https://claude.com/blog/building-agents-with-the-claude-agent-sdk
+- Microsoft Learn, *Hybrid search overview*  
+  https://learn.microsoft.com/en-us/azure/search/hybrid-search-overview
+- Microsoft Learn, *Hybrid search ranking (RRF)*  
   https://learn.microsoft.com/en-us/azure/search/hybrid-search-ranking
-- Microsoft Learn, *Relevance in vector search*  
+- Microsoft Learn, *Vector search ranking*  
   https://learn.microsoft.com/en-us/azure/search/vector-search-ranking
 - Microsoft Learn, *Chunk and Vectorize by Document Layout*  
   https://learn.microsoft.com/en-us/azure/search/search-how-to-semantic-chunking
 - Elastic Docs, *Hybrid search*  
   https://www.elastic.co/docs/solutions/search/hybrid-search
-- OpenAI, *Evaluation best practices*  
-  https://developers.openai.com/api/docs/guides/evaluation-best-practices
-- OpenAI, *A practical guide to building agents*  
-  https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/
-- OpenAI, *Designing AI agents to resist prompt injection*  
-  https://openai.com/index/designing-agents-to-resist-prompt-injection/
-- Anthropic, *Building agents with the Claude Agent SDK*  
-  https://claude.com/blog/building-agents-with-the-claude-agent-sdk
+- Google Cloud IAM, *Best practices for using service accounts securely*  
+  https://cloud.google.com/iam/docs/best-practices-service-accounts
+
+Catatan:
+
+- Referensi OpenAI dan Anthropic dipakai untuk **agent design, safety, approvals, dan eval**.
+- Referensi Microsoft dan Elastic dipakai untuk **hybrid retrieval, RRF, ranking, dan chunking**.
+- Referensi Google Cloud IAM dipakai sebagai **inference desain** untuk prinsip service identity dan menghindari static shared credentials, meskipun GovConnect tidak wajib memakai stack GCP.

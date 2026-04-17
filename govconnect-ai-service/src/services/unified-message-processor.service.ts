@@ -1418,9 +1418,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       systemPrompt = contextResult.systemPrompt;
       messageCount = contextResult.messageCount;
     } else {
-      // Build complaint categories and service catalog text for WhatsApp channel too
-      const complaintCategoriesText = await buildComplaintCategoriesText(resolvedVillageId);
-      const serviceCatalogText = await buildServiceCatalogText(resolvedVillageId);
+      // Fase 1.4: Skip catalog/categories for greeting & simple queries to save tokens
+      const needsCatalog = !isGreeting && looksLikeQuestion !== false;
+      const complaintCategoriesText = needsCatalog ? await buildComplaintCategoriesText(resolvedVillageId) : '';
+      const serviceCatalogText = needsCatalog ? await buildServiceCatalogText(resolvedVillageId) : '';
       const villageName = templateContext?.villageName || (await getVillageProfileSummary(resolvedVillageId))?.name || undefined;
       const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText, promptFocus, villageName, serviceCatalogText);
       systemPrompt = contextResult.systemPrompt;

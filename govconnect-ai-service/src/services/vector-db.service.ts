@@ -271,6 +271,9 @@ export async function searchVectors(
     // (e.g. "informasi_umum") often don't match stored categories (e.g. "umum", "general").
     // Using category as a hard filter causes 0 results. Vector similarity is the primary filter.
     if (sourceTypes.includes('knowledge')) {
+      // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
+      // Actual quality filtering happens post-RRF in rerank stage.
+      const sqlMinScore = Math.min(minScore, 0.35);
       const knowledgeQuery = villageId
         ? Prisma.sql`
             SELECT 
@@ -278,7 +281,7 @@ export async function searchVectors(
               1 - (embedding <=> ${embeddingStr}::vector) as similarity,
               'knowledge' as source_type, quality_score
             FROM knowledge_vectors
-            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
               AND (village_id = ${villageId} OR village_id IS NULL)
           `
         : Prisma.sql`
@@ -287,7 +290,7 @@ export async function searchVectors(
               1 - (embedding <=> ${embeddingStr}::vector) as similarity,
               'knowledge' as source_type, quality_score
             FROM knowledge_vectors
-            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
           `;
 
       const knowledgeResults = await prisma.$queryRaw<VectorSearchRow[]>`
@@ -323,6 +326,8 @@ export async function searchVectors(
 
     // Search document vectors
     if (sourceTypes.includes('document')) {
+      // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
+      const sqlMinScore = Math.min(minScore, 0.35);
       const documentQuery = villageId
         ? Prisma.sql`
             SELECT 
@@ -331,7 +336,7 @@ export async function searchVectors(
               1 - (embedding <=> ${embeddingStr}::vector) as similarity,
               'document' as source_type
             FROM document_vectors
-            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
               AND (village_id = ${villageId} OR village_id IS NULL)
           `
         : Prisma.sql`
@@ -341,7 +346,7 @@ export async function searchVectors(
               1 - (embedding <=> ${embeddingStr}::vector) as similarity,
               'document' as source_type
             FROM document_vectors
-            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${minScore}
+            WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
           `;
 
       const documentResults = await prisma.$queryRaw<VectorSearchRow[]>`

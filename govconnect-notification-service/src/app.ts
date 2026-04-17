@@ -20,6 +20,11 @@ const app: Application = express();
 // Middleware
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') || '*' }));
 app.use(helmet());
+
+// Correlation ID middleware — must be before routes
+import { correlationMiddleware } from './shared/correlation-context';
+app.use(correlationMiddleware);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 

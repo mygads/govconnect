@@ -185,6 +185,8 @@ model knowledge_base {
   admin_id         String?   // Who created/updated this
   last_edited_at   DateTime? // When content was last edited
   last_embedded_at DateTime? // When embedding was last generated
+  embedding_status String    @default("pending") // pending | processing | completed | failed
+  embedding_error  String?   @db.Text // Error message if embedding failed
   updated_at       DateTime  @updatedAt
   created_at       DateTime  @default(now())
 

@@ -697,18 +697,21 @@ export interface ServiceCatalogItem {
   };
 }
 
-let serviceCatalogCache: ServiceCatalogItem[] | null = null;
-let serviceCatalogCacheTime = 0;
+// Per-village cache to prevent multi-tenant data leakage (TENANT-01 fix)
+const serviceCatalogCacheMap = new Map<string, { data: ServiceCatalogItem[]; time: number }>();
 const SERVICE_CATALOG_TTL = 15 * 60 * 1000; // 15 minutes
+const SERVICE_CATALOG_CACHE_MAX_ENTRIES = 50; // Prevent unbounded growth
 
 /**
  * Get all available services from case-service DB.
- * Results are cached for 15 minutes.
+ * Results are cached per villageId for 15 minutes.
  */
 export async function getServiceCatalog(villageId?: string): Promise<ServiceCatalogItem[]> {
+  const cacheKey = villageId || '__global__';
   const now = Date.now();
-  if (serviceCatalogCache && (now - serviceCatalogCacheTime) < SERVICE_CATALOG_TTL) {
-    return serviceCatalogCache;
+  const cached = serviceCatalogCacheMap.get(cacheKey);
+  if (cached && (now - cached.time) < SERVICE_CATALOG_TTL) {
+    return cached.data;
   }
 
   try {
@@ -723,22 +726,29 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
     });
 
     if (resilientHttp.isFallbackResponse(response)) {
-      return serviceCatalogCache || [];
+      return cached?.data || [];
     }
 
     const services = Array.isArray(response.data?.data) ? response.data.data : [];
-    serviceCatalogCache = services;
-    serviceCatalogCacheTime = now;
 
-    logger.info('✅ Service catalog fetched from DB', { count: services.length });
+    // Evict oldest entry if cache is full
+    if (serviceCatalogCacheMap.size >= SERVICE_CATALOG_CACHE_MAX_ENTRIES) {
+      const oldestKey = serviceCatalogCacheMap.keys().next().value;
+      if (oldestKey) serviceCatalogCacheMap.delete(oldestKey);
+    }
+
+    serviceCatalogCacheMap.set(cacheKey, { data: services, time: now });
+
+    logger.info('✅ Service catalog fetched from DB', { count: services.length, villageId: cacheKey });
     return services;
   } catch (error: any) {
     logger.warn('❌ Failed to fetch service catalog, using cache or empty', {
       error: error.message,
       status: error.response?.status,
-      hasCachedData: !!serviceCatalogCache,
+      hasCachedData: !!cached,
+      villageId: cacheKey,
     });
-    return serviceCatalogCache || [];
+    return cached?.data || [];
   }
 }
 
@@ -746,8 +756,7 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
  * Clear the service catalog cache (called from periodic cleanup)
  */
 export function clearServiceCatalogCache(): void {
-  serviceCatalogCache = null;
-  serviceCatalogCacheTime = 0;
+  serviceCatalogCacheMap.clear();
 }
 
 export interface ServiceRequirementDefinition {

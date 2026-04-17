@@ -34,9 +34,9 @@ import {
 /**
  * Default RAG configuration
  */
-const DEFAULT_TOP_K = 8;            // Fetch more so dedup still leaves enough useful results
-const DEFAULT_MIN_SCORE = 0.65;
-const MIN_EFFECTIVE_SCORE = 0.45; // Floor to prevent noise from cascading threshold reductions
+const DEFAULT_TOP_K = 15;            // Fase 1.2: Fetch more candidates for reranker (was 8)
+const DEFAULT_MIN_SCORE = 0.50; // Lowered from 0.65 for better recall (Fase 0.5)
+const MIN_EFFECTIVE_SCORE = 0.35; // Lowered from 0.45 — threshold applied post-retrieval/rerank // Floor to prevent noise from cascading threshold reductions
 const MAX_CONTEXT_LENGTH = 5000; // Increased from 4000 — dedup removes waste, so we can include more
 const DEFAULT_RERANK_MIN_SCORE = 0.2;
 
@@ -160,6 +160,52 @@ Output: jam buka kelurahan waktu operasional jadwal kerja pelayanan kantor
 QUERY:
 {query}`;
 
+// ── Indonesian synonym map for single-word query expansion (Fase 0.7) ──
+const INDONESIAN_SYNONYM_MAP: Record<string, string> = {
+  // Dokumen kependudukan
+  'ktp': 'KTP kartu tanda penduduk identitas pembuatan persyaratan',
+  'kk': 'KK kartu keluarga keluarga pembuatan persyaratan',
+  'akta': 'akta kelahiran kematian pernikahan dokumen surat',
+  'akte': 'akta kelahiran kematian pernikahan dokumen surat',
+  'sktm': 'SKTM surat keterangan tidak mampu miskin bantuan',
+  'skck': 'SKCK surat keterangan catatan kepolisian berkelakuan baik',
+  // Waktu & jadwal
+  'jam': 'jam buka tutup operasional jadwal pelayanan waktu kerja',
+  'buka': 'jam buka operasional jadwal pelayanan waktu kerja',
+  'tutup': 'jam tutup operasional jadwal pelayanan waktu libur',
+  'sabtu': 'sabtu jam buka operasional hari kerja libur weekend',
+  'minggu': 'minggu hari libur buka tutup operasional',
+  'jadwal': 'jadwal jam operasional pelayanan waktu buka tutup',
+  // Biaya & tarif
+  'biaya': 'biaya tarif harga ongkos bayar gratis retribusi',
+  'tarif': 'tarif biaya harga ongkos bayar retribusi',
+  'gratis': 'gratis biaya tarif bayar tidak berbayar',
+  'bayar': 'bayar biaya tarif harga retribusi',
+  // Lokasi & kontak
+  'alamat': 'alamat lokasi tempat kantor desa kelurahan',
+  'telepon': 'telepon nomor kontak hubungi whatsapp hp',
+  'telp': 'telepon nomor kontak hubungi whatsapp hp',
+  'kontak': 'kontak telepon nomor hubungi whatsapp',
+  'lokasi': 'lokasi alamat tempat kantor desa kelurahan maps',
+  // Infrastruktur
+  'jalan': 'jalan rusak berlubang perbaikan infrastruktur',
+  'lampu': 'lampu jalan mati penerangan rusak',
+  'sampah': 'sampah menumpuk kotor kebersihan bau limbah',
+  'drainase': 'drainase saluran air banjir tersumbat selokan got',
+  'banjir': 'banjir genangan air drainase saluran',
+  // Layanan umum
+  'syarat': 'syarat persyaratan ketentuan dokumen kelengkapan berkas',
+  'persyaratan': 'persyaratan syarat ketentuan dokumen kelengkapan berkas',
+  'prosedur': 'prosedur cara langkah proses alur tata cara',
+  'cara': 'cara prosedur langkah proses alur tata cara pembuatan',
+  'surat': 'surat keterangan pengantar domisili dokumen',
+  'izin': 'izin perizinan surat keramaian usaha',
+  // Status
+  'status': 'status cek laporan pengaduan layanan proses',
+  'lapor': 'lapor laporan pengaduan aduan keluhan masalah',
+  'keluhan': 'keluhan pengaduan aduan lapor masalah',
+};
+
 // ── Query expansion cache ──
 const expansionCache = new Map<string, { expanded: string; ts: number }>();
 const EXPANSION_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
@@ -171,22 +217,45 @@ function normalizeForExpansionCache(q: string): string {
 }
 
 /**
- * Expand query using micro LLM for better retrieval recall.
+ * Expand query for better retrieval recall.
+ * Fase 1.5: Static synonym dictionary is the PRIMARY expansion path (0 LLM cost).
+ * LLM expansion is used as FALLBACK only for multi-word queries where dict provides no enrichment.
  * Results are cached for 15 minutes to avoid redundant LLM calls.
- * Falls back to original query if LLM fails.
- * Skips expansion for single-word queries — direct keyword match is sufficient.
  */
 export async function expandQuery(query: string): Promise<string> {
   if (!query.trim()) return query;
 
-  // Skip expansion for single-word queries — LLM overhead not worth it
-  const wordCount = query.trim().split(/\s+/).length;
-  if (wordCount <= 1) {
-    logger.debug('Query expansion skipped (single word)', { query: query.substring(0, 40) });
+  const words = query.trim().toLowerCase().split(/\s+/);
+  
+  // Step 1: Try static synonym dictionary expansion for ALL words
+  const dictExpansions: string[] = [];
+  for (const word of words) {
+    const synonym = INDONESIAN_SYNONYM_MAP[word];
+    if (synonym) {
+      dictExpansions.push(synonym);
+    }
+  }
+  
+  // If dict provided at least one expansion, combine with original query
+  if (dictExpansions.length > 0) {
+    const expanded = `${query} ${dictExpansions.join(' ')}`;
+    // Deduplicate words
+    const uniqueWords = [...new Set(expanded.toLowerCase().split(/\s+/))].join(' ');
+    logger.debug('Query expansion via synonym dict', { 
+      query: query.substring(0, 40), 
+      dictHits: dictExpansions.length,
+      expanded: uniqueWords.substring(0, 100),
+    });
+    return uniqueWords;
+  }
+
+  // Step 2: For single-word queries with no dict match, return as-is (save LLM cost)
+  if (words.length <= 1) {
+    logger.debug('Query expansion: no synonym for single word, skipping LLM', { query: query.substring(0, 40) });
     return query;
   }
 
-  // Check expansion cache first
+  // Step 3: LLM fallback for multi-word queries where dict provided nothing
   const cacheKey = normalizeForExpansionCache(query);
   const cached = expansionCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < EXPANSION_CACHE_TTL) {
@@ -210,11 +279,10 @@ export async function expandQuery(query: string): Promise<string> {
 
   const expanded = gatewayResult?.text?.trim();
   if (gatewayResult && expanded && expanded.length > query.length) {
-    logger.debug('Query expanded via RAG gateway lane', {
+    logger.debug('Query expanded via LLM fallback', {
       original: query,
       expanded: expanded.substring(0, 100),
       model: gatewayResult.model,
-      provider: gatewayResult.provider,
     });
     if (expansionCache.size >= MAX_EXPANSION_CACHE) {
       const oldest = expansionCache.keys().next().value;
@@ -469,9 +537,18 @@ export async function retrieveContext(
       });
 
       if (searchResults.length === 0) {
-        logger.info('No relevant results found for query', {
-          query: query.substring(0, 50),
-          expandedQuery: expandedQuery !== query ? expandedQuery.substring(0, 100) : undefined,
+        // Fase 1.8: Structured "why retrieval failed" trace
+        logger.warn('RAG vector-only search returned 0 results — failure trace', {
+          trace: 'rag_retrieval_failed',
+          query: query.substring(0, 100),
+          expandedQuery: expandedQuery !== query ? expandedQuery.substring(0, 150) : undefined,
+          queryIntent,
+          adjustedMinScore: adjustedMinScore * 0.8,
+          topK: rerankCandidateCount,
+          hybridSearch: false,
+          categories: effectiveCategories,
+          villageId,
+          searchTimeMs: Date.now() - startTime,
         });
 
         return {
@@ -491,6 +568,19 @@ export async function retrieveContext(
     }
 
     if (filteredResults.length === 0) {
+      // Fase 1.8: Structured "why retrieval failed" trace for diagnostics
+      logger.warn('RAG retrieval returned 0 results — failure trace', {
+        trace: 'rag_retrieval_failed',
+        query: query.substring(0, 100),
+        expandedQuery: expandedQuery !== query ? expandedQuery.substring(0, 150) : undefined,
+        queryIntent,
+        adjustedMinScore,
+        topK,
+        hybridSearch: useHybridSearch,
+        categories: effectiveCategories,
+        villageId,
+        searchTimeMs: Date.now() - startTime,
+      });
       return {
         relevantChunks: [],
         contextString: '',
@@ -759,7 +849,7 @@ function buildContextString(results: VectorSearchResult[]): { context: string; c
       conflicts.push({
         source1: groupItems[0].source || 'tidak diketahui',
         source2: groupItems[1].source || 'tidak diketahui',
-        similarityScore: 0, // Will be filled by dedup caller if needed
+        similarityScore: Math.max(...groupItems.map(g => g._conflictJaccard ?? 0)),
         contentSnippet1: groupItems[0].content.substring(0, 200),
         contentSnippet2: groupItems[1].content.substring(0, 200),
       });
@@ -830,6 +920,8 @@ function buildContextString(results: VectorSearchResult[]): { context: string; c
 interface DedupResult extends VectorSearchResult {
   /** If set, results sharing the same _conflictGroup discuss the same topic but contain different data */
   _conflictGroup?: number;
+  /** Jaccard similarity score with the conflicting item */
+  _conflictJaccard?: number;
 }
 
 function deduplicateResults(results: VectorSearchResult[]): DedupResult[] {
@@ -878,7 +970,8 @@ function deduplicateResults(results: VectorSearchResult[]): DedupResult[] {
       if (!existingResult._conflictGroup) {
         existingResult._conflictGroup = nextConflictGroup++;
       }
-      const conflictResult: DedupResult = { ...result, _conflictGroup: existingResult._conflictGroup };
+      const conflictResult: DedupResult = { ...result, _conflictGroup: existingResult._conflictGroup, _conflictJaccard: maxJaccard };
+      if (!existingResult._conflictJaccard) existingResult._conflictJaccard = maxJaccard;
       deduped.push(conflictResult);
       wordSets.push(words);
 

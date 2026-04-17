@@ -154,7 +154,8 @@ function parseLLMResponseText(responseText: string, modelName: string): LLMRespo
   return LLMResponseSchema.parse(parsedResponse);
 }
 
-export async function callLLM(systemPrompt: string): Promise<{ response: LLMResponse; metrics: LLMMetrics } | null> {
+export async function callLLM(systemPrompt: string, _retryCount = 0): Promise<{ response: LLMResponse; metrics: LLMMetrics } | null> {
+  const MAX_RETRIES = 1; // BUG-01 fix: retry once on JSON parse failure before falling back to repair
   const envModels = getDefaultGatewayModels('full');
 
   const gatewayResult = await callAIGatewayPrompt({
@@ -186,7 +187,17 @@ export async function callLLM(systemPrompt: string): Promise<{ response: LLMResp
       metrics: gatewayResult.metrics,
     };
   } catch (error: any) {
-    logger.error('Gateway response validation failed', {
+    // BUG-01 fix: retry LLM call instead of silently repairing broken JSON
+    if (_retryCount < MAX_RETRIES) {
+      logger.warn('Gateway response validation failed, retrying LLM call', {
+        provider: gatewayResult.provider,
+        model: gatewayResult.model,
+        error: error.message,
+        retryCount: _retryCount + 1,
+      });
+      return callLLM(systemPrompt, _retryCount + 1);
+    }
+    logger.error('Gateway response validation failed after retry', {
       provider: gatewayResult.provider,
       model: gatewayResult.model,
       error: error.message,

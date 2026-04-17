@@ -48,7 +48,7 @@ export async function searchKeywords(
   options: VectorSearchOptions = {}
 ): Promise<VectorSearchResult[]> {
   const {
-    topK = 10,
+    topK = 15, // Fase 1.2: bigger candidate pool
     categories,
     sourceTypes = ['knowledge', 'document'],
     villageId,
@@ -84,11 +84,13 @@ export async function searchKeywords(
           keywords,
           'knowledge' as source_type,
           quality_score,
-          -- Calculate relevance score based on matches
+          -- Fase 1.3: Enhanced relevance scoring with trigram similarity
           (
             CASE WHEN LOWER(title) LIKE ${ilikeTerm} THEN 3.0 ELSE 0 END +
             CASE WHEN LOWER(content) LIKE ${ilikeTerm} THEN 2.0 ELSE 0 END +
             CASE WHEN ${query.toLowerCase()} = ANY(LOWER(keywords::text)::text[]) THEN 2.5 ELSE 0 END +
+            COALESCE(similarity(LOWER(title), ${query.toLowerCase()}), 0) * 2.0 +
+            COALESCE(similarity(LOWER(content), ${query.toLowerCase()}), 0) * 1.0 +
             COALESCE(
               ts_rank(
                 to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(content, '')),
@@ -101,7 +103,8 @@ export async function searchKeywords(
         WHERE 
           (${combinedTermCondition}
           OR to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(content, '')) 
-             @@ plainto_tsquery('simple', ${query}))
+             @@ plainto_tsquery('simple', ${query})
+          OR similarity(LOWER(title || ' ' || content), ${query.toLowerCase()}) > 0.1)
           ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
         ORDER BY relevance_score DESC
         LIMIT ${topK}
@@ -148,10 +151,12 @@ export async function searchKeywords(
           category,
           section_title,
           'document' as source_type,
+          -- Fase 1.3: Enhanced relevance scoring with trigram similarity
           (
             CASE WHEN LOWER(content) LIKE ${ilikeTerm} THEN 2.0 ELSE 0 END +
             CASE WHEN LOWER(document_title) LIKE ${ilikeTerm} THEN 1.5 ELSE 0 END +
             CASE WHEN LOWER(COALESCE(section_title, '')) LIKE ${ilikeTerm} THEN 2.5 ELSE 0 END +
+            COALESCE(similarity(LOWER(COALESCE(section_title, '') || ' ' || content), ${query.toLowerCase()}), 0) * 1.5 +
             COALESCE(
               ts_rank(
                 to_tsvector('simple', COALESCE(section_title, '') || ' ' || COALESCE(content, '')),
@@ -164,7 +169,8 @@ export async function searchKeywords(
         WHERE 
           (${combinedDocTermCondition}
           OR to_tsvector('simple', COALESCE(section_title, '') || ' ' || COALESCE(content, '')) 
-             @@ plainto_tsquery('simple', ${query}))
+             @@ plainto_tsquery('simple', ${query})
+          OR similarity(LOWER(COALESCE(section_title, '') || ' ' || content), ${query.toLowerCase()}) > 0.1)
           ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
         ORDER BY relevance_score DESC
         LIMIT ${topK}
@@ -204,29 +210,52 @@ export async function searchKeywords(
 
 /**
  * Prepare search terms from query
- * Handles Indonesian language specifics
+ * Handles Indonesian language specifics with expanded stopwords and basic stemming
  */
 function prepareSearchTerms(query: string): string[] {
-  // Indonesian stop words to exclude from keyword search
-  const stopWords = new Set(['di', 'ke', 'ya', 'yg', 'apa', 'ini', 'itu', 'dan', 'atau', 'yang', 'dari']);
+  // Expanded Indonesian stop words (Fase 1.3)
+  const stopWords = new Set([
+    'di', 'ke', 'ya', 'yg', 'apa', 'ini', 'itu', 'dan', 'atau', 'yang', 'dari',
+    'untuk', 'dengan', 'pada', 'adalah', 'akan', 'juga', 'sudah', 'belum', 'bisa',
+    'ada', 'tidak', 'saya', 'kami', 'kita', 'mereka', 'dia', 'anda', 'bapak', 'ibu',
+    'pak', 'bu', 'mas', 'mbak', 'mau', 'minta', 'tolong', 'mohon', 'dong', 'deh',
+    'kok', 'sih', 'kan', 'lah', 'nih', 'tuh', 'gak', 'ga', 'nggak', 'enggak',
+    'gimana', 'gimna', 'bgmn', 'bagaimana', 'apakah', 'boleh', 'biar', 'supaya',
+    'kalau', 'kalo', 'jika', 'bila', 'tapi', 'tetapi', 'namun', 'sedang', 'lagi',
+    'sedangkan', 'serta', 'maupun', 'baik', 'terima', 'kasih', 'makasih', 'terimakasih',
+  ]);
+
   const terms = query
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
     .filter(t => t.length > 1 && !stopWords.has(t));
 
-  // Instead of a hardcoded synonym map, use lightweight algorithmic expansion:
-  // 1. Keep all original terms
-  // 2. Add common Indonesian abbreviation expansions via prefix matching
-  //    (this is structural, not vocabulary-dependent)
+  // Basic Indonesian stemming: strip common prefixes/suffixes for broader matching
   const expanded: string[] = [...terms];
-
-  // Common abbreviation patterns in Indonesian administrative context
   for (const term of terms) {
-    // Short forms → possible longer forms (generic prefix expansion)
-    if (term.length <= 4) {
-      // Will match in the vector/keyword DB naturally; no need to hardcode synonyms
-      // The LLM-based expandQuery() in rag.service.ts handles semantic expansion
+    // Strip common prefixes: ber-, me-, men-, mem-, meng-, meny-, pe-, pen-, pem-, peng-, peny-, per-, se-, di-, ke-, ter-
+    let stem = term;
+    const prefixes = ['meny', 'meng', 'mem', 'men', 'me', 'ber', 'peny', 'peng', 'pem', 'pen', 'pe', 'per', 'se', 'ter', 'di', 'ke'];
+    for (const prefix of prefixes) {
+      if (stem.startsWith(prefix) && stem.length > prefix.length + 2) {
+        const stripped = stem.slice(prefix.length);
+        if (stripped.length >= 3) {
+          expanded.push(stripped);
+          break;
+        }
+      }
+    }
+    // Strip common suffixes: -kan, -an, -i, -nya
+    const suffixes = ['kan', 'nya', 'an'];
+    for (const suffix of suffixes) {
+      if (stem.endsWith(suffix) && stem.length > suffix.length + 2) {
+        const stripped = stem.slice(0, -suffix.length);
+        if (stripped.length >= 3) {
+          expanded.push(stripped);
+          break;
+        }
+      }
     }
   }
 

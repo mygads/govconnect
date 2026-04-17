@@ -48,6 +48,12 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    // Fase 1.6: Update embedding status lifecycle
+    await prisma.knowledge_base.update({
+      where: { id },
+      data: { embedding_status: 'processing', embedding_error: null }
+    })
+
     // Call AI service to update/re-embed the vector
     const vectorResult = await updateKnowledgeVector(knowledge.id, {
       village_id: knowledge.village_id || undefined,
@@ -60,17 +66,23 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     if (!vectorResult.success) {
       console.error('Failed to re-embed knowledge:', vectorResult.error)
+      await prisma.knowledge_base.update({
+        where: { id },
+        data: { embedding_status: 'failed', embedding_error: String(vectorResult.error) }
+      })
       return NextResponse.json(
         { error: 'Gagal melakukan re-embed ke AI service', details: vectorResult.error },
         { status: 500 }
       )
     }
 
-    // Update last_embedded_at timestamp
+    // Update last_embedded_at timestamp and status
     await prisma.knowledge_base.update({
       where: { id },
       data: {
-        last_embedded_at: new Date()
+        last_embedded_at: new Date(),
+        embedding_status: 'completed',
+        embedding_error: null,
       }
     })
 

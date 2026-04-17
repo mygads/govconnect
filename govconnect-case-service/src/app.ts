@@ -25,11 +25,25 @@ const app: Application = express();
 // Middleware
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') || '*' }));
 app.use(helmet());
+
+// Correlation ID middleware — must be before routes
+import { correlationMiddleware } from './shared/correlation-context';
+app.use(correlationMiddleware);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Prometheus Metrics endpoint
-app.get('/metrics', async (req, res) => {
+// Fase 1.7: Internal auth guard for sensitive endpoints
+const internalAuthGuard = (req: any, res: any, next: any) => {
+  const apiKey = req.headers['x-internal-api-key'];
+  if (!apiKey || apiKey !== process.env.INTERNAL_API_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  next();
+};
+
+// Prometheus Metrics endpoint (Fase 1.7: protected)
+app.get('/metrics', internalAuthGuard, async (req, res) => {
   try {
     res.set('Content-Type', promClient.register.contentType);
     const metrics = await promClient.register.metrics();
@@ -65,8 +79,9 @@ app.use('/', complaintMetaRoutes);
 app.use('/statistics', statisticsRoutes);
 app.use('/user', userRoutes);
 
-// Swagger API Documentation
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+// Swagger API Documentation (Fase 1.7: disabled in production, auth-gated otherwise)
+if (process.env.NODE_ENV !== 'production') {
+app.use('/api-docs', internalAuthGuard, swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   explorer: true,
   customSiteTitle: 'GovConnect Case Service API',
   customCss: '.swagger-ui .topbar { display: none }',
@@ -79,10 +94,11 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 }));
 
 // OpenAPI spec as JSON
-app.get('/api-docs.json', (req, res) => {
+app.get('/api-docs.json', internalAuthGuard, (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(swaggerSpec);
 });
+} // end if NODE_ENV !== 'production'
 
 // Root endpoint
 app.get('/', (req, res) => {
