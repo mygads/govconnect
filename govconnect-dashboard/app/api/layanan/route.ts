@@ -82,6 +82,12 @@ export async function POST(request: NextRequest) {
     const category_id = typeof body.category_id === 'string' ? body.category_id : ''
     const mode = typeof body.mode === 'string' ? body.mode : undefined
     const is_active = typeof body.is_active === 'boolean' ? body.is_active : undefined
+    const estimated_cost = typeof body.estimated_cost === 'string' && body.estimated_cost.trim()
+      ? body.estimated_cost.trim()
+      : null
+    const estimated_processing_time = typeof body.estimated_processing_time === 'string' && body.estimated_processing_time.trim()
+      ? body.estimated_processing_time.trim()
+      : null
 
     let slug = typeof body.slug === 'string' ? body.slug.trim() : ''
     if (!slug && name) slug = slugify(name)
@@ -103,6 +109,8 @@ export async function POST(request: NextRequest) {
         description,
         slug,
         mode,
+        estimated_cost,
+        estimated_processing_time,
         is_active,
       }),
     })

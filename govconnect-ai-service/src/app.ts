@@ -622,6 +622,18 @@ app.get('/stats/analytics/knowledge', (req: Request, res: Response) => {
   }
 });
 
+app.get('/stats/analytics/retrieval', (req: Request, res: Response) => {
+  try {
+    const stats = aiAnalyticsService.getRetrievalObservability({
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    });
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get retrieval observability' });
+  }
+});
+
 // ===========================================
 // AI Token Usage Endpoints (generic LLM usage tracking)
 

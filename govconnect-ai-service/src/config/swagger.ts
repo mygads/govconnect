@@ -227,6 +227,13 @@ AI Service adalah **otak AI** untuk sistem GovConnect.
           responses: { '200': { description: 'Full analytics' } },
         },
       },
+      '/stats/analytics/retrieval': {
+        get: {
+          tags: ['Analytics'],
+          summary: 'Get retrieval observability traces and summaries',
+          responses: { '200': { description: 'Retrieval observability' } },
+        },
+      },
       '/stats/embeddings': {
         get: {
           tags: ['Embeddings'],

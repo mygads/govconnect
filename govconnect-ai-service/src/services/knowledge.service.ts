@@ -27,6 +27,9 @@ interface KnowledgeSearchResult {
   confidenceLevel?: 'none' | 'low' | 'medium' | 'high';
   retrievalMode?: 'rag' | 'keyword' | 'document_rag';
   searchTimeMs?: number;
+  topScore?: number | null;
+  avgTopScore?: number | null;
+  sourceTitles?: string[];
 }
 
 interface VillageProfileSummary {
@@ -171,6 +174,9 @@ export async function searchDocuments(
       confidenceLevel: ragContext.confidence?.level || 'medium',
       retrievalMode: 'document_rag' as const,
       searchTimeMs: ragContext.searchTimeMs,
+      topScore: ragContext.relevantChunks[0]?.score ?? null,
+      avgTopScore: calculateAverageTopScore(ragContext),
+      sourceTitles: ragContext.relevantChunks.map((chunk) => chunk.source).filter(Boolean).slice(0, 5),
     };
     trackKnowledgeSearch(query, villageId, result, channel);
     return result;
@@ -190,22 +196,6 @@ export async function searchDocuments(
     };
     trackKnowledgeSearch(query, villageId, empty, channel);
     return empty;
-  }
-}
-
-/**
- * Keyword-only knowledge search (bypasses RAG).
- * Useful for exact-term queries where the answer is explicitly present in KB (e.g., glossary/commands)
- * and we want deterministic extraction.
- */
-export async function searchKnowledgeKeywordsOnly(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
-  try {
-    return await searchKnowledgeWithKeywords(query, categories, villageId);
-  } catch (error: any) {
-    logger.warn('Keyword-only knowledge search failed', {
-      error: error?.message,
-    });
-    return { data: [], total: 0, context: '' };
   }
 }
 
@@ -256,6 +246,16 @@ function mergeKnowledgeResults(a: KnowledgeSearchResult, b: KnowledgeSearchResul
     confidenceLevel: a.confidenceLevel === 'high' ? 'high' : (a.confidenceLevel || b.confidenceLevel || 'medium'),
     retrievalMode: a.retrievalMode || b.retrievalMode,
     searchTimeMs: (a.searchTimeMs || 0) + (b.searchTimeMs || 0),
+    topScore: [a.topScore, b.topScore].filter((score): score is number => typeof score === 'number').sort((x, y) => y - x)[0] ?? null,
+    avgTopScore: (() => {
+      const scores = [a.avgTopScore, b.avgTopScore].filter((score): score is number => typeof score === 'number');
+      return scores.length > 0
+        ? Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 1000) / 1000
+        : null;
+    })(),
+    sourceTitles: Array.from(
+      new Set([...(a.sourceTitles || []), ...(b.sourceTitles || [])].filter(Boolean))
+    ).slice(0, 5),
   };
 }
 
@@ -275,6 +275,20 @@ function trackKnowledgeSearch(
     channel,
     villageId,
     hasKnowledge,
+  });
+
+  aiAnalyticsService.recordRetrievalTrace({
+    query,
+    retrievalMode: result.retrievalMode || 'keyword',
+    confidence,
+    hasKnowledge,
+    resultCount: result.total,
+    searchTimeMs: result.searchTimeMs,
+    topScore: result.topScore,
+    avgTopScore: result.avgTopScore,
+    sourceTitles: result.sourceTitles,
+    channel,
+    villageId,
   });
 
   if (!hasKnowledge || confidence === 'low' || confidence === 'none') {
@@ -357,6 +371,9 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
     confidenceLevel: ragContext.confidence?.level || 'medium',
     retrievalMode: 'rag',
     searchTimeMs: ragContext.searchTimeMs,
+    topScore: ragContext.relevantChunks[0]?.score ?? null,
+    avgTopScore: calculateAverageTopScore(ragContext),
+    sourceTitles: items.map((item) => item.title).filter(Boolean).slice(0, 5),
   };
 }
 
@@ -364,6 +381,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
  * Search knowledge base using keyword-based API (fallback)
  */
 async function searchKnowledgeWithKeywords(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
+  const startTime = Date.now();
   const response = await axios.post<KnowledgeSearchResult>(
     `${config.dashboardServiceUrl}/api/internal/knowledge`,
     {
@@ -388,7 +406,22 @@ async function searchKnowledgeWithKeywords(query: string, categories?: string[],
     ...response.data,
     confidenceLevel: response.data.total > 0 ? 'medium' : 'none',
     retrievalMode: 'keyword',
+    searchTimeMs: response.data.searchTimeMs ?? (Date.now() - startTime),
+    sourceTitles: (response.data.data || []).map((item) => item.title).filter(Boolean).slice(0, 5),
   };
+}
+
+function calculateAverageTopScore(ragContext: RAGContext): number | null {
+  const scores = ragContext.relevantChunks
+    .slice(0, 3)
+    .map((chunk) => chunk.score)
+    .filter((score) => Number.isFinite(score));
+
+  if (scores.length === 0) {
+    return null;
+  }
+
+  return Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 1000) / 1000;
 }
 
 /**

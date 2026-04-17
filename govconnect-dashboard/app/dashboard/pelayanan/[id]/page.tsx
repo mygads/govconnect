@@ -75,6 +75,9 @@ interface ServiceRequest {
   service?: {
     id: string
     name: string
+    mode?: string | null
+    estimated_cost?: string | null
+    estimated_processing_time?: string | null
     category?: { name: string } | null
     requirements?: ServiceRequirement[]
   }
@@ -615,6 +618,47 @@ export default function ServiceRequestDetailPage() {
         </div>
 
         <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-500/10">
+                  <FileText className="h-5 w-5 text-emerald-600" />
+                </div>
+                <CardTitle className="text-lg">Informasi Layanan</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Nama Layanan</p>
+                <p className="text-sm font-medium">{request.service?.name || "-"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Kategori</p>
+                <p className="text-sm font-medium">{request.service?.category?.name || "-"}</p>
+              </div>
+              {request.service?.mode && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Mode</p>
+                  <p className="text-sm font-medium">
+                    {request.service.mode === "online" ? "Online" : request.service.mode === "offline" ? "Offline" : "Online & Offline"}
+                  </p>
+                </div>
+              )}
+              {request.service?.estimated_cost && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Estimasi Biaya</p>
+                  <p className="text-sm font-medium">{request.service.estimated_cost}</p>
+                </div>
+              )}
+              {request.service?.estimated_processing_time && (
+                <div>
+                  <p className="text-xs text-muted-foreground">Estimasi Waktu Proses</p>
+                  <p className="text-sm font-medium">{request.service.estimated_processing_time}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <div className="flex items-center gap-3">

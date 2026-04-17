@@ -3,6 +3,16 @@ import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { ai } from '@/lib/api-client'
 import prisma from '@/lib/prisma'
 
+async function safeJson(fetcher: () => Promise<Response>) {
+  try {
+    const res = await fetcher()
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
 // GET - Get knowledge analytics (intent stats, top queries, coverage gaps)
 export async function GET(request: NextRequest) {
   try {
@@ -16,33 +26,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Village ID required' }, { status: 400 })
     }
 
-    // Fetch AI analytics data
-    let analyticsData = null
-    try {
-      const res = await ai.getAnalytics()
-      if (res.ok) analyticsData = await res.json()
-    } catch (e) { console.log('AI analytics unavailable') }
-
-    // Fetch intent stats
-    let intentData = null
-    try {
-      const res = await ai.getAnalyticsIntents()
-      if (res.ok) intentData = await res.json()
-    } catch (e) { console.log('AI intents unavailable') }
-
-    // Fetch flow data for knowledge hit/miss info
-    let flowData = null
-    try {
-      const res = await ai.getAnalyticsFlow()
-      if (res.ok) flowData = await res.json()
-    } catch (e) { console.log('AI flow unavailable') }
-
-    // Fetch real-time knowledge stats from AI service
-    let knowledgeData = null
-    try {
-      const res = await ai.getAnalyticsKnowledge()
-      if (res.ok) knowledgeData = await res.json()
-    } catch (e) { console.log('AI knowledge stats unavailable') }
+    const [
+      analyticsData,
+      intentData,
+      flowData,
+      knowledgeData,
+      retrievalData,
+    ] = await Promise.all([
+      safeJson(() => ai.getAnalytics()),
+      safeJson(() => ai.getAnalyticsIntents()),
+      safeJson(() => ai.getAnalyticsFlow()),
+      safeJson(() => ai.getAnalyticsKnowledge()),
+      safeJson(() => ai.getAnalyticsRetrieval({ village_id: villageId })),
+    ])
 
     // Build analytics response
     const intents = intentData?.intents || intentData?.data || []
@@ -153,6 +149,7 @@ export async function GET(request: NextRequest) {
         totalOpen: conflictStatusCounts.open,
         totalAutoResolved: conflictStatusCounts.auto_resolved,
       },
+      retrievalObservability: retrievalData,
       rawAnalytics: analyticsData,
     })
   } catch (error) {

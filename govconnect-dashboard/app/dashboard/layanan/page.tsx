@@ -68,6 +68,8 @@ interface Service {
   description: string
   slug: string
   mode: string
+  estimated_cost?: string | null
+  estimated_processing_time?: string | null
   is_active: boolean
   category?: { name: string } | null
   requirements?: ServiceRequirement[]
@@ -143,6 +145,8 @@ export default function LayananPage() {
     description: "",
     slug: "",
     mode: "both",
+    estimated_cost: "",
+    estimated_processing_time: "",
     is_active: true,
   })
   const [requirementForm, setRequirementForm] = useState({
@@ -293,6 +297,8 @@ export default function LayananPage() {
         description: service.description,
         slug: service.slug,
         mode: service.mode,
+        estimated_cost: service.estimated_cost || "",
+        estimated_processing_time: service.estimated_processing_time || "",
         is_active: service.is_active,
       })
     } else {
@@ -303,6 +309,8 @@ export default function LayananPage() {
         description: "",
         slug: "",
         mode: "both",
+        estimated_cost: "",
+        estimated_processing_time: "",
         is_active: true,
       })
     }
@@ -315,7 +323,12 @@ export default function LayananPage() {
     try {
       setSaving(true)
       const computedSlug = serviceForm.slug.trim() || slugify(serviceForm.name)
-      const payload = { ...serviceForm, slug: computedSlug }
+      const payload = {
+        ...serviceForm,
+        slug: computedSlug,
+        estimated_cost: serviceForm.estimated_cost.trim() || null,
+        estimated_processing_time: serviceForm.estimated_processing_time.trim() || null,
+      }
       if (editingService) {
         await layanan.update(editingService.id, payload)
       } else {
@@ -995,6 +1008,31 @@ export default function LayananPage() {
               />
             </div>
 
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Estimasi Biaya</Label>
+                <Input
+                  value={serviceForm.estimated_cost}
+                  onChange={(e) => setServiceForm(prev => ({ ...prev, estimated_cost: e.target.value }))}
+                  placeholder="Contoh: Gratis / Rp 10.000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Akan dipakai agent sebagai fakta deterministik biaya layanan.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>Estimasi Waktu Proses</Label>
+                <Input
+                  value={serviceForm.estimated_processing_time}
+                  onChange={(e) => setServiceForm(prev => ({ ...prev, estimated_processing_time: e.target.value }))}
+                  placeholder="Contoh: 1 hari kerja"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Tampilkan SLA yang benar-benar berlaku di lapangan.
+                </p>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div className="space-y-0.5">
                 <Label className="cursor-pointer">Aktifkan Layanan</Label>
@@ -1331,6 +1369,23 @@ function ServiceCard({ service, publicLink, copiedId, onCopy, onEdit, onDelete, 
           <FileText className="h-3 w-3" />
           <span>{service.requirements?.length || 0} persyaratan</span>
         </div>
+
+        {(service.estimated_cost || service.estimated_processing_time) && (
+          <div className="grid gap-2 text-xs text-muted-foreground">
+            {service.estimated_cost && (
+              <div className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5">
+                <span className="font-medium text-foreground/80">Biaya</span>
+                <span className="text-right">{service.estimated_cost}</span>
+              </div>
+            )}
+            {service.estimated_processing_time && (
+              <div className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5">
+                <span className="font-medium text-foreground/80">Waktu Proses</span>
+                <span className="text-right">{service.estimated_processing_time}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {publicLink && (
           <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">

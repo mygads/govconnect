@@ -35,6 +35,8 @@ interface ServiceItem {
   description: string;
   slug: string;
   mode: string;
+  estimated_cost?: string | null;
+  estimated_processing_time?: string | null;
   requirements: ServiceRequirement[];
   category?: { name: string } | null;
 }
@@ -406,16 +408,18 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
         </div>
       </div>
 
-      <Card className="border-border/50">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <Info className="w-4 h-4 text-secondary" />
-            Informasi Layanan
+        <Card className="border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Info className="w-4 h-4 text-secondary" />
+              Informasi Layanan
           </CardTitle>
         </CardHeader>
         <CardContent className="text-xs text-muted-foreground space-y-1">
           <p>Mode layanan: {serviceRequest.service?.mode === "online" ? "Online" : serviceRequest.service?.mode === "offline" ? "Offline" : "Online & Offline"}</p>
           <p>Kategori: {serviceRequest.service?.category?.name || "Layanan Administrasi"}</p>
+          {serviceRequest.service?.estimated_cost && <p>Estimasi biaya: {serviceRequest.service.estimated_cost}</p>}
+          {serviceRequest.service?.estimated_processing_time && <p>Estimasi waktu proses: {serviceRequest.service.estimated_processing_time}</p>}
         </CardContent>
       </Card>
 

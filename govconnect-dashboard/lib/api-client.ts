@@ -468,6 +468,16 @@ export const ai = {
     });
   },
 
+  /**
+   * Get retrieval observability traces and aggregates
+   */
+  async getAnalyticsRetrieval(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/retrieval${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
   // ==================== Token Usage (AI Gateway Models) ====================
 
   /**

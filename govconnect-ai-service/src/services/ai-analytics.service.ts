@@ -81,6 +81,25 @@ interface KnowledgeStats {
   gaps: KnowledgeGapEntry[];
 }
 
+interface RetrievalTraceEntry {
+  query: string;
+  retrievalMode: 'rag' | 'keyword' | 'document_rag';
+  confidence: 'none' | 'low' | 'medium' | 'high';
+  hasKnowledge: boolean;
+  resultCount: number;
+  searchTimeMs: number;
+  topScore: number | null;
+  avgTopScore: number | null;
+  sourceTitles: string[];
+  channel: string;
+  villageId?: string;
+  timestamp: string;
+}
+
+interface RetrievalStats {
+  recentTraces: RetrievalTraceEntry[];
+}
+
 interface CategoryUsageEntry {
   category: string;
   count: number;
@@ -102,6 +121,7 @@ interface AnalyticsStorage {
   tokenUsage: TokenUsageStats;
   accuracy: AccuracyStats;
   knowledge: KnowledgeStats;
+  retrieval: RetrievalStats;
   categoryUsage: CategoryUsageStats;
   lastUpdated: string;
 }
@@ -150,6 +170,9 @@ class AIAnalyticsService {
         misses: 0,
         noKnowledge: 0,
         gaps: [],
+      },
+      retrieval: {
+        recentTraces: [],
       },
       categoryUsage: {
         complaint: {},
@@ -326,6 +349,43 @@ class AIAnalyticsService {
     }
   }
 
+  recordRetrievalTrace(opts: {
+    query: string;
+    retrievalMode: 'rag' | 'keyword' | 'document_rag';
+    confidence: 'none' | 'low' | 'medium' | 'high';
+    hasKnowledge: boolean;
+    resultCount: number;
+    searchTimeMs?: number;
+    topScore?: number | null;
+    avgTopScore?: number | null;
+    sourceTitles?: string[];
+    channel: string;
+    villageId?: string;
+  }): void {
+    const query = opts.query.trim();
+    if (!query) return;
+
+    const trace: RetrievalTraceEntry = {
+      query: query.substring(0, 200),
+      retrievalMode: opts.retrievalMode,
+      confidence: opts.confidence,
+      hasKnowledge: opts.hasKnowledge,
+      resultCount: Math.max(0, opts.resultCount || 0),
+      searchTimeMs: Math.max(0, Math.round(opts.searchTimeMs || 0)),
+      topScore: typeof opts.topScore === 'number' ? Math.round(opts.topScore * 1000) / 1000 : null,
+      avgTopScore: typeof opts.avgTopScore === 'number' ? Math.round(opts.avgTopScore * 1000) / 1000 : null,
+      sourceTitles: Array.from(new Set((opts.sourceTitles || []).filter(Boolean))).slice(0, 3),
+      channel: opts.channel,
+      villageId: opts.villageId,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.data.retrieval.recentTraces.unshift(trace);
+    if (this.data.retrieval.recentTraces.length > 250) {
+      this.data.retrieval.recentTraces = this.data.retrieval.recentTraces.slice(0, 250);
+    }
+  }
+
   /**
    * Get knowledge analytics stats
    */
@@ -345,6 +405,124 @@ class AIAnalyticsService {
       hitRate: total > 0 ? Math.round((this.data.knowledge.hits / total) * 100 * 10) / 10 : 0,
       missRate: total > 0 ? Math.round((this.data.knowledge.misses / total) * 100 * 10) / 10 : 0,
       topGaps: [...this.data.knowledge.gaps].sort((a, b) => b.count - a.count).slice(0, 20),
+    };
+  }
+
+  getRetrievalObservability(filters?: {
+    villageId?: string;
+    channel?: string;
+  }): {
+    summary: {
+      totalTraces: number;
+      hitRate: number;
+      avgLatencyMs: number;
+      p95LatencyMs: number;
+      avgResultCount: number;
+      avgTopScore: number | null;
+    };
+    byMode: Array<{
+      mode: string;
+      count: number;
+      hitRate: number;
+      avgLatencyMs: number;
+      avgResultCount: number;
+    }>;
+    byConfidence: Array<{
+      confidence: string;
+      count: number;
+      percentage: number;
+    }>;
+    recentTraces: RetrievalTraceEntry[];
+  } {
+    const traces = this.data.retrieval.recentTraces.filter((trace) => {
+      if (filters?.villageId && trace.villageId !== filters.villageId) {
+        return false;
+      }
+      if (filters?.channel && trace.channel !== filters.channel) {
+        return false;
+      }
+      return true;
+    });
+    const totalTraces = traces.length;
+
+    const hitCount = traces.filter((trace) => trace.hasKnowledge).length;
+    const latencies = traces
+      .map((trace) => trace.searchTimeMs)
+      .filter((value) => Number.isFinite(value) && value >= 0)
+      .sort((a, b) => a - b);
+    const resultCounts = traces.map((trace) => trace.resultCount);
+    const scored = traces
+      .map((trace) => trace.topScore)
+      .filter((score): score is number => typeof score === 'number' && Number.isFinite(score));
+
+    const byMode = Array.from(
+      traces.reduce((acc, trace) => {
+        const bucket = acc.get(trace.retrievalMode) || {
+          mode: trace.retrievalMode,
+          count: 0,
+          hitCount: 0,
+          totalLatencyMs: 0,
+          totalResultCount: 0,
+        };
+
+        bucket.count++;
+        bucket.hitCount += trace.hasKnowledge ? 1 : 0;
+        bucket.totalLatencyMs += trace.searchTimeMs;
+        bucket.totalResultCount += trace.resultCount;
+        acc.set(trace.retrievalMode, bucket);
+        return acc;
+      }, new Map<string, {
+        mode: string;
+        count: number;
+        hitCount: number;
+        totalLatencyMs: number;
+        totalResultCount: number;
+      }>())
+    )
+      .map(([, bucket]) => ({
+        mode: bucket.mode,
+        count: bucket.count,
+        hitRate: bucket.count > 0 ? Math.round((bucket.hitCount / bucket.count) * 1000) / 10 : 0,
+        avgLatencyMs: bucket.count > 0 ? Math.round(bucket.totalLatencyMs / bucket.count) : 0,
+        avgResultCount: bucket.count > 0 ? Math.round((bucket.totalResultCount / bucket.count) * 10) / 10 : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const byConfidence = Array.from(
+      traces.reduce((acc, trace) => {
+        acc.set(trace.confidence, (acc.get(trace.confidence) || 0) + 1);
+        return acc;
+      }, new Map<string, number>())
+    )
+      .map(([confidence, count]) => ({
+        confidence,
+        count,
+        percentage: totalTraces > 0 ? Math.round((count / totalTraces) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const p95LatencyMs = latencies.length > 0
+      ? latencies[Math.min(latencies.length - 1, Math.max(0, Math.ceil(latencies.length * 0.95) - 1))]
+      : 0;
+
+    return {
+      summary: {
+        totalTraces,
+        hitRate: totalTraces > 0 ? Math.round((hitCount / totalTraces) * 1000) / 10 : 0,
+        avgLatencyMs: latencies.length > 0
+          ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
+          : 0,
+        p95LatencyMs,
+        avgResultCount: resultCounts.length > 0
+          ? Math.round((resultCounts.reduce((sum, value) => sum + value, 0) / resultCounts.length) * 10) / 10
+          : 0,
+        avgTopScore: scored.length > 0
+          ? Math.round((scored.reduce((sum, value) => sum + value, 0) / scored.length) * 1000) / 1000
+          : null,
+      },
+      byMode,
+      byConfidence,
+      recentTraces: traces.slice(0, 50),
     };
   }
 

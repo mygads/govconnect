@@ -83,13 +83,98 @@ interface KnowledgeConflictsData {
   totalAutoResolved: number
 }
 
+interface RetrievalModeItem {
+  mode: string
+  count: number
+  hitRate: number
+  avgLatencyMs: number
+  avgResultCount: number
+}
+
+interface RetrievalConfidenceItem {
+  confidence: string
+  count: number
+  percentage: number
+}
+
+interface RetrievalTraceItem {
+  query: string
+  retrievalMode: "rag" | "keyword" | "document_rag"
+  confidence: "none" | "low" | "medium" | "high"
+  hasKnowledge: boolean
+  resultCount: number
+  searchTimeMs: number
+  topScore: number | null
+  avgTopScore: number | null
+  sourceTitles: string[]
+  channel: string
+  villageId?: string
+  timestamp: string
+}
+
+interface RetrievalObservabilityData {
+  summary: {
+    totalTraces: number
+    hitRate: number
+    avgLatencyMs: number
+    p95LatencyMs: number
+    avgResultCount: number
+    avgTopScore: number | null
+  }
+  byMode: RetrievalModeItem[]
+  byConfidence: RetrievalConfidenceItem[]
+  recentTraces: RetrievalTraceItem[]
+}
+
 interface AnalyticsData {
   overview: OverviewStats
   intents: IntentItem[]
   flow: Record<string, any>
   knowledgeGaps?: KnowledgeGapsData
   knowledgeConflicts?: KnowledgeConflictsData
+  retrievalObservability?: RetrievalObservabilityData | null
   rawAnalytics: any
+}
+
+function formatRetrievalMode(mode: string): string {
+  switch (mode) {
+    case "rag":
+      return "Hybrid RAG"
+    case "keyword":
+      return "Keyword"
+    case "document_rag":
+      return "Document RAG"
+    default:
+      return mode
+  }
+}
+
+function retrievalModeBadgeClass(mode: string): string {
+  switch (mode) {
+    case "rag":
+      return "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+    case "keyword":
+      return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+    case "document_rag":
+      return "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300"
+    default:
+      return "bg-muted text-muted-foreground"
+  }
+}
+
+function confidenceBadgeClass(confidence: string): string {
+  switch (confidence) {
+    case "high":
+      return "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300"
+    case "medium":
+      return "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+    case "low":
+      return "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-300"
+    case "none":
+      return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300"
+    default:
+      return "bg-muted text-muted-foreground"
+  }
 }
 
 export default function KnowledgeAnalyticsPage() {
@@ -226,6 +311,11 @@ export default function KnowledgeAnalyticsPage() {
   const knowledgeConflicts = data?.knowledgeConflicts
   const topConflicts = knowledgeConflicts?.topConflicts || []
   const conflictStatusCounts = knowledgeConflicts?.statusCounts || { open: 0, resolved: 0, auto_resolved: 0, ignored: 0 }
+  const retrievalObservability = data?.retrievalObservability
+  const retrievalSummary = retrievalObservability?.summary
+  const retrievalModes = retrievalObservability?.byMode || []
+  const retrievalConfidence = retrievalObservability?.byConfidence || []
+  const retrievalTraces = retrievalObservability?.recentTraces || []
   const hitRateNum = typeof overview.hitRate === "string" ? parseFloat(overview.hitRate) : overview.hitRate
 
   return (
@@ -357,6 +447,183 @@ export default function KnowledgeAnalyticsPage() {
               <span>100%</span>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart3 className="h-5 w-5" /> Observability Retrieval
+          </CardTitle>
+          <CardDescription>
+            Trace pencarian terbaru dari AI service: mode retrieval, confidence, hasil, latency, dan sumber yang terpakai.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <Card className="border-dashed">
+              <CardContent className="pt-6">
+                <div className="text-sm text-muted-foreground">Avg Latency</div>
+                <div className="text-2xl font-bold mt-1">{retrievalSummary?.avgLatencyMs ?? 0} ms</div>
+                <div className="text-xs text-muted-foreground mt-1">P95: {retrievalSummary?.p95LatencyMs ?? 0} ms</div>
+              </CardContent>
+            </Card>
+            <Card className="border-dashed">
+              <CardContent className="pt-6">
+                <div className="text-sm text-muted-foreground">Retrieval Hit Rate</div>
+                <div className="text-2xl font-bold mt-1">{retrievalSummary?.hitRate ?? 0}%</div>
+                <div className="text-xs text-muted-foreground mt-1">{retrievalSummary?.totalTraces ?? 0} trace tercatat</div>
+              </CardContent>
+            </Card>
+            <Card className="border-dashed">
+              <CardContent className="pt-6">
+                <div className="text-sm text-muted-foreground">Avg Result Count</div>
+                <div className="text-2xl font-bold mt-1">{retrievalSummary?.avgResultCount ?? 0}</div>
+                <div className="text-xs text-muted-foreground mt-1">Rata-rata kandidat per query</div>
+              </CardContent>
+            </Card>
+            <Card className="border-dashed">
+              <CardContent className="pt-6">
+                <div className="text-sm text-muted-foreground">Avg Top Score</div>
+                <div className="text-2xl font-bold mt-1">
+                  {typeof retrievalSummary?.avgTopScore === "number" ? retrievalSummary.avgTopScore.toFixed(3) : "-"}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">Khusus trace yang punya skor similarity</div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Mode Retrieval</CardTitle>
+                <CardDescription>Distribusi dan performa per mode pencarian.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {retrievalModes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Belum ada trace retrieval.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Mode</TableHead>
+                        <TableHead>Count</TableHead>
+                        <TableHead>Hit Rate</TableHead>
+                        <TableHead>Avg Latency</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {retrievalModes.map((item) => (
+                        <TableRow key={item.mode}>
+                          <TableCell>
+                            <Badge className={retrievalModeBadgeClass(item.mode)}>
+                              {formatRetrievalMode(item.mode)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{item.count}</TableCell>
+                          <TableCell>{item.hitRate}%</TableCell>
+                          <TableCell>{item.avgLatencyMs} ms</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Confidence Distribution</CardTitle>
+                <CardDescription>Distribusi confidence hasil retrieval terbaru.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {retrievalConfidence.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Belum ada trace retrieval.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {retrievalConfidence.map((item) => (
+                      <div key={item.confidence} className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <Badge className={confidenceBadgeClass(item.confidence)}>
+                            {item.confidence.toUpperCase()}
+                          </Badge>
+                          <div className="text-sm text-muted-foreground">
+                            {item.count} trace • {item.percentage}%
+                          </div>
+                        </div>
+                        <Progress value={item.percentage} className="h-2" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Recent Retrieval Traces</CardTitle>
+              <CardDescription>
+                Sampel query terbaru untuk debugging kualitas retrieval dan source coverage.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {retrievalTraces.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <BarChart3 className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                  <p>Belum ada trace retrieval yang tercatat.</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Waktu</TableHead>
+                      <TableHead>Query</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead>Confidence</TableHead>
+                      <TableHead>Result</TableHead>
+                      <TableHead>Latency</TableHead>
+                      <TableHead>Top Score</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {retrievalTraces.slice(0, 15).map((trace, idx) => (
+                      <TableRow key={`${trace.timestamp}-${idx}`}>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {formatRelativeTime(new Date(trace.timestamp))}
+                        </TableCell>
+                        <TableCell className="max-w-[320px]">
+                          <div className="space-y-1">
+                            <div className="font-medium line-clamp-2">{trace.query}</div>
+                            {trace.sourceTitles.length > 0 && (
+                              <div className="text-xs text-muted-foreground line-clamp-1">
+                                Sumber: {trace.sourceTitles.join(", ")}
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={retrievalModeBadgeClass(trace.retrievalMode)}>
+                            {formatRetrievalMode(trace.retrievalMode)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={confidenceBadgeClass(trace.confidence)}>
+                            {trace.confidence.toUpperCase()}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{trace.resultCount}</TableCell>
+                        <TableCell>{trace.searchTimeMs} ms</TableCell>
+                        <TableCell>
+                          {typeof trace.topScore === "number" ? trace.topScore.toFixed(3) : "-"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </CardContent>
       </Card>
 

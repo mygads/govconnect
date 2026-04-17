@@ -65,10 +65,20 @@ export async function PUT(
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
+    const payload = {
+      ...body,
+      estimated_cost: typeof body.estimated_cost === 'string'
+        ? (body.estimated_cost.trim() || null)
+        : body.estimated_cost,
+      estimated_processing_time: typeof body.estimated_processing_time === 'string'
+        ? (body.estimated_processing_time.trim() || null)
+        : body.estimated_processing_time,
+    }
+
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/${serviceId}`), {
       method: 'PUT',
       headers: getHeaders(),
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     })
 
     const data = await response.json().catch(() => null)
