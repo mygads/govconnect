@@ -46,6 +46,9 @@ RUN pnpm run build
 # ===============================================
 FROM node:22-alpine AS runner
 
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -54,23 +57,12 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 aiuser
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
-
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
-
-# Copy prisma schema
+# Copy runtime artifacts and local Prisma CLI from builder so startup stays
+# deterministic even when the npm registry is unavailable.
+COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/prisma ./prisma
-
-# Copy built files from builder
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-
-# Generate Prisma client for production
-RUN pnpm prisma generate
 
 # Create required directories with proper permissions
 RUN mkdir -p logs uploads/documents data && chown -R aiuser:nodejs /app
@@ -85,18 +77,25 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'mkdir -p /app/uploads/documents /app/data /app/logs' >> /app/entrypoint.sh && \
     echo 'chown -R aiuser:nodejs /app/uploads /app/data /app/logs 2>/dev/null || true' >> /app/entrypoint.sh && \
     echo '' >> /app/entrypoint.sh && \
+    echo '# Ensure pgvector exists in schema ai before Prisma touches vector columns' >> /app/entrypoint.sh && \
+    echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
+    echo '  echo "🧩 Ensuring pgvector extension is available in schema ai..."' >> /app/entrypoint.sh && \
+    echo '  printf "%s\n" "CREATE SCHEMA IF NOT EXISTS ai;" "CREATE EXTENSION IF NOT EXISTS vector SCHEMA ai;" | su -s /bin/sh aiuser -c "./node_modules/.bin/prisma db execute --stdin --schema prisma/schema.prisma 2>&1" || echo "⚠️ pgvector bootstrap failed, continuing with existing database state..."' >> /app/entrypoint.sh && \
+    echo '  printf "%s\n" "DO \$sql\$ BEGIN IF EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = \$v\$vector\$v\$ AND n.nspname <> \$v\$ai\$v\$ AND pg_get_userbyid(e.extowner) = current_user) THEN EXECUTE \$v\$ALTER EXTENSION vector SET SCHEMA ai\$v\$; END IF; END \$sql\$;" | su -s /bin/sh aiuser -c "./node_modules/.bin/prisma db execute --stdin --schema prisma/schema.prisma 2>&1" || echo "⚠️ pgvector schema alignment skipped..."' >> /app/entrypoint.sh && \
+    echo 'fi' >> /app/entrypoint.sh && \
+    echo '' >> /app/entrypoint.sh && \
     echo '# Run migrations as aiuser' >> /app/entrypoint.sh && \
     echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
     echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
     echo '  if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
     echo '    echo "📦 Running migrate deploy..."' >> /app/entrypoint.sh && \
-    echo '    su -s /bin/sh aiuser -c "npx prisma@6.19.0 migrate deploy 2>&1" || {' >> /app/entrypoint.sh && \
+    echo '    su -s /bin/sh aiuser -c "./node_modules/.bin/prisma migrate deploy 2>&1" || {' >> /app/entrypoint.sh && \
     echo '      echo "⚠️ Migration failed, trying db push..."' >> /app/entrypoint.sh && \
-    echo '      su -s /bin/sh aiuser -c "npx prisma@6.19.0 db push --skip-generate 2>&1" || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '      su -s /bin/sh aiuser -c "./node_modules/.bin/prisma db push --skip-generate 2>&1" || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
     echo '    }' >> /app/entrypoint.sh && \
     echo '  else' >> /app/entrypoint.sh && \
     echo '    echo "📦 No migrations found, running db push..."' >> /app/entrypoint.sh && \
-    echo '    su -s /bin/sh aiuser -c "npx prisma@6.19.0 db push --skip-generate 2>&1" || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '    su -s /bin/sh aiuser -c "./node_modules/.bin/prisma db push --skip-generate 2>&1" || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
     echo '  fi' >> /app/entrypoint.sh && \
     echo 'else' >> /app/entrypoint.sh && \
     echo '  echo "⚠️ DATABASE_URL not set, skipping migrations"' >> /app/entrypoint.sh && \

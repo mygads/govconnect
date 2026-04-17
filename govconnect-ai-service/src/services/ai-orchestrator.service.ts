@@ -31,6 +31,7 @@ import {
   shouldSendResponse,
   completeProcessing,
 } from './spam-guard.service';
+import { recordGuardrailEvent } from './runtime-observability.service';
 
 // Re-export all handlers from unified processor for backward compatibility
 export {
@@ -144,6 +145,17 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     const takeover = await isUserInTakeover(wa_user_id, village_id);
     if (takeover) {
       logger.info('👤 User is in takeover mode', { wa_user_id, message_id });
+      await recordGuardrailEvent({
+        waUserId: wa_user_id,
+        villageId: village_id,
+        channel: 'whatsapp',
+        guardStage: 'transport_guard',
+        guardType: 'takeover',
+        action: 'blocked',
+        reason: 'human_takeover_active',
+        messagePreview: message,
+        metadata: { messageId: message_id },
+      });
       completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
@@ -151,6 +163,17 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     // Spam check (content-based: gambling, urls, etc.)
     if (isSpamMessage(message)) {
       logger.warn('🚫 Spam message detected', { wa_user_id, message_id });
+      await recordGuardrailEvent({
+        waUserId: wa_user_id,
+        villageId: village_id,
+        channel: 'whatsapp',
+        guardStage: 'transport_guard',
+        guardType: 'spam_content',
+        action: 'blocked',
+        reason: 'content_spam_pattern',
+        messagePreview: message,
+        metadata: { messageId: message_id },
+      });
       completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
@@ -167,6 +190,17 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
         wa_user_id,
         message_id,
         reason: preCheck.reason,
+      });
+      await recordGuardrailEvent({
+        waUserId: wa_user_id,
+        villageId: village_id,
+        channel: 'whatsapp',
+        guardStage: 'transport_guard',
+        guardType: 'spam_guard_supersede',
+        action: 'blocked',
+        reason: preCheck.reason,
+        messagePreview: message,
+        metadata: { messageId: message_id },
       });
       completeProcessing(village_id, wa_user_id, message_id);
       return;

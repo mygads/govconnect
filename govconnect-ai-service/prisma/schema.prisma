@@ -334,3 +334,91 @@ model ai_retrieval_traces {
   @@index([confidence, created_at])
   @@index([channel, created_at])
 }
+
+// ==================== DURABLE MEMORY OBSERVABILITY ====================
+// Stores memory retrieval traces for summary-builder and explicit user memory lookups.
+
+model ai_memory_traces {
+  id                    String   @id @default(cuid())
+  trace_id              String?
+  wa_user_id            String
+  village_id            String?
+  channel               String?
+  source                String
+  query                 String   @db.Text
+  result_count          Int      @default(0)
+  top_score             Float?
+  avg_score             Float?
+  selected_memories_json Json?
+  summary_text          String?  @db.Text
+  created_at            DateTime @default(now())
+
+  @@index([wa_user_id, created_at])
+  @@index([village_id, created_at])
+  @@index([source, created_at])
+  @@index([channel, created_at])
+}
+
+// ==================== DURABLE GUARDRAIL EVENTS ====================
+// Makes deterministic outer guards observable for admin dashboards and exports.
+
+model ai_guardrail_events {
+  id                String   @id @default(cuid())
+  trace_id          String?
+  wa_user_id        String?
+  village_id        String?
+  channel           String?
+  guard_stage       String
+  guard_type        String
+  action            String
+  reason            String?
+  message_preview   String?  @db.Text
+  metadata_json     Json?
+  created_at        DateTime @default(now())
+
+  @@index([guard_type, created_at])
+  @@index([guard_stage, created_at])
+  @@index([village_id, created_at])
+  @@index([channel, created_at])
+}
+
+// ==================== DURABLE TOOL POLICY TUNING ====================
+// Stores eval-driven/runtime-derived allowlist policies and their runtime events.
+
+model ai_tool_allowlist_policies {
+  id                String   @id @default(cuid())
+  policy_key        String   @unique
+  source            String
+  match_terms_json  Json
+  allowed_tools_json Json
+  confidence        Float    @default(0.5)
+  evaluation_count  Int      @default(0)
+  success_count     Int      @default(0)
+  last_seen_at      DateTime @default(now())
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([source, updated_at])
+  @@index([confidence, updated_at])
+}
+
+model ai_tool_policy_events {
+  id                   String   @id @default(cuid())
+  trace_id             String?
+  wa_user_id           String?
+  village_id           String?
+  channel              String?
+  query                String   @db.Text
+  policy_key           String?
+  policy_source        String?
+  heuristic_tools_json Json?
+  learned_tools_json   Json?
+  allowed_tools_json   Json?
+  actual_tools_json    Json?
+  success              Boolean  @default(true)
+  created_at           DateTime @default(now())
+
+  @@index([policy_key, created_at])
+  @@index([village_id, created_at])
+  @@index([channel, created_at])
+}

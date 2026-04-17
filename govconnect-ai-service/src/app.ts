@@ -18,6 +18,9 @@ import { modelStatsService } from './services/model-stats.service';
 import { rateLimiterService } from './services/rate-limiter.service';
 import { getSpamGuardStats as getAISpamGuardStats } from './services/spam-guard.service';
 import { aiAnalyticsService } from './services/ai-analytics.service';
+import { getGuardrailObservabilityDurable, getMemoryObservabilityDurable } from './services/runtime-observability.service';
+import { getToolPolicyObservabilityDurable } from './services/agent/tool-policy.service';
+import { exportObservabilityData, toNdjson, type ObservabilityExportKind } from './services/observability-export.service';
 import { getEmbeddingStats, getEmbeddingCacheStats } from './services/embedding.service';
 import { getVectorDbStats } from './services/vector-db.service';
 import { resilientHttp } from './services/circuit-breaker.service';
@@ -583,12 +586,15 @@ app.get('/stats/analytics/full', async (req: Request, res: Response) => {
       villageId: getQuery(req, 'village_id') || undefined,
       channel: getQuery(req, 'channel') || undefined,
     };
-    const [summary, intents, flow, knowledge, retrieval] = await Promise.all([
+    const [summary, intents, flow, knowledge, retrieval, memory, guardrails, toolPolicy] = await Promise.all([
       aiAnalyticsService.getSummaryDurable(filters),
       aiAnalyticsService.getIntentDistributionDurable(filters),
       aiAnalyticsService.getConversationFlowDurable(filters),
       aiAnalyticsService.getKnowledgeStatsDurable(filters),
       aiAnalyticsService.getRetrievalObservabilityDurable(filters),
+      getMemoryObservabilityDurable(filters),
+      getGuardrailObservabilityDurable(filters),
+      getToolPolicyObservabilityDurable(filters),
     ]);
 
     res.json({
@@ -597,6 +603,9 @@ app.get('/stats/analytics/full', async (req: Request, res: Response) => {
       flow,
       knowledge,
       retrieval,
+      memory,
+      guardrails,
+      toolPolicy,
     });
   } catch (error: any) {
     res.status(500).json({
@@ -660,6 +669,64 @@ app.get('/stats/analytics/retrieval', async (req: Request, res: Response) => {
     res.json(stats);
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to get retrieval observability' });
+  }
+});
+
+app.get('/stats/analytics/memory', async (req: Request, res: Response) => {
+  try {
+    const stats = await getMemoryObservabilityDurable({
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    });
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get memory observability' });
+  }
+});
+
+app.get('/stats/analytics/guardrails', async (req: Request, res: Response) => {
+  try {
+    const stats = await getGuardrailObservabilityDurable({
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    });
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get guardrail observability' });
+  }
+});
+
+app.get('/stats/analytics/tool-policy', async (req: Request, res: Response) => {
+  try {
+    const stats = await getToolPolicyObservabilityDurable({
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    });
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get tool policy observability' });
+  }
+});
+
+app.get('/stats/analytics/export', async (req: Request, res: Response) => {
+  try {
+    const kind = (getQuery(req, 'kind') || 'all') as ObservabilityExportKind;
+    const format = (getQuery(req, 'format') || 'json').toLowerCase();
+    const payload = await exportObservabilityData(kind, {
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+      limit: Number(getQuery(req, 'limit') || 500),
+    });
+
+    if (format === 'ndjson') {
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.send(toNdjson(payload));
+      return;
+    }
+
+    res.json(payload);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to export observability analytics' });
   }
 });
 
@@ -1379,6 +1446,10 @@ app.get('/admin/routes', internalAuthMiddleware, (req: Request, res: Response) =
       analyticsIntents: '/stats/analytics/intents',
       analyticsFlow: '/stats/analytics/flow',
       analyticsTokens: '/stats/analytics/tokens',
+      analyticsMemory: '/stats/analytics/memory',
+      analyticsGuardrails: '/stats/analytics/guardrails',
+      analyticsToolPolicy: '/stats/analytics/tool-policy',
+      analyticsExport: '/stats/analytics/export',
       goldenSetSummary: '/stats/golden-set',
       goldenSetRun: 'POST /stats/golden-set/run',
       embeddingStats: '/stats/embeddings',

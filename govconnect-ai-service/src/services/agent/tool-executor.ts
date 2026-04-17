@@ -23,6 +23,7 @@ import {
 } from '../case-client.service';
 import { rememberMemoryEvent, searchUserMemories } from '../hybrid-memory.service';
 import { searchDocuments, searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
+import { recordMemoryTrace } from '../runtime-observability.service';
 import { resolveServiceSlugFromSearch } from '../service-handler';
 import { resolveVillageSlugForPublicForm } from '../ump-utils';
 import {
@@ -78,6 +79,7 @@ interface ToolContext {
   userId: string;
   villageId?: string;
   channel: 'whatsapp' | 'webchat';
+  isEvaluation?: boolean;
 }
 
 const EMERGENCY_CONTACT_HINTS = [
@@ -538,6 +540,28 @@ async function toolSearchUserMemory(
     limit: 5,
   });
 
+  if (!ctx.isEvaluation) {
+    await recordMemoryTrace({
+      waUserId: ctx.userId,
+      villageId: ctx.villageId,
+      channel: ctx.channel,
+      source: 'tool_search_user_memory',
+      query,
+      candidates: memories.map((memory) => ({
+        id: memory.id,
+        memoryType: memory.memory_type,
+        content: memory.content,
+        relevanceScore: Number(memory.finalScore.toFixed(3)),
+        lexicalScore: Number(memory.lexicalScore.toFixed(3)),
+        semanticScore: Number(memory.semanticScore.toFixed(3)),
+        recencyScore: Number(memory.recencyScore.toFixed(3)),
+        importanceScore: Number(memory.importanceScore.toFixed(3)),
+        typeBoost: Number(memory.typeBoost.toFixed(3)),
+        createdAt: memory.created_at.toISOString(),
+      })),
+    });
+  }
+
   return {
     success: true,
     data: {
@@ -586,14 +610,16 @@ async function toolCreateComplaint(
   }
 
   const profile = await getAutoFillSuggestionsWithFallback(ctx.userId);
-  const reporterName = namaPelapor || profile.nama_lengkap;
-  const reporterPhone = ctx.channel === 'webchat' ? (noHp || profile.no_hp) : ctx.userId;
+  const reporterName = namaPelapor || profile.nama_lengkap || (ctx.isEvaluation ? 'User Evaluasi' : undefined);
+  const reporterPhone = ctx.channel === 'webchat'
+    ? (noHp || profile.no_hp || (ctx.isEvaluation ? '081234567890' : undefined))
+    : ctx.userId;
 
-  if (namaPelapor) {
+  if (!ctx.isEvaluation && namaPelapor) {
     updateProfile(ctx.userId, { nama_lengkap: namaPelapor });
   }
 
-  if (noHp) {
+  if (!ctx.isEvaluation && noHp) {
     updateProfile(ctx.userId, { no_hp: noHp });
     if (ctx.channel === 'webchat') {
       updateConversationUserProfile(
@@ -605,7 +631,7 @@ async function toolCreateComplaint(
     }
   }
 
-  if (alamat) {
+  if (!ctx.isEvaluation && alamat) {
     saveDefaultAddress(ctx.userId, alamat, rtRw);
   }
 
@@ -662,6 +688,27 @@ async function toolCreateComplaint(
   }
 
   const categoryConfig = await findComplaintCategoryConfig(kategori, ctx.villageId);
+  if (ctx.isEvaluation) {
+    const simulatedId = referenceFromSeed('LAP', `${ctx.userId}:${kategori}:${alamat}`);
+    return {
+      success: true,
+      data: {
+        created: true,
+        complaint_id: simulatedId,
+        reference_number: simulatedId,
+        status: 'OPEN',
+        status_label: getStatusLabel('OPEN'),
+        is_urgent: categoryConfig?.is_urgent === true,
+        send_important_contacts: categoryConfig?.send_important_contacts === true,
+        simulated: true,
+        message: `Laporan simulasi berhasil dibuat dengan nomor ${simulatedId}.`,
+      },
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'complaint_creation',
+      },
+    };
+  }
   const complaintId = await createComplaint({
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -781,6 +828,24 @@ async function toolCreateServiceRequest(
     ctx.userId,
     ctx.channel,
   );
+  if (ctx.isEvaluation) {
+    return {
+      success: true,
+      data: {
+        ready: true,
+        service_slug: service.slug,
+        service_name: service.name,
+        can_submit_online: true,
+        form_url: formUrl,
+        simulated: true,
+        message: `Link formulir simulasi untuk layanan ${service.name} siap dikirim.`,
+      },
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'service_request_link',
+      },
+    };
+  }
   recordServiceUsage(ctx.userId, service.slug);
   void rememberMemoryEvent({
     wa_user_id: ctx.userId,
@@ -838,6 +903,27 @@ async function toolUpdateComplaint(
   }
 
   const deskripsi = deskripsiRaw ? `[Update] ${deskripsiRaw}` : undefined;
+  if (ctx.isEvaluation) {
+    return {
+      success: true,
+      data: {
+        updated: true,
+        reference_number: referenceNumber,
+        simulated: true,
+        message: 'Laporan simulasi berhasil diperbarui.',
+        details: {
+          alamat: alamat || null,
+          rt_rw: rtRw || null,
+          deskripsi: deskripsiRaw || null,
+        },
+      },
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'complaint_update',
+      },
+    };
+  }
+
   const result = await updateComplaintByUser(referenceNumber, {
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -900,6 +986,31 @@ async function toolGetServiceRequestEditLink(
 
   if (inferReferenceKind(referenceNumber) !== 'service_request') {
     return { success: false, error: 'Gunakan nomor layanan dengan format LAY-xxx.' };
+  }
+
+  if (ctx.isEvaluation) {
+    const editUrl = buildEditServiceFormUrl(
+      getPublicFormBaseUrl(),
+      referenceNumber,
+      'eval-token',
+      ctx.userId,
+      ctx.channel,
+    );
+    return {
+      success: true,
+      data: {
+        ready: true,
+        reference_number: referenceNumber,
+        edit_url: editUrl,
+        expires_at: null,
+        simulated: true,
+        message: `Link edit simulasi untuk permohonan ${referenceNumber} siap dikirim.`,
+      },
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'service_request_edit_link',
+      },
+    };
   }
 
   const tokenResult = await requestServiceRequestEditToken(referenceNumber, {
@@ -1124,6 +1235,22 @@ async function toolCancelRequest(
   }
 
   if (referenceKind === 'complaint') {
+    if (ctx.isEvaluation) {
+      return {
+        success: true,
+        data: {
+          cancelled: true,
+          reference_type: 'complaint',
+          reference_number: referenceNumber,
+          simulated: true,
+          message: `Laporan simulasi ${referenceNumber} berhasil dibatalkan.`,
+        },
+        meta: {
+          trustLevel: 'action_result',
+          sourceKind: 'request_cancellation',
+        },
+      };
+    }
     const result = await cancelComplaint(referenceNumber, {
       wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
       channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -1155,6 +1282,23 @@ async function toolCancelRequest(
         reference_type: 'complaint',
         reference_number: referenceNumber,
         message: result.message || 'Laporan berhasil dibatalkan.',
+      },
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'request_cancellation',
+      },
+    };
+  }
+
+  if (ctx.isEvaluation) {
+    return {
+      success: true,
+      data: {
+        cancelled: true,
+        reference_type: 'service_request',
+        reference_number: referenceNumber,
+        simulated: true,
+        message: `Permohonan layanan simulasi ${referenceNumber} berhasil dibatalkan.`,
       },
       meta: {
         trustLevel: 'action_result',
@@ -1281,6 +1425,12 @@ function slugifyCategory(value: string): string {
 
 function normalizeReferenceNumber(value: unknown): string {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
+}
+
+function referenceFromSeed(prefix: 'LAP' | 'LAY', seed: string): string {
+  const normalized = seed.replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const suffix = normalized.slice(-3).padStart(3, '0');
+  return `${prefix}-20991231-${suffix}`;
 }
 
 function inferReferenceKind(referenceNumber: string): 'complaint' | 'service_request' | 'unknown' {

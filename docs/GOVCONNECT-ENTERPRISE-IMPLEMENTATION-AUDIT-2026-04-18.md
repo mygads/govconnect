@@ -34,9 +34,9 @@ GovConnect sekarang **sudah berada pada arsitektur single-agent with tools sebag
 2. **Complaint/service tool coverage operasional**: `sudah`
 3. **Hybrid memory durable + semantic recall**: `sudah`
 4. **Hybrid RAG + RRF + threshold-late**: `sudah`
-5. **Observability retrieval**: `sudah lebih baik dan aktif`, tetapi `belum setara trace-grading / candidate-level debug penuh`
+5. **Observability retrieval**: `durable dan aktif`, termasuk `candidate-level retrieval debug`
 6. **Frontend-backend sync untuk biaya/SLA layanan**: `sudah diperbaiki`
-7. **Cleanup deprecated/orphan lama**: `sebagian sudah dibersihkan`
+7. **Cleanup deprecated/orphan lama**: `yang jelas orphan/deprecated sudah dibersihkan`
 
 ### Verdict akhir
 
@@ -44,10 +44,11 @@ Implementasi aktif **sudah layak disebut modern single-agent tool-calling archit
 
 Gap yang masih tersisa sekarang bersifat **non-blocking tetapi penting untuk roadmap enterprise**:
 
-- analytics observability masih **in-memory**, belum durable
-- retrieval observability belum menampilkan **candidate-level vector/keyword subscore**
-- outer guard deterministik masih berada di luar agent loop
-- tool set masih cukup lebar; belum ada dynamic tool allowlisting per turn
+- outer guard deterministik masih berada di luar agent loop, walau sekarang sudah durable dan observable
+- trace/eval observability sudah durable dan punya release gate, tetapi belum sampai evaluator-grade per-step / model-judge
+- memory observability sudah tampil di dashboard analytics, tetapi belum menjadi halaman observability tersendiri dengan alerting
+- tool set masih cukup lebar, walau sekarang sudah memakai hybrid allowlisting: heuristic + learned policy dari eval
+- analytics durable sudah bisa diekspor, tetapi belum otomatis dikirim ke warehouse/log pipeline lintas layanan
 
 ## 3. Temuan Implementasi Aktual
 
@@ -236,7 +237,7 @@ Ini lebih cocok untuk AI CS pemerintah karena:
 
 ### Residual gap
 
-Belum ada memory trace/ops dashboard khusus. Memory retrieval sudah ada di runtime, tetapi belum punya observability UI terpisah.
+Memory observability sekarang sudah tampil di dashboard analytics umum, termasuk trace summary dan candidate debug. Yang belum ada adalah halaman observability memory yang benar-benar terpisah, alerting, dan tren historis lintas periode.
 
 ## 3.5 RAG / retrieval architecture
 
@@ -266,11 +267,12 @@ Kondisi sekarang sudah selaras dengan pola yang direkomendasikan:
 
 ### Perbaikan sesi ini
 
-Observability retrieval kini aktif:
+Observability retrieval kini aktif dan durable:
 
 - `govconnect-ai-service/src/services/ai-analytics.service.ts::recordRetrievalTrace`
 - `govconnect-ai-service/src/services/knowledge.service.ts::trackKnowledgeSearch`
 - endpoint baru `GET /stats/analytics/retrieval`
+- retrieval trace dipersist ke tabel `ai_retrieval_traces`
 - dashboard `knowledge-analytics` kini menampilkan:
   - mode retrieval
   - confidence distribution
@@ -278,16 +280,17 @@ Observability retrieval kini aktif:
   - latency
   - result count
   - top score
+  - candidate debug per trace
+  - vector/keyword rank dan score
+  - RRF/rerank contribution
 
 ### Residual gap
 
-Belum ada subscore debug penuh setingkat Azure untuk:
+Retrieval observability sekarang sudah durable, punya candidate-level debug, dan ikut tampil di dashboard. Yang belum penuh adalah:
 
-- per-candidate vector score
-- per-candidate keyword score
-- fused rank explanation per item
-
-Saat ini observability masih level trace dan aggregate, bukan candidate-debug lengkap.
+- anotasi kualitas jawaban berbasis model-judge/per-step
+- diff antar model/tool policy lintas run
+- sink otomatis ke observability stack lintas service
 
 ## 3.6 Deterministic service facts: biaya dan SLA
 
@@ -345,12 +348,12 @@ Kalau operator belum mengisi data katalog, output tetap bisa `null`. Ini sekaran
 ### Yang masih bisa ditingkatkan
 
 - tool count aktif masih relatif banyak
-- belum ada dynamic `allowed_tools` per turn
-- observability analytics masih in-memory, jadi optimasi token historis belum durable
+- policy allowlisting masih berbasis term match + golden-set learning, belum policy engine yang lebih kaya
+- token analytics durable belum terhubung ke cost dashboard lintas service
 
 ### Penilaian
 
-Secara arah, sistem sekarang sudah jauh lebih hemat daripada arsitektur prompt-bloat lama. Namun untuk target enterprise cost-ops, langkah berikutnya yang paling bernilai adalah **dynamic tool allowlisting** dan **durable token / trace analytics**.
+Secara arah, sistem sekarang sudah jauh lebih hemat daripada arsitektur prompt-bloat lama. Dynamic tool allowlisting per turn yang memadukan heuristic + learned policy sudah menutup salah satu gap biaya/akurasi yang paling nyata. Release gate eval terbaru juga sudah ada. Langkah berikutnya yang paling bernilai adalah **policy tuning yang lebih kaya** dan **observability token/cost lintas layanan**.
 
 ## 3.8 Frontend / backend sync audit
 
@@ -368,12 +371,17 @@ Secara arah, sistem sekarang sudah jauh lebih hemat daripada arsitektur prompt-b
    - biaya jika tersedia
    - estimasi waktu proses jika tersedia
 
-3. Knowledge analytics dashboard sekarang membaca retrieval observability aktual dari AI service
+3. Knowledge analytics dashboard sekarang membaca observability aktual dari AI service untuk:
+   - retrieval
+   - memory traces
+   - outer guardrails
+   - tool allowlisting policy
+   - latest eval / release gate
 
 ### Gaps yang masih saya lihat
 
 1. Halaman `knowledge-analytics` masih menggunakan fetch langsung ke route dashboard, bukan wrapper frontend API terpadu. Ini bukan bug fungsional, tetapi inkonsisten dengan pola client abstraction lain di dashboard.
-2. AI analytics summary utama masih bergantung pada storage in-memory di AI service. Dashboard sudah menambal sebagian dengan data DB untuk knowledge gaps/conflicts, tetapi overview AI analytics belum benar-benar durable.
+2. Dashboard observability masih terkonsolidasi di satu halaman besar; belum ada drilldown page atau saved views per domain (retrieval, memory, guardrails, eval).
 
 ## 3.9 Deprecated / orphan / duplicate cleanup
 
@@ -470,7 +478,7 @@ Sudah sesuai:
 Belum penuh:
 
 - tool aktif masih relatif banyak
-- belum ada dynamic tool subset per turn
+- allowlisting per turn sudah ada, tetapi policy learning-nya masih sederhana
 
 ## 4.3 OpenAI: practical guide, tool calling, safety, trace grading
 
@@ -496,11 +504,13 @@ Sudah sesuai:
 - cancel tetap butuh confirmation
 - retrieval diperlakukan sebagai untrusted content
 - observability retrieval kini aktif
+- trace scoring, regression flag, dan release gate golden-set sudah durable
+- dynamic tool subset per turn sekarang memadukan heuristic + eval-driven learned policy
 
 Belum penuh:
 
-- belum ada trace grading / eval trace dashboard yang durable
-- belum ada dynamic `allowed_tools`
+- belum ada model-judge/per-step trace grading yang benar-benar setara platform agent builder
+- allowlisting masih menggunakan policy sederhana berbasis term overlap + hasil golden set, belum adaptive policy engine
 
 ## 4.4 Google Gemini: function calling
 
@@ -527,7 +537,7 @@ Sudah sesuai:
 
 Catatan:
 
-Konfigurasi runtime GovConnect masih dominan `auto`. Forced subset / allowed-tool style belum diterapkan per turn.
+Konfigurasi runtime GovConnect masih dominan `auto` di level panggilan model, tetapi allowlisting per turn sudah diterapkan sebelum tool list dikirim ke model.
 
 ## 4.5 LangChain dan LlamaIndex: memory
 
@@ -557,7 +567,7 @@ Sudah sesuai:
 Belum penuh:
 
 - belum ada procedural memory store eksplisit
-- belum ada dashboard observability memory khusus
+- belum ada dashboard/alerting memory yang berdiri sendiri di luar halaman analytics gabungan
 
 ## 4.6 Azure AI Search: Hybrid + RRF
 
@@ -572,53 +582,101 @@ Azure menekankan:
 
 ### Status GovConnect
 
-`Aligned pada retrieval core`
+`Aligned pada retrieval core dan observability candidate debug`
 
 Sudah sesuai:
 
 - hybrid dense + keyword
 - RRF fusion
 - threshold-late / ranking flow lebih sehat
+- candidate-level retrieval debug sudah muncul di dashboard/admin
 
 Belum penuh:
 
-- belum ada debug subscore per candidate di dashboard/admin
+- belum ada explainer evaluatif per candidate yang menghubungkan retrieval score ke kualitas jawaban akhir
 
 ## 5. Remaining Gaps
 
 Ini adalah residual gap yang masih nyata setelah implementasi sesi ini:
 
-1. **AI analytics masih in-memory**
-   - retrieval trace dan summary hilang setelah restart
-   - untuk enterprise idealnya persist ke DB/warehouse/log pipeline
+1. **Outer guard masih di luar agent**
+   - spam/media/pending-state/takeover tetap ditangani deterministik di luar loop tool-calling
+   - sekarang guardrail ini sudah durable dan observable
+   - tetapi arsitektur tetap belum “all behavior inside agent”
 
-2. **Knowledge overview AI masih belum durable penuh**
-   - dashboard knowledge gaps/conflicts sudah punya DB backing
-   - tetapi sebagian summary AI analytics masih berasal dari memory service
+2. **Trace/eval sudah ada, tetapi belum evaluator-grade penuh**
+   - golden-set sekarang punya `trace_score`, `trace_grade`, `regression_detected`, dan `release_gate_pass`
+   - dashboard juga sudah menampilkan latest eval run
+   - tetapi belum ada per-step grading, model-judge, atau compare view lintas run/model
 
-3. **Candidate-level retrieval debug belum ada**
-   - belum ada vector score vs keyword score vs fused rank per item
+3. **Memory observability sudah ada, tetapi belum menjadi product observability terpisah**
+   - admin sekarang sudah bisa melihat memory traces, source mix, memory type mix, dan candidate debug
+   - tetapi belum ada halaman khusus, alerting, atau saved filters untuk domain memory
 
-4. **Dynamic tool allowlisting belum ada**
-   - saat ini semua tool aktif tersedia pada banyak turn
-   - masih ada ruang optimasi token dan akurasi tool choice
+4. **Tool allowlisting sudah hybrid, tetapi policy engine masih sederhana**
+   - per-turn subset sekarang memadukan heuristic regex + learned policies dari golden-set
+   - event policy hit/miss juga sudah durable
+   - tetapi policy matching masih berbasis term overlap, belum memakai classifier/policy model khusus
 
-5. **Repo instruction hygiene**
+5. **Analytics durable sudah bisa diekspor, tetapi belum otomatis ke stack observability eksternal**
+   - AI service sekarang bisa export JSON/NDJSON untuk interactions, retrieval, memory, guardrails, dan tool policies
+   - dashboard juga sudah punya proxy export route
+   - tetapi belum ada sink otomatis ke warehouse/log pipeline lintas service
+
+6. **Repo instruction hygiene**
    - referensi skill `.github/skills/fullstack-feature/SKILL.md` tidak valid di repo ini
+
+7. **LLM gateway keys belum terisi pada root compose env**
+   - stack lokal sekarang bisa start sehat
+   - tetapi lane `llm/embed/rag/rerank` tetap disabled bila `LLM_API_KEY`, `EMBED_API_KEY`, `RAG_API_KEY`, `RERANK_API_KEY` dibiarkan kosong
+   - ini sekarang menjadi gap konfigurasi operasional, bukan gap arsitektur/runtime
+
+8. **Parity `.env` per-service belum seluruhnya 1:1 dengan `.env.example`**
+   - root compose env sekarang sudah sinkron
+   - tetapi file `.env` lokal di beberapa service masih mengandung kombinasi key lama, key tambahan lokal, dan key baru yang belum di-copy penuh dari `.env.example`
+   - ini tidak memblokir local compose karena compose memakai root `.env`, tetapi tetap menjadi hygiene gap untuk mode standalone per-service
 
 ## 6. Changes Implemented in This Audit Session
 
 ### AI service
 
+- menambahkan persistence durable untuk `ai_interaction_events`
+- menambahkan persistence durable untuk `ai_retrieval_traces`
+- menambahkan persistence durable untuk `ai_memory_traces`
+- menambahkan persistence durable untuk `ai_guardrail_events`
+- menambahkan persistence durable untuk `ai_tool_allowlist_policies`
+- menambahkan persistence durable untuk `ai_tool_policy_events`
 - menambahkan retrieval observability trace
+- menambahkan memory observability trace
+- menambahkan outer-guard observability trace
+- menambahkan tool allowlisting policy store + event logging
 - menambahkan endpoint `/stats/analytics/retrieval`
+- menambahkan endpoint `/stats/analytics/memory`
+- menambahkan endpoint `/stats/analytics/guardrails`
+- menambahkan endpoint `/stats/analytics/tool-policy`
+- menambahkan endpoint export `/stats/analytics/export`
 - menambahkan filter multi-tenant `village_id` untuk retrieval observability
 - menghubungkan knowledge search ke analytics trace
+- menambahkan candidate-level retrieval debug sampai ke dashboard
+- menambahkan dynamic tool allowlisting per turn di agent orchestrator
+- menggabungkan heuristic allowlist dengan learned policy dari golden-set
+- menambahkan trace scoring dan release-gate metadata pada golden-set evaluation
+- membuat evaluasi tool side-effects aman saat `isEvaluation`
+- memperbaiki rate-limit key generator webchat agar kompatibel dengan IPv6 helper `express-rate-limit`
+- mengaktifkan `ALLOWED_ORIGINS` local default untuk runtime AI
+- menghapus script vector bootstrap lama `prisma/migrations/init_vector_db.sql` yang sudah tidak menjadi source of truth
 
 ### Dashboard
 
 - menampilkan retrieval observability pada halaman `knowledge-analytics`
+- menampilkan candidate debug per retrieval trace pada halaman `knowledge-analytics`
+- menampilkan memory observability pada halaman `knowledge-analytics`
+- menampilkan outer guardrail observability pada halaman `knowledge-analytics`
+- menampilkan tool allowlisting policy observability pada halaman `knowledge-analytics`
+- menampilkan latest eval / release gate pada halaman `knowledge-analytics`
+- menambahkan export analytics JSON/NDJSON via dashboard route
 - sinkronkan create/update layanan dengan field `estimated_cost` dan `estimated_processing_time`
+- memperbaiki runtime API client supaya Docker build tidak gagal hanya karena `INTERNAL_API_KEY` belum tersedia saat build time
 - tampilkan biaya/SLA di:
   - dashboard layanan
   - public form layanan
@@ -630,31 +688,56 @@ Ini adalah residual gap yang masih nyata setelah implementasi sesi ini:
 - menghapus `govconnect-dashboard/lib/graphql-client.ts`
 - menghapus helper `searchKnowledgeKeywordsOnly()` yang orphan
 
+### Infra / Docker / CI
+
+- mengisi dan menegaskan `PROFILE_ENCRYPTION_KEY` sebagai syarat wajib local compose AI
+- menambahkan fail-fast compose env check untuk `PROFILE_ENCRYPTION_KEY` pada `ai-service`
+- mengubah Dockerfile `govconnect-ai-service` agar tidak lagi install dependency runtime dari registry
+- mengubah Dockerfile `govconnect-dashboard` agar Prisma CLI runtime memakai binary lokal, bukan fallback install `latest`
+- memastikan bootstrap `pgvector` AI berjalan otomatis saat container start
+- mengubah workflow CI/CD agar migrasi container memakai Prisma CLI lokal (`./node_modules/.bin/prisma`)
+- memperbaiki health check dashboard di workflow CI/CD dari endpoint `401` ke endpoint publik yang benar
+- membuktikan `docker compose build` dan `docker compose up -d` lokal berjalan sukses untuk semua service
+
 ## 7. Verification
 
 Perintah yang dijalankan:
 
 - `cd govconnect-ai-service && npx tsc --noEmit`
 - `cd govconnect-case-service && npx tsc --noEmit`
+- `cd govconnect-channel-service && npx tsc --noEmit`
 - `cd govconnect-dashboard && npx tsc --noEmit`
+- `cd govconnect-notification-service && npx tsc --noEmit`
+- `docker build -t govconnect-ai-service:local ./govconnect-ai-service`
+- `docker build -t govconnect-dashboard:local ./govconnect-dashboard`
+- `docker compose build`
+- `docker compose up -d`
+- health check host:
+  - `http://127.0.0.1:3001/health`
+  - `http://127.0.0.1:3002/health`
+  - `http://127.0.0.1:3003/health`
+  - `http://127.0.0.1:3004/health`
+  - `http://127.0.0.1:3011/`
 
 Hasil:
 
 - `pass`
+- seluruh 5 container local compose `healthy`
 
 Catatan:
 
 - audit ini tidak menjalankan live end-to-end ke gateway LLM production
 - audit ini tidak menjalankan golden-set live run pada sesi ini
+- AI service lokal tetap akan menonaktifkan lane LLM/RAG jika API key gateway tidak diisi pada root `.env`
 
 ## 8. Recommended Next Steps
 
 Prioritas tertinggi berikutnya:
 
-1. persist retrieval traces dan AI analytics ke storage durable
-2. tambahkan candidate-level retrieval debug untuk vector/keyword/RRF
-3. tambahkan dynamic `allowed_tools` / tool subset per turn
-4. tambahkan trace-eval workflow atau golden-set release gate yang lebih dekat ke trace grading
+1. tambahkan trace grading yang lebih kaya: per-step grader, model-judge, dan compare lintas run/model
+2. pecah observability menjadi halaman khusus untuk retrieval, memory, dan guardrails bila operator memang membutuhkannya
+3. ekspor analytics durable ke warehouse/log pipeline bila butuh operasi lintas layanan
+4. evolusikan dynamic tool allowlisting dari learned term-policy ke policy engine/classifier yang lebih kaya
 5. rapikan dokumentasi repo yang masih merujuk skill/file yang tidak ada
 
 ## 9. Official Sources

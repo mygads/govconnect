@@ -15,7 +15,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
@@ -94,10 +94,14 @@ const webchatRateLimit = rateLimit({
   max: 15,
   keyGenerator: (req: Request) => {
     // Prioritize IP to prevent client-controlled bypass (Temuan 9)
-    return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
-      || req.ip
-      || req.body?.session_id
-      || 'unknown';
+    const forwardedIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim();
+    const clientIp = forwardedIp || req.ip;
+
+    if (clientIp) {
+      return ipKeyGenerator(clientIp);
+    }
+
+    return req.body?.session_id || 'unknown';
   },
   standardHeaders: true,
   legacyHeaders: false,

@@ -14,8 +14,17 @@ export async function GET(request: NextRequest) {
     }
 
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '10')
+    const villageId = request.nextUrl.searchParams.get('village_id')
 
     const runs = await prisma.ai_golden_set_runs.findMany({
+      where: villageId
+        ? {
+            OR: [
+              { village_id: villageId },
+              { village_id: null },
+            ],
+          }
+        : undefined,
       orderBy: { completed_at: 'desc' },
       take: Math.min(limit, 50),
       include: {
@@ -41,8 +50,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const {
       run_id,
+      village_id,
       total,
       intent_accuracy,
+      tool_accuracy,
       keyword_accuracy,
       overall_accuracy,
       thresholds,
@@ -55,35 +66,6 @@ export async function POST(request: NextRequest) {
     if (!run_id || !results) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
-
-    // Store run + items in a transaction
-    const run = await prisma.ai_golden_set_runs.create({
-      data: {
-        run_id,
-        total: total || results.length,
-        intent_accuracy: intent_accuracy || 0,
-        keyword_accuracy: keyword_accuracy || 0,
-        overall_accuracy: overall_accuracy || 0,
-        thresholds: thresholds || {},
-        status: status || {},
-        started_at: new Date(started_at),
-        completed_at: new Date(completed_at),
-        items: {
-          create: results.map((r: any) => ({
-            run_id,
-            query: r.query,
-            expected_intent: r.expected_intent || null,
-            predicted_intent: r.predicted_intent || 'UNKNOWN',
-            reply_text: r.reply_text || '',
-            intent_match: r.intent_match ?? null,
-            keyword_match: r.keyword_match ?? null,
-            keyword_score: r.keyword_score ?? null,
-            score: r.score || 0,
-            latency_ms: r.latency_ms || 0,
-          })),
-        },
-      },
-    })
 
     // Release gate: check if regression detected against previous run
     const previousRun = await prisma.ai_golden_set_runs.findFirst({
@@ -99,17 +81,59 @@ export async function POST(request: NextRequest) {
         (previousRun.overall_accuracy - overall_accuracy) >= regressionDelta
     }
 
+    const releaseGatePass =
+      (status?.overall_pass ?? true) &&
+      (status?.intent_pass ?? true) &&
+      (status?.tool_pass ?? true) &&
+      !regressionDetected
+
+    const run = await prisma.ai_golden_set_runs.create({
+      data: {
+        run_id,
+        village_id: village_id || null,
+        total: total || results.length,
+        intent_accuracy: intent_accuracy || 0,
+        tool_accuracy: tool_accuracy || 0,
+        keyword_accuracy: keyword_accuracy || 0,
+        overall_accuracy: overall_accuracy || 0,
+        regression_detected: regressionDetected,
+        release_gate_pass: releaseGatePass,
+        thresholds: thresholds || {},
+        status: status || {},
+        started_at: new Date(started_at),
+        completed_at: new Date(completed_at),
+        items: {
+          create: results.map((r: any) => ({
+            run_id,
+            query: r.query,
+            expected_intent: r.expected_intent || null,
+            expected_tools: r.expected_tools || undefined,
+            actual_tools: r.actual_tools || undefined,
+            predicted_intent: r.predicted_intent || 'UNKNOWN',
+            reply_text: r.reply_text || '',
+            intent_match: r.intent_match ?? null,
+            tool_match: r.tool_match ?? null,
+            tool_score: r.tool_score ?? null,
+            keyword_match: r.keyword_match ?? null,
+            keyword_score: r.keyword_score ?? null,
+            score: r.score || 0,
+            trace_score: r.trace_score ?? null,
+            trace_grade: r.trace_grade ?? null,
+            latency_ms: r.latency_ms || 0,
+            scenario: r.scenario || null,
+            trace_id: r.trace_id || null,
+          })),
+        },
+      },
+    })
+
     return NextResponse.json({
       status: 'success',
       data: {
         id: run.id,
         run_id: run.run_id,
         regression_detected: regressionDetected,
-        release_gate_pass:
-          (status?.overall_pass ?? true) &&
-          (status?.intent_pass ?? true) &&
-          (status?.tool_pass ?? true) &&
-          !regressionDetected,
+        release_gate_pass: releaseGatePass,
       },
     }, { status: 201 })
   } catch (error: any) {

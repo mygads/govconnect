@@ -30,12 +30,7 @@ COPY . .
 
 # Generate Prisma Client
 ENV DATABASE_URL="postgresql://postgres:postgres@localhost:5432/dummy?schema=dashboard"
-RUN echo "Running prisma generate..." && \
-    pnpm prisma generate 2>&1 || { \
-      echo "⚠️ prisma generate failed, trying alternative approach..."; \
-      npm install prisma@latest @prisma/client@latest --silent; \
-      npx prisma generate 2>&1 || echo "⚠️ prisma generate failed during build; continuing"; \
-    }
+RUN pnpm prisma generate
 
 # Build Next.js app
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -69,6 +64,7 @@ COPY --from=builder /app/.next/static ./.next/static
 
 # Copy Prisma schema and generated client
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/.bin ./node_modules/.bin
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
 # Copy entire .pnpm directory for Prisma CLI dependencies
@@ -103,13 +99,13 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
     echo '  if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
     echo '    echo "📦 Running migrate deploy..."' >> /app/entrypoint.sh && \
-    echo '    node node_modules/prisma/build/index.js migrate deploy 2>&1 || {' >> /app/entrypoint.sh && \
+    echo '    ./node_modules/.bin/prisma migrate deploy 2>&1 || {' >> /app/entrypoint.sh && \
     echo '      echo "⚠️ Migration failed, trying db push..."' >> /app/entrypoint.sh && \
-    echo '      node node_modules/prisma/build/index.js db push 2>&1 || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '      ./node_modules/.bin/prisma db push --skip-generate 2>&1 || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
     echo '    }' >> /app/entrypoint.sh && \
     echo '  else' >> /app/entrypoint.sh && \
     echo '    echo "📦 No migrations found, running db push..."' >> /app/entrypoint.sh && \
-    echo '    node node_modules/prisma/build/index.js db push 2>&1 || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '    ./node_modules/.bin/prisma db push --skip-generate 2>&1 || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
     echo '  fi' >> /app/entrypoint.sh && \
     echo 'else' >> /app/entrypoint.sh && \
     echo '  echo "⚠️ DATABASE_URL not set, skipping migrations"' >> /app/entrypoint.sh && \

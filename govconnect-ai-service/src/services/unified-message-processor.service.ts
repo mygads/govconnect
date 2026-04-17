@@ -34,6 +34,8 @@ import { validateResponse } from './ump-formatters';
 import type { ChannelType } from './ump-formatters';
 import { getCachedResponse, setCachedResponse } from './response-cache.service';
 import { buildHybridMemorySummary } from './hybrid-memory.service';
+import { recordGuardrailEvent } from './runtime-observability.service';
+import { recordToolPolicyEvent } from './agent/tool-policy.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
@@ -100,6 +102,7 @@ interface AgentProcessInput {
   userId: string;
   message: string;
   channel: 'whatsapp' | 'webchat';
+  isEvaluation?: boolean;
   villageId?: string;
   conversationSummary?: string;
   recentConversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -168,6 +171,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     userId,
     message,
     channel,
+    isEvaluation,
     villageId,
     conversationSummary,
     recentConversationHistory,
@@ -196,6 +200,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         userId,
         villageId,
         channel,
+        isEvaluation: input.isEvaluation,
       },
       {
         summary: conversationSummary,
@@ -228,6 +233,14 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         hasKnowledge: result.toolsUsed.includes('search_knowledge') || result.toolsUsed.includes('search_documents'),
         agentMode: 'single_orchestrator',
         toolsUsed: result.toolsUsed,
+        allowedTools: result.allowedToolNames,
+        heuristicTools: result.heuristicTools,
+        learnedTools: result.learnedTools,
+        toolPolicy: {
+          policyKey: result.matchedPolicyKey,
+          policySource: result.matchedPolicySource,
+          confidence: result.matchedPolicyConfidence,
+        },
         toolTrace: result.toolTrace,
         traceId,
       },
@@ -293,22 +306,68 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const MAX_INPUT_LENGTH = 4000; // ~1000 tokens, well above any realistic user message
     if (message.length > MAX_INPUT_LENGTH) {
       logger.warn('🚫 [UnifiedProcessor] Message too long, rejected', { traceId, userId, channel, length: message.length });
+      await recordGuardrailEvent({
+        traceId,
+        waUserId: userId,
+        villageId,
+        channel,
+        guardStage: 'unified_processor',
+        guardType: 'input_length',
+        action: 'blocked',
+        reason: 'message_too_long',
+        messagePreview: message,
+        metadata: {
+          length: message.length,
+          maxLength: MAX_INPUT_LENGTH,
+        },
+      });
       return finish({
         success: true,
         response: 'Maaf, pesan Anda terlalu panjang. Mohon kirim pesan yang lebih singkat (maksimal beberapa paragraf).',
         intent: 'UNKNOWN',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+          traceId,
+          guardrail: {
+            stage: 'unified_processor',
+            type: 'input_length',
+            action: 'blocked',
+            reason: 'message_too_long',
+          },
+        },
       });
     }
 
     // Step 1: Spam check
     if (isSpamMessage(message)) {
       logger.warn('🚫 [UnifiedProcessor] Spam detected', { userId, channel });
+      await recordGuardrailEvent({
+        traceId,
+        waUserId: userId,
+        villageId,
+        channel,
+        guardStage: 'unified_processor',
+        guardType: 'spam_content',
+        action: 'blocked',
+        reason: 'content_spam_pattern',
+        messagePreview: message,
+      });
       return finish({
         success: false,
         response: '',
         intent: 'SPAM',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+          traceId,
+          guardrail: {
+            stage: 'unified_processor',
+            type: 'spam_content',
+            action: 'blocked',
+            reason: 'content_spam_pattern',
+          },
+        },
         error: 'Spam message detected',
       });
     }
@@ -381,6 +440,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       startTime,
     });
     if (protocolGuardResult) {
+      await recordGuardrailEvent({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'protocol_guard',
+        guardType: 'unsupported_media',
+        action: 'handled',
+        reason: input.mediaType,
+        messagePreview: message,
+      });
       tracker.complete();
       return finish(protocolGuardResult);
     }
@@ -395,6 +465,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       runWithMicroBudget: withMicroNluBudget,
     });
     if (pendingOfferResult) {
+      await recordGuardrailEvent({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'pre_agent_pending_offer',
+        guardType: 'pending_offer',
+        action: 'handled',
+        reason: pendingOfferResult.intent,
+        messagePreview: message,
+      });
       return finish(pendingOfferResult);
     }
 
@@ -412,6 +493,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       notifyStage,
     });
     if (latePreAgentResult) {
+      await recordGuardrailEvent({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'pre_agent_state',
+        guardType: 'pending_state',
+        action: 'handled',
+        reason: latePreAgentResult.intent,
+        messagePreview: message,
+      });
       return finish(latePreAgentResult);
     }
 
@@ -431,6 +523,9 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         wa_user_id: userId,
         query: sanitizedMessage,
         village_id: resolvedVillageId,
+        trace_id: traceId,
+        channel: agentChannel,
+        skip_observability: !!isEvaluation,
       }),
     ]);
 
@@ -473,6 +568,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       userId,
       message: sanitizedMessage,
       channel: channel as 'whatsapp' | 'webchat',
+      isEvaluation,
       villageId: resolvedVillageId,
       conversationSummary: conversationContext.summary,
       recentConversationHistory: conversationContext.recentMessages,
@@ -536,21 +632,39 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       error: error.message,
     });
   } finally {
-    if (!isEvaluation && finalResult && finalResult.intent !== 'SPAM') {
+    const analyticsResult = finalResult as ProcessMessageResult | null;
+    if (!isEvaluation && analyticsResult && analyticsResult.intent !== 'SPAM') {
       await aiAnalyticsService.recordInteractionEvent({
         waUserId: userId,
         villageId,
         channel,
-        intent: deriveAnalyticsIntent(finalResult),
-        success: finalResult.success,
-        hasKnowledge: finalResult.metadata.hasKnowledge,
-        isFallback: finalResult.intent === 'ERROR',
-        agentMode: finalResult.metadata.agentMode,
-        responseSource: deriveAnalyticsSource(finalResult),
-        toolsUsed: finalResult.metadata.toolsUsed,
-        model: finalResult.metadata.model,
-        processingTimeMs: finalResult.metadata.processingTimeMs,
+        intent: deriveAnalyticsIntent(analyticsResult),
+        success: analyticsResult.success,
+        hasKnowledge: analyticsResult.metadata.hasKnowledge,
+        isFallback: analyticsResult.intent === 'ERROR',
+        agentMode: analyticsResult.metadata.agentMode,
+        responseSource: deriveAnalyticsSource(analyticsResult),
+        toolsUsed: analyticsResult.metadata.toolsUsed,
+        model: analyticsResult.metadata.model,
+        processingTimeMs: analyticsResult.metadata.processingTimeMs,
       });
+
+      if (analyticsResult.metadata.agentMode === 'single_orchestrator') {
+        await recordToolPolicyEvent({
+          traceId: analyticsResult.metadata.traceId,
+          waUserId: userId,
+          villageId,
+          channel,
+          query: message,
+          heuristicTools: (analyticsResult.metadata.heuristicTools || []) as any,
+          learnedTools: (analyticsResult.metadata.learnedTools || []) as any,
+          allowedTools: (analyticsResult.metadata.allowedTools || []) as any,
+          actualTools: analyticsResult.metadata.toolsUsed || [],
+          success: analyticsResult.success,
+          policyKey: analyticsResult.metadata.toolPolicy?.policyKey,
+          policySource: analyticsResult.metadata.toolPolicy?.policySource,
+        });
+      }
     }
     decrementActiveProcessing();
   }

@@ -72,10 +72,14 @@ model system_settings {
 model ai_golden_set_runs {
   id               String   @id @default(cuid())
   run_id           String   @unique
+  village_id       String?
   total            Int
   intent_accuracy  Float
+  tool_accuracy    Float    @default(0)
   keyword_accuracy Float
   overall_accuracy Float
+  regression_detected Boolean @default(false)
+  release_gate_pass Boolean @default(true)
   thresholds       Json
   status           Json
   started_at       DateTime
@@ -92,13 +96,21 @@ model ai_golden_set_items {
   run_id          String
   query           String   @db.Text
   expected_intent String?
+  expected_tools  Json?
+  actual_tools    Json?
   predicted_intent String
   reply_text      String   @db.Text
   intent_match    Boolean?
+  tool_match      Boolean?
+  tool_score      Float?
   keyword_match   Boolean?
   keyword_score   Float?
   score           Float
+  trace_score     Float?
+  trace_grade     String?
   latency_ms      Int
+  scenario        String?
+  trace_id        String?
   created_at      DateTime @default(now())
 
   run             ai_golden_set_runs @relation(fields: [run_id], references: [id], onDelete: Cascade)

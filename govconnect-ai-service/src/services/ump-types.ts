@@ -61,6 +61,14 @@ export interface ProcessMessageResult {
     language?: string;
     agentMode?: 'single_orchestrator' | 'deterministic_fact_router' | 'pre_agent_guard' | 'response_cache';
     toolsUsed?: string[];
+    allowedTools?: string[];
+    heuristicTools?: string[];
+    learnedTools?: string[];
+    toolPolicy?: {
+      policyKey?: string;
+      policySource?: string;
+      confidence?: number;
+    };
     toolTrace?: Array<{
       tool: string;
       success: boolean;
@@ -68,6 +76,12 @@ export interface ProcessMessageResult {
       trustLevel: 'trusted_fact' | 'trusted_record' | 'untrusted_retrieval' | 'action_result';
       sourceKind?: string;
     }>;
+    guardrail?: {
+      stage: string;
+      type: string;
+      action: string;
+      reason?: string;
+    };
     /** Unique trace ID for correlating logs across NLU → RAG → LLM → response */
     traceId?: string;
   };

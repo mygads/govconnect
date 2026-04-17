@@ -58,34 +58,11 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 caseuser
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
-
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
-
-# Copy prisma schema and generated client from builder
+# Copy runtime artifacts and local Prisma CLI from builder so startup does not
+# depend on registry access.
+COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-
-# Copy entire .pnpm directory for Prisma dependencies
-COPY --from=builder /app/node_modules/.pnpm ./node_modules/.pnpm
-
-# Ensure Prisma client is resolvable (pnpm symlink layout)
-RUN set -e; \
-    mkdir -p node_modules/@prisma; \
-    for pkg_dir in node_modules/.pnpm/@prisma+client@*; do \
-        [ -d "$pkg_dir/node_modules/@prisma" ] || continue; \
-        for pkg_path in "$pkg_dir"/node_modules/@prisma/*; do \
-            name="$(basename "$pkg_path")"; \
-            [ -e "node_modules/@prisma/$name" ] || ln -sf "../.pnpm/$(basename "$pkg_dir")/node_modules/@prisma/$name" "node_modules/@prisma/$name"; \
-        done; \
-    done
-
-# Copy built files from builder
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 # Set proper permissions
@@ -102,13 +79,13 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
     echo '  if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
     echo '    echo "📦 Running migrate deploy..."' >> /app/entrypoint.sh && \
-    echo '    npx prisma@6.19.0 migrate deploy 2>&1 || {' >> /app/entrypoint.sh && \
+    echo '    ./node_modules/.bin/prisma migrate deploy 2>&1 || {' >> /app/entrypoint.sh && \
     echo '      echo "⚠️ Migration failed, trying db push..."' >> /app/entrypoint.sh && \
-    echo '      npx prisma@6.19.0 db push --skip-generate 2>&1 || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '      ./node_modules/.bin/prisma db push --skip-generate 2>&1 || echo "⚠️ DB operations failed, continuing..."' >> /app/entrypoint.sh && \
     echo '    }' >> /app/entrypoint.sh && \
     echo '  else' >> /app/entrypoint.sh && \
     echo '    echo "📦 No migrations found, running db push..."' >> /app/entrypoint.sh && \
-    echo '    npx prisma@6.19.0 db push --skip-generate 2>&1 || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
+    echo '    ./node_modules/.bin/prisma db push --skip-generate 2>&1 || echo "⚠️ DB push failed, continuing..."' >> /app/entrypoint.sh && \
     echo '  fi' >> /app/entrypoint.sh && \
     echo 'else' >> /app/entrypoint.sh && \
     echo '  echo "⚠️ DATABASE_URL not set, skipping migrations"' >> /app/entrypoint.sh && \

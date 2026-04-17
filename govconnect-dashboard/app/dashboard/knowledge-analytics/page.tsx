@@ -10,7 +10,8 @@ import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Brain, RefreshCcw, TrendingUp, TrendingDown, AlertTriangle,
-  CheckCircle, XCircle, HelpCircle, BarChart3, Target, MessageSquareWarning, Trash2, Loader2
+  CheckCircle, XCircle, HelpCircle, BarChart3, Target, MessageSquareWarning, Trash2, Loader2,
+  Shield, Download, GitBranch
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
@@ -142,6 +143,151 @@ interface RetrievalObservabilityData {
   recentTraces: RetrievalTraceItem[]
 }
 
+interface MemoryTraceCandidate {
+  id: string
+  memoryType: string
+  content: string
+  relevanceScore: number
+  lexicalScore: number
+  semanticScore: number
+  recencyScore: number
+  importanceScore: number
+  typeBoost: number
+  createdAt: string
+}
+
+interface MemoryTraceItem {
+  traceId?: string
+  waUserId: string
+  source: string
+  query: string
+  channel?: string
+  villageId?: string
+  resultCount: number
+  topScore: number | null
+  avgScore: number | null
+  summaryText?: string
+  createdAt: string
+  candidates: MemoryTraceCandidate[]
+}
+
+interface MemoryObservabilityData {
+  summary: {
+    totalTraces: number
+    avgResultCount: number
+    avgTopScore: number | null
+  }
+  bySource: Array<{
+    source: string
+    count: number
+    avgResultCount: number
+  }>
+  byMemoryType: Array<{
+    memoryType: string
+    count: number
+  }>
+  recentTraces: MemoryTraceItem[]
+}
+
+interface GuardrailEventItem {
+  traceId?: string
+  waUserId?: string
+  guardStage: string
+  guardType: string
+  action: string
+  reason?: string
+  messagePreview?: string
+  createdAt: string
+}
+
+interface GuardrailObservabilityData {
+  summary: {
+    totalEvents: number
+    blockedCount: number
+    handledCount: number
+  }
+  byType: Array<{
+    guardType: string
+    count: number
+  }>
+  byStage: Array<{
+    guardStage: string
+    count: number
+  }>
+  recentEvents: GuardrailEventItem[]
+}
+
+interface ToolPolicyDefinition {
+  policyKey: string
+  source: string
+  matchTerms: string[]
+  allowedTools: string[]
+  confidence: number
+  evaluationCount: number
+  successCount: number
+  lastSeenAt: string
+}
+
+interface ToolPolicyEventItem {
+  traceId?: string
+  query: string
+  policyKey?: string
+  policySource?: string
+  heuristicTools: string[]
+  learnedTools: string[]
+  allowedTools: string[]
+  actualTools: string[]
+  success: boolean
+  createdAt: string
+}
+
+interface ToolPolicyObservabilityData {
+  summary: {
+    totalPolicies: number
+    totalEvents: number
+    policyHitRate: number
+  }
+  policies: ToolPolicyDefinition[]
+  recentEvents: ToolPolicyEventItem[]
+}
+
+interface EvaluationItem {
+  id: string
+  query: string
+  expectedIntent?: string | null
+  expectedTools?: unknown
+  actualTools?: unknown
+  predictedIntent: string
+  replyText: string
+  intentMatch?: boolean | null
+  toolMatch?: boolean | null
+  toolScore?: number | null
+  keywordMatch?: boolean | null
+  keywordScore?: number | null
+  score: number
+  traceScore?: number | null
+  traceGrade?: string | null
+  latencyMs: number
+  scenario?: string | null
+  traceId?: string | null
+}
+
+interface EvaluationRunData {
+  runId: string
+  total: number
+  overallAccuracy: number
+  intentAccuracy: number
+  toolAccuracy: number
+  keywordAccuracy: number
+  regressionDetected: boolean
+  releaseGatePass: boolean
+  thresholds: Record<string, unknown>
+  status: Record<string, unknown>
+  startedAt: string
+  completedAt: string
+  items: EvaluationItem[]
+}
+
 interface AnalyticsData {
   overview: OverviewStats
   intents: IntentItem[]
@@ -149,6 +295,10 @@ interface AnalyticsData {
   knowledgeGaps?: KnowledgeGapsData
   knowledgeConflicts?: KnowledgeConflictsData
   retrievalObservability?: RetrievalObservabilityData | null
+  memoryObservability?: MemoryObservabilityData | null
+  guardrailObservability?: GuardrailObservabilityData | null
+  toolPolicyObservability?: ToolPolicyObservabilityData | null
+  evaluation?: EvaluationRunData | null
   rawAnalytics: any
 }
 
@@ -197,6 +347,7 @@ export default function KnowledgeAnalyticsPage() {
   const { user } = useAuth()
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [selectedTraceIndex, setSelectedTraceIndex] = useState(0)
+  const [selectedMemoryTraceIndex, setSelectedMemoryTraceIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deletingGapId, setDeletingGapId] = useState<string | null>(null)
@@ -209,39 +360,67 @@ export default function KnowledgeAnalyticsPage() {
     if (user && user.role === "superadmin") redirect("/dashboard")
   }, [user])
 
+  const getAuthHeaders = useCallback(() => {
+    const token = localStorage.getItem("token")
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  }, [])
+
+  const fetchDashboardJson = useCallback(async <T,>(url: string, init?: RequestInit): Promise<T> => {
+    const headers = new Headers(init?.headers)
+    const authHeaders = getAuthHeaders()
+    Object.entries(authHeaders).forEach(([key, value]) => headers.set(key, value))
+
+    const res = await fetch(url, {
+      ...init,
+      headers,
+    })
+
+    if (!res.ok) {
+      throw new Error("Request dashboard gagal")
+    }
+
+    return res.json() as Promise<T>
+  }, [getAuthHeaders])
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch("/api/statistics/knowledge-analytics", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!res.ok) throw new Error("Gagal memuat data analytics")
-      setData(await res.json())
+      const analytics = await fetchDashboardJson<AnalyticsData>("/api/statistics/knowledge-analytics")
+      setData(analytics)
     } catch (err: any) {
-      setError(err.message)
+      setError(err.message === "Request dashboard gagal" ? "Gagal memuat data analytics" : err.message)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [fetchDashboardJson])
 
   useEffect(() => { fetchData() }, [fetchData])
   useEffect(() => {
     setSelectedTraceIndex(0)
   }, [data?.retrievalObservability?.recentTraces?.length])
+  useEffect(() => {
+    setSelectedMemoryTraceIndex(0)
+  }, [data?.memoryObservability?.recentTraces?.length])
+
+  const handleExport = (format: "json" | "ndjson") => {
+    window.open(`/api/statistics/knowledge-analytics/export?kind=all&format=${format}`, "_blank")
+  }
 
   const handleDeleteGap = async (id: string) => {
     try {
       setDeletingGapId(id)
-      const res = await fetch(`/api/knowledge-gaps/${id}`, {
+      await fetchDashboardJson(`/api/knowledge-gaps/${id}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
-      if (!res.ok) throw new Error("Gagal menghapus")
       toast({ title: "Berhasil", description: "Pertanyaan berhasil dihapus" })
       fetchData()
     } catch (err: any) {
-      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+      toast({
+        title: "Gagal",
+        description: err.message === "Request dashboard gagal" ? "Gagal menghapus" : err.message,
+        variant: "destructive",
+      })
     } finally {
       setDeletingGapId(null)
     }
@@ -251,16 +430,17 @@ export default function KnowledgeAnalyticsPage() {
     if (!confirm('Hapus semua pertanyaan belum terjawab? Data analytics akan di-reset.')) return
     try {
       setDeletingAllGaps(true)
-      const res = await fetch('/api/knowledge-gaps/batch', {
+      const response = await fetchDashboardJson<{ deleted: number }>('/api/knowledge-gaps/batch', {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
-      if (!res.ok) throw new Error("Gagal menghapus")
-      const data = await res.json()
-      toast({ title: "Berhasil", description: `${data.deleted} pertanyaan berhasil dihapus` })
+      toast({ title: "Berhasil", description: `${response.deleted} pertanyaan berhasil dihapus` })
       fetchData()
     } catch (err: any) {
-      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+      toast({
+        title: "Gagal",
+        description: err.message === "Request dashboard gagal" ? "Gagal menghapus" : err.message,
+        variant: "destructive",
+      })
     } finally {
       setDeletingAllGaps(false)
     }
@@ -270,16 +450,17 @@ export default function KnowledgeAnalyticsPage() {
     if (!confirm('Hapus semua data konflik? Data analytics akan di-reset.')) return
     try {
       setDeletingAllConflicts(true)
-      const res = await fetch('/api/knowledge-conflicts/batch', {
+      const response = await fetchDashboardJson<{ deleted: number }>('/api/knowledge-conflicts/batch', {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
-      if (!res.ok) throw new Error("Gagal menghapus")
-      const data = await res.json()
-      toast({ title: "Berhasil", description: `${data.deleted} konflik berhasil dihapus` })
+      toast({ title: "Berhasil", description: `${response.deleted} konflik berhasil dihapus` })
       fetchData()
     } catch (err: any) {
-      toast({ title: "Gagal", description: err.message, variant: "destructive" })
+      toast({
+        title: "Gagal",
+        description: err.message === "Request dashboard gagal" ? "Gagal menghapus" : err.message,
+        variant: "destructive",
+      })
     } finally {
       setDeletingAllConflicts(false)
     }
@@ -337,6 +518,16 @@ export default function KnowledgeAnalyticsPage() {
   const retrievalConfidence = retrievalObservability?.byConfidence || []
   const retrievalTraces = retrievalObservability?.recentTraces || []
   const selectedTrace = retrievalTraces[selectedTraceIndex] || retrievalTraces[0] || null
+  const memoryObservability = data?.memoryObservability
+  const memorySummary = memoryObservability?.summary
+  const memorySources = memoryObservability?.bySource || []
+  const memoryTypes = memoryObservability?.byMemoryType || []
+  const memoryTraces = memoryObservability?.recentTraces || []
+  const selectedMemoryTrace = memoryTraces[selectedMemoryTraceIndex] || memoryTraces[0] || null
+  const guardrailObservability = data?.guardrailObservability
+  const toolPolicyObservability = data?.toolPolicyObservability
+  const evaluation = data?.evaluation
+  const failedEvalItems = (evaluation?.items || []).filter((item) => item.traceGrade !== "A" || item.score < 1).slice(0, 10)
   const hitRateNum = typeof overview.hitRate === "string" ? parseFloat(overview.hitRate) : overview.hitRate
 
   return (
@@ -349,9 +540,17 @@ export default function KnowledgeAnalyticsPage() {
             Pantau efektivitas knowledge base dan identifikasi pertanyaan yang belum terjawab
           </p>
         </div>
-        <Button onClick={fetchData} variant="outline">
-          <RefreshCcw className="h-4 w-4 mr-2" /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => handleExport("json")} variant="outline">
+            <Download className="h-4 w-4 mr-2" /> Export JSON
+          </Button>
+          <Button onClick={() => handleExport("ndjson")} variant="outline">
+            <Download className="h-4 w-4 mr-2" /> Export NDJSON
+          </Button>
+          <Button onClick={fetchData} variant="outline">
+            <RefreshCcw className="h-4 w-4 mr-2" /> Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Conflict Alert Banner */}
@@ -737,6 +936,425 @@ export default function KnowledgeAnalyticsPage() {
               )}
             </CardContent>
           </Card>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Brain className="h-5 w-5" /> Observability Memory
+          </CardTitle>
+          <CardDescription>
+            Menampilkan trace memory hybrid yang dipakai untuk konteks personal user, lengkap dengan skor lexical, semantic, recency, dan importance.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card className="border-dashed">
+              <CardContent className="pt-6">
+                <div className="text-sm text-muted-foreground">Total Memory Traces</div>
+                <div className="text-2xl font-bold mt-1">{memorySummary?.totalTraces ?? 0}</div>
+              </CardContent>
+            </Card>
+            <Card className="border-dashed">
+              <CardContent className="pt-6">
+                <div className="text-sm text-muted-foreground">Avg Result Count</div>
+                <div className="text-2xl font-bold mt-1">{memorySummary?.avgResultCount ?? 0}</div>
+              </CardContent>
+            </Card>
+            <Card className="border-dashed">
+              <CardContent className="pt-6">
+                <div className="text-sm text-muted-foreground">Avg Top Score</div>
+                <div className="text-2xl font-bold mt-1">
+                  {typeof memorySummary?.avgTopScore === "number" ? memorySummary.avgTopScore.toFixed(3) : "-"}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Source Memory</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {memorySources.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Belum ada trace memory.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Source</TableHead>
+                        <TableHead>Count</TableHead>
+                        <TableHead>Avg Result</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {memorySources.map((source) => (
+                        <TableRow key={source.source}>
+                          <TableCell>{source.source}</TableCell>
+                          <TableCell>{source.count}</TableCell>
+                          <TableCell>{source.avgResultCount}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Top Memory Types</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {memoryTypes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Belum ada tipe memory dominan.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {memoryTypes.map((item) => (
+                      <div key={item.memoryType} className="flex items-center justify-between rounded-lg border p-3">
+                        <div className="font-medium">{item.memoryType}</div>
+                        <Badge variant="outline">{item.count}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Recent Memory Traces</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {memoryTraces.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Belum ada trace memory.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Waktu</TableHead>
+                        <TableHead>Source</TableHead>
+                        <TableHead>Query</TableHead>
+                        <TableHead>Result</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {memoryTraces.slice(0, 12).map((trace, idx) => (
+                        <TableRow
+                          key={`${trace.createdAt}-${idx}`}
+                          className="cursor-pointer"
+                          onClick={() => setSelectedMemoryTraceIndex(idx)}
+                        >
+                          <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                            {formatRelativeTime(new Date(trace.createdAt))}
+                          </TableCell>
+                          <TableCell>{trace.source}</TableCell>
+                          <TableCell className="max-w-[260px]">
+                            <div className="line-clamp-2 font-medium">{trace.query}</div>
+                          </TableCell>
+                          <TableCell>{trace.resultCount}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Memory Candidate Debug</CardTitle>
+                <CardDescription>
+                  Trace yang dipilih menunjukkan kenapa suatu memory terambil: lexical, semantic, recency, importance, dan boost operasional.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {!selectedMemoryTrace || selectedMemoryTrace.candidates.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Pilih trace memory untuk melihat kandidat yang terambil.</p>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <div className="font-medium">{selectedMemoryTrace.query}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {selectedMemoryTrace.source} • {selectedMemoryTrace.resultCount} memory • {typeof selectedMemoryTrace.topScore === "number" ? selectedMemoryTrace.topScore.toFixed(3) : "-"}
+                      </div>
+                      {selectedMemoryTrace.summaryText && (
+                        <div className="text-xs text-muted-foreground mt-2 line-clamp-3">
+                          {selectedMemoryTrace.summaryText}
+                        </div>
+                      )}
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Memory</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Final</TableHead>
+                          <TableHead>Lexical</TableHead>
+                          <TableHead>Semantic</TableHead>
+                          <TableHead>Recency</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedMemoryTrace.candidates.map((candidate) => (
+                          <TableRow key={candidate.id}>
+                            <TableCell className="max-w-[260px]">
+                              <div className="line-clamp-2 font-medium">{candidate.content}</div>
+                              <div className="text-xs text-muted-foreground mt-1">{formatRelativeTime(new Date(candidate.createdAt))}</div>
+                            </TableCell>
+                            <TableCell><Badge variant="outline">{candidate.memoryType}</Badge></TableCell>
+                            <TableCell>{candidate.relevanceScore.toFixed(3)}</TableCell>
+                            <TableCell>{candidate.lexicalScore.toFixed(3)}</TableCell>
+                            <TableCell>{candidate.semanticScore.toFixed(3)}</TableCell>
+                            <TableCell>{candidate.recencyScore.toFixed(3)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5" /> Guardrail Observability
+            </CardTitle>
+            <CardDescription>
+              Transparansi outer guard yang tetap deterministik: spam, takeover, supersede, protocol guard, dan pending-state.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-3">
+              <Card className="border-dashed">
+                <CardContent className="pt-6">
+                  <div className="text-sm text-muted-foreground">Total Events</div>
+                  <div className="text-2xl font-bold mt-1">{guardrailObservability?.summary.totalEvents ?? 0}</div>
+                </CardContent>
+              </Card>
+              <Card className="border-dashed">
+                <CardContent className="pt-6">
+                  <div className="text-sm text-muted-foreground">Blocked</div>
+                  <div className="text-2xl font-bold mt-1">{guardrailObservability?.summary.blockedCount ?? 0}</div>
+                </CardContent>
+              </Card>
+              <Card className="border-dashed">
+                <CardContent className="pt-6">
+                  <div className="text-sm text-muted-foreground">Handled</div>
+                  <div className="text-2xl font-bold mt-1">{guardrailObservability?.summary.handledCount ?? 0}</div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Waktu</TableHead>
+                  <TableHead>Guard</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead>Aksi</TableHead>
+                  <TableHead>Reason</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(guardrailObservability?.recentEvents || []).slice(0, 10).map((item, idx) => (
+                  <TableRow key={`${item.createdAt}-${idx}`}>
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {formatRelativeTime(new Date(item.createdAt))}
+                    </TableCell>
+                    <TableCell>{item.guardType}</TableCell>
+                    <TableCell>{item.guardStage}</TableCell>
+                    <TableCell>
+                      <Badge variant={item.action === "blocked" ? "destructive" : "outline"}>{item.action}</Badge>
+                    </TableCell>
+                    <TableCell className="max-w-[220px]">
+                      <div className="line-clamp-2 text-sm">{item.reason || "-"}</div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GitBranch className="h-5 w-5" /> Tool Policy Tuning
+            </CardTitle>
+            <CardDescription>
+              Allowlisting sekarang tidak murni heuristic. Policy dari golden set/runtime ikut mempengaruhi subset tool per turn.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-3">
+              <Card className="border-dashed">
+                <CardContent className="pt-6">
+                  <div className="text-sm text-muted-foreground">Policies</div>
+                  <div className="text-2xl font-bold mt-1">{toolPolicyObservability?.summary.totalPolicies ?? 0}</div>
+                </CardContent>
+              </Card>
+              <Card className="border-dashed">
+                <CardContent className="pt-6">
+                  <div className="text-sm text-muted-foreground">Events</div>
+                  <div className="text-2xl font-bold mt-1">{toolPolicyObservability?.summary.totalEvents ?? 0}</div>
+                </CardContent>
+              </Card>
+              <Card className="border-dashed">
+                <CardContent className="pt-6">
+                  <div className="text-sm text-muted-foreground">Policy Hit Rate</div>
+                  <div className="text-2xl font-bold mt-1">{toolPolicyObservability?.summary.policyHitRate ?? 0}%</div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Policy</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Confidence</TableHead>
+                  <TableHead>Allowed Tools</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(toolPolicyObservability?.policies || []).slice(0, 8).map((policy) => (
+                  <TableRow key={policy.policyKey}>
+                    <TableCell className="max-w-[220px]">
+                      <div className="line-clamp-2 font-medium">{policy.policyKey}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{policy.matchTerms.join(", ")}</div>
+                    </TableCell>
+                    <TableCell>{policy.source}</TableCell>
+                    <TableCell>{(policy.confidence * 100).toFixed(0)}%</TableCell>
+                    <TableCell className="max-w-[260px]">
+                      <div className="line-clamp-2 text-sm">{policy.allowedTools.join(", ")}</div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CheckCircle className="h-5 w-5" /> Eval & Release Gate
+          </CardTitle>
+          <CardDescription>
+            Latest golden set run untuk regression detection, release gate, dan trace-grade observability.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {!evaluation ? (
+            <p className="text-sm text-muted-foreground">Belum ada data evaluasi golden set yang persisten.</p>
+          ) : (
+            <>
+              <div className="grid gap-4 md:grid-cols-5">
+                <Card className="border-dashed">
+                  <CardContent className="pt-6">
+                    <div className="text-sm text-muted-foreground">Overall</div>
+                    <div className="text-2xl font-bold mt-1">{(evaluation.overallAccuracy * 100).toFixed(1)}%</div>
+                  </CardContent>
+                </Card>
+                <Card className="border-dashed">
+                  <CardContent className="pt-6">
+                    <div className="text-sm text-muted-foreground">Intent</div>
+                    <div className="text-2xl font-bold mt-1">{(evaluation.intentAccuracy * 100).toFixed(1)}%</div>
+                  </CardContent>
+                </Card>
+                <Card className="border-dashed">
+                  <CardContent className="pt-6">
+                    <div className="text-sm text-muted-foreground">Tool</div>
+                    <div className="text-2xl font-bold mt-1">{(evaluation.toolAccuracy * 100).toFixed(1)}%</div>
+                  </CardContent>
+                </Card>
+                <Card className="border-dashed">
+                  <CardContent className="pt-6">
+                    <div className="text-sm text-muted-foreground">Keyword</div>
+                    <div className="text-2xl font-bold mt-1">{(evaluation.keywordAccuracy * 100).toFixed(1)}%</div>
+                  </CardContent>
+                </Card>
+                <Card className="border-dashed">
+                  <CardContent className="pt-6">
+                    <div className="text-sm text-muted-foreground">Release Gate</div>
+                    <div className="mt-2">
+                      <Badge className={evaluation.releaseGatePass ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300" : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300"}>
+                        {evaluation.releaseGatePass ? "PASS" : "FAIL"}
+                      </Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge variant="outline">Run: {evaluation.runId}</Badge>
+                <Badge variant="outline">{evaluation.total} item</Badge>
+                <Badge variant={evaluation.regressionDetected ? "destructive" : "outline"}>
+                  {evaluation.regressionDetected ? "Regression detected" : "No regression"}
+                </Badge>
+              </div>
+
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Query</TableHead>
+                    <TableHead>Intent</TableHead>
+                    <TableHead>Tools</TableHead>
+                    <TableHead>Trace Grade</TableHead>
+                    <TableHead>Latency</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {failedEvalItems.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        Tidak ada item evaluasi yang bermasalah pada run terbaru.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    failedEvalItems.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="max-w-[340px]">
+                          <div className="line-clamp-2 font-medium">{item.query}</div>
+                          {item.traceId && (
+                            <div className="text-xs text-muted-foreground mt-1">Trace: {item.traceId}</div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">{item.predictedIntent}</div>
+                          {item.expectedIntent && (
+                            <div className="text-xs text-muted-foreground">Expected: {item.expectedIntent}</div>
+                          )}
+                        </TableCell>
+                        <TableCell className="max-w-[220px]">
+                          <div className="line-clamp-2 text-sm">
+                            {Array.isArray(item.actualTools) ? item.actualTools.join(", ") : "-"}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={item.traceGrade === "A" ? "outline" : "destructive"}>
+                            {item.traceGrade || "-"} {typeof item.traceScore === "number" ? `(${item.traceScore})` : ""}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{item.latencyMs} ms</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </>
+          )}
         </CardContent>
       </Card>
 

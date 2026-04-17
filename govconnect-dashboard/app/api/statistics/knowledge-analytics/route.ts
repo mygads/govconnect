@@ -32,12 +32,18 @@ export async function GET(request: NextRequest) {
       flowData,
       knowledgeData,
       retrievalData,
+      memoryData,
+      guardrailData,
+      toolPolicyData,
     ] = await Promise.all([
       safeJson(() => ai.getAnalytics({ village_id: villageId })),
       safeJson(() => ai.getAnalyticsIntents({ village_id: villageId })),
       safeJson(() => ai.getAnalyticsFlow({ village_id: villageId })),
       safeJson(() => ai.getAnalyticsKnowledge({ village_id: villageId })),
       safeJson(() => ai.getAnalyticsRetrieval({ village_id: villageId })),
+      safeJson(() => ai.getAnalyticsMemory({ village_id: villageId })),
+      safeJson(() => ai.getAnalyticsGuardrails({ village_id: villageId })),
+      safeJson(() => ai.getAnalyticsToolPolicy({ village_id: villageId })),
     ])
 
     // Build analytics response
@@ -109,6 +115,62 @@ export async function GET(request: NextRequest) {
       }
     } catch (e) { console.log('Knowledge conflicts DB unavailable') }
 
+    let latestEvalRun: any = null
+    try {
+      const evalRun = await prisma.ai_golden_set_runs.findFirst({
+        where: {
+          OR: [
+            { village_id: villageId },
+            { village_id: null },
+          ],
+        },
+        orderBy: { completed_at: 'desc' },
+        include: {
+          items: {
+            orderBy: [{ score: 'asc' }, { latency_ms: 'desc' }],
+            take: 20,
+          },
+        },
+      })
+
+      if (evalRun) {
+        latestEvalRun = {
+          runId: evalRun.run_id,
+          total: evalRun.total,
+          overallAccuracy: evalRun.overall_accuracy,
+          intentAccuracy: evalRun.intent_accuracy,
+          toolAccuracy: evalRun.tool_accuracy,
+          keywordAccuracy: evalRun.keyword_accuracy,
+          regressionDetected: evalRun.regression_detected,
+          releaseGatePass: evalRun.release_gate_pass,
+          thresholds: evalRun.thresholds,
+          status: evalRun.status,
+          startedAt: evalRun.started_at,
+          completedAt: evalRun.completed_at,
+          items: evalRun.items.map((item) => ({
+            id: item.id,
+            query: item.query,
+            expectedIntent: item.expected_intent,
+            expectedTools: item.expected_tools,
+            actualTools: item.actual_tools,
+            predictedIntent: item.predicted_intent,
+            replyText: item.reply_text,
+            intentMatch: item.intent_match,
+            toolMatch: item.tool_match,
+            toolScore: item.tool_score,
+            keywordMatch: item.keyword_match,
+            keywordScore: item.keyword_score,
+            score: item.score,
+            traceScore: item.trace_score,
+            traceGrade: item.trace_grade,
+            latencyMs: item.latency_ms,
+            scenario: item.scenario,
+            traceId: item.trace_id,
+          })),
+        }
+      }
+    } catch (e) { console.log('Golden set DB unavailable') }
+
     // Calculate knowledge coverage
     // Prefer real-time AI stats; if AI service has reset (all zeros), use DB-based counts as fallback
     const aiTotalQueries = analyticsData?.totalQueries || analyticsData?.total_queries || 0
@@ -150,6 +212,10 @@ export async function GET(request: NextRequest) {
         totalAutoResolved: conflictStatusCounts.auto_resolved,
       },
       retrievalObservability: retrievalData,
+      memoryObservability: memoryData,
+      guardrailObservability: guardrailData,
+      toolPolicyObservability: toolPolicyData,
+      evaluation: latestEvalRun,
       rawAnalytics: analyticsData,
     })
   } catch (error) {

@@ -62,6 +62,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL_AI}
+      - PROFILE_ENCRYPTION_KEY=${PROFILE_ENCRYPTION_KEY:?PROFILE_ENCRYPTION_KEY is required for ai-service}
     volumes:
       - ai-uploads:/app/uploads
       - ai-data:/app/data

@@ -2,6 +2,7 @@ import logger from '../utils/logger';
 import { processUnifiedMessage } from './unified-message-processor.service';
 import { sanitizeUserInput } from './context-builder.service';
 import { config } from '../config/env';
+import { upsertPoliciesFromGoldenSet } from './agent/tool-policy.service';
 
 export type GoldenSetItem = {
   id: string;
@@ -26,6 +27,8 @@ export type GoldenSetItemResult = {
   tool_score?: number;
   keyword_match?: boolean;
   keyword_score?: number;
+  trace_score?: number;
+  trace_grade?: string;
   score: number;
   latency_ms: number;
   scenario?: string;
@@ -215,6 +218,22 @@ function buildSliceSummary(results: GoldenSetItemResult[]): Record<string, {
   return summary;
 }
 
+function computeTraceGrade(score: number, latencyMs: number): { traceScore: number; traceGrade: string } {
+  const latencyScore = latencyMs <= 2500
+    ? 1
+    : latencyMs <= 5000
+      ? 0.85
+      : latencyMs <= 8000
+        ? 0.7
+        : 0.5;
+  const traceScore = Number((((score * 0.75) + (latencyScore * 0.25)) * 100).toFixed(1));
+
+  if (traceScore >= 90) return { traceScore, traceGrade: 'A' };
+  if (traceScore >= 80) return { traceScore, traceGrade: 'B' };
+  if (traceScore >= 70) return { traceScore, traceGrade: 'C' };
+  return { traceScore, traceGrade: 'D' };
+}
+
 export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVillageId?: string): Promise<GoldenSetSummary> {
   const runId = `golden-${Date.now()}`;
   const startedAt = new Date().toISOString();
@@ -255,6 +274,8 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
     const score = scoreParts.length > 0
       ? scoreParts.reduce((acc, cur) => acc + cur, 0) / scoreParts.length
       : 1;
+    const latencyMs = Date.now() - startItem;
+    const traceGrade = computeTraceGrade(score, latencyMs);
 
     results.push({
       id: item.id,
@@ -269,8 +290,10 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
       tool_score: Array.isArray(item.expected_tools) ? toolScore.score : undefined,
       keyword_match: item.expected_keywords ? keywordScore.match : undefined,
       keyword_score: item.expected_keywords ? keywordScore.score : undefined,
+      trace_score: traceGrade.traceScore,
+      trace_grade: traceGrade.traceGrade,
       score,
-      latency_ms: Date.now() - startItem,
+      latency_ms: latencyMs,
       scenario,
       trace_id: result.metadata.traceId,
     });
@@ -333,8 +356,11 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
   }
 
   // Persist to dashboard DB (fire-and-forget)
-  persistEvalRun(summary).catch((err) => {
+  persistEvalRun(summary, defaultVillageId).catch((err) => {
     logger.warn('Failed to persist golden set run to dashboard (non-blocking)', { error: err.message });
+  });
+  upsertPoliciesFromGoldenSet(summary.results).catch((err) => {
+    logger.warn('Failed to upsert tool allowlist policies from golden set', { error: err.message });
   });
 
   logger.info('Golden set evaluation completed', {
@@ -356,7 +382,7 @@ export function getGoldenSetSummary(): { latest: GoldenSetSummary | null; histor
 /**
  * Persist evaluation run to dashboard DB via API
  */
-async function persistEvalRun(summary: GoldenSetSummary): Promise<void> {
+async function persistEvalRun(summary: GoldenSetSummary, defaultVillageId?: string): Promise<void> {
   const dashboardUrl = process.env.DASHBOARD_SERVICE_URL || process.env.DASHBOARD_URL || '';
   if (!dashboardUrl) {
     logger.debug('DASHBOARD_SERVICE_URL not configured, skipping eval persistence');
@@ -371,8 +397,10 @@ async function persistEvalRun(summary: GoldenSetSummary): Promise<void> {
     },
     body: JSON.stringify({
       run_id: summary.run_id,
+      village_id: defaultVillageId || null,
       total: summary.total,
       intent_accuracy: summary.intent_accuracy,
+      tool_accuracy: summary.tool_accuracy,
       keyword_accuracy: summary.keyword_accuracy,
       overall_accuracy: summary.overall_accuracy,
       thresholds: summary.thresholds,

@@ -31,29 +31,25 @@ export const API_BASE_URL = process.env['API_BASE_URL'] || '';
 
 // SEC-06 fix: No hardcoded fallback — throw in production, warn in dev
 let _internalApiKey: string | null = null;
+let _internalApiKeyWarned = false;
 
 export function getInternalApiKey(): string {
   if (_internalApiKey !== null) return _internalApiKey;
   
-  const keyValue = process.env['INTERNAL_API_KEY'];
+  const keyValue = process.env['INTERNAL_API_KEY']?.trim() || '';
   if (!keyValue) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: INTERNAL_API_KEY environment variable is required in production');
+    if (!_internalApiKeyWarned) {
+      console.warn('WARNING: INTERNAL_API_KEY not set — internal service routes may fail until runtime env is injected');
+      _internalApiKeyWarned = true;
     }
-    console.warn('WARNING: INTERNAL_API_KEY not set — using empty string for development');
   }
-  _internalApiKey = keyValue || '';
+  _internalApiKey = keyValue;
   return _internalApiKey;
 }
 
-// For backward compatibility - uses lazy getter
-export const INTERNAL_API_KEY = (() => {
-  const key = process.env['INTERNAL_API_KEY'];
-  if (!key && process.env.NODE_ENV === 'production') {
-    throw new Error('FATAL: INTERNAL_API_KEY environment variable is required in production');
-  }
-  return key || '';
-})();
+// For backward compatibility - keep this as a plain runtime-read constant
+// so module evaluation during `next build` does not fail before env injection.
+export const INTERNAL_API_KEY = process.env['INTERNAL_API_KEY'] || '';
 
 // Auth token storage
 let authToken: string | null = null;
@@ -100,7 +96,7 @@ export function buildUrl(service: ServicePathType, path: string): string {
 export function getHeaders(additionalHeaders?: Record<string, string>): Record<string, string> {
   return {
     'Content-Type': 'application/json',
-    'x-internal-api-key': INTERNAL_API_KEY,
+    'x-internal-api-key': getInternalApiKey(),
     ...additionalHeaders,
   };
 }
@@ -479,6 +475,47 @@ export const ai = {
     const qs = params ? '?' + new URLSearchParams(params).toString() : ''
     return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/retrieval${qs}`), {
       headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get memory observability traces and aggregates
+   */
+  async getAnalyticsMemory(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/memory${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get outer guardrail observability
+   */
+  async getAnalyticsGuardrails(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/guardrails${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get tool allowlist policy analytics
+   */
+  async getAnalyticsToolPolicy(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/tool-policy${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Export observability analytics as JSON or NDJSON
+   */
+  async exportAnalytics(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/export${qs}`), {
+      headers: getHeaders(),
+      timeout: 60000,
     });
   },
 

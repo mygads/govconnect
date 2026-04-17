@@ -14,6 +14,7 @@ import { config } from '../../config/env';
 import { getDefaultGatewayModels } from '../ai-gateway.service';
 import { recordTokenUsage } from '../token-usage.service';
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
+import { resolveLearnedToolPolicy } from './tool-policy.service';
 import { executeToolCall, type ToolExecutionTrace } from './tool-executor';
 import { buildAgentSystemPrompt, type AgentPromptContext } from './agent-prompt';
 
@@ -40,6 +41,12 @@ interface ToolCall {
 export interface AgentResult {
   replyText: string;
   toolsUsed: string[];
+  heuristicTools: AgentToolName[];
+  learnedTools: AgentToolName[];
+  allowedToolNames: AgentToolName[];
+  matchedPolicyKey?: string;
+  matchedPolicySource?: string;
+  matchedPolicyConfidence?: number;
   toolTrace: ToolExecutionTrace[];
   totalTokens: number;
   iterations: number;
@@ -51,6 +58,7 @@ interface ToolContext {
   userId: string;
   villageId?: string;
   channel: 'whatsapp' | 'webchat';
+  isEvaluation?: boolean;
 }
 
 interface ConversationContext {
@@ -69,7 +77,15 @@ export async function runAgent(
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const systemPrompt = buildAgentSystemPrompt(promptCtx);
-  const allowedToolNames = selectAllowedTools(userMessage);
+  const toolSelection = await selectAllowedTools(userMessage);
+  const {
+    heuristicTools,
+    learnedTools,
+    allowedToolNames,
+    matchedPolicyKey,
+    matchedPolicySource,
+    matchedPolicyConfidence,
+  } = toolSelection;
   const allowedTools = AGENT_TOOLS.filter((tool) => allowedToolNames.includes(tool.function.name as AgentToolName));
 
   const messages: AgentMessage[] = [{ role: 'system', content: systemPrompt }];
@@ -104,6 +120,12 @@ export async function runAgent(
       return {
         replyText: 'Maaf, terjadi gangguan pada sistem. Silakan coba lagi nanti.',
         toolsUsed,
+        heuristicTools,
+        learnedTools,
+        allowedToolNames,
+        matchedPolicyKey,
+        matchedPolicySource,
+        matchedPolicyConfidence,
         toolTrace,
         totalTokens,
         iterations,
@@ -172,6 +194,9 @@ export async function runAgent(
         iterations,
         toolsUsed,
         allowedToolNames,
+        matchedPolicyKey,
+        matchedPolicySource,
+        matchedPolicyConfidence,
         toolTrace,
         totalTokens,
         model,
@@ -195,6 +220,12 @@ export async function runAgent(
       return {
         replyText: finalText,
         toolsUsed,
+        heuristicTools,
+        learnedTools,
+        allowedToolNames,
+        matchedPolicyKey,
+        matchedPolicySource,
+        matchedPolicyConfidence,
         toolTrace,
         totalTokens,
         iterations,
@@ -212,12 +243,20 @@ export async function runAgent(
     iterations,
     toolsUsed,
     allowedToolNames,
+    matchedPolicyKey,
+    matchedPolicySource,
     userId: toolCtx.userId,
   });
 
   return {
     replyText: 'Maaf, saya membutuhkan waktu lebih lama untuk memproses permintaan ini. Silakan coba lagi.',
     toolsUsed,
+    heuristicTools,
+    learnedTools,
+    allowedToolNames,
+    matchedPolicyKey,
+    matchedPolicySource,
+    matchedPolicyConfidence,
     toolTrace,
     totalTokens,
     iterations,
@@ -332,17 +371,28 @@ async function callLLMWithTools(
   }
 }
 
-function selectAllowedTools(userMessage: string): AgentToolName[] {
+async function selectAllowedTools(userMessage: string): Promise<{
+  heuristicTools: AgentToolName[];
+  learnedTools: AgentToolName[];
+  allowedToolNames: AgentToolName[];
+  matchedPolicyKey?: string;
+  matchedPolicySource?: string;
+  matchedPolicyConfidence?: number;
+}> {
   const normalized = userMessage.toLowerCase().trim();
-  const tools = new Set<AgentToolName>();
+  const heuristicSet = new Set<AgentToolName>();
   const hasReference = /\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
   const isGreetingOnly = /^(halo|hai|hi|hello|assalamualaikum|permisi|p|selamat (pagi|siang|sore|malam))[\s!.,?]*$/i.test(userMessage);
 
   if (isGreetingOnly) {
-    return [];
+    return {
+      heuristicTools: [],
+      learnedTools: [],
+      allowedToolNames: [],
+    };
   }
 
-  const add = (...names: AgentToolName[]) => names.forEach((name) => tools.add(name));
+  const add = (...names: AgentToolName[]) => names.forEach((name) => heuristicSet.add(name));
 
   if (/\b(riwayat|history|laporan saya|permohonan saya|pengajuan saya)\b/i.test(normalized)) {
     add('get_my_history', 'search_user_memory');
@@ -393,7 +443,7 @@ function selectAllowedTools(userMessage: string): AgentToolName[] {
     add('search_knowledge');
   }
 
-  if (tools.size === 0) {
+  if (heuristicSet.size === 0) {
     add(
       'get_village_profile',
       'get_service_info',
@@ -404,5 +454,20 @@ function selectAllowedTools(userMessage: string): AgentToolName[] {
     );
   }
 
-  return Array.from(tools);
+  const heuristicTools = Array.from(heuristicSet);
+  const learnedPolicy = await resolveLearnedToolPolicy(userMessage);
+  const learnedTools = learnedPolicy.tools || [];
+  const allowedToolNames = Array.from(new Set<AgentToolName>([
+    ...heuristicTools,
+    ...learnedTools,
+  ]));
+
+  return {
+    heuristicTools,
+    learnedTools,
+    allowedToolNames,
+    matchedPolicyKey: learnedPolicy.matchedPolicyKey,
+    matchedPolicySource: learnedPolicy.matchedPolicySource,
+    matchedPolicyConfidence: learnedPolicy.confidence,
+  };
 }

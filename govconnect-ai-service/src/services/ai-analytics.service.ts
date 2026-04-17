@@ -11,6 +11,7 @@
 import logger from '../utils/logger';
 import prisma from '../lib/prisma';
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { findPricing as getTokenPricing } from './token-usage.service';
 import { registerInterval } from '../utils/timer-registry';
 
@@ -158,7 +159,7 @@ class AIAnalyticsService {
   constructor() {
     this.data = this.getDefaultStorage();
     this.startSessionCleanup();
-    logger.info('📊 AI Analytics Service initialized (in-memory)');
+    logger.info('📊 AI Analytics Service initialized (hybrid durable + in-memory)');
   }
 
   /**
@@ -567,42 +568,64 @@ class AIAnalyticsService {
     processingTimeMs?: number;
   }): Promise<void> {
     try {
-      const latest = await prisma.ai_interaction_events.findFirst({
-        where: {
-          wa_user_id: opts.waUserId,
-          ...(opts.villageId ? { village_id: opts.villageId } : {}),
-          ...(opts.channel ? { channel: opts.channel } : {}),
-        },
-        orderBy: { created_at: 'desc' },
-        select: {
-          analytics_session_id: true,
-          created_at: true,
-        },
-      });
+      const latestRows = await prisma.$queryRaw<Array<{
+        analytics_session_id: string;
+        created_at: Date;
+      }>>(Prisma.sql`
+        SELECT analytics_session_id, created_at
+        FROM ai_interaction_events
+        WHERE wa_user_id = ${opts.waUserId}
+        ${opts.villageId ? Prisma.sql`AND village_id = ${opts.villageId}` : Prisma.empty}
+        ${opts.channel ? Prisma.sql`AND channel = ${opts.channel}` : Prisma.empty}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `);
+      const latest = latestRows[0];
 
       const now = Date.now();
       const analyticsSessionId = latest && now - latest.created_at.getTime() <= SESSION_TIMEOUT_MS
         ? latest.analytics_session_id
         : `sess_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-      await prisma.ai_interaction_events.create({
-        data: {
-          analytics_session_id: analyticsSessionId,
-          wa_user_id: opts.waUserId,
-          village_id: opts.villageId ?? null,
-          channel: opts.channel ?? null,
-          intent: opts.intent,
-          success: opts.success,
-          has_knowledge: opts.hasKnowledge,
-          is_fallback: opts.isFallback,
-          agent_mode: opts.agentMode ?? null,
-          response_source: opts.responseSource ?? null,
-          tools_used_json: Array.isArray(opts.toolsUsed) ? opts.toolsUsed : undefined,
-          tool_count: Array.isArray(opts.toolsUsed) ? opts.toolsUsed.length : 0,
-          model: opts.model ?? null,
-          processing_time_ms: opts.processingTimeMs ?? null,
-        },
-      });
+      const toolsUsedJson = Array.isArray(opts.toolsUsed)
+        ? Prisma.sql`${JSON.stringify(opts.toolsUsed)}::jsonb`
+        : Prisma.sql`NULL`;
+
+      await prisma.$executeRaw(Prisma.sql`
+        INSERT INTO ai_interaction_events (
+          id,
+          analytics_session_id,
+          wa_user_id,
+          village_id,
+          channel,
+          intent,
+          success,
+          has_knowledge,
+          is_fallback,
+          agent_mode,
+          response_source,
+          tools_used_json,
+          tool_count,
+          model,
+          processing_time_ms
+        ) VALUES (
+          ${randomUUID()},
+          ${analyticsSessionId},
+          ${opts.waUserId},
+          ${opts.villageId ?? null},
+          ${opts.channel ?? null},
+          ${opts.intent},
+          ${opts.success},
+          ${opts.hasKnowledge},
+          ${opts.isFallback},
+          ${opts.agentMode ?? null},
+          ${opts.responseSource ?? null},
+          ${toolsUsedJson},
+          ${Array.isArray(opts.toolsUsed) ? opts.toolsUsed.length : 0},
+          ${opts.model ?? null},
+          ${opts.processingTimeMs ?? null}
+        )
+      `);
     } catch (error: any) {
       logger.error('Failed to persist AI interaction analytics', {
         error: error.message,
@@ -630,25 +653,50 @@ class AIAnalyticsService {
     timestamp: string;
   }): Promise<void> {
     try {
-      await prisma.ai_retrieval_traces.create({
-        data: {
-          trace_id: opts.traceId ?? null,
-          wa_user_id: opts.waUserId ?? null,
-          village_id: opts.villageId ?? null,
-          channel: opts.channel ?? null,
-          query: opts.query,
-          retrieval_mode: opts.retrievalMode,
-          confidence: opts.confidence,
-          has_knowledge: opts.hasKnowledge,
-          result_count: opts.resultCount,
-          search_time_ms: opts.searchTimeMs,
-          top_score: opts.topScore,
-          avg_top_score: opts.avgTopScore,
-          source_titles_json: opts.sourceTitles,
-          candidate_debug_json: opts.candidateDebug ?? Prisma.JsonNull,
-          created_at: new Date(opts.timestamp),
-        },
-      });
+      const sourceTitlesJson = opts.sourceTitles.length > 0
+        ? Prisma.sql`${JSON.stringify(opts.sourceTitles)}::jsonb`
+        : Prisma.sql`NULL`;
+      const candidateDebugJson = Array.isArray(opts.candidateDebug)
+        ? Prisma.sql`${JSON.stringify(opts.candidateDebug)}::jsonb`
+        : Prisma.sql`NULL`;
+
+      await prisma.$executeRaw(Prisma.sql`
+        INSERT INTO ai_retrieval_traces (
+          id,
+          trace_id,
+          wa_user_id,
+          village_id,
+          channel,
+          query,
+          retrieval_mode,
+          confidence,
+          has_knowledge,
+          result_count,
+          search_time_ms,
+          top_score,
+          avg_top_score,
+          source_titles_json,
+          candidate_debug_json,
+          created_at
+        ) VALUES (
+          ${randomUUID()},
+          ${opts.traceId ?? null},
+          ${opts.waUserId ?? null},
+          ${opts.villageId ?? null},
+          ${opts.channel ?? null},
+          ${opts.query},
+          ${opts.retrievalMode},
+          ${opts.confidence},
+          ${opts.hasKnowledge},
+          ${opts.resultCount},
+          ${opts.searchTimeMs},
+          ${opts.topScore},
+          ${opts.avgTopScore},
+          ${sourceTitlesJson},
+          ${candidateDebugJson},
+          ${new Date(opts.timestamp)}
+        )
+      `);
     } catch (error: any) {
       logger.error('Failed to persist retrieval trace', {
         error: error.message,
@@ -674,8 +722,6 @@ class AIAnalyticsService {
       if (filters?.villageId) conditions.push(Prisma.sql`village_id = ${filters.villageId}`);
       if (filters?.channel) conditions.push(Prisma.sql`channel = ${filters.channel}`);
       const where = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
-      const fallbackConditions: Prisma.Sql[] = [...conditions, Prisma.sql`is_fallback = true`];
-      const fallbackWhere = Prisma.sql`WHERE ${Prisma.join(fallbackConditions, ' AND ')}`;
 
       const [summaryRows, topIntentRows, topPatternRows, tokenRows] = await Promise.all([
         prisma.$queryRaw<Array<{
@@ -843,6 +889,8 @@ class AIAnalyticsService {
       if (filters?.villageId) conditions.push(Prisma.sql`village_id = ${filters.villageId}`);
       if (filters?.channel) conditions.push(Prisma.sql`channel = ${filters.channel}`);
       const where = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+      const fallbackConditions: Prisma.Sql[] = [...conditions, Prisma.sql`is_fallback = true`];
+      const fallbackWhere = Prisma.sql`WHERE ${Prisma.join(fallbackConditions, ' AND ')}`;
 
       const [sessionRows, patternRows, dropOffRows, fallbackRows, retrievalRows] = await Promise.all([
         prisma.$queryRaw<Array<{ total_sessions: number; total_messages: number; avg_messages_per_session: number | null }>>(Prisma.sql`
@@ -1001,14 +1049,42 @@ class AIAnalyticsService {
     recentTraces: RetrievalTraceEntry[];
   }> {
     try {
-      const traces = await prisma.ai_retrieval_traces.findMany({
-        where: {
-          ...(filters?.villageId ? { village_id: filters.villageId } : {}),
-          ...(filters?.channel ? { channel: filters.channel } : {}),
-        },
-        orderBy: { created_at: 'desc' },
-        take: 250,
-      });
+      const traces = await prisma.$queryRaw<Array<{
+        query: string;
+        retrieval_mode: string;
+        confidence: string;
+        has_knowledge: boolean;
+        result_count: number;
+        search_time_ms: number;
+        top_score: number | null;
+        avg_top_score: number | null;
+        source_titles_json: Prisma.JsonValue | string | null;
+        candidate_debug_json: Prisma.JsonValue | string | null;
+        channel: string | null;
+        village_id: string | null;
+        created_at: Date;
+      }>>(Prisma.sql`
+        SELECT
+          query,
+          retrieval_mode,
+          confidence,
+          has_knowledge,
+          result_count,
+          search_time_ms,
+          top_score,
+          avg_top_score,
+          source_titles_json,
+          candidate_debug_json,
+          channel,
+          village_id,
+          created_at
+        FROM ai_retrieval_traces
+        WHERE 1 = 1
+        ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
+        ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
+        ORDER BY created_at DESC
+        LIMIT 250
+      `);
 
       const normalizedTraces: RetrievalTraceEntry[] = traces.map((trace) => ({
         query: trace.query,
@@ -1019,10 +1095,10 @@ class AIAnalyticsService {
         searchTimeMs: trace.search_time_ms,
         topScore: trace.top_score,
         avgTopScore: trace.avg_top_score,
-        sourceTitles: Array.isArray(trace.source_titles_json) ? trace.source_titles_json as string[] : [],
-        candidateDebug: Array.isArray(trace.candidate_debug_json)
-          ? trace.candidate_debug_json as RetrievalTraceEntry['candidateDebug']
-          : undefined,
+        sourceTitles: this.parseJsonArray<string>(trace.source_titles_json),
+        candidateDebug: this.parseJsonArray<NonNullable<RetrievalTraceEntry['candidateDebug']>[number]>(
+          trace.candidate_debug_json,
+        ),
         channel: trace.channel || 'system',
         villageId: trace.village_id || undefined,
         timestamp: trace.created_at.toISOString(),
@@ -1035,6 +1111,27 @@ class AIAnalyticsService {
       });
       return this.getRetrievalObservability(filters);
     }
+  }
+
+  private parseJsonArray<T>(value: Prisma.JsonValue | string | null | undefined): T[] {
+    if (!value) {
+      return [];
+    }
+
+    if (Array.isArray(value)) {
+      return value as T[];
+    }
+
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? (parsed as T[]) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    return [];
   }
 
   private getRetrievalObservabilityFromTraces(traces: RetrievalTraceEntry[]): {

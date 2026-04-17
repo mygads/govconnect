@@ -3,6 +3,7 @@ import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { LRUCache } from '../utils/lru-cache';
 import { generateEmbedding } from './embedding.service';
+import { recordMemoryTrace } from './runtime-observability.service';
 import {
   searchUserMemoryVectors,
   upsertUserMemoryVector,
@@ -406,6 +407,9 @@ export async function buildHybridMemorySummary(input: {
   wa_user_id: string;
   query: string;
   village_id?: string;
+  trace_id?: string;
+  channel?: 'whatsapp' | 'webchat';
+  skip_observability?: boolean;
 }): Promise<string> {
   const cacheKey = buildSummaryCacheKey(input.wa_user_id, input.village_id, input.query);
   const cached = MEMORY_SUMMARY_CACHE.get(cacheKey);
@@ -462,6 +466,30 @@ export async function buildHybridMemorySummary(input: {
     const summary = sections.join('\n\n');
     if (summary) {
       MEMORY_SUMMARY_CACHE.set(cacheKey, summary);
+    }
+
+    if (!input.skip_observability) {
+      await recordMemoryTrace({
+        traceId: input.trace_id,
+        waUserId: input.wa_user_id,
+        villageId: input.village_id,
+        channel: input.channel,
+        source: 'summary_builder',
+        query: input.query,
+        summaryText: summary || undefined,
+        candidates: rankedMemories.map((entry) => ({
+          id: entry.id,
+          memoryType: entry.memory_type,
+          content: entry.content,
+          relevanceScore: Number(entry.finalScore.toFixed(3)),
+          lexicalScore: Number(entry.lexicalScore.toFixed(3)),
+          semanticScore: Number(entry.semanticScore.toFixed(3)),
+          recencyScore: Number(entry.recencyScore.toFixed(3)),
+          importanceScore: Number(entry.importanceScore.toFixed(3)),
+          typeBoost: Number(entry.typeBoost.toFixed(3)),
+          createdAt: entry.created_at.toISOString(),
+        })),
+      });
     }
 
     return summary;

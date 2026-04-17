@@ -515,14 +515,14 @@ jobs:
             # Run migrations for dashboard (has Prisma)
             if sudo docker compose ps dashboard | grep -q "running"; then
               echo "📦 Running Dashboard migrations..."
-              sudo docker compose exec -T dashboard sh -c "npx prisma migrate deploy || npx prisma db push" 2>&1 || echo "⚠️ Dashboard migration completed with warnings"
+              sudo docker compose exec -T dashboard sh -c "./node_modules/.bin/prisma migrate deploy || ./node_modules/.bin/prisma db push --skip-generate" 2>&1 || echo "⚠️ Dashboard migration completed with warnings"
             fi
             
             # Run migrations for other services if they have Prisma
             for service in channel-service ai-service case-service notification-service; do
               if sudo docker compose ps $service | grep -q "running"; then
                 echo "📦 Running $service migrations..."
-                sudo docker compose exec -T $service sh -c "npx prisma migrate deploy || npx prisma db push" 2>&1 || echo "⚠️ $service migration completed with warnings"
+                sudo docker compose exec -T $service sh -c "./node_modules/.bin/prisma migrate deploy || ./node_modules/.bin/prisma db push --skip-generate" 2>&1 || echo "⚠️ $service migration completed with warnings"
               fi
             done
             
@@ -541,7 +541,7 @@ jobs:
             echo "Checking services..."
             
             # Check Dashboard
-            curl -sf http://localhost:3011/api/health && echo " ✅ Dashboard OK" || echo " ❌ Dashboard FAILED"
+            curl -sf http://localhost:3011/ && echo " ✅ Dashboard OK" || echo " ❌ Dashboard FAILED"
             
             # Check Channel Service
             curl -sf http://localhost:3001/health && echo " ✅ Channel OK" || echo " ❌ Channel FAILED"
