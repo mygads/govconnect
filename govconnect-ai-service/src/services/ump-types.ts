@@ -59,7 +59,7 @@ export interface ProcessMessageResult {
     knowledgeConfidence?: string;
     sentiment?: string;
     language?: string;
-    agentMode?: 'single_orchestrator' | 'deterministic_fact_router' | 'pre_agent_guard';
+    agentMode?: 'single_orchestrator' | 'deterministic_fact_router' | 'pre_agent_guard' | 'response_cache';
     toolsUsed?: string[];
     toolTrace?: Array<{
       tool: string;

@@ -76,6 +76,31 @@ function normalizeText(text: string): string {
   return (text || '').toLowerCase();
 }
 
+function normalizeToolName(tool: string): string {
+  switch (tool) {
+    case 'get_office_profile':
+    case 'get_village_profile':
+      return 'get_village_profile';
+    case 'get_service_catalog':
+    case 'get_service_requirements':
+    case 'get_service_info':
+      return 'get_service_info';
+    case 'get_important_contacts':
+    case 'get_emergency_contacts':
+      return 'get_emergency_contacts';
+    case 'check_complaint_status':
+    case 'check_service_request_status':
+    case 'check_status':
+      return 'check_status';
+    case 'cancel_complaint':
+    case 'cancel_service_request':
+    case 'cancel_request':
+      return 'cancel_request';
+    default:
+      return tool;
+  }
+}
+
 function computeKeywordScore(replyText: string, expectedKeywords?: string[]): { match: boolean; score: number } {
   if (!expectedKeywords || expectedKeywords.length === 0) {
     return { match: true, score: 1 };
@@ -91,12 +116,18 @@ function computeToolScore(actualTools: string[], expectedTools?: string[]): { ma
     return { match: true, score: 1 };
   }
 
+  const normalizedActualTools = [...new Set(actualTools.map(normalizeToolName))];
+  const normalizedExpectedTools = [...new Set(expectedTools.map(normalizeToolName))];
+
   if (expectedTools.length === 0) {
-    return { match: actualTools.length === 0, score: actualTools.length === 0 ? 1 : 0 };
+    return {
+      match: normalizedActualTools.length === 0,
+      score: normalizedActualTools.length === 0 ? 1 : 0,
+    };
   }
 
-  const matched = expectedTools.filter((tool) => actualTools.includes(tool));
-  const score = matched.length / expectedTools.length;
+  const matched = normalizedExpectedTools.filter((tool) => normalizedActualTools.includes(tool));
+  const score = matched.length / normalizedExpectedTools.length;
   return {
     match: score >= 1,
     score,
@@ -115,8 +146,8 @@ function classifyEvalScenario(item: GoldenSetItem): string {
     return normalizeScenarioLabel(item.note);
   }
 
-  const expectedTools = item.expected_tools || [];
-  if (expectedTools.includes('get_office_profile') || expectedTools.includes('get_important_contacts')) {
+  const expectedTools = (item.expected_tools || []).map(normalizeToolName);
+  if (expectedTools.includes('get_village_profile') || expectedTools.includes('get_emergency_contacts')) {
     return 'fact_query';
   }
   if (expectedTools.includes('search_documents')) {
@@ -125,13 +156,13 @@ function classifyEvalScenario(item: GoldenSetItem): string {
   if (expectedTools.includes('search_knowledge')) {
     return 'knowledge_query';
   }
-  if (expectedTools.includes('get_service_catalog') || expectedTools.includes('get_service_requirements')) {
+  if (expectedTools.includes('get_service_info')) {
     return 'service_query';
   }
   if (expectedTools.includes('create_complaint')) {
     return 'complaint_flow';
   }
-  if (expectedTools.includes('check_complaint_status') || expectedTools.includes('check_service_request_status')) {
+  if (expectedTools.includes('check_status')) {
     return 'status_query';
   }
 

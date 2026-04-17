@@ -20,102 +20,29 @@
 
 import logger from '../utils/logger';
 import { getWIBDateTime } from '../utils/wib-datetime';
-import axios from 'axios';
-import { config } from '../config/env';
-import { buildContext, buildKnowledgeQueryContext, sanitizeUserInput } from './context-builder.service';
-import type { PromptFocus } from '../prompts/system-prompt';
-import * as systemPromptModule from '../prompts/system-prompt';
-import { callLLM } from './llm.service';
-import {
-  createComplaint,
-  cancelComplaint,
-  cancelServiceRequest,
-  getComplaintTypes,
-  getUserHistory,
-  updateComplaintByUser,
-  getServiceRequestStatusWithOwnership,
-  requestServiceRequestEditToken,
-  getServiceRequirements,
-  getComplaintStatusWithOwnership,
-  ServiceRequirementDefinition,
-  HistoryItem,
-} from './case-client.service';
-import { getImportantContacts } from './important-contacts.service';
-import { searchKnowledge, searchKnowledgeKeywordsOnly, getRAGContext, getKelurahanInfoContext, getVillageProfileSummary, reportKnowledgeGap } from './knowledge.service';
-import { shouldRetrieveContext, isSpamMessage } from './rag.service';
-import { detectLanguage, getLanguageContext } from './language-detection.service';
-import { analyzeSentiment, analyzeSentimentWithLLM, getSentimentContext, needsHumanEscalation } from './sentiment-analysis.service';
-import { rateLimiterService } from './rate-limiter.service';
-import { aiAnalyticsService } from './ai-analytics.service';
-import { recordTokenUsage } from './token-usage.service';
-import { RAGContext } from '../types/embedding.types';
-import { learnFromMessage, recordInteraction, saveDefaultAddress, getProfileContext, recordServiceUsage, updateProfile, getProfile, clearProfile, deleteProfile } from './user-profile.service';
-import { updateConversationUserProfile } from './channel-client.service';
-import { getEnhancedContext, updateContext, recordDataCollected, recordCompletedAction, getContextForLLM } from './conversation-context.service';
-import { adaptResponse, buildAdaptationContext } from './response-adapter.service';
+import { sanitizeUserInput } from './context-builder.service';
+import { getVillageProfileSummary } from './knowledge.service';
+import { isSpamMessage } from './rag.service';
+import { getAutoFillSuggestions } from './user-profile.service';
 import { normalizeText } from './text-normalizer.service';
-import { classifyConfirmation } from './confirmation-classifier.service';
-import {
-  appendAntiHallucinationInstruction,
-  hasKnowledgeInPrompt,
-  logAntiHallucinationEvent,
-  needsAntiHallucinationRetry,
-  sanitizeFakeLinks,
-} from './anti-hallucination.service';
-import { matchServiceSlug, matchComplaintType, classifyMessage, extractNameViaNLU, classifyUpdateIntent, validateResponseAgainstKnowledge } from './micro-llm-matcher.service';
+import { classifyMessage } from './micro-llm-matcher.service';
 import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
-import { getCachedResponse, setCachedResponse, isCacheable } from './response-cache.service';
-import { resolveDeterministicFactReply } from './deterministic-fact-router.service';
-import {
-  ChannelType,
-  normalizeHandlerResult,
-  COMPLAINT_STATUS_MAP,
-  SERVICE_STATUS_MAP,
-  validateResponse,
-  formatClickableLink,
-  formatClickablePhone,
-  buildImportantContactsMessage,
-  maskSensitiveId,
-  toSafeDate,
-  formatDateTimeId,
-  formatRelativeTime,
-  formatKategori,
-  getStatusInfo,
-  buildAdminNoteSection,
-  buildNaturalStatusResponse,
-  buildNaturalServiceStatusResponse,
-  buildComplaintDetailResponse,
-  buildServiceRequestDetailResponse,
-  buildCancelSuccessResponse,
-  buildCancelErrorResponse,
-  buildHistoryResponse,
-  getStatusLabel,
-  extractDateFromText,
-  extractTimeFromText,
-  normalizeTo628,
-  isValidCitizenWaNumber,
-  getPublicFormBaseUrl,
-  buildPublicServiceFormUrl,
-  buildEditServiceFormUrl,
-  buildChannelParams,
-} from './ump-formatters';
-import type { HandlerResult } from './ump-formatters';
+import { validateResponse } from './ump-formatters';
+import type { ChannelType } from './ump-formatters';
+import { getCachedResponse, setCachedResponse } from './response-cache.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
-import {
-  syncNameToChannelService,
-  incrementActiveProcessing,
-  decrementActiveProcessing,
-} from './ump-state';
+import { incrementActiveProcessing, decrementActiveProcessing } from './ump-state';
 import {
   fetchConversationHistoryFromChannel,
   appendToHistoryCache,
+  buildCompactConversationHistory,
 } from './ump-utils';
-import { buildComplaintCategoriesText, handleComplaintCreation, handleComplaintUpdate, handleCancellationRequest, handleHistory } from './complaint-handler';
-import { resolveServiceSlugFromSearch, handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEditLink, buildServiceCatalogText } from './service-handler';
+import { handleComplaintCreation, handleComplaintUpdate, handleCancellationRequest, handleHistory } from './complaint-handler';
+import { handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEditLink } from './service-handler';
 import { runAgent } from './agent';
 import { handleStatusCheck } from './status-handler';
 import {
@@ -152,15 +79,6 @@ export { handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEd
 export { handleStatusCheck } from './status-handler';
 
 /**
- * Unwrap a HandlerResult (string or { replyText, guidanceText?, contacts? })
- * into separate fields for ProcessMessageResult.
- */
-function unwrapHandler(result: HandlerResult): { response: string; guidanceText?: string; contacts?: ProcessMessageResult['contacts'] } {
-  const n = normalizeHandlerResult(result);
-  return { response: n.replyText, guidanceText: n.guidanceText, contacts: n.contacts };
-}
-
-/**
  * Process message from any channel
  * This is the SINGLE SOURCE OF TRUTH for message processing
  * 
@@ -183,14 +101,45 @@ interface AgentProcessInput {
   villageId?: string;
   conversationHistory: string;
   villageName?: string;
+  userName?: string | null;
   traceId: string;
   startTime: number;
   tracker: ReturnType<typeof createProcessingTracker>;
   notifyStage: (stage: string, progress: number) => void;
 }
 
+const CACHEABLE_AGENT_TOOLS = new Set([
+  'get_village_profile',
+  'get_service_info',
+  'get_complaint_categories',
+  'get_emergency_contacts',
+  'search_knowledge',
+  'search_documents',
+]);
+
+function isCacheableAgentResult(result: ProcessMessageResult): boolean {
+  const toolsUsed = Array.isArray(result.metadata?.toolsUsed) ? result.metadata.toolsUsed : [];
+  if (toolsUsed.length === 0) {
+    return false;
+  }
+
+  return toolsUsed.every((tool) => CACHEABLE_AGENT_TOOLS.has(tool));
+}
+
 async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessageResult> {
-  const { userId, message, channel, villageId, conversationHistory, villageName, traceId, startTime, tracker, notifyStage } = input;
+  const {
+    userId,
+    message,
+    channel,
+    villageId,
+    conversationHistory,
+    villageName,
+    userName,
+    traceId,
+    startTime,
+    tracker,
+    notifyStage,
+  } = input;
 
   tracker.thinking();
   notifyStage('thinking', 60);
@@ -203,6 +152,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         conversationHistory,
         currentDatetime: String(getWIBDateTime()),
         userMessage: message,
+        userName,
       },
       {
         userId,
@@ -420,8 +370,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     // Step 2.5: AI Optimization - Pre-process message
-    const historyString = resolvedHistory?.map(m => `${m.role}: ${m.content}`).join('\n') || '';
+    const historyString = resolvedHistory?.length
+      ? await buildCompactConversationHistory(userId, resolvedHistory)
+      : '';
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
+    const savedProfile = getAutoFillSuggestions(userId);
 
     if (resolvedVillageId) {
       const profile = await getVillageProfileSummary(resolvedVillageId);
@@ -437,36 +390,31 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = normalizeText(sanitizedMessage);
 
-    const deterministicFactReply = await resolveDeterministicFactReply({
-      userId,
-      villageId: resolvedVillageId,
-      message: sanitizedMessage,
-      channel,
-    });
-    if (deterministicFactReply) {
-      logger.info('⚡ [UnifiedProcessor] Deterministic fact fast path hit', {
-        traceId,
-        userId,
-        channel,
-        source: deterministicFactReply.source,
-      });
+    const cachedKnowledge = !isEvaluation
+      ? getCachedResponse(sanitizedMessage, 'KNOWLEDGE_QUERY', resolvedVillageId)
+      : null;
+    if (cachedKnowledge) {
       tracker.complete();
       notifyStage('done', 100);
+
       return {
         success: true,
-        response: deterministicFactReply.response,
-        intent: deterministicFactReply.intent,
+        response: cachedKnowledge.response,
+        guidanceText: cachedKnowledge.guidanceText,
+        intent: 'KNOWLEDGE_QUERY',
         metadata: {
           processingTimeMs: Date.now() - startTime,
-          hasKnowledge: deterministicFactReply.source === 'service_catalog' || deterministicFactReply.source === 'service_requirements',
-          agentMode: 'deterministic_fact_router',
+          hasKnowledge: true,
+          agentMode: 'response_cache',
+          toolsUsed: [],
           traceId,
         },
       };
     }
 
     // ── Agent Mode (always active) ──
-    // Single function-calling agent loop replaces the old intent pipeline.
+    // Spam guard and pending-state guards stay outside the agent, but
+    // deterministic question answering now goes through the same tool-calling agent.
     const agentResult = await processWithAgent({
       userId,
       message: sanitizedMessage,
@@ -474,11 +422,23 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       villageId: resolvedVillageId,
       conversationHistory: historyString,
       villageName: templateContext?.villageName ?? undefined,
+      userName: savedProfile.nama_lengkap ?? null,
       traceId,
       startTime,
       tracker,
       notifyStage,
     });
+
+    if (!isEvaluation && agentResult.success && isCacheableAgentResult(agentResult)) {
+      setCachedResponse(
+        sanitizedMessage,
+        agentResult.response,
+        'KNOWLEDGE_QUERY',
+        agentResult.guidanceText,
+        resolvedVillageId,
+      );
+    }
+
     return agentResult;
     
   } catch (error: any) {

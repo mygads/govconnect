@@ -446,10 +446,11 @@ export async function hybridSearch(
       keywordWeight
     );
 
-    // Filter by minimum score and limit
-    const filteredResults = fusedResults
-      .filter(r => r.score >= minScore)
-      .slice(0, topK);
+    // Recall-first, threshold-late:
+    // keep the top fused candidates here and let the downstream reranker/final
+    // thresholding decide what survives. This avoids dropping borderline items
+    // before semantic rerank has a chance to promote them.
+    const candidateResults = fusedResults.slice(0, topK);
 
     const searchTimeMs = Date.now() - startTime;
 
@@ -458,13 +459,14 @@ export async function hybridSearch(
       vectorCount: vectorResults.length,
       keywordCount: keywordResults.length,
       fusedCount: fusedResults.length,
-      finalCount: filteredResults.length,
+      candidateCount: candidateResults.length,
+      requestedMinScore: minScore,
       searchTimeMs,
-      topScore: filteredResults[0]?.score.toFixed(3),
-      matchTypes: filteredResults.map(r => r.matchType),
+      topScore: candidateResults[0]?.score.toFixed(3),
+      matchTypes: candidateResults.map(r => r.matchType),
     });
 
-    return filteredResults;
+    return candidateResults;
   } catch (error: any) {
     logger.error('[HybridSearch] Search failed', { error: error.message });
     return [];

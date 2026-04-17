@@ -112,6 +112,56 @@ export function appendToHistoryCache(userId: string, role: 'user' | 'assistant',
   }
 }
 
+export async function buildCompactConversationHistory(
+  userId: string,
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+): Promise<string> {
+  const SUMMARIZE_THRESHOLD = 8;
+  const MAX_RECENT = 6;
+
+  if (history.length > SUMMARIZE_THRESHOLD) {
+    const older = history.slice(0, history.length - MAX_RECENT);
+    const recent = history.slice(-MAX_RECENT);
+
+    let summaryText: string | null = null;
+    try {
+      const { summarizeConversation } = require('./micro-llm-matcher.service');
+      summaryText = await summarizeConversation(
+        older.map((message) => ({
+          role: message.role === 'user' ? 'User' : 'Assistant',
+          content: message.content,
+        })),
+        { wa_user_id: userId },
+      );
+    } catch {
+      // Fallback below keeps older context terse without another failure path.
+    }
+
+    let prefix: string;
+    if (summaryText) {
+      prefix = `[RINGKASAN PERCAKAPAN SEBELUMNYA (${older.length} pesan)]\n${summaryText}\n\n[PERCAKAPAN TERBARU]\n`;
+    } else {
+      const keyParts = older
+        .filter((message) => message.role === 'user')
+        .map((message) => message.content)
+        .filter((content) => content.length > 5)
+        .slice(-3)
+        .map((content) => content.substring(0, 80));
+
+      prefix = keyParts.length > 0
+        ? `[TOPIK SEBELUMNYA: ${keyParts.join('; ')}]\n\n[PERCAKAPAN TERBARU]\n`
+        : '';
+    }
+
+    return prefix + recent.map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`).join('\n');
+  }
+
+  return history
+    .slice(-10)
+    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`)
+    .join('\n');
+}
+
 // ==================== ADDRESS HELPERS ====================
 
 /**
@@ -255,43 +305,7 @@ export async function buildContextWithHistory(
   promptFocus?: string,
   villageName?: string
 ): Promise<{ systemPrompt: string; messageCount: number }> {
-
-  const conversationHistory = await (async () => {
-    const SUMMARIZE_THRESHOLD = 8;
-    const MAX_RECENT = 6;
-    if (history.length > SUMMARIZE_THRESHOLD) {
-      const older = history.slice(0, history.length - MAX_RECENT);
-      const recent = history.slice(-MAX_RECENT);
-
-      // Try micro-LLM summarization for older messages
-      let summaryText: string | null = null;
-      try {
-        const { summarizeConversation } = require('./micro-llm-matcher.service');
-        summaryText = await summarizeConversation(
-          older.map(m => ({ role: m.role === 'user' ? 'User' : 'Assistant', content: m.content })),
-          { wa_user_id: userId }
-        );
-      } catch { /* fallback below */ }
-
-      let prefix: string;
-      if (summaryText) {
-        prefix = `[RINGKASAN PERCAKAPAN SEBELUMNYA (${older.length} pesan)]\n${summaryText}\n\n[PERCAKAPAN TERBARU]\n`;
-      } else {
-        // Fallback: extract key info from older messages instead of dropping them silently
-        const keyParts = older
-          .filter(m => m.role === 'user')
-          .map(m => m.content)
-          .filter(c => c.length > 5)
-          .slice(-3) // Keep last 3 user messages as keywords
-          .map(c => c.substring(0, 80));
-        prefix = keyParts.length > 0
-          ? `[TOPIK SEBELUMNYA: ${keyParts.join('; ')}]\n\n[PERCAKAPAN TERBARU]\n`
-          : '';
-      }
-      return prefix + recent.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
-    }
-    return history.slice(-10).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
-  })();
+  const conversationHistory = await buildCompactConversationHistory(userId, history);
 
   let knowledgeSection = '';
   if (ragContext) {

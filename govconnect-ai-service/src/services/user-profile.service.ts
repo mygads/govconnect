@@ -7,7 +7,8 @@
  * - Layanan yang sering digunakan
  * - Riwayat interaksi
  * 
- * Data disimpan di file JSON (production: gunakan Redis/Database)
+ * Saat ini disimpan di in-memory LRU cache.
+ * Ini cukup untuk personalisasi ringan, tetapi bukan long-term memory yang durable.
  */
 
 import logger from '../utils/logger';
@@ -215,7 +216,7 @@ export function clearProfile(wa_user_id: string): void {
 /**
  * Fully delete user profile from cache — removes the entire entry.
  * Used when admin deletes a conversation so AI has zero memory of the user.
- * The deleted state is persisted to user-profiles.json on next flush.
+ * Tidak ada persistence durable di layer ini; penghapusan hanya membersihkan cache aktif.
  */
 export function deleteProfile(wa_user_id: string): boolean {
   const existed = profileCache.delete(wa_user_id);
