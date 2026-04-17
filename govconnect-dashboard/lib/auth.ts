@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify } from 'jose'
 import bcrypt from 'bcryptjs'
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
 // Lazy initialization to avoid build-time errors
@@ -123,4 +123,46 @@ export async function comparePassword(
   hash: string
 ): Promise<boolean> {
   return await bcrypt.compare(password, hash)
+}
+
+// ── Fase 2: Server-side RBAC helpers ──
+
+export type AdminRole = 'superadmin' | 'village_admin'
+
+/**
+ * Require authentication. Returns session or sends 401 response.
+ * Usage in API route:
+ *   const [session, errorResponse] = await requireAuth(request)
+ *   if (errorResponse) return errorResponse
+ */
+export async function requireAuth(
+  request: NextRequest,
+): Promise<[AdminSession, null] | [null, NextResponse]> {
+  const session = await getAdminSession(request)
+  if (!session) {
+    return [null, NextResponse.json({ error: 'Unauthorized' }, { status: 401 })]
+  }
+  return [session, null]
+}
+
+/**
+ * Require specific role(s). Returns session or sends 403 response.
+ * Usage:
+ *   const [session, errorResponse] = await requireRole(request, 'superadmin')
+ *   if (errorResponse) return errorResponse
+ */
+export async function requireRole(
+  request: NextRequest,
+  ...roles: AdminRole[]
+): Promise<[AdminSession, null] | [null, NextResponse]> {
+  const [session, authError] = await requireAuth(request)
+  if (authError) return [null, authError]
+
+  if (!roles.includes(session!.role as AdminRole)) {
+    return [null, NextResponse.json(
+      { error: 'Forbidden: insufficient permissions' },
+      { status: 403 },
+    )]
+  }
+  return [session!, null]
 }

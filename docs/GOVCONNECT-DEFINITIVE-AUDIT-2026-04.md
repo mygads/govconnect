@@ -826,16 +826,16 @@ OpenAI-compatible API (yang sudah dipakai GovConnect via OpenRouter) mendukung `
 
 **Target: Single agent + tools, token -60%**
 
-| # | Task | Effort |
-|---|------|--------|
-| 2.1 | Implement 9 tool functions | 3 hari |
-| 2.2 | Write agent system prompt + test | 2 hari |
-| 2.3 | Implement agent orchestrator (function calling) | 3 hari |
-| 2.4 | Pisahkan deterministic facts dari RAG | 2 hari |
-| 2.5 | Migrate unified-message-processor → agent | 3 hari |
-| 2.6 | Build golden test set (200 queries) | 3 hari |
-| 2.7 | A/B test: pipeline vs agent (canary deployment) | 2 hari |
-| 2.8 | Fix FE: RBAC server-side, consolidate fetch, CSP | 3 hari |
+| # | Task | Effort | Status |
+|---|------|--------|--------|
+| 2.1 | Implement 9 tool functions | 3 hari | ✅ |
+| 2.2 | Write agent system prompt + test | 2 hari | ✅ |
+| 2.3 | Implement agent orchestrator (function calling) | 3 hari | ✅ |
+| 2.4 | Pisahkan deterministic facts dari RAG | 2 hari | ✅ |
+| 2.5 | Migrate unified-message-processor → agent | 3 hari | ✅ |
+| 2.6 | Build golden test set (200 queries) | 3 hari | ✅ |
+| 2.7 | A/B test: pipeline vs agent (canary deployment) | 2 hari | ✅ |
+| 2.8 | Fix FE: RBAC server-side, consolidate fetch, CSP | 3 hari | ✅ |
 
 ### Fase 3 — Enterprise Hardening (2-4 minggu)
 

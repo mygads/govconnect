@@ -138,6 +138,7 @@ import {
 } from './ump-utils';
 import { buildComplaintCategoriesText, handleComplaintCreation, handleComplaintUpdate, handleCancellationRequest, handleHistory, handlePendingAddressConfirmation } from './complaint-handler';
 import { resolveServiceSlugFromSearch, handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEditLink, buildServiceCatalogText } from './service-handler';
+import { runAgent } from './agent';
 import { handleStatusCheck } from './status-handler';
 import { handleKnowledgeQuery } from './knowledge-handler';
 
@@ -191,6 +192,88 @@ function unwrapHandler(result: HandlerResult): { response: string; guidanceText?
  * 6. If fast path available → return cached/quick response
  * 7. Otherwise → full LLM processing
  */
+
+// ── Agent mode helpers ──
+
+interface AgentProcessInput {
+  userId: string;
+  message: string;
+  channel: 'whatsapp' | 'webchat';
+  villageId?: string;
+  conversationHistory: string;
+  villageName?: string;
+  traceId: string;
+  startTime: number;
+  tracker: ReturnType<typeof createProcessingTracker>;
+  notifyStage: (stage: string, progress: number) => void;
+}
+
+async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessageResult> {
+  const { userId, message, channel, villageId, conversationHistory, villageName, traceId, startTime, tracker, notifyStage } = input;
+
+  tracker.thinking();
+  notifyStage('thinking', 60);
+
+  try {
+    const result = await runAgent(
+      message,
+      {
+        villageName: villageName ?? undefined,
+        conversationHistory,
+        currentDatetime: String(getWIBDateTime()),
+        userMessage: message,
+      },
+      {
+        userId,
+        villageId,
+        channel,
+      },
+    );
+
+    tracker.complete();
+    notifyStage('done', 100);
+
+    logger.info('🤖 [Agent] Response generated', {
+      traceId,
+      userId,
+      channel,
+      mode: 'agent',
+      toolsUsed: result.toolsUsed,
+      iterations: result.iterations,
+      totalTokens: result.totalTokens,
+      model: result.model,
+      durationMs: result.durationMs,
+    });
+
+    return {
+      success: true,
+      response: result.replyText,
+      intent: 'AGENT',
+      metadata: {
+        processingTimeMs: Date.now() - startTime,
+        model: result.model,
+        hasKnowledge: result.toolsUsed.includes('search_knowledge'),
+        traceId,
+      },
+    };
+  } catch (error: any) {
+    logger.error('🤖 [Agent] Error', { traceId, userId, error: error.message });
+    tracker.complete();
+
+    return {
+      success: true,
+      response: 'Maaf, terjadi gangguan pada sistem. Silakan coba lagi nanti.',
+      intent: 'AGENT_ERROR',
+      metadata: {
+        processingTimeMs: Date.now() - startTime,
+        hasKnowledge: false,
+        traceId,
+      },
+      error: error.message,
+    };
+  }
+}
+
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   incrementActiveProcessing();
   const startTime = Date.now();
@@ -1215,686 +1298,22 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 3: Sanitize and correct typos
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = normalizeText(sanitizedMessage);
-    
-    // Step 4: Language detection
-    const languageDetection = detectLanguage(sanitizedMessage);
-    const languageContext = getLanguageContext(languageDetection);
-    
-    // Step 5: Sentiment analysis (regex pre-filter + micro-LLM for urgent/angry)
-    const sentiment = await analyzeSentimentWithLLM(sanitizedMessage, userId, {
-      village_id: resolvedVillageId,
-      wa_user_id: userId,
-      session_id: userId,
-      channel,
-    });
-    const sentimentContext = getSentimentContext(sentiment);
-    
-    // Step 5.5: User Profile & Context Enhancement
-    // Learn from message (extract NIK, phone, detect style)
-    if (!isEvaluation) {
-      learnFromMessage(userId, message);
-      recordInteraction(userId, sentiment.score, undefined);
-    }
-    
-    // Get profile context for LLM
-    const profileContext = getProfileContext(userId);
-    
-    // Get enhanced conversation context
-    const conversationCtx = getEnhancedContext(userId);
-    const conversationContextStr = getContextForLLM(userId);
-    
-    // Build adaptation context (sentiment + profile + conversation)
-    const adaptationContext = buildAdaptationContext(userId, sentiment);
-    
-    // Check if user needs human escalation
-    if (needsHumanEscalation(userId) || conversationCtx.needsHumanHelp) {
-      logger.warn('🚨 User needs human escalation', { 
-        userId, 
-        sentiment: sentiment.level,
-        clarificationCount: conversationCtx.clarificationCount,
-        isStuck: conversationCtx.isStuck,
-      });
-    }
-    
-    // Step 5.8: Response cache check — skip expensive RAG + LLM for repeated questions
-    // Only for stateless queries (FAQ, knowledge, greetings) — never for user-specific flows
-    const fsmState = conversationCtx.fsmState;
-    if (fsmState === 'IDLE' && isCacheable(sanitizedMessage)) {
-      const cachedResp = getCachedResponse(sanitizedMessage);
-      if (cachedResp) {
-        const processingTimeMs = Date.now() - startTime;
-        tracker.complete();
-        if (channel === 'whatsapp') {
-          appendToHistoryCache(userId, 'assistant', cachedResp.response);
-        }
-        logger.info('⚡ [UnifiedProcessor] Response served from cache', {
-          userId, channel, intent: cachedResp.intent, processingTimeMs,
-        });
-        return {
-          success: true,
-          response: cachedResp.response,
-          guidanceText: cachedResp.guidanceText,
-          intent: cachedResp.intent,
-          metadata: {
-            processingTimeMs,
-            hasKnowledge: cachedResp.intent === 'KNOWLEDGE_QUERY',
-          },
-        };
-      }
-    }
-    
-    // Step 6: Pre-fetch RAG context if needed
-    // Uses unified NLU classifier result for intelligent RAG skip/fetch decision
-    // This avoids a separate shouldRetrieveContext() call that would invoke classifyRAGIntent again
-    tracker.searching();
-    notifyStage('searching', 40);
-    
-    let preloadedRAGContext: RAGContext | string | undefined;
-    let graphContext = '';
-    const isGreeting = await checkGreeting();
-    const unified = await getUnifiedClassification();
-    const looksLikeQuestion = unified?.rag_needed ?? await shouldRetrieveContext(sanitizedMessage);
-    const nluCategories = unified?.categories || [];
-    const prefetchVillageId = resolvedVillageId;
-    
-    if (isGreeting) {
-      try {
-        const kelurahanInfo = await getKelurahanInfoContext(prefetchVillageId);
-        if (kelurahanInfo) preloadedRAGContext = kelurahanInfo;
-      } catch (error: any) {
-        logger.warn('[UnifiedProcessor] Failed to fetch kelurahan info', { error: error.message });
-      }
-    } else if (looksLikeQuestion) {
-      try {
-        // Pass NLU-inferred categories to RAG for more targeted search
-        const ragContext = await getRAGContext(sanitizedMessage, nluCategories.length > 0 ? nluCategories : undefined, prefetchVillageId);
-        if (ragContext.totalResults > 0) preloadedRAGContext = ragContext;
-      } catch (error: any) {
-        logger.warn('[UnifiedProcessor] RAG fetch failed', { error: error.message });
-      }
-    }
-    
-    // Step 6.5: Get knowledge graph context for service-related queries
-    // Dynamically uses DB-backed knowledge graph (no hardcoded service codes/keywords)
-    try {
-      
-      // Build dynamic service code regex from DB-backed knowledge graph
-      const serviceCodes = getAllServiceCodes();
-      if (serviceCodes.length > 0) {
-        // Escape regex special chars in service codes (some may contain parentheses like "SKKT(")
-        const escapedCodes = serviceCodes.map(code => code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        const codesPattern = new RegExp(`\\b(${escapedCodes.join('|')})\\b`, 'i');
-        const serviceCodeMatch = sanitizedMessage.match(codesPattern);
-        if (serviceCodeMatch) {
-          graphContext = await getGraphContextAsync(serviceCodeMatch[1].toUpperCase());
-        }
-      }
-      
-      // If no direct code match, try keyword matching from DB-backed nodes
-      if (!graphContext) {
-        const serviceKeywords = getAllServiceKeywords();
-        const lowerMsg = sanitizedMessage.toLowerCase();
-        for (const { keyword } of serviceKeywords) {
-          if (lowerMsg.includes(keyword)) {
-            const node = await findNodeByKeywordAsync(keyword);
-            if (node) {
-              graphContext = await getGraphContextAsync(node.code);
-              break;
-            }
-          }
-        }
-      }
-    } catch (error: any) {
-      logger.warn('[UnifiedProcessor] Knowledge graph lookup failed', { error: error.message });
-    }
 
-    // Step 7: Build context
-    // Determine prompt focus based on conversation state to reduce token usage
-    // Priority: FSM state > previous intent > NLU message_type > emergency > graph > 'full'
-    //
-    // ADAPTIVE PROMPT SAVINGS (vs full ~5000 tokens):
-    //   complaint → ~1400 tokens (core + complaint rules/intents/cases + edge)
-    //   service   → ~1800 tokens (core + service rules/intents/cases + edge)
-    //   knowledge → ~1600 tokens (core + knowledge rules + PART5 + edge)
-    //   status    → ~1200 tokens (core + status rules/cases + edge)
-    //   cancel    → ~2000 tokens (core + cancel + complaint/service)
-    let promptFocus: PromptFocus = 'full';
-    const currentIntent = conversationCtx.currentIntent;
-    
-    if (fsmState === 'COLLECTING_COMPLAINT_DATA' || fsmState === 'CONFIRMING_COMPLAINT' || fsmState === 'AWAITING_ADDRESS_DETAIL') {
-      promptFocus = 'complaint';
-    } else if (fsmState === 'COLLECTING_SERVICE_REQUEST_DATA' || fsmState === 'CONFIRMING_SERVICE_REQUEST') {
-      promptFocus = 'service';
-    } else if (fsmState === 'CANCELLATION_FLOW') {
-      promptFocus = 'cancel';
-    } else if (fsmState === 'CHECK_STATUS_FLOW') {
-      promptFocus = 'status';
-    } else if (currentIntent === 'KNOWLEDGE_QUERY') {
-      promptFocus = 'knowledge';
-    } else if (currentIntent === 'CREATE_COMPLAINT' || currentIntent === 'UPDATE_COMPLAINT') {
-      promptFocus = 'complaint';
-    } else if (currentIntent === 'SERVICE_INFO' || currentIntent === 'CREATE_SERVICE_REQUEST' || currentIntent === 'UPDATE_SERVICE_REQUEST') {
-      promptFocus = 'service';
-    } else if (unified?.message_type && unified.confidence >= 0.7) {
-      // NLU→PromptFocus bridge: use micro NLU classification for first message / IDLE state
-      // This saves ~3000-3500 tokens by loading only relevant rules, intents, and case examples
-      switch (unified.message_type) {
-        case 'COMPLAINT':
-          promptFocus = 'complaint';
-          break;
-        case 'QUESTION':
-          // Questions could be service or knowledge — use RAG categories to decide
-          if (nluCategories.some(c => ['layanan_administrasi', 'panduan-sop'].includes(c))) {
-            promptFocus = 'service';
-          } else if (nluCategories.length > 0) {
-            promptFocus = 'knowledge';
-          }
-          // else remains 'full' — ambiguous question
-          break;
-        // GREETING, FAREWELL, DATA_INPUT, CONFIRMATION, SOCIAL → keep 'full'
-      }
-    }
-    // else 'full' — IDLE state with no prior context or low NLU confidence
-
-    // (Emergency hint removed — no pre-LLM keyword detection, LLM handles intent)
-
-    // Knowledge graph → prompt focus override:
-    // If knowledge graph matched a service code, ensure we use 'service' focus
-    if (promptFocus === 'full' && graphContext) {
-      promptFocus = 'service';
-    }
-    
-    logger.debug('[UnifiedProcessor] Adaptive prompt focus', {
-      userId, fsmState, currentIntent, promptFocus,
-      nluMessageType: unified?.message_type, nluConfidence: unified?.confidence,
-    });
-
-    let systemPrompt: string;
-    let messageCount: number;
-    
-    if (channel === 'webchat' && resolvedHistory) {
-      const villageName = templateContext?.villageName || (await getVillageProfileSummary(resolvedVillageId))?.name || undefined;
-      const contextResult = await buildContextWithHistory(userId, sanitizedMessage, resolvedHistory, preloadedRAGContext, resolvedVillageId, promptFocus, villageName);
-      systemPrompt = contextResult.systemPrompt;
-      messageCount = contextResult.messageCount;
-    } else {
-      // Fase 1.4: Skip catalog/categories for greeting & simple queries to save tokens
-      const needsCatalog = !isGreeting && looksLikeQuestion !== false;
-      const complaintCategoriesText = needsCatalog ? await buildComplaintCategoriesText(resolvedVillageId) : '';
-      const serviceCatalogText = needsCatalog ? await buildServiceCatalogText(resolvedVillageId) : '';
-      const villageName = templateContext?.villageName || (await getVillageProfileSummary(resolvedVillageId))?.name || undefined;
-      const contextResult = await buildContext(userId, sanitizedMessage, preloadedRAGContext, complaintCategoriesText, promptFocus, villageName, serviceCatalogText);
-      systemPrompt = contextResult.systemPrompt;
-      messageCount = contextResult.messageCount;
-    }
-    
-    // Inject language, sentiment, profile, conversation, graph context
-    const allContexts = [
-      languageContext,
-      sentimentContext,
-      profileContext,
-      conversationContextStr,
-      adaptationContext,
-      graphContext,
-    ].filter(Boolean).join('\n');
-    
-    if (allContexts) {
-      systemPrompt = systemPrompt.replace(
-        'PESAN TERAKHIR USER:',
-        `${allContexts}\n\nPESAN TERAKHIR USER:`
-      );
-    }
-    
-    // Step 8: Call LLM
-    // Update status: thinking
-    tracker.thinking();
-    notifyStage('thinking', 60);
-    const llmResult = await callLLM(systemPrompt);
-    
-    if (!llmResult) {
-      throw new Error('LLM call failed - all models exhausted');
-    }
-    
-    const { response: llmResponse, metrics } = llmResult;
-
-    // Record actual token usage for main chat call
-    recordTokenUsage({
-      model: metrics.model,
-      input_tokens: metrics.inputTokens,
-      output_tokens: metrics.outputTokens,
-      total_tokens: metrics.totalTokens,
-      layer_type: 'full_nlu',
-      call_type: 'main_chat',
-      village_id: input.villageId,
-      wa_user_id: userId,
-      session_id: userId,
-      channel,
-      intent: llmResponse.intent,
-      success: true,
-      duration_ms: metrics.durationMs,
-      key_source: metrics.keySource,
-      key_id: metrics.keyId,
-      key_tier: metrics.keyTier,
-    });
-
-    // Anti-hallucination gate — multi-layer approach:
-    // 1. Regex detection (fast, free) to identify potential hallucination signals
-    // 2. Micro-LLM validation (cheap, ~10x less tokens than full retry) to confirm
-    // 3. Full LLM retry only for confirmed fake links (always hallucination)
-    const hasKnowledge = hasKnowledgeInPrompt(systemPrompt);
-    // Extract knowledge text early for cross-referencing in anti-hallucination
-    const knowledgeMatch = systemPrompt.match(/KNOWLEDGE BASE YANG TERSEDIA:\n([\s\S]*?)(?:\n\[CONFIDENCE:|$)/);
-    const knowledgeText = knowledgeMatch?.[1] || '';
-    const gate = needsAntiHallucinationRetry({
-      replyText: llmResponse.reply_text,
-      guidanceText: llmResponse.guidance_text,
-      hasKnowledge,
-      knowledgeText,
-    });
-
-    if (gate.shouldRetry) {
-      logAntiHallucinationEvent({
-        userId,
-        channel,
-        reason: gate.reason,
-        model: metrics.model,
-      });
-
-      // For fake links → always sanitize (no LLM needed, regex is sufficient)
-      if (gate.reason?.includes('link palsu')) {
-        if (llmResult.response.reply_text) {
-          llmResult.response.reply_text = sanitizeFakeLinks(llmResult.response.reply_text);
-        }
-        if (llmResult.response.guidance_text) {
-          llmResult.response.guidance_text = sanitizeFakeLinks(llmResult.response.guidance_text);
-        }
-      } else if (hasKnowledge) {
-        // Has knowledge → use micro-LLM to validate against knowledge (cheap check)
-        const responseText = [llmResult.response.reply_text, llmResult.response.guidance_text].filter(Boolean).join(' ');
-        
-        if (knowledgeText) {
-          const validation = await validateResponseAgainstKnowledge(responseText, knowledgeText, {
-            village_id: input.villageId,
-            wa_user_id: userId,
-            session_id: userId,
-            channel,
-          });
-          
-          if (validation?.has_hallucination) {
-            logger.warn('[UnifiedProcessor] Micro-LLM confirmed hallucination', {
-              userId, issues: validation.issues,
-            });
-            // Only do full retry if micro-LLM confirms hallucination
-            const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
-            const retryResult = await callLLM(retryPrompt);
-            if (retryResult?.response?.reply_text) {
-              recordTokenUsage({
-                model: retryResult.metrics.model,
-                input_tokens: retryResult.metrics.inputTokens,
-                output_tokens: retryResult.metrics.outputTokens,
-                total_tokens: retryResult.metrics.totalTokens,
-                layer_type: 'full_nlu',
-                call_type: 'anti_hallucination_retry',
-                village_id: input.villageId,
-                wa_user_id: userId,
-                session_id: userId,
-                channel,
-                intent: retryResult.response.intent,
-                success: true,
-                duration_ms: retryResult.metrics.durationMs,
-                key_source: retryResult.metrics.keySource,
-                key_id: retryResult.metrics.keyId,
-                key_tier: retryResult.metrics.keyTier,
-              });
-              llmResult.response = retryResult.response;
-            }
-          }
-          // else: micro-LLM says no hallucination → skip expensive full retry (saves ~5000 tokens)
-        }
-      } else {
-        // No knowledge context + hallucination signals → full retry with anti-hallucination instruction
-        const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
-        const retryResult = await callLLM(retryPrompt);
-        if (retryResult?.response?.reply_text) {
-          recordTokenUsage({
-            model: retryResult.metrics.model,
-            input_tokens: retryResult.metrics.inputTokens,
-            output_tokens: retryResult.metrics.outputTokens,
-            total_tokens: retryResult.metrics.totalTokens,
-            layer_type: 'full_nlu',
-            call_type: 'anti_hallucination_retry',
-            village_id: input.villageId,
-            wa_user_id: userId,
-            session_id: userId,
-            channel,
-            intent: retryResult.response.intent,
-            success: true,
-            duration_ms: retryResult.metrics.durationMs,
-            key_source: retryResult.metrics.keySource,
-            key_id: retryResult.metrics.keyId,
-            key_tier: retryResult.metrics.keyTier,
-          });
-          llmResult.response = retryResult.response;
-        }
-      }
-    }
-
-    // ── Post-processing sanitization pipeline ──
-    // Runs on EVERY final response to catch hallucinations that slipped through.
-    if (llmResult.response.reply_text) {
-      llmResult.response.reply_text = sanitizeFakeLinks(llmResult.response.reply_text);
-    }
-    if (llmResult.response.guidance_text) {
-      llmResult.response.guidance_text = sanitizeFakeLinks(llmResult.response.guidance_text);
-    }
-    // Remove fabricated phone numbers when no knowledge context is present
-    if (!hasKnowledge) {
-      const FAKE_PHONE_PATTERN = /\b0\d{2,3}[-.\s]?\d{4,8}\b/g;
-      if (llmResult.response.reply_text && FAKE_PHONE_PATTERN.test(llmResult.response.reply_text)) {
-        llmResult.response.reply_text = llmResult.response.reply_text.replace(FAKE_PHONE_PATTERN, '[nomor telepon tersedia di kantor]');
-        logger.warn('[UnifiedProcessor] Sanitized fabricated phone number from reply');
-      }
-    }
-    
-    // Track analytics (skip during evaluation)
-    if (!isEvaluation) {
-      aiAnalyticsService.recordIntent(
-        userId,
-        llmResult.response.intent,
-        metrics.durationMs,
-        systemPrompt.length,
-        llmResult.response.reply_text.length,
-        metrics.model
-      );
-    }
-    
-    logger.info('[UnifiedProcessor] LLM response received', {
+    // ── Agent Mode (always active) ──
+    // Single function-calling agent loop replaces the old intent pipeline.
+    const agentResult = await processWithAgent({
       userId,
-      channel,
-      intent: llmResult.response.intent,
-      durationMs: metrics.durationMs,
+      message: sanitizedMessage,
+      channel: channel as 'whatsapp' | 'webchat',
+      villageId: resolvedVillageId,
+      conversationHistory: historyString,
+      villageName: templateContext?.villageName ?? undefined,
+      traceId,
+      startTime,
+      tracker,
+      notifyStage,
     });
-    
-    // Update status: preparing response
-    tracker.preparing();
-    notifyStage('preparing', 80);
-    
-    // Step 9: Handle intent
-    const effectiveLlmResponse = llmResult.response;
-
-    // If webhook already resolved tenant, enforce it deterministically.
-    if (input.villageId) {
-      effectiveLlmResponse.fields = {
-        ...(effectiveLlmResponse.fields || {}),
-        village_id: input.villageId,
-      } as any;
-    }
-
-    effectiveLlmResponse.fields = {
-      ...(effectiveLlmResponse.fields || {}),
-      _original_message: message,
-    } as any;
-
-    let finalReplyText = effectiveLlmResponse.reply_text;
-    let guidanceText = effectiveLlmResponse.guidance_text || '';
-    let resultContacts: ProcessMessageResult['contacts'] | undefined;
-
-    // Emergency auto-category removed — LLM handles intent and category classification.
-    // is_urgent flag comes from DB complaintTypeConfig after LLM determines kategori.
-
-    // ── Confidence-based intent validation (3-tier) ──
-    // Tier 1: confidence < 0.4 → demote to QUESTION (ask clarification)
-    // Tier 2: confidence 0.4-0.6 → proceed but add clarification prompt to guidance_text
-    // Tier 3: confidence > 0.6 → proceed normally
-    const llmConfidence = typeof effectiveLlmResponse.confidence === 'number' ? effectiveLlmResponse.confidence : 0.8;
-    const isActionIntent = !['QUESTION', 'UNKNOWN', 'KNOWLEDGE_QUERY'].includes(effectiveLlmResponse.intent);
-    
-    if (llmConfidence < 0.4 && isActionIntent) {
-      logger.info('[UnifiedProcessor] Very low LLM confidence, demoting to QUESTION', {
-        userId, originalIntent: effectiveLlmResponse.intent, confidence: llmConfidence,
-      });
-      // Override intent, but keep LLM's reply_text if it looks like a clarification question
-      effectiveLlmResponse.intent = 'QUESTION' as any;
-      // Ensure reply_text asks for clarification
-      if (!effectiveLlmResponse.reply_text || effectiveLlmResponse.reply_text.length < 10) {
-        effectiveLlmResponse.reply_text = 'Mohon maaf, bisa dijelaskan lebih detail apa yang Bapak/Ibu butuhkan? Kami ingin memastikan bisa membantu dengan tepat.';
-      }
-    } else if (llmConfidence < 0.6 && isActionIntent) {
-      // Medium confidence: proceed but add a soft confirmation in guidance_text
-      logger.info('[UnifiedProcessor] Medium LLM confidence, adding clarification prompt', {
-        userId, intent: effectiveLlmResponse.intent, confidence: llmConfidence,
-      });
-      const existingGuidance = effectiveLlmResponse.guidance_text || '';
-      effectiveLlmResponse.guidance_text = existingGuidance 
-        ? `${existingGuidance}\n\nJika ini bukan yang Bapak/Ibu maksud, mohon jelaskan kembali ya.`
-        : 'Jika ini bukan yang Bapak/Ibu maksud, mohon jelaskan kembali ya.';
-    }
-
-    // Service slug resolution: when LLM detected SERVICE_INFO/CREATE_SERVICE_REQUEST
-    // but didn't extract the specific service_slug, try to resolve it from the message
-    // using micro-LLM semantic search (NOT pattern matching)
-    if (['SERVICE_INFO', 'CREATE_SERVICE_REQUEST'].includes(effectiveLlmResponse.intent)) {
-      const hasServiceRef = !!(effectiveLlmResponse.fields?.service_slug || effectiveLlmResponse.fields?.service_id);
-      if (!hasServiceRef) {
-        const resolved = await resolveServiceSlugFromSearch(message, resolvedVillageId);
-        if (resolved?.slug) {
-          const existingServiceName = (effectiveLlmResponse.fields as any)?.service_name;
-          effectiveLlmResponse.fields = {
-            ...(effectiveLlmResponse.fields || {}),
-            service_slug: resolved.slug,
-            service_name: resolved.name || existingServiceName,
-          } as any;
-        }
-      }
-    }
-    
-    switch (effectiveLlmResponse.intent) {
-      case 'CREATE_COMPLAINT':
-        const rateLimitCheck = rateLimiterService.checkRateLimit(userId);
-        if (!rateLimitCheck.allowed) {
-          finalReplyText = rateLimitCheck.message || 'Anda telah mencapai batas laporan hari ini.';
-        } else {
-          const complaintHandlerResult = normalizeHandlerResult(await handleComplaintCreation(userId, channel, effectiveLlmResponse, message, mediaUrl));
-          finalReplyText = complaintHandlerResult.replyText;
-          if (complaintHandlerResult.contacts?.length) {
-            resultContacts = complaintHandlerResult.contacts;
-          }
-        }
-        break;
-      
-      case 'SERVICE_INFO':
-        {
-          const serviceInfoResult = normalizeHandlerResult(await handleServiceInfo(userId, effectiveLlmResponse, channel));
-          finalReplyText = serviceInfoResult.replyText;
-          if (serviceInfoResult.guidanceText && !guidanceText) {
-            guidanceText = serviceInfoResult.guidanceText;
-          }
-        }
-        break;
-      
-      case 'CREATE_SERVICE_REQUEST':
-        finalReplyText = await handleServiceRequestCreation(userId, channel, effectiveLlmResponse);
-        break;
-
-      case 'UPDATE_COMPLAINT':
-        finalReplyText = await handleComplaintUpdate(userId, channel, effectiveLlmResponse, message);
-        break;
-
-      case 'UPDATE_SERVICE_REQUEST':
-        finalReplyText = await handleServiceRequestEditLink(userId, channel, effectiveLlmResponse);
-        break;
-      
-      case 'CHECK_STATUS':
-        finalReplyText = await handleStatusCheck(userId, channel, effectiveLlmResponse, message);
-        break;
-      
-      case 'CANCEL_COMPLAINT':
-        finalReplyText = await handleCancellationRequest(userId, 'laporan', effectiveLlmResponse);
-        break;
-
-      case 'CANCEL_SERVICE_REQUEST':
-        finalReplyText = await handleCancellationRequest(userId, 'layanan', effectiveLlmResponse);
-        break;
-      
-      case 'HISTORY':
-        finalReplyText = await handleHistory(userId, channel);
-        break;
-      
-      case 'KNOWLEDGE_QUERY':
-        if (preloadedRAGContext && typeof preloadedRAGContext === 'object' && preloadedRAGContext.contextString) {
-          effectiveLlmResponse.fields = {
-            ...(effectiveLlmResponse.fields || {}),
-            _preloaded_knowledge_context: preloadedRAGContext.contextString,
-          } as any;
-        }
-        {
-          const kqResult = normalizeHandlerResult(await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel));
-          finalReplyText = kqResult.replyText;
-          if (kqResult.contacts?.length) resultContacts = kqResult.contacts;
-        }
-        break;
-      
-      case 'QUESTION':
-        // If LLM explicitly says needs_knowledge=true, or if RAG context was preloaded,
-        // route through knowledge handler for a more informed answer
-        if (effectiveLlmResponse.needs_knowledge && preloadedRAGContext && typeof preloadedRAGContext === 'object' && preloadedRAGContext.contextString) {
-          effectiveLlmResponse.fields = {
-            ...(effectiveLlmResponse.fields || {}),
-            _preloaded_knowledge_context: preloadedRAGContext.contextString,
-          } as any;
-          const kqResult2 = normalizeHandlerResult(await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel));
-          finalReplyText = kqResult2.replyText;
-          if (kqResult2.contacts?.length) resultContacts = kqResult2.contacts;
-        } else if (unified?.categories?.includes('kontak')) {
-          // NLU detected contact category — force route to knowledge handler for contact lookup
-          // This catches cases where LLM classified as QUESTION but user is asking for contacts
-          logger.info('[UnifiedProcessor] QUESTION with contact category, routing to knowledge handler', { userId });
-          effectiveLlmResponse.fields = {
-            ...(effectiveLlmResponse.fields || {}),
-            village_id: resolvedVillageId,
-            knowledge_category: 'kontak',
-          } as any;
-          const kqResult3 = normalizeHandlerResult(await handleKnowledgeQuery(userId, message, effectiveLlmResponse, finalReplyText, channel));
-          finalReplyText = kqResult3.replyText;
-          if (kqResult3.contacts?.length) resultContacts = kqResult3.contacts;
-        }
-        // else: use LLM reply as-is (greeting, chitchat, etc.)
-        break;
-
-      case 'UNKNOWN':
-      default:
-        // If UNKNOWN and reply is empty/generic, provide smart clarification
-        if (!finalReplyText || finalReplyText.length < 10) {
-          finalReplyText = 'Mohon maaf Pak/Bu, saya kurang mengerti maksudnya. Bisa dijelaskan lebih detail?\n\nSaya bisa membantu:\n1. Layanan surat/dokumen\n2. Pengaduan/laporan masalah\n3. Cek status layanan/pengaduan\n4. Informasi desa (jadwal, kontak, prosedur)';
-        }
-        break;
-    }
-    
-    // Step 9.4: Track category usage analytics
-    if (!isEvaluation) {
-      const intent = effectiveLlmResponse.intent;
-      if (intent === 'CREATE_COMPLAINT' || intent === 'UPDATE_COMPLAINT') {
-        const kategori = (effectiveLlmResponse.fields as any)?.kategori || (effectiveLlmResponse.fields as any)?.category;
-        if (kategori) aiAnalyticsService.recordCategoryUsage('complaint', String(kategori));
-      } else if (intent === 'SERVICE_INFO' || intent === 'CREATE_SERVICE_REQUEST' || intent === 'UPDATE_SERVICE_REQUEST') {
-        const serviceSlug = (effectiveLlmResponse.fields as any)?.service_slug || (effectiveLlmResponse.fields as any)?.service_name;
-        if (serviceSlug) aiAnalyticsService.recordCategoryUsage('service', String(serviceSlug));
-      } else if (intent === 'KNOWLEDGE_QUERY') {
-        const knowledgeCat = (effectiveLlmResponse.fields as any)?.knowledge_category || 'general';
-        aiAnalyticsService.recordCategoryUsage('knowledge', String(knowledgeCat));
-      }
-    }
-
-    // Step 9.5: Track knowledge hit/miss for analytics
-    // Records whether the knowledge base had relevant content for this query.
-    // QUESTION intent is excluded — it covers greetings, names, acknowledgments,
-    // and generic replies that are NOT real knowledge-seeking queries.
-    // Only KNOWLEDGE_QUERY and SERVICE_INFO represent actual knowledge needs.
-    if (!isEvaluation) {
-      const knowledgeIntent = effectiveLlmResponse.intent;
-      const isKnowledgeSeeking = ['KNOWLEDGE_QUERY', 'SERVICE_INFO'].includes(knowledgeIntent)
-        || effectiveLlmResponse.needs_knowledge === true;
-      if (isKnowledgeSeeking) {
-        const ragConf = typeof preloadedRAGContext === 'object' ? preloadedRAGContext.confidence?.level : undefined;
-        const confLevel = (ragConf as any) || 'none';
-        aiAnalyticsService.recordKnowledge({
-          query: message.substring(0, 200),
-          intent: knowledgeIntent,
-          confidence: confLevel,
-          channel,
-          villageId: resolvedVillageId,
-          hasKnowledge: !!(preloadedRAGContext && typeof preloadedRAGContext === 'object' && preloadedRAGContext.contextString),
-        });
-
-        // Persist knowledge gaps to Dashboard DB (fire-and-forget) for admin visibility
-        if (confLevel === 'none' || confLevel === 'low') {
-          reportKnowledgeGap({
-            query: message.substring(0, 500),
-            intent: knowledgeIntent,
-            confidence: confLevel,
-            channel,
-            villageId: resolvedVillageId,
-          });
-        }
-      }
-    }
-
-    // Step 10: Validate response
-    const validatedReply = validateResponse(finalReplyText);
-    const validatedGuidance = guidanceText ? validateResponse(guidanceText) : undefined;
-    
-    // Step 10.5: Adapt response based on sentiment, profile, and context
-    const adaptedResult = adaptResponse(validatedReply, userId, sentiment, validatedGuidance);
-    const finalResponse = adaptedResult.response;
-    const finalGuidance = adaptedResult.guidanceText;
-    
-    // Step 10.6: Update conversation context
-    updateContext(userId, {
-      currentIntent: effectiveLlmResponse.intent,
-      intentConfidence: 0.8, // Default confidence since Micro NLU handles intent now
-      collectedData: effectiveLlmResponse.fields,
-      missingFields: effectiveLlmResponse.fields?.missing_info || [],
-    });
-    
-    const processingTimeMs = Date.now() - startTime;
-    
-    // Update status: complete
-    tracker.complete();
-    
-    // Append AI response to conversation history cache (keeps cache fresh for next message)
-    if (channel === 'whatsapp') {
-      appendToHistoryCache(userId, 'assistant', finalResponse);
-    }
-    
-    logger.info('✅ [UnifiedProcessor] Message processed', {
-      userId,
-      channel,
-      intent: effectiveLlmResponse.intent,
-      processingTimeMs,
-    });
-    
-    // Save cacheable responses for future use (FAQ, knowledge, greetings) — skip during eval
-    if (!isEvaluation) {
-      setCachedResponse(message, finalResponse, effectiveLlmResponse.intent, finalGuidance);
-    }
-    
-    return {
-      success: true,
-      response: finalResponse,
-      guidanceText: finalGuidance,
-      contacts: resultContacts,
-      intent: llmResponse.intent,
-      fields: llmResponse.fields,
-      metadata: {
-        processingTimeMs,
-        model: metrics.model,
-        hasKnowledge: !!preloadedRAGContext,
-        knowledgeConfidence: typeof preloadedRAGContext === 'object' ? preloadedRAGContext.confidence?.level : undefined,
-        sentiment: sentiment.level !== 'neutral' ? sentiment.level : undefined,
-        language: languageDetection.primary !== 'indonesian' ? languageDetection.primary : undefined,
-        traceId,
-      },
-    };
+    return agentResult;
     
   } catch (error: any) {
     const processingTimeMs = Date.now() - startTime;

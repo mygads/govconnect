@@ -101,7 +101,7 @@ function calculateCost(model: string, inputTokens: number, outputTokens: number)
 
 // ==================== Types ====================
 
-export type LayerType = 'full_nlu' | 'micro_nlu' | 'embedding' | 'rag_expand' | 'rag_rerank';
+export type LayerType = 'full_nlu' | 'micro_nlu' | 'embedding' | 'rag_expand' | 'rag_rerank' | 'agent';
 
 export type CallType =
   | 'main_chat'
@@ -127,7 +127,8 @@ export type CallType =
   | 'summarize'
   | 'hallucination_check'
   | 'sentiment_urgency'
-  | 'rerank_documents';
+  | 'rerank_documents'
+  | 'agent_orchestrator';
 
 export interface TokenUsageRecord {
   model: string;

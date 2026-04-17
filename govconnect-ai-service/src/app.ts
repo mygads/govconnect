@@ -150,6 +150,7 @@ app.get('/health', (req: Request, res: Response) => {
     rerankEnabled: config.rerankEnabled,
     retrievalCacheEnabled: config.ragEnableRetrievalCache,
     documentStorage: getObjectStorageInfo(),
+    architecture: 'agent',
   });
 });
 

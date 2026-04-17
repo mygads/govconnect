@@ -877,22 +877,22 @@ Target: 1-2 minggu
 - ✅ simpan actual similarity score untuk conflict analytics
 - ✅ perkuat lexical search Indonesia
 - ✅ buat dashboard "why retrieval failed" berbasis trace
-## Fase 2 — Pisahkan deterministic facts dari free-text RAG
+## Fase 2 — Pisahkan deterministic facts dari free-text RAG ✅
 
 Target: 2-3 minggu
 
-- jadikan office profile/hours/contacts/services sebagai tool/data query resmi
-- jangan lewatkan pertanyaan fact sederhana ke LLM bebas
-- RAG fokus ke SOP, FAQ, dan dokumen naratif
+- ✅ jadikan office profile/hours/contacts/services sebagai tool/data query resmi
+- ✅ jangan lewatkan pertanyaan fact sederhana ke LLM bebas
+- ✅ RAG fokus ke SOP, FAQ, dan dokumen naratif
 
-## Fase 3 — Refactor ke tool-calling orchestration
+## Fase 3 — Refactor ke tool-calling orchestration ✅
 
 Target: 3-5 minggu
 
-- satu orchestrator agent
-- tools eksplisit
-- citations sebagai first-class output
-- fallback/human escalation rule yang jelas
+- ✅ satu orchestrator agent
+- ✅ tools eksplisit
+- ✅ citations sebagai first-class output
+- ✅ fallback/human escalation rule yang jelas
 
 ## Fase 4 — Enterprise hardening
 
