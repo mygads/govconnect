@@ -773,6 +773,9 @@ app.get('/', (req, res) => res.json({ service: 'GovConnect AI', status: 'running
 
 #### Temuan 34: Variabel `GEMINI_API_KEY` Berpotensi Bocor via Serialisasi Config
 
+Catatan 2026-04-17:
+Arsitektur AI Service sudah direfaktor ke 4-lane AI gateway dan `geminiApiKey` tidak lagi ada di runtime config aktif. Temuan ini bersifat historis.
+
 | Bidang | Detail |
 |--------|--------|
 | **Keparahan** | RENDAH |

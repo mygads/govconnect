@@ -72,6 +72,10 @@ interface TokenSummary {
   embedding_cost: number
   rag_expand_calls: number
   rag_expand_tokens: number
+  rag_expand_cost: number
+  rag_rerank_calls: number
+  rag_rerank_tokens: number
+  rag_rerank_cost: number
   main_chat_calls: number
   main_chat_tokens: number
   main_chat_cost: number
@@ -153,51 +157,6 @@ interface VillageInfo {
   slug: string
 }
 
-// ==================== Gemini Pricing (per 1M tokens, USD, paid tier <=200k context) ====================
-
-const GEMINI_PRICING: Record<string, { input: number; output: number }> = {
-  // Gemini 3
-  "gemini-3-pro-preview": { input: 2.00, output: 12.00 },
-  "gemini-3-flash-preview": { input: 0.50, output: 3.00 },
-  // Gemini 2.5
-  "gemini-2.5-pro": { input: 1.25, output: 10.00 },
-  "gemini-2.5-pro-preview": { input: 1.25, output: 10.00 },
-  "gemini-2.5-flash": { input: 0.30, output: 2.50 },
-  "gemini-2.5-flash-preview": { input: 0.30, output: 2.50 },
-  "gemini-2.5-flash-lite": { input: 0.10, output: 0.40 },
-  "gemini-2.5-flash-lite-preview": { input: 0.10, output: 0.40 },
-  // Gemini 2.0
-  "gemini-2.0-flash": { input: 0.10, output: 0.40 },
-  "gemini-2.0-flash-exp": { input: 0.10, output: 0.40 },
-  "gemini-2.0-flash-lite": { input: 0.075, output: 0.30 },
-  // Gemini 1.5 (legacy)
-  "gemini-1.5-pro": { input: 1.25, output: 5.00 },
-  "gemini-1.5-flash": { input: 0.075, output: 0.30 },
-  "gemini-1.5-flash-8b": { input: 0.0375, output: 0.15 },
-}
-
-/** Find pricing for a model name (supports partial match for date-suffixed names like gemini-2.5-flash-preview-05-20) */
-function findModelPricing(model: string): { input: number; output: number } {
-  if (GEMINI_PRICING[model]) return GEMINI_PRICING[model]
-  // Try prefix match (longest first)
-  const keys = Object.keys(GEMINI_PRICING).sort((a, b) => b.length - a.length)
-  for (const key of keys) {
-    if (model.startsWith(key)) return GEMINI_PRICING[key]
-  }
-  // Fallback by family
-  if (model.includes("flash-lite")) return { input: 0.10, output: 0.40 }
-  if (model.includes("flash")) return { input: 0.30, output: 2.50 }
-  if (model.includes("pro")) return { input: 1.25, output: 10.00 }
-  return { input: 0.30, output: 2.50 } // default flash pricing
-}
-
-function calcModelCost(model: string, inputTokens: number, outputTokens: number) {
-  const p = findModelPricing(model)
-  const inputCost = (inputTokens / 1_000_000) * p.input
-  const outputCost = (outputTokens / 1_000_000) * p.output
-  return { inputCost, outputCost, totalCost: inputCost + outputCost, pricing: p }
-}
-
 // ==================== Helpers ====================
 
 const USD_TO_IDR = 17_000
@@ -228,10 +187,42 @@ function formatDate(iso: string, period: string): string {
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short" })
 }
 
+function sumCostUsd<T extends { cost_usd: number }>(rows: T[]): number {
+  return rows.reduce((sum, row) => sum + (row.cost_usd || 0), 0)
+}
+
+function formatSourceLabel(source: string): string {
+  const normalized = source.trim().toLowerCase()
+
+  if (normalized === "gateway_llm") return "Gateway · LLM"
+  if (normalized === "gateway_embed") return "Gateway · Embed"
+  if (normalized === "gateway_rag") return "Gateway · RAG Rewrite"
+  if (normalized === "gateway_rerank") return "Gateway · Rerank"
+  if (normalized === "byok") return "Legacy BYOK"
+  if (normalized === "env") return "Legacy Direct ENV"
+  if (normalized === "unknown") return "Unknown"
+
+  return source
+}
+
+function sourceBadgeClass(source: string): string {
+  const normalized = source.trim().toLowerCase()
+
+  if (normalized.startsWith("gateway_")) {
+    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"
+  }
+  if (normalized === "byok" || normalized === "env") {
+    return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
+  }
+
+  return "bg-gray-100 text-gray-700 dark:bg-gray-900 dark:text-gray-300"
+}
+
 const LAYER_COLORS: Record<string, string> = {
   full_nlu: "#6366f1",
   micro_nlu: "#f59e0b",
   rag_expand: "#10b981",
+  rag_rerank: "#0f766e",
   embedding: "#ef4444",
 }
 
@@ -239,6 +230,7 @@ const LAYER_LABELS: Record<string, string> = {
   full_nlu: "Full NLU",
   micro_nlu: "Micro NLU",
   rag_expand: "RAG Expand",
+  rag_rerank: "RAG Rerank",
   embedding: "Embedding",
 }
 
@@ -396,18 +388,6 @@ export default function AITokenUsagePage() {
     return allModelDetail.filter(d => d.village_id === villageId)
   }, [allModelDetail])
 
-  // Helper: compute calculated cost for a village using Gemini pricing
-  const calcVillageCost = useCallback((villageId: string) => {
-    const details = getVillageModelData(villageId)
-    let totalInputCost = 0, totalOutputCost = 0
-    for (const d of details) {
-      const c = calcModelCost(d.model, d.input_tokens, d.output_tokens)
-      totalInputCost += c.inputCost
-      totalOutputCost += c.outputCost
-    }
-    return { inputCost: totalInputCost, outputCost: totalOutputCost, totalCost: totalInputCost + totalOutputCost }
-  }, [getVillageModelData])
-
   // Handle tab change — load data on demand
   const handleTabChange = (tab: string) => {
     setActiveTab(tab)
@@ -469,7 +449,7 @@ export default function AITokenUsagePage() {
             AI Token Usage
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Monitoring penggunaan token AI — Harga dari pricing resmi Gemini API (Kurs: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")})
+            Monitoring penggunaan token AI gateway per model. Kurs estimasi: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -585,7 +565,7 @@ export default function AITokenUsagePage() {
         {/* ====== IKHTISAR TOKEN TAB ====== */}
         <TabsContent value="ringkasan" className="space-y-6 mt-4">
           {/* Token distribution cards — Full NLU / Micro NLU / Embedding / RAG */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <div className="h-3 w-3 rounded-full bg-indigo-500" />
@@ -616,7 +596,15 @@ export default function AITokenUsagePage() {
                 <span className="text-xs text-muted-foreground font-medium">RAG Expand</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.rag_expand_tokens || 0)}</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_expand_calls || 0)} calls</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_expand_calls || 0)} calls · {formatIDR(summary?.rag_expand_cost || 0)}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="h-3 w-3 rounded-full bg-teal-800" />
+                <span className="text-xs text-muted-foreground font-medium">RAG Rerank</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.rag_rerank_tokens || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_rerank_calls || 0)} calls · {formatIDR(summary?.rag_rerank_cost || 0)}</p>
             </div>
           </div>
 
@@ -627,7 +615,7 @@ export default function AITokenUsagePage() {
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Cpu className="h-4 w-4" /> Distribusi Token per Layer
                 </CardTitle>
-                <CardDescription>Full NLU (chat utama), Micro NLU (klasifier), Embedding, RAG Expand</CardDescription>
+                <CardDescription>Full NLU, Micro NLU, Embedding, RAG Rewrite, dan RAG Rerank</CardDescription>
               </CardHeader>
               <CardContent>
                 {summaryLoading ? <Skeleton className="h-56" /> : (
@@ -635,15 +623,16 @@ export default function AITokenUsagePage() {
                     <div className="h-56 flex items-center justify-center">
                       <Doughnut
                         data={{
-                          labels: ["Full NLU", "Micro NLU", "Embedding", "RAG Expand"],
+                          labels: ["Full NLU", "Micro NLU", "Embedding", "RAG Expand", "RAG Rerank"],
                           datasets: [{
                             data: [
                               summary?.full_nlu_tokens || 0,
                               summary?.micro_nlu_tokens || 0,
                               summary?.embedding_tokens || 0,
                               summary?.rag_expand_tokens || 0,
+                              summary?.rag_rerank_tokens || 0,
                             ],
-                            backgroundColor: ["#6366f1", "#f59e0b", "#a855f7", "#14b8a6"],
+                            backgroundColor: ["#6366f1", "#f59e0b", "#a855f7", "#14b8a6", "#0f766e"],
                             borderWidth: 2,
                             borderColor: "#fff",
                           }],
@@ -741,7 +730,7 @@ export default function AITokenUsagePage() {
         {/* ====== BIAYA (COST) TAB ====== */}
         <TabsContent value="biaya" className="space-y-6 mt-4">
           {/* Cost Summary Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <div className="rounded-lg bg-emerald-100 dark:bg-emerald-950 p-2"><Wallet className="h-4 w-4 text-emerald-600" /></div>
@@ -774,6 +763,22 @@ export default function AITokenUsagePage() {
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.embedding_cost || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.embedding_calls || 0)} calls</p>
             </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="rounded-lg bg-teal-100 dark:bg-teal-950 p-2"><Layers className="h-4 w-4 text-teal-600" /></div>
+                <span className="text-xs text-muted-foreground font-medium">Biaya RAG Rewrite</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.rag_expand_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_expand_calls || 0)} calls</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="rounded-lg bg-cyan-100 dark:bg-cyan-950 p-2"><Layers className="h-4 w-4 text-cyan-700" /></div>
+                <span className="text-xs text-muted-foreground font-medium">Biaya Rerank</span>
+              </div>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.rag_rerank_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_rerank_calls || 0)} calls</p>
+            </div>
           </div>
 
           {/* Rincian Biaya per Model */}
@@ -782,7 +787,7 @@ export default function AITokenUsagePage() {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <DollarSign className="h-4 w-4" /> Rincian Biaya per Model
               </CardTitle>
-              <CardDescription>Biaya dihitung berdasarkan harga resmi Gemini API (input &amp; output berbeda per model). Kurs: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")}</CardDescription>
+              <CardDescription>Biaya memakai `cost_usd` yang direkam backend, jadi selalu mengikuti provider/model gateway aktif. Kurs: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")}</CardDescription>
             </CardHeader>
             <CardContent>
               {summaryLoading ? <Skeleton className="h-48" /> : (
@@ -793,41 +798,35 @@ export default function AITokenUsagePage() {
                         <th className="pb-2 pr-3">Model</th>
                         <th className="pb-2 pr-3 text-right">Input Tokens</th>
                         <th className="pb-2 pr-3 text-right">Output Tokens</th>
-                        <th className="pb-2 pr-3 text-right">Harga Input (IDR)</th>
-                        <th className="pb-2 pr-3 text-right">Harga Output (IDR)</th>
+                        <th className="pb-2 pr-3 text-right">Total Tokens</th>
+                        <th className="pb-2 pr-3 text-right">API Calls</th>
                         <th className="pb-2 pr-3 text-right">Total Biaya (IDR)</th>
                         <th className="pb-2 text-right">Biaya (USD)</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {byModel.map((m, i) => {
-                        const c = calcModelCost(m.model, m.input_tokens, m.output_tokens)
-                        return (
-                          <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
-                            <td className="py-2 pr-3">
-                              <span className="font-mono text-xs">{m.model}</span>
-                              <div className="text-[10px] text-muted-foreground">
-                                ${c.pricing.input}/M in · ${c.pricing.output}/M out
-                              </div>
-                            </td>
-                            <td className="py-2 pr-3 text-right">{formatNumber(m.input_tokens)}</td>
-                            <td className="py-2 pr-3 text-right">{formatNumber(m.output_tokens)}</td>
-                            <td className="py-2 pr-3 text-right text-blue-600">{formatIDR(c.inputCost)}</td>
-                            <td className="py-2 pr-3 text-right text-orange-600">{formatIDR(c.outputCost)}</td>
-                            <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(c.totalCost)}</td>
-                            <td className="py-2 text-right text-muted-foreground">{formatUSD(c.totalCost)}</td>
-                          </tr>
-                        )
-                      })}
+                      {byModel.map((m, i) => (
+                        <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                          <td className="py-2 pr-3">
+                            <span className="font-mono text-xs">{m.model}</span>
+                          </td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(m.input_tokens)}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(m.output_tokens)}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(m.total_tokens)}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(m.call_count)}</td>
+                          <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(m.cost_usd)}</td>
+                          <td className="py-2 text-right text-muted-foreground">{formatUSD(m.cost_usd)}</td>
+                        </tr>
+                      ))}
                       {byModel.length > 0 && (
                         <tr className="border-t-2 font-semibold bg-muted/30">
                           <td className="py-2 pr-3">TOTAL</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.input_tokens, 0))}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.output_tokens, 0))}</td>
-                          <td className="py-2 pr-3 text-right text-blue-600">{formatIDR(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).inputCost, 0))}</td>
-                          <td className="py-2 pr-3 text-right text-orange-600">{formatIDR(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).outputCost, 0))}</td>
-                          <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).totalCost, 0))}</td>
-                          <td className="py-2 text-right text-muted-foreground">{formatUSD(byModel.reduce((s, m) => s + calcModelCost(m.model, m.input_tokens, m.output_tokens).totalCost, 0))}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.total_tokens, 0))}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.call_count, 0))}</td>
+                          <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(sumCostUsd(byModel))}</td>
+                          <td className="py-2 text-right text-muted-foreground">{formatUSD(sumCostUsd(byModel))}</td>
                         </tr>
                       )}
                       {byModel.length === 0 && (
@@ -847,21 +846,23 @@ export default function AITokenUsagePage() {
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Activity className="h-4 w-4" /> Biaya per Layer
                 </CardTitle>
-                <CardDescription>Perbandingan biaya antara Full NLU, Micro NLU, dan Embedding</CardDescription>
+                <CardDescription>Perbandingan biaya antara Full NLU, Micro NLU, Embedding, RAG Rewrite, dan Rerank</CardDescription>
               </CardHeader>
               <CardContent>
                 {summaryLoading ? <Skeleton className="h-56" /> : (
                   <div className="h-56 flex items-center justify-center">
                     <Doughnut
                       data={{
-                        labels: ["Full NLU", "Micro NLU", "Embedding"],
+                        labels: ["Full NLU", "Micro NLU", "Embedding", "RAG Rewrite", "RAG Rerank"],
                         datasets: [{
                           data: [
                             summary?.full_nlu_cost || 0,
                             summary?.micro_nlu_cost || 0,
                             summary?.embedding_cost || 0,
+                            summary?.rag_expand_cost || 0,
+                            summary?.rag_rerank_cost || 0,
                           ],
-                          backgroundColor: ["#6366f1", "#f59e0b", "#a855f7"],
+                          backgroundColor: ["#6366f1", "#f59e0b", "#a855f7", "#14b8a6", "#0f766e"],
                           borderWidth: 2,
                           borderColor: "#fff",
                         }],
@@ -884,13 +885,13 @@ export default function AITokenUsagePage() {
               </CardContent>
             </Card>
 
-            {/* Sumber API Key — BYOK vs ENV */}
+            {/* Sumber Gateway / legacy source tracking */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Shield className="h-4 w-4" /> Sumber API Key
+                  <Shield className="h-4 w-4" /> Sumber Trafik AI
                 </CardTitle>
-                <CardDescription>Rincian penggunaan dari BYOK keys vs .env API key utama</CardDescription>
+                <CardDescription>Distribusi penggunaan berdasarkan lane gateway aktif. Label legacy tetap ditampilkan untuk data historis lama.</CardDescription>
               </CardHeader>
               <CardContent>
                 {summaryLoading ? <Skeleton className="h-24" /> : bySource.length === 0 ? (
@@ -900,7 +901,7 @@ export default function AITokenUsagePage() {
                       <span className="text-sm font-medium text-amber-800 dark:text-amber-200">Belum Ada Data</span>
                     </div>
                     <p className="text-xs text-amber-700 dark:text-amber-300">
-                      Data sumber API key akan muncul setelah ada percakapan baru yang terekam dengan tracking key source.
+                      Data sumber trafik akan muncul setelah ada request baru yang terekam dengan tracking key source.
                     </p>
                   </div>
                 ) : (
@@ -920,12 +921,8 @@ export default function AITokenUsagePage() {
                           {bySource.map((s) => (
                             <tr key={s.source} className="border-b last:border-0">
                               <td className="py-2 pr-3 font-medium text-sm">
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                                  s.source === 'byok' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
-                                  s.source === 'env' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
-                                  'bg-gray-100 text-gray-700 dark:bg-gray-900 dark:text-gray-300'
-                                }`}>
-                                  {s.source === 'byok' ? 'BYOK Keys' : s.source === 'env' ? '.env Fallback' : s.source}
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${sourceBadgeClass(s.source)}`}>
+                                  {formatSourceLabel(s.source)}
                                 </span>
                               </td>
                               <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(s.total_calls)}</td>
@@ -1130,7 +1127,7 @@ export default function AITokenUsagePage() {
                 const superadminTokens = superadminInput + superadminOutput
                 const superadminCalls = Math.max(0, (summary?.total_calls || 0) - villageTotalCalls)
                 const totalUsers = responsesByVillage.reduce((s, v) => s + v.unique_users, 0)
-                const allVillageCost = byVillage.reduce((s, v) => s + calcVillageCost(v.village_id).totalCost, 0)
+                const allVillageCost = sumCostUsd(byVillage)
 
                 return (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1236,7 +1233,7 @@ export default function AITokenUsagePage() {
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <Building2 className="h-4 w-4" /> Analisis Token per Desa (Semua Model Digabung)
                   </CardTitle>
-                  <CardDescription>Biaya dihitung dari harga resmi Gemini (input &amp; output berbeda per model). Klik Detail untuk breakdown lengkap per model &amp; layer.</CardDescription>
+                  <CardDescription>Biaya memakai `cost_usd` yang direkam backend. Klik Detail untuk breakdown lengkap per model dan layer.</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="overflow-x-auto">
@@ -1249,15 +1246,12 @@ export default function AITokenUsagePage() {
                           <th className="pb-2 pr-3 text-right">Total</th>
                           <th className="pb-2 pr-3 text-right">Calls</th>
                           <th className="pb-2 pr-3 text-right">Users</th>
-                          <th className="pb-2 pr-3 text-right">Harga Input</th>
-                          <th className="pb-2 pr-3 text-right">Harga Output</th>
                           <th className="pb-2 pr-3 text-right">Total Biaya</th>
                           <th className="pb-2 text-center">Aksi</th>
                         </tr>
                       </thead>
                       <tbody>
                         {byVillage.map((v, i) => {
-                          const vc = calcVillageCost(v.village_id)
                           const resp = responsesByVillage.find(r => r.village_id === v.village_id)
                           return (
                             <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
@@ -1267,9 +1261,7 @@ export default function AITokenUsagePage() {
                               <td className="py-2 pr-3 text-right font-semibold">{formatNumber(v.total_tokens)}</td>
                               <td className="py-2 pr-3 text-right">{formatNumber(v.call_count)}</td>
                               <td className="py-2 pr-3 text-right">{resp?.unique_users ?? "-"}</td>
-                              <td className="py-2 pr-3 text-right text-blue-600">{formatIDR(vc.inputCost)}</td>
-                              <td className="py-2 pr-3 text-right text-orange-600">{formatIDR(vc.outputCost)}</td>
-                              <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(vc.totalCost)}</td>
+                              <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(v.cost_usd)}</td>
                               <td className="py-2 text-center">
                                 <Button variant="ghost" size="sm" onClick={() => setDetailVillageId(v.village_id)} className="h-7 px-2 text-xs">
                                   <Eye className="h-3 w-3 mr-1" /> Detail
@@ -1284,8 +1276,7 @@ export default function AITokenUsagePage() {
                           const totTok = byVillage.reduce((s, v) => s + v.total_tokens, 0)
                           const totCall = byVillage.reduce((s, v) => s + v.call_count, 0)
                           const totUsers = responsesByVillage.reduce((s, v) => s + v.unique_users, 0)
-                          const totIC = byVillage.reduce((s, v) => s + calcVillageCost(v.village_id).inputCost, 0)
-                          const totOC = byVillage.reduce((s, v) => s + calcVillageCost(v.village_id).outputCost, 0)
+                          const totalVillageCost = sumCostUsd(byVillage)
                           return (
                             <tr className="border-t-2 font-semibold bg-muted/30">
                               <td className="py-2 pr-3">TOTAL ({byVillage.length} desa)</td>
@@ -1294,15 +1285,13 @@ export default function AITokenUsagePage() {
                               <td className="py-2 pr-3 text-right">{formatNumber(totTok)}</td>
                               <td className="py-2 pr-3 text-right">{formatNumber(totCall)}</td>
                               <td className="py-2 pr-3 text-right">{totUsers}</td>
-                              <td className="py-2 pr-3 text-right text-blue-600">{formatIDR(totIC)}</td>
-                              <td className="py-2 pr-3 text-right text-orange-600">{formatIDR(totOC)}</td>
-                              <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(totIC + totOC)}</td>
+                              <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(totalVillageCost)}</td>
                               <td className="py-2"></td>
                             </tr>
                           )
                         })()}
                         {byVillage.length === 0 && (
-                          <tr><td colSpan={10} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
+                          <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -1337,7 +1326,7 @@ export default function AITokenUsagePage() {
                         <tbody>
                           {responsesByVillage.map((r, i) => {
                             const vu = byVillage.find(v => v.village_id === r.village_id)
-                            const vc = vu ? calcVillageCost(vu.village_id) : { totalCost: 0 }
+                            const totalCost = vu?.cost_usd || 0
                             const users = r.unique_users || 1
                             return (
                               <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
@@ -1347,8 +1336,8 @@ export default function AITokenUsagePage() {
                                 <td className="py-2 pr-3 text-right font-semibold">{formatNumber(Math.round((vu?.total_tokens || 0) / users))}</td>
                                 <td className="py-2 pr-3 text-right">{formatNumber(Math.round((vu?.input_tokens || 0) / users))}</td>
                                 <td className="py-2 pr-3 text-right">{formatNumber(Math.round((vu?.output_tokens || 0) / users))}</td>
-                                <td className="py-2 pr-3 text-right text-emerald-600">{formatIDR(vc.totalCost)}</td>
-                                <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(vc.totalCost / users)}</td>
+                                <td className="py-2 pr-3 text-right text-emerald-600">{formatIDR(totalCost)}</td>
+                                <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(totalCost / users)}</td>
                               </tr>
                             )
                           })}
@@ -1367,27 +1356,31 @@ export default function AITokenUsagePage() {
             const totalInput = detail.reduce((s, d) => s + d.input_tokens, 0)
             const totalOutput = detail.reduce((s, d) => s + d.output_tokens, 0)
             const totalCalls = detail.reduce((s, d) => s + d.call_count, 0)
-            let totalInputCost = 0, totalOutputCost = 0
-            detail.forEach(d => {
-              const c = calcModelCost(d.model, d.input_tokens, d.output_tokens)
-              totalInputCost += c.inputCost
-              totalOutputCost += c.outputCost
-            })
-            const totalCost = totalInputCost + totalOutputCost
+            const totalCost = sumCostUsd(detail)
             const resp = responsesByVillage.find(r => r.village_id === detailVillageId)
             const users = resp?.unique_users || 0
 
             // Group by model
-            const modelMap = new Map<string, { input: number; output: number; calls: number }>()
+            const modelMap = new Map<string, { input: number; output: number; calls: number; cost: number }>()
             detail.forEach(d => {
-              const prev = modelMap.get(d.model) || { input: 0, output: 0, calls: 0 }
-              modelMap.set(d.model, { input: prev.input + d.input_tokens, output: prev.output + d.output_tokens, calls: prev.calls + d.call_count })
+              const prev = modelMap.get(d.model) || { input: 0, output: 0, calls: 0, cost: 0 }
+              modelMap.set(d.model, {
+                input: prev.input + d.input_tokens,
+                output: prev.output + d.output_tokens,
+                calls: prev.calls + d.call_count,
+                cost: prev.cost + d.cost_usd,
+              })
             })
             // Group by layer
-            const layerMap = new Map<string, { input: number; output: number; calls: number }>()
+            const layerMap = new Map<string, { input: number; output: number; calls: number; cost: number }>()
             detail.forEach(d => {
-              const prev = layerMap.get(d.layer_type) || { input: 0, output: 0, calls: 0 }
-              layerMap.set(d.layer_type, { input: prev.input + d.input_tokens, output: prev.output + d.output_tokens, calls: prev.calls + d.call_count })
+              const prev = layerMap.get(d.layer_type) || { input: 0, output: 0, calls: 0, cost: 0 }
+              layerMap.set(d.layer_type, {
+                input: prev.input + d.input_tokens,
+                output: prev.output + d.output_tokens,
+                calls: prev.calls + d.call_count,
+                cost: prev.cost + d.cost_usd,
+              })
             })
 
             return (
@@ -1413,12 +1406,12 @@ export default function AITokenUsagePage() {
                           <div className="rounded-lg bg-muted p-3 text-center">
                             <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Input Tokens</div>
                             <div className="text-lg font-bold">{formatNumber(totalInput)}</div>
-                            <div className="text-xs text-blue-600">{formatIDR(totalInputCost)}</div>
+                            <div className="text-xs text-muted-foreground">Recorded by gateway</div>
                           </div>
                           <div className="rounded-lg bg-muted p-3 text-center">
                             <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Output Tokens</div>
                             <div className="text-lg font-bold">{formatNumber(totalOutput)}</div>
-                            <div className="text-xs text-orange-600">{formatIDR(totalOutputCost)}</div>
+                            <div className="text-xs text-muted-foreground">Recorded by gateway</div>
                           </div>
                           <div className="rounded-lg bg-muted p-3 text-center">
                             <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Total Biaya</div>
@@ -1443,29 +1436,21 @@ export default function AITokenUsagePage() {
                                   <th className="pb-2 pr-3 text-right">Input</th>
                                   <th className="pb-2 pr-3 text-right">Output</th>
                                   <th className="pb-2 pr-3 text-right">Calls</th>
-                                  <th className="pb-2 pr-3 text-right">Harga Input</th>
-                                  <th className="pb-2 pr-3 text-right">Harga Output</th>
-                                  <th className="pb-2 text-right">Total</th>
+                                  <th className="pb-2 text-right">Total Biaya</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {Array.from(modelMap.entries()).map(([model, data], i) => {
-                                  const mc = calcModelCost(model, data.input, data.output)
-                                  return (
-                                    <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
-                                      <td className="py-1.5 pr-3">
-                                        <span className="font-mono text-xs">{model}</span>
-                                        <div className="text-[10px] text-muted-foreground">${mc.pricing.input}/M in · ${mc.pricing.output}/M out</div>
-                                      </td>
-                                      <td className="py-1.5 pr-3 text-right">{formatNumber(data.input)}</td>
-                                      <td className="py-1.5 pr-3 text-right">{formatNumber(data.output)}</td>
-                                      <td className="py-1.5 pr-3 text-right">{data.calls}</td>
-                                      <td className="py-1.5 pr-3 text-right text-blue-600">{formatIDR(mc.inputCost)}</td>
-                                      <td className="py-1.5 pr-3 text-right text-orange-600">{formatIDR(mc.outputCost)}</td>
-                                      <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(mc.totalCost)}</td>
-                                    </tr>
-                                  )
-                                })}
+                                {Array.from(modelMap.entries()).map(([model, data], i) => (
+                                  <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                                    <td className="py-1.5 pr-3">
+                                      <span className="font-mono text-xs">{model}</span>
+                                    </td>
+                                    <td className="py-1.5 pr-3 text-right">{formatNumber(data.input)}</td>
+                                    <td className="py-1.5 pr-3 text-right">{formatNumber(data.output)}</td>
+                                    <td className="py-1.5 pr-3 text-right">{data.calls}</td>
+                                    <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(data.cost)}</td>
+                                  </tr>
+                                ))}
                               </tbody>
                             </table>
                           </div>
@@ -1487,8 +1472,6 @@ export default function AITokenUsagePage() {
                               </thead>
                               <tbody>
                                 {Array.from(layerMap.entries()).map(([layer, data], i) => {
-                                  const layerRows = detail.filter(d => d.layer_type === layer)
-                                  const layerCost = layerRows.reduce((s, d) => s + calcModelCost(d.model, d.input_tokens, d.output_tokens).totalCost, 0)
                                   return (
                                     <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
                                       <td className="py-1.5 pr-3">
@@ -1499,7 +1482,7 @@ export default function AITokenUsagePage() {
                                       <td className="py-1.5 pr-3 text-right">{formatNumber(data.input)}</td>
                                       <td className="py-1.5 pr-3 text-right">{formatNumber(data.output)}</td>
                                       <td className="py-1.5 pr-3 text-right">{data.calls}</td>
-                                      <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(layerCost)}</td>
+                                      <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(data.cost)}</td>
                                     </tr>
                                   )
                                 })}
@@ -1520,31 +1503,24 @@ export default function AITokenUsagePage() {
                                   <th className="pb-2 pr-3 text-right">Input</th>
                                   <th className="pb-2 pr-3 text-right">Output</th>
                                   <th className="pb-2 pr-3 text-right">Calls</th>
-                                  <th className="pb-2 pr-3 text-right">Harga Input</th>
-                                  <th className="pb-2 pr-3 text-right">Harga Output</th>
-                                  <th className="pb-2 text-right">Total</th>
+                                  <th className="pb-2 text-right">Total Biaya</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {detail.map((d, i) => {
-                                  const c = calcModelCost(d.model, d.input_tokens, d.output_tokens)
-                                  return (
-                                    <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
-                                      <td className="py-1.5 pr-3">
-                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: (LAYER_COLORS[d.layer_type] || "#94a3b8") + "20", color: LAYER_COLORS[d.layer_type] || "#94a3b8" }}>
-                                          {LAYER_LABELS[d.layer_type] || d.layer_type}
-                                        </span>
-                                      </td>
-                                      <td className="py-1.5 pr-3 font-mono text-xs">{d.model}</td>
-                                      <td className="py-1.5 pr-3 text-right">{formatNumber(d.input_tokens)}</td>
-                                      <td className="py-1.5 pr-3 text-right">{formatNumber(d.output_tokens)}</td>
-                                      <td className="py-1.5 pr-3 text-right">{d.call_count}</td>
-                                      <td className="py-1.5 pr-3 text-right text-blue-600">{formatIDR(c.inputCost)}</td>
-                                      <td className="py-1.5 pr-3 text-right text-orange-600">{formatIDR(c.outputCost)}</td>
-                                      <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(c.totalCost)}</td>
-                                    </tr>
-                                  )
-                                })}
+                                {detail.map((d, i) => (
+                                  <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                                    <td className="py-1.5 pr-3">
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: (LAYER_COLORS[d.layer_type] || "#94a3b8") + "20", color: LAYER_COLORS[d.layer_type] || "#94a3b8" }}>
+                                        {LAYER_LABELS[d.layer_type] || d.layer_type}
+                                      </span>
+                                    </td>
+                                    <td className="py-1.5 pr-3 font-mono text-xs">{d.model}</td>
+                                    <td className="py-1.5 pr-3 text-right">{formatNumber(d.input_tokens)}</td>
+                                    <td className="py-1.5 pr-3 text-right">{formatNumber(d.output_tokens)}</td>
+                                    <td className="py-1.5 pr-3 text-right">{d.call_count}</td>
+                                    <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(d.cost_usd)}</td>
+                                  </tr>
+                                ))}
                               </tbody>
                             </table>
                           </div>
@@ -1581,7 +1557,7 @@ export default function AITokenUsagePage() {
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Zap className="h-4 w-4" /> Detail per Layer, Call Type &amp; Model
                 </CardTitle>
-                <CardDescription>Breakdown lengkap penggunaan token berdasarkan layer dan model — biaya dari pricing resmi Gemini</CardDescription>
+                <CardDescription>Breakdown lengkap penggunaan token berdasarkan layer dan model aktif di gateway.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
@@ -1595,36 +1571,27 @@ export default function AITokenUsagePage() {
                         <th className="pb-2 pr-3 text-right">Output</th>
                         <th className="pb-2 pr-3 text-right">Calls</th>
                         <th className="pb-2 pr-3 text-right">Latency</th>
-                        <th className="pb-2 pr-3 text-right">Harga Input</th>
-                        <th className="pb-2 pr-3 text-right">Harga Output</th>
                         <th className="pb-2 text-right">Total Biaya</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {layerBreakdown.map((r, i) => {
-                        const c = calcModelCost(r.model, r.input_tokens, r.output_tokens)
-                        return (
-                          <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
-                            <td className="py-2 pr-3">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: (LAYER_COLORS[r.layer_type] || "#94a3b8") + "20", color: LAYER_COLORS[r.layer_type] || "#94a3b8" }}>
-                                {LAYER_LABELS[r.layer_type] || r.layer_type}
-                              </span>
-                            </td>
-                            <td className="py-2 pr-3 font-mono text-xs">{r.call_type}</td>
-                            <td className="py-2 pr-3 font-mono text-xs">{r.model}</td>
-                            <td className="py-2 pr-3 text-right">{formatNumber(r.input_tokens)}</td>
-                            <td className="py-2 pr-3 text-right">{formatNumber(r.output_tokens)}</td>
-                            <td className="py-2 pr-3 text-right">{formatNumber(r.call_count)}</td>
-                            <td className="py-2 pr-3 text-right">{r.avg_duration_ms ? r.avg_duration_ms + "ms" : "-"}</td>
-                            <td className="py-2 pr-3 text-right text-blue-600">{formatIDR(c.inputCost)}</td>
-                            <td className="py-2 pr-3 text-right text-orange-600">{formatIDR(c.outputCost)}</td>
-                            <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(c.totalCost)}</td>
-                          </tr>
-                        )
-                      })}
+                      {layerBreakdown.map((r, i) => (
+                        <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                          <td className="py-2 pr-3">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: (LAYER_COLORS[r.layer_type] || "#94a3b8") + "20", color: LAYER_COLORS[r.layer_type] || "#94a3b8" }}>
+                              {LAYER_LABELS[r.layer_type] || r.layer_type}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-3 font-mono text-xs">{r.call_type}</td>
+                          <td className="py-2 pr-3 font-mono text-xs">{r.model}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(r.input_tokens)}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(r.output_tokens)}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(r.call_count)}</td>
+                          <td className="py-2 pr-3 text-right">{r.avg_duration_ms ? r.avg_duration_ms + "ms" : "-"}</td>
+                          <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(r.cost_usd)}</td>
+                        </tr>
+                      ))}
                       {layerBreakdown.length > 0 && (() => {
-                        const totIC = layerBreakdown.reduce((s, r) => s + calcModelCost(r.model, r.input_tokens, r.output_tokens).inputCost, 0)
-                        const totOC = layerBreakdown.reduce((s, r) => s + calcModelCost(r.model, r.input_tokens, r.output_tokens).outputCost, 0)
                         return (
                           <tr className="border-t-2 font-semibold bg-muted/30">
                             <td className="py-2 pr-3" colSpan={3}>TOTAL</td>
@@ -1632,14 +1599,12 @@ export default function AITokenUsagePage() {
                             <td className="py-2 pr-3 text-right">{formatNumber(layerBreakdown.reduce((s, r) => s + r.output_tokens, 0))}</td>
                             <td className="py-2 pr-3 text-right">{formatNumber(layerBreakdown.reduce((s, r) => s + r.call_count, 0))}</td>
                             <td className="py-2 pr-3 text-right">-</td>
-                            <td className="py-2 pr-3 text-right text-blue-600">{formatIDR(totIC)}</td>
-                            <td className="py-2 pr-3 text-right text-orange-600">{formatIDR(totOC)}</td>
-                            <td className="py-2 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(totIC + totOC)}</td>
+                            <td className="py-2 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(sumCostUsd(layerBreakdown))}</td>
                           </tr>
                         )
                       })()}
                       {layerBreakdown.length === 0 && (
-                        <tr><td colSpan={10} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
+                        <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">Belum ada data</td></tr>
                       )}
                     </tbody>
                   </table>

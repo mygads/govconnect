@@ -61,7 +61,7 @@ export interface LLMMetrics {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
-  keySource?: string;  // "byok" | "env"
+  keySource?: string;  // "gateway_<lane>" or legacy "byok" / "env"
   keyId?: string | null;
-  keyTier?: string;    // "free" | "tier1" | "tier2" | "env"
+  keyTier?: string;    // gateway provider or legacy tier label
 }

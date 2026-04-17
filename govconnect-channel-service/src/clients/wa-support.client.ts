@@ -114,7 +114,9 @@ export interface CreateSessionRequest {
   events?: string;
   expiration_sec?: number;
   auto_connect?: boolean;
-  history?: boolean;
+  auto_read_enabled?: boolean;
+  typing_enabled?: boolean;
+  history?: number;
 }
 
 export interface UpdateSessionRequest {
@@ -122,10 +124,14 @@ export interface UpdateSessionRequest {
   webhook_url?: string;
   events?: string;
   expiration_sec?: number;
-  history?: boolean;
+  auto_read_enabled?: boolean;
+  typing_enabled?: boolean;
+  history?: number;
 }
 
 export interface UpdateSessionSettingsRequest {
+  auto_read_enabled?: boolean;
+  typing_enabled?: boolean;
   webhook_url?: string;
 }
 
@@ -448,6 +454,29 @@ class WaSupportClient {
   /** Pair phone for linking code auth */
   async pairPhone(sessionToken: string, phone: string): Promise<WaSupportResult> {
     return this.waGateway(sessionToken, '/session/pairphone', 'POST', { Phone: phone });
+  }
+
+  /** Configure per-session S3 media storage */
+  async configureSessionS3(sessionToken: string, data: Record<string, unknown>): Promise<WaSupportResult> {
+    return this.waGateway(sessionToken, '/session/s3/config', 'POST', data);
+  }
+
+  /** Test per-session S3 media storage */
+  async testSessionS3(sessionToken: string): Promise<WaSupportResult> {
+    return this.waGateway(sessionToken, '/session/s3/test', 'POST');
+  }
+
+  /** Update webhook for legacy direct session bootstrapping */
+  async setWebhook(sessionToken: string, webhookUrl: string, events: string[] = ['Message']): Promise<WaSupportResult> {
+    return this.waGateway(sessionToken, '/webhook', 'POST', {
+      WebhookURL: webhookUrl,
+      Events: events,
+    });
+  }
+
+  /** Configure message history retention */
+  async setHistory(sessionToken: string, history: number): Promise<WaSupportResult> {
+    return this.waGateway(sessionToken, '/session/history', 'POST', { history });
   }
 }
 

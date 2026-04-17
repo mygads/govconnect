@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import logger from '../utils/logger';
 import { getQuery } from '../utils/http';
-import { MEDIA_INTERNAL_URL, MEDIA_PUBLIC_URL } from '../services/media.service';
+import { uploadBufferToObjectStorage } from '../services/object-storage.service';
 
 function getScope(raw: unknown): string {
   const value = typeof raw === 'string' ? raw.trim() : '';
@@ -23,19 +23,31 @@ export async function handleUploadMedia(req: Request, res: Response): Promise<vo
       return;
     }
 
-    const relativePath = `public/${scope}/${file.filename}`;
-    const internalUrl = `${MEDIA_INTERNAL_URL.replace(/\/$/, '')}/${relativePath}`;
-    const publicUrl = `${MEDIA_PUBLIC_URL.replace(/\/$/, '')}/${relativePath}`;
+    if (!file.buffer || file.buffer.length === 0) {
+      res.status(400).json({ success: false, error: 'Isi file tidak ditemukan' });
+      return;
+    }
+
+    const uploaded = await uploadBufferToObjectStorage({
+      buffer: file.buffer,
+      contentType: file.mimetype || 'application/octet-stream',
+      originalName: file.originalname,
+      folder: `media/public/${scope}`,
+      metadata: {
+        scope,
+        source: 'dashboard-upload',
+      },
+    });
 
     res.json({
       success: true,
       data: {
-        filename: file.filename,
+        filename: uploaded.fileName,
         mime_type: file.mimetype,
         size: file.size,
-        path: relativePath,
-        url: publicUrl,
-        internal_url: internalUrl,
+        path: uploaded.key,
+        url: uploaded.url,
+        internal_url: uploaded.internalUrl,
       },
     });
   } catch (error: any) {

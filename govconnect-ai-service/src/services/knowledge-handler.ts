@@ -3,13 +3,13 @@
  *
  * Sub-handlers (address, hours, contact) use deterministic DB lookups
  * (anti-hallucination). Only general questions fall through to the
- * secondary callGemini() RAG path.
+ * secondary callLLM() RAG path.
  */
 
 import logger from '../utils/logger';
 import axios from 'axios';
 import { config } from '../config/env';
-import { callGemini } from './llm.service';
+import { callLLM } from './llm.service';
 import { buildKnowledgeQueryContext } from './context-builder.service';
 import { searchKnowledge, searchKnowledgeKeywordsOnly, getVillageProfileSummary } from './knowledge.service';
 import { getImportantContacts } from './important-contacts.service';
@@ -180,7 +180,7 @@ export async function handleKnowledgeQuery(
       // Only reuse if reply is structured (has list markers) suggesting completeness
       const isStructured = /(\n[-*•]\s|\n\d+[.)]\s)/.test(mainLlmReplyText);
       if (!isGeneric && isStructured) {
-        logger.info('[KnowledgeQuery] Reusing main LLM reply, skipping second callGemini', {
+        logger.info('[KnowledgeQuery] Reusing main LLM reply, skipping second callLLM', {
           userId,
           replyLength: mainLlmReplyText.length,
         });
@@ -195,7 +195,7 @@ export async function handleKnowledgeQuery(
     }
 
     const { systemPrompt } = await buildKnowledgeQueryContext(userId, message, contextString);
-    const knowledgeResult2 = await callGemini(systemPrompt);
+    const knowledgeResult2 = await callLLM(systemPrompt);
 
     if (!knowledgeResult2) {
       return 'Maaf, terjadi kendala teknis. Silakan coba lagi dalam beberapa saat.';

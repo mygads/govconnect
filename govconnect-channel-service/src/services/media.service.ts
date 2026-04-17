@@ -1,17 +1,9 @@
 import axios from 'axios';
-import fs from 'fs';
-import path from 'path';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { GenfityWebhookPayload, GenfityMediaMessage } from '../types/webhook.types';
 import { getAccessTokenForVillage } from './wa.service';
-
-// Storage configuration
-const MEDIA_STORAGE_PATH = process.env.MEDIA_STORAGE_PATH || '/app/uploads';
-// Internal URL for Docker network (used by other services)
-export const MEDIA_INTERNAL_URL = process.env.MEDIA_INTERNAL_URL || 'http://channel-service:3001/uploads';
-// Public URL for browser access (used by Dashboard)
-export const MEDIA_PUBLIC_URL = process.env.MEDIA_PUBLIC_URL || 'http://localhost:3001/uploads';
+import { uploadBufferToObjectStorage } from './object-storage.service';
 
 export interface MediaInfo {
   hasMedia: boolean;
@@ -22,7 +14,7 @@ export interface MediaInfo {
   fileName?: string;
   caption?: string;
   fileSize?: number;
-  localPath?: string;          // Local file path if downloaded
+  storageKey?: string;
 }
 
 export interface DownloadMediaParams {
@@ -44,9 +36,11 @@ export function extractMediaInfo(payload: GenfityWebhookPayload): MediaInfo {
       hasMedia: true,
       mediaType: getMediaTypeFromMime(payload.s3.mimeType),
       mediaUrl: payload.s3.url,
+      mediaPublicUrl: payload.s3.url,
       mimeType: payload.s3.mimeType,
       fileName: payload.s3.fileName,
       fileSize: payload.s3.size,
+      storageKey: payload.s3.key,
     };
   }
 
@@ -171,11 +165,11 @@ function getExtensionFromMime(mimeType: string): string {
 export interface SavedMediaResult {
   internalUrl: string;  // For Docker network (Case Service)
   publicUrl: string;    // For browser (Dashboard)
-  localPath: string;    // Local file path
+  storageKey: string;
 }
 
 /**
- * Save base64 media to local storage
+ * Save base64 media to object storage
  */
 export async function saveBase64Media(
   base64Data: string,
@@ -184,37 +178,36 @@ export async function saveBase64Media(
   messageId: string
 ): Promise<SavedMediaResult | null> {
   try {
-    // Ensure storage directory exists
-    const userDir = path.join(MEDIA_STORAGE_PATH, waUserId);
-    if (!fs.existsSync(userDir)) {
-      fs.mkdirSync(userDir, { recursive: true });
-    }
-
-    // Generate filename
     const ext = getExtensionFromMime(mimeType);
-    const filename = `${messageId}_${Date.now()}.${ext}`;
-    const filePath = path.join(userDir, filename);
+    const filename = `${messageId}.${ext}`;
 
     // Remove data URL prefix if present
     const base64Content = base64Data.replace(/^data:[^;]+;base64,/, '');
     
-    // Save file
     const buffer = Buffer.from(base64Content, 'base64');
-    fs.writeFileSync(filePath, buffer);
+    const uploaded = await uploadBufferToObjectStorage({
+      buffer,
+      contentType: mimeType || 'application/octet-stream',
+      originalName: filename,
+      folder: `media/whatsapp/${waUserId}`,
+      metadata: {
+        source: 'whatsapp-webhook',
+        waUserId,
+        messageId,
+      },
+    });
 
-    logger.info('Media saved from base64', {
+    logger.info('Media saved from base64 to object storage', {
       waUserId,
       messageId,
-      filePath,
+      storageKey: uploaded.key,
       size: buffer.length,
     });
 
-    // Return both internal and public URLs
-    const relativePath = `${waUserId}/${filename}`;
     return {
-      internalUrl: `${MEDIA_INTERNAL_URL}/${relativePath}`,
-      publicUrl: `${MEDIA_PUBLIC_URL}/${relativePath}`,
-      localPath: filePath,
+      internalUrl: uploaded.internalUrl,
+      publicUrl: uploaded.url,
+      storageKey: uploaded.key,
     };
   } catch (error: any) {
     logger.error('Failed to save base64 media', {
@@ -361,7 +354,7 @@ export async function processMediaFromWebhook(
         ...mediaInfo,
         mediaUrl: savedResult.internalUrl,
         mediaPublicUrl: savedResult.publicUrl,
-        localPath: savedResult.localPath,
+        storageKey: savedResult.storageKey,
       };
     }
   }
@@ -390,7 +383,7 @@ export async function processMediaFromWebhook(
           ...mediaInfo,
           mediaUrl: savedResult.internalUrl,
           mediaPublicUrl: savedResult.publicUrl,
-          localPath: savedResult.localPath,
+          storageKey: savedResult.storageKey,
         };
       }
     }
@@ -429,7 +422,7 @@ export async function processMediaFromWebhook(
           ...mediaInfo,
           mediaUrl: downloadedResult.internalUrl,
           mediaPublicUrl: downloadedResult.publicUrl,
-          localPath: downloadedResult.localPath,
+          storageKey: downloadedResult.storageKey,
         };
       }
     }
@@ -445,15 +438,3 @@ export async function processMediaFromWebhook(
   return mediaInfo;
 }
 
-/**
- * Ensure media storage directory exists
- */
-export function ensureStorageDirectory(): void {
-  if (!fs.existsSync(MEDIA_STORAGE_PATH)) {
-    fs.mkdirSync(MEDIA_STORAGE_PATH, { recursive: true });
-    logger.info('Created media storage directory', { path: MEDIA_STORAGE_PATH });
-  }
-}
-
-// Initialize storage directory on module load
-ensureStorageDirectory();

@@ -1,18 +1,33 @@
 import { Router, Request, Response } from 'express';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import logger from '../utils/logger';
 import { config } from '../config/env';
+import {
+  callAIGatewayEmbeddings,
+  callAIGatewayPrompt,
+  callAIGatewayRerank,
+  getAIGatewayInfo,
+  getAllAIGatewayInfo,
+  getDefaultGatewayModels,
+  getDefaultRAGRewriteModels,
+  isAIGatewayEnabled,
+  pingAIGateway,
+} from '../services/ai-gateway.service';
 import { processUnifiedMessage } from '../services/unified-message-processor.service';
-import { extractAndRecord } from '../services/token-usage.service';
-import { apiKeyManager, isRateLimitError } from '../services/api-key-manager.service';
 import { firstHeader } from '../utils/http';
-
-// Using same unified processor as WhatsApp for consistency
 
 const router = Router();
 
-// Timeout for ping calls (10 seconds)
-const PING_TIMEOUT_MS = 10_000;
+type LanePingStatus = 'connected' | 'error' | 'disabled';
+
+interface LanePingResult {
+  lane: 'llm' | 'embed' | 'rag' | 'rerank';
+  status: LanePingStatus;
+  provider?: string;
+  model?: string;
+  responseTime?: number;
+  details?: Record<string, unknown>;
+  error?: string;
+}
 
 function verifyInternalKey(req: Request, res: Response, next: Function) {
   const apiKey = firstHeader(req.headers['x-internal-api-key']);
@@ -24,124 +39,186 @@ function verifyInternalKey(req: Request, res: Response, next: Function) {
   next();
 }
 
-/**
- * POST /api/testing/ping
- * Lightweight LLM connectivity check — sends a tiny prompt to Gemini
- * and verifies the response. Uses minimal tokens (~20 tokens total).
- */
-router.post('/ping', verifyInternalKey, async (req: Request, res: Response) => {
+async function pingLLMLane(): Promise<LanePingResult> {
+  if (!isAIGatewayEnabled('llm')) {
+    return { lane: 'llm', status: 'disabled', error: 'LLM lane is not configured' };
+  }
+
+  const models = getDefaultGatewayModels('micro');
+  const result = await pingAIGateway(models, 'llm');
+
+  if (!result) {
+    return {
+      lane: 'llm',
+      status: 'error',
+      error: 'All LLM lane ping attempts failed',
+    };
+  }
+
+  return {
+    lane: 'llm',
+    status: 'connected',
+    provider: result.provider,
+    model: result.model,
+    responseTime: result.metrics.durationMs,
+    details: {
+      response: result.text,
+      gateway: getAIGatewayInfo('llm'),
+    },
+  };
+}
+
+async function pingEmbedLane(): Promise<LanePingResult> {
+  if (!isAIGatewayEnabled('embed')) {
+    return { lane: 'embed', status: 'disabled', error: 'Embed lane is not configured' };
+  }
+
+  const result = await callAIGatewayEmbeddings({
+    input: 'ping embedding healthcheck',
+    model: config.embeddingGateway.model,
+    dimensions: config.embeddingGateway.dimensions,
+    timeoutMs: config.embeddingGateway.timeoutMs,
+    layerType: 'embedding',
+    callType: 'embedding_single',
+  });
+
+  if (!result) {
+    return {
+      lane: 'embed',
+      status: 'error',
+      error: 'Embed lane request failed',
+    };
+  }
+
+  return {
+    lane: 'embed',
+    status: 'connected',
+    provider: result.provider,
+    model: result.model,
+    responseTime: result.metrics.durationMs,
+    details: {
+      dimensions: result.embeddings[0]?.length || 0,
+      gateway: getAIGatewayInfo('embed'),
+    },
+  };
+}
+
+async function pingRAGLane(): Promise<LanePingResult> {
+  if (!isAIGatewayEnabled('rag')) {
+    return { lane: 'rag', status: 'disabled', error: 'RAG rewrite lane is not configured' };
+  }
+
+  const result = await callAIGatewayPrompt({
+    lane: 'rag',
+    modelPriority: getDefaultRAGRewriteModels(),
+    messages: [{ role: 'user', content: 'Rewrite this as a short retrieval query: cara bikin ktp baru' }],
+    temperature: 0,
+    maxTokens: 60,
+    timeoutMs: config.ragGateway.timeoutMs,
+    jsonMode: false,
+    layerType: 'rag_expand',
+    callType: 'rag_query_expand',
+  });
+
+  if (!result) {
+    return {
+      lane: 'rag',
+      status: 'error',
+      error: 'RAG rewrite lane request failed',
+    };
+  }
+
+  return {
+    lane: 'rag',
+    status: 'connected',
+    provider: result.provider,
+    model: result.model,
+    responseTime: result.metrics.durationMs,
+    details: {
+      response: result.text,
+      gateway: getAIGatewayInfo('rag'),
+    },
+  };
+}
+
+async function pingRerankLane(): Promise<LanePingResult> {
+  if (!isAIGatewayEnabled('rerank')) {
+    return { lane: 'rerank', status: 'disabled', error: 'Rerank lane is not configured' };
+  }
+
+  const result = await callAIGatewayRerank({
+    query: 'cara bikin ktp baru',
+    documents: [
+      'Panduan pembuatan KTP baru beserta syarat administrasi.',
+      'Jadwal posyandu minggu depan di balai desa.',
+      'Prosedur penggantian KK hilang dan dokumen pendukung.',
+    ],
+    model: config.rerankerGateway.model,
+    topN: Math.min(3, config.rerankerGateway.topN),
+    timeoutMs: config.rerankerGateway.timeoutMs,
+    layerType: 'rag_rerank',
+    callType: 'rerank_documents',
+  });
+
+  if (!result) {
+    return {
+      lane: 'rerank',
+      status: 'error',
+      error: 'Rerank lane request failed',
+    };
+  }
+
+  return {
+    lane: 'rerank',
+    status: 'connected',
+    provider: result.provider,
+    model: result.model,
+    responseTime: result.metrics.durationMs,
+    details: {
+      topScore: result.items[0]?.relevanceScore,
+      resultCount: result.items.length,
+      gateway: getAIGatewayInfo('rerank'),
+    },
+  };
+}
+
+router.post('/ping', verifyInternalKey, async (_req: Request, res: Response) => {
   try {
     const startTime = Date.now();
 
-    // Use the cheapest model available via BYOK key rotation
-    const microModels = ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
-    const callPlan = apiKeyManager.getCallPlan(microModels, microModels);
+    const [llm, embed, rag, rerank] = await Promise.all([
+      pingLLMLane(),
+      pingEmbedLane(),
+      pingRAGLane(),
+      pingRerankLane(),
+    ]);
 
-    // Fallback to .env key if no BYOK keys
-    if (callPlan.length === 0 && config.geminiApiKey) {
-      const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-      callPlan.push({
-        key: { genAI, apiKey: config.geminiApiKey, keyName: 'env', keyId: null, isByok: false, tier: 'env' },
-        model: 'gemini-2.0-flash-lite',
-      });
-    }
+    const tests = { llm, embed, rag, rerank };
+    const hasBlockingError = Object.values(tests).some(test => test.status === 'error');
+    const statusCode = hasBlockingError ? 503 : 200;
 
-    if (callPlan.length === 0) {
-      return res.status(503).json({
-        success: false,
-        error: 'No API keys available',
-      });
-    }
+    logger.info('AI gateway lanes ping completed', {
+      tests,
+      totalResponseTime: Date.now() - startTime,
+    });
 
-    // Try each key/model until one succeeds
-    let lastError = '';
-    for (const { key, model: modelName } of callPlan) {
-      try {
-        const geminiModel = key.genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 10,
-          },
-        });
-
-        const result = await Promise.race([
-          geminiModel.generateContent('Reply with just: OK'),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Ping timeout after ${PING_TIMEOUT_MS}ms`)), PING_TIMEOUT_MS)
-          ),
-        ]);
-
-        const responseText = result.response.text().trim();
-        const elapsed = Date.now() - startTime;
-
-        // Record BYOK usage
-        if (key.isByok && key.keyId) {
-          const usage = result.response.usageMetadata;
-          apiKeyManager.recordSuccess(key.keyId);
-          apiKeyManager.recordUsage(key.keyId, modelName, usage?.promptTokenCount ?? 0, usage?.totalTokenCount ?? 0);
-        }
-
-        // Record token usage (minimal — ~20 tokens)
-        extractAndRecord(result, modelName, 'micro_nlu', 'connection_test', {
-          success: true,
-          duration_ms: elapsed,
-          key_source: key.isByok ? 'byok' : 'env',
-          key_id: key.keyId,
-          key_tier: key.tier,
-        });
-
-        logger.info('✅ LLM ping successful', {
-          model: modelName,
-          keyName: key.keyName,
-          responseTime: elapsed,
-          response: responseText,
-        });
-
-        return res.json({
-          success: true,
-          model: modelName,
-          responseTime: elapsed,
-          response: responseText,
-          keySource: key.isByok ? 'byok' : 'env',
-        });
-      } catch (err: any) {
-        lastError = err.message || 'Unknown error';
-        logger.warn('⚠️ LLM ping attempt failed', {
-          model: modelName,
-          keyName: key.keyName,
-          error: lastError,
-        });
-        // Mark rate-limited model at capacity so getCallPlan skips it
-        if (isRateLimitError(lastError) && key.isByok && key.keyId) {
-          apiKeyManager.recordRateLimit(key.keyId, modelName, key.tier);
-        }
-        continue;
-      }
-    }
-
-    // All attempts failed
-    return res.status(503).json({
-      success: false,
-      error: 'All LLM ping attempts failed',
-      details: lastError,
+    return res.status(statusCode).json({
+      success: !hasBlockingError,
       responseTime: Date.now() - startTime,
+      gateways: getAllAIGatewayInfo(),
+      tests,
     });
   } catch (error: any) {
-    logger.error('LLM ping error', { error: error.message });
+    logger.error('AI gateway lanes ping error', { error: error.message });
     return res.status(500).json({
       success: false,
       error: 'Ping failed',
       details: error.message,
+      gateways: getAllAIGatewayInfo(),
     });
   }
 });
 
-/**
- * POST /api/testing/chat
- * Testing AI response using the same NLU processor as webchat
- * This ensures consistency between testing and actual webchat experience
- */
 router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
   try {
     const { message, village_id, villageId, user_id } = req.body || {};
@@ -159,15 +236,13 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
       ? user_id
       : `test_admin_${Date.now()}`;
 
-    logger.info('🧪 Testing chat request', {
+    logger.info('Testing chat request', {
       userId,
       village_id: resolvedVillageId,
       messageLength: message.length,
       processor: 'UNIFIED',
     });
 
-    // Use SAME unified processor as WhatsApp for consistent results
-    // isEvaluation=true skips name gate, profile writes, analytics — testing focuses on knowledge answers
     const result = await processUnifiedMessage({
       userId,
       message,

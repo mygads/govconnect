@@ -51,6 +51,9 @@ import {
 import { clearAllUMPCaches, clearUserCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
 import { clearVillageProfileCache, getVillageProfileCacheStats } from './services/knowledge.service';
 import { getEmbeddingCacheStats as getEmbCacheDetailStats } from './services/embedding.service';
+import { getAllAIGatewayInfo } from './services/ai-gateway.service';
+import { matchComplaintType } from './services/micro-llm-matcher.service';
+import { getObjectStorageInfo } from './services/object-storage.service';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -119,7 +122,17 @@ if (config.nodeEnv !== 'production') {
 
 // Minimal health endpoint for Docker/K8s liveness probe (Temuan 12)
 app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', service: 'ai-orchestrator', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    service: 'ai-orchestrator',
+    timestamp: new Date().toISOString(),
+    gateways: getAllAIGatewayInfo(),
+    chatGatewayEnabled: config.llmGateway.enabled,
+    chatProvider: config.llmGateway.provider,
+    rerankEnabled: config.rerankEnabled,
+    retrievalCacheEnabled: config.ragEnableRetrievalCache,
+    documentStorage: getObjectStorageInfo(),
+  });
 });
 
 // Detailed health endpoint — protected (Temuan 12)
@@ -597,7 +610,7 @@ app.get('/stats/analytics/knowledge', (req: Request, res: Response) => {
 });
 
 // ===========================================
-// AI Token Usage Endpoints (real Gemini usageMetadata)
+// AI Token Usage Endpoints (generic LLM usage tracking)
 
 // GET /stats/token-usage/summary — overview card data
 app.get('/stats/token-usage/summary', async (req: Request, res: Response) => {
@@ -736,7 +749,7 @@ app.get('/stats/token-usage/village-model-detail', async (req: Request, res: Res
   }
 });
 
-// GET /stats/token-usage/by-source — BYOK vs ENV breakdown
+// GET /stats/token-usage/by-source — gateway lane / source breakdown
 app.get('/stats/token-usage/by-source', async (req: Request, res: Response) => {
   try {
     const slug = getQuery(req, 'village_id');
@@ -932,8 +945,7 @@ app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
 // Embedding & RAG Endpoints
 // ===========================================
 
-// Serve uploaded documents as static files
-// Files are accessible at /uploads/documents/<filename>
+// Legacy local document serving for backward compatibility with older records.
 import path from 'path';
 const uploadsDir = path.join(process.cwd(), 'uploads', 'documents');
 app.use('/uploads/documents', express.static(uploadsDir, {
@@ -969,8 +981,60 @@ app.use('/api/status', internalAuthMiddleware, statusRoutes);
 app.use('/api/testing', testingRoutes);
 
 /**
+ * Internal NLU endpoint for other services that must reuse gateway-only
+ * complaint type resolution without implementing their own provider clients.
+ */
+app.post('/admin/nlu/complaint-type-match', async (req: Request, res: Response) => {
+  try {
+    const { kategori, availableTypes, context } = req.body || {};
+
+    if (typeof kategori !== 'string' || !kategori.trim()) {
+      res.status(400).json({ error: 'kategori is required' });
+      return;
+    }
+
+    if (!Array.isArray(availableTypes) || availableTypes.length === 0) {
+      res.status(400).json({ error: 'availableTypes is required' });
+      return;
+    }
+
+    const sanitizedTypes = availableTypes
+      .filter((item: any) => item && typeof item.id === 'string' && typeof item.name === 'string')
+      .map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        categoryName: typeof item.categoryName === 'string'
+          ? item.categoryName
+          : typeof item.category_name === 'string'
+            ? item.category_name
+            : '',
+      }));
+
+    if (sanitizedTypes.length === 0) {
+      res.status(400).json({ error: 'availableTypes contains no valid entries' });
+      return;
+    }
+
+    const result = await matchComplaintType(
+      kategori,
+      sanitizedTypes,
+      context && typeof context === 'object' ? context : undefined,
+    );
+
+    res.json(result || {
+      matched_id: null,
+      confidence: 0,
+      reason: 'no_match',
+    });
+  } catch (error: any) {
+    logger.error('Complaint type match endpoint failed', { error: error.message });
+    res.status(500).json({ error: 'Failed to resolve complaint type' });
+  }
+});
+
+/**
  * Internal endpoint for cross-service token usage recording.
- * Used by case-service (and other services) that make their own Gemini LLM calls
+ * Used by other services that make their own AI gateway calls
  * but don't have direct access to the ai_token_usage table.
  */
 app.post('/admin/record-token-usage', async (req: Request, res: Response) => {
@@ -1216,10 +1280,12 @@ function getCircuitBreakerDescription(state: string): string {
 
 // Root endpoint — minimal info only (Temuan 32)
 app.get('/', (req: Request, res: Response) => {
-  res.json({
+ res.json({
     service: 'GovConnect AI Orchestrator',
     version: '1.0.0',
     status: 'running',
+    gateways: getAllAIGatewayInfo(),
+    rerankEnabled: config.rerankEnabled,
   });
 });
 
@@ -1231,6 +1297,19 @@ app.get('/admin/routes', internalAuthMiddleware, (req: Request, res: Response) =
     status: 'running',
     docs: '/api-docs',
     description: 'Stateless AI service for processing WhatsApp messages',
+    gateways: {
+      ...getAllAIGatewayInfo(),
+      rerankEnabled: config.rerankEnabled,
+      ragLLMRerankMaxCandidates: config.ragLLMRerankMaxCandidates,
+      retrievalCacheEnabled: config.ragEnableRetrievalCache,
+      retrievalCacheTTLSeconds: config.ragRetrievalCacheTTLSeconds,
+    },
+    llm: {
+      chatProvider: config.llmGateway.provider,
+      ragRewriteProvider: config.ragGateway.provider,
+      embedProvider: config.embeddingGateway.provider,
+      rerankProvider: config.rerankerGateway.provider,
+    },
     endpoints: {
       health: '/health',
       healthDetailed: '/admin/health/detailed',

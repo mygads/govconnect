@@ -19,9 +19,17 @@ import {
   VectorSearchResult,
   VectorSearchOptions,
 } from '../types/embedding.types';
+import { config } from '../config/env';
 import { generateEmbedding } from './embedding.service';
 import { searchVectors, recordBatchRetrievals } from './vector-db.service';
 import { hybridSearch, HybridSearchResult } from './hybrid-search.service';
+import {
+  buildPromptMessages,
+  callAIGatewayPrompt,
+  callAIGatewayRerank,
+  getDefaultRAGRewriteModels,
+  isAIGatewayEnabled,
+} from './ai-gateway.service';
 
 /**
  * Default RAG configuration
@@ -30,6 +38,7 @@ const DEFAULT_TOP_K = 8;            // Fetch more so dedup still leaves enough u
 const DEFAULT_MIN_SCORE = 0.65;
 const MIN_EFFECTIVE_SCORE = 0.45; // Floor to prevent noise from cascading threshold reductions
 const MAX_CONTEXT_LENGTH = 5000; // Increased from 4000 — dedup removes waste, so we can include more
+const DEFAULT_RERANK_MIN_SCORE = 0.2;
 
 /**
  * ==================== QUERY INTENT CLASSIFICATION ====================
@@ -122,24 +131,13 @@ async function classifyQueryIntent(
 
 /**
  * ==================== QUERY EXPANSION (Micro LLM) ====================
- * Uses a lightweight Gemini model to expand user queries with relevant
+ * Uses the dedicated RAG gateway lane to expand user queries with relevant
  * Indonesian synonyms/terms for better document retrieval.
  *
  * Unlike a static synonym map, the LLM understands context, slang,
  * regional words, and abbreviations naturally.
  */
-
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { config } from '../config/env';
-import { extractAndRecord } from './token-usage.service';
-import { apiKeyManager, MAX_RETRIES_PER_MODEL, isRateLimitError } from './api-key-manager.service';
-
-const EXPAND_MODELS = (() => {
-  const raw = (process.env.MICRO_NLU_MODELS || '').trim();
-  if (!raw) return ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
-  const models = raw.split(',').map(m => m.trim()).filter(Boolean);
-  return models.length ? models : ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
-})();
+const EXPAND_MODELS = getDefaultRAGRewriteModels();
 
 const EXPAND_PROMPT = `Kamu adalah query expander untuk pencarian dokumen layanan pemerintah Indonesia.
 
@@ -166,6 +164,7 @@ QUERY:
 const expansionCache = new Map<string, { expanded: string; ts: number }>();
 const EXPANSION_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 const MAX_EXPANSION_CACHE = 200;
+const retrievalCache = new Map<string, { value: RAGContext; ts: number }>();
 
 function normalizeForExpansionCache(q: string): string {
   return q.toLowerCase().trim().replace(/\s+/g, ' ').replace(/[^\w\s]/g, '');
@@ -179,7 +178,6 @@ function normalizeForExpansionCache(q: string): string {
  */
 export async function expandQuery(query: string): Promise<string> {
   if (!query.trim()) return query;
-  if (!config.geminiApiKey && apiKeyManager.getByokKeys().length === 0) return query;
 
   // Skip expansion for single-word queries — LLM overhead not worth it
   const wordCount = query.trim().split(/\s+/).length;
@@ -198,79 +196,141 @@ export async function expandQuery(query: string): Promise<string> {
 
   const prompt = EXPAND_PROMPT.replace('{query}', query);
 
-  // Build call plan using BYOK keys + fallback
-  const callPlan = apiKeyManager.getCallPlan(EXPAND_MODELS, EXPAND_MODELS);
+  const gatewayResult = await callAIGatewayPrompt({
+    lane: 'rag',
+    modelPriority: EXPAND_MODELS,
+    messages: buildPromptMessages(prompt),
+    temperature: 0.2,
+    maxTokens: 150,
+    timeoutMs: config.ragGateway.timeoutMs,
+    jsonMode: false,
+    layerType: 'rag_expand',
+    callType: 'rag_query_expand',
+  });
 
-  for (const { key, model: modelName } of callPlan) {
-    for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
-      try {
-        const model = key.genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 150,
-          },
-        });
-
-        const startMs = Date.now();
-        const result = await model.generateContent(prompt);
-        const durationMs = Date.now() - startMs;
-        const expanded = result.response.text().trim();
-
-        // Record BYOK usage
-        if (key.isByok && key.keyId) {
-          const usage = result.response.usageMetadata;
-          apiKeyManager.recordSuccess(key.keyId);
-          apiKeyManager.recordUsage(key.keyId, modelName, usage?.promptTokenCount ?? 0, usage?.totalTokenCount ?? 0);
-        }
-
-        extractAndRecord(result, modelName, 'rag_expand', 'rag_query_expand', {
-          success: true,
-          duration_ms: durationMs,
-          key_source: key.isByok ? 'byok' : 'env',
-          key_id: key.keyId,
-          key_tier: key.tier,
-        });
-
-        if (expanded && expanded.length > query.length) {
-          logger.debug('Query expanded via micro LLM', {
-            original: query,
-            expanded: expanded.substring(0, 100),
-            model: modelName,
-          });
-          // Cache the expansion result
-          if (expansionCache.size >= MAX_EXPANSION_CACHE) {
-            const oldest = expansionCache.keys().next().value;
-            if (oldest) expansionCache.delete(oldest);
-          }
-          expansionCache.set(cacheKey, { expanded, ts: Date.now() });
-          return expanded;
-        }
-      } catch (error: any) {
-        logger.warn('Query expansion failed', {
-          keyName: key.keyName,
-          model: modelName,
-          retry: retry + 1,
-          error: error.message,
-        });
-        if (key.isByok && key.keyId) {
-          apiKeyManager.recordFailure(key.keyId, error.message);
-        }
-        // 429 / rate limit → mark model at capacity, skip to next model
-        if (isRateLimitError(error.message || '')) {
-          if (key.isByok && key.keyId) {
-            apiKeyManager.recordRateLimit(key.keyId, modelName, key.tier);
-          }
-          break;
-        }
-        if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('401') ||
-            error.message?.includes('404') || error.message?.includes('not found')) break;
-      }
+  const expanded = gatewayResult?.text?.trim();
+  if (gatewayResult && expanded && expanded.length > query.length) {
+    logger.debug('Query expanded via RAG gateway lane', {
+      original: query,
+      expanded: expanded.substring(0, 100),
+      model: gatewayResult.model,
+      provider: gatewayResult.provider,
+    });
+    if (expansionCache.size >= MAX_EXPANSION_CACHE) {
+      const oldest = expansionCache.keys().next().value;
+      if (oldest) expansionCache.delete(oldest);
     }
+    expansionCache.set(cacheKey, { expanded, ts: Date.now() });
+    return expanded;
   }
 
-  // Fallback: return original query if all models fail
   return query;
+}
+
+function getRetrievalCacheKey(
+  query: string,
+  options: {
+    topK: number;
+    minScore: number;
+    categories?: string[];
+    sourceTypes?: string[];
+    villageId?: string;
+    useQueryExpansion: boolean;
+    useHybridSearch: boolean;
+  },
+): string {
+  return JSON.stringify({
+    query: normalizeForExpansionCache(query),
+    ...options,
+    categories: [...(options.categories || [])].sort(),
+    sourceTypes: [...(options.sourceTypes || [])].sort(),
+  });
+}
+
+function getCachedRetrieval(key: string): RAGContext | null {
+  if (!config.ragEnableRetrievalCache) {
+    return null;
+  }
+
+  const cached = retrievalCache.get(key);
+  if (!cached) {
+    return null;
+  }
+
+  const ageMs = Date.now() - cached.ts;
+  if (ageMs > config.ragRetrievalCacheTTLSeconds * 1000) {
+    retrievalCache.delete(key);
+    return null;
+  }
+
+  return {
+    ...cached.value,
+    searchTimeMs: Math.min(cached.value.searchTimeMs, 5),
+  };
+}
+
+function setCachedRetrieval(key: string, value: RAGContext): void {
+  if (!config.ragEnableRetrievalCache) {
+    return;
+  }
+
+  retrievalCache.set(key, { value, ts: Date.now() });
+
+  if (retrievalCache.size > 500) {
+    const oldest = retrievalCache.keys().next().value;
+    if (oldest) retrievalCache.delete(oldest);
+  }
+}
+
+async function rerankRetrievedResults(
+  results: VectorSearchResult[],
+  query: string,
+  topK: number,
+  minScore: number,
+): Promise<VectorSearchResult[]> {
+  if (
+    !config.rerankEnabled ||
+    !isAIGatewayEnabled('rerank') ||
+    results.length <= 1
+  ) {
+    return rerankResults(results, query, topK).filter(r => r.score >= minScore);
+  }
+
+  const rerankResult = await callAIGatewayRerank({
+    query,
+    documents: results.map(result => result.content),
+    topN: Math.min(topK, results.length),
+    timeoutMs: config.rerankerGateway.timeoutMs,
+    layerType: 'rag_rerank',
+    callType: 'rerank_documents',
+  });
+
+  if (!rerankResult) {
+    return rerankResults(results, query, topK).filter(r => r.score >= minScore);
+  }
+
+  const reranked: VectorSearchResult[] = [];
+  for (const item of rerankResult.items) {
+    const original = results[item.index];
+    if (!original) {
+      continue;
+    }
+
+    reranked.push({
+      ...original,
+      score: Math.max(0, Math.min(1, item.relevanceScore)),
+      metadata: {
+        ...(original.metadata || {}),
+        rerankScore: item.relevanceScore,
+        rerankModel: rerankResult.model,
+      },
+    });
+  }
+
+  const rerankThreshold = Math.max(minScore * 0.75, DEFAULT_RERANK_MIN_SCORE);
+  const filtered = reranked.filter(result => result.score >= rerankThreshold).slice(0, topK);
+
+  return filtered.length > 0 ? filtered : reranked.slice(0, topK);
 }
 
 /**
@@ -299,6 +359,25 @@ export async function retrieveContext(
     useQueryExpansion = true,  // Enable query expansion by default
     useHybridSearch = true,    // Enable hybrid search by default
   } = options as VectorSearchOptions & { useQueryExpansion?: boolean; useHybridSearch?: boolean };
+
+  const retrievalCacheKey = getRetrievalCacheKey(query, {
+    topK,
+    minScore,
+    categories,
+    sourceTypes,
+    villageId,
+    useQueryExpansion,
+    useHybridSearch,
+  });
+
+  const cachedRetrieval = getCachedRetrieval(retrievalCacheKey);
+  if (cachedRetrieval) {
+    logger.debug('RAG retrieval cache hit', {
+      query: query.substring(0, 40),
+      villageId,
+    });
+    return cachedRetrieval;
+  }
 
   // Step 0: Check query intent - skip RAG for greetings/simple responses
   const queryIntentResult = await classifyQueryIntent(query);
@@ -344,23 +423,30 @@ export async function retrieveContext(
   try {
     // Step 1: Expand query with synonyms for better recall
     const expandedQuery = useQueryExpansion ? await expandQuery(query) : query;
-    
+
     let filteredResults: VectorSearchResult[];
-    
+    const rerankCandidateCount = config.rerankEnabled
+      ? Math.max(topK * 2, config.ragLLMRerankMaxCandidates)
+      : topK;
+
     // Step 2-4: Use Hybrid Search (Vector + Keyword) or pure Vector search
     if (useHybridSearch) {
-      // NEW: Hybrid search combines vector + keyword for better accuracy
       const hybridResults = await hybridSearch(expandedQuery, {
-        topK,
-        minScore: adjustedMinScore,
+        topK: rerankCandidateCount,
+        minScore: Math.max(adjustedMinScore * 0.8, MIN_EFFECTIVE_SCORE),
         categories: effectiveCategories,
         sourceTypes,
         villageId,
-        useQueryExpansion: false, // Already expanded
+        useQueryExpansion: false,
       });
-      
-      filteredResults = hybridResults;
-      
+
+      filteredResults = await rerankRetrievedResults(
+        hybridResults,
+        expandedQuery,
+        topK,
+        adjustedMinScore,
+      );
+
       logger.debug('Hybrid search completed', {
         query: query.substring(0, 50),
         resultCount: hybridResults.length,
@@ -375,9 +461,9 @@ export async function retrieveContext(
       });
 
       const searchResults = await searchVectors(queryEmbedding.values, {
-        topK: topK * 2,
+        topK: rerankCandidateCount,
         minScore: adjustedMinScore * 0.8,
-        categories,
+        categories: effectiveCategories,
         sourceTypes,
         villageId,
       });
@@ -396,9 +482,12 @@ export async function retrieveContext(
         };
       }
 
-      // Re-rank and filter
-      const rerankedResults = rerankResults(searchResults, query, topK);
-      filteredResults = rerankedResults.filter(r => r.score >= adjustedMinScore);
+      filteredResults = await rerankRetrievedResults(
+        searchResults,
+        expandedQuery,
+        topK,
+        adjustedMinScore,
+      );
     }
 
     if (filteredResults.length === 0) {
@@ -437,7 +526,7 @@ export async function retrieveContext(
       searchTimeMs: endTime - startTime,
     });
 
-    return {
+    const response: RAGContext = {
       relevantChunks: filteredResults,
       contextString,
       totalResults: filteredResults.length,
@@ -445,6 +534,10 @@ export async function retrieveContext(
       confidence,
       conflicts: conflicts.length > 0 ? conflicts : undefined,
     };
+
+    setCachedRetrieval(retrievalCacheKey, response);
+
+    return response;
   } catch (error: any) {
     logger.error('RAG retrieval failed', {
       query: query.substring(0, 50),

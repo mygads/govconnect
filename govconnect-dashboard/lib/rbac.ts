@@ -16,7 +16,6 @@ const SUPERADMIN_ONLY_RULES: RouteRule[] = [
   { path: '/dashboard/settings/cache', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/system-health', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/llm-check', roles: ['superadmin'] },
-  { path: '/dashboard/superadmin/gemini-keys', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/whatsapp', roles: ['superadmin'] },
 ]
 

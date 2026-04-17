@@ -2,7 +2,7 @@
  * Sentiment Analysis Service
  * 
  * Detects user mood/sentiment for escalation and adaptive responses.
- * Uses micro-LLM (Gemini Flash Lite) for all sentiment classification.
+ * Uses the micro-LLM lane on the active AI gateway for sentiment classification.
  * 
  * No hardcoded regex patterns — the LLM understands Indonesian sentiment,
  * slang, abbreviations, urgency, and conversational context far better

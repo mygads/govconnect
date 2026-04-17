@@ -2,7 +2,63 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSession } from '@/lib/auth'
 import { buildUrl, getHeaders, apiFetch, ServicePath, AI_SERVICE_URL } from '@/lib/api-client'
 
-// GET - Check LLM connectivity and model info
+type LaneName = 'llm' | 'embed' | 'rag' | 'rerank'
+
+interface LaneCheckResult {
+  lane: LaneName
+  label: string
+  status: string
+  responseTime: number
+  provider?: string
+  model?: string
+  error?: string
+  details?: any
+}
+
+function laneLabel(lane: LaneName): string {
+  switch (lane) {
+    case 'embed':
+      return 'Embedding Lane'
+    case 'rag':
+      return 'RAG Rewrite Lane'
+    case 'rerank':
+      return 'Rerank Lane'
+    default:
+      return 'LLM Lane'
+  }
+}
+
+function normalizeLaneChecks(payload: any): LaneCheckResult[] {
+  const tests = payload?.tests
+  if (!tests || typeof tests !== 'object') {
+    return []
+  }
+
+  const order: LaneName[] = ['llm', 'embed', 'rag', 'rerank']
+  const checks: LaneCheckResult[] = []
+
+  for (const lane of order) {
+    const item = tests[lane]
+    if (!item || typeof item !== 'object') {
+      continue
+    }
+
+    checks.push({
+      lane,
+      label: laneLabel(lane),
+      status: typeof item.status === 'string' ? item.status : 'unknown',
+      responseTime: typeof item.responseTime === 'number' ? item.responseTime : 0,
+      provider: typeof item.provider === 'string' ? item.provider : undefined,
+      model: typeof item.model === 'string' ? item.model : undefined,
+      error: typeof item.error === 'string' ? item.error : undefined,
+      details: item.details,
+    })
+  }
+
+  return checks
+}
+
+// GET - Check AI gateway lane connectivity and model info
 export async function GET(request: NextRequest) {
   try {
     const session = await getAdminSession(request)
@@ -13,7 +69,7 @@ export async function GET(request: NextRequest) {
     const results: any = {
       timestamp: new Date().toISOString(),
       aiServiceStatus: 'unknown',
-      llmTests: [],
+      laneChecks: [],
     }
 
     // 1. Check AI service health
@@ -48,7 +104,7 @@ export async function GET(request: NextRequest) {
       results.models = null
     }
 
-    // 3. Test LLM with a lightweight ping (minimal tokens ~20)
+    // 3. Test all configured gateway lanes
     try {
       const start = Date.now()
       const testRes = await apiFetch(buildUrl(ServicePath.AI, '/api/testing/ping'), {
@@ -59,25 +115,24 @@ export async function GET(request: NextRequest) {
       })
       const elapsed = Date.now() - start
 
-      if (testRes.ok) {
-        const testData = await testRes.json()
-        results.llmTests.push({
-          name: 'LLM Connection Test',
-          status: 'connected',
-          responseTime: testData.responseTime || elapsed,
+      const testData = await testRes.json().catch(() => null)
+      results.pingDetails = testData
+      results.laneChecks = normalizeLaneChecks(testData)
+
+      if (results.laneChecks.length === 0) {
+        results.laneChecks = [{
+          lane: 'llm',
+          label: 'Gateway Ping',
+          status: testRes.ok ? 'connected' : 'error',
+          responseTime: testData?.responseTime || elapsed,
+          error: testRes.ok ? undefined : `HTTP ${testRes.status}`,
           details: testData,
-        })
-      } else {
-        results.llmTests.push({
-          name: 'LLM Connection Test',
-          status: 'error',
-          responseTime: elapsed,
-          error: `HTTP ${testRes.status}`,
-        })
+        }]
       }
     } catch (e: any) {
-      results.llmTests.push({
-        name: 'LLM Connection Test',
+      results.laneChecks.push({
+        lane: 'llm',
+        label: 'Gateway Ping',
         status: 'failed',
         responseTime: 0,
         error: e.message,

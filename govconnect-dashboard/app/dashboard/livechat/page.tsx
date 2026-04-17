@@ -693,9 +693,11 @@ export default function LiveChatPage() {
 
   // Check if message contains image URL
   const isImageUrl = (text: string) => {
-    return /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(text) ||
-      text.includes('/uploads/') ||
-      text.startsWith('http') && (text.includes('image') || text.includes('/media/'))
+    const trimmed = text.trim()
+    return /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(trimmed) ||
+      /https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp)(\?[^\s]*)?$/i.test(trimmed) ||
+      trimmed.includes('/uploads/') ||
+      (trimmed.startsWith('http') && (trimmed.includes('image') || trimmed.includes('/media/') || trimmed.includes('/cdn/')))
   }
 
   // Extract image URL from message

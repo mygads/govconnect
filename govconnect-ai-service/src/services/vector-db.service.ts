@@ -14,6 +14,7 @@
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { Prisma } from '@prisma/client';
+import { config } from '../config/env';
 import {
   VectorSearchResult,
   VectorSearchOptions,
@@ -46,7 +47,7 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
     category,
     keywords,
     embedding,
-    embeddingModel = 'gemini-embedding-001',
+    embeddingModel = config.embeddingGateway.model,
     qualityScore = 1.0,
   } = input;
 
@@ -183,7 +184,7 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
             ${chunk.documentId}, ${chunk.villageId || null}, ${chunk.chunkIndex}, ${chunk.content},
             ${chunk.documentTitle || null}, ${chunk.category || null}, 
             ${chunk.pageNumber || null}, ${chunk.sectionTitle || null},
-            ${embeddingStr}::vector, ${chunk.embeddingModel || 'gemini-embedding-001'},
+            ${embeddingStr}::vector, ${chunk.embeddingModel || config.embeddingGateway.model},
             NOW()
           )
           ON CONFLICT (document_id, chunk_index) DO UPDATE SET

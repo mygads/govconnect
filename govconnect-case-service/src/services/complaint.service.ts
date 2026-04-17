@@ -23,8 +23,8 @@ interface ResolvedComplaintType {
  * Resolve a kategori string to a ComplaintType using a micro LLM.
  *
  * Instead of hardcoded synonyms or pattern matching, this sends the user's
- * kategori + all available complaint types to a lightweight Gemini model
- * and lets AI semantically determine the best match.
+ * kategori + all available complaint types to AI Service so the gateway-only
+ * micro NLU layer can determine the best semantic match.
  *
  * This handles slang, typos, regional words, informal language, etc. — things
  * that static keyword maps can never fully cover.
@@ -58,7 +58,9 @@ export async function resolveComplaintTypeFromDB(
     }));
 
     // Ask micro LLM to semantically match
-    const llmResult = await resolveWithMicroLLM(kategori, options);
+    const llmResult = await resolveWithMicroLLM(kategori, options, {
+      village_id: villageId,
+    });
 
     if (llmResult?.matched_id && llmResult.confidence >= 0.5) {
       const matched = types.find(t => t.id === llmResult.matched_id);

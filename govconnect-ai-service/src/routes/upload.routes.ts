@@ -3,54 +3,32 @@
  * 
  * Handles file upload, parsing, chunking, and embedding:
  * 1. Receive file from Dashboard
- * 2. Save file locally
+ * 2. Use a temporary local file only for parsing compatibility
  * 3. Parse content (PDF, DOCX, TXT)
  * 4. Chunk the text
  * 5. Generate embeddings
  * 6. Store vectors
+ * 7. Upload original file to object storage
  */
 
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
+import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
-import { existsSync, mkdirSync } from 'fs';
 import logger from '../utils/logger';
 import { processDocumentSemanticChunking } from '../services/document-processor.service';
 import { smartChunkDocument } from '../services/ai-chunking.service';
 import { generateBatchEmbeddings } from '../services/embedding.service';
-import { addDocumentChunks } from '../services/vector-db.service';
+import { addDocumentChunks, deleteDocumentVectors } from '../services/vector-db.service';
 import { config } from '../config/env';
 import { firstHeader, getParam } from '../utils/http';
+import { deleteObjectByUrl, uploadBufferToObjectStorage } from '../services/object-storage.service';
 
 const router = Router();
 
-// Configure multer for file uploads
-const uploadDir = path.join(process.cwd(), 'uploads', 'documents');
-
-// Ensure upload directory exists (graceful — don't crash if permission denied)
-try {
-  if (!existsSync(uploadDir)) {
-    mkdirSync(uploadDir, { recursive: true });
-  }
-} catch (err: any) {
-  console.error(`Warning: Could not create upload directory ${uploadDir}: ${err.message}`);
-  console.error('File uploads will fail until the directory is created with proper permissions.');
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, `doc-${uniqueSuffix}${ext}`);
-  }
-});
-
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
   },
@@ -83,6 +61,21 @@ function verifyInternalKey(req: Request, res: Response, next: Function) {
   }
   
   next();
+}
+
+async function createTempUploadFile(file: Express.Multer.File): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
+  const safeExt = path.extname(file.originalname || '').toLowerCase().slice(0, 10);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'govconnect-ai-upload-'));
+  const filePath = path.join(tempDir, `document${safeExt}`);
+
+  await fs.writeFile(filePath, file.buffer);
+
+  return {
+    filePath,
+    cleanup: async () => {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    },
+  };
 }
 
 /**
@@ -250,13 +243,16 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
     mimeType: file.mimetype,
   });
   
+  let vectorsStored = false;
+  let tempFile: { filePath: string; cleanup: () => Promise<void> } | null = null;
+
   try {
+    tempFile = await createTempUploadFile(file);
+
     // Parse file content
-    const content = await parseFileContent(file.path, file.mimetype);
+    const content = await parseFileContent(tempFile.filePath, file.mimetype);
     
     if (!content || content.trim().length === 0) {
-      // Clean up file
-      await fs.unlink(file.path).catch(() => {});
       return res.status(400).json({ error: 'Document is empty or could not extract text' });
     }
     
@@ -302,7 +298,6 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
     }
     
     if (smartChunks.length === 0) {
-      await fs.unlink(file.path).catch(() => {});
       return res.status(400).json({ error: 'No chunks generated from document' });
     }
 
@@ -357,15 +352,24 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       category: chunk.category, // AI-assigned per-chunk category
       sectionTitle: chunk.title, // AI-assigned per-chunk title
     })));
+    vectorsStored = true;
     
-    // Build the file URL for viewing
-    // This URL will be accessible via the static file serving in app.ts
-    const fileUrl = `/uploads/documents/${file.filename}`;
+    const storedFile = await uploadBufferToObjectStorage({
+      buffer: file.buffer,
+      contentType: file.mimetype || 'application/octet-stream',
+      originalName: file.originalname,
+      folder: `knowledge/documents/${documentId}`,
+      metadata: {
+        documentId,
+        villageId: resolvedVillageId || '',
+      },
+    });
+    const fileUrl = storedFile.url;
     
     logger.info('Document processing completed', {
       documentId,
       chunksCount: chunksWithEmbeddings.length,
-      filename: file.filename,
+      filename: storedFile.fileName,
       fileUrl,
       aiChunking: usedAiChunking,
     });
@@ -373,8 +377,9 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
     return res.json({
       success: true,
       documentId,
-      filename: file.filename,
+      filename: storedFile.fileName,
       fileUrl, // Full path for viewing the document
+      fileKey: storedFile.key,
       originalName: file.originalname,
       fileSize: file.size,
       mimeType: file.mimetype,
@@ -387,16 +392,22 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       documentId,
       error: error.message,
     });
-    
-    // Clean up file on error
-    if (file?.path) {
-      await fs.unlink(file.path).catch(() => {});
+
+    if (vectorsStored) {
+      await deleteDocumentVectors(documentId).catch((cleanupError: any) => {
+        logger.warn('Failed to rollback vectors after document upload error', {
+          documentId,
+          error: cleanupError.message,
+        });
+      });
     }
     
     return res.status(500).json({
       error: 'Document processing failed',
       details: error.message,
     });
+  } finally {
+    await tempFile?.cleanup();
   }
 });
 
@@ -413,14 +424,36 @@ router.delete('/document/:documentId', verifyInternalKey, async (req: Request, r
   }
   
   try {
-    const { deleteDocumentVectors } = await import('../services/vector-db.service');
+    let deletedFile = false;
+
+    try {
+      const response = await fetch(`${config.dashboardServiceUrl}/api/internal/documents/${documentId}`, {
+        headers: {
+          'x-internal-api-key': config.internalApiKey,
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (response.ok) {
+        const payload = await response.json() as { data?: { file_url?: string | null } };
+        deletedFile = await deleteObjectByUrl(payload?.data?.file_url).catch(() => false);
+      }
+    } catch (storageError: any) {
+      logger.warn('Failed to inspect/delete document object storage file', {
+        documentId,
+        error: storageError.message,
+      });
+    }
+
     await deleteDocumentVectors(documentId);
     
-    logger.info('Document vectors deleted', { documentId });
+    logger.info('Document vectors deleted', { documentId, deletedFile });
     
     return res.json({
       success: true,
-      message: 'Document vectors deleted successfully',
+      message: deletedFile
+        ? 'Document vectors and stored file deleted successfully'
+        : 'Document vectors deleted successfully',
     });
   } catch (error: any) {
     logger.error('Failed to delete document vectors', {

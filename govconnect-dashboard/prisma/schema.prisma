@@ -369,11 +369,9 @@ model genfity_whatsapp_sessions {
   @@index([connected])
 }
 
-// ==================== GEMINI API KEYS (BYOK) ====================
-// Superadmin can add multiple Gemini API keys from different Google accounts
-// Keys are tried in priority order; when one hits 80% of its rate limits,
-// the system automatically switches to the next available key.
-// The .env GEMINI_API_KEY acts as the ultimate fallback.
+// ==================== LEGACY GEMINI API KEYS (BYOK) ====================
+// Historical table from the pre-gateway architecture.
+// Runtime flow is now gateway-only and no longer uses this table.
 
 model gemini_api_keys {
   id              String   @id @default(cuid())
@@ -430,4 +428,3 @@ model gemini_api_key_usage {
   @@index([period_type, period_key])
   @@index([key_id, model, period_type, period_key])
 }
-

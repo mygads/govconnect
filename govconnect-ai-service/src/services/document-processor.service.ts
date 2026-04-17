@@ -354,7 +354,7 @@ function generateChunkId(documentId: string, chunkIndex: number): string {
 
 /**
  * Estimate token count for text (rough estimate)
- * Gemini uses ~4 characters per token on average
+ * Most gateway chat models use ~4 characters per token on average
  */
 export function estimateTokenCount(text: string): number {
   return Math.ceil(text.length / 4);

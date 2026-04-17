@@ -459,7 +459,7 @@ export const ai = {
     });
   },
 
-  // ==================== Token Usage (Real Gemini) ====================
+  // ==================== Token Usage (AI Gateway Models) ====================
 
   /**
    * Get token usage summary
@@ -552,7 +552,7 @@ export const ai = {
   },
 
   /**
-   * Get token usage breakdown by key source (BYOK vs ENV)
+   * Get token usage breakdown by recorded gateway lane / source
    */
   async getTokenUsageBySource(params?: Record<string, string>) {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';

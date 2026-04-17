@@ -12,6 +12,7 @@ Dokumen ini mengarahkan GitHub Copilot agar konsisten dengan kebutuhan GovConnec
 - **AI Orchestrator stateless** (tidak boleh simpan data di DB AI atau memory session persisten).
 - **Chat history hanya di Channel Service** (FIFO 30 pesan, pakai `channel` + `channel_identifier`).
 - Jangan mengubah konfigurasi model AI di UI; hanya lewat **ENV**.
+- Untuk AI Service: semua workload AI lewat **AI gateway OpenAI-compatible** dengan 4 lane terpisah: `LLM`, `EMBED`, `RAG`, dan `RERANK`.
 - Jangan mengakses DB antar service secara langsung; gunakan REST/RabbitMQ.
 - Selalu jaga naming convention yang sudah ada (kebab-case file, camelCase function, PascalCase class).
 

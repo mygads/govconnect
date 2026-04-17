@@ -14,8 +14,12 @@ AI Service adalah **otak AI** untuk sistem GovConnect.
 ## Fitur Utama
 - Intent detection dari pesan warga
 - Ekstraksi data (kategori, alamat, deskripsi)
-- Multi-provider LLM (Gemini, OpenRouter)
-- Fallback mechanism untuk reliability
+- AI gateway 4-lane untuk:
+  - LLM chat completions
+  - embeddings
+  - RAG query rewrite
+  - reranking
+- Provider OpenAI-compatible yang bisa dipindah via ENV
 - RAG dengan knowledge base
       `,
       contact: {

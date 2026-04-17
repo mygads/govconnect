@@ -586,7 +586,7 @@ KNOWLEDGE BASE:
 // Backward-compatible: full PART5
 export const SYSTEM_PROMPT_PART5 = [SYSTEM_PROMPT_PART5_IDENTITY, SYSTEM_PROMPT_PART5_KNOWLEDGE].join('\n');
 
-// JSON Schema for Gemini structured output
+// JSON Schema for gateway-based structured output
 export const JSON_SCHEMA_FOR_GEMINI = {
   type: 'object',
   properties: {

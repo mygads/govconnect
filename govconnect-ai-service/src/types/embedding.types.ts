@@ -1,13 +1,13 @@
 /**
  * Embedding Types for GovConnect AI Service
- * Based on Gemini Embedding API (gemini-embedding-001)
+ * Based on OpenAI-compatible embedding gateways
  * 
- * @see https://ai.google.dev/gemini-api/docs/embeddings
+ * The active provider/model are selected from the EMBED lane configuration.
  */
 
 /**
- * Task types supported by Gemini Embedding API
- * Each task type optimizes embeddings for specific use cases
+ * Task types used by the GovConnect embedding pipeline.
+ * These hints are forwarded when the target provider supports them.
  */
 export type EmbeddingTaskType = 
   | 'SEMANTIC_SIMILARITY'   // For comparing similarity between texts
@@ -31,7 +31,7 @@ export type EmbeddingDimension = 128 | 256 | 512 | 768 | 1536 | 2048 | 3072;
 export interface EmbeddingResult {
   values: number[];           // The embedding vector
   dimensions: number;         // Actual dimensions of the vector
-  model: string;              // Model used (e.g., "gemini-embedding-001")
+  model: string;              // Model used (e.g., "openai/text-embedding-3-small")
   normalized: boolean;        // Whether the embedding is L2-normalized
 }
 
@@ -48,7 +48,7 @@ export interface BatchEmbeddingResult {
  * Configuration for embedding operations
  */
 export interface EmbeddingConfig {
-  model?: string;                           // Default: gemini-embedding-001
+  model?: string;                           // Default: active EMBED_MODEL
   outputDimensionality?: EmbeddingDimension; // Default: 768
   taskType?: EmbeddingTaskType;              // Default: RETRIEVAL_DOCUMENT
   normalize?: boolean;                       // Default: true for dims < 3072

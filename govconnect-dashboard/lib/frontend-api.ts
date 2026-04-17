@@ -327,6 +327,13 @@ export const settings = {
   },
 };
 
+// ==================== SUPERADMIN ====================
+export const superadmin = {
+  async getLLMCheck() {
+    return fetchApi<any>('/api/superadmin/llm-check');
+  },
+};
+
 // ==================== BACKWARD COMPATIBLE EXPORTS ====================
 // Untuk kompatibilitas dengan kode yang sudah ada
 export const apiClient = {
@@ -356,6 +363,9 @@ export const apiClient = {
   
   // Settings
   settings,
+
+  // Superadmin
+  superadmin,
   
   // Layanan
   getServices: layanan.getAll,

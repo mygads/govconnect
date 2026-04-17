@@ -3,6 +3,7 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import prisma from '../config/database';
 import { waSupportClient } from '../clients/wa-support.client';
+import { getWhatsAppSessionS3Config } from './object-storage.service';
 
 // In-memory settings cache (since we're using single session)
 // Both default to true — govconnect always reads and shows typing
@@ -115,6 +116,63 @@ function getPublicWhatsAppWebhookUrl(): string {
   return base ? `${base}/webhook` : '';
 }
 
+async function callSessionGateway(
+  sessionToken: string,
+  path: string,
+  method: 'GET' | 'POST' | 'DELETE' = 'POST',
+  body?: unknown,
+): Promise<any> {
+  const url = `${config.WA_API_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  const response = await axios.request({
+    url,
+    method,
+    data: body,
+    headers: {
+      token: sessionToken,
+      'Content-Type': 'application/json',
+    },
+    timeout: 15000,
+  });
+
+  return response.data?.data || response.data;
+}
+
+async function configureSessionObjectStorage(sessionToken: string, villageId: string): Promise<void> {
+  const s3Config = getWhatsAppSessionS3Config();
+  if (!s3Config) {
+    logger.info('Skipping WhatsApp session S3 bootstrap because object storage is not configured', {
+      village_id: villageId,
+    });
+    return;
+  }
+
+  await callSessionGateway(sessionToken, '/session/s3/config', 'POST', s3Config);
+  await callSessionGateway(sessionToken, '/session/s3/test', 'POST');
+
+  logger.info('WhatsApp session S3 configured successfully', {
+    village_id: villageId,
+    bucket: s3Config.bucket,
+    endpoint: s3Config.endpoint,
+  });
+}
+
+async function bootstrapDirectSessionGateway(params: {
+  token: string;
+  villageId: string;
+  webhook: string;
+}): Promise<void> {
+  if (params.webhook) {
+    await callSessionGateway(params.token, '/webhook', 'POST', {
+      WebhookURL: params.webhook,
+      Events: ['Message', 'ReadReceipt'],
+    });
+  }
+
+  await callSessionGateway(params.token, '/session/history', 'POST', { history: 0 });
+
+  await configureSessionObjectStorage(params.token, params.villageId);
+}
+
 /**
  * Ensure a wa-support-v2 user exists for this village.
  * Creates (upsert) via internal API. Returns api_key if newly created,
@@ -197,6 +255,9 @@ async function createSessionViaWaSupport(params: {
     webhook_url: params.webhook || '',
     events: 'All',
     auto_connect: true,
+    auto_read_enabled: sessionSettings.autoReadMessages,
+    typing_enabled: sessionSettings.typingIndicator,
+    history: 0,
   });
 
   if (!result.success) {
@@ -485,6 +546,13 @@ export async function createSessionForVillage(params: {
     });
     token = created.token;
     sessionId = created.sessionId;
+
+    try {
+      await configureSessionObjectStorage(token, params.villageId);
+    } catch (error: any) {
+      await deleteSessionFromWaSupport(user.apiKey, created.sessionId);
+      throw error;
+    }
   } else if (isDryRun()) {
     token = `dryrun_${params.villageId}_${Date.now()}`;
   } else {
@@ -497,6 +565,24 @@ export async function createSessionForVillage(params: {
       throw new Error('Token sesi tidak ditemukan dari server WA');
     }
     token = extracted;
+
+    try {
+      await bootstrapDirectSessionGateway({
+        token,
+        villageId: params.villageId,
+        webhook,
+      });
+    } catch (error: any) {
+      try {
+        await logoutSession(token);
+      } catch (logoutError: any) {
+        logger.warn('Failed to clean up direct WhatsApp session after bootstrap error', {
+          village_id: params.villageId,
+          error: logoutError.message,
+        });
+      }
+      throw error;
+    }
   }
 
   // Compute the instance_name (session name on WA provider)

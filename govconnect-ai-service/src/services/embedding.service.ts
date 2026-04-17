@@ -1,21 +1,15 @@
 /**
  * Embedding Service for GovConnect AI
- * 
- * Implements Gemini Embedding API (gemini-embedding-001) for semantic search and RAG
- * Based on Google's best practices from the Gemini Cookbook
- * 
- * Key features:
- * - Single and batch embedding generation
- * - Task-type optimization (RETRIEVAL_DOCUMENT, RETRIEVAL_QUERY, etc.)
- * - Configurable output dimensions (768 recommended for balance)
- * - L2 normalization for accurate cosine similarity
- * - Query embedding cache for reduced API calls
- * 
- * @see https://ai.google.dev/gemini-api/docs/embeddings
+ *
+ * Semua request embedding sekarang wajib lewat AI gateway lane `EMBED`.
+ * Service ini tetap menjaga:
+ * - query embedding cache
+ * - batch processing
+ * - L2 normalization
+ * - statistik internal
  */
 
 import crypto from 'crypto';
-import { GoogleGenerativeAI, TaskType } from '@google/generative-ai';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import {
@@ -26,46 +20,39 @@ import {
   EmbeddingConfig,
   EmbeddingStats,
 } from '../types/embedding.types';
-import { apiKeyManager } from './api-key-manager.service';
-import { recordTokenUsage } from './token-usage.service';
+import { callAIGatewayEmbeddings } from './ai-gateway.service';
+import { registerInterval } from '../utils/timer-registry';
 
-// Default configuration
-const DEFAULT_MODEL = 'gemini-embedding-001';
-const DEFAULT_DIMENSIONS: EmbeddingDimension = 768;
-const MAX_BATCH_SIZE = 100; // Gemini API limit
+const DEFAULT_MODEL = config.embeddingGateway.model;
+const DEFAULT_DIMENSIONS: EmbeddingDimension = config.embeddingGateway.dimensions as EmbeddingDimension;
+const MAX_BATCH_SIZE = 100;
 const EMBEDDING_RETRY_COUNT = parseInt(process.env.EMBEDDING_RETRY_COUNT || '2', 10);
 const EMBEDDING_RETRY_BASE_MS = parseInt(process.env.EMBEDDING_RETRY_BASE_MS || '750', 10);
 const EMBEDDING_RETRY_MAX_MS = parseInt(process.env.EMBEDDING_RETRY_MAX_MS || '5000', 10);
 
-/**
- * Get a GenAI instance for embedding calls, using BYOK if available.
- * Returns both the GenAI instance and key source metadata for token tracking.
- */
-function getEmbeddingGenAI(): { genAI: GoogleGenerativeAI; keySource: string; keyId: string | null; keyTier: string } {
-  const selected = apiKeyManager.selectKey(DEFAULT_MODEL);
-  if (selected) {
-    if (selected.isByok && selected.keyId) {
-      apiKeyManager.recordUsage(selected.keyId, DEFAULT_MODEL, 0, 0); // Updated post-call
-    }
-    return {
-      genAI: selected.genAI,
-      keySource: selected.isByok ? 'byok' : 'env',
-      keyId: selected.keyId,
-      keyTier: selected.tier,
-    };
-  }
-  return {
-    genAI: new GoogleGenerativeAI(config.geminiApiKey),
-    keySource: 'env',
-    keyId: null,
-    keyTier: 'env',
-  };
+interface CachedEmbedding {
+  embedding: number[];
+  timestamp: number;
+  taskType: EmbeddingTaskType;
 }
 
-/** Estimate token count from text length (roughly 4 chars ≈ 1 token for mixed Indonesian/English) */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+const embeddingCache = new Map<string, CachedEmbedding>();
+const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
+const MAX_CACHE_SIZE = 500;
+
+let cacheStats = {
+  hits: 0,
+  misses: 0,
+  evictions: 0,
+};
+
+let stats: EmbeddingStats = {
+  totalEmbeddingsGenerated: 0,
+  totalTokensUsed: 0,
+  averageLatencyMs: 0,
+  errorCount: 0,
+  successRate: 100,
+};
 
 function isBlankText(text: unknown): boolean {
   return typeof text !== 'string' || text.trim().length === 0;
@@ -80,10 +67,55 @@ function makeZeroEmbedding(dimensions: number, modelLabel: string): EmbeddingRes
   };
 }
 
+function normalizeForCache(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[^\w\s]/g, '');
+}
+
+function getCacheKey(text: string, taskType: EmbeddingTaskType): string {
+  const normalized = normalizeForCache(text);
+  return crypto.createHash('md5').update(`${taskType}:${normalized}`).digest('hex');
+}
+
+function cleanupExpiredCache(): void {
+  const now = Date.now();
+  let expired = 0;
+
+  for (const [key, value] of embeddingCache.entries()) {
+    if (now - value.timestamp > EMBEDDING_CACHE_TTL_MS) {
+      embeddingCache.delete(key);
+      expired++;
+    }
+  }
+
+  if (expired > 0) {
+    cacheStats.evictions += expired;
+    logger.debug('Cleaned up expired embedding cache entries', { expired });
+  }
+}
+
+function evictOldestIfNeeded(): void {
+  if (embeddingCache.size <= MAX_CACHE_SIZE) return;
+
+  const entries = Array.from(embeddingCache.entries())
+    .sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+  const toRemove = Math.floor(MAX_CACHE_SIZE * 0.2);
+  for (let i = 0; i < toRemove && i < entries.length; i++) {
+    embeddingCache.delete(entries[i][0]);
+    cacheStats.evictions++;
+  }
+
+  logger.debug('Evicted oldest embedding cache entries', { evicted: toRemove });
+}
+
 async function withRetry<T>(
   fn: () => Promise<T>,
   label: string,
-  maxRetries: number = EMBEDDING_RETRY_COUNT
+  maxRetries: number = EMBEDDING_RETRY_COUNT,
 ): Promise<T> {
   let lastError: any;
 
@@ -99,7 +131,7 @@ async function withRetry<T>(
 
       const backoff = Math.min(
         EMBEDDING_RETRY_BASE_MS * Math.pow(2, attempt),
-        EMBEDDING_RETRY_MAX_MS
+        EMBEDDING_RETRY_MAX_MS,
       );
       const jitter = Math.floor(Math.random() * 250);
 
@@ -117,94 +149,68 @@ async function withRetry<T>(
   throw lastError;
 }
 
-// ============================================================================
-// EMBEDDING CACHE - Reduces API calls for similar/repeated queries
-// ============================================================================
-
-interface CachedEmbedding {
-  embedding: number[];
-  timestamp: number;
-  taskType: EmbeddingTaskType;
-}
-
-const embeddingCache = new Map<string, CachedEmbedding>();
-const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
-const MAX_CACHE_SIZE = 500; // Maximum cached embeddings
-
-// Cache statistics
-let cacheStats = {
-  hits: 0,
-  misses: 0,
-  evictions: 0,
-};
-
-/**
- * Normalize query text for cache key generation
- */
-function normalizeForCache(text: string): string {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, ' ')
-    .replace(/[^\w\s]/g, ''); // Remove punctuation for fuzzy matching
-}
-
-/**
- * Generate cache key from text and task type
- */
-function getCacheKey(text: string, taskType: EmbeddingTaskType): string {
-  const normalized = normalizeForCache(text);
-  const hash = crypto.createHash('md5').update(`${taskType}:${normalized}`).digest('hex');
-  return hash;
-}
-
-/**
- * Clean up expired cache entries
- */
-function cleanupExpiredCache(): void {
-  const now = Date.now();
-  let expired = 0;
-  
-  for (const [key, value] of embeddingCache.entries()) {
-    if (now - value.timestamp > EMBEDDING_CACHE_TTL_MS) {
-      embeddingCache.delete(key);
-      expired++;
-    }
-  }
-  
-  if (expired > 0) {
-    cacheStats.evictions += expired;
-    logger.debug('Cleaned up expired embedding cache entries', { expired });
+function updateSuccessRate(): void {
+  const totalAttempts = stats.totalEmbeddingsGenerated + stats.errorCount;
+  if (totalAttempts > 0) {
+    stats.successRate = (stats.totalEmbeddingsGenerated / totalAttempts) * 100;
   }
 }
 
-/**
- * Evict oldest entries if cache is too large
- */
-function evictOldestIfNeeded(): void {
-  if (embeddingCache.size <= MAX_CACHE_SIZE) return;
-  
-  // Find oldest entries
-  const entries = Array.from(embeddingCache.entries())
-    .sort((a, b) => a[1].timestamp - b[1].timestamp);
-  
-  // Remove oldest 20%
-  const toRemove = Math.floor(MAX_CACHE_SIZE * 0.2);
-  for (let i = 0; i < toRemove && i < entries.length; i++) {
-    embeddingCache.delete(entries[i][0]);
-    cacheStats.evictions++;
+function finalizeEmbeddingValues(
+  values: number[],
+  outputDimensionality: number,
+  normalize: boolean,
+): { values: number[]; normalized: boolean } {
+  let nextValues = values;
+
+  if (nextValues.length > outputDimensionality) {
+    nextValues = nextValues.slice(0, outputDimensionality);
   }
-  
-  logger.debug('Evicted oldest embedding cache entries', { evicted: toRemove });
+
+  if (normalize && outputDimensionality < 3072) {
+    nextValues = normalizeEmbedding(nextValues);
+    return { values: nextValues, normalized: true };
+  }
+
+  return { values: nextValues, normalized: false };
 }
 
-// Cleanup expired cache every 5 minutes
-import { registerInterval } from '../utils/timer-registry';
+async function requestGatewayEmbeddings(
+  input: string | string[],
+  model: string,
+  outputDimensionality: number,
+  layerCall: 'embedding_single' | 'embedding_batch',
+): Promise<{ embeddings: number[][]; model: string; durationMs: number }> {
+  if (!config.embeddingGateway.enabled) {
+    throw new Error('EMBED lane is not configured');
+  }
+
+  const result = await withRetry(
+    () =>
+      callAIGatewayEmbeddings({
+        input,
+        model,
+        dimensions: outputDimensionality,
+        timeoutMs: config.embeddingGateway.timeoutMs,
+        layerType: 'embedding',
+        callType: layerCall,
+      }),
+    'embedding-gateway',
+  );
+
+  if (!result) {
+    throw new Error('Embedding gateway returned null');
+  }
+
+  return {
+    embeddings: result.embeddings,
+    model: result.model,
+    durationMs: result.metrics.durationMs,
+  };
+}
+
 registerInterval(cleanupExpiredCache, 5 * 60 * 1000, 'embedding-cache-cleanup');
 
-/**
- * Get embedding cache statistics
- */
 export function getEmbeddingCacheStats(): {
   size: number;
   hits: number;
@@ -222,66 +228,26 @@ export function getEmbeddingCacheStats(): {
   };
 }
 
-/**
- * Clear embedding cache
- */
 export function clearEmbeddingCache(): void {
   embeddingCache.clear();
   cacheStats = { hits: 0, misses: 0, evictions: 0 };
   logger.info('Embedding cache cleared');
 }
 
-// ============================================================================
-// EMBEDDING GENERATION
-// ============================================================================
-
-// Statistics tracking
-let stats: EmbeddingStats = {
-  totalEmbeddingsGenerated: 0,
-  totalTokensUsed: 0,
-  averageLatencyMs: 0,
-  errorCount: 0,
-  successRate: 100,
-};
-
-/**
- * Generate embedding for a single text
- * Uses cache for query embeddings to reduce API calls
- * 
- * @param text - The text to embed
- * @param options - Configuration options
- * @returns EmbeddingResult with normalized vector
- * 
- * @example
- * // For indexing a knowledge base document
- * const result = await generateEmbedding(
- *   "Jam operasional kelurahan adalah Senin-Jumat 08:00-15:00",
- *   { taskType: 'RETRIEVAL_DOCUMENT' }
- * );
- * 
- * @example
- * // For a user query (will be cached)
- * const result = await generateEmbedding(
- *   "jam buka kelurahan kapan?",
- *   { taskType: 'RETRIEVAL_QUERY' }
- * );
- */
 export async function generateEmbedding(
   text: string,
-  options: EmbeddingConfig = {}
+  options: EmbeddingConfig = {},
 ): Promise<EmbeddingResult> {
   const {
     model = DEFAULT_MODEL,
     outputDimensionality = DEFAULT_DIMENSIONS,
     taskType = 'RETRIEVAL_DOCUMENT',
     normalize = true,
-    useCache = true, // Enable cache by default for queries
+    useCache = true,
   } = options;
 
   const startTime = Date.now();
 
-  // Empty/blank text is not embeddable; return zero vector so callers can continue safely.
-  // This prevents batch embedding failures when some records have empty content.
   if (isBlankText(text)) {
     logger.warn('generateEmbedding called with blank text; returning zero vector', {
       taskType,
@@ -290,19 +256,12 @@ export async function generateEmbedding(
     return makeZeroEmbedding(outputDimensionality, 'empty');
   }
 
-  // Check cache for query embeddings (RETRIEVAL_QUERY task type)
-  // Only cache queries since document embeddings are stored in DB
   if (useCache && taskType === 'RETRIEVAL_QUERY') {
     const cacheKey = getCacheKey(text, taskType);
     const cached = embeddingCache.get(cacheKey);
-    
+
     if (cached && Date.now() - cached.timestamp < EMBEDDING_CACHE_TTL_MS) {
       cacheStats.hits++;
-      logger.debug('Embedding cache hit', {
-        textLength: text.length,
-        cacheSize: embeddingCache.size,
-      });
-      
       return {
         values: cached.embedding,
         dimensions: cached.embedding.length,
@@ -310,121 +269,53 @@ export async function generateEmbedding(
         normalized: true,
       };
     }
+
     cacheStats.misses++;
   }
 
   try {
-    logger.debug('Generating embedding', {
-      textLength: text.length,
-      model,
-      dimensions: outputDimensionality,
-      taskType,
-    });
+    const gatewayResult = await requestGatewayEmbeddings(text, model, outputDimensionality, 'embedding_single');
+    const rawValues = gatewayResult.embeddings[0];
+    const finalized = finalizeEmbeddingValues(rawValues, outputDimensionality, normalize);
 
-    // Get embedding model
-    const embeddingKey = getEmbeddingGenAI();
-    const embeddingModel = embeddingKey.genAI.getGenerativeModel({ model });
-
-    // Call Gemini API - use proper EmbedContentRequest with taskType for optimal quality
-    const result = await withRetry(
-      () => embeddingModel.embedContent({
-        content: { role: 'user', parts: [{ text }] },
-        taskType: taskType as unknown as TaskType,
-      }),
-      'embedContent'
-    );
-
-    let values = result.embedding.values;
-
-    // Truncate to desired dimensions if needed
-    if (values.length > outputDimensionality) {
-      values = values.slice(0, outputDimensionality);
-    }
-
-    // Normalize embedding for dimensions < 3072
-    // This is required for accurate cosine similarity
-    if (normalize && outputDimensionality < 3072) {
-      values = normalizeEmbedding(values);
-    }
-
-    const endTime = Date.now();
-    const latencyMs = endTime - startTime;
-
-    // Record embedding token usage (estimate tokens from text length)
-    const estimatedTokens = estimateTokens(text);
-    recordTokenUsage({
-      model,
-      input_tokens: estimatedTokens,
-      output_tokens: 0,
-      total_tokens: estimatedTokens,
-      layer_type: 'embedding',
-      call_type: 'embedding_single',
-      success: true,
-      duration_ms: latencyMs,
-      key_source: embeddingKey.keySource,
-      key_id: embeddingKey.keyId,
-      key_tier: embeddingKey.keyTier,
-    });
-
-    // Update stats
     stats.totalEmbeddingsGenerated++;
-    stats.averageLatencyMs = (stats.averageLatencyMs * (stats.totalEmbeddingsGenerated - 1) + latencyMs) / stats.totalEmbeddingsGenerated;
+    stats.averageLatencyMs = (stats.averageLatencyMs * (stats.totalEmbeddingsGenerated - 1) + gatewayResult.durationMs) / stats.totalEmbeddingsGenerated;
     stats.lastEmbeddingAt = new Date();
-    updateSuccessRate(true);
+    updateSuccessRate();
 
-    // Cache query embeddings for future use
     if (useCache && taskType === 'RETRIEVAL_QUERY') {
       const cacheKey = getCacheKey(text, taskType);
       embeddingCache.set(cacheKey, {
-        embedding: values,
+        embedding: finalized.values,
         timestamp: Date.now(),
         taskType,
       });
       evictOldestIfNeeded();
-      
-      logger.debug('Embedding cached', {
-        cacheSize: embeddingCache.size,
-        textLength: text.length,
-      });
     }
 
-    logger.debug('Embedding generated successfully', {
-      dimensions: values.length,
-      latencyMs,
-    });
-
     return {
-      values,
-      dimensions: values.length,
-      model,
-      normalized: normalize && outputDimensionality < 3072,
+      values: finalized.values,
+      dimensions: finalized.values.length,
+      model: gatewayResult.model,
+      normalized: finalized.normalized,
     };
   } catch (error: any) {
-    const endTime = Date.now();
     stats.errorCount++;
-    updateSuccessRate(false);
+    updateSuccessRate();
 
     logger.error('Failed to generate embedding', {
       error: error.message,
       textLength: text.length,
-      latencyMs: endTime - startTime,
+      latencyMs: Date.now() - startTime,
     });
 
     throw error;
   }
 }
 
-/**
- * Generate embeddings for multiple texts in batch
- * More efficient than calling generateEmbedding multiple times
- * 
- * @param texts - Array of texts to embed
- * @param options - Configuration options
- * @returns BatchEmbeddingResult with all embeddings
- */
 export async function generateBatchEmbeddings(
   texts: string[],
-  options: EmbeddingConfig = {}
+  options: EmbeddingConfig = {},
 ): Promise<BatchEmbeddingResult> {
   const {
     model = DEFAULT_MODEL,
@@ -442,11 +333,10 @@ export async function generateBatchEmbeddings(
     };
   }
 
-  // Gemini batchEmbedContents can fail if some entries are blank.
-  // We skip blank entries in the API call and fill their slots with zero vectors.
   const cleanedTexts = texts.map((t) => (typeof t === 'string' ? t : ''));
   const nonBlankTexts: string[] = [];
   const nonBlankIndexes: number[] = [];
+
   for (let i = 0; i < cleanedTexts.length; i++) {
     if (!isBlankText(cleanedTexts[i])) {
       nonBlankIndexes.push(i);
@@ -461,19 +351,14 @@ export async function generateBatchEmbeddings(
     };
   }
 
-  // Split into batches if needed
   if (nonBlankTexts.length > MAX_BATCH_SIZE) {
-    logger.info('Splitting large batch into smaller chunks', {
-      totalTexts: nonBlankTexts.length,
-      batchSize: MAX_BATCH_SIZE,
-    });
-
-    // We must preserve original positions; process in chunks of non-blank inputs.
     const filled: EmbeddingResult[] = cleanedTexts.map(() => makeZeroEmbedding(outputDimensionality, 'empty'));
+
     for (let i = 0; i < nonBlankTexts.length; i += MAX_BATCH_SIZE) {
       const chunkTexts = nonBlankTexts.slice(i, i + MAX_BATCH_SIZE);
       const chunkIndexes = nonBlankIndexes.slice(i, i + MAX_BATCH_SIZE);
       const chunkResult = await generateBatchEmbeddings(chunkTexts, options);
+
       for (let j = 0; j < chunkIndexes.length; j++) {
         if (chunkResult.embeddings[j]) {
           filled[chunkIndexes[j]] = chunkResult.embeddings[j];
@@ -488,50 +373,14 @@ export async function generateBatchEmbeddings(
   }
 
   try {
-    logger.info('Generating batch embeddings', {
-      count: nonBlankTexts.length,
-      model,
-      dimensions: outputDimensionality,
-      taskType,
-    });
-
-    // Get embedding model
-    const embeddingKey = getEmbeddingGenAI();
-    const embeddingModel = embeddingKey.genAI.getGenerativeModel({ model });
-
-    // Prepare batch request - include model and taskType for optimal embedding quality
-    const requestModel = model.startsWith('models/') ? model : `models/${model}`;
-    const batchResult = await withRetry(
-      () =>
-        embeddingModel.batchEmbedContents({
-          requests: nonBlankTexts.map(text => ({
-            model: requestModel,
-            content: { role: 'user', parts: [{ text }] },
-            taskType: taskType as unknown as TaskType,
-          })),
-        }),
-      'batchEmbedContents'
-    );
-
-    // Process results
-    const nonBlankEmbeddings: EmbeddingResult[] = batchResult.embeddings.map(embedding => {
-      let values = embedding.values;
-
-      // Truncate to desired dimensions if needed
-      if (values.length > outputDimensionality) {
-        values = values.slice(0, outputDimensionality);
-      }
-
-      // Normalize embedding for dimensions < 3072
-      if (normalize && outputDimensionality < 3072) {
-        values = normalizeEmbedding(values);
-      }
-
+    const gatewayResult = await requestGatewayEmbeddings(nonBlankTexts, model, outputDimensionality, 'embedding_batch');
+    const nonBlankEmbeddings = gatewayResult.embeddings.map((values) => {
+      const finalized = finalizeEmbeddingValues(values, outputDimensionality, normalize);
       return {
-        values,
-        dimensions: values.length,
-        model,
-        normalized: normalize && outputDimensionality < 3072,
+        values: finalized.values,
+        dimensions: finalized.values.length,
+        model: gatewayResult.model,
+        normalized: finalized.normalized,
       };
     });
 
@@ -543,40 +392,14 @@ export async function generateBatchEmbeddings(
       }
     }
 
-    const endTime = Date.now();
-    const latencyMs = endTime - startTime;
-
-    // Update stats
     stats.totalEmbeddingsGenerated += nonBlankTexts.length;
-    stats.averageLatencyMs = (stats.averageLatencyMs + latencyMs) / 2;
+    stats.averageLatencyMs = (stats.averageLatencyMs + gatewayResult.durationMs) / 2;
     stats.lastEmbeddingAt = new Date();
-    updateSuccessRate(true);
-
-    // Record batch embedding token usage
-    const totalEstimatedTokens = nonBlankTexts.reduce((sum, t) => sum + estimateTokens(t), 0);
-    recordTokenUsage({
-      model,
-      input_tokens: totalEstimatedTokens,
-      output_tokens: 0,
-      total_tokens: totalEstimatedTokens,
-      layer_type: 'embedding',
-      call_type: 'embedding_batch',
-      success: true,
-      duration_ms: latencyMs,
-      key_source: embeddingKey.keySource,
-      key_id: embeddingKey.keyId,
-      key_tier: embeddingKey.keyTier,
-    });
-
-    logger.info('Batch embeddings generated successfully', {
-      count: nonBlankEmbeddings.length,
-      avgDimensions: nonBlankEmbeddings[0]?.dimensions,
-      latencyMs,
-    });
+    updateSuccessRate();
 
     return {
       embeddings,
-      processingTimeMs: latencyMs,
+      processingTimeMs: gatewayResult.durationMs,
     };
   } catch (error: any) {
     logger.warn('Batch embedding failed, attempting single-request fallback', {
@@ -593,13 +416,11 @@ export async function generateBatchEmbeddings(
             taskType,
             normalize,
             useCache: false,
-          })
-        )
+          }),
+        ),
       );
 
-      const embeddings: EmbeddingResult[] = cleanedTexts.map(() =>
-        makeZeroEmbedding(outputDimensionality, 'empty')
-      );
+      const embeddings: EmbeddingResult[] = cleanedTexts.map(() => makeZeroEmbedding(outputDimensionality, 'empty'));
       for (let i = 0; i < nonBlankIndexes.length; i++) {
         const idx = nonBlankIndexes[i];
         if (fallbackEmbeddings[i]) {
@@ -607,28 +428,19 @@ export async function generateBatchEmbeddings(
         }
       }
 
-      const latencyMs = Date.now() - startTime;
-
-      logger.info('Fallback single embeddings generated successfully', {
-        count: fallbackEmbeddings.length,
-        avgDimensions: fallbackEmbeddings[0]?.dimensions,
-        latencyMs,
-      });
-
       return {
         embeddings,
-        processingTimeMs: latencyMs,
+        processingTimeMs: Date.now() - startTime,
       };
     } catch (fallbackError: any) {
-      const endTime = Date.now();
       stats.errorCount++;
-      updateSuccessRate(false);
+      updateSuccessRate();
 
       logger.error('Failed to generate batch embeddings', {
         error: error.message,
         fallbackError: fallbackError.message,
         count: texts.length,
-        latencyMs: endTime - startTime,
+        latencyMs: Date.now() - startTime,
       });
 
       throw error;
@@ -636,16 +448,9 @@ export async function generateBatchEmbeddings(
   }
 }
 
-/**
- * Normalize embedding vector to unit length (L2 normalization)
- * Required for accurate cosine similarity with dimensions < 3072
- * 
- * @param values - The embedding vector to normalize
- * @returns Normalized vector with unit length
- */
 export function normalizeEmbedding(values: number[]): number[] {
   const norm = Math.sqrt(values.reduce((sum, v) => sum + v * v, 0));
-  
+
   if (norm === 0) {
     logger.warn('Attempted to normalize zero vector');
     return values;
@@ -654,17 +459,6 @@ export function normalizeEmbedding(values: number[]): number[] {
   return values.map(v => v / norm);
 }
 
-/**
- * Calculate cosine similarity between two embeddings
- * 
- * @param a - First embedding vector
- * @param b - Second embedding vector
- * @returns Similarity score between -1 and 1 (1 = most similar)
- * 
- * @example
- * const sim = cosineSimilarity(queryEmbedding.values, docEmbedding.values);
- * if (sim > 0.7) console.log('High similarity!');
- */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) {
     throw new Error(`Embedding dimension mismatch: ${a.length} vs ${b.length}`);
@@ -681,22 +475,11 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   }
 
   const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-  
-  if (denominator === 0) {
-    return 0;
-  }
+  if (denominator === 0) return 0;
 
   return dotProduct / denominator;
 }
 
-/**
- * Calculate dot product between two embeddings
- * Use this for normalized embeddings (faster than cosine similarity)
- * 
- * @param a - First embedding vector (should be normalized)
- * @param b - Second embedding vector (should be normalized)
- * @returns Dot product (equivalent to cosine similarity for normalized vectors)
- */
 export function dotProduct(a: number[], b: number[]): number {
   if (a.length !== b.length) {
     throw new Error(`Embedding dimension mismatch: ${a.length} vs ${b.length}`);
@@ -710,14 +493,6 @@ export function dotProduct(a: number[], b: number[]): number {
   return result;
 }
 
-/**
- * Calculate Euclidean distance between two embeddings
- * Lower distance = more similar
- * 
- * @param a - First embedding vector
- * @param b - Second embedding vector
- * @returns Euclidean distance (0 = identical)
- */
 export function euclideanDistance(a: number[], b: number[]): number {
   if (a.length !== b.length) {
     throw new Error(`Embedding dimension mismatch: ${a.length} vs ${b.length}`);
@@ -732,20 +507,11 @@ export function euclideanDistance(a: number[], b: number[]): number {
   return Math.sqrt(sumSquaredDiff);
 }
 
-/**
- * Find top-K most similar embeddings from a collection
- * 
- * @param queryEmbedding - The query embedding to match against
- * @param embeddings - Collection of embeddings to search
- * @param topK - Number of results to return
- * @param minScore - Minimum similarity threshold
- * @returns Sorted array of indices and scores
- */
 export function findTopKSimilar(
   queryEmbedding: number[],
   embeddings: number[][],
   topK: number = 5,
-  minScore: number = 0
+  minScore: number = 0,
 ): Array<{ index: number; score: number }> {
   const scores: Array<{ index: number; score: number }> = [];
 
@@ -756,23 +522,14 @@ export function findTopKSimilar(
     }
   }
 
-  // Sort by score descending
   scores.sort((a, b) => b.score - a.score);
-
-  // Return top K
   return scores.slice(0, topK);
 }
 
-/**
- * Get current embedding service statistics
- */
 export function getEmbeddingStats(): EmbeddingStats {
   return { ...stats };
 }
 
-/**
- * Reset embedding statistics
- */
 export function resetEmbeddingStats(): void {
   stats = {
     totalEmbeddingsGenerated: 0,
@@ -783,26 +540,10 @@ export function resetEmbeddingStats(): void {
   };
 }
 
-/**
- * Update success rate calculation
- */
-function updateSuccessRate(success: boolean): void {
-  const totalAttempts = stats.totalEmbeddingsGenerated + stats.errorCount;
-  if (totalAttempts > 0) {
-    stats.successRate = (stats.totalEmbeddingsGenerated / totalAttempts) * 100;
-  }
-}
-
-/**
- * Validate embedding dimensions
- */
 export function isValidDimension(dim: number): dim is EmbeddingDimension {
   return [128, 256, 512, 768, 1536, 2048, 3072].includes(dim);
 }
 
-/**
- * Get recommended task type based on use case
- */
 export function getRecommendedTaskType(useCase: 'query' | 'document' | 'classification' | 'clustering' | 'similarity'): EmbeddingTaskType {
   switch (useCase) {
     case 'query':

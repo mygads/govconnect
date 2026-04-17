@@ -26,7 +26,7 @@ model knowledge_vectors {
   
   // Vector embedding
   embedding         Unsupported("vector(768)")
-  embedding_model   String   @default("gemini-embedding-001")
+  embedding_model   String   @default("openai/text-embedding-3-small")
   
   // Quality metrics (synced from dashboard or computed here)
   quality_score     Float    @default(1.0)
@@ -62,7 +62,7 @@ model document_vectors {
   
   // Vector embedding
   embedding         Unsupported("vector(768)")
-  embedding_model   String   @default("gemini-embedding-001")
+  embedding_model   String   @default("openai/text-embedding-3-small")
   
   // Timestamps
   created_at        DateTime @default(now())
@@ -94,19 +94,19 @@ model embedding_jobs {
 }
 
 // ==================== AI TOKEN USAGE ====================
-// Tracks actual token usage from Gemini API responses (usageMetadata)
+// Tracks actual token usage from gateway/provider responses
 // Stored per-call for granular analytics
 
 model ai_token_usage {
   id              String   @id @default(cuid())
   
   // Model info
-  model           String   // e.g. "gemini-2.5-flash", "gemini-2.0-flash-lite"
+  model           String   // e.g. "openai/gpt-4o-mini", "google/gemini-2.5-flash-lite"
   
-  // Token counts (from Gemini usageMetadata)
-  input_tokens    Int      // promptTokenCount
-  output_tokens   Int      // candidatesTokenCount
-  total_tokens    Int      // totalTokenCount
+  // Token counts (normalized into a common OpenAI-compatible shape)
+  input_tokens    Int
+  output_tokens   Int
+  total_tokens    Int
   
   // Cost in USD (calculated from pricing table)
   cost_usd        Float    @default(0)
@@ -127,9 +127,9 @@ model ai_token_usage {
   duration_ms     Int?     // How long the LLM call took
   
   // API Key source tracking
-  key_source      String?  // "byok" | "env" | null (for older records)
-  key_id          String?  // BYOK key ID if applicable
-  key_tier        String?  // "free" | "tier1" | "tier2" | "env"
+  key_source      String?  // "gateway_<lane>" or legacy older values
+  key_id          String?  // gateway key label or legacy identifier
+  key_tier        String?  // gateway provider or legacy tier label
   
   created_at      DateTime @default(now())
   

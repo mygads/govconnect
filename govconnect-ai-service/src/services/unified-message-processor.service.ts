@@ -25,7 +25,7 @@ import { config } from '../config/env';
 import { buildContext, buildKnowledgeQueryContext, sanitizeUserInput } from './context-builder.service';
 import type { PromptFocus } from '../prompts/system-prompt';
 import * as systemPromptModule from '../prompts/system-prompt';
-import { callGemini } from './llm.service';
+import { callLLM } from './llm.service';
 import {
   createComplaint,
   cancelComplaint,
@@ -1448,7 +1448,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Update status: thinking
     tracker.thinking();
     notifyStage('thinking', 60);
-    const llmResult = await callGemini(systemPrompt);
+    const llmResult = await callLLM(systemPrompt);
     
     if (!llmResult) {
       throw new Error('LLM call failed - all models exhausted');
@@ -1525,7 +1525,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
             });
             // Only do full retry if micro-LLM confirms hallucination
             const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
-            const retryResult = await callGemini(retryPrompt);
+            const retryResult = await callLLM(retryPrompt);
             if (retryResult?.response?.reply_text) {
               recordTokenUsage({
                 model: retryResult.metrics.model,
@@ -1553,7 +1553,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       } else {
         // No knowledge context + hallucination signals → full retry with anti-hallucination instruction
         const retryPrompt = appendAntiHallucinationInstruction(systemPrompt);
-        const retryResult = await callGemini(retryPrompt);
+        const retryResult = await callLLM(retryPrompt);
         if (retryResult?.response?.reply_text) {
           recordTokenUsage({
             model: retryResult.metrics.model,

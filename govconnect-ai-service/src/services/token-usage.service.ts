@@ -1,10 +1,11 @@
 /**
  * Token Usage Tracking Service
  *
- * Persists actual Gemini API token usage (from usageMetadata) to PostgreSQL.
+ * Persists actual LLM token usage to PostgreSQL.
  * Provides aggregation queries for the AI Usage dashboard.
  *
- * Pricing reference (USD per 1M tokens, paid tier <=200k context) — February 2026:
+ * Default pricing reference (USD per 1M tokens, provider list can be extended via
+ * AI_MODEL_PRICING_OVERRIDES in the environment):
  * ┌─────────────────────────────────┬──────────┬───────────┐
  * │ Model                           │ Input    │ Output    │
  * ├─────────────────────────────────┼──────────┼───────────┤
@@ -26,6 +27,32 @@ import logger from '../utils/logger';
 
 // ==================== Pricing ====================
 
+function loadPricingOverrides(): Record<string, { input: number; output: number }> {
+  const raw = process.env.AI_MODEL_PRICING_OVERRIDES?.trim();
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, { input?: number; output?: number }>;
+    const overrides: Record<string, { input: number; output: number }> = {};
+
+    for (const [model, pricing] of Object.entries(parsed)) {
+      if (typeof pricing?.input === 'number' && typeof pricing?.output === 'number') {
+        overrides[model] = {
+          input: pricing.input,
+          output: pricing.output,
+        };
+      }
+    }
+
+    return overrides;
+  } catch (error: any) {
+    logger.warn('Invalid AI_MODEL_PRICING_OVERRIDES JSON, ignoring overrides', {
+      error: error.message,
+    });
+    return {};
+  }
+}
+
 const PRICING: Record<string, { input: number; output: number }> = {
   // Gemini 3
   'gemini-3-pro-preview':       { input: 2.00,  output: 12.00 },
@@ -45,9 +72,12 @@ const PRICING: Record<string, { input: number; output: number }> = {
   'gemini-1.5-pro':             { input: 1.25,  output: 5.00 },
   'gemini-1.5-flash':           { input: 0.075, output: 0.30 },
   'gemini-1.5-flash-8b':        { input: 0.0375, output: 0.15 },
+  ...loadPricingOverrides(),
 };
 
-/** Find pricing for a model name — supports date-suffixed names like gemini-2.5-flash-preview-05-20 */
+const unknownPricingModels = new Set<string>();
+
+/** Find pricing for a model name — supports prefix matches and ENV overrides. */
 export function findPricing(model: string): { input: number; output: number } {
   if (PRICING[model]) return PRICING[model];
   // Prefix match (longest key first)
@@ -55,11 +85,13 @@ export function findPricing(model: string): { input: number; output: number } {
   for (const key of keys) {
     if (model.startsWith(key)) return PRICING[key];
   }
-  // Fallback by family
-  if (model.includes('flash-lite')) return { input: 0.10, output: 0.40 };
-  if (model.includes('flash'))      return { input: 0.30, output: 2.50 };
-  if (model.includes('pro'))        return { input: 1.25, output: 10.00 };
-  return { input: 0.30, output: 2.50 }; // default flash
+
+  if (!unknownPricingModels.has(model)) {
+    unknownPricingModels.add(model);
+    logger.warn('No pricing configured for model, defaulting cost to 0', { model });
+  }
+
+  return { input: 0, output: 0 };
 }
 
 function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
@@ -69,7 +101,7 @@ function calculateCost(model: string, inputTokens: number, outputTokens: number)
 
 // ==================== Types ====================
 
-export type LayerType = 'full_nlu' | 'micro_nlu' | 'embedding' | 'rag_expand';
+export type LayerType = 'full_nlu' | 'micro_nlu' | 'embedding' | 'rag_expand' | 'rag_rerank';
 
 export type CallType =
   | 'main_chat'
@@ -91,7 +123,11 @@ export type CallType =
   | 'address_analysis'
   | 'contact_match'
   | 'update_intent'
-  | 'profile_query_classify';
+  | 'profile_query_classify'
+  | 'summarize'
+  | 'hallucination_check'
+  | 'sentiment_urgency'
+  | 'rerank_documents';
 
 export interface TokenUsageRecord {
   model: string;
@@ -107,9 +143,9 @@ export interface TokenUsageRecord {
   intent?: string | null;
   success?: boolean;
   duration_ms?: number | null;
-  key_source?: string | null;  // "byok" | "env"
-  key_id?: string | null;      // BYOK key ID
-  key_tier?: string | null;    // "free" | "tier1" | "tier2" | "env"
+  key_source?: string | null;  // "gateway_<lane>" | legacy values like "byok" / "env"
+  key_id?: string | null;      // gateway key label or legacy key identifier
+  key_tier?: string | null;    // active gateway provider or legacy tier label
 }
 
 export interface UsageMetadata {
@@ -166,10 +202,10 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> 
 }
 
 /**
- * Helper: extract usageMetadata from a Gemini GenerateContentResult and record it.
+ * Helper: extract provider usage metadata from a usageMetadata-style result and record it.
  */
 export function extractAndRecord(
-  geminiResult: any,
+  providerResult: any,
   model: string,
   layer_type: LayerType,
   call_type: CallType,
@@ -186,7 +222,7 @@ export function extractAndRecord(
     key_tier?: string | null;
   }
 ): { inputTokens: number; outputTokens: number; totalTokens: number } {
-  const meta: UsageMetadata = geminiResult?.response?.usageMetadata ?? {};
+  const meta: UsageMetadata = providerResult?.response?.usageMetadata ?? {};
   const inputTokens = meta.promptTokenCount ?? 0;
   const outputTokens = meta.candidatesTokenCount ?? 0;
   const totalTokens = meta.totalTokenCount ?? (inputTokens + outputTokens);
@@ -514,6 +550,10 @@ export async function getTokenUsageSummary(
   embedding_cost: number;
   rag_expand_calls: number;
   rag_expand_tokens: number;
+  rag_expand_cost: number;
+  rag_rerank_calls: number;
+  rag_rerank_tokens: number;
+  rag_rerank_cost: number;
   main_chat_calls: number;
   main_chat_tokens: number;
   main_chat_cost: number;
@@ -545,6 +585,10 @@ export async function getTokenUsageSummary(
       COALESCE(SUM(CASE WHEN layer_type = 'embedding' THEN cost_usd ELSE 0 END), 0)::float AS embedding_cost,
       COALESCE(SUM(CASE WHEN layer_type = 'rag_expand' THEN 1 ELSE 0 END), 0)::int AS rag_expand_calls,
       COALESCE(SUM(CASE WHEN layer_type = 'rag_expand' THEN total_tokens ELSE 0 END), 0)::int AS rag_expand_tokens,
+      COALESCE(SUM(CASE WHEN layer_type = 'rag_expand' THEN cost_usd ELSE 0 END), 0)::float AS rag_expand_cost,
+      COALESCE(SUM(CASE WHEN layer_type = 'rag_rerank' THEN 1 ELSE 0 END), 0)::int AS rag_rerank_calls,
+      COALESCE(SUM(CASE WHEN layer_type = 'rag_rerank' THEN total_tokens ELSE 0 END), 0)::int AS rag_rerank_tokens,
+      COALESCE(SUM(CASE WHEN layer_type = 'rag_rerank' THEN cost_usd ELSE 0 END), 0)::float AS rag_rerank_cost,
       COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN 1 ELSE 0 END), 0)::int AS main_chat_calls,
       COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN total_tokens ELSE 0 END), 0)::int AS main_chat_tokens,
       COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN cost_usd ELSE 0 END), 0)::float AS main_chat_cost,
@@ -569,6 +613,10 @@ export async function getTokenUsageSummary(
     embedding_cost: 0,
     rag_expand_calls: 0,
     rag_expand_tokens: 0,
+    rag_expand_cost: 0,
+    rag_rerank_calls: 0,
+    rag_rerank_tokens: 0,
+    rag_rerank_cost: 0,
     main_chat_calls: 0,
     main_chat_tokens: 0,
     main_chat_cost: 0,
@@ -578,7 +626,7 @@ export async function getTokenUsageSummary(
 }
 
 /**
- * Get token usage breakdown by key source (BYOK vs ENV).
+ * Get token usage breakdown by recorded gateway lane / source.
  * Returns aggregated totals per source for the given slug filter.
  */
 export async function getTokenUsageBySource(slug?: string) {

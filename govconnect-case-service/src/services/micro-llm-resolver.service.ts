@@ -1,135 +1,17 @@
 /**
- * Micro LLM Resolver Service
+ * Complaint type resolver for Case Service.
  *
- * Uses a lightweight Gemini model to semantically match a user's kategori
- * string to the closest ComplaintType in the database.
- *
- * BYOK-aware: Uses API key rotation via AI service endpoint.
- * Falls back to .env GEMINI_API_KEY if BYOK not available.
- * Token usage is recorded to AI service for dashboard tracking.
+ * Case Service no longer talks to Gemini or any direct model provider.
+ * It delegates semantic complaint-type matching to AI Service, which already
+ * owns the gateway-only LLM integration and token accounting.
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config/env';
 import logger from '../utils/logger';
 
-/** Max retries per model before switching */
-const MAX_RETRIES_PER_MODEL = 2;
-
-/** Model fallback order for paid tiers (includes 2.0 models) */
-const MODEL_FALLBACK_ORDER = [
-  'gemini-2.0-flash-lite',
-  'gemini-2.5-flash-lite',
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-3-flash-preview',
-];
-
-/** Model fallback order for free tier (no 2.0 models) */
-const MODEL_FALLBACK_ORDER_FREE = [
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-3-flash-preview',
-];
-
-interface ByokKey {
-  id: string;
-  api_key: string;
-  name: string;
-  tier: string;
-  is_active: boolean;
-  is_valid: boolean;
-}
-
-/** Cache of BYOK keys fetched from Dashboard API */
-let byokKeysCache: ByokKey[] = [];
-let byokLastFetch = 0;
-const BYOK_CACHE_TTL_MS = 60_000;
-let genAIInstances: Map<string, GoogleGenerativeAI> = new Map();
-
-/**
- * Fetch BYOK keys from Dashboard API (cached for 60s).
- */
-async function getByokKeys(): Promise<ByokKey[]> {
-  if (Date.now() - byokLastFetch < BYOK_CACHE_TTL_MS && byokKeysCache.length > 0) {
-    return byokKeysCache;
-  }
-  try {
-    const dashboardUrl = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:3000';
-    const resp = await fetch(`${dashboardUrl}/api/internal/gemini-keys`, {
-      headers: { 'x-internal-api-key': config.internalApiKey },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!resp.ok) return byokKeysCache;
-    const data = await resp.json() as { keys?: ByokKey[] };
-    byokKeysCache = (data.keys || []).filter((k: ByokKey) => k.is_active && k.is_valid);
-    byokLastFetch = Date.now();
-
-    // Create GenAI instances
-    for (const k of byokKeysCache) {
-      if (!genAIInstances.has(k.id)) {
-        genAIInstances.set(k.id, new GoogleGenerativeAI(k.api_key));
-      }
-    }
-    return byokKeysCache;
-  } catch {
-    return byokKeysCache;
-  }
-}
-
-// Env fallback
-const envGenAI = config.geminiApiKey ? new GoogleGenerativeAI(config.geminiApiKey) : null;
-
-/**
- * Fire-and-forget: record token usage to AI service for dashboard tracking.
- * Case service doesn't share the ai_token_usage table, so we POST to AI service.
- */
-async function recordTokenUsageToAIService(
-  usageMetadata: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | undefined,
-  model: string,
-  durationMs: number,
-  keySource: 'byok' | 'env',
-  keyId?: string,
-  keyTier?: string,
-): Promise<void> {
-  try {
-    const inputTokens = usageMetadata?.promptTokenCount ?? 0;
-    const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
-    const totalTokens = usageMetadata?.totalTokenCount ?? (inputTokens + outputTokens);
-    if (totalTokens === 0) return;
-
-    await fetch(`${config.aiServiceUrl}/admin/record-token-usage`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-internal-api-key': config.internalApiKey,
-      },
-      body: JSON.stringify({
-        model,
-        input_tokens: inputTokens,
-        output_tokens: outputTokens,
-        total_tokens: totalTokens,
-        layer_type: 'micro_nlu',
-        call_type: 'complaint_type_match',
-        success: true,
-        duration_ms: durationMs,
-        key_source: keySource,
-        key_id: keyId ?? null,
-        key_tier: keyTier ?? null,
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch (error: any) {
-    logger.warn('Failed to record token usage to AI service', { error: error.message });
-  }
-}
-
 export interface MicroLLMMatch {
-  /** The matched type ID, or null if no match */
   matched_id: string | null;
-  /** Confidence 0.0–1.0 */
   confidence: number;
-  /** Short reason for the match */
   reason: string;
 }
 
@@ -140,157 +22,64 @@ interface ComplaintTypeOption {
   is_urgent: boolean;
 }
 
-const RESOLVER_PROMPT = `Kamu adalah classifier kategori pengaduan masyarakat.
-
-TUGAS:
-Diberikan sebuah KATA KUNCI pengaduan dari user dan DAFTAR TIPE PENGADUAN yang tersedia di database.
-Tentukan tipe pengaduan mana yang paling cocok dengan kata kunci user.
-
-ATURAN:
-- Pahami MAKNA dan KONTEKS kata user, bukan hanya kecocokan kata.
-- User bisa pakai bahasa informal, singkatan, typo, bahasa daerah, atau slang.
-- Jika tidak ada yang cocok sama sekali, kembalikan matched_id: null.
-- Jangan memaksakan match jika memang tidak relevan.
-
-OUTPUT (JSON saja, tanpa markdown):
-{
-  "matched_id": "id_tipe_yang_cocok atau null",
-  "confidence": 0.0-1.0,
-  "reason": "penjelasan singkat"
+interface ComplaintTypeMatchResponse {
+  matched_id?: string | null;
+  confidence?: number;
+  reason?: string;
 }
 
-DAFTAR TIPE PENGADUAN:
-{complaint_types}
-
-KATA KUNCI PENGADUAN USER:
-{kategori}`;
-
-/**
- * Call the micro LLM to semantically resolve a kategori string to a complaint type.
- * Uses BYOK key rotation + model fallback. Returns null on total failure.
- */
 export async function resolveWithMicroLLM(
   kategori: string,
-  availableTypes: ComplaintTypeOption[]
+  availableTypes: ComplaintTypeOption[],
+  context?: { village_id?: string },
 ): Promise<MicroLLMMatch | null> {
-  if (!config.geminiApiKey && byokKeysCache.length === 0) {
-    logger.warn('Micro LLM resolver skipped: no API keys configured');
+  if (!kategori || !availableTypes.length) {
     return null;
   }
 
-  if (!availableTypes.length) return null;
+  try {
+    const response = await fetch(`${config.aiServiceUrl}/admin/nlu/complaint-type-match`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-api-key': config.internalApiKey,
+      },
+      body: JSON.stringify({
+        kategori,
+        context,
+        availableTypes: availableTypes.map((item) => ({
+          id: item.id,
+          name: item.name,
+          category_name: item.category_name,
+        })),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
 
-  // Build the types list for the prompt
-  const typesText = availableTypes
-    .map(t => `- ID: "${t.id}" | Nama: "${t.name}" | Kategori: "${t.category_name}" | Urgent: ${t.is_urgent ? 'Ya' : 'Tidak'}`)
-    .join('\n');
-
-  const prompt = RESOLVER_PROMPT
-    .replace('{complaint_types}', typesText)
-    .replace('{kategori}', kategori);
-
-  const byokKeys = await getByokKeys();
-
-  // 1. Try BYOK keys first
-  for (const bkey of byokKeys) {
-    const genAI = genAIInstances.get(bkey.id);
-    if (!genAI) continue;
-
-    // Pick model list based on key tier (free has no 2.0 models)
-    const models = config.microNluModels.length > 0
-      ? config.microNluModels
-      : (bkey.tier === 'free' ? MODEL_FALLBACK_ORDER_FREE : MODEL_FALLBACK_ORDER);
-
-    for (const modelName of models) {
-      for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
-        try {
-          const model = genAI.getGenerativeModel({
-            model: modelName,
-            generationConfig: { temperature: 0.1, maxOutputTokens: 200 },
-          });
-
-          const startMs = Date.now();
-          const result = await model.generateContent(prompt);
-          const durationMs = Date.now() - startMs;
-          const responseText = result.response.text();
-          const cleaned = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-          const parsed = JSON.parse(cleaned) as MicroLLMMatch;
-
-          if (typeof parsed.confidence !== 'number') throw new Error('Invalid confidence');
-
-          if (parsed.matched_id) {
-            const exists = availableTypes.some(t => t.id === parsed.matched_id);
-            if (!exists) { parsed.matched_id = null; parsed.confidence = 0; }
-          }
-
-          // Record token usage to AI service (fire-and-forget)
-          recordTokenUsageToAIService(
-            result.response.usageMetadata as any,
-            modelName, durationMs, 'byok', bkey.id, bkey.tier,
-          );
-
-          logger.info('Micro LLM resolved complaint type', {
-            kategori, matched_id: parsed.matched_id, confidence: parsed.confidence,
-            model: modelName, keyName: bkey.name,
-          });
-          return parsed;
-        } catch (error: any) {
-          logger.warn('Micro LLM resolver failed', {
-            model: modelName, keyName: bkey.name, retry: retry + 1, error: error.message,
-          });
-          if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('401') ||
-              error.message?.includes('404') || error.message?.includes('not found')) break;
-        }
-      }
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`AI service ${response.status}: ${errorText || response.statusText}`);
     }
-  }
 
-  // 2. Fallback to .env key (use paid model order since .env is typically a paid key)
-  if (envGenAI) {
-    const envModels = config.microNluModels.length > 0 ? config.microNluModels : MODEL_FALLBACK_ORDER;
-
-    for (const modelName of envModels) {
-      for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
-        try {
-          const model = envGenAI.getGenerativeModel({
-            model: modelName,
-            generationConfig: { temperature: 0.1, maxOutputTokens: 200 },
-          });
-
-          const startMs = Date.now();
-          const result = await model.generateContent(prompt);
-          const durationMs = Date.now() - startMs;
-          const responseText = result.response.text();
-          const cleaned = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-          const parsed = JSON.parse(cleaned) as MicroLLMMatch;
-
-          if (typeof parsed.confidence !== 'number') throw new Error('Invalid confidence');
-
-          if (parsed.matched_id) {
-            const exists = availableTypes.some(t => t.id === parsed.matched_id);
-            if (!exists) { parsed.matched_id = null; parsed.confidence = 0; }
-          }
-
-          // Record token usage to AI service (fire-and-forget)
-          recordTokenUsageToAIService(
-            result.response.usageMetadata as any,
-            modelName, durationMs, 'env',
-          );
-
-          logger.info('Micro LLM resolved complaint type (env fallback)', {
-            kategori, matched_id: parsed.matched_id, confidence: parsed.confidence, model: modelName,
-          });
-          return parsed;
-        } catch (error: any) {
-          logger.warn('Micro LLM resolver failed (env fallback)', {
-            model: modelName, retry: retry + 1, error: error.message,
-          });
-          if (error.message?.includes('404') || error.message?.includes('not found')) break;
-        }
-      }
+    const parsed = await response.json() as ComplaintTypeMatchResponse;
+    if (typeof parsed.confidence !== 'number') {
+      return null;
     }
-  }
 
-  logger.error('All micro LLM models failed for complaint type resolution', { kategori });
-  return null;
+    const matchedId = parsed.matched_id && availableTypes.some((item) => item.id === parsed.matched_id)
+      ? parsed.matched_id
+      : null;
+
+    return {
+      matched_id: matchedId,
+      confidence: matchedId ? parsed.confidence : 0,
+      reason: parsed.reason || 'no_match',
+    };
+  } catch (error: any) {
+    logger.warn('Complaint type resolver via AI service failed', {
+      kategori,
+      error: error.message,
+    });
+    return null;
+  }
 }

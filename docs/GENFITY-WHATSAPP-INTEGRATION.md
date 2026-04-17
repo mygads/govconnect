@@ -15,13 +15,23 @@ Admin (Dashboard)
 govconnect-dashboard /api/whatsapp/*
   ↓ (x-internal-api-key)
 Channel Service /internal/whatsapp/*
-  ↓ (WA_API_URL = genfity-wa-support gateway)
+  ↓ (WA_SUPPORT_URL = account/session API, x-api-key / internal key)
+genfity-wa-support /v1/sessions
+  ↓ (session_token)
 genfity-wa-support /v1/wa/*
   ↓ (backend)
 genfity-wa (WA server)
   ↓ (webhook)
 Channel Service /webhook
 ```
+
+Saat `POST /api/whatsapp/session` dipanggil, GovConnect sekarang melakukan bootstrap session penuh:
+
+1. membuat session via `WA_SUPPORT_URL /v1/sessions` bila customer API aktif;
+2. mengirim webhook URL publik GovConnect;
+3. mengirim konfigurasi S3 session ke `POST /v1/wa/session/s3/config`;
+4. menjalankan `POST /v1/wa/session/s3/test`;
+5. baru menyimpan session ke database internal jika semua step berhasil.
 
 ## Endpoint yang digunakan Dashboard
 
@@ -43,7 +53,7 @@ Channel Service mendukung format webhook **form mode** dari genfity-wa:
 - `userID` → WA user id / nomor pengirim
 - `jsonData` → payload event WA
 
-Mapping tenant dilakukan dari `instanceName` sehingga pesan dari 2 desa dengan WA user yang sama tidak akan bertabrakan.
+Mapping tenant dilakukan dari `instanceName` (slug session) ke `village_id` internal sehingga pesan dari 2 desa dengan WA user yang sama tidak akan bertabrakan.
 
 ## ENV yang wajib
 
@@ -51,8 +61,11 @@ Isi di `govconnect/.env` (lihat juga `.env.example`):
 
 ```env
 # Base URL WhatsApp gateway (wajib mengarah ke prefix `/v1/wa`)
-# Direkomendasikan: genfity-wa-support agar semua request tervalidasi via token.
 WA_API_URL=https://api-wa.genfity.com/v1/wa
+
+# Base URL account/session API genfity-wa-support
+WA_SUPPORT_URL=https://api-wa.genfity.com
+WA_SUPPORT_INTERNAL_API_KEY=your_wa_support_api_key
 
 # Shared secret untuk antar-service auth
 INTERNAL_API_KEY=your_internal_api_key
@@ -60,9 +73,16 @@ INTERNAL_API_KEY=your_internal_api_key
 # URL publik channel-service (untuk webhook URL yang dipublish)
 PUBLIC_CHANNEL_BASE_URL=https://channel.govconnect.my.id
 
-# (Opsional) fallback token jika belum ada token sesi di DB.
-# Normalnya token dibuat per-desa/per-user dan disimpan di DB internal (wa_sessions).
-WA_ACCESS_TOKEN=
+# Object storage yang juga dipush ke session WA
+S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+S3_REGION=auto
+S3_BUCKET=govconnect-media
+S3_ACCESS_KEY=your_s3_access_key
+S3_SECRET_KEY=your_s3_secret_key
+S3_PATH_STYLE=false
+S3_PUBLIC_URL=https://cdn.govconnect.my.id
+S3_MEDIA_DELIVERY=s3
+S3_RETENTION_DAYS=365
 
 # (Opsional) untuk testing tanpa outbound call
 WA_DRY_RUN=false

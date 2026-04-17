@@ -7,7 +7,7 @@
  * 1. FALLBACK when LLM completely fails (fallback-response.service.ts)
  * 2. Safety net for intent detection when no LLM response available
  * 
- * The main AI flow uses Gemini LLM for all intent classification.
+ * The main AI flow uses AI gateway LLMs for intent classification.
  * These patterns do NOT bypass LLM — they are the last resort.
  */
 

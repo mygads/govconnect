@@ -2,6 +2,7 @@ import express, { Application } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
+import path from 'path';
 import webhookRoutes from './routes/webhook.routes';
 import internalRoutes from './routes/internal.routes';
 import healthRoutes from './routes/health.routes';
@@ -10,8 +11,8 @@ import { metricsHandler, metricsMiddleware } from './middleware/metrics.middlewa
 import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 
-// Media storage path
-const MEDIA_STORAGE_PATH = process.env.MEDIA_STORAGE_PATH || '/app/uploads';
+// Legacy local uploads path retained only to serve older records.
+const LEGACY_MEDIA_UPLOADS_PATH = path.join(process.cwd(), 'uploads');
 
 /**
  * Create Express application
@@ -29,8 +30,8 @@ export function createApp(): Application {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // Serve uploaded media files statically
-  app.use('/uploads', express.static(MEDIA_STORAGE_PATH, {
+  // Legacy local media serving for backward compatibility with older records.
+  app.use('/uploads', express.static(LEGACY_MEDIA_UPLOADS_PATH, {
     maxAge: '7d', // Cache for 7 days
     etag: true,
   }));

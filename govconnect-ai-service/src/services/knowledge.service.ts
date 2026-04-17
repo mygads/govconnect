@@ -1,6 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
+import { isAIGatewayEnabled } from './ai-gateway.service';
 import {
   retrieveContext,
 } from './rag.service';
@@ -30,8 +31,9 @@ interface VillageProfileSummary {
   operating_hours?: any | null;
 }
 
-// Feature flag for RAG-based search
-const USE_RAG_SEARCH = process.env.USE_RAG_SEARCH !== 'false'; // Default: true
+function isRAGSearchEnabled(): boolean {
+  return isAIGatewayEnabled('embed') && isAIGatewayEnabled('rag');
+}
 
 /**
  * Search knowledge base for relevant information
@@ -39,15 +41,17 @@ const USE_RAG_SEARCH = process.env.USE_RAG_SEARCH !== 'false'; // Default: true
  */
 export async function searchKnowledge(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
   try {
+    const ragSearchEnabled = isRAGSearchEnabled();
+
     logger.info('Searching knowledge base', {
       query: query.substring(0, 100),
       categories,
       villageId,
-      useRAG: USE_RAG_SEARCH,
+      useRAG: ragSearchEnabled,
     });
 
     // Try RAG-based semantic search first
-    if (USE_RAG_SEARCH) {
+    if (ragSearchEnabled) {
       try {
         const ragResult = await searchKnowledgeWithRAG(query, categories, villageId);
         if (ragResult.total > 0) {

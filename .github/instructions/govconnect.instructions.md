@@ -13,7 +13,7 @@ Instruksi ini wajib diikuti saat bekerja dengan project GovConnect. Baca keselur
 ### Tech Stack
 - **Backend Services**: Express.js (Node.js)
 - **Dashboard**: Next.js 14+ (App Router)
-- **AI**: Google Gemini / OpenRouter
+- **AI**: OpenAI-compatible AI gateway dengan 4 lane terpisah untuk `LLM`, `EMBED`, `RAG`, dan `RERANK`
 - **Message Broker**: RabbitMQ
 - **Database**: PostgreSQL (1 DB per service)
 - **ORM**: Prisma (Next.js), Sequelize/TypeORM (Express)
@@ -620,7 +620,7 @@ PESAN TERAKHIR USER:
 {user_message}
 ```
 
-### JSON Schema Enforcement (Gemini)
+### JSON / Structured Output Enforcement
 ```typescript
 const schema = {
   type: "object",
@@ -644,14 +644,19 @@ const schema = {
   required: ["intent", "fields", "reply_text"]
 };
 
-// Gemini API call dengan schema
-const result = await model.generateContent({
-  contents: [{ role: "user", parts: [{ text: prompt }] }],
-  generationConfig: {
-    temperature: 0.3,
-    responseMimeType: "application/json",
-    responseSchema: schema
-  }
+// OpenAI-compatible AI gateway call
+const result = await fetch(`${process.env.LLM_BASE_URL}/chat/completions`, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY}`,
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    model: process.env.FULL_NLU_MODELS?.split(",")[0],
+    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" },
+    temperature: 0.3
+  })
 });
 ```
 
@@ -994,7 +999,9 @@ services:
     build: ./govconnect-ai-service
     environment:
       RABBITMQ_URL: amqp://admin:secret@rabbitmq:5672
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LLM_PROVIDER: ${LLM_PROVIDER}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       CHANNEL_SERVICE_URL: http://channel-service:3001
       CASE_SERVICE_URL: http://case-service:3003
     depends_on:
@@ -1089,13 +1096,13 @@ await enforeFIFO(data.wa_user_id, 30);
 
 ### 4. ❌ LLM Response Not Parsed
 ```javascript
-// WRONG - assume LLM always return valid JSON
-const response = await gemini.generateContent(prompt);
+// WRONG - assume gateway always return valid JSON content
+const response = await gatewayCall(prompt);
 const data = JSON.parse(response.text); // bisa error
 
 // CORRECT - handle parsing error
 try {
-  const response = await gemini.generateContent(prompt);
+  const response = await gatewayCall(prompt);
   const data = JSON.parse(response.text);
   
   // Validate schema
@@ -1200,47 +1207,27 @@ async function buildContext(waUserId) {
 
 ### Service 2: LLM Call dengan Schema
 ```javascript
-// src/services/gemini.service.js
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// src/services/ai-gateway.service.js
 
 async function askLLM(systemPrompt, userMessage, conversationHistory) {
-  const model = genAI.getGenerativeModel({ 
-    model: 'gemini-1.5-flash',
-    generationConfig: {
-      temperature: 0.3,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: 'object',
-        properties: {
-          intent: { 
-            type: 'string',
-            enum: ['CREATE_COMPLAINT', 'CREATE_TICKET', 'QUESTION', 'UNKNOWN']
-          },
-          fields: {
-            type: 'object',
-            properties: {
-              kategori: { type: 'string' },
-              alamat: { type: 'string' },
-              deskripsi: { type: 'string' },
-              rt_rw: { type: 'string' },
-              jenis: { type: 'string' }
-            }
-          },
-          reply_text: { type: 'string' }
-        },
-        required: ['intent', 'fields', 'reply_text']
-      }
-    }
-  });
-  
   const fullPrompt = `${systemPrompt}\n\nCONVERSATION HISTORY:\n${conversationHistory}\n\nPESAN TERAKHIR USER:\n${userMessage}`;
-  
-  const result = await model.generateContent(fullPrompt);
-  const responseText = result.response.text();
-  
-  return JSON.parse(responseText);
+
+  const result = await fetch(`${process.env.LLM_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: process.env.FULL_NLU_MODELS?.split(',')[0] || process.env.LLM_MODEL,
+      messages: [{ role: 'user', content: fullPrompt }],
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+    }),
+  });
+
+  const data = await result.json();
+  return JSON.parse(data.choices[0].message.content);
 }
 ```
 
@@ -1280,9 +1267,9 @@ function buildNotificationMessage(eventType, data) {
 - [RabbitMQ Tutorials](https://www.rabbitmq.com/tutorials)
 - [Node.js AMQP Client](https://github.com/amqp-node/amqplib)
 
-### Gemini AI
-- [Gemini API Quickstart](https://ai.google.dev/tutorials/node_quickstart)
-- [JSON Schema in Gemini](https://ai.google.dev/docs/json_mode)
+### OpenAI-Compatible AI Gateway
+- OpenRouter chat completions, embeddings, dan rerank docs
+- Dokumentasi provider gateway aktif yang dipakai tim
 
 ---
 

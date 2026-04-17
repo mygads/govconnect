@@ -20,9 +20,7 @@
  */
 
 import logger from '../utils/logger';
-import { apiKeyManager, isRateLimitError } from './api-key-manager.service';
-import { config } from '../config/env';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { buildPromptMessages, callAIGatewayPrompt, getDefaultGatewayModels, isAIGatewayEnabled } from './ai-gateway.service';
 import { getCategorySlugs, FALLBACK_CATEGORY_SLUGS } from './dynamic-categories.service';
 
 // ==================== TYPES ====================
@@ -182,102 +180,54 @@ async function callLLMForChunking(
   timeout: number = 60_000,
   validCategories?: string[],
 ): Promise<ChunkDefinition[]> {
-  // Use flash model for smart chunking (needs to be smart enough)
-  const preferredModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
-  const fallbackModels = ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite'];
-  const callPlan = apiKeyManager.getCallPlan(preferredModels, fallbackModels);
-
-  // Fallback to .env key
-  if (callPlan.length === 0 && config.geminiApiKey) {
-    const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-    callPlan.push({
-      key: { genAI, apiKey: config.geminiApiKey, keyName: 'env', keyId: null, isByok: false, tier: 'env' },
-      model: 'gemini-2.0-flash',
-    });
+  if (!isAIGatewayEnabled('llm')) {
+    throw new Error('LLM gateway lane is not configured for AI chunking');
   }
 
-  if (callPlan.length === 0) {
-    throw new Error('No API keys available for AI chunking');
+  const gatewayResult = await callAIGatewayPrompt({
+    lane: 'llm',
+    modelPriority: getDefaultGatewayModels('full'),
+    messages: buildPromptMessages(prompt),
+    temperature: 0.1,
+    maxTokens: 8192,
+    timeoutMs: timeout,
+    jsonMode: true,
+  });
+
+  if (!gatewayResult) {
+    throw new Error('All AI gateway attempts failed for AI chunking');
   }
 
-  for (const { key, model: modelName } of callPlan) {
-    try {
-      const geminiModel = key.genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          temperature: 0.1, // Low temperature for consistent structured output
-          maxOutputTokens: 8192,
-          responseMimeType: 'application/json',
-        },
-      });
+  const parsed = JSON.parse(gatewayResult.text);
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('LLM returned empty or non-array response');
+  }
 
-      const result = await Promise.race([
-        geminiModel.generateContent(prompt),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('AI chunking timeout')), timeout),
-        ),
-      ]);
-
-      const responseText = result.response.text().trim();
-
-      // Record BYOK usage
-      if (key.isByok && key.keyId) {
-        const usage = result.response.usageMetadata;
-        apiKeyManager.recordSuccess(key.keyId);
-        apiKeyManager.recordUsage(
-          key.keyId, modelName,
-          usage?.promptTokenCount ?? 0,
-          usage?.totalTokenCount ?? 0,
-        );
-      }
-
-      // Parse JSON response
-      const parsed = JSON.parse(responseText);
-
-      if (!Array.isArray(parsed) || parsed.length === 0) {
-        throw new Error('LLM returned empty or non-array response');
-      }
-
-      // Validate and normalize chunk definitions
-      const validated: ChunkDefinition[] = parsed.map((def: any, idx: number) => {
-        if (!def.paragraphs || !Array.isArray(def.paragraphs) || def.paragraphs.length === 0) {
-          throw new Error(`Chunk ${idx} has no paragraphs`);
-        }
-        if (!def.title || typeof def.title !== 'string') {
-          throw new Error(`Chunk ${idx} has no title`);
-        }
-
-        // Normalize category
-        const rawCategory = (def.category || 'custom').toLowerCase().trim();
-        const category = (validCategories || [...FALLBACK_CATEGORY_SLUGS]).includes(rawCategory) ? rawCategory : 'custom';
-
-        return {
-          paragraphs: def.paragraphs.map((n: any) => Number(n)),
-          title: def.title.trim(),
-          category,
-        };
-      });
-
-      logger.info('[SmartChunk] LLM chunking succeeded', {
-        model: modelName,
-        chunksReturned: validated.length,
-      });
-
-      return validated;
-
-    } catch (err: any) {
-      if (isRateLimitError(err.message) && key.isByok && key.keyId) {
-        apiKeyManager.recordRateLimit(key.keyId, modelName, key.tier);
-      }
-      logger.warn('[SmartChunk] LLM attempt failed', {
-        model: modelName,
-        error: err.message,
-      });
-      continue;
+  const validated: ChunkDefinition[] = parsed.map((def: any, idx: number) => {
+    if (!def.paragraphs || !Array.isArray(def.paragraphs) || def.paragraphs.length === 0) {
+      throw new Error(`Chunk ${idx} has no paragraphs`);
     }
-  }
+    if (!def.title || typeof def.title !== 'string') {
+      throw new Error(`Chunk ${idx} has no title`);
+    }
 
-  throw new Error('All LLM attempts failed for AI chunking');
+    const rawCategory = (def.category || 'custom').toLowerCase().trim();
+    const category = (validCategories || [...FALLBACK_CATEGORY_SLUGS]).includes(rawCategory) ? rawCategory : 'custom';
+
+    return {
+      paragraphs: def.paragraphs.map((n: any) => Number(n)),
+      title: def.title.trim(),
+      category,
+    };
+  });
+
+  logger.info('[SmartChunk] AI gateway chunking succeeded', {
+    provider: gatewayResult.provider,
+    model: gatewayResult.model,
+    chunksReturned: validated.length,
+  });
+
+  return validated;
 }
 
 /** Number of sentences to overlap between consecutive chunks for context preservation */
@@ -545,50 +495,31 @@ KATEGORI: ${cats.join(', ')}
 Jawab HANYA JSON (tanpa markdown):
 {"title": "Judul Deskriptif", "category": "kategori"}`;
 
-    const microModels = ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite'];
-    const callPlan = apiKeyManager.getCallPlan(microModels, microModels);
-
-    if (callPlan.length === 0 && config.geminiApiKey) {
-      const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-      callPlan.push({
-        key: { genAI, apiKey: config.geminiApiKey, keyName: 'env', keyId: null, isByok: false, tier: 'env' },
-        model: 'gemini-2.0-flash-lite',
-      });
+    if (!isAIGatewayEnabled('llm')) {
+      throw new Error('LLM gateway lane is not configured for short-document chunking');
     }
 
-    for (const { key, model: modelName } of callPlan) {
-      try {
-        const geminiModel = key.genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: { temperature: 0, maxOutputTokens: 200, responseMimeType: 'application/json' },
-        });
+    const gatewayResult = await callAIGatewayPrompt({
+      lane: 'llm',
+      modelPriority: getDefaultGatewayModels('micro'),
+      messages: buildPromptMessages(prompt),
+      temperature: 0,
+      maxTokens: 200,
+      timeoutMs: 10_000,
+      jsonMode: true,
+    });
 
-        const result = await Promise.race([
-          geminiModel.generateContent(prompt),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('timeout')), 10_000),
-          ),
-        ]);
+    if (gatewayResult) {
+      const parsed = JSON.parse(gatewayResult.text.trim());
+      const rawCat = (parsed.category || 'custom').toLowerCase().trim();
+      const category = cats.includes(rawCat) ? rawCat : 'custom';
 
-        if (key.isByok && key.keyId) {
-          const usage = result.response.usageMetadata;
-          apiKeyManager.recordSuccess(key.keyId);
-          apiKeyManager.recordUsage(key.keyId, modelName, usage?.promptTokenCount ?? 0, usage?.totalTokenCount ?? 0);
-        }
-
-        const parsed = JSON.parse(result.response.text().trim());
-        const rawCat = (parsed.category || 'custom').toLowerCase().trim();
-        const category = cats.includes(rawCat) ? rawCat : 'custom';
-
-        return [{
-          title: parsed.title || documentTitle,
-          category,
-          content,
-          paragraphRange: [1, paragraphs.length] as [number, number],
-        }];
-      } catch {
-        continue;
-      }
+      return [{
+        title: parsed.title || documentTitle,
+        category,
+        content,
+        paragraphRange: [1, paragraphs.length] as [number, number],
+      }];
     }
   } catch {
     // Fallback

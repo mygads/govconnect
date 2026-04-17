@@ -1,7 +1,7 @@
 /**
  * Micro LLM Matcher Service
  *
- * Lightweight Gemini calls for semantic matching tasks:
+ * Lightweight gateway calls for semantic matching tasks:
  * - Complaint type resolution (kategori → ComplaintType)
  * - Service slug resolution (query → Service)
  *
@@ -9,106 +9,40 @@
  * No hardcoded synonyms — AI handles all vocabulary understanding.
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { config } from '../config/env';
 import logger from '../utils/logger';
-import { extractAndRecord } from './token-usage.service';
-import type { LayerType, CallType } from './token-usage.service';
-import { apiKeyManager, MAX_RETRIES_PER_MODEL, isRateLimitError } from './api-key-manager.service';
+import { buildPromptMessages, callAIGatewayPrompt, getDefaultGatewayModels, isAIGatewayEnabled } from './ai-gateway.service';
+import type { CallType } from './token-usage.service';
 
 // ---------- Model Priority ----------
 
-const DEFAULT_MODELS = [
-  'gemini-2.0-flash-lite',
-  'gemini-2.5-flash-lite',
-  'gemini-2.0-flash',
-];
+const MICRO_MODELS = getDefaultGatewayModels('micro');
 
-function parseMicroModels(): string[] {
-  const raw = (process.env.MICRO_NLU_MODELS || '').trim();
-  if (!raw) return DEFAULT_MODELS;
-  const models = raw.split(',').map(m => m.trim()).filter(Boolean);
-  return models.length > 0 ? models : DEFAULT_MODELS;
-}
-
-const MICRO_MODELS = parseMicroModels();
-
-// ---------- Generic micro LLM call (BYOK-aware) ----------
+// ---------- Generic micro LLM call (gateway-only) ----------
 
 async function callMicroLLM(
   prompt: string,
   call_type: CallType,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<string | null> {
-  if (!config.geminiApiKey && apiKeyManager.getByokKeys().length === 0) {
-    logger.warn('Micro LLM skipped: no API keys configured');
+  if (!isAIGatewayEnabled('llm')) {
+    logger.error('Micro LLM skipped: LLM gateway lane is not configured');
     return null;
   }
 
-  // Build call plan using BYOK keys + fallback
-  const callPlan = apiKeyManager.getCallPlan(MICRO_MODELS, MICRO_MODELS);
+  const gatewayResult = await callAIGatewayPrompt({
+    lane: 'llm',
+    modelPriority: MICRO_MODELS,
+    messages: buildPromptMessages(prompt),
+    temperature: 0.1,
+    maxTokens: call_type === 'summarize' ? 250 : 300,
+    timeoutMs: 10_000,
+    jsonMode: call_type !== 'summarize',
+    layerType: 'micro_nlu',
+    callType: call_type,
+    context,
+  });
 
-  for (const { key, model: modelName } of callPlan) {
-    for (let retry = 0; retry < MAX_RETRIES_PER_MODEL; retry++) {
-      try {
-        const model = key.genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 300,
-          },
-        });
-
-        const startMs = Date.now();
-        const result = await model.generateContent(prompt);
-        const durationMs = Date.now() - startMs;
-
-        // Record usage
-        if (key.isByok && key.keyId) {
-          const usage = result.response.usageMetadata;
-          apiKeyManager.recordSuccess(key.keyId);
-          apiKeyManager.recordUsage(key.keyId, modelName, usage?.promptTokenCount ?? 0, usage?.totalTokenCount ?? 0);
-        }
-
-        extractAndRecord(result, modelName, 'micro_nlu' as LayerType, call_type, {
-          ...context,
-          success: true,
-          duration_ms: durationMs,
-          key_source: key.isByok ? 'byok' : 'env',
-          key_id: key.keyId,
-          key_tier: key.tier,
-        });
-
-        return result.response.text();
-      } catch (error: any) {
-        logger.warn('Micro LLM failed', {
-          keyName: key.keyName,
-          model: modelName,
-          retry: retry + 1,
-          error: error.message,
-        });
-
-        if (key.isByok && key.keyId) {
-          apiKeyManager.recordFailure(key.keyId, error.message);
-        }
-
-        // 429 / rate limit → mark model at capacity, skip to next model
-        if (isRateLimitError(error.message || '')) {
-          if (key.isByok && key.keyId) {
-            apiKeyManager.recordRateLimit(key.keyId, modelName, key.tier);
-          }
-          break;
-        }
-        // API key error → skip key entirely
-        if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('401')) break;
-        // Model not found → skip model
-        if (error.message?.includes('404') || error.message?.includes('not found')) break;
-      }
-    }
-  }
-
-  logger.error('All micro LLM attempts failed');
-  return null;
+  return gatewayResult?.text || null;
 }
 
 function parseJSON(raw: string): any | null {
