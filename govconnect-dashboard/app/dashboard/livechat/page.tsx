@@ -95,6 +95,7 @@ export default function LiveChatPage() {
   const [takeoverReasonTemplate, setTakeoverReasonTemplate] = useState("")
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRetryingAI, setIsRetryingAI] = useState(false)
+  const [failedMedia, setFailedMedia] = useState<Record<string, boolean>>({})
 
   // Processing status state
   const [processingStatuses, setProcessingStatuses] = useState<Record<string, ProcessingStatus>>({})
@@ -223,6 +224,7 @@ export default function LiveChatPage() {
     setIsUserScrollingUp(false)
     setHasNewMessages(false)
     setNewMessageCount(0)
+    setFailedMedia({})
     isNearBottomRef.current = true
   }, [getConversationKey(selectedConversation)])
 
@@ -716,37 +718,60 @@ export default function LiveChatPage() {
     return null
   }
 
+  const resolveRenderableMediaUrl = (url: string) => {
+    const trimmed = url.trim()
+    if (trimmed.startsWith('/uploads/')) {
+      return `/api/livechat/media?src=${encodeURIComponent(trimmed)}`
+    }
+
+    try {
+      const parsed = new URL(trimmed)
+      const isLegacyChannelHost =
+        parsed.hostname === 'channel-service' ||
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1'
+
+      if (isLegacyChannelHost && parsed.pathname.startsWith('/uploads/')) {
+        return `/api/livechat/media?src=${encodeURIComponent(trimmed)}`
+      }
+    } catch {
+      return trimmed
+    }
+
+    return trimmed
+  }
+
   // Render message content (handle images)
   const renderMessageContent = (msg: Message) => {
     const imageUrl = extractImageUrl(msg.message_text)
 
     if (imageUrl) {
+      const renderableImageUrl = resolveRenderableMediaUrl(imageUrl)
+      const mediaKey = `${msg.id}:${imageUrl}`
       // Get caption (text without the URL)
       const caption = msg.message_text.replace(imageUrl, '').trim()
 
       return (
         <div className="space-y-2">
-          <div className="relative rounded-lg overflow-hidden max-w-[280px]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={imageUrl}
-              alt="Media"
-              className="w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
-              onClick={() => window.open(imageUrl, '_blank')}
-              onError={(e) => {
-                const target = e.target as HTMLImageElement
-                target.style.display = 'none'
-                const parent = target.parentElement!
-                const fallback = document.createElement('div')
-                fallback.className = 'flex items-center gap-2 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg'
-                const span = document.createElement('span')
-                span.className = 'text-sm'
-                span.textContent = 'Gambar tidak dapat dimuat'
-                fallback.appendChild(span)
-                parent.appendChild(fallback)
-              }}
-            />
-          </div>
+          {failedMedia[mediaKey] ? (
+            <div className="flex items-center gap-2 rounded-lg bg-gray-100 p-3 dark:bg-gray-700">
+              <ImageIcon className="h-4 w-4" />
+              <span className="text-sm">Gambar tidak dapat dimuat</span>
+            </div>
+          ) : (
+            <div className="relative max-w-[280px] overflow-hidden rounded-lg">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={renderableImageUrl}
+                alt="Media"
+                className="h-auto w-full cursor-pointer transition-opacity hover:opacity-90"
+                onClick={() => window.open(renderableImageUrl, '_blank', 'noopener,noreferrer')}
+                onError={() => {
+                  setFailedMedia((current) => ({ ...current, [mediaKey]: true }))
+                }}
+              />
+            </div>
+          )}
           {caption && (
             <p className="text-sm whitespace-pre-wrap wrap-break-word">{caption}</p>
           )}

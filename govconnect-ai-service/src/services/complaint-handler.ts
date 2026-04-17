@@ -29,14 +29,15 @@ import {
   toVCardContacts,
 } from './ump-formatters';
 import {
-  pendingAddressConfirmation,
-  pendingAddressRequest,
-  pendingComplaintData,
   addPendingPhoto,
+  clearPendingAddressConfirmation,
   consumePendingPhotos,
   getPendingPhotoCount,
   MAX_PHOTOS_PER_COMPLAINT,
+  setPendingAddressConfirmation,
+  setPendingAddressRequest,
   setPendingCancelConfirmation,
+  setPendingComplaintData,
 } from './ump-state';
 import {
   isVagueAddress,
@@ -160,7 +161,7 @@ export async function handleComplaintCreation(
     if (!alamat) {
       // Store pending address request so we can continue when user provides address
       if (mediaUrl) addPendingPhoto(userId, mediaUrl);
-      pendingAddressRequest.set(userId, {
+      setPendingAddressRequest(userId, {
         kategori,
         deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
         village_id: villageId,
@@ -189,7 +190,7 @@ export async function handleComplaintCreation(
     logger.info('Address is vague, asking for confirmation', { userId, alamat, kategori });
 
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);
-    pendingAddressConfirmation.set(userId, {
+    setPendingAddressConfirmation(userId, {
       alamat,
       kategori,
       deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
@@ -219,7 +220,7 @@ export async function handleComplaintCreation(
 
   if (needsName || needsPhone) {
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);
-    pendingComplaintData.set(userId, {
+    setPendingComplaintData(userId, {
       kategori,
       deskripsi: deskripsi || `Laporan ${kategori.replace(/_/g, ' ')}`,
       alamat: alamat || undefined,
@@ -472,7 +473,7 @@ export async function handlePendingAddressConfirmation(
   if (addrDecision === 'yes') {
     logger.info('User confirmed vague address, creating complaint', { userId, alamat: pendingConfirm.alamat });
 
-    pendingAddressConfirmation.delete(userId);
+    clearPendingAddressConfirmation(userId);
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);
     const combinedFotoUrl = consumePendingPhotos(userId);
 
@@ -514,7 +515,7 @@ export async function handlePendingAddressConfirmation(
 
   if (addrDecision === 'no') {
     logger.info('User rejected vague address, asking for specific address', { userId });
-    pendingAddressConfirmation.delete(userId);
+    clearPendingAddressConfirmation(userId);
     return 'Baik Pak/Bu, silakan berikan alamat yang lebih spesifik (contoh: Jl. Merdeka No. 5 RT 02/RW 03), atau ketik "batal" jika ingin membatalkan laporan.';
   }
 
@@ -527,7 +528,7 @@ export async function handlePendingAddressConfirmation(
   if (looksLikeAddress) {
     logger.info('User provided more specific address', { userId, newAlamat: message });
 
-    pendingAddressConfirmation.delete(userId);
+    clearPendingAddressConfirmation(userId);
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);
     const combinedFotoUrl = consumePendingPhotos(userId);
 
@@ -569,6 +570,6 @@ export async function handlePendingAddressConfirmation(
 
   // User said something else, clear pending and continue normal flow
   logger.info('User response not confirmation, clearing pending and processing normally', { userId });
-  pendingAddressConfirmation.delete(userId);
+  clearPendingAddressConfirmation(userId);
   return null;
 }

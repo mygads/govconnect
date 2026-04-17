@@ -379,6 +379,63 @@ export async function searchVectors(
       }
     }
 
+    // Search question variants (maps back to parent knowledge entries)
+    if (sourceTypes.includes('knowledge')) {
+      try {
+        const sqlMinScore = Math.min(minScore, 0.35);
+        const variantQuery = villageId
+          ? Prisma.sql`
+              SELECT 
+                qv.source_id, qv.variant_text,
+                kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
+                1 - (qv.embedding <=> ${embeddingStr}::vector) as similarity
+              FROM question_variants qv
+              JOIN knowledge_vectors kv ON kv.id = qv.source_id
+              WHERE 1 - (qv.embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
+                AND qv.source_type = 'knowledge'
+                AND (qv.village_id = ${villageId} OR qv.village_id IS NULL)
+            `
+          : Prisma.sql`
+              SELECT 
+                qv.source_id, qv.variant_text,
+                kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
+                1 - (qv.embedding <=> ${embeddingStr}::vector) as similarity
+              FROM question_variants qv
+              JOIN knowledge_vectors kv ON kv.id = qv.source_id
+              WHERE 1 - (qv.embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
+                AND qv.source_type = 'knowledge'
+            `;
+
+        const variantResults = await prisma.$queryRaw<any[]>`
+          ${variantQuery}
+          ORDER BY similarity DESC
+          LIMIT ${topK}
+        `;
+
+        for (const row of variantResults) {
+          // Only add if not already in results (avoid duplicates with direct knowledge match)
+          if (!results.some(r => r.id === row.source_id)) {
+            const qualityBoost = (row.quality_score ?? 1.0) * 0.03;
+            results.push({
+              id: row.source_id,
+              content: row.content,
+              score: Math.min(1.0, row.similarity + qualityBoost),
+              source: row.title,
+              sourceType: 'knowledge',
+              metadata: {
+                category: row.category,
+                keywords: row.keywords,
+                qualityScore: row.quality_score,
+                matchedVariant: row.variant_text,
+              },
+            });
+          }
+        }
+      } catch {
+        // question_variants table may not exist yet — graceful fallback
+      }
+    }
+
     // Sort combined results by score and limit
     results.sort((a, b) => b.score - a.score);
     const finalResults = results.slice(0, topK);

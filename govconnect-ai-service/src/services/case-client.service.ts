@@ -690,7 +690,9 @@ export interface ServiceCatalogItem {
   slug: string;
   code?: string;
   description?: string;
+  mode?: string | null;
   is_active: boolean;
+  requirements?: ServiceRequirementDefinition[];
   category?: {
     id: string;
     name: string;

@@ -259,6 +259,14 @@ Referensi Anthropic (Building Effective Agents, Dec 2024):
 3. **Orchestration terlalu berlapis** (banyak gating mengurangi recall)
 4. **Ingestion dan eval belum observable**
 
+**Update codebase 2026-04-17**
+
+- SQL vector retrieval masih punya floor, tetapi sekarang sudah **recall-first** dengan `sqlMinScore = Math.min(minScore, 0.35)`, jadi klaim lama tentang cutoff SQL `0.65` tidak lagi akurat sebagai penyebab utama
+- query satu kata sekarang sudah di-expand lewat **static synonym map** di `rag.service.ts`, jadi bottleneck lama `if (wordCount <= 1) return query` bukan lagi kondisi runtime aktif
+- `searchKnowledge()` sekarang **knowledge-only** dan dokumen dipisah ke `searchDocuments()`
+- pending-state pre-agent utama sudah dipindah ke `pre-agent-state-router.service.ts`, walau UMP masih menyimpan beberapa non-agent guards
+- HNSW vector index sudah ada di migration `20260417_add_hnsw_vector_indexes`
+
 ### 4.2 — Bukti Teknis Penyebab Miss
 
 #### Penyebab 1: Hard Cutoff di SQL (`vector-db.service.ts:280-290`)
@@ -303,11 +311,11 @@ Data seperti jam operasional, alamat, kontak, biaya — ini **facts**, bukan nar
 
 | Data Point | Nilai | Sumber |
 |------------|-------|--------|
-| minScore default | 0.65 | `rag.service.ts:20` |
+| minScore default | 0.50 | `rag.service.ts` |
 | minScore knowledge.service | 0.55 (sudah diturunkan!) | `knowledge.service.ts:88` |
-| Min effective score | 0.45 | `rag.service.ts:21` |
-| Stop words | 11 kata saja | `hybrid-search.service.ts:106-108` |
-| Vector index | **TIDAK ADA** (sequential scan) | `prisma/schema.prisma` |
+| Min effective score | 0.35 | `rag.service.ts` |
+| Lexical enrichment | sudah jauh lebih kaya dari 11 stopwords lama | `hybrid-search.service.ts` |
+| Vector index | HNSW migration sudah ada | `prisma/migrations/20260417_add_hnsw_vector_indexes` |
 | Embedding model | text-embedding-3-small (768 dim) | `prisma/schema.prisma` |
 | Task type query | RETRIEVAL_QUERY | `rag.service.ts:458` ✅ correct |
 | Task type document | RETRIEVAL_DOCUMENT | `document-processor.service.ts:172` ✅ correct |
@@ -642,12 +650,15 @@ Pisahkan jelas menjadi 3 layer:
 - Nomor darurat
 - → Diakses via **deterministic tool** (database query langsung)
 
-**Layer 2: Knowledge Narrative (RAG, 80-95% akurat)**
+**Layer 2A: Knowledge Narrative (RAG, 80-95% akurat)**
 - SOP/prosedur
 - FAQ
 - Kebijakan desa
+- → Diakses via **search_knowledge tool** (curated knowledge only)
+
+**Layer 2B: Documents (RAG dokumen, 80-95% akurat tergantung kualitas parse/chunk)**
 - Dokumen PDF/Word
-- → Diakses via **search_knowledge tool** (hybrid retrieval + rerank)
+- → Diakses via **search_documents tool** (hybrid retrieval + rerank)
 
 **Layer 3: Derived Artifacts (internal)**
 - Chunks & embeddings
@@ -841,16 +852,16 @@ OpenAI-compatible API (yang sudah dipakai GovConnect via OpenRouter) mendukung `
 
 **Target: Production-grade security + eval**
 
-| # | Task | Effort |
-|---|------|--------|
-| 3.1 | Contextual retrieval (prepend context ke chunks) | 2 hari |
-| 3.2 | Question variants per KB entry | 3 hari |
-| 3.3 | Persistent eval store + release gate | 3 hari |
-| 3.4 | Service-to-service signed tokens (replace shared key) | 3 hari |
-| 3.5 | Signed URL untuk file access | 1 hari |
-| 3.6 | UU PDP: consent mechanism + PII encryption | 4 hari |
-| 3.7 | CSRF + audit trail + admin action logging | 2 hari |
-| 3.8 | LLM degradation strategy (offline queue + static fallback) | 2 hari |
+| # | Task | Effort | Status |
+|---|------|--------|--------|
+| 3.1 | Contextual retrieval (prepend context ke chunks) | 2 hari | ✅ |
+| 3.2 | Question variants per KB entry | 3 hari | ✅ |
+| 3.3 | Persistent eval store + release gate | 3 hari | ✅ |
+| 3.4 | Service-to-service signed tokens (replace shared key) | 3 hari | ✅ |
+| 3.5 | Signed URL untuk file access | 1 hari | ✅ |
+| 3.6 | UU PDP: consent mechanism + PII encryption | 4 hari | ✅ |
+| 3.7 | CSRF + audit trail + admin action logging | 2 hari | ✅ |
+| 3.8 | LLM degradation strategy (offline queue + static fallback) | 2 hari | ✅ |
 
 ### Projected Results
 

@@ -213,6 +213,8 @@ export async function searchKeywords(
  * Handles Indonesian language specifics with expanded stopwords and basic stemming
  */
 function prepareSearchTerms(query: string): string[] {
+  const normalizedQuery = query.toLowerCase();
+
   // Expanded Indonesian stop words (Fase 1.3)
   const stopWords = new Set([
     'di', 'ke', 'ya', 'yg', 'apa', 'ini', 'itu', 'dan', 'atau', 'yang', 'dari',
@@ -233,6 +235,52 @@ function prepareSearchTerms(query: string): string[] {
 
   // Basic Indonesian stemming: strip common prefixes/suffixes for broader matching
   const expanded: string[] = [...terms];
+
+  const phraseExpansions: Array<{ pattern: RegExp; terms: string[] }> = [
+    {
+      pattern: /\b(alamat|lokasi|letak|dimana|di mana|maps|gmaps|peta|kantornya dimana)\b/,
+      terms: ['alamat', 'lokasi', 'kantor', 'maps', 'gmaps'],
+    },
+    {
+      pattern: /\b(jam|buka|tutup|operasional|hari kerja|sabtu|minggu)\b/,
+      terms: ['jam', 'operasional', 'buka', 'tutup', 'hari', 'kerja'],
+    },
+    {
+      pattern: /\b(biaya|tarif|gratis|bayar|pembayaran|retribusi)\b/,
+      terms: ['biaya', 'tarif', 'gratis', 'bayar'],
+    },
+    {
+      pattern: /\b(syarat|persyaratan|dokumen|berkas|formulir)\b/,
+      terms: ['syarat', 'persyaratan', 'dokumen', 'berkas', 'formulir'],
+    },
+    {
+      pattern: /\b(kontak|telepon|telp|nomor|wa|whatsapp|hotline|hubungi)\b/,
+      terms: ['kontak', 'telepon', 'nomor', 'hubungi'],
+    },
+  ];
+
+  for (const expansion of phraseExpansions) {
+    if (expansion.pattern.test(normalizedQuery)) {
+      expanded.push(...expansion.terms);
+    }
+  }
+
+  const acronymExpansions: Record<string, string[]> = {
+    ktp: ['ktp', 'kartu', 'tanda', 'penduduk'],
+    kk: ['kk', 'kartu', 'keluarga'],
+    skck: ['skck', 'surat', 'catatan', 'kepolisian'],
+    sktm: ['sktm', 'surat', 'tidak', 'mampu'],
+    nik: ['nik', 'kependudukan'],
+    bpjs: ['bpjs', 'jaminan', 'kesehatan'],
+    umkm: ['umkm', 'usaha', 'mikro'],
+  };
+
+  for (const term of terms) {
+    if (acronymExpansions[term]) {
+      expanded.push(...acronymExpansions[term]);
+    }
+  }
+
   for (const term of terms) {
     // Strip common prefixes: ber-, me-, men-, mem-, meng-, meny-, pe-, pen-, pem-, peng-, peny-, per-, se-, di-, ke-, ter-
     let stem = term;

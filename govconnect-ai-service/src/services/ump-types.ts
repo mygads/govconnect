@@ -59,6 +59,15 @@ export interface ProcessMessageResult {
     knowledgeConfidence?: string;
     sentiment?: string;
     language?: string;
+    agentMode?: 'single_orchestrator' | 'deterministic_fact_router' | 'pre_agent_guard';
+    toolsUsed?: string[];
+    toolTrace?: Array<{
+      tool: string;
+      success: boolean;
+      durationMs: number;
+      trustLevel: 'trusted_fact' | 'trusted_record' | 'untrusted_retrieval' | 'action_result';
+      sourceKind?: string;
+    }>;
     /** Unique trace ID for correlating logs across NLU → RAG → LLM → response */
     traceId?: string;
   };

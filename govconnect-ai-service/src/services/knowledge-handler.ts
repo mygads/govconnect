@@ -11,7 +11,12 @@ import axios from 'axios';
 import { config } from '../config/env';
 import { callLLM } from './llm.service';
 import { buildKnowledgeQueryContext } from './context-builder.service';
-import { searchKnowledge, searchKnowledgeKeywordsOnly, getVillageProfileSummary } from './knowledge.service';
+import {
+  searchDocuments,
+  searchKnowledge,
+  searchKnowledgeKeywordsOnly,
+  getVillageProfileSummary,
+} from './knowledge.service';
 import { getImportantContacts } from './important-contacts.service';
 import {
   matchServiceSlug,
@@ -41,6 +46,20 @@ function extractPhoneNumbers(text: string): string[] {
     .map((raw) => normalizePhoneNumber(raw))
     .filter(Boolean);
   return Array.from(new Set(normalized));
+}
+
+function mergeRetrievalContexts(...parts: Array<string | undefined>): string {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  for (const part of parts) {
+    const value = part?.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    merged.push(value);
+  }
+
+  return merged.join('\n\n---\n\n');
 }
 
 // ──────────────── main export ────────────────
@@ -136,6 +155,14 @@ export async function handleKnowledgeQuery(
       const knowledgeResult = await searchKnowledge(message, categories, villageId);
       total = knowledgeResult.total;
       contextString = knowledgeResult.context;
+
+      if (!contextString || contextString.length < 180) {
+        const documentResult = await searchDocuments(message, categories, villageId);
+        if (documentResult.total > 0) {
+          contextString = mergeRetrievalContexts(contextString, documentResult.context);
+          total += documentResult.total;
+        }
+      }
     }
 
     // ─── Deterministic KB extraction (anchored terms) ───
@@ -159,7 +186,7 @@ export async function handleKnowledgeQuery(
       if (kw?.context) {
         const deterministicFromKeyword = tryExtractDeterministicKbAnswer(normalizedQuery, kw.context);
         if (deterministicFromKeyword) return deterministicFromKeyword;
-        contextString = [contextString, kw.context].filter(Boolean).join('\n\n---\n\n');
+        contextString = mergeRetrievalContexts(contextString, kw.context);
         total = Math.max(total, kw.total || 0);
       }
     }

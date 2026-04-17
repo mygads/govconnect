@@ -34,6 +34,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Phone, PlusCircle, X, Pencil, Trash2, AlertTriangle, Folder, FolderOpen } from "lucide-react"
+import { importantContacts as contactsApi } from "@/lib/frontend-api"
 
 interface ContactCategory {
   id: string
@@ -90,24 +91,13 @@ export default function ImportantContactsPage() {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [categoryRes, contactRes] = await Promise.all([
-        fetch("/api/important-contacts/categories", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }),
-        fetch("/api/important-contacts", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }),
+      const [categoryData, contactData] = await Promise.all([
+        contactsApi.getCategories(),
+        contactsApi.getAll(),
       ])
 
-      if (categoryRes.ok) {
-        const data = await categoryRes.json()
-        setCategories(data.data || [])
-      }
-
-      if (contactRes.ok) {
-        const data = await contactRes.json()
-        setContacts(data.data || [])
-      }
+      setCategories(categoryData.data || [])
+      setContacts(contactData.data || [])
     } catch (error) {
       console.error("Failed to load important contacts:", error)
     } finally {
@@ -125,19 +115,7 @@ export default function ImportantContactsPage() {
     if (!newCategory.trim()) return
 
     try {
-      const response = await fetch("/api/important-contacts/categories", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({ name: newCategory.trim() }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menambahkan kategori")
-      }
+      await contactsApi.createCategory({ name: newCategory.trim() })
 
       setNewCategory("")
       setCategoryModalOpen(false)
@@ -159,19 +137,7 @@ export default function ImportantContactsPage() {
     if (!editingCategory || !newCategory.trim()) return
 
     try {
-      const response = await fetch(`/api/important-contacts/categories/${editingCategory.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({ name: newCategory.trim() }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal mengubah kategori")
-      }
+      await contactsApi.updateCategory(editingCategory.id, { name: newCategory.trim() })
 
       setNewCategory("")
       setEditingCategory(null)
@@ -203,13 +169,14 @@ export default function ImportantContactsPage() {
 
     // Fetch linked complaint types
     try {
-      const response = await fetch(`/api/important-contacts/categories/${category.id}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      const data = await contactsApi.getAll() // category detail endpoint
+      // Fetch linked complaint types from category detail
+      const catRes = await fetch(`/api/important-contacts/categories/${category.id}`, {
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
-
-      if (response.ok) {
-        const data = await response.json()
-        setLinkedComplaintTypes(data.linkedComplaintTypes || [])
+      if (catRes.ok) {
+        const catData = await catRes.json()
+        setLinkedComplaintTypes(catData.linkedComplaintTypes || [])
       }
     } catch (error) {
       console.error("Failed to fetch linked types:", error)
@@ -222,19 +189,7 @@ export default function ImportantContactsPage() {
     if (!categoryToDelete) return
 
     try {
-      const response = await fetch(`/api/important-contacts/categories/${categoryToDelete.id}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menghapus kategori")
-      }
-
-      const data = await response.json()
+      const data = await contactsApi.deleteCategory(categoryToDelete.id)
       
       setDeleteCategoryDialogOpen(false)
       setCategoryToDelete(null)
@@ -265,24 +220,12 @@ export default function ImportantContactsPage() {
     if (!newContact.category_id || !newContact.name || !newContact.phone) return
 
     try {
-      const response = await fetch("/api/important-contacts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
+      await contactsApi.create({
           category_id: newContact.category_id,
           name: newContact.name,
           phone: newContact.phone,
           description: newContact.description,
-        }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menambahkan nomor penting")
-      }
+        })
 
       setNewContact({ category_id: "", name: "", phone: "", description: "" })
       setContactModalOpen(false)
@@ -304,24 +247,12 @@ export default function ImportantContactsPage() {
     if (!editingContact || !newContact.category_id || !newContact.name || !newContact.phone) return
 
     try {
-      const response = await fetch(`/api/important-contacts/${editingContact.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
+      await contactsApi.update(editingContact.id, {
           category_id: newContact.category_id,
           name: newContact.name,
           phone: newContact.phone,
           description: newContact.description,
-        }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal mengubah nomor penting")
-      }
+        })
 
       setNewContact({ category_id: "", name: "", phone: "", description: "" })
       setEditingContact(null)
@@ -360,17 +291,7 @@ export default function ImportantContactsPage() {
     if (!contactToDelete) return
 
     try {
-      const response = await fetch(`/api/important-contacts/${contactToDelete.id}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menghapus nomor penting")
-      }
+      await contactsApi.delete(contactToDelete.id)
 
       setDeleteContactDialogOpen(false)
       setContactToDelete(null)

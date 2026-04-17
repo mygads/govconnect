@@ -65,9 +65,9 @@ import {
 import { matchServiceSlug, matchComplaintType, classifyFarewell, classifyGreeting, classifyNameUpdate, classifyMessage, extractNameViaNLU, classifyKnowledgeSubtype, analyzeAddress, matchContactQuery, classifyUpdateIntent, validateResponseAgainstKnowledge } from './micro-llm-matcher.service';
 import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { createProcessingTracker } from './processing-status.service';
-import { getGraphContextAsync, findNodeByKeywordAsync, getAllServiceCodes, getAllServiceKeywords } from './knowledge-graph.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
 import { getCachedResponse, setCachedResponse, isCacheable } from './response-cache.service';
+import { resolveDeterministicFactReply } from './deterministic-fact-router.service';
 import {
   ChannelType,
   normalizeHandlerResult,
@@ -106,18 +106,7 @@ import type { HandlerResult } from './ump-formatters';
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
 import {
-  pendingAddressConfirmation,
-  pendingAddressRequest,
-  pendingCancelConfirmation,
   pendingNameConfirmation,
-  pendingServiceFormOffer,
-  pendingEmergencyComplaintOffer,
-  pendingComplaintData,
-  pendingPhotos,
-  addPendingPhoto,
-  consumePendingPhotos,
-  getPendingPhotoCount,
-  MAX_PHOTOS_PER_COMPLAINT,
   syncNameToChannelService,
   incrementActiveProcessing,
   decrementActiveProcessing,
@@ -129,18 +118,21 @@ import {
   extractNameFromTextNLU,
   extractNameFromHistoryNLU,
   getLastAssistantMessage,
-  extractNameFromAssistantPrompt,
   wasNamePrompted,
   fetchConversationHistoryFromChannel,
   appendToHistoryCache,
-  extractAddressFromMessage,
-  buildContextWithHistory,
 } from './ump-utils';
-import { buildComplaintCategoriesText, handleComplaintCreation, handleComplaintUpdate, handleCancellationRequest, handleHistory, handlePendingAddressConfirmation } from './complaint-handler';
+import { buildComplaintCategoriesText, handleComplaintCreation, handleComplaintUpdate, handleCancellationRequest, handleHistory } from './complaint-handler';
 import { resolveServiceSlugFromSearch, handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEditLink, buildServiceCatalogText } from './service-handler';
 import { runAgent } from './agent';
 import { handleStatusCheck } from './status-handler';
 import { handleKnowledgeQuery } from './knowledge-handler';
+import {
+  tryHandleHistoryNameConfirmation,
+  tryHandleLatePreAgentState,
+  tryHandlePendingNameConfirmation,
+  tryHandlePendingOffers,
+} from './pre-agent-state-router.service';
 
 // ── Barrel re-exports (backward compatibility) ──
 export type { ChannelType } from './ump-formatters';
@@ -252,7 +244,10 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
       metadata: {
         processingTimeMs: Date.now() - startTime,
         model: result.model,
-        hasKnowledge: result.toolsUsed.includes('search_knowledge'),
+        hasKnowledge: result.toolsUsed.includes('search_knowledge') || result.toolsUsed.includes('search_documents'),
+        agentMode: 'single_orchestrator',
+        toolsUsed: result.toolsUsed,
+        toolTrace: result.toolTrace,
         traceId,
       },
     };
@@ -267,6 +262,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
       metadata: {
         processingTimeMs: Date.now() - startTime,
         hasKnowledge: false,
+        agentMode: 'single_orchestrator',
         traceId,
       },
       error: error.message,
@@ -333,6 +329,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     const resolvedVillageId = villageId;
+    const agentChannel = channel === 'webchat' ? 'webchat' : 'whatsapp';
 
     // Cumulative timeout budget for micro-NLU classifiers (prevents worst-case stacking)
     const MICRO_NLU_BUDGET_MS = 8000;
@@ -403,199 +400,44 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       });
     }
 
-    const pendingName = pendingNameConfirmation.get(userId);
-    if (pendingName) {
-      // Use micro LLM for name confirmation (full NLU, no regex fallback)
-      let nameDecision: string;
-      try {
-        const nameResult = await withMicroNluBudget(
-          () => classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
-          null
-        );
-        nameDecision = nameResult?.decision === 'CONFIRM' ? 'yes' : nameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
-      } catch {
-        nameDecision = 'uncertain';
-      }
-
-      if (nameDecision === 'yes') {
-        pendingNameConfirmation.delete(userId);
-        updateProfile(userId, { nama_lengkap: pendingName.name });
-        syncNameToChannelService(userId, pendingName.name, resolvedVillageId, channel);
-        return {
-          success: true,
-          response: `Baik, terima kasih Pak/Bu ${pendingName.name}. Ada yang bisa kami bantu?`,
-          intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-
-      if (nameDecision === 'no') {
-        pendingNameConfirmation.delete(userId);
-        return {
-          success: true,
-          response: 'Mohon maaf, boleh kami tahu nama yang benar?',
-          intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-
-      // uncertain → re-ask
-      return {
-        success: true,
-        response: `Baik, apakah benar ini dengan Bapak/Ibu ${pendingName.name}? Balas YA atau BUKAN ya.`,
-        intent: 'QUESTION',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-      };
+    const pendingNameResult = await tryHandlePendingNameConfirmation({
+      userId,
+      message,
+      channel: agentChannel,
+      villageId: resolvedVillageId,
+      traceId,
+      startTime,
+      runWithMicroBudget: withMicroNluBudget,
+    });
+    if (pendingNameResult) {
+      return pendingNameResult;
     }
 
-    const lastPromptedName = extractNameFromAssistantPrompt(getLastAssistantMessage(resolvedHistory));
-    if (lastPromptedName) {
-      // Use micro LLM for name confirmation via history (full NLU, no regex fallback)
-      let histNameDecision: string;
-      try {
-        const histNameResult = await withMicroNluBudget(
-          () => classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
-          null
-        );
-        histNameDecision = histNameResult?.decision === 'CONFIRM' ? 'yes' : histNameResult?.decision === 'REJECT' ? 'no' : 'uncertain';
-      } catch {
-        histNameDecision = 'uncertain';
-      }
-
-      if (histNameDecision === 'yes') {
-        logger.info('🧭 [UnifiedProcessor] Name confirmation via history', {
-          userId,
-          name: lastPromptedName,
-          source: 'history_prompt',
-        });
-        updateProfile(userId, { nama_lengkap: lastPromptedName });
-        syncNameToChannelService(userId, lastPromptedName, resolvedVillageId, channel);
-        return {
-          success: true,
-          response: `Baik, terima kasih Pak/Bu ${lastPromptedName}. Ada yang bisa kami bantu?`,
-          intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-
-      if (histNameDecision === 'no') {
-        return {
-          success: true,
-          response: 'Mohon maaf, boleh kami tahu nama yang benar?',
-          intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-      // uncertain → fall through to normal processing
+    const historyNameResult = await tryHandleHistoryNameConfirmation({
+      userId,
+      message,
+      channel: agentChannel,
+      villageId: resolvedVillageId,
+      traceId,
+      startTime,
+      conversationHistory: resolvedHistory,
+      runWithMicroBudget: withMicroNluBudget,
+    });
+    if (historyNameResult) {
+      return historyNameResult;
     }
 
-    // Step 2.2: Check pending online service form offer
-    const pendingOffer = pendingServiceFormOffer.get(userId);
-    if (pendingOffer) {
-      // If the message contains a LAP/LAY code, clear the pending offer and let it fall through
-      // to Step 2.45 where the code will be detected and handled as a status check.
-      const hasLapLayCode = /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(message);
-      if (hasLapLayCode) {
-        logger.info('[UnifiedProcessor] LAP/LAY code detected while pendingServiceFormOffer active, clearing offer', { userId });
-        clearPendingServiceFormOffer(userId);
-        // fall through to Step 2.45
-      } else {
-        const confirmationResult = await withMicroNluBudget(
-          () => classifyConfirmation(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
-          null
-        );
-        const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
-        const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
-
-        if (isLikelyConfirm) {
-          clearPendingServiceFormOffer(userId);
-          const llmLike = {
-            intent: 'CREATE_SERVICE_REQUEST',
-            fields: {
-              service_slug: pendingOffer.service_slug,
-              ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
-            },
-            reply_text: '',
-          };
-
-          const linkReply = await handleServiceRequestCreation(userId, channel, llmLike);
-          return {
-            success: true,
-            response: linkReply,
-            intent: 'CREATE_SERVICE_REQUEST',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-          };
-        }
-
-        if (isLikelyReject) {
-          clearPendingServiceFormOffer(userId);
-          return {
-            success: true,
-            response: 'Baik Pak/Bu, siap. Kalau Bapak/Ibu mau proses nanti, kabari kami ya.',
-            intent: 'QUESTION',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-          };
-        }
-
-        // UNCERTAIN: The user's message is neither a clear YES nor NO.
-        // This means the user is likely talking about something else entirely.
-        // Clear the pending offer and let normal processing handle the message,
-        // regardless of length — the micro NLU already determined it's not a confirmation.
-        logger.info('[UnifiedProcessor] Clearing pendingServiceFormOffer — confirmation is UNCERTAIN, treating as new intent', { userId, messageLength: message.length });
-        clearPendingServiceFormOffer(userId);
-        // fall through to normal processing
-      }
-    }
-
-    // Step 2.3: Check pending emergency complaint offer
-    const pendingEmergency = pendingEmergencyComplaintOffer.get(userId);
-    if (pendingEmergency) {
-      const confirmationResult = await withMicroNluBudget(
-        () => classifyConfirmation(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
-        null
-      );
-      const isLikelyConfirm = confirmationResult && confirmationResult.decision === 'CONFIRM' && confirmationResult.confidence >= 0.7;
-      const isLikelyReject = confirmationResult && confirmationResult.decision === 'REJECT' && confirmationResult.confidence >= 0.7;
-
-      if (isLikelyConfirm) {
-        clearPendingEmergencyComplaintOffer(userId);
-        // Route to complaint creation with the emergency context
-        const llmLike = {
-          intent: 'CREATE_COMPLAINT',
-          fields: {
-            kategori: pendingEmergency.contact_entity || 'darurat',
-            ...(pendingEmergency.village_id ? { village_id: pendingEmergency.village_id } : {}),
-          },
-          reply_text: '',
-        };
-        const complaintResult = await handleComplaintCreation(userId, channel, llmLike, message);
-        const unwrapped = unwrapHandler(complaintResult);
-        return {
-          success: true,
-          response: unwrapped.response,
-          contacts: unwrapped.contacts,
-          intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-
-      if (isLikelyReject) {
-        clearPendingEmergencyComplaintOffer(userId);
-        return {
-          success: true,
-          response: 'Baik Pak/Bu. Semoga situasinya segera tertangani. Jangan ragu hubungi kami jika butuh bantuan lagi.',
-          intent: 'KNOWLEDGE_QUERY',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-
-      // Ambiguous → re-prompt
-      return {
-        success: true,
-        response: 'Apakah Bapak/Ibu ingin kami *buatkan laporan pengaduan* terkait situasi darurat ini? Balas *iya* atau *tidak*.',
-        intent: 'KNOWLEDGE_QUERY',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-      };
+    const pendingOfferResult = await tryHandlePendingOffers({
+      userId,
+      message,
+      channel: agentChannel,
+      villageId: resolvedVillageId,
+      traceId,
+      startTime,
+      runWithMicroBudget: withMicroNluBudget,
+    });
+    if (pendingOfferResult) {
+      return pendingOfferResult;
     }
 
     // ============================================
@@ -868,420 +710,25 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       }
     }
 
-    // Step 2: Check pending address confirmation (for vague addresses)
-    const pendingConfirm = pendingAddressConfirmation.get(userId);
-    if (pendingConfirm) {
-      const confirmResult = await handlePendingAddressConfirmation(userId, message, pendingConfirm, channel === 'webchat' ? 'webchat' : 'whatsapp', mediaUrl);
-      if (confirmResult) {
-        return {
-          success: true,
-          response: confirmResult,
-          intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-    }
-    
-    // Step 2.05: Check pending address request (for missing required addresses)
-    const pendingAddr = pendingAddressRequest.get(userId);
-    if (pendingAddr) {
-      // Escape detection: if user's message looks like a new intent (service, knowledge, status),
-      // clear the pending state and let the message flow to the LLM for fresh classification.
-      const unified205 = await getUnifiedClassification();
-      const isNewIntent205 = unified205?.message_type === 'QUESTION' && unified205.confidence >= 0.7;
-      const isComplaint205 = unified205?.message_type === 'COMPLAINT' && unified205.confidence >= 0.7;
-      const isGreeting205 = unified205?.message_type === 'GREETING';
-      const isFarewell205 = unified205?.message_type === 'FAREWELL';
-      // Fully NLU-driven topic change detection — no hardcoded keyword regex.
-      // classifyMessage() already distinguishes DATA_INPUT (user providing address)
-      // from QUESTION (user changing topic) and COMPLAINT (new report).
-      // rag_needed=true means user is asking a knowledge question, not giving an address.
-      const needsRAG205 = unified205?.rag_needed === true && isNewIntent205;
-      if (isNewIntent205 || isComplaint205 || isGreeting205 || isFarewell205 || needsRAG205) {
-        logger.info('[UnifiedProcessor] User changed topic during pending address, clearing state', {
-          userId, nluType: unified205?.message_type, confidence: unified205?.confidence,
-        });
-        pendingAddressRequest.delete(userId);
-        // Fall through to normal processing
-      } else {
-      // Try to extract address from user's message via NLU
-      const extractedAddr = await extractAddressFromMessage(message, userId, { village_id: pendingAddr.village_id });
-      if (extractedAddr && extractedAddr.length >= 5) {
-        pendingAddressRequest.delete(userId);
-        
-        // Continue with complaint creation using the new address
-        const llmLike = {
-          fields: {
-            village_id: pendingAddr.village_id,
-            kategori: pendingAddr.kategori,
-            deskripsi: pendingAddr.deskripsi,
-            alamat: extractedAddr,
-          },
-        };
-        
-        logger.info('Continuing complaint with provided address', { 
-          userId, 
-          kategori: pendingAddr.kategori,
-          alamat: extractedAddr,
-        });
-        
-        // If current message also has a photo, accumulate it
-        if (mediaUrl) addPendingPhoto(userId, mediaUrl);
-        
-        const complaintResult = await handleComplaintCreation(
-          userId, 
-          channel === 'webchat' ? 'webchat' : 'whatsapp', 
-          llmLike, 
-          message, 
-          undefined // Photos tracked in pendingPhotos cache
-        );
-        const unwrapped = unwrapHandler(complaintResult);
-        
-        return {
-          success: true,
-          response: unwrapped.response,
-          contacts: unwrapped.contacts,
-          intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      } else if (message.trim().length > 10) {
-        // User might have provided address in free text — validate with NLU first
-        const addrAnalysis = await analyzeAddress(message.trim(), { village_id: pendingAddr.village_id, is_complaint_context: true, kategori: pendingAddr.kategori });
-        if (addrAnalysis?.quality === 'not_address') {
-          // Message is NOT an address — ask again with guidance
-          logger.info('[UnifiedProcessor] Message not recognized as address, asking again', { userId, quality: addrAnalysis.quality });
-          return {
-            success: true,
-            response: 'Mohon maaf Pak/Bu, saya belum bisa mengenali lokasi dari pesan tersebut. Bisa disebutkan alamat lengkapnya? Misalnya nama jalan, RT/RW, atau patokan terdekat.',
-            intent: 'CREATE_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-          };
-        }
-        // Address detected (specific or vague) — proceed
-        pendingAddressRequest.delete(userId);
-        
-        const llmLike = {
-          fields: {
-            village_id: pendingAddr.village_id,
-            kategori: pendingAddr.kategori,
-            deskripsi: pendingAddr.deskripsi,
-            alamat: message.trim(),
-          },
-        };
-        
-        logger.info('Using user message as address for complaint', { 
-          userId, 
-          kategori: pendingAddr.kategori,
-          alamat: message.trim(),
-        });
-        
-        // If current message also has a photo, accumulate it
-        if (mediaUrl) addPendingPhoto(userId, mediaUrl);
-        
-        const complaintResult = await handleComplaintCreation(
-          userId, 
-          channel === 'webchat' ? 'webchat' : 'whatsapp', 
-          llmLike, 
-          message, 
-          undefined // Photos tracked in pendingPhotos cache
-        );
-        const unwrapped = unwrapHandler(complaintResult);
-        
-        return {
-          success: true,
-          response: unwrapped.response,
-          contacts: unwrapped.contacts,
-          intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-      } // end else (not new intent — continue complaint address flow)
-    }
-
-    // Step 2.07: Check pending complaint data (waiting for name/phone)
-    const pendingComplaint = pendingComplaintData.get(userId);
-    if (pendingComplaint) {
-      // Escape detection: if user's message looks like a new intent (service, knowledge, status),
-      // clear the pending state and let the message flow to the LLM for fresh classification.
-      const unified207 = await getUnifiedClassification();
-      const isNewIntent207 = unified207?.message_type === 'QUESTION' && unified207.confidence >= 0.7;
-      const isComplaint207 = unified207?.message_type === 'COMPLAINT' && unified207.confidence >= 0.7;
-      const isGreeting207 = unified207?.message_type === 'GREETING';
-      const isFarewell207 = unified207?.message_type === 'FAREWELL';
-      // Fully NLU-driven — same logic as Step 2.05
-      const needsRAG207 = unified207?.rag_needed === true && isNewIntent207;
-      if (isNewIntent207 || isComplaint207 || isGreeting207 || isFarewell207 || needsRAG207) {
-        logger.info('[UnifiedProcessor] User changed topic during pending complaint data, clearing state', {
-          userId, nluType: unified207?.message_type, confidence: unified207?.confidence,
-        });
-        pendingComplaintData.delete(userId);
-        // Fall through to normal processing
-      } else {
-      const userProfile = getProfile(userId);
-      
-      if (pendingComplaint.waitingFor === 'nama') {
-        // Try to extract name from message
-        const extractedName = await extractNameFromTextNLU(message, { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel });
-        if (extractedName) {
-          // Save name to profile + sync to Channel Service sidebar
-          updateProfile(userId, { nama_lengkap: extractedName });
-          syncNameToChannelService(userId, extractedName, resolvedVillageId, channel);
-          
-          // Check if webchat still needs phone
-          if (pendingComplaint.channel === 'webchat' && !userProfile.no_hp) {
-            // Update pending to wait for phone
-            pendingComplaintData.set(userId, {
-              ...pendingComplaint,
-              waitingFor: 'no_hp',
-              timestamp: Date.now(),
-            });
-            
-            return {
-              success: true,
-              response: `Terima kasih Pak/Bu ${extractedName}. Mohon informasikan juga nomor telepon yang dapat dihubungi.`,
-              intent: 'CREATE_COMPLAINT',
-              metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-            };
-          }
-          
-          // All data complete, proceed with complaint creation
-          pendingComplaintData.delete(userId);
-          
-          const llmLike = {
-            fields: {
-              village_id: pendingComplaint.village_id,
-              kategori: pendingComplaint.kategori,
-              deskripsi: pendingComplaint.deskripsi,
-              alamat: pendingComplaint.alamat,
-              rt_rw: pendingComplaint.rt_rw,
-            },
-          };
-          
-          logger.info('Continuing complaint after name received', { 
-            userId, 
-            nama: extractedName,
-            kategori: pendingComplaint.kategori,
-          });
-          
-          const complaintResult = await handleComplaintCreation(
-            userId, 
-            pendingComplaint.channel, 
-            llmLike, 
-            message, 
-            undefined // Photos tracked in pendingPhotos cache
-          );
-          const unwrapped = unwrapHandler(complaintResult);
-          
-          return {
-            success: true,
-            response: unwrapped.response,
-            contacts: unwrapped.contacts,
-            intent: 'CREATE_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-          };
-        }
-        
-        // Could not extract name, ask again
-        return {
-          success: true,
-          response: 'Mohon maaf Pak/Bu, boleh tuliskan nama lengkap Anda untuk melanjutkan laporan?',
-          intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-      
-      if (pendingComplaint.waitingFor === 'no_hp') {
-        // Try to extract phone from message
-        const phoneMatch = message.match(/\b(0[87]\d{8,11}|62[87]\d{8,11}|\+62[87]\d{8,11})\b/);
-        if (phoneMatch) {
-          const phone = phoneMatch[1].replace(/^\+/, '');
-          
-          // Save phone to profile + sync to Channel Service
-          updateProfile(userId, { no_hp: phone });
-          const channelUpper = (pendingComplaint.channel || 'webchat').toUpperCase() as 'WHATSAPP' | 'WEBCHAT';
-          updateConversationUserProfile(userId, { user_phone: phone }, pendingComplaint.village_id, channelUpper)
-            .catch(() => { /* non-critical */ });
-          
-          // All data complete, proceed with complaint creation
-          pendingComplaintData.delete(userId);
-          
-          const llmLike = {
-            fields: {
-              village_id: pendingComplaint.village_id,
-              kategori: pendingComplaint.kategori,
-              deskripsi: pendingComplaint.deskripsi,
-              alamat: pendingComplaint.alamat,
-              rt_rw: pendingComplaint.rt_rw,
-            },
-          };
-          
-          logger.info('Continuing complaint after phone received', { 
-            userId, 
-            phone,
-            kategori: pendingComplaint.kategori,
-          });
-          
-          const complaintResult = await handleComplaintCreation(
-            userId, 
-            pendingComplaint.channel, 
-            llmLike, 
-            message, 
-            undefined // Photos tracked in pendingPhotos cache
-          );
-          const unwrapped = unwrapHandler(complaintResult);
-          
-          return {
-            success: true,
-            response: unwrapped.response,
-            contacts: unwrapped.contacts,
-            intent: 'CREATE_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-          };
-        }
-        
-        // Could not extract phone, ask again
-        return {
-          success: true,
-          response: 'Mohon maaf Pak/Bu, format nomor telepon sepertinya kurang tepat. Silakan masukkan nomor HP yang valid (contoh: 081234567890).',
-          intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-      } // end else (not new intent — continue complaint data flow)
-    }
-
-    // Step 2.08: Photo-only message during active complaint flow
-    // If user sends a photo with no meaningful text while we're collecting complaint data,
-    // accumulate the photo and acknowledge it without disrupting the flow.
-    if (mediaUrl && message.trim().length < 5) {
-      const hasActiveComplaintFlow = pendingAddressRequest.get(userId) || pendingAddressConfirmation.get(userId) || pendingComplaintData.get(userId);
-      if (hasActiveComplaintFlow) {
-        const photoCount = getPendingPhotoCount(userId);
-        if (photoCount >= MAX_PHOTOS_PER_COMPLAINT) {
-          return {
-            success: true,
-            response: `Maaf Pak/Bu, maksimal ${MAX_PHOTOS_PER_COMPLAINT} foto per laporan. Foto sebelumnya sudah kami simpan. Silakan lanjutkan menjawab pertanyaan kami.`,
-            intent: 'CREATE_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-          };
-        }
-        addPendingPhoto(userId, mediaUrl);
-        const newCount = getPendingPhotoCount(userId);
-        const remaining = MAX_PHOTOS_PER_COMPLAINT - newCount;
-        return {
-          success: true,
-          response: `✅ Foto ke-${newCount} sudah kami terima.${remaining > 0 ? ` Anda masih bisa mengirim ${remaining} foto lagi.` : ' Batas foto sudah tercapai.'} Silakan lanjutkan menjawab pertanyaan sebelumnya ya Pak/Bu.`,
-          intent: 'CREATE_COMPLAINT',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-
-      // Photo-only message outside any active flow — store and acknowledge
-      addPendingPhoto(userId, mediaUrl);
-      const userName = knownName || getProfile(userId).nama_lengkap;
-      const nameGreeting = userName ? ` ${userName}` : '';
-      tracker.complete();
-      return {
-        success: true,
-        response: `Terima kasih Pak/Bu${nameGreeting}, foto sudah kami terima. ` +
-          `Jika ingin melaporkan pengaduan, silakan jelaskan masalahnya dan foto akan kami lampirkan otomatis.`,
-        intent: 'QUESTION',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-      };
-    }
-
-    // Step 2.1: Check pending cancel confirmation
-    const pendingCancel = pendingCancelConfirmation.get(userId);
-    if (pendingCancel) {
-      // Use micro LLM for confirmation classification (full NLU, no regex fallback)
-      let cancelDecision: string;
-      try {
-        const cancelResult = await withMicroNluBudget(
-          () => classifyConfirmation(message.trim(), { village_id: resolvedVillageId, wa_user_id: userId, session_id: userId, channel }),
-          null
-        );
-        cancelDecision = cancelResult?.decision === 'CONFIRM' ? 'yes' : cancelResult?.decision === 'REJECT' ? 'no' : 'uncertain';
-      } catch {
-        cancelDecision = 'uncertain';
-      }
-
-      if (cancelDecision === 'yes') {
-        clearPendingCancelConfirmation(userId);
-        if (pendingCancel.type === 'laporan') {
-          const result = await cancelComplaint(pendingCancel.id, buildChannelParams(channel, userId), pendingCancel.reason);
-          return {
-            success: true,
-            response: result.success
-              ? buildCancelSuccessResponse('laporan', pendingCancel.id, result.message)
-              : buildCancelErrorResponse('laporan', pendingCancel.id, result.error, result.message),
-            intent: 'CANCEL_COMPLAINT',
-            metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-          };
-        }
-
-        const serviceResult = await cancelServiceRequest(pendingCancel.id, buildChannelParams(channel, userId), pendingCancel.reason);
-        return {
-          success: true,
-          response: serviceResult.success
-            ? buildCancelSuccessResponse('layanan', pendingCancel.id, serviceResult.message)
-            : buildCancelErrorResponse('layanan', pendingCancel.id, serviceResult.error, serviceResult.message),
-          intent: 'CANCEL_SERVICE_REQUEST',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-
-      if (cancelDecision === 'no') {
-        clearPendingCancelConfirmation(userId);
-        return {
-          success: true,
-          response: 'Baik Pak/Bu, laporan/layanan Anda tidak jadi dibatalkan. Ada yang bisa kami bantu lagi?',
-          intent: 'QUESTION',
-          metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-        };
-      }
-
-      // uncertain — ask again
-      return {
-        success: true,
-        response: 'Mohon konfirmasi ya Pak/Bu. Balas "YA" untuk melanjutkan pembatalan, atau "TIDAK" untuk membatalkan.',
-        intent: pendingCancel.type === 'laporan' ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-      };
+    const latePreAgentResult = await tryHandleLatePreAgentState({
+      userId,
+      message,
+      channel: agentChannel,
+      villageId: resolvedVillageId,
+      traceId,
+      startTime,
+      mediaUrl,
+      knownName,
+      getUnifiedClassification,
+      runWithMicroBudget: withMicroNluBudget,
+      tracker,
+      notifyStage,
+    });
+    if (latePreAgentResult) {
+      return latePreAgentResult;
     }
 
     // Step 2.5: AI Optimization - Pre-process message
-    // Step 2.45: Direct LAP/LAY code detection — bypass LLM for direct status check
-    // Flexible regex: handles LAP-20260226-001, LAP-20260226001, LAP20260226001, etc.
-    const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
-    const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
-    if (lapMatch || layMatch) {
-      // Normalize to standard format: LAP-YYYYMMDD-NNN or LAY-YYYYMMDD-NNN
-      const rawCode = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase().replace(/\s/g, '');
-      const prefix = rawCode.startsWith('LAP') ? 'LAP' : 'LAY';
-      const digitsOnly = rawCode.replace(/^(LAP|LAY)-?/, '').replace(/-/g, '');
-      const code = `${prefix}-${digitsOnly.slice(0, 8)}-${digitsOnly.slice(8)}`;
-      const isLap = prefix === 'LAP';
-      const directCheckLlm = {
-        intent: 'CHECK_STATUS',
-        fields: isLap ? { complaint_id: code } : { request_number: code },
-        reply_text: '',
-      };
-      logger.info('[UnifiedProcessor] Direct LAP/LAY code detected, bypassing LLM', { userId, rawCode, normalizedCode: code });
-      tracker.preparing();
-      notifyStage('preparing', 80);
-      const statusReply = await handleStatusCheck(userId, channel, directCheckLlm, message);
-      tracker.complete();
-      if (channel === 'whatsapp') {
-        appendToHistoryCache(userId, 'assistant', statusReply);
-      }
-      return {
-        success: true,
-        response: statusReply,
-        intent: 'CHECK_STATUS',
-        metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-      };
-    }
-
     const historyString = resolvedHistory?.map(m => `${m.role}: ${m.content}`).join('\n') || '';
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
 
@@ -1298,6 +745,34 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 3: Sanitize and correct typos
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = normalizeText(sanitizedMessage);
+
+    const deterministicFactReply = await resolveDeterministicFactReply({
+      userId,
+      villageId: resolvedVillageId,
+      message: sanitizedMessage,
+      channel,
+    });
+    if (deterministicFactReply) {
+      logger.info('⚡ [UnifiedProcessor] Deterministic fact fast path hit', {
+        traceId,
+        userId,
+        channel,
+        source: deterministicFactReply.source,
+      });
+      tracker.complete();
+      notifyStage('done', 100);
+      return {
+        success: true,
+        response: deterministicFactReply.response,
+        intent: deterministicFactReply.intent,
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: deterministicFactReply.source === 'service_catalog' || deterministicFactReply.source === 'service_requirements',
+          agentMode: 'deterministic_fact_router',
+          traceId,
+        },
+      };
+    }
 
     // ── Agent Mode (always active) ──
     // Single function-calling agent loop replaces the old intent pipeline.

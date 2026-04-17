@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { layanan, villages } from "@/lib/frontend-api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -163,11 +164,7 @@ export default function LayananPage() {
   useEffect(() => {
     const loadVillage = async () => {
       try {
-        const response = await fetch("/api/villages/me", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        })
-        if (!response.ok) return
-        const json = await response.json()
+        const json = await villages.getMe()
         setVillageSlug(json?.data?.slug || "")
       } catch {
         // ignore
@@ -179,24 +176,14 @@ export default function LayananPage() {
   const fetchAll = async () => {
     try {
       setLoading(true)
-      const [servicesRes, categoriesRes] = await Promise.all([
-        fetch("/api/layanan", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }),
-        fetch("/api/layanan/categories", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }),
+      const [servicesData, categoriesData] = await Promise.all([
+        layanan.getAll(),
+        layanan.getCategories().catch(() => null),
       ])
 
-      if (!servicesRes.ok) {
-        const err = await servicesRes.json()
-        throw new Error(err.error || "Gagal memuat layanan")
-      }
-      const servicesData = await servicesRes.json()
       setServices(servicesData.data || [])
 
-      if (categoriesRes.ok) {
-        const categoriesData = await categoriesRes.json()
+      if (categoriesData) {
         setCategories(categoriesData.data || [])
       } else {
         setCategories([])
@@ -213,11 +200,7 @@ export default function LayananPage() {
   const fetchRequirements = async (serviceId: string): Promise<ServiceRequirement[]> => {
     try {
       setReqLoading(true)
-      const response = await fetch(`/api/layanan/${serviceId}/requirements`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!response.ok) throw new Error("Gagal memuat persyaratan")
-      const data = await response.json()
+      const data = await layanan.getRequirements(serviceId)
       const list = data.data || []
       setRequirements(list)
       return list
@@ -255,22 +238,10 @@ export default function LayananPage() {
     
     try {
       setSaving(true)
-      const url = editingCategory 
-        ? `/api/layanan/categories/${editingCategory.id}`
-        : "/api/layanan/categories"
-      
-      const response = await fetch(url, {
-        method: editingCategory ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify(categoryForm),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menyimpan kategori")
+      if (editingCategory) {
+        await layanan.updateCategory(editingCategory.id, categoryForm)
+      } else {
+        await layanan.createCategory(categoryForm)
       }
 
       toast({
@@ -296,15 +267,7 @@ export default function LayananPage() {
     if (!confirm("Hapus kategori ini? Layanan dalam kategori ini akan kehilangan kategorinya.")) return
     
     try {
-      const response = await fetch(`/api/layanan/categories/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menghapus kategori")
-      }
+      await layanan.deleteCategory(id)
 
       toast({
         title: "Kategori dihapus",
@@ -352,25 +315,11 @@ export default function LayananPage() {
     try {
       setSaving(true)
       const computedSlug = serviceForm.slug.trim() || slugify(serviceForm.name)
-      const url = editingService 
-        ? `/api/layanan/${editingService.id}`
-        : "/api/layanan"
-      
-      const response = await fetch(url, {
-        method: editingService ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
-          ...serviceForm,
-          slug: computedSlug,
-        }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menyimpan layanan")
+      const payload = { ...serviceForm, slug: computedSlug }
+      if (editingService) {
+        await layanan.update(editingService.id, payload)
+      } else {
+        await layanan.create(payload)
       }
 
       toast({
@@ -396,15 +345,7 @@ export default function LayananPage() {
     if (!confirm("Hapus layanan ini? Semua persyaratan akan ikut terhapus.")) return
     
     try {
-      const response = await fetch(`/api/layanan/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menghapus layanan")
-      }
+      await layanan.delete(id)
 
       toast({
         title: "Layanan dihapus",
@@ -461,29 +402,18 @@ export default function LayananPage() {
         options_json = requirementForm.options.split(",").map((o) => o.trim()).filter(Boolean)
       }
 
-      const url = editingRequirement 
-        ? `/api/layanan/requirements/${editingRequirement.id}`
-        : `/api/layanan/${activeService.id}/requirements`
-      
-      const response = await fetch(url, {
-        method: editingRequirement ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
-          label: requirementForm.label,
-          field_type: requirementForm.field_type,
-          is_required: requirementForm.is_required,
-          help_text: requirementForm.help_text || null,
-          options_json,
-          order_index: normalizedOrder,
-        }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menyimpan persyaratan")
+      const reqPayload = {
+        label: requirementForm.label,
+        field_type: requirementForm.field_type,
+        is_required: requirementForm.is_required,
+        help_text: requirementForm.help_text || null,
+        options_json,
+        order_index: normalizedOrder,
+      }
+      if (editingRequirement) {
+        await layanan.updateRequirement(editingRequirement.id, reqPayload)
+      } else {
+        await layanan.createRequirement(activeService.id, reqPayload)
       }
 
       toast({
@@ -548,15 +478,7 @@ export default function LayananPage() {
     if (!confirm("Hapus persyaratan ini?")) return
     
     try {
-      const response = await fetch(`/api/layanan/requirements/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menghapus persyaratan")
-      }
+      await layanan.deleteRequirement(id)
 
       toast({
         title: "Persyaratan dihapus",
@@ -593,14 +515,7 @@ export default function LayananPage() {
     try {
       await Promise.all(
         normalized.map((req) =>
-          fetch(`/api/layanan/requirements/${req.id}`, {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${localStorage.getItem("token")}`,
-            },
-            body: JSON.stringify({ order_index: req.order_index }),
-          })
+          layanan.updateRequirement(req.id, { order_index: req.order_index })
         )
       )
 

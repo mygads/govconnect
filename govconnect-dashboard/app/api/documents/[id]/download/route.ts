@@ -1,28 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { verifyToken } from '@/lib/auth'
-import { buildUrl, ServicePath } from '@/lib/api-client'
-
-async function getSession(request: NextRequest) {
-  const token = request.cookies.get('token')?.value ||
-    request.headers.get('authorization')?.replace('Bearer ', '')
-  if (!token) return null
-  const payload = await verifyToken(token)
-  if (!payload) return null
-  const session = await prisma.admin_sessions.findUnique({
-    where: { token },
-    include: { admin: true }
-  })
-  if (!session || session.expires_at < new Date()) return null
-  return session
-}
+import { getAdminSession } from '@/lib/auth'
+import { buildUrl, getInternalApiKey, ServicePath } from '@/lib/api-client'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSession(request)
+    const session = await getAdminSession(request)
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -36,7 +22,7 @@ export async function GET(
       return NextResponse.json({ error: 'Document not found' }, { status: 404 })
     }
 
-    if (session.admin.village_id && document.village_id !== session.admin.village_id) {
+    if (session.villageId && document.village_id !== session.villageId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -49,9 +35,17 @@ export async function GET(
       ? rawUrl
       : buildUrl(ServicePath.AI, rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`)
 
+    const requestHeaders = new Headers()
+    if (new URL(normalized).pathname.startsWith('/uploads/documents/')) {
+      requestHeaders.set('x-internal-api-key', getInternalApiKey())
+    }
+
     let response: Response
     try {
-      response = await fetch(normalized, { signal: AbortSignal.timeout(15000) })
+      response = await fetch(normalized, {
+        headers: requestHeaders,
+        signal: AbortSignal.timeout(15000),
+      })
     } catch (fetchErr: any) {
       console.error('Download fetch error:', fetchErr.message, 'URL:', normalized)
       return NextResponse.json(

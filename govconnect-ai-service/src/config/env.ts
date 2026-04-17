@@ -397,7 +397,7 @@ function validateEnv(): Config {
   };
 
   if (config.nodeEnv === 'production' && !config.profileEncryptionKey) {
-    logger.warn('⚠️  PROFILE_ENCRYPTION_KEY not set — PII encryption disabled in production');
+    throw new Error('FATAL: PROFILE_ENCRYPTION_KEY is required in production for UU PDP compliance');
   }
 
   if (config.embeddingGateway.dimensions !== DEFAULT_EMBED_DIMENSIONS) {

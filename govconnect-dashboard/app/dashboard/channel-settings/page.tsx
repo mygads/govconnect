@@ -28,6 +28,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { useToast } from "@/hooks/use-toast"
+import { auth as authApi, superadmin as superadminApi, fetchApiRaw } from "@/lib/frontend-api"
 import { 
   Wifi, 
   Save, 
@@ -121,14 +122,7 @@ export default function ChannelSettingsPage() {
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        const token = localStorage.getItem("token")
-        if (!token) return
-
-        const meRes = await fetch("/api/auth/me", {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!meRes.ok) return
-        const meJson = (await meRes.json()) as AuthMeResponse
+        const meJson = await authApi.me()
         setAuth(meJson.user)
 
         if (meJson.user.village_id) {
@@ -137,11 +131,7 @@ export default function ChannelSettingsPage() {
         }
 
         if (meJson.user.role === "superadmin") {
-          const vRes = await fetch("/api/superadmin/villages", {
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          if (!vRes.ok) return
-          const vJson = await vRes.json()
+          const vJson = await superadminApi.getVillages()
           const list = (vJson.data || []) as VillageItem[]
           setVillages(list)
           if (list.length > 0) {
@@ -171,9 +161,7 @@ export default function ChannelSettingsPage() {
         return null
       }
       
-      const response = await fetch(withVillage("/api/whatsapp/status"), {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/status"))
       
       let data: any = null
       try {
@@ -241,9 +229,7 @@ export default function ChannelSettingsPage() {
   const fetchQRCode = useCallback(async () => {
     try {
       setQrLoading(true)
-      const response = await fetch(withVillage("/api/whatsapp/qr"), {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/qr"))
       
       let data: any = null
       try {
@@ -277,9 +263,7 @@ export default function ChannelSettingsPage() {
   // Check for duplicate WA number
   const checkDuplicateWaNumber = useCallback(async (waNumber: string): Promise<DuplicateInfo | null> => {
     try {
-      const response = await fetch(withVillage(`/api/whatsapp/check-duplicate?wa_number=${encodeURIComponent(waNumber)}`), {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
+      const response = await fetchApiRaw(withVillage(`/api/whatsapp/check-duplicate?wa_number=${encodeURIComponent(waNumber)}`))
       
       if (!response.ok) return null
       
@@ -326,12 +310,8 @@ export default function ChannelSettingsPage() {
     
     try {
       setIsResolvingDuplicate(true)
-      const response = await fetch(withVillage("/api/whatsapp/force-disconnect"), {
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/force-disconnect"), {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({ target_village_id: duplicateInfo.existingVillageId }),
       })
 
@@ -411,10 +391,7 @@ export default function ChannelSettingsPage() {
       if (!selectedVillageId) return
       try {
         setLoading(true)
-        const token = localStorage.getItem("token")
-        const response = await fetch(withVillage("/api/channel-settings"), {
-          headers: { Authorization: `Bearer ${token}` },
-        })
+        const response = await fetchApiRaw(withVillage("/api/channel-settings"))
         if (response.ok) {
           const data = await response.json()
           setSettings({
@@ -460,9 +437,8 @@ export default function ChannelSettingsPage() {
   const handleCreateSession = async () => {
     try {
       setSessionLoading(true)
-      const response = await fetch(withVillage("/api/whatsapp/session"), {
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/session"), {
         method: "POST",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
 
       let data: any = null
@@ -496,9 +472,8 @@ export default function ChannelSettingsPage() {
   const handleDisconnectSession = async () => {
     try {
       setSessionLoading(true)
-      const response = await fetch(withVillage("/api/whatsapp/disconnect"), {
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/disconnect"), {
         method: "POST",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
 
       let data: any = null
@@ -536,9 +511,8 @@ export default function ChannelSettingsPage() {
     
     try {
       // First try to connect the session
-      const connectResponse = await fetch(withVillage("/api/whatsapp/connect"), {
+      const connectResponse = await fetchApiRaw(withVillage("/api/whatsapp/connect"), {
         method: "POST",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
 
       let connectData: any = null
@@ -591,9 +565,8 @@ export default function ChannelSettingsPage() {
       stopPolling()
       setShowQrDialog(false)
       
-      const response = await fetch(withVillage("/api/whatsapp/session"), {
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/session"), {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
 
       let data: any = null
@@ -635,12 +608,8 @@ export default function ChannelSettingsPage() {
     setSaving(true)
 
     try {
-      const response = await fetch(withVillage("/api/channel-settings"), {
+      const response = await fetchApiRaw(withVillage("/api/channel-settings"), {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
         body: JSON.stringify({
           enabled_wa: settings.enabled_wa,
           enabled_webchat: settings.enabled_webchat,

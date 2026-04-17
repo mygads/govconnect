@@ -14,7 +14,7 @@ import { config } from '../../config/env';
 import { getDefaultGatewayModels } from '../ai-gateway.service';
 import { recordTokenUsage } from '../token-usage.service';
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
-import { executeToolCall, type ToolCallResult } from './tool-executor';
+import { executeToolCall, type ToolExecutionTrace } from './tool-executor';
 import { buildAgentSystemPrompt, type AgentPromptContext } from './agent-prompt';
 
 const MAX_TOOL_ITERATIONS = 5;
@@ -37,15 +37,10 @@ interface ToolCall {
   };
 }
 
-interface ToolCallUsage {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-}
-
-interface AgentResult {
+export interface AgentResult {
   replyText: string;
   toolsUsed: string[];
+  toolTrace: ToolExecutionTrace[];
   totalTokens: number;
   iterations: number;
   model: string;
@@ -75,6 +70,7 @@ export async function runAgent(
   ];
 
   const toolsUsed: string[] = [];
+  const toolTrace: ToolExecutionTrace[] = [];
   let totalTokens = 0;
   let iterations = 0;
   let model = '';
@@ -87,6 +83,7 @@ export async function runAgent(
       return {
         replyText: 'Maaf, terjadi gangguan pada sistem. Silakan coba lagi nanti.',
         toolsUsed,
+        toolTrace,
         totalTokens,
         iterations,
         model: model || 'unknown',
@@ -125,12 +122,13 @@ export async function runAgent(
 
           toolsUsed.push(toolName);
           const result = await executeToolCall(toolName, args, toolCtx);
+          toolTrace.push(result.trace);
 
           return {
             role: 'tool' as const,
             tool_call_id: tc.id,
             name: toolName,
-            content: result,
+            content: result.content,
           };
         }),
       );
@@ -152,6 +150,7 @@ export async function runAgent(
       logger.info('Agent completed', {
         iterations,
         toolsUsed,
+        toolTrace,
         totalTokens,
         model,
         durationMs,
@@ -174,6 +173,7 @@ export async function runAgent(
       return {
         replyText: finalText,
         toolsUsed,
+        toolTrace,
         totalTokens,
         iterations,
         model,
@@ -195,6 +195,7 @@ export async function runAgent(
   return {
     replyText: 'Maaf, saya membutuhkan waktu lebih lama untuk memproses permintaan ini. Silakan coba lagi.',
     toolsUsed,
+    toolTrace,
     totalTokens,
     iterations,
     model: model || 'unknown',

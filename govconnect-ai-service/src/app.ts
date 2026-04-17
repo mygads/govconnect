@@ -54,6 +54,7 @@ import { getEmbeddingCacheStats as getEmbCacheDetailStats } from './services/emb
 import { getAllAIGatewayInfo } from './services/ai-gateway.service';
 import { matchComplaintType } from './services/micro-llm-matcher.service';
 import { getObjectStorageInfo } from './services/object-storage.service';
+import { requireInternalApiKey } from './utils/internal-auth';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -84,14 +85,7 @@ app.use(helmet());
 import { correlationMiddleware } from './shared/correlation-context';
 app.use(correlationMiddleware);
 
-const internalAuthMiddleware = (req: Request, res: Response, next: any) => {
-  const apiKey = req.headers['x-internal-api-key'];
-  if (!apiKey || apiKey !== config.internalApiKey) {
-    res.status(403).json({ error: 'Forbidden' });
-    return;
-  }
-  next();
-};
+const internalAuthMiddleware = requireInternalApiKey;
 
 app.use(express.json({ limit: '2mb' }));
 
@@ -439,7 +433,7 @@ app.post('/admin/cache/mode', (req: Request, res: Response) => {
   });
 });
 
-app.get('/health/services', async (req: Request, res: Response) => {
+app.get('/health/services', internalAuthMiddleware, async (req: Request, res: Response) => {
   try {
     // Check Channel Service
     const channelHealthy = await checkServiceHealth(

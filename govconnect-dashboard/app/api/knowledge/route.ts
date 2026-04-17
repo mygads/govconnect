@@ -197,7 +197,7 @@ export async function POST(request: NextRequest) {
     // Mark as processing, then update status on completion/failure
     prisma.knowledge_base.update({
       where: { id: knowledge.id },
-      data: { embedding_status: 'processing' },
+      data: { embedding_status: 'processing', embedding_error: null },
     }).then(() =>
       addKnowledgeVector({
         id: knowledge.id,

@@ -11,7 +11,6 @@
 
 import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
-import { config } from '../config/env';
 import { generateEmbedding } from '../services/embedding.service';
 import { 
   searchVectors, 
@@ -19,13 +18,14 @@ import {
   recordBatchRetrievals,
 } from '../services/vector-db.service';
 import { firstHeader } from '../utils/http';
+import { internalApiKeyMatches } from '../utils/internal-auth';
 
 const router = Router();
 
 // Middleware to verify internal API key
 function verifyInternalKey(req: Request, res: Response, next: Function) {
   const apiKey = firstHeader(req.headers['x-internal-api-key']);
-  if (!apiKey || apiKey !== config.internalApiKey) {
+  if (!internalApiKeyMatches(apiKey)) {
     return res.status(403).json({ error: 'Unauthorized' });
   }
   next();

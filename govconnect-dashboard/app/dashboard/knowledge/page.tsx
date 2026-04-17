@@ -33,6 +33,7 @@ import {
   Brain,
   Database,
 } from "lucide-react"
+import { knowledge as knowledgeApi, documents as documentsApi } from "@/lib/frontend-api"
 import {
   Dialog,
   DialogContent,
@@ -72,6 +73,8 @@ interface Knowledge {
   is_active: boolean
   priority: number
   embedding_model?: string | null
+  embedding_status?: 'pending' | 'processing' | 'completed' | 'failed' | null
+  embedding_error?: string | null
   last_embedded_at?: string | null
   created_at: string
   updated_at: string
@@ -182,18 +185,12 @@ export default function KnowledgePage() {
   const fetchCategories = async () => {
     setCategoriesLoading(true)
     try {
-      const response = await fetch('/api/knowledge/categories', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-      })
+      const data = await knowledgeApi.getCategories()
+      const list = Array.isArray(data.data) ? data.data : []
+      setCategories(list)
 
-      if (response.ok) {
-        const data = await response.json()
-        const list = Array.isArray(data.data) ? data.data : []
-        setCategories(list)
-
-        if (!knowledgeForm.category_id && list.length > 0) {
-          setKnowledgeForm(prev => ({ ...prev, category_id: list[0].id }))
-        }
+      if (!knowledgeForm.category_id && list.length > 0) {
+        setKnowledgeForm(prev => ({ ...prev, category_id: list[0].id }))
       }
     } catch (error) {
       toast({ title: "Error", description: "Gagal mengambil kategori", variant: "destructive" })
@@ -205,19 +202,12 @@ export default function KnowledgePage() {
   const fetchKnowledge = async () => {
     setKnowledgeLoading(true)
     try {
-      const params = new URLSearchParams()
-      if (knowledgeSearch) params.set('search', knowledgeSearch)
-      if (knowledgeCategory && knowledgeCategory !== 'all') params.set('category_id', knowledgeCategory)
-      params.set('limit', '100')
+      const params: Record<string, string> = { limit: '100' }
+      if (knowledgeSearch) params.search = knowledgeSearch
+      if (knowledgeCategory && knowledgeCategory !== 'all') params.category_id = knowledgeCategory
 
-      const response = await fetch(`/api/knowledge?${params}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setKnowledge(data.data)
-      }
+      const data = await knowledgeApi.getAll(params)
+      setKnowledge(data.data)
     } catch (error) {
       toast({ title: "Error", description: "Gagal mengambil basis pengetahuan", variant: "destructive" })
     } finally {
@@ -228,19 +218,12 @@ export default function KnowledgePage() {
   const fetchDocuments = async () => {
     setDocumentsLoading(true)
     try {
-      const params = new URLSearchParams()
-      if (documentsStatus && documentsStatus !== 'all') params.set('status', documentsStatus)
-      if (documentsCategory && documentsCategory !== 'all') params.set('category_id', documentsCategory)
-      params.set('limit', '100')
+      const params: Record<string, string> = { limit: '100' }
+      if (documentsStatus && documentsStatus !== 'all') params.status = documentsStatus
+      if (documentsCategory && documentsCategory !== 'all') params.category_id = documentsCategory
 
-      const response = await fetch(`/api/documents?${params}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setDocuments(data.data)
-      }
+      const data = await documentsApi.getAll(params)
+      setDocuments(data.data)
     } catch (error) {
       toast({ title: "Error", description: "Gagal mengambil dokumen", variant: "destructive" })
     } finally {
@@ -264,24 +247,11 @@ export default function KnowledgePage() {
 
     setAddCategoryLoading(true)
     try {
-      const response = await fetch('/api/knowledge/categories', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({ name: newCategoryName.trim() }),
-      })
-
-      if (response.ok) {
-        toast({ title: "Berhasil", description: `Kategori "${newCategoryName.trim()}" berhasil ditambahkan` })
-        setNewCategoryName('')
-        setIsAddCategoryOpen(false)
-        await fetchCategories()
-      } else {
-        const err = await response.json().catch(() => ({}))
-        toast({ title: "Error", description: err.error || "Gagal menambahkan kategori", variant: "destructive" })
-      }
+      await knowledgeApi.createCategory({ name: newCategoryName.trim() })
+      toast({ title: "Berhasil", description: `Kategori "${newCategoryName.trim()}" berhasil ditambahkan` })
+      setNewCategoryName('')
+      setIsAddCategoryOpen(false)
+      await fetchCategories()
     } catch (error) {
       toast({ title: "Error", description: "Gagal menambahkan kategori", variant: "destructive" })
     } finally {
@@ -317,13 +287,7 @@ export default function KnowledgePage() {
   const handleGenerateAllEmbeddings = async () => {
     setEmbeddingLoading(true)
     try {
-      // Generate for knowledge base
-      const kbResponse = await fetch('/api/knowledge/embed-all', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-      })
-      
-      const kbResult = kbResponse.ok ? await kbResponse.json() : null
+      const kbResult = await knowledgeApi.embedAll()
 
       toast({
         title: "Embedding Berhasil Dibuat",
@@ -361,16 +325,7 @@ export default function KnowledgePage() {
 
       const keywords = knowledgeForm.keywords.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0)
 
-      const response = await fetch('/api/knowledge', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({ ...knowledgeForm, keywords }),
-      })
-
-      if (!response.ok) throw new Error((await response.json()).error || 'Gagal membuat data')
+      await knowledgeApi.create({ ...knowledgeForm, keywords })
 
       toast({ title: "Berhasil", description: "Entri pengetahuan berhasil dibuat" })
       setIsAddKnowledgeOpen(false)
@@ -396,16 +351,7 @@ export default function KnowledgePage() {
 
       const keywords = knowledgeForm.keywords.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0)
 
-      const response = await fetch(`/api/knowledge/${selectedKnowledge.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({ ...knowledgeForm, keywords }),
-      })
-
-      if (!response.ok) throw new Error((await response.json()).error || 'Gagal memperbarui data')
+      await knowledgeApi.update(selectedKnowledge.id, { ...knowledgeForm, keywords })
 
       toast({ title: "Berhasil", description: "Entri pengetahuan berhasil diperbarui" })
       setIsEditKnowledgeOpen(false)
@@ -423,12 +369,7 @@ export default function KnowledgePage() {
     setKnowledgeFormLoading(true)
 
     try {
-      const response = await fetch(`/api/knowledge/${selectedKnowledge.id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-      })
-
-      if (!response.ok) throw new Error((await response.json()).error || 'Gagal menghapus data')
+      await knowledgeApi.delete(selectedKnowledge.id)
 
       toast({ title: "Berhasil", description: "Entri pengetahuan berhasil dihapus" })
       setIsDeleteKnowledgeOpen(false)
@@ -491,17 +432,8 @@ export default function KnowledgePage() {
 
       setUploadProgress(30)
 
-      const response = await fetch('/api/documents', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        body: formData,
-      })
+      await documentsApi.upload(formData)
 
-      setUploadProgress(70)
-
-      if (!response.ok) throw new Error((await response.json()).error || 'Gagal mengunggah')
-
-      const result = await response.json()
       setUploadProgress(100)
 
       toast({ title: "Berhasil", description: "Dokumen berhasil diunggah dan mulai diproses" })
@@ -520,25 +452,12 @@ export default function KnowledgePage() {
     try {
       toast({ title: "Diproses", description: "Memulai pemrosesan dokumen..." })
       
-      const response = await fetch(`/api/documents/${documentId}/process`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+      const result = await documentsApi.process(documentId)
+      
+      toast({ 
+        title: "Berhasil", 
+        description: `Dokumen diproses: ${result.chunksCount || 0} chunk dibuat` 
       })
-      
-      const result = await response.json()
-      
-      if (!response.ok) {
-        toast({ 
-          title: "Pemrosesan Gagal", 
-          description: result.error || result.details || 'Kesalahan tidak diketahui',
-          variant: "destructive" 
-        })
-      } else {
-        toast({ 
-          title: "Berhasil", 
-          description: `Dokumen diproses: ${result.chunksCount || 0} chunk dibuat` 
-        })
-      }
       
       fetchDocuments()
     } catch (error: any) {
@@ -556,20 +475,11 @@ export default function KnowledgePage() {
     setEditDocLoading(true)
 
     try {
-      const response = await fetch(`/api/documents/${selectedDocument.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({
-          title: editDocTitle,
-          description: editDocDescription,
-          category_id: editDocCategory || null,
-        }),
+      await documentsApi.update(selectedDocument.id, {
+        title: editDocTitle,
+        description: editDocDescription,
+        category_id: editDocCategory || null,
       })
-
-      if (!response.ok) throw new Error((await response.json()).error || 'Gagal memperbarui data')
 
       toast({ title: "Berhasil", description: "Dokumen berhasil diperbarui" })
       setIsEditDocOpen(false)
@@ -585,12 +495,7 @@ export default function KnowledgePage() {
     if (!selectedDocument) return
 
     try {
-      const response = await fetch(`/api/documents/${selectedDocument.id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-      })
-
-      if (!response.ok) throw new Error((await response.json()).error || 'Gagal menghapus data')
+      await documentsApi.delete(selectedDocument.id)
 
       toast({ title: "Berhasil", description: "Dokumen berhasil dihapus" })
       setIsDeleteDocOpen(false)
@@ -656,7 +561,7 @@ export default function KnowledgePage() {
   })
 
   // Stats
-  const knowledgeWithEmbedding = knowledge.filter(k => k.last_embedded_at).length
+  const knowledgeWithEmbedding = knowledge.filter(k => (k.embedding_status || (k.last_embedded_at ? 'completed' : 'pending')) === 'completed').length
   const totalChunks = documents.reduce((sum, d) => sum + (d.total_chunks || 0), 0)
 
   return (
@@ -850,14 +755,28 @@ export default function KnowledgePage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {item.last_embedded_at ? (
-                            <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                              <CheckCircle className="h-3 w-3 mr-1" />
-                              Ya
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">Tidak</Badge>
-                          )}
+                          {(() => {
+                            const statusKey = item.embedding_status || (item.last_embedded_at ? 'completed' : 'pending')
+                            const status = STATUS_CONFIG[statusKey]
+                            const Icon = status.icon
+                            const iconClassName = statusKey === 'processing' ? 'h-3 w-3 mr-1 animate-spin' : 'h-3 w-3 mr-1'
+
+                            return (
+                              <div className="space-y-1">
+                                <Badge className={status.color}>
+                                  <Icon className={iconClassName} />
+                                  {status.label}
+                                </Badge>
+                                {item.embedding_error ? (
+                                  <p className="max-w-xs text-xs text-destructive line-clamp-2">{item.embedding_error}</p>
+                                ) : item.last_embedded_at ? (
+                                  <p className="text-xs text-muted-foreground">
+                                    {new Date(item.last_embedded_at).toLocaleString('id-ID')}
+                                  </p>
+                                ) : null}
+                              </div>
+                            )
+                          })()}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="sm" onClick={() => openEditKnowledge(item)}>

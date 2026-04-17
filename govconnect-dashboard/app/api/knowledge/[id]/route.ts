@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
-import { deleteKnowledgeVector } from '@/lib/ai-service'
+import { deleteKnowledgeVector, updateKnowledgeVector } from '@/lib/ai-service'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -145,9 +145,43 @@ export async function PUT(request: NextRequest, { params }: Params) {
     })
 
     if (hasEmbeddingChanges) {
-      // Reset embedding status by deleting existing vector
-      deleteKnowledgeVector(id).catch(err => {
-        console.error('Failed to reset knowledge embedding in AI Service:', err)
+      prisma.knowledge_base.update({
+        where: { id },
+        data: {
+          embedding_status: 'processing',
+          embedding_error: null,
+        },
+      }).then(() =>
+        updateKnowledgeVector(id, {
+          village_id: knowledge.village_id || undefined,
+          title: knowledge.title,
+          content: knowledge.content,
+          category: knowledge.category || 'Umum',
+          keywords: knowledge.keywords || [],
+          qualityScore: 0.8,
+        })
+      ).then(async (vectorResult) => {
+        if (!vectorResult.success) {
+          throw new Error(vectorResult.error || 'Failed to update knowledge vector')
+        }
+
+        await prisma.knowledge_base.update({
+          where: { id },
+          data: {
+            embedding_status: 'completed',
+            last_embedded_at: new Date(),
+            embedding_error: null,
+          },
+        })
+      }).catch(async (err) => {
+        console.error('Failed to re-sync knowledge embedding in AI Service:', err)
+        await prisma.knowledge_base.update({
+          where: { id },
+          data: {
+            embedding_status: 'failed',
+            embedding_error: String(err?.message || err),
+          },
+        }).catch(() => {})
       })
     }
 

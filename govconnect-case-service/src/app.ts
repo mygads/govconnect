@@ -11,7 +11,9 @@ import userRoutes from './routes/user.routes';
 import serviceCatalogRoutes from './routes/service-catalog.routes';
 import complaintMetaRoutes from './routes/complaint-meta.routes';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.middleware';
+import { config } from './config/env';
 import { swaggerSpec } from './config/swagger';
+import { internalApiKeyMatches } from './utils/internal-auth';
 import logger from './utils/logger';
 
 // Initialize Prometheus default metrics
@@ -23,7 +25,20 @@ promClient.collectDefaultMetrics({
 const app: Application = express();
 
 // Middleware
-app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') || '*' }));
+// SEC-02 fix: fail-closed CORS — reject if ALLOWED_ORIGINS not configured
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean);
+if (!allowedOrigins || allowedOrigins.length === 0) {
+  console.warn('⚠️  ALLOWED_ORIGINS not set — CORS will reject all cross-origin requests');
+}
+app.use(cors({
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins && allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
+}));
 app.use(helmet());
 
 // Correlation ID middleware — must be before routes
@@ -36,7 +51,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Fase 1.7: Internal auth guard for sensitive endpoints
 const internalAuthGuard = (req: any, res: any, next: any) => {
   const apiKey = req.headers['x-internal-api-key'];
-  if (!apiKey || apiKey !== process.env.INTERNAL_API_KEY) {
+  if (!internalApiKeyMatches(apiKey, config.internalApiKey)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   next();

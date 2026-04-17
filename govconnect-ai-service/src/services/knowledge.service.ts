@@ -14,6 +14,9 @@ interface KnowledgeItem {
   content: string;
   category: string;
   keywords: string[];
+  source_type?: 'knowledge' | 'document';
+  section_title?: string | null;
+  trust_level?: 'trusted_fact' | 'untrusted_retrieval';
 }
 
 interface KnowledgeSearchResult {
@@ -36,8 +39,9 @@ function isRAGSearchEnabled(): boolean {
 }
 
 /**
- * Search knowledge base for relevant information
- * Uses RAG (semantic search) when enabled, falls back to keyword search
+ * Search knowledge base for relevant information.
+ * This lane is intentionally limited to curated knowledge items only.
+ * Uploaded documents must use searchDocuments() so the retrieval plane stays explicit.
  */
 export async function searchKnowledge(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
   try {
@@ -83,6 +87,67 @@ export async function searchKnowledge(query: string, categories?: string[], vill
     });
 
     // Return empty result on error
+    return {
+      data: [],
+      total: 0,
+      context: '',
+    };
+  }
+}
+
+/**
+ * Search uploaded/ingested documents only.
+ * This is intentionally separate from general knowledge search so the agent
+ * can choose the narrower retrieval tool when the answer is likely in PDFs/Word docs.
+ */
+export async function searchDocuments(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
+  try {
+    const ragSearchEnabled = isRAGSearchEnabled();
+    if (!ragSearchEnabled) {
+      return {
+        data: [],
+        total: 0,
+        context: '',
+      };
+    }
+
+    const ragContext = await retrieveContext(query, {
+      topK: 5,
+      minScore: 0.55,
+      categories: categories && categories.length > 0 ? categories : undefined,
+      sourceTypes: ['document'],
+      villageId,
+    });
+
+    if (ragContext.totalResults === 0) {
+      return {
+        data: [],
+        total: 0,
+        context: '',
+      };
+    }
+
+    return {
+      data: ragContext.relevantChunks.map((chunk) => ({
+        id: chunk.id,
+        title: chunk.source,
+        content: chunk.content,
+        category: chunk.metadata?.category || 'document',
+        keywords: chunk.metadata?.keywords || [],
+        source_type: 'document',
+        section_title: chunk.metadata?.sectionTitle || null,
+        trust_level: 'untrusted_retrieval',
+      })),
+      total: ragContext.totalResults,
+      context: ragContext.contextString,
+    };
+  } catch (error: any) {
+    logger.warn('Document search failed', {
+      query: query.substring(0, 100),
+      villageId,
+      error: error.message,
+    });
+
     return {
       data: [],
       total: 0,
@@ -155,7 +220,7 @@ function mergeKnowledgeResults(a: KnowledgeSearchResult, b: KnowledgeSearchResul
 }
 
 /**
- * Search knowledge base using RAG (semantic search with embeddings)
+ * Search curated knowledge using RAG (semantic search with embeddings)
  * 
  * NOTE: minScore tuned to 0.55 for better recall with Indonesian language
  * Higher scores (0.65+) were too strict and missed relevant results
@@ -170,24 +235,24 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
     topK: 5,
     minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
     categories: effectiveCategories,
-    sourceTypes: ['knowledge', 'document'], // Search both knowledge and documents
-    villageId,
-  });
+      sourceTypes: ['knowledge'],
+      villageId,
+    });
 
   // Fallback: if NLU category filtering is too strict, retry WITHOUT category filter.
   // This improves recall for generic KB (e.g., glossary/5W1H) that may not match NLU categories.
   if (ragContext.totalResults === 0 && effectiveCategories && effectiveCategories.length > 0) {
-    logger.debug('RAG search fallback: retrying without category filter', {
-      effectiveCategories,
-    });
+      logger.debug('Knowledge RAG fallback: retrying without category filter', {
+        effectiveCategories,
+      });
 
     ragContext = await retrieveContext(query, {
       topK: 5,
       minScore: 0.55,
       categories: undefined,
-      sourceTypes: ['knowledge', 'document'],
-      villageId,
-    });
+        sourceTypes: ['knowledge'],
+        villageId,
+      });
   }
 
   if (ragContext.totalResults === 0) {
@@ -205,6 +270,9 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
     content: chunk.content,
     category: chunk.metadata?.category || 'general',
     keywords: chunk.metadata?.keywords || [],
+    source_type: chunk.sourceType,
+    section_title: chunk.metadata?.sectionTitle || null,
+    trust_level: 'untrusted_retrieval',
   }));
 
   logger.info('RAG knowledge search completed', {
@@ -274,8 +342,9 @@ export async function getAllKnowledge(villageId?: string): Promise<KnowledgeItem
 }
 
 /**
- * Get RAG context directly for a query
- * Use this when you need the full RAG context object
+ * Get knowledge-only RAG context directly for a query.
+ * Legacy callers should use this only for curated knowledge; document retrieval
+ * must go through searchDocuments() or retrieveContext(..., { sourceTypes: ['document'] }).
  * 
  * DB-FIRST PRIORITY: If the query relates to village profile data (jam buka,
  * nama desa, alamat, kepala desa, etc.), the authoritative DB data is fetched
@@ -294,7 +363,7 @@ export async function getRAGContext(query: string, categories?: string[], villag
     topK: 5,
     minScore: 0.55,
     categories: effectiveCategories,
-    sourceTypes: ['knowledge', 'document'],
+    sourceTypes: ['knowledge'],
     villageId,
   });
 

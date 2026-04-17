@@ -14,6 +14,7 @@ import {
 } from '../services/ai-gateway.service';
 import { processUnifiedMessage } from '../services/unified-message-processor.service';
 import { firstHeader } from '../utils/http';
+import { internalApiKeyMatches } from '../utils/internal-auth';
 
 const router = Router();
 
@@ -32,7 +33,7 @@ interface LanePingResult {
 function verifyInternalKey(req: Request, res: Response, next: Function) {
   const apiKey = firstHeader(req.headers['x-internal-api-key']);
 
-  if (!apiKey || apiKey !== config.internalApiKey) {
+  if (!internalApiKeyMatches(apiKey)) {
     return res.status(403).json({ error: 'Unauthorized' });
   }
 

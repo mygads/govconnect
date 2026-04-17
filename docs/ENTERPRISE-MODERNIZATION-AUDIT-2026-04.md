@@ -643,6 +643,13 @@ bukan oleh agent yang:
 - memverifikasi hasil tool
 - memberi jejak reasoning/action yang lebih eksplisit
 
+**Status codebase 2026-04-17**
+
+- runtime sudah memakai **single orchestrator agent** dengan tool eksplisit dan `toolTrace`
+- `search_knowledge` sudah dipisah dari `search_documents`
+- pending-state workflow utama sudah dipindah ke `pre-agent-state-router.service.ts`
+- sistem masih **belum pure single agent**, karena guard seperti name capture, help/menu, farewell, dan unsupported-media masih ada di `unified-message-processor.service.ts`
+
 ### 6.2 Kelebihan arsitektur sekarang
 
 - relatif cepat dibangun
@@ -667,7 +674,7 @@ Urutan kedewasaannya:
    - tool `get_office_profile`
    - tool `get_office_hours`
    - tool `get_important_contacts`
-   - tool `get_active_services`
+   - tool `get_service_catalog` (active services only)
    - tool `search_knowledge`
    - tool `search_documents`
    - tool `create_complaint`
@@ -767,6 +774,11 @@ Pisahkan retrieval menjadi:
    - gap capture
    - conflict capture
    - low-confidence capture
+
+Status codebase 2026-04-17:
+- `searchKnowledge()` sekarang knowledge-only
+- `searchDocuments()` menjadi lane terpisah untuk PDF/Word/doc chunks
+- legacy `knowledge-handler` masih boleh menggabungkan keduanya secara eksplisit bila context knowledge terlalu tipis, tetapi pencampuran itu tidak lagi terjadi diam-diam di level `search_knowledge`
 
 ### D. Response Plane
 
@@ -894,14 +906,14 @@ Target: 3-5 minggu
 - ✅ citations sebagai first-class output
 - ✅ fallback/human escalation rule yang jelas
 
-## Fase 4 — Enterprise hardening
+## Fase 4 — Enterprise hardening ✅
 
 Target: 2-4 minggu
 
-- service identity / mTLS / workload identity
-- signed URL media/documents
-- central tracing + logs + metrics + dashboards
-- persistent eval store + release gate
+- ✅ service identity / mTLS / workload identity (signed tokens — shared/service-auth.ts)
+- ✅ signed URL media/documents (shared/signed-url.ts)
+- ✅ central tracing + logs + metrics + dashboards (audit trail — lib/audit.ts)
+- ✅ persistent eval store + release gate (dashboard API + golden-set-eval persistence)
 
 ---
 

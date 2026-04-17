@@ -93,6 +93,27 @@ model embedding_jobs {
   @@index([priority])
 }
 
+// ==================== QUESTION VARIANTS ====================
+// AI-generated question variants per knowledge base entry
+// Stored as additional vectors to improve recall for diverse phrasings
+
+model question_variants {
+  id                String   @id @default(cuid())
+  source_id         String   // ID of parent knowledge_vectors entry
+  source_type       String   @default("knowledge") // "knowledge" | "document_chunk"
+  village_id        String?
+  variant_text      String   @db.Text
+  
+  // Vector embedding of the variant question
+  embedding         Unsupported("vector(768)")
+  embedding_model   String   @default("openai/text-embedding-3-small")
+  
+  created_at        DateTime @default(now())
+  
+  @@index([source_id])
+  @@index([village_id])
+}
+
 // ==================== AI TOKEN USAGE ====================
 // Tracks actual token usage from gateway/provider responses
 // Stored per-call for granular analytics

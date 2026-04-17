@@ -17,6 +17,7 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { generateEmbedding, generateBatchEmbeddings } from '../services/embedding.service';
 import { smartChunkKnowledge } from '../services/ai-chunking.service';
+import { generateAndStoreVariants, deleteVariants } from '../services/question-variant.service';
 import {
   upsertKnowledgeVector,
   deleteKnowledgeVector,
@@ -26,13 +27,14 @@ import {
   getVectorDbStats,
 } from '../services/vector-db.service';
 import { firstHeader, getParam } from '../utils/http';
+import { internalApiKeyMatches } from '../utils/internal-auth';
 
 const router = Router();
 
 // Middleware to verify internal API key
 function verifyInternalKey(req: Request, res: Response, next: Function) {
   const apiKey = firstHeader(req.headers['x-internal-api-key']);
-  if (!apiKey || apiKey !== config.internalApiKey) {
+  if (!internalApiKeyMatches(apiKey)) {
     return res.status(403).json({ error: 'Unauthorized' });
   }
   next();
@@ -183,6 +185,11 @@ router.post('/', async (req: Request, res: Response) => {
         embeddingModel: embeddingResult.model,
       },
     });
+
+    // Fire-and-forget: generate question variants for better recall
+    generateAndStoreVariants(id, title, content, resolvedVillageId).catch((err: any) => {
+      logger.warn('Question variant generation failed (non-blocking)', { id, error: err.message });
+    });
   } catch (error: any) {
     logger.error('Failed to add knowledge', { error: error.message });
     res.status(500).json({ error: 'Failed to add knowledge vector' });
@@ -304,6 +311,13 @@ router.put('/:id', async (req: Request, res: Response) => {
         embeddingModel: embeddingResult.model,
       },
     });
+
+    // Fire-and-forget: regenerate question variants
+    deleteVariants(id).then(() =>
+      generateAndStoreVariants(id, title, content, resolvedVillageId)
+    ).catch((err: any) => {
+      logger.warn('Question variant regeneration failed (non-blocking)', { id, error: err.message });
+    });
   } catch (error: any) {
     logger.error('Failed to update knowledge', { error: error.message });
     res.status(500).json({ error: 'Failed to update knowledge vector' });
@@ -328,6 +342,9 @@ router.delete('/:id', async (req: Request, res: Response) => {
     if (!deleted) {
       return res.status(404).json({ error: 'Knowledge vector not found' });
     }
+
+    // Cleanup question variants
+    deleteVariants(id).catch(() => {});
 
     res.json({ status: 'success', deleted: true });
   } catch (error: any) {

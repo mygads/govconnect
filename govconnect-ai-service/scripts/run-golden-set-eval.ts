@@ -2,11 +2,15 @@ import fs from 'fs';
 import path from 'path';
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:3002';
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'govconnect-internal-2025-secret';
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY;
 
 const goldenSetPath = path.join(__dirname, 'golden-set.json');
 
 async function main() {
+  if (!INTERNAL_API_KEY) {
+    throw new Error('INTERNAL_API_KEY environment variable is required');
+  }
+
   const raw = fs.readFileSync(goldenSetPath, 'utf-8');
   const items = JSON.parse(raw);
 

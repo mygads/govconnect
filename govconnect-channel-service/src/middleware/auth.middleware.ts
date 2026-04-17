@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config/env';
 import logger from '../utils/logger';
+import { internalApiKeyMatches } from '../utils/internal-auth';
 
 /**
  * Internal API authentication middleware
@@ -15,7 +16,7 @@ export function internalAuth(req: Request, res: Response, next: NextFunction): v
     return;
   }
 
-  if (apiKey !== config.INTERNAL_API_KEY) {
+  if (!internalApiKeyMatches(apiKey, config.INTERNAL_API_KEY)) {
     logger.warn('Internal API call with invalid API key', { path: req.path });
     res.status(403).json({ error: 'Forbidden: Invalid API key' });
     return;

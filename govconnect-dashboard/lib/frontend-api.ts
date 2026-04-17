@@ -40,6 +40,17 @@ async function fetchApi<T>(url: string, options: RequestInit = {}): Promise<T> {
   return response.json();
 }
 
+// Fetch wrapper that returns raw Response (for handlers that need status codes or custom parsing)
+export async function fetchApiRaw(url: string, options: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...getAuthHeaders(),
+      ...options.headers,
+    },
+  });
+}
+
 // ==================== AUTH ====================
 export const auth = {
   async login(username: string, password: string) {
@@ -62,7 +73,7 @@ export const auth = {
   },
 
   async me() {
-    return fetchApi<{ admin: any }>('/api/auth/me');
+    return fetchApi<{ user: any }>('/api/auth/me');
   },
 
   async updateProfile(data: { name?: string }) {
@@ -128,6 +139,74 @@ export const layanan = {
 
   async getActive() {
     return fetchApi<any>('/api/layanan/active');
+  },
+
+  async create(data: any) {
+    return fetchApi<any>('/api/layanan', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async update(id: string, data: any) {
+    return fetchApi<any>(`/api/layanan/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async delete(id: string) {
+    return fetchApi<any>(`/api/layanan/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async getCategories() {
+    return fetchApi<any>('/api/layanan/categories');
+  },
+
+  async createCategory(data: any) {
+    return fetchApi<any>('/api/layanan/categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateCategory(id: string, data: any) {
+    return fetchApi<any>(`/api/layanan/categories/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteCategory(id: string) {
+    return fetchApi<any>(`/api/layanan/categories/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async getRequirements(serviceId: string) {
+    return fetchApi<any>(`/api/layanan/${serviceId}/requirements`);
+  },
+
+  async createRequirement(serviceId: string, data: any) {
+    return fetchApi<any>(`/api/layanan/${serviceId}/requirements`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateRequirement(id: string, data: any) {
+    return fetchApi<any>(`/api/layanan/requirements/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteRequirement(id: string) {
+    return fetchApi<any>(`/api/layanan/requirements/${id}`, {
+      method: 'DELETE',
+    });
   },
 };
 
@@ -202,12 +281,17 @@ export const livechat = {
       method: 'DELETE',
     });
   },
+
+  async getProcessingStatus() {
+    return fetchApi<any>('/api/livechat/processing-status');
+  },
 };
 
 // ==================== KNOWLEDGE ====================
 export const knowledge = {
-  async getAll() {
-    return fetchApi<any>('/api/knowledge');
+  async getAll(params?: Record<string, string>) {
+    const searchParams = params ? new URLSearchParams(params).toString() : '';
+    return fetchApi<any>(`/api/knowledge${searchParams ? `?${searchParams}` : ''}`);
   },
 
   async getById(id: string) {
@@ -239,12 +323,24 @@ export const knowledge = {
       method: 'POST',
     });
   },
+
+  async getCategories() {
+    return fetchApi<any>('/api/knowledge/categories');
+  },
+
+  async createCategory(data: any) {
+    return fetchApi<any>('/api/knowledge/categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 // ==================== DOCUMENTS ====================
 export const documents = {
-  async getAll() {
-    return fetchApi<any>('/api/documents');
+  async getAll(params?: Record<string, string>) {
+    const searchParams = params ? new URLSearchParams(params).toString() : '';
+    return fetchApi<any>(`/api/documents${searchParams ? `?${searchParams}` : ''}`);
   },
 
   async getById(id: string) {
@@ -268,6 +364,13 @@ export const documents = {
   async delete(id: string) {
     return fetchApi<any>(`/api/documents/${id}`, {
       method: 'DELETE',
+    });
+  },
+
+  async update(id: string, data: any) {
+    return fetchApi<any>(`/api/documents/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
     });
   },
 
@@ -332,42 +435,346 @@ export const superadmin = {
   async getLLMCheck() {
     return fetchApi<any>('/api/superadmin/llm-check');
   },
+
+  async getVillages() {
+    return fetchApi<any>('/api/superadmin/villages');
+  },
+
+  async getAdmins() {
+    return fetchApi<any>('/api/superadmin/admins');
+  },
+
+  async registerAdmin(data: any) {
+    return fetchApi<any>('/api/superadmin/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+// ==================== IMPORTANT CONTACTS ====================
+export const importantContacts = {
+  async getAll() {
+    return fetchApi<any>('/api/important-contacts');
+  },
+
+  async create(data: any) {
+    return fetchApi<any>('/api/important-contacts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async update(id: string, data: any) {
+    return fetchApi<any>(`/api/important-contacts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async delete(id: string) {
+    return fetchApi<any>(`/api/important-contacts/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async getCategories() {
+    return fetchApi<any>('/api/important-contacts/categories');
+  },
+
+  async createCategory(data: any) {
+    return fetchApi<any>('/api/important-contacts/categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateCategory(id: string, data: any) {
+    return fetchApi<any>(`/api/important-contacts/categories/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteCategory(id: string) {
+    return fetchApi<any>(`/api/important-contacts/categories/${id}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+// ==================== WHATSAPP / CHANNEL SETTINGS ====================
+export const whatsapp = {
+  async getStatus(villageParam?: string) {
+    const base = villageParam ? `/api/whatsapp/status?${villageParam}` : '/api/whatsapp/status';
+    return fetchApi<any>(base);
+  },
+
+  async getQR(villageParam?: string) {
+    const base = villageParam ? `/api/whatsapp/qr?${villageParam}` : '/api/whatsapp/qr';
+    return fetchApi<any>(base);
+  },
+
+  async checkDuplicate(waNumber: string, villageParam?: string) {
+    const base = `/api/whatsapp/check-duplicate?wa_number=${encodeURIComponent(waNumber)}${villageParam ? `&${villageParam}` : ''}`;
+    return fetchApi<any>(base);
+  },
+
+  async forceDisconnect(villageParam?: string) {
+    const base = villageParam ? `/api/whatsapp/force-disconnect?${villageParam}` : '/api/whatsapp/force-disconnect';
+    return fetchApi<any>(base, { method: 'POST' });
+  },
+
+  async createSession(villageParam?: string) {
+    const base = villageParam ? `/api/whatsapp/session?${villageParam}` : '/api/whatsapp/session';
+    return fetchApi<any>(base, { method: 'POST' });
+  },
+
+  async deleteSession(villageParam?: string) {
+    const base = villageParam ? `/api/whatsapp/session?${villageParam}` : '/api/whatsapp/session';
+    return fetchApi<any>(base, { method: 'DELETE' });
+  },
+
+  async disconnect(villageParam?: string) {
+    const base = villageParam ? `/api/whatsapp/disconnect?${villageParam}` : '/api/whatsapp/disconnect';
+    return fetchApi<any>(base, { method: 'POST' });
+  },
+
+  async connect(data: any, villageParam?: string) {
+    const base = villageParam ? `/api/whatsapp/connect?${villageParam}` : '/api/whatsapp/connect';
+    return fetchApi<any>(base, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+export const channelSettings = {
+  async get(villageParam?: string) {
+    const base = villageParam ? `/api/channel-settings?${villageParam}` : '/api/channel-settings';
+    return fetchApi<any>(base);
+  },
+
+  async update(data: any, villageParam?: string) {
+    const base = villageParam ? `/api/channel-settings?${villageParam}` : '/api/channel-settings';
+    return fetchApi<any>(base, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+// ==================== COMPLAINTS (PENGADUAN) ====================
+export const complaints = {
+  async getCategories() {
+    return fetchApi<any>('/api/complaints/categories');
+  },
+
+  async createCategory(data: any) {
+    return fetchApi<any>('/api/complaints/categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateCategory(id: string, data: any) {
+    return fetchApi<any>(`/api/complaints/categories/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteCategory(id: string) {
+    return fetchApi<any>(`/api/complaints/categories/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async getTypes() {
+    return fetchApi<any>('/api/complaints/types');
+  },
+
+  async createType(data: any) {
+    return fetchApi<any>('/api/complaints/types', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateType(id: string, data: any) {
+    return fetchApi<any>(`/api/complaints/types/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteType(id: string) {
+    return fetchApi<any>(`/api/complaints/types/${id}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+// ==================== VILLAGE PROFILE ====================
+export const villageProfile = {
+  async get() {
+    return fetchApi<any>('/api/village-profile');
+  },
+
+  async update(data: any) {
+    return fetchApi<any>('/api/village-profile', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+// ==================== VILLAGES ====================
+export const villages = {
+  async getMe() {
+    return fetchApi<any>('/api/villages/me');
+  },
+};
+
+// ==================== SERVICE REQUESTS (PELAYANAN) ====================
+export const serviceRequests = {
+  async getAll(params?: Record<string, string>) {
+    const searchParams = params ? new URLSearchParams(params).toString() : '';
+    return fetchApi<any>(`/api/service-requests${searchParams ? `?${searchParams}` : ''}`);
+  },
+
+  async getById(id: string) {
+    return fetchApi<any>(`/api/service-requests/${id}`);
+  },
+
+  async updateStatus(id: string, data: any) {
+    return fetchApi<any>(`/api/service-requests/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async softDelete(id: string) {
+    return fetchApi<any>(`/api/service-requests/${id}/soft-delete`, {
+      method: 'PATCH',
+    });
+  },
+
+  async restore(id: string) {
+    return fetchApi<any>(`/api/service-requests/${id}/restore`, {
+      method: 'PATCH',
+    });
+  },
+
+  async getDeleted() {
+    return fetchApi<any>('/api/service-requests/deleted');
+  },
+};
+
+// ==================== KNOWLEDGE ANALYTICS ====================
+export const knowledgeAnalytics = {
+  async get() {
+    return fetchApi<any>('/api/statistics/knowledge-analytics');
+  },
+
+  async deleteGap(id: string) {
+    return fetchApi<any>(`/api/knowledge-gaps/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async deleteGapsBatch(ids: string[]) {
+    return fetchApi<any>('/api/knowledge-gaps/batch', {
+      method: 'DELETE',
+      body: JSON.stringify({ ids }),
+    });
+  },
+
+  async deleteConflictsBatch(ids: string[]) {
+    return fetchApi<any>('/api/knowledge-conflicts/batch', {
+      method: 'DELETE',
+      body: JSON.stringify({ ids }),
+    });
+  },
+};
+
+// ==================== CACHE ====================
+export const cache = {
+  async get() {
+    return fetchApi<any>('/api/cache');
+  },
+
+  async clearAll() {
+    return fetchApi<any>('/api/cache', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'clear-all' }),
+    });
+  },
+
+  async setMode(mode: string) {
+    return fetchApi<any>('/api/cache', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'set-mode', mode }),
+    });
+  },
+};
+
+// ==================== SPAM GUARD ====================
+export const spamGuard = {
+  async get() {
+    return fetchApi<any>('/api/spam-guard');
+  },
+
+  async remove(waUserId: string) {
+    return fetchApi<any>(`/api/spam-guard?wa_user_id=${encodeURIComponent(waUserId)}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+// ==================== UPLOADS ====================
+export const uploads = {
+  async upload(formData: FormData) {
+    const token = getAuthToken();
+    const response = await fetch('/api/uploads', {
+      method: 'POST',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(error.error || 'Upload failed');
+    }
+    return response.json();
+  },
 };
 
 // ==================== BACKWARD COMPATIBLE EXPORTS ====================
 // Untuk kompatibilitas dengan kode yang sudah ada
 export const apiClient = {
-  // Auth
   ...auth,
-  
-  // Laporan (complaints)
   getComplaints: laporan.getAll,
   getComplaintById: laporan.getById,
   updateComplaintStatus: laporan.updateStatus,
-  
-  // Statistics
   getStatistics: statistics.getOverview,
   getTrends: statistics.getTrends,
-  
-  // Livechat
   livechat,
-  
-  // Knowledge
   knowledge,
-  
-  // Documents
   documents,
-  
-  // Rate Limit
   rateLimit,
-  
-  // Settings
   settings,
-
-  // Superadmin
   superadmin,
-  
-  // Layanan
+  importantContacts,
+  whatsapp,
+  channelSettings,
+  complaints,
+  villageProfile,
+  villages,
+  serviceRequests,
+  knowledgeAnalytics,
+  cache,
+  spamGuard,
+  uploads,
   getServices: layanan.getAll,
   getActiveServices: layanan.getActive,
 };

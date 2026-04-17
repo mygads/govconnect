@@ -24,6 +24,7 @@ import { addDocumentChunks, deleteDocumentVectors } from '../services/vector-db.
 import { config } from '../config/env';
 import { firstHeader, getParam } from '../utils/http';
 import { deleteObjectByUrl, uploadBufferToObjectStorage } from '../services/object-storage.service';
+import { internalApiKeyMatches } from '../utils/internal-auth';
 
 const router = Router();
 
@@ -55,8 +56,8 @@ const upload = multer({
 // Internal API key verification middleware
 function verifyInternalKey(req: Request, res: Response, next: Function) {
   const apiKey = firstHeader(req.headers['x-internal-api-key']);
-  
-  if (!apiKey || apiKey !== config.internalApiKey) {
+
+  if (!internalApiKeyMatches(apiKey)) {
     return res.status(403).json({ error: 'Unauthorized' });
   }
   

@@ -9,6 +9,8 @@ import healthRoutes from './routes/health.routes';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.middleware';
 import { metricsHandler, metricsMiddleware } from './middleware/metrics.middleware';
 import { swaggerSpec } from './config/swagger';
+import { config } from './config/env';
+import { internalApiKeyMatches } from './utils/internal-auth';
 import logger from './utils/logger';
 
 // Legacy local uploads path retained only to serve older records.
@@ -24,7 +26,21 @@ export function createApp(): Application {
   app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow images to be loaded from other origins
   }));
-  app.use(cors());
+
+  // SEC-02 fix: fail-closed CORS — reject if ALLOWED_ORIGINS not configured
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean);
+  if (!allowedOrigins || allowedOrigins.length === 0) {
+    console.warn('⚠️  ALLOWED_ORIGINS not set — CORS will reject all cross-origin requests');
+  }
+  app.use(cors({
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins && allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      callback(new Error(`CORS: origin ${origin} not allowed`));
+    },
+  }));
 
   // Correlation ID middleware — must be before routes
   const { correlationMiddleware } = require('./shared/correlation-context');
@@ -38,7 +54,7 @@ export function createApp(): Application {
   // SEC-05 fix: require internal API key for uploaded media
   const internalAuthGuard = (req: any, res: any, next: any) => {
     const apiKey = req.headers['x-internal-api-key'];
-    if (!apiKey || apiKey !== process.env.INTERNAL_API_KEY) {
+    if (!internalApiKeyMatches(apiKey, config.INTERNAL_API_KEY)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     next();

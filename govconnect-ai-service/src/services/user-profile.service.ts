@@ -31,7 +31,13 @@ function getPiiKey(): Buffer | null {
 
 function encryptPii(plaintext: string): string {
   const key = getPiiKey();
-  if (!key) return plaintext; // Fallback: store plain if key not configured
+  if (!key) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('PROFILE_ENCRYPTION_KEY is required in production for PII encryption (UU PDP)');
+    }
+    logger.warn('⚠️ PII encryption disabled — PROFILE_ENCRYPTION_KEY not set');
+    return plaintext;
+  }
 
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ENCRYPTION_ALGO, key, iv, { authTagLength: AUTH_TAG_LENGTH });
@@ -88,6 +94,11 @@ export interface UserProfile {
   preferred_language: PreferredLanguage;
   communication_style: CommunicationStyle;
   response_detail: 'brief' | 'detailed' | 'auto';
+  
+  // UU PDP consent tracking
+  data_consent: boolean;             // User has given consent for data processing
+  data_consent_at?: Date;            // When consent was given
+  data_consent_version?: string;     // Version of consent policy
   
   // Default data (untuk auto-fill)
   default_address?: string;
@@ -168,6 +179,7 @@ function createDefaultProfile(wa_user_id: string): UserProfile {
     preferred_language: 'auto',
     communication_style: 'auto',
     response_detail: 'auto',
+    data_consent: false,
     frequent_services: [],
     total_complaints: 0,
     total_service_requests: 0,
@@ -432,6 +444,47 @@ export function getMostFrequentService(wa_user_id: string): string | null {
   return profile.frequent_services[profile.frequent_services.length - 1];
 }
 
+// ==================== UU PDP CONSENT (Fase 3.6) ====================
+
+const CONSENT_VERSION = '1.0';
+
+/**
+ * Record user data processing consent
+ */
+export function recordConsent(wa_user_id: string): UserProfile {
+  const profile = getProfile(wa_user_id);
+  profile.data_consent = true;
+  profile.data_consent_at = new Date();
+  profile.data_consent_version = CONSENT_VERSION;
+  profile.updated_at = new Date();
+  profileCache.set(wa_user_id, profile);
+  logger.info('📋 User data consent recorded', { wa_user_id, version: CONSENT_VERSION });
+  return profile;
+}
+
+/**
+ * Revoke user data processing consent and delete PII
+ */
+export function revokeConsent(wa_user_id: string): void {
+  const profile = getProfile(wa_user_id);
+  profile.data_consent = false;
+  profile.data_consent_at = undefined;
+  profile.nama_lengkap = undefined;
+  profile.nik = undefined;
+  profile.no_hp = undefined;
+  profile.updated_at = new Date();
+  profileCache.set(wa_user_id, profile);
+  logger.info('📋 User consent revoked, PII deleted', { wa_user_id });
+}
+
+/**
+ * Check if user has given consent for PII storage
+ */
+export function hasConsent(wa_user_id: string): boolean {
+  const profile = profileCache.get(wa_user_id);
+  return profile?.data_consent === true;
+}
+
 // ==================== CLEANUP ====================
 
 export default {
@@ -446,4 +499,7 @@ export default {
   getAutoFillSuggestions,
   isReturningUser,
   getMostFrequentService,
+  recordConsent,
+  revokeConsent,
+  hasConsent,
 };
