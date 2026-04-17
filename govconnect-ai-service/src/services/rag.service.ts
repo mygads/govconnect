@@ -548,6 +548,7 @@ export async function retrieveContext(
     const expandedQuery = useQueryExpansion ? await expandQuery(query) : query;
 
     let filteredResults: VectorSearchResult[];
+    let retrievalDebug: RAGContext['retrievalDebug'] | undefined;
     const rerankCandidateCount = config.rerankEnabled
       ? Math.max(topK * 2, config.ragLLMRerankMaxCandidates)
       : topK;
@@ -569,6 +570,7 @@ export async function retrieveContext(
         topK,
         adjustedMinScore,
       );
+      retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults);
 
       logger.debug('Hybrid search completed', {
         query: query.substring(0, 50),
@@ -620,6 +622,7 @@ export async function retrieveContext(
         topK,
         adjustedMinScore,
       );
+      retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults);
     }
 
     if (filteredResults.length === 0) {
@@ -678,6 +681,7 @@ export async function retrieveContext(
       searchTimeMs: endTime - startTime,
       confidence,
       conflicts: conflicts.length > 0 ? conflicts : undefined,
+      retrievalDebug,
     };
 
     setCachedRetrieval(retrievalCacheKey, response);
@@ -702,6 +706,64 @@ export async function retrieveContext(
       },
     };
   }
+}
+
+function buildHybridRetrievalDebug(
+  candidates: HybridSearchResult[],
+  selectedResults: VectorSearchResult[],
+): RAGContext['retrievalDebug'] {
+  const selectedById = new Map(
+    selectedResults.map((result) => [
+      result.id,
+      {
+        rerankScore: typeof result.metadata?.rerankScore === 'number' ? result.metadata.rerankScore as number : null,
+        finalScore: result.score,
+      },
+    ]),
+  );
+
+  return {
+    hybridUsed: true,
+    candidates: candidates.slice(0, 10).map((candidate) => ({
+      id: candidate.id,
+      title: candidate.source,
+      sourceType: candidate.sourceType,
+      finalScore: selectedById.get(candidate.id)?.finalScore ?? candidate.score,
+      vectorScore: candidate.vectorScore ?? null,
+      keywordScore: candidate.keywordScore ?? null,
+      vectorRank: candidate.vectorRank ?? null,
+      keywordRank: candidate.keywordRank ?? null,
+      rrfScore: candidate.rrfScore ?? null,
+      rerankScore: selectedById.get(candidate.id)?.rerankScore ?? null,
+      matchType: candidate.matchType ?? null,
+      selected: selectedById.has(candidate.id),
+    })),
+  };
+}
+
+function buildVectorRetrievalDebug(
+  candidates: VectorSearchResult[],
+  selectedResults: VectorSearchResult[],
+): RAGContext['retrievalDebug'] {
+  const selectedIds = new Set(selectedResults.map((result) => result.id));
+
+  return {
+    hybridUsed: false,
+    candidates: candidates.slice(0, 10).map((candidate, index) => ({
+      id: candidate.id,
+      title: candidate.source,
+      sourceType: candidate.sourceType,
+      finalScore: candidate.score,
+      vectorScore: candidate.score,
+      keywordScore: null,
+      vectorRank: index + 1,
+      keywordRank: null,
+      rrfScore: null,
+      rerankScore: typeof candidate.metadata?.rerankScore === 'number' ? candidate.metadata.rerankScore as number : null,
+      matchType: null,
+      selected: selectedIds.has(candidate.id),
+    })),
+  };
 }
 
 /**

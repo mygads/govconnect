@@ -35,6 +35,8 @@ export interface HybridSearchResult extends VectorSearchResult {
   keywordRank?: number;
   rrfScore: number;
   matchType: 'vector' | 'keyword' | 'both';
+  vectorScore?: number;
+  keywordScore?: number;
 }
 
 // ==================== KEYWORD SEARCH ====================
@@ -333,16 +335,20 @@ export function reciprocalRankFusion(
   const vectorRanks = new Map<string, number>();
   const keywordRanks = new Map<string, number>();
   const allResults = new Map<string, VectorSearchResult>();
+  const vectorScores = new Map<string, number>();
+  const keywordScores = new Map<string, number>();
 
   // Assign vector ranks
   vectorResults.forEach((result, index) => {
     vectorRanks.set(result.id, index + 1);
+    vectorScores.set(result.id, result.score);
     allResults.set(result.id, result);
   });
 
   // Assign keyword ranks
   keywordResults.forEach((result, index) => {
     keywordRanks.set(result.id, index + 1);
+    keywordScores.set(result.id, result.score);
     if (!allResults.has(result.id)) {
       allResults.set(result.id, result);
     }
@@ -382,6 +388,8 @@ export function reciprocalRankFusion(
       keywordRank: keywordRanks.get(id),
       rrfScore,
       matchType,
+      vectorScore: vectorScores.get(id),
+      keywordScore: keywordScores.get(id),
     });
   }
 

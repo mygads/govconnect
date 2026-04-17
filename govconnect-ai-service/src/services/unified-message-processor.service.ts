@@ -27,6 +27,7 @@ import { getAutoFillSuggestionsWithFallback } from './user-profile.service';
 import { normalizeText } from './text-normalizer.service';
 import { classifyMessage } from './micro-llm-matcher.service';
 import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
+import { aiAnalyticsService } from './ai-analytics.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
 import { validateResponse } from './ump-formatters';
@@ -129,6 +130,39 @@ function isCacheableAgentResult(result: ProcessMessageResult): boolean {
   return toolsUsed.every((tool) => CACHEABLE_AGENT_TOOLS.has(tool));
 }
 
+function deriveAnalyticsIntent(result: ProcessMessageResult): string {
+  if (result.intent && result.intent !== 'AGENT') {
+    return result.intent;
+  }
+
+  const toolsUsed = Array.isArray(result.metadata?.toolsUsed) ? result.metadata.toolsUsed : [];
+
+  if (toolsUsed.includes('create_complaint')) return 'CREATE_COMPLAINT';
+  if (toolsUsed.includes('update_complaint')) return 'UPDATE_COMPLAINT';
+  if (toolsUsed.includes('create_service_request')) return 'CREATE_SERVICE_REQUEST';
+  if (toolsUsed.includes('get_service_request_edit_link')) return 'EDIT_SERVICE_REQUEST';
+  if (toolsUsed.includes('check_status')) return 'CHECK_STATUS';
+  if (toolsUsed.includes('cancel_request')) return 'CANCEL_REQUEST';
+  if (toolsUsed.includes('get_my_history')) return 'HISTORY';
+  if (toolsUsed.includes('search_documents')) return 'DOCUMENT_SEARCH';
+  if (toolsUsed.includes('search_knowledge')) return 'KNOWLEDGE_QUERY';
+  if (toolsUsed.includes('get_service_info')) return 'SERVICE_INFO';
+  if (toolsUsed.includes('get_village_profile')) return 'VILLAGE_PROFILE';
+  if (toolsUsed.includes('get_emergency_contacts')) return 'EMERGENCY_CONTACTS';
+  if (toolsUsed.includes('search_user_memory')) return 'MEMORY_LOOKUP';
+
+  return result.intent || 'DIRECT_RESPONSE';
+}
+
+function deriveAnalyticsSource(result: ProcessMessageResult): string {
+  if (result.intent === 'SPAM') return 'spam_guard';
+  if (result.intent === 'ERROR') return 'fallback_error';
+  if (result.metadata.agentMode === 'response_cache') return 'response_cache';
+  if (result.metadata.agentMode === 'single_orchestrator') return 'agent';
+  if (result.metadata.agentMode === 'pre_agent_guard') return 'pre_agent_guard';
+  return 'orchestrator';
+}
+
 async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessageResult> {
   const {
     userId,
@@ -222,6 +256,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, onStageChange } = input;
   let resolvedHistory = conversationHistory;
+  let finalResult: ProcessMessageResult | null = null;
+  const finish = (result: ProcessMessageResult) => {
+    finalResult = result;
+    return result;
+  };
   
   // Generate trace ID for correlating all logs in this request
   const traceId = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -254,25 +293,24 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const MAX_INPUT_LENGTH = 4000; // ~1000 tokens, well above any realistic user message
     if (message.length > MAX_INPUT_LENGTH) {
       logger.warn('🚫 [UnifiedProcessor] Message too long, rejected', { traceId, userId, channel, length: message.length });
-      decrementActiveProcessing();
-      return {
+      return finish({
         success: true,
         response: 'Maaf, pesan Anda terlalu panjang. Mohon kirim pesan yang lebih singkat (maksimal beberapa paragraf).',
         intent: 'UNKNOWN',
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
-      };
+      });
     }
 
     // Step 1: Spam check
     if (isSpamMessage(message)) {
       logger.warn('🚫 [UnifiedProcessor] Spam detected', { userId, channel });
-      return {
+      return finish({
         success: false,
         response: '',
         intent: 'SPAM',
         metadata: { processingTimeMs: Date.now() - startTime, hasKnowledge: false, traceId },
         error: 'Spam message detected',
-      };
+      });
     }
 
     const resolvedVillageId = villageId;
@@ -344,7 +382,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     });
     if (protocolGuardResult) {
       tracker.complete();
-      return protocolGuardResult;
+      return finish(protocolGuardResult);
     }
 
     const pendingOfferResult = await tryHandlePendingOffers({
@@ -357,7 +395,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       runWithMicroBudget: withMicroNluBudget,
     });
     if (pendingOfferResult) {
-      return pendingOfferResult;
+      return finish(pendingOfferResult);
     }
 
     const latePreAgentResult = await tryHandleLatePreAgentState({
@@ -374,7 +412,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       notifyStage,
     });
     if (latePreAgentResult) {
-      return latePreAgentResult;
+      return finish(latePreAgentResult);
     }
 
     // Step 2.5: AI Optimization - Pre-process message
@@ -413,7 +451,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       tracker.complete();
       notifyStage('done', 100);
 
-      return {
+      return finish({
         success: true,
         response: cachedKnowledge.response,
         guidanceText: cachedKnowledge.guidanceText,
@@ -425,7 +463,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           toolsUsed: [],
           traceId,
         },
-      };
+      });
     }
 
     // ── Agent Mode (always active) ──
@@ -457,7 +495,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       );
     }
 
-    return agentResult;
+    return finish(agentResult);
     
   } catch (error: any) {
     const processingTimeMs = Date.now() - startTime;
@@ -490,14 +528,30 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       ? getErrorFallback(errorType)
       : getSmartFallback(userId, undefined, message);
     
-    return {
+    return finish({
       success: false,
       response: fallbackResponse,
       intent: 'ERROR',
       metadata: { processingTimeMs, hasKnowledge: false, traceId },
       error: error.message,
-    };
+    });
   } finally {
+    if (!isEvaluation && finalResult && finalResult.intent !== 'SPAM') {
+      await aiAnalyticsService.recordInteractionEvent({
+        waUserId: userId,
+        villageId,
+        channel,
+        intent: deriveAnalyticsIntent(finalResult),
+        success: finalResult.success,
+        hasKnowledge: finalResult.metadata.hasKnowledge,
+        isFallback: finalResult.intent === 'ERROR',
+        agentMode: finalResult.metadata.agentMode,
+        responseSource: deriveAnalyticsSource(finalResult),
+        toolsUsed: finalResult.metadata.toolsUsed,
+        model: finalResult.metadata.model,
+        processingTimeMs: finalResult.metadata.processingTimeMs,
+      });
+    }
     decrementActiveProcessing();
   }
 }

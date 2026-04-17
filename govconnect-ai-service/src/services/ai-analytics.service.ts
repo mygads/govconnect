@@ -9,6 +9,8 @@
  */
 
 import logger from '../utils/logger';
+import prisma from '../lib/prisma';
+import { Prisma } from '@prisma/client';
 import { findPricing as getTokenPricing } from './token-usage.service';
 import { registerInterval } from '../utils/timer-registry';
 
@@ -91,6 +93,20 @@ interface RetrievalTraceEntry {
   topScore: number | null;
   avgTopScore: number | null;
   sourceTitles: string[];
+  candidateDebug?: Array<{
+    id: string;
+    title: string;
+    sourceType: 'knowledge' | 'document';
+    finalScore: number;
+    vectorScore?: number | null;
+    keywordScore?: number | null;
+    vectorRank?: number | null;
+    keywordRank?: number | null;
+    rrfScore?: number | null;
+    rerankScore?: number | null;
+    matchType?: 'vector' | 'keyword' | 'both' | null;
+    selected?: boolean;
+  }>;
   channel: string;
   villageId?: string;
   timestamp: string;
@@ -350,6 +366,8 @@ class AIAnalyticsService {
   }
 
   recordRetrievalTrace(opts: {
+    traceId?: string;
+    waUserId?: string;
     query: string;
     retrievalMode: 'rag' | 'keyword' | 'document_rag';
     confidence: 'none' | 'low' | 'medium' | 'high';
@@ -359,6 +377,7 @@ class AIAnalyticsService {
     topScore?: number | null;
     avgTopScore?: number | null;
     sourceTitles?: string[];
+    candidateDebug?: RetrievalTraceEntry['candidateDebug'];
     channel: string;
     villageId?: string;
   }): void {
@@ -375,6 +394,7 @@ class AIAnalyticsService {
       topScore: typeof opts.topScore === 'number' ? Math.round(opts.topScore * 1000) / 1000 : null,
       avgTopScore: typeof opts.avgTopScore === 'number' ? Math.round(opts.avgTopScore * 1000) / 1000 : null,
       sourceTitles: Array.from(new Set((opts.sourceTitles || []).filter(Boolean))).slice(0, 3),
+      candidateDebug: Array.isArray(opts.candidateDebug) ? opts.candidateDebug.slice(0, 10) : undefined,
       channel: opts.channel,
       villageId: opts.villageId,
       timestamp: new Date().toISOString(),
@@ -384,6 +404,12 @@ class AIAnalyticsService {
     if (this.data.retrieval.recentTraces.length > 250) {
       this.data.retrieval.recentTraces = this.data.retrieval.recentTraces.slice(0, 250);
     }
+
+    void this.persistRetrievalTrace({
+      traceId: opts.traceId,
+      waUserId: opts.waUserId,
+      ...trace,
+    });
   }
 
   /**
@@ -493,6 +519,596 @@ class AIAnalyticsService {
         acc.set(trace.confidence, (acc.get(trace.confidence) || 0) + 1);
         return acc;
       }, new Map<string, number>())
+    )
+      .map(([confidence, count]) => ({
+        confidence,
+        count,
+        percentage: totalTraces > 0 ? Math.round((count / totalTraces) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const p95LatencyMs = latencies.length > 0
+      ? latencies[Math.min(latencies.length - 1, Math.max(0, Math.ceil(latencies.length * 0.95) - 1))]
+      : 0;
+
+    return {
+      summary: {
+        totalTraces,
+        hitRate: totalTraces > 0 ? Math.round((hitCount / totalTraces) * 1000) / 10 : 0,
+        avgLatencyMs: latencies.length > 0
+          ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
+          : 0,
+        p95LatencyMs,
+        avgResultCount: resultCounts.length > 0
+          ? Math.round((resultCounts.reduce((sum, value) => sum + value, 0) / resultCounts.length) * 10) / 10
+          : 0,
+        avgTopScore: scored.length > 0
+          ? Math.round((scored.reduce((sum, value) => sum + value, 0) / scored.length) * 1000) / 1000
+          : null,
+      },
+      byMode,
+      byConfidence,
+      recentTraces: traces.slice(0, 50),
+    };
+  }
+
+  async recordInteractionEvent(opts: {
+    waUserId: string;
+    villageId?: string;
+    channel?: string;
+    intent: string;
+    success: boolean;
+    hasKnowledge: boolean;
+    isFallback: boolean;
+    agentMode?: string;
+    responseSource?: string;
+    toolsUsed?: string[];
+    model?: string;
+    processingTimeMs?: number;
+  }): Promise<void> {
+    try {
+      const latest = await prisma.ai_interaction_events.findFirst({
+        where: {
+          wa_user_id: opts.waUserId,
+          ...(opts.villageId ? { village_id: opts.villageId } : {}),
+          ...(opts.channel ? { channel: opts.channel } : {}),
+        },
+        orderBy: { created_at: 'desc' },
+        select: {
+          analytics_session_id: true,
+          created_at: true,
+        },
+      });
+
+      const now = Date.now();
+      const analyticsSessionId = latest && now - latest.created_at.getTime() <= SESSION_TIMEOUT_MS
+        ? latest.analytics_session_id
+        : `sess_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+      await prisma.ai_interaction_events.create({
+        data: {
+          analytics_session_id: analyticsSessionId,
+          wa_user_id: opts.waUserId,
+          village_id: opts.villageId ?? null,
+          channel: opts.channel ?? null,
+          intent: opts.intent,
+          success: opts.success,
+          has_knowledge: opts.hasKnowledge,
+          is_fallback: opts.isFallback,
+          agent_mode: opts.agentMode ?? null,
+          response_source: opts.responseSource ?? null,
+          tools_used_json: Array.isArray(opts.toolsUsed) ? opts.toolsUsed : undefined,
+          tool_count: Array.isArray(opts.toolsUsed) ? opts.toolsUsed.length : 0,
+          model: opts.model ?? null,
+          processing_time_ms: opts.processingTimeMs ?? null,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Failed to persist AI interaction analytics', {
+        error: error.message,
+        intent: opts.intent,
+        wa_user_id: opts.waUserId,
+      });
+    }
+  }
+
+  private async persistRetrievalTrace(opts: {
+    traceId?: string;
+    waUserId?: string;
+    query: string;
+    retrievalMode: 'rag' | 'keyword' | 'document_rag';
+    confidence: 'none' | 'low' | 'medium' | 'high';
+    hasKnowledge: boolean;
+    resultCount: number;
+    searchTimeMs: number;
+    topScore: number | null;
+    avgTopScore: number | null;
+    sourceTitles: string[];
+    candidateDebug?: RetrievalTraceEntry['candidateDebug'];
+    channel: string;
+    villageId?: string;
+    timestamp: string;
+  }): Promise<void> {
+    try {
+      await prisma.ai_retrieval_traces.create({
+        data: {
+          trace_id: opts.traceId ?? null,
+          wa_user_id: opts.waUserId ?? null,
+          village_id: opts.villageId ?? null,
+          channel: opts.channel ?? null,
+          query: opts.query,
+          retrieval_mode: opts.retrievalMode,
+          confidence: opts.confidence,
+          has_knowledge: opts.hasKnowledge,
+          result_count: opts.resultCount,
+          search_time_ms: opts.searchTimeMs,
+          top_score: opts.topScore,
+          avg_top_score: opts.avgTopScore,
+          source_titles_json: opts.sourceTitles,
+          candidate_debug_json: opts.candidateDebug ?? Prisma.JsonNull,
+          created_at: new Date(opts.timestamp),
+        },
+      });
+    } catch (error: any) {
+      logger.error('Failed to persist retrieval trace', {
+        error: error.message,
+        retrievalMode: opts.retrievalMode,
+      });
+    }
+  }
+
+  async getSummaryDurable(filters?: {
+    villageId?: string;
+    channel?: string;
+  }): Promise<{
+    totalRequests: number;
+    overallAccuracy: number;
+    totalCostUSD: number;
+    avgProcessingTimeMs: number;
+    topIntents: Array<{ intent: string; count: number; successRate: number }>;
+    topPatterns: Array<{ pattern: string; count: number }>;
+    tokenUsageLast7Days: Array<{ date: string; tokens: number; cost: number }>;
+  }> {
+    try {
+      const conditions: Prisma.Sql[] = [];
+      if (filters?.villageId) conditions.push(Prisma.sql`village_id = ${filters.villageId}`);
+      if (filters?.channel) conditions.push(Prisma.sql`channel = ${filters.channel}`);
+      const where = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+      const fallbackConditions: Prisma.Sql[] = [...conditions, Prisma.sql`is_fallback = true`];
+      const fallbackWhere = Prisma.sql`WHERE ${Prisma.join(fallbackConditions, ' AND ')}`;
+
+      const [summaryRows, topIntentRows, topPatternRows, tokenRows] = await Promise.all([
+        prisma.$queryRaw<Array<{
+          total_requests: number;
+          overall_accuracy: number | null;
+          avg_processing_time_ms: number | null;
+          total_cost_usd: number | null;
+        }>>(Prisma.sql`
+          SELECT
+            COUNT(*)::int AS total_requests,
+            COALESCE(AVG(CASE WHEN success THEN 100.0 ELSE 0.0 END), 0)::float AS overall_accuracy,
+            COALESCE(AVG(processing_time_ms), 0)::float AS avg_processing_time_ms,
+            COALESCE((
+              SELECT SUM(cost_usd)
+              FROM ai_token_usage tu
+              ${where}
+            ), 0)::float AS total_cost_usd
+          FROM ai_interaction_events
+          ${where}
+        `),
+        prisma.$queryRaw<Array<{ intent: string; count: number; success_rate: number | null }>>(Prisma.sql`
+          SELECT
+            intent,
+            COUNT(*)::int AS count,
+            COALESCE(AVG(CASE WHEN success THEN 100.0 ELSE 0.0 END), 0)::float AS success_rate
+          FROM ai_interaction_events
+          ${where}
+          GROUP BY intent
+          ORDER BY count DESC
+          LIMIT 10
+        `),
+        prisma.$queryRaw<Array<{ pattern: string; count: number }>>(Prisma.sql`
+          SELECT
+            pattern,
+            COUNT(*)::int AS count
+          FROM (
+            SELECT
+              analytics_session_id,
+              string_agg(intent, ' -> ' ORDER BY created_at ASC) AS pattern
+            FROM ai_interaction_events
+            ${where}
+            GROUP BY analytics_session_id
+          ) session_patterns
+          GROUP BY pattern
+          ORDER BY count DESC
+          LIMIT 10
+        `),
+        prisma.$queryRaw<Array<{ day: Date; tokens: number; cost: number }>>(Prisma.sql`
+          SELECT
+            date_trunc('day', created_at) AS day,
+            COALESCE(SUM(total_tokens), 0)::int AS tokens,
+            COALESCE(SUM(cost_usd), 0)::float AS cost
+          FROM ai_token_usage
+          WHERE created_at >= NOW() - INTERVAL '6 days'
+          ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
+          ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
+          GROUP BY day
+          ORDER BY day ASC
+        `),
+      ]);
+
+      const summary = summaryRows[0] || {
+        total_requests: 0,
+        overall_accuracy: 0,
+        avg_processing_time_ms: 0,
+        total_cost_usd: 0,
+      };
+
+      const tokenMap = new Map(
+        tokenRows.map((row) => [
+          row.day instanceof Date ? row.day.toISOString().split('T')[0] : String(row.day),
+          row,
+        ]),
+      );
+
+      const tokenUsageLast7Days = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date();
+        date.setDate(date.getDate() - (6 - index));
+        const key = date.toISOString().split('T')[0];
+        const row = tokenMap.get(key);
+        return {
+          date: key,
+          tokens: row?.tokens ?? 0,
+          cost: row?.cost ?? 0,
+        };
+      });
+
+      return {
+        totalRequests: summary.total_requests ?? 0,
+        overallAccuracy: Math.round(summary.overall_accuracy ?? 0),
+        totalCostUSD: Math.round((summary.total_cost_usd ?? 0) * 10000) / 10000,
+        avgProcessingTimeMs: Math.round(summary.avg_processing_time_ms ?? 0),
+        topIntents: topIntentRows.map((row) => ({
+          intent: row.intent,
+          count: row.count,
+          successRate: Math.round(row.success_rate ?? 0),
+        })),
+        topPatterns: topPatternRows.map((row) => ({
+          pattern: row.pattern,
+          count: row.count,
+        })),
+        tokenUsageLast7Days,
+      };
+    } catch (error: any) {
+      logger.error('Failed to get durable analytics summary, falling back to in-memory', {
+        error: error.message,
+      });
+      return this.getSummary();
+    }
+  }
+
+  async getIntentDistributionDurable(filters?: {
+    villageId?: string;
+    channel?: string;
+  }): Promise<Array<{ intent: string; count: number; percentage: number }>> {
+    try {
+      const conditions: Prisma.Sql[] = [];
+      if (filters?.villageId) conditions.push(Prisma.sql`village_id = ${filters.villageId}`);
+      if (filters?.channel) conditions.push(Prisma.sql`channel = ${filters.channel}`);
+      const where = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+
+      const rows = await prisma.$queryRaw<Array<{ intent: string; count: number; percentage: number }>>(Prisma.sql`
+        WITH total AS (
+          SELECT COUNT(*)::float AS total_count
+          FROM ai_interaction_events
+          ${where}
+        )
+        SELECT
+          intent,
+          COUNT(*)::int AS count,
+          CASE
+            WHEN (SELECT total_count FROM total) > 0
+              THEN ROUND((COUNT(*)::float / (SELECT total_count FROM total)) * 100)
+            ELSE 0
+          END::float AS percentage
+        FROM ai_interaction_events
+        ${where}
+        GROUP BY intent
+        ORDER BY count DESC
+      `);
+
+      return rows;
+    } catch (error: any) {
+      logger.error('Failed to get durable intent distribution, falling back to in-memory', {
+        error: error.message,
+      });
+      return this.getIntentDistribution();
+    }
+  }
+
+  async getConversationFlowDurable(filters?: {
+    villageId?: string;
+    channel?: string;
+  }): Promise<{
+    patterns: Array<{ pattern: string; count: number }>;
+    dropOffPoints: Array<{ intent: string; count: number }>;
+    avgMessagesPerSession: number;
+    totalSessions: number;
+    knowledge_hit: number;
+    knowledge_miss: number;
+    fallbackCount: number;
+  }> {
+    try {
+      const conditions: Prisma.Sql[] = [];
+      if (filters?.villageId) conditions.push(Prisma.sql`village_id = ${filters.villageId}`);
+      if (filters?.channel) conditions.push(Prisma.sql`channel = ${filters.channel}`);
+      const where = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+
+      const [sessionRows, patternRows, dropOffRows, fallbackRows, retrievalRows] = await Promise.all([
+        prisma.$queryRaw<Array<{ total_sessions: number; total_messages: number; avg_messages_per_session: number | null }>>(Prisma.sql`
+          SELECT
+            COUNT(DISTINCT analytics_session_id)::int AS total_sessions,
+            COUNT(*)::int AS total_messages,
+            CASE
+              WHEN COUNT(DISTINCT analytics_session_id) > 0
+                THEN ROUND((COUNT(*)::float / COUNT(DISTINCT analytics_session_id))::numeric, 1)
+              ELSE 0
+            END::float AS avg_messages_per_session
+          FROM ai_interaction_events
+          ${where}
+        `),
+        prisma.$queryRaw<Array<{ pattern: string; count: number }>>(Prisma.sql`
+          SELECT
+            pattern,
+            COUNT(*)::int AS count
+          FROM (
+            SELECT
+              analytics_session_id,
+              string_agg(intent, ' -> ' ORDER BY created_at ASC) AS pattern
+            FROM ai_interaction_events
+            ${where}
+            GROUP BY analytics_session_id
+          ) session_patterns
+          GROUP BY pattern
+          ORDER BY count DESC
+          LIMIT 20
+        `),
+        prisma.$queryRaw<Array<{ intent: string; count: number }>>(Prisma.sql`
+          SELECT
+            last_intent AS intent,
+            COUNT(*)::int AS count
+          FROM (
+            SELECT
+              analytics_session_id,
+              (ARRAY_AGG(intent ORDER BY created_at DESC))[1] AS last_intent
+            FROM ai_interaction_events
+            ${where}
+            GROUP BY analytics_session_id
+          ) session_last_intents
+          GROUP BY last_intent
+          ORDER BY count DESC
+        `),
+        prisma.$queryRaw<Array<{ fallback_count: number }>>(Prisma.sql`
+          SELECT COUNT(*)::int AS fallback_count
+          FROM ai_interaction_events
+          ${fallbackWhere}
+        `),
+        prisma.$queryRaw<Array<{ knowledge_hit: number; knowledge_miss: number }>>(Prisma.sql`
+          SELECT
+            COALESCE(SUM(CASE WHEN has_knowledge THEN 1 ELSE 0 END), 0)::int AS knowledge_hit,
+            COALESCE(SUM(CASE WHEN has_knowledge THEN 0 ELSE 1 END), 0)::int AS knowledge_miss
+          FROM ai_retrieval_traces
+          WHERE 1 = 1
+          ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
+          ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
+        `),
+      ]);
+
+      const session = sessionRows[0] || {
+        total_sessions: 0,
+        total_messages: 0,
+        avg_messages_per_session: 0,
+      };
+      const fallback = fallbackRows[0]?.fallback_count ?? 0;
+      const retrieval = retrievalRows[0] || { knowledge_hit: 0, knowledge_miss: 0 };
+
+      return {
+        patterns: patternRows,
+        dropOffPoints: dropOffRows,
+        avgMessagesPerSession: session.avg_messages_per_session ?? 0,
+        totalSessions: session.total_sessions ?? 0,
+        knowledge_hit: retrieval.knowledge_hit ?? 0,
+        knowledge_miss: retrieval.knowledge_miss ?? 0,
+        fallbackCount: fallback,
+      };
+    } catch (error: any) {
+      logger.error('Failed to get durable conversation flow, falling back to in-memory', {
+        error: error.message,
+      });
+      return {
+        ...this.getConversationFlow(),
+        fallbackCount: 0,
+      };
+    }
+  }
+
+  async getKnowledgeStatsDurable(filters?: {
+    villageId?: string;
+    channel?: string;
+  }): Promise<{
+    hits: number;
+    misses: number;
+    noKnowledge: number;
+    hitRate: number;
+    missRate: number;
+    topGaps: KnowledgeGapEntry[];
+  }> {
+    try {
+      const rows = await prisma.$queryRaw<Array<{ hits: number; misses: number; no_knowledge: number }>>(Prisma.sql`
+        SELECT
+          COALESCE(SUM(CASE WHEN has_knowledge THEN 1 ELSE 0 END), 0)::int AS hits,
+          COALESCE(SUM(CASE WHEN has_knowledge THEN 0 ELSE 1 END), 0)::int AS misses,
+          COALESCE(SUM(CASE WHEN has_knowledge THEN 0 ELSE 1 END), 0)::int AS no_knowledge
+        FROM ai_retrieval_traces
+        WHERE 1 = 1
+        ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
+        ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
+      `);
+
+      const stats = rows[0] || { hits: 0, misses: 0, no_knowledge: 0 };
+      const total = (stats.hits ?? 0) + (stats.misses ?? 0);
+
+      return {
+        hits: stats.hits ?? 0,
+        misses: stats.misses ?? 0,
+        noKnowledge: stats.no_knowledge ?? 0,
+        hitRate: total > 0 ? Math.round(((stats.hits ?? 0) / total) * 1000) / 10 : 0,
+        missRate: total > 0 ? Math.round(((stats.misses ?? 0) / total) * 1000) / 10 : 0,
+        topGaps: [],
+      };
+    } catch (error: any) {
+      logger.error('Failed to get durable knowledge stats, falling back to in-memory', {
+        error: error.message,
+      });
+      return this.getKnowledgeStats();
+    }
+  }
+
+  async getRetrievalObservabilityDurable(filters?: {
+    villageId?: string;
+    channel?: string;
+  }): Promise<{
+    summary: {
+      totalTraces: number;
+      hitRate: number;
+      avgLatencyMs: number;
+      p95LatencyMs: number;
+      avgResultCount: number;
+      avgTopScore: number | null;
+    };
+    byMode: Array<{
+      mode: string;
+      count: number;
+      hitRate: number;
+      avgLatencyMs: number;
+      avgResultCount: number;
+    }>;
+    byConfidence: Array<{
+      confidence: string;
+      count: number;
+      percentage: number;
+    }>;
+    recentTraces: RetrievalTraceEntry[];
+  }> {
+    try {
+      const traces = await prisma.ai_retrieval_traces.findMany({
+        where: {
+          ...(filters?.villageId ? { village_id: filters.villageId } : {}),
+          ...(filters?.channel ? { channel: filters.channel } : {}),
+        },
+        orderBy: { created_at: 'desc' },
+        take: 250,
+      });
+
+      const normalizedTraces: RetrievalTraceEntry[] = traces.map((trace) => ({
+        query: trace.query,
+        retrievalMode: trace.retrieval_mode as RetrievalTraceEntry['retrievalMode'],
+        confidence: trace.confidence as RetrievalTraceEntry['confidence'],
+        hasKnowledge: trace.has_knowledge,
+        resultCount: trace.result_count,
+        searchTimeMs: trace.search_time_ms,
+        topScore: trace.top_score,
+        avgTopScore: trace.avg_top_score,
+        sourceTitles: Array.isArray(trace.source_titles_json) ? trace.source_titles_json as string[] : [],
+        candidateDebug: Array.isArray(trace.candidate_debug_json)
+          ? trace.candidate_debug_json as RetrievalTraceEntry['candidateDebug']
+          : undefined,
+        channel: trace.channel || 'system',
+        villageId: trace.village_id || undefined,
+        timestamp: trace.created_at.toISOString(),
+      }));
+
+      return this.getRetrievalObservabilityFromTraces(normalizedTraces);
+    } catch (error: any) {
+      logger.error('Failed to get durable retrieval observability, falling back to in-memory', {
+        error: error.message,
+      });
+      return this.getRetrievalObservability(filters);
+    }
+  }
+
+  private getRetrievalObservabilityFromTraces(traces: RetrievalTraceEntry[]): {
+    summary: {
+      totalTraces: number;
+      hitRate: number;
+      avgLatencyMs: number;
+      p95LatencyMs: number;
+      avgResultCount: number;
+      avgTopScore: number | null;
+    };
+    byMode: Array<{
+      mode: string;
+      count: number;
+      hitRate: number;
+      avgLatencyMs: number;
+      avgResultCount: number;
+    }>;
+    byConfidence: Array<{
+      confidence: string;
+      count: number;
+      percentage: number;
+    }>;
+    recentTraces: RetrievalTraceEntry[];
+  } {
+    const totalTraces = traces.length;
+    const hitCount = traces.filter((trace) => trace.hasKnowledge).length;
+    const latencies = traces
+      .map((trace) => trace.searchTimeMs)
+      .filter((value) => Number.isFinite(value) && value >= 0)
+      .sort((a, b) => a - b);
+    const resultCounts = traces.map((trace) => trace.resultCount);
+    const scored = traces
+      .map((trace) => trace.topScore)
+      .filter((score): score is number => typeof score === 'number' && Number.isFinite(score));
+
+    const byMode = Array.from(
+      traces.reduce((acc, trace) => {
+        const bucket = acc.get(trace.retrievalMode) || {
+          mode: trace.retrievalMode,
+          count: 0,
+          hitCount: 0,
+          totalLatencyMs: 0,
+          totalResultCount: 0,
+        };
+
+        bucket.count++;
+        bucket.hitCount += trace.hasKnowledge ? 1 : 0;
+        bucket.totalLatencyMs += trace.searchTimeMs;
+        bucket.totalResultCount += trace.resultCount;
+        acc.set(trace.retrievalMode, bucket);
+        return acc;
+      }, new Map<string, {
+        mode: string;
+        count: number;
+        hitCount: number;
+        totalLatencyMs: number;
+        totalResultCount: number;
+      }>()),
+    )
+      .map(([, bucket]) => ({
+        mode: bucket.mode,
+        count: bucket.count,
+        hitRate: bucket.count > 0 ? Math.round((bucket.hitCount / bucket.count) * 1000) / 10 : 0,
+        avgLatencyMs: bucket.count > 0 ? Math.round(bucket.totalLatencyMs / bucket.count) : 0,
+        avgResultCount: bucket.count > 0 ? Math.round((bucket.totalResultCount / bucket.count) * 10) / 10 : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const byConfidence = Array.from(
+      traces.reduce((acc, trace) => {
+        acc.set(trace.confidence, (acc.get(trace.confidence) || 0) + 1);
+        return acc;
+      }, new Map<string, number>()),
     )
       .map(([confidence, count]) => ({
         confidence,

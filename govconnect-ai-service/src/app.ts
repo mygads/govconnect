@@ -524,9 +524,12 @@ app.get('/stats/models/:modelName', (req: Request, res: Response) => {
 
 // ===========================================
 // AI Analytics Endpoints
-app.get('/stats/analytics', (req: Request, res: Response) => {
+app.get('/stats/analytics', async (req: Request, res: Response) => {
   try {
-    const summary = aiAnalyticsService.getSummary();
+    const summary = await aiAnalyticsService.getSummaryDurable({
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    });
     res.json(summary);
   } catch (error: any) {
     res.status(500).json({
@@ -535,9 +538,12 @@ app.get('/stats/analytics', (req: Request, res: Response) => {
   }
 });
 
-app.get('/stats/analytics/intents', (req: Request, res: Response) => {
+app.get('/stats/analytics/intents', async (req: Request, res: Response) => {
   try {
-    const distribution = aiAnalyticsService.getIntentDistribution();
+    const distribution = await aiAnalyticsService.getIntentDistributionDurable({
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    });
     res.json(distribution);
   } catch (error: any) {
     res.status(500).json({
@@ -546,9 +552,12 @@ app.get('/stats/analytics/intents', (req: Request, res: Response) => {
   }
 });
 
-app.get('/stats/analytics/flow', (req: Request, res: Response) => {
+app.get('/stats/analytics/flow', async (req: Request, res: Response) => {
   try {
-    const flow = aiAnalyticsService.getConversationFlow();
+    const flow = await aiAnalyticsService.getConversationFlowDurable({
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    });
     res.json(flow);
   } catch (error: any) {
     res.status(500).json({
@@ -568,10 +577,27 @@ app.get('/stats/analytics/tokens', (req: Request, res: Response) => {
   }
 });
 
-app.get('/stats/analytics/full', (req: Request, res: Response) => {
+app.get('/stats/analytics/full', async (req: Request, res: Response) => {
   try {
-    const data = aiAnalyticsService.getAllAnalytics();
-    res.json(data);
+    const filters = {
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    };
+    const [summary, intents, flow, knowledge, retrieval] = await Promise.all([
+      aiAnalyticsService.getSummaryDurable(filters),
+      aiAnalyticsService.getIntentDistributionDurable(filters),
+      aiAnalyticsService.getConversationFlowDurable(filters),
+      aiAnalyticsService.getKnowledgeStatsDurable(filters),
+      aiAnalyticsService.getRetrievalObservabilityDurable(filters),
+    ]);
+
+    res.json({
+      summary,
+      intents,
+      flow,
+      knowledge,
+      retrieval,
+    });
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get full analytics',
@@ -613,18 +639,21 @@ app.post('/stats/analytics/fix', (req: Request, res: Response) => {
 });
 
 // Knowledge analytics (hit/miss/gaps)
-app.get('/stats/analytics/knowledge', (req: Request, res: Response) => {
+app.get('/stats/analytics/knowledge', async (req: Request, res: Response) => {
   try {
-    const stats = aiAnalyticsService.getKnowledgeStats();
+    const stats = await aiAnalyticsService.getKnowledgeStatsDurable({
+      villageId: getQuery(req, 'village_id') || undefined,
+      channel: getQuery(req, 'channel') || undefined,
+    });
     res.json(stats);
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to get knowledge stats' });
   }
 });
 
-app.get('/stats/analytics/retrieval', (req: Request, res: Response) => {
+app.get('/stats/analytics/retrieval', async (req: Request, res: Response) => {
   try {
-    const stats = aiAnalyticsService.getRetrievalObservability({
+    const stats = await aiAnalyticsService.getRetrievalObservabilityDurable({
       villageId: getQuery(req, 'village_id') || undefined,
       channel: getQuery(req, 'channel') || undefined,
     });
@@ -1180,7 +1209,7 @@ app.get('/stats/dashboard', async (req: Request, res: Response) => {
     const cacheStats = getCacheStats();
     const fsmStats = getFSMStats();
     const modelStats = modelStatsService.getAllStats();
-    const analyticsData = aiAnalyticsService.getSummary();
+    const analyticsData = await aiAnalyticsService.getSummaryDurable();
 
     const architecture = 'NLU Processor (Micro NLU + Full NLU)';
 

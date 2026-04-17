@@ -33,10 +33,10 @@ export async function GET(request: NextRequest) {
       knowledgeData,
       retrievalData,
     ] = await Promise.all([
-      safeJson(() => ai.getAnalytics()),
-      safeJson(() => ai.getAnalyticsIntents()),
-      safeJson(() => ai.getAnalyticsFlow()),
-      safeJson(() => ai.getAnalyticsKnowledge()),
+      safeJson(() => ai.getAnalytics({ village_id: villageId })),
+      safeJson(() => ai.getAnalyticsIntents({ village_id: villageId })),
+      safeJson(() => ai.getAnalyticsFlow({ village_id: villageId })),
+      safeJson(() => ai.getAnalyticsKnowledge({ village_id: villageId })),
       safeJson(() => ai.getAnalyticsRetrieval({ village_id: villageId })),
     ])
 
@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
         ? intents.slice(0, 20).map((i: any) => ({
             intent: i.intent || i.name || 'unknown',
             count: i.count || i.total || 0,
-            avgConfidence: i.avgConfidence || i.avg_confidence || 0,
+            avgConfidence: i.avgConfidence || i.avg_confidence || i.percentage || 0,
           }))
         : [],
       flow,

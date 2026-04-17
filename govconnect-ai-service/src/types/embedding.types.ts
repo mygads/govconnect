@@ -126,6 +126,23 @@ export interface RAGContext {
   confidence?: RAGConfidence; // Confidence scoring for the result
   /** Detected conflicts between RAG sources (if any) */
   conflicts?: RAGConflictInfo[];
+  retrievalDebug?: {
+    hybridUsed: boolean;
+    candidates: Array<{
+      id: string;
+      title: string;
+      sourceType: 'knowledge' | 'document';
+      finalScore: number;
+      vectorScore?: number | null;
+      keywordScore?: number | null;
+      vectorRank?: number | null;
+      keywordRank?: number | null;
+      rrfScore?: number | null;
+      rerankScore?: number | null;
+      matchType?: 'vector' | 'keyword' | 'both' | null;
+      selected?: boolean;
+    }>;
+  };
 }
 
 /**

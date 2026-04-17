@@ -426,8 +426,9 @@ export const ai = {
   /**
    * Get analytics
    */
-  async getAnalytics() {
-    return apiFetch(buildUrl(ServicePath.AI, '/stats/analytics'), {
+  async getAnalytics(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics${qs}`), {
       headers: getHeaders(),
     });
   },
@@ -435,8 +436,9 @@ export const ai = {
   /**
    * Get analytics flow
    */
-  async getAnalyticsFlow() {
-    return apiFetch(buildUrl(ServicePath.AI, '/stats/analytics/flow'), {
+  async getAnalyticsFlow(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/flow${qs}`), {
       headers: getHeaders(),
     });
   },
@@ -444,8 +446,9 @@ export const ai = {
   /**
    * Get analytics intents
    */
-  async getAnalyticsIntents() {
-    return apiFetch(buildUrl(ServicePath.AI, '/stats/analytics/intents'), {
+  async getAnalyticsIntents(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/intents${qs}`), {
       headers: getHeaders(),
     });
   },
@@ -462,8 +465,9 @@ export const ai = {
   /**
    * Get analytics knowledge hit/miss/gaps
    */
-  async getAnalyticsKnowledge() {
-    return apiFetch(buildUrl(ServicePath.AI, '/stats/analytics/knowledge'), {
+  async getAnalyticsKnowledge(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/analytics/knowledge${qs}`), {
       headers: getHeaders(),
     });
   },

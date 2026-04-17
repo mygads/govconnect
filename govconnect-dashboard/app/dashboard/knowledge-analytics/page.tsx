@@ -98,6 +98,7 @@ interface RetrievalConfidenceItem {
 }
 
 interface RetrievalTraceItem {
+  candidateDebug?: RetrievalCandidateDebug[]
   query: string
   retrievalMode: "rag" | "keyword" | "document_rag"
   confidence: "none" | "low" | "medium" | "high"
@@ -110,6 +111,21 @@ interface RetrievalTraceItem {
   channel: string
   villageId?: string
   timestamp: string
+}
+
+interface RetrievalCandidateDebug {
+  id: string
+  title: string
+  sourceType: "knowledge" | "document"
+  finalScore: number
+  vectorScore?: number | null
+  keywordScore?: number | null
+  vectorRank?: number | null
+  keywordRank?: number | null
+  rrfScore?: number | null
+  rerankScore?: number | null
+  matchType?: "vector" | "keyword" | "both" | null
+  selected?: boolean
 }
 
 interface RetrievalObservabilityData {
@@ -180,6 +196,7 @@ function confidenceBadgeClass(confidence: string): string {
 export default function KnowledgeAnalyticsPage() {
   const { user } = useAuth()
   const [data, setData] = useState<AnalyticsData | null>(null)
+  const [selectedTraceIndex, setSelectedTraceIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deletingGapId, setDeletingGapId] = useState<string | null>(null)
@@ -209,6 +226,9 @@ export default function KnowledgeAnalyticsPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => {
+    setSelectedTraceIndex(0)
+  }, [data?.retrievalObservability?.recentTraces?.length])
 
   const handleDeleteGap = async (id: string) => {
     try {
@@ -316,6 +336,7 @@ export default function KnowledgeAnalyticsPage() {
   const retrievalModes = retrievalObservability?.byMode || []
   const retrievalConfidence = retrievalObservability?.byConfidence || []
   const retrievalTraces = retrievalObservability?.recentTraces || []
+  const selectedTrace = retrievalTraces[selectedTraceIndex] || retrievalTraces[0] || null
   const hitRateNum = typeof overview.hitRate === "string" ? parseFloat(overview.hitRate) : overview.hitRate
 
   return (
@@ -588,7 +609,11 @@ export default function KnowledgeAnalyticsPage() {
                   </TableHeader>
                   <TableBody>
                     {retrievalTraces.slice(0, 15).map((trace, idx) => (
-                      <TableRow key={`${trace.timestamp}-${idx}`}>
+                      <TableRow
+                        key={`${trace.timestamp}-${idx}`}
+                        className="cursor-pointer"
+                        onClick={() => setSelectedTraceIndex(idx)}
+                      >
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                           {formatRelativeTime(new Date(trace.timestamp))}
                         </TableCell>
@@ -621,6 +646,94 @@ export default function KnowledgeAnalyticsPage() {
                     ))}
                   </TableBody>
                 </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Candidate Debug</CardTitle>
+              <CardDescription>
+                Rincian kandidat retrieval untuk trace yang dipilih. Ini menampilkan rank vector, rank keyword, RRF, rerank, dan kandidat yang lolos.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!selectedTrace || !selectedTrace.candidateDebug || selectedTrace.candidateDebug.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Pilih trace retrieval yang memiliki kandidat untuk melihat debug ranking.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <div className="text-xs text-muted-foreground mb-1">Trace terpilih</div>
+                    <div className="font-medium">{selectedTrace.query}</div>
+                    <div className="text-xs text-muted-foreground mt-2">
+                      {formatRetrievalMode(selectedTrace.retrievalMode)} • {selectedTrace.searchTimeMs} ms • {selectedTrace.resultCount} hasil
+                    </div>
+                  </div>
+
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Kandidat</TableHead>
+                        <TableHead>Sumber</TableHead>
+                        <TableHead>Final</TableHead>
+                        <TableHead>Vector</TableHead>
+                        <TableHead>Keyword</TableHead>
+                        <TableHead>RRF</TableHead>
+                        <TableHead>Rerank</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedTrace.candidateDebug.map((candidate) => (
+                        <TableRow key={candidate.id}>
+                          <TableCell className="max-w-[280px]">
+                            <div className="space-y-1">
+                              <div className="font-medium line-clamp-2">{candidate.title}</div>
+                              {candidate.matchType && (
+                                <div className="text-xs text-muted-foreground">
+                                  Match: {candidate.matchType}
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {candidate.sourceType === "knowledge" ? "Knowledge" : "Document"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{candidate.finalScore.toFixed(3)}</TableCell>
+                          <TableCell>
+                            <div className="text-xs">
+                              {typeof candidate.vectorScore === "number" ? candidate.vectorScore.toFixed(3) : "-"}
+                              {typeof candidate.vectorRank === "number" && (
+                                <div className="text-muted-foreground">rank #{candidate.vectorRank}</div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-xs">
+                              {typeof candidate.keywordScore === "number" ? candidate.keywordScore.toFixed(3) : "-"}
+                              {typeof candidate.keywordRank === "number" && (
+                                <div className="text-muted-foreground">rank #{candidate.keywordRank}</div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>{typeof candidate.rrfScore === "number" ? candidate.rrfScore.toFixed(4) : "-"}</TableCell>
+                          <TableCell>{typeof candidate.rerankScore === "number" ? candidate.rerankScore.toFixed(3) : "-"}</TableCell>
+                          <TableCell>
+                            {candidate.selected ? (
+                              <Badge className="bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300">Dipakai</Badge>
+                            ) : (
+                              <Badge variant="secondary">Drop</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>

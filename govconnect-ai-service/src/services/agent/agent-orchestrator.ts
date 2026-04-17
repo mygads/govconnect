@@ -69,6 +69,8 @@ export async function runAgent(
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const systemPrompt = buildAgentSystemPrompt(promptCtx);
+  const allowedToolNames = selectAllowedTools(userMessage);
+  const allowedTools = AGENT_TOOLS.filter((tool) => allowedToolNames.includes(tool.function.name as AgentToolName));
 
   const messages: AgentMessage[] = [{ role: 'system', content: systemPrompt }];
 
@@ -97,7 +99,7 @@ export async function runAgent(
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     iterations = i + 1;
 
-    const response = await callLLMWithTools(messages);
+    const response = await callLLMWithTools(messages, allowedTools);
     if (!response) {
       return {
         replyText: 'Maaf, terjadi gangguan pada sistem. Silakan coba lagi nanti.',
@@ -169,6 +171,7 @@ export async function runAgent(
       logger.info('Agent completed', {
         iterations,
         toolsUsed,
+        allowedToolNames,
         toolTrace,
         totalTokens,
         model,
@@ -208,6 +211,7 @@ export async function runAgent(
   logger.warn('Agent loop exhausted without final response', {
     iterations,
     toolsUsed,
+    allowedToolNames,
     userId: toolCtx.userId,
   });
 
@@ -252,6 +256,7 @@ function getAgentModels(): string[] {
 
 async function callLLMWithTools(
   messages: AgentMessage[],
+  tools: typeof AGENT_TOOLS,
 ): Promise<any | null> {
   const gwConfig = getAgentGatewayConfig();
   if (!gwConfig.baseUrl || !gwConfig.apiKey) {
@@ -277,12 +282,15 @@ async function callLLMWithTools(
       if (m.name) msg.name = m.name;
       return msg;
     }),
-    tools: AGENT_TOOLS,
-    tool_choice: 'auto',
     temperature: 0.3,
     max_tokens: 1500,
     stream: false,
   };
+
+  if (tools.length > 0) {
+    body.tools = tools;
+    body.tool_choice = 'auto';
+  }
 
   try {
     const controller = new AbortController();
@@ -322,4 +330,79 @@ async function callLLMWithTools(
     logger.error('Agent LLM call exception', { error: error.message, model });
     return null;
   }
+}
+
+function selectAllowedTools(userMessage: string): AgentToolName[] {
+  const normalized = userMessage.toLowerCase().trim();
+  const tools = new Set<AgentToolName>();
+  const hasReference = /\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
+  const isGreetingOnly = /^(halo|hai|hi|hello|assalamualaikum|permisi|p|selamat (pagi|siang|sore|malam))[\s!.,?]*$/i.test(userMessage);
+
+  if (isGreetingOnly) {
+    return [];
+  }
+
+  const add = (...names: AgentToolName[]) => names.forEach((name) => tools.add(name));
+
+  if (/\b(riwayat|history|laporan saya|permohonan saya|pengajuan saya)\b/i.test(normalized)) {
+    add('get_my_history', 'search_user_memory');
+  }
+
+  if (/\b(sebelumnya|tadi|terakhir|alamat saya|preferensi saya|yang pernah saya|saya pernah)\b/i.test(normalized)) {
+    add('search_user_memory');
+  }
+
+  if (/\b(batal|batalkan|cancel)\b/i.test(normalized)) {
+    add('cancel_request', 'check_status');
+  }
+
+  if (hasReference && /\b(status|cek|periksa|tracking|lacak)\b/i.test(normalized)) {
+    add('check_status');
+  }
+
+  if (/\b(edit|ubah data|perbaiki data|revisi data)\b/i.test(normalized) && /\b(lay|lyn)-[\w-]+\b/i.test(userMessage)) {
+    add('get_service_request_edit_link', 'check_status');
+  }
+
+  if (/\b(ubah laporan|update laporan|perbarui laporan|tambah keterangan|ubah alamat|update pengaduan|revisi laporan)\b/i.test(normalized)
+    && /\blap-[\w-]+\b/i.test(userMessage)) {
+    add('update_complaint', 'check_status');
+  }
+
+  if (/\b(alamat|lokasi|maps|gmaps|jam buka|jam operasional|kontak|nomor kantor|telepon kantor|kantor desa)\b/i.test(normalized)) {
+    add('get_village_profile');
+  }
+
+  if (/\b(darurat|ambulans|pemadam|polisi|nomor darurat|kontak penting)\b/i.test(normalized)) {
+    add('get_emergency_contacts');
+  }
+
+  if (/\b(lapor|pengaduan|keluhan|jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak)\b/i.test(normalized)) {
+    add('create_complaint', 'get_complaint_categories');
+  }
+
+  if (/\b(surat|layanan|dokumen|syarat|persyaratan|biaya|proses|ktp|kk|sktm|domisili|akta|pindah|kelahiran|kematian)\b/i.test(normalized)) {
+    add('get_service_info', 'create_service_request');
+  }
+
+  if (/\b(pdf|dokumen|lampiran|berkas|sop|peraturan|sk|surat keputusan|file)\b/i.test(normalized)) {
+    add('search_documents');
+  }
+
+  if (/\b(apa|bagaimana|kenapa|mengapa|kebijakan|prosedur|aturan|faq|panduan)\b/i.test(normalized)) {
+    add('search_knowledge');
+  }
+
+  if (tools.size === 0) {
+    add(
+      'get_village_profile',
+      'get_service_info',
+      'search_knowledge',
+      'search_documents',
+      'check_status',
+      'get_complaint_categories',
+    );
+  }
+
+  return Array.from(tools);
 }

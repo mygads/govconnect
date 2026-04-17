@@ -278,3 +278,59 @@ model user_memory_vectors {
   @@index([wa_user_id, memory_type])
   @@index([village_id])
 }
+
+// ==================== DURABLE AI INTERACTION ANALYTICS ====================
+// Stores one row per finalized citizen interaction so dashboards remain usable
+// after service restarts and can support tenant-filtered analytics queries.
+
+model ai_interaction_events {
+  id                   String   @id @default(cuid())
+  analytics_session_id String
+  wa_user_id           String
+  village_id           String?
+  channel              String?
+  intent               String
+  success              Boolean  @default(true)
+  has_knowledge        Boolean  @default(false)
+  is_fallback          Boolean  @default(false)
+  agent_mode           String?
+  response_source      String?
+  tools_used_json      Json?
+  tool_count           Int      @default(0)
+  model                String?
+  processing_time_ms   Int?
+  created_at           DateTime @default(now())
+
+  @@index([analytics_session_id])
+  @@index([wa_user_id, created_at])
+  @@index([village_id, created_at])
+  @@index([intent, created_at])
+  @@index([channel, created_at])
+}
+
+// ==================== DURABLE RETRIEVAL OBSERVABILITY ====================
+// Stores retrieval traces and candidate-level debug for hybrid search.
+
+model ai_retrieval_traces {
+  id                   String   @id @default(cuid())
+  trace_id             String?
+  wa_user_id           String?
+  village_id           String?
+  channel              String?
+  query                String   @db.Text
+  retrieval_mode       String
+  confidence           String
+  has_knowledge        Boolean  @default(false)
+  result_count         Int      @default(0)
+  search_time_ms       Int      @default(0)
+  top_score            Float?
+  avg_top_score        Float?
+  source_titles_json   Json?
+  candidate_debug_json Json?
+  created_at           DateTime @default(now())
+
+  @@index([village_id, created_at])
+  @@index([retrieval_mode, created_at])
+  @@index([confidence, created_at])
+  @@index([channel, created_at])
+}

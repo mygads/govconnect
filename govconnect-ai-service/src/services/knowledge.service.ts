@@ -30,6 +30,7 @@ interface KnowledgeSearchResult {
   topScore?: number | null;
   avgTopScore?: number | null;
   sourceTitles?: string[];
+  candidateDebug?: NonNullable<RAGContext['retrievalDebug']>['candidates'];
 }
 
 interface VillageProfileSummary {
@@ -177,6 +178,7 @@ export async function searchDocuments(
       topScore: ragContext.relevantChunks[0]?.score ?? null,
       avgTopScore: calculateAverageTopScore(ragContext),
       sourceTitles: ragContext.relevantChunks.map((chunk) => chunk.source).filter(Boolean).slice(0, 5),
+      candidateDebug: ragContext.retrievalDebug?.candidates,
     };
     trackKnowledgeSearch(query, villageId, result, channel);
     return result;
@@ -256,6 +258,7 @@ function mergeKnowledgeResults(a: KnowledgeSearchResult, b: KnowledgeSearchResul
     sourceTitles: Array.from(
       new Set([...(a.sourceTitles || []), ...(b.sourceTitles || [])].filter(Boolean))
     ).slice(0, 5),
+    candidateDebug: a.candidateDebug || b.candidateDebug,
   };
 }
 
@@ -287,6 +290,7 @@ function trackKnowledgeSearch(
     topScore: result.topScore,
     avgTopScore: result.avgTopScore,
     sourceTitles: result.sourceTitles,
+    candidateDebug: result.candidateDebug,
     channel,
     villageId,
   });
@@ -374,6 +378,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
     topScore: ragContext.relevantChunks[0]?.score ?? null,
     avgTopScore: calculateAverageTopScore(ragContext),
     sourceTitles: items.map((item) => item.title).filter(Boolean).slice(0, 5),
+    candidateDebug: ragContext.retrievalDebug?.candidates,
   };
 }
 
@@ -408,6 +413,20 @@ async function searchKnowledgeWithKeywords(query: string, categories?: string[],
     retrievalMode: 'keyword',
     searchTimeMs: response.data.searchTimeMs ?? (Date.now() - startTime),
     sourceTitles: (response.data.data || []).map((item) => item.title).filter(Boolean).slice(0, 5),
+    candidateDebug: (response.data.data || []).slice(0, 10).map((item, index) => ({
+      id: item.id,
+      title: item.title,
+      sourceType: item.source_type || 'knowledge',
+      finalScore: Math.max(0.1, 1 - index * 0.08),
+      vectorScore: null,
+      keywordScore: null,
+      vectorRank: null,
+      keywordRank: index + 1,
+      rrfScore: null,
+      rerankScore: null,
+      matchType: 'keyword' as const,
+      selected: true,
+    })),
   };
 }
 
