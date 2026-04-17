@@ -6,10 +6,8 @@
 
 export interface AgentPromptContext {
   villageName?: string;
-  conversationHistory: string;
   memorySummary?: string;
   currentDatetime: string;
-  userMessage: string;
   userName?: string | null;
 }
 
@@ -34,6 +32,7 @@ PANDUAN TOOL:
 - Nomor darurat atau kontak bantuan cepat → \`get_emergency_contacts\`
 - SOP, FAQ, kebijakan, prosedur, panduan → \`search_knowledge\`
 - Isi PDF, Word, lampiran, jadwal berbasis dokumen → \`search_documents\`
+- Konteks personal user dari interaksi sebelumnya → \`search_user_memory\`
 - Buat pengaduan → \`create_complaint\`
 - Kirim link formulir layanan online → \`create_service_request\`
 - User ingin menambah detail/memperbarui laporan yang masih aktif → \`update_complaint\`
@@ -60,9 +59,6 @@ FORMAT JAWABAN:
 - Ringkas dan langsung ke inti.
 - Gunakan format WhatsApp yang rapi bila perlu.
 - Jika memakai hasil tool, sebutkan sumber singkat seperti "Berdasarkan data resmi desa" atau "Berdasarkan dokumen yang tersedia".
-
-RIWAYAT PERCAKAPAN:
-${ctx.conversationHistory || '(Belum ada riwayat)'}
 
 MEMORI INTERNAL YANG RELEVAN:
 ${ctx.memorySummary || '(Belum ada memori relevan)'}

@@ -2,6 +2,7 @@ import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { isAIGatewayEnabled } from './ai-gateway.service';
+import { aiAnalyticsService } from './ai-analytics.service';
 import {
   retrieveContext,
 } from './rag.service';
@@ -23,6 +24,9 @@ interface KnowledgeSearchResult {
   data: KnowledgeItem[];
   total: number;
   context: string;
+  confidenceLevel?: 'none' | 'low' | 'medium' | 'high';
+  retrievalMode?: 'rag' | 'keyword' | 'document_rag';
+  searchTimeMs?: number;
 }
 
 interface VillageProfileSummary {
@@ -43,7 +47,12 @@ function isRAGSearchEnabled(): boolean {
  * This lane is intentionally limited to curated knowledge items only.
  * Uploaded documents must use searchDocuments() so the retrieval plane stays explicit.
  */
-export async function searchKnowledge(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
+export async function searchKnowledge(
+  query: string,
+  categories?: string[],
+  villageId?: string,
+  channel: string = 'system',
+): Promise<KnowledgeSearchResult> {
   try {
     const ragSearchEnabled = isRAGSearchEnabled();
 
@@ -64,10 +73,13 @@ export async function searchKnowledge(query: string, categories?: string[], vill
           if (shouldAugmentRagWithKeywordSearch(query, ragResult.context)) {
             const keywordResult = await searchKnowledgeWithKeywords(query, undefined, villageId);
             if (keywordResult.total > 0) {
-              return mergeKnowledgeResults(ragResult, keywordResult);
+              const merged = mergeKnowledgeResults(ragResult, keywordResult);
+              trackKnowledgeSearch(query, villageId, merged, channel);
+              return merged;
             }
           }
 
+          trackKnowledgeSearch(query, villageId, ragResult, channel);
           return ragResult;
         }
         // If RAG returns no results, fall back to keyword search
@@ -80,7 +92,9 @@ export async function searchKnowledge(query: string, categories?: string[], vill
     }
 
     // Keyword-based search (fallback or when RAG is disabled)
-    return await searchKnowledgeWithKeywords(query, categories, villageId);
+    const keywordResult = await searchKnowledgeWithKeywords(query, categories, villageId);
+    trackKnowledgeSearch(query, villageId, keywordResult, channel);
+    return keywordResult;
   } catch (error: any) {
     logger.error('Failed to search knowledge base', {
       error: error.message,
@@ -100,15 +114,24 @@ export async function searchKnowledge(query: string, categories?: string[], vill
  * This is intentionally separate from general knowledge search so the agent
  * can choose the narrower retrieval tool when the answer is likely in PDFs/Word docs.
  */
-export async function searchDocuments(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
+export async function searchDocuments(
+  query: string,
+  categories?: string[],
+  villageId?: string,
+  channel: string = 'system',
+): Promise<KnowledgeSearchResult> {
   try {
     const ragSearchEnabled = isRAGSearchEnabled();
     if (!ragSearchEnabled) {
-      return {
+      const empty = {
         data: [],
         total: 0,
         context: '',
+        confidenceLevel: 'none' as const,
+        retrievalMode: 'document_rag' as const,
       };
+      trackKnowledgeSearch(query, villageId, empty, channel);
+      return empty;
     }
 
     const ragContext = await retrieveContext(query, {
@@ -120,27 +143,37 @@ export async function searchDocuments(query: string, categories?: string[], vill
     });
 
     if (ragContext.totalResults === 0) {
-      return {
+      const empty = {
         data: [],
         total: 0,
         context: '',
+        confidenceLevel: ragContext.confidence?.level || 'none',
+        retrievalMode: 'document_rag' as const,
+        searchTimeMs: ragContext.searchTimeMs,
       };
+      trackKnowledgeSearch(query, villageId, empty, channel);
+      return empty;
     }
 
-    return {
+    const result: KnowledgeSearchResult = {
       data: ragContext.relevantChunks.map((chunk) => ({
         id: chunk.id,
         title: chunk.source,
         content: chunk.content,
         category: chunk.metadata?.category || 'document',
         keywords: chunk.metadata?.keywords || [],
-        source_type: 'document',
+        source_type: 'document' as const,
         section_title: chunk.metadata?.sectionTitle || null,
-        trust_level: 'untrusted_retrieval',
+        trust_level: 'untrusted_retrieval' as const,
       })),
       total: ragContext.totalResults,
       context: ragContext.contextString,
+      confidenceLevel: ragContext.confidence?.level || 'medium',
+      retrievalMode: 'document_rag' as const,
+      searchTimeMs: ragContext.searchTimeMs,
     };
+    trackKnowledgeSearch(query, villageId, result, channel);
+    return result;
   } catch (error: any) {
     logger.warn('Document search failed', {
       query: query.substring(0, 100),
@@ -148,11 +181,15 @@ export async function searchDocuments(query: string, categories?: string[], vill
       error: error.message,
     });
 
-    return {
+    const empty = {
       data: [],
       total: 0,
       context: '',
+      confidenceLevel: 'none' as const,
+      retrievalMode: 'document_rag' as const,
     };
+    trackKnowledgeSearch(query, villageId, empty, channel);
+    return empty;
   }
 }
 
@@ -216,7 +253,39 @@ function mergeKnowledgeResults(a: KnowledgeSearchResult, b: KnowledgeSearchResul
     data: Array.from(byId.values()),
     total: byId.size,
     context: mergedContext,
+    confidenceLevel: a.confidenceLevel === 'high' ? 'high' : (a.confidenceLevel || b.confidenceLevel || 'medium'),
+    retrievalMode: a.retrievalMode || b.retrievalMode,
+    searchTimeMs: (a.searchTimeMs || 0) + (b.searchTimeMs || 0),
   };
+}
+
+function trackKnowledgeSearch(
+  query: string,
+  villageId: string | undefined,
+  result: KnowledgeSearchResult,
+  channel: string,
+): void {
+  const confidence = result.confidenceLevel || (result.total > 0 ? 'medium' : 'none');
+  const hasKnowledge = result.total > 0;
+
+  aiAnalyticsService.recordKnowledge({
+    query,
+    intent: result.retrievalMode === 'document_rag' ? 'DOCUMENT_SEARCH' : 'KNOWLEDGE_QUERY',
+    confidence,
+    channel,
+    villageId,
+    hasKnowledge,
+  });
+
+  if (!hasKnowledge || confidence === 'low' || confidence === 'none') {
+    reportKnowledgeGap({
+      query,
+      intent: result.retrievalMode === 'document_rag' ? 'DOCUMENT_SEARCH' : 'KNOWLEDGE_QUERY',
+      confidence,
+      channel,
+      villageId,
+    }).catch(() => {});
+  }
 }
 
 /**
@@ -285,6 +354,9 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
     data: items,
     total: ragContext.totalResults,
     context: ragContext.contextString,
+    confidenceLevel: ragContext.confidence?.level || 'medium',
+    retrievalMode: 'rag',
+    searchTimeMs: ragContext.searchTimeMs,
   };
 }
 
@@ -312,7 +384,11 @@ async function searchKnowledgeWithKeywords(query: string, categories?: string[],
     resultsFound: response.data.total,
   });
 
-  return response.data;
+  return {
+    ...response.data,
+    confidenceLevel: response.data.total > 0 ? 'medium' : 'none',
+    retrievalMode: 'keyword',
+  };
 }
 
 /**

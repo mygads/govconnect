@@ -691,6 +691,8 @@ export interface ServiceCatalogItem {
   code?: string;
   description?: string;
   mode?: string | null;
+  estimated_cost?: string | null;
+  estimated_processing_time?: string | null;
   is_active: boolean;
   requirements?: ServiceRequirementDefinition[];
   category?: {

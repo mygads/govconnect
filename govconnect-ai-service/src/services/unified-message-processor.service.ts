@@ -40,7 +40,7 @@ import { incrementActiveProcessing, decrementActiveProcessing } from './ump-stat
 import {
   fetchConversationHistoryFromChannel,
   appendToHistoryCache,
-  buildCompactConversationHistory,
+  buildAgentConversationContext,
 } from './ump-utils';
 import { handleComplaintCreation, handleComplaintUpdate, handleCancellationRequest, handleHistory } from './complaint-handler';
 import { handleServiceInfo, handleServiceRequestCreation, handleServiceRequestEditLink } from './service-handler';
@@ -100,7 +100,8 @@ interface AgentProcessInput {
   message: string;
   channel: 'whatsapp' | 'webchat';
   villageId?: string;
-  conversationHistory: string;
+  conversationSummary?: string;
+  recentConversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   memorySummary?: string;
   villageName?: string;
   userName?: string | null;
@@ -134,7 +135,8 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     message,
     channel,
     villageId,
-    conversationHistory,
+    conversationSummary,
+    recentConversationHistory,
     memorySummary,
     villageName,
     userName,
@@ -152,16 +154,18 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
       message,
       {
         villageName: villageName ?? undefined,
-        conversationHistory,
         memorySummary,
         currentDatetime: String(getWIBDateTime()),
-        userMessage: message,
         userName,
       },
       {
         userId,
         villageId,
         channel,
+      },
+      {
+        summary: conversationSummary,
+        recentMessages: recentConversationHistory,
       },
     );
 
@@ -374,9 +378,9 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     // Step 2.5: AI Optimization - Pre-process message
-    const historyString = resolvedHistory?.length
-      ? await buildCompactConversationHistory(userId, resolvedHistory)
-      : '';
+    const conversationContext = resolvedHistory?.length
+      ? await buildAgentConversationContext(userId, resolvedHistory)
+      : { summary: undefined, recentMessages: [] as Array<{ role: 'user' | 'assistant'; content: string }> };
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
 
     // Step 3: Sanitize and correct typos
@@ -432,7 +436,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       message: sanitizedMessage,
       channel: channel as 'whatsapp' | 'webchat',
       villageId: resolvedVillageId,
-      conversationHistory: historyString,
+      conversationSummary: conversationContext.summary,
+      recentConversationHistory: conversationContext.recentMessages,
       memorySummary,
       villageName: templateContext?.villageName ?? undefined,
       userName: savedProfile.nama_lengkap ?? null,

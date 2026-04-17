@@ -2,6 +2,12 @@ import type { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { LRUCache } from '../utils/lru-cache';
+import { generateEmbedding } from './embedding.service';
+import {
+  searchUserMemoryVectors,
+  upsertUserMemoryVector,
+  type UserMemoryVectorSearchResult,
+} from './memory-vector.service';
 
 const MEMORY_SUMMARY_CACHE = new LRUCache<string, string>({
   maxSize: 2000,
@@ -18,6 +24,25 @@ const MEMORY_STOP_WORDS = new Set([
   'status', 'cek', 'tolong', 'minta',
 ]);
 
+const OPERATIONAL_MEMORY_TYPES = new Set([
+  'complaint',
+  'service_request',
+  'service_edit',
+  'status_lookup',
+  'cancellation',
+]);
+
+type MemoryEntryRow = {
+  id: string;
+  wa_user_id: string;
+  village_id: string | null;
+  memory_type: string;
+  memory_key: string | null;
+  content: string;
+  importance: number;
+  created_at: Date;
+};
+
 export interface MemoryEventInput {
   wa_user_id: string;
   village_id?: string;
@@ -26,6 +51,21 @@ export interface MemoryEventInput {
   content: string;
   metadata_json?: Prisma.InputJsonObject;
   importance?: number;
+}
+
+export interface RetrievedUserMemory {
+  id: string;
+  memory_type: string;
+  memory_key?: string | null;
+  content: string;
+  importance: number;
+  created_at: Date;
+  lexicalScore: number;
+  semanticScore: number;
+  recencyScore: number;
+  importanceScore: number;
+  typeBoost: number;
+  finalScore: number;
 }
 
 function normalizeQueryTerms(query: string): string[] {
@@ -46,24 +86,37 @@ function buildSummaryCacheKey(wa_user_id: string, village_id: string | undefined
   return `${wa_user_id}:${village_id || '_'}:${normalizeQueryTerms(query).sort().join('|')}`;
 }
 
-function computeMemoryScore(
+function computeLexicalOverlap(
   entry: {
     content: string;
-    memory_key: string | null;
-    importance: number;
-    created_at: Date;
+    memory_key?: string | null;
   },
   queryTerms: string[],
 ): number {
+  if (queryTerms.length === 0) {
+    return 0;
+  }
+
   const haystack = `${entry.memory_key || ''} ${entry.content}`.toLowerCase();
   const overlap = queryTerms.reduce((count, term) => (haystack.includes(term) ? count + 1 : count), 0);
-  const overlapScore = queryTerms.length > 0 ? overlap / queryTerms.length : 0;
+  return overlap / queryTerms.length;
+}
 
-  const ageDays = Math.max(0, (Date.now() - entry.created_at.getTime()) / (24 * 60 * 60 * 1000));
-  const recencyBoost = Math.max(0, 1 - ageDays / 30) * 0.2;
-  const importanceBoost = clampImportance(entry.importance) * 0.8;
+function computeRecencyScore(createdAt: Date): number {
+  const ageDays = Math.max(0, (Date.now() - createdAt.getTime()) / (24 * 60 * 60 * 1000));
+  return Math.max(0, 1 - (ageDays / 45));
+}
 
-  return overlapScore + recencyBoost + importanceBoost;
+function needsRecentOperationalMemory(query: string): boolean {
+  return /\b(status|cek|lacak|update|ubah|edit|batalkan|batal|laporan|layanan|permohonan|riwayat)\b/i.test(query || '');
+}
+
+function computeTypeBoost(query: string, memoryType: string): number {
+  if (!needsRecentOperationalMemory(query)) {
+    return 0;
+  }
+
+  return OPERATIONAL_MEMORY_TYPES.has(memoryType) ? 0.08 : 0;
 }
 
 function clearMemoryCaches(wa_user_id: string): void {
@@ -110,9 +163,109 @@ async function pruneUserMemories(wa_user_id: string): Promise<void> {
   });
 }
 
+async function persistMemoryVector(entry: {
+  id: string;
+  wa_user_id: string;
+  village_id: string | null;
+  memory_type: string;
+  content: string;
+  importance: number;
+}): Promise<void> {
+  try {
+    const embedding = await generateEmbedding(entry.content, {
+      taskType: 'RETRIEVAL_DOCUMENT',
+      outputDimensionality: 768,
+      useCache: true,
+    });
+
+    await upsertUserMemoryVector({
+      memoryEntryId: entry.id,
+      waUserId: entry.wa_user_id,
+      villageId: entry.village_id,
+      memoryType: entry.memory_type,
+      content: entry.content,
+      importance: entry.importance,
+      embedding: embedding.values,
+      embeddingModel: embedding.model,
+    });
+  } catch (error: any) {
+    logger.debug('Failed to persist semantic memory vector', {
+      memoryEntryId: entry.id,
+      error: error.message,
+    });
+  }
+}
+
+function mergeMemoryCandidates(
+  lexicalCandidates: MemoryEntryRow[],
+  semanticCandidates: UserMemoryVectorSearchResult[],
+  query: string,
+  queryTerms: string[],
+): RetrievedUserMemory[] {
+  const merged = new Map<string, RetrievedUserMemory>();
+
+  for (const entry of lexicalCandidates) {
+    const lexicalScore = computeLexicalOverlap(entry, queryTerms);
+    const recencyScore = computeRecencyScore(entry.created_at);
+    const importanceScore = clampImportance(entry.importance);
+    const typeBoost = computeTypeBoost(query, entry.memory_type);
+    const finalScore = (lexicalScore * 0.3) + (recencyScore * 0.2) + (importanceScore * 0.4) + typeBoost;
+
+    merged.set(entry.id, {
+      id: entry.id,
+      memory_type: entry.memory_type,
+      memory_key: entry.memory_key,
+      content: entry.content,
+      importance: entry.importance,
+      created_at: entry.created_at,
+      lexicalScore,
+      semanticScore: 0,
+      recencyScore,
+      importanceScore,
+      typeBoost,
+      finalScore,
+    });
+  }
+
+  for (const semantic of semanticCandidates) {
+    const existing = merged.get(semantic.memoryEntryId);
+    const recencyScore = computeRecencyScore(semantic.createdAt);
+    const importanceScore = clampImportance(semantic.importance);
+    const typeBoost = computeTypeBoost(query, semantic.memoryType);
+    const lexicalScore = existing?.lexicalScore ?? computeLexicalOverlap({
+      content: semantic.content,
+      memory_key: null,
+    }, queryTerms);
+    const semanticScore = Math.max(0, Math.min(1, semantic.similarity));
+    const finalScore = (semanticScore * 0.45)
+      + (lexicalScore * 0.2)
+      + (importanceScore * 0.2)
+      + (recencyScore * 0.15)
+      + typeBoost;
+
+    merged.set(semantic.memoryEntryId, {
+      id: semantic.memoryEntryId,
+      memory_type: semantic.memoryType,
+      memory_key: existing?.memory_key ?? null,
+      content: existing?.content ?? semantic.content,
+      importance: semantic.importance,
+      created_at: semantic.createdAt,
+      lexicalScore,
+      semanticScore,
+      recencyScore,
+      importanceScore,
+      typeBoost,
+      finalScore,
+    });
+  }
+
+  return Array.from(merged.values())
+    .sort((a, b) => b.finalScore - a.finalScore);
+}
+
 export async function rememberMemoryEvent(input: MemoryEventInput): Promise<void> {
   try {
-    await prisma.user_memory_entries.create({
+    const created = await prisma.user_memory_entries.create({
       data: {
         wa_user_id: input.wa_user_id,
         village_id: input.village_id ?? null,
@@ -126,6 +279,7 @@ export async function rememberMemoryEvent(input: MemoryEventInput): Promise<void
 
     clearMemoryCaches(input.wa_user_id);
     pruneUserMemories(input.wa_user_id).catch(() => {});
+    void persistMemoryVector(created);
   } catch (error: any) {
     logger.warn('Failed to persist episodic memory', {
       wa_user_id: input.wa_user_id,
@@ -147,6 +301,107 @@ export async function deleteAllMemories(wa_user_id: string): Promise<void> {
   }
 }
 
+export async function searchUserMemories(input: {
+  wa_user_id: string;
+  query: string;
+  village_id?: string;
+  limit?: number;
+}): Promise<RetrievedUserMemory[]> {
+  const queryTerms = normalizeQueryTerms(input.query);
+  const memoryTypeFilter = needsRecentOperationalMemory(input.query)
+    ? Array.from(OPERATIONAL_MEMORY_TYPES)
+    : undefined;
+
+  try {
+    const [lexicalCandidates, semanticCandidates] = await Promise.all([
+      prisma.user_memory_entries.findMany({
+        where: {
+          wa_user_id: input.wa_user_id,
+          OR: [
+            { village_id: input.village_id ?? null },
+            { village_id: null },
+          ],
+          ...(memoryTypeFilter ? { memory_type: { in: memoryTypeFilter } } : {}),
+        },
+        orderBy: { created_at: 'desc' },
+        take: 40,
+      }),
+      (async () => {
+        if (!input.query.trim()) {
+          return [];
+        }
+
+        try {
+          const queryEmbedding = await generateEmbedding(input.query, {
+            taskType: 'RETRIEVAL_QUERY',
+            outputDimensionality: 768,
+            useCache: true,
+          });
+
+          return await searchUserMemoryVectors(queryEmbedding.values, {
+            waUserId: input.wa_user_id,
+            villageId: input.village_id,
+            memoryTypes: memoryTypeFilter,
+            topK: Math.max((input.limit || 5) * 2, 8),
+            minScore: 0.35,
+          });
+        } catch (error: any) {
+          logger.debug('Semantic user memory search skipped', {
+            wa_user_id: input.wa_user_id,
+            error: error.message,
+          });
+          return [];
+        }
+      })(),
+    ]);
+
+    let merged = mergeMemoryCandidates(lexicalCandidates, semanticCandidates, input.query, queryTerms);
+
+    if (merged.length === 0 && lexicalCandidates.length > 0) {
+      merged = lexicalCandidates
+        .map((entry) => {
+          const recencyScore = computeRecencyScore(entry.created_at);
+          const importanceScore = clampImportance(entry.importance);
+          const typeBoost = computeTypeBoost(input.query, entry.memory_type);
+          return {
+            id: entry.id,
+            memory_type: entry.memory_type,
+            memory_key: entry.memory_key,
+            content: entry.content,
+            importance: entry.importance,
+            created_at: entry.created_at,
+            lexicalScore: 0,
+            semanticScore: 0,
+            recencyScore,
+            importanceScore,
+            typeBoost,
+            finalScore: (importanceScore * 0.6) + (recencyScore * 0.4) + typeBoost,
+          };
+        })
+        .sort((a, b) => b.finalScore - a.finalScore);
+    }
+
+    const ranked = merged
+      .filter((entry) => entry.finalScore >= 0.35 || entry.semanticScore >= 0.35)
+      .slice(0, input.limit || 5);
+
+    if (ranked.length > 0) {
+      prisma.user_memory_entries.updateMany({
+        where: { id: { in: ranked.map((entry) => entry.id) } },
+        data: { last_accessed_at: new Date() },
+      }).catch(() => {});
+    }
+
+    return ranked;
+  } catch (error: any) {
+    logger.warn('Failed to search user memories', {
+      wa_user_id: input.wa_user_id,
+      error: error.message,
+    });
+    return [];
+  }
+}
+
 export async function buildHybridMemorySummary(input: {
   wa_user_id: string;
   query: string;
@@ -159,22 +414,15 @@ export async function buildHybridMemorySummary(input: {
   }
 
   try {
-    const queryTerms = normalizeQueryTerms(input.query);
-    const needsRecentOperationalMemory = /\b(status|cek|lacak|update|ubah|edit|batalkan|batal|laporan|layanan|permohonan)\b/i.test(input.query || '');
-    const [profile, memoryEntries] = await Promise.all([
+    const [profile, rankedMemories] = await Promise.all([
       prisma.durable_user_profiles.findUnique({
         where: { wa_user_id: input.wa_user_id },
       }),
-      prisma.user_memory_entries.findMany({
-        where: {
-          wa_user_id: input.wa_user_id,
-          OR: [
-            { village_id: input.village_id ?? null },
-            { village_id: null },
-          ],
-        },
-        orderBy: { created_at: 'desc' },
-        take: 40,
+      searchUserMemories({
+        wa_user_id: input.wa_user_id,
+        query: input.query,
+        village_id: input.village_id,
+        limit: needsRecentOperationalMemory(input.query) ? 5 : 4,
       }),
     ]);
 
@@ -198,41 +446,10 @@ export async function buildHybridMemorySummary(input: {
       profileParts.push(`Total interaksi historis: ${profile?.total_messages}`);
     }
 
-    let rankedMemories = memoryEntries
-      .map((entry) => ({
-        ...entry,
-        score: computeMemoryScore(entry, queryTerms),
-      }))
-      .filter((entry) => entry.score >= 0.45)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
-
-    if (rankedMemories.length === 0 && memoryEntries.length > 0) {
-      const fallbackTypes = needsRecentOperationalMemory
-        ? new Set(['complaint', 'service_request', 'service_edit', 'status_lookup', 'cancellation'])
-        : null;
-
-      rankedMemories = memoryEntries
-        .filter((entry) => !fallbackTypes || fallbackTypes.has(entry.memory_type))
-        .map((entry) => ({
-          ...entry,
-          score: computeMemoryScore(entry, []) + clampImportance(entry.importance),
-        }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, needsRecentOperationalMemory ? 3 : 2);
-    }
-
     const memoryParts = rankedMemories.map((entry) => {
       const createdAt = entry.created_at.toISOString().slice(0, 10);
       return `${createdAt}: ${entry.content}`;
     });
-
-    if (rankedMemories.length > 0) {
-      prisma.user_memory_entries.updateMany({
-        where: { id: { in: rankedMemories.map((entry) => entry.id) } },
-        data: { last_accessed_at: new Date() },
-      }).catch(() => {});
-    }
 
     const sections: string[] = [];
     if (profileParts.length > 0) {

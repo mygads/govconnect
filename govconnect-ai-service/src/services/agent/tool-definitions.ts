@@ -12,6 +12,7 @@ export interface ToolDefinition {
   function: {
     name: string;
     description: string;
+    strict?: boolean;
     parameters: Record<string, unknown>;
   };
 }
@@ -21,6 +22,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'get_village_profile',
+      strict: true,
       description:
         'Profil desa resmi: nama, alamat kantor, jam operasional, kontak kantor, dan Google Maps. ' +
         'Gunakan untuk pertanyaan alamat, jam buka, lokasi, atau kontak kantor desa.',
@@ -28,6 +30,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
         type: 'object',
         properties: {},
         required: [],
+        additionalProperties: false,
       },
     },
   },
@@ -35,6 +38,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'get_service_info',
+      strict: true,
       description:
         'Detail layanan administrasi: daftar layanan aktif, persyaratan, mode layanan, dan link formulir online jika tersedia. ' +
         'Gunakan untuk pertanyaan syarat, biaya, proses, dokumen, surat, atau layanan kependudukan. ' +
@@ -43,11 +47,12 @@ export const AGENT_TOOLS: ToolDefinition[] = [
         type: 'object',
         properties: {
           service_name: {
-            type: 'string',
+            type: ['string', 'null'],
             description: 'Nama layanan spesifik jika user menanyakan layanan tertentu. Contoh: "KTP", "SKTM", "surat pindah".',
           },
         },
-        required: [],
+        required: ['service_name'],
+        additionalProperties: false,
       },
     },
   },
@@ -55,12 +60,14 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'get_complaint_categories',
+      strict: true,
       description:
         'Daftar kategori pengaduan resmi yang tersedia di desa ini, termasuk penanda kategori darurat bila ada.',
       parameters: {
         type: 'object',
         properties: {},
         required: [],
+        additionalProperties: false,
       },
     },
   },
@@ -68,12 +75,14 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'get_emergency_contacts',
+      strict: true,
       description:
         'Nomor darurat dan kontak penting publik seperti pemadam, ambulans, polisi, puskesmas, atau fasilitas bantuan cepat lainnya.',
       parameters: {
         type: 'object',
         properties: {},
         required: [],
+        additionalProperties: false,
       },
     },
   },
@@ -81,6 +90,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'search_knowledge',
+      strict: true,
       description:
         'Cari informasi naratif di knowledge base desa: SOP, FAQ, kebijakan, prosedur, dan panduan. ' +
         'Jangan gunakan untuk jam buka/alamat/kontak kantor atau detail layanan deterministik.',
@@ -93,6 +103,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           },
         },
         required: ['query'],
+        additionalProperties: false,
       },
     },
   },
@@ -100,6 +111,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'search_documents',
+      strict: true,
       description:
         'Cari isi dokumen upload yang sudah diindeks seperti PDF, Word, lampiran jadwal, atau SOP panjang berbasis dokumen.',
       parameters: {
@@ -111,6 +123,29 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           },
         },
         required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_user_memory',
+      strict: true,
+      description:
+        'Cari memori internal lintas sesi tentang user yang sedang berbicara. ' +
+        'Gunakan hanya untuk konteks personal user, interaksi sebelumnya, alamat yang pernah dipakai, riwayat perubahan, atau preferensi yang relevan. ' +
+        'Jangan gunakan untuk fakta resmi desa.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Apa yang ingin diingat kembali tentang user. Contoh: "alamat terakhir user", "laporan terakhir user", "preferensi gaya bahasa user".',
+          },
+        },
+        required: ['query'],
+        additionalProperties: false,
       },
     },
   },
@@ -118,6 +153,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'create_complaint',
+      strict: true,
       description:
         'Buat pengaduan infrastruktur. Wajib ada kategori, alamat, dan deskripsi. ' +
         'Jika nama pelapor atau nomor telepon webchat belum tersedia, tool akan meminta data tambahan dulu.',
@@ -137,19 +173,20 @@ export const AGENT_TOOLS: ToolDefinition[] = [
             description: 'Deskripsi detail masalah, minimal 10 karakter.',
           },
           rt_rw: {
-            type: 'string',
+            type: ['string', 'null'],
             description: 'RT/RW lokasi bila tersedia.',
           },
           nama_pelapor: {
-            type: 'string',
+            type: ['string', 'null'],
             description: 'Nama lengkap pelapor bila user menyebutkannya di chat.',
           },
           no_hp: {
-            type: 'string',
+            type: ['string', 'null'],
             description: 'Nomor HP pelapor, terutama untuk kanal webchat.',
           },
         },
-        required: ['kategori', 'alamat', 'deskripsi'],
+        required: ['kategori', 'alamat', 'deskripsi', 'rt_rw', 'nama_pelapor', 'no_hp'],
+        additionalProperties: false,
       },
     },
   },
@@ -157,6 +194,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'create_service_request',
+      strict: true,
       description:
         'Siapkan link formulir layanan online untuk warga. Jangan kumpulkan data administrasi lengkap via chat.',
       parameters: {
@@ -168,6 +206,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           },
         },
         required: ['service_slug'],
+        additionalProperties: false,
       },
     },
   },
@@ -175,6 +214,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'update_complaint',
+      strict: true,
       description:
         'Perbarui laporan pengaduan milik user. Gunakan jika user ingin menambah detail, mengubah alamat, atau memperbarui RT/RW pada laporan yang masih aktif.',
       parameters: {
@@ -185,19 +225,20 @@ export const AGENT_TOOLS: ToolDefinition[] = [
             description: 'Nomor laporan. Contoh: "LAP-20260101-001".',
           },
           alamat: {
-            type: 'string',
+            type: ['string', 'null'],
             description: 'Alamat terbaru jika user ingin memperbarui lokasi.',
           },
           deskripsi: {
-            type: 'string',
+            type: ['string', 'null'],
             description: 'Keterangan tambahan atau revisi deskripsi laporan.',
           },
           rt_rw: {
-            type: 'string',
+            type: ['string', 'null'],
             description: 'RT/RW terbaru bila user menyebutkannya.',
           },
         },
-        required: ['reference_number'],
+        required: ['reference_number', 'alamat', 'deskripsi', 'rt_rw'],
+        additionalProperties: false,
       },
     },
   },
@@ -205,6 +246,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'get_service_request_edit_link',
+      strict: true,
       description:
         'Siapkan link edit aman untuk permohonan layanan milik user agar perubahan data dilakukan di website, bukan lewat chat.',
       parameters: {
@@ -216,6 +258,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           },
         },
         required: ['reference_number'],
+        additionalProperties: false,
       },
     },
   },
@@ -223,12 +266,14 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'get_my_history',
+      strict: true,
       description:
         'Ambil riwayat laporan dan permohonan layanan milik user yang sedang berbicara.',
       parameters: {
         type: 'object',
         properties: {},
         required: [],
+        additionalProperties: false,
       },
     },
   },
@@ -236,6 +281,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'check_status',
+      strict: true,
       description:
         'Cek status laporan atau layanan berdasarkan nomor referensi. Gunakan untuk LAP-xxx atau LAY-xxx.',
       parameters: {
@@ -247,6 +293,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           },
         },
         required: ['reference_number'],
+        additionalProperties: false,
       },
     },
   },
@@ -254,6 +301,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'cancel_request',
+      strict: true,
       description:
         'Batalkan laporan atau layanan. Wajib minta konfirmasi user terlebih dahulu sebelum eksekusi.',
       parameters: {
@@ -268,11 +316,12 @@ export const AGENT_TOOLS: ToolDefinition[] = [
             description: 'true jika user sudah mengonfirmasi pembatalan.',
           },
           cancel_reason: {
-            type: 'string',
+            type: ['string', 'null'],
             description: 'Alasan pembatalan jika user menyebutkannya.',
           },
         },
-        required: ['reference_number', 'confirmation'],
+        required: ['reference_number', 'confirmation', 'cancel_reason'],
+        additionalProperties: false,
       },
     },
   },
@@ -285,6 +334,7 @@ export type AgentToolName =
   | 'get_emergency_contacts'
   | 'search_knowledge'
   | 'search_documents'
+  | 'search_user_memory'
   | 'create_complaint'
   | 'create_service_request'
   | 'update_complaint'

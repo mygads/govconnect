@@ -159,7 +159,17 @@ export async function handleGetServiceById(req: Request, res: Response) {
 
 export async function handleCreateService(req: Request, res: Response) {
   try {
-    const { village_id, category_id, name, description, slug, mode, is_active } = req.body;
+    const {
+      village_id,
+      category_id,
+      name,
+      description,
+      slug,
+      mode,
+      estimated_cost,
+      estimated_processing_time,
+      is_active,
+    } = req.body;
     if (!village_id || !category_id || !name || !description || !slug) {
       return res.status(400).json({ error: 'village_id, category_id, name, description, slug are required' });
     }
@@ -171,6 +181,8 @@ export async function handleCreateService(req: Request, res: Response) {
         description,
         slug,
         mode: mode || 'both',
+        estimated_cost: estimated_cost ?? null,
+        estimated_processing_time: estimated_processing_time ?? null,
         is_active: is_active ?? true,
       }
     });
@@ -187,7 +199,16 @@ export async function handleUpdateService(req: Request, res: Response) {
     if (!id) {
       return res.status(400).json({ error: 'id is required' });
     }
-    const { name, description, slug, mode, is_active, category_id } = req.body;
+    const {
+      name,
+      description,
+      slug,
+      mode,
+      estimated_cost,
+      estimated_processing_time,
+      is_active,
+      category_id,
+    } = req.body;
     const service = await prisma.serviceItem.update({
       where: { id },
       data: {
@@ -195,6 +216,8 @@ export async function handleUpdateService(req: Request, res: Response) {
         description: description ?? undefined,
         slug: slug ?? undefined,
         mode: mode ?? undefined,
+        estimated_cost: estimated_cost ?? undefined,
+        estimated_processing_time: estimated_processing_time ?? undefined,
         is_active: is_active ?? undefined,
         category_id: category_id ?? undefined,
       }

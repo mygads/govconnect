@@ -7,20 +7,13 @@
  */
 
 import logger from '../utils/logger';
-import { getWIBDateTime } from '../utils/wib-datetime';
 import axios from 'axios';
 import { config } from '../config/env';
-import { buildContext, buildKnowledgeQueryContext } from './context-builder.service';
-import type { PromptFocus } from '../prompts/system-prompt';
-import * as systemPromptModule from '../prompts/system-prompt';
 import { extractNameViaNLU, analyzeAddress, matchComplaintType } from './micro-llm-matcher.service';
 import { getVillageProfileSummary } from './knowledge.service';
 import { getComplaintTypes } from './case-client.service';
 import type { ChannelType } from './ump-formatters';
-import { buildComplaintCategoriesText } from './complaint-handler';
-import { buildServiceCatalogText } from './service-handler';
 import { conversationHistoryCache, complaintTypeCache } from './ump-state';
-import { RAGContext } from '../types/embedding.types';
 
 // ==================== NAME EXTRACTION ====================
 
@@ -112,54 +105,55 @@ export function appendToHistoryCache(userId: string, role: 'user' | 'assistant',
   }
 }
 
-export async function buildCompactConversationHistory(
+export async function buildAgentConversationContext(
   userId: string,
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
-): Promise<string> {
+): Promise<{
+  summary?: string;
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>;
+}> {
   const SUMMARIZE_THRESHOLD = 8;
   const MAX_RECENT = 6;
 
-  if (history.length > SUMMARIZE_THRESHOLD) {
-    const older = history.slice(0, history.length - MAX_RECENT);
-    const recent = history.slice(-MAX_RECENT);
-
-    let summaryText: string | null = null;
-    try {
-      const { summarizeConversation } = require('./micro-llm-matcher.service');
-      summaryText = await summarizeConversation(
-        older.map((message) => ({
-          role: message.role === 'user' ? 'User' : 'Assistant',
-          content: message.content,
-        })),
-        { wa_user_id: userId },
-      );
-    } catch {
-      // Fallback below keeps older context terse without another failure path.
-    }
-
-    let prefix: string;
-    if (summaryText) {
-      prefix = `[RINGKASAN PERCAKAPAN SEBELUMNYA (${older.length} pesan)]\n${summaryText}\n\n[PERCAKAPAN TERBARU]\n`;
-    } else {
-      const keyParts = older
-        .filter((message) => message.role === 'user')
-        .map((message) => message.content)
-        .filter((content) => content.length > 5)
-        .slice(-3)
-        .map((content) => content.substring(0, 80));
-
-      prefix = keyParts.length > 0
-        ? `[TOPIK SEBELUMNYA: ${keyParts.join('; ')}]\n\n[PERCAKAPAN TERBARU]\n`
-        : '';
-    }
-
-    return prefix + recent.map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`).join('\n');
+  if (history.length <= SUMMARIZE_THRESHOLD) {
+    return {
+      recentMessages: history.slice(-MAX_RECENT),
+    };
   }
 
-  return history
-    .slice(-10)
-    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`)
-    .join('\n');
+  const older = history.slice(0, history.length - MAX_RECENT);
+  const recent = history.slice(-MAX_RECENT);
+
+  let summaryText: string | undefined;
+  try {
+    const { summarizeConversation } = require('./micro-llm-matcher.service');
+    const summarized = await summarizeConversation(
+      older.map((message) => ({
+        role: message.role === 'user' ? 'User' : 'Assistant',
+        content: message.content,
+      })),
+      { wa_user_id: userId },
+    );
+    summaryText = typeof summarized === 'string' && summarized.trim()
+      ? summarized.trim()
+      : undefined;
+  } catch {
+    const keyParts = older
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content)
+      .filter((content) => content.length > 5)
+      .slice(-3)
+      .map((content) => content.substring(0, 80));
+
+    if (keyParts.length > 0) {
+      summaryText = `Topik sebelumnya: ${keyParts.join('; ')}`;
+    }
+  }
+
+  return {
+    summary: summaryText,
+    recentMessages: recent,
+  };
 }
 
 // ==================== ADDRESS HELPERS ====================
@@ -289,85 +283,4 @@ export async function resolveVillageSlugForPublicForm(villageId?: string): Promi
     // ignore
   }
   return 'desa';
-}
-
-// ==================== WEBCHAT CONTEXT BUILDER ====================
-
-/**
- * Build context with provided conversation history (for webchat)
- */
-export async function buildContextWithHistory(
-  userId: string,
-  currentMessage: string,
-  history: Array<{ role: 'user' | 'assistant'; content: string }>,
-  ragContext?: RAGContext | string,
-  villageId?: string,
-  promptFocus?: string,
-  villageName?: string
-): Promise<{ systemPrompt: string; messageCount: number }> {
-  const conversationHistory = await buildCompactConversationHistory(userId, history);
-
-  let knowledgeSection = '';
-  if (ragContext) {
-    if (typeof ragContext === 'string') {
-      knowledgeSection = ragContext ? `\n\nKNOWLEDGE BASE YANG TERSEDIA:\n${ragContext}` : '';
-    } else if (ragContext.contextString) {
-      const confidence = ragContext.confidence;
-      let confidenceInstruction = '';
-      if (confidence) {
-        switch (confidence.level) {
-          case 'high': confidenceInstruction = `\n[CONFIDENCE: TINGGI - ${confidence.reason}]`; break;
-          case 'medium': confidenceInstruction = `\n[CONFIDENCE: SEDANG - ${confidence.reason}]`; break;
-          case 'low': confidenceInstruction = `\n[CONFIDENCE: RENDAH - ${confidence.reason}]`; break;
-        }
-      }
-
-      // DB-FIRST PRIORITY instruction
-      let dbPriorityInstruction = '';
-      if (ragContext.contextString.includes('[SUMBER: DATABASE RESMI')) {
-        dbPriorityInstruction = `\n[PRIORITAS DATA] Jika ada data dari DATABASE RESMI dan data serupa dari knowledge base/dokumen, SELALU gunakan data DATABASE RESMI (otoritatif).`;
-      }
-
-      // CONFLICT DETECTION instruction
-      let conflictInstruction = '';
-      if (ragContext.contextString.includes('KONFLIK DATA')) {
-        conflictInstruction = `\n[PENANGANAN DATA BERBEDA] Tampilkan SEMUA versi data yang berbeda dan beri tahu user: "Kami menemukan beberapa data yang berbeda dari sumber berbeda." Sarankan konfirmasi ke kantor desa. Jika salah satu sumber adalah DATABASE RESMI, prioritaskan itu.`;
-      }
-
-      knowledgeSection = `\n\nKNOWLEDGE BASE YANG TERSEDIA:\n${ragContext.contextString}${confidenceInstruction}${dbPriorityInstruction}${conflictInstruction}`;
-    }
-  }
-
-  // Calculate current date, time, and tomorrow for prompt (in WIB timezone)
-  const wib = getWIBDateTime();
-  const currentDate = wib.date;
-  const tomorrowDate = wib.tomorrow;
-  const currentTime = wib.time;
-  const timeOfDay = wib.timeOfDay;
-
-  // Build dynamic complaint categories from DB
-  const complaintCategoriesText = await buildComplaintCategoriesText(villageId);
-  // Build dynamic service catalog from DB
-  const serviceCatalogText = await buildServiceCatalogText(villageId);
-
-  // Determine if knowledge exists for conditional prompt inclusion
-  const hasKnowledge = !!knowledgeSection.trim();
-  const getPromptFn = promptFocus && typeof systemPromptModule.getAdaptiveSystemPrompt === 'function'
-    ? () => (systemPromptModule as any).getAdaptiveSystemPrompt(promptFocus, hasKnowledge)
-    : typeof systemPromptModule.getFullSystemPrompt === 'function'
-      ? systemPromptModule.getFullSystemPrompt
-      : () => (systemPromptModule as any).SYSTEM_PROMPT_WITH_KNOWLEDGE || '';
-
-  const systemPrompt = getPromptFn()
-    .replace('{knowledge_context}', knowledgeSection)
-    .replace('{history}', conversationHistory || '(Ini adalah percakapan pertama dengan user)')
-    .replace('{user_message}', currentMessage)
-    .replace(/\{\{current_date\}\}/g, currentDate)
-    .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate)
-    .replace(/\{\{current_time\}\}/g, currentTime)
-    .replace(/\{\{time_of_day\}\}/g, timeOfDay)
-    .replace(/\{\{complaint_categories\}\}/g, complaintCategoriesText)
-      .replace(/\{\{service_catalog\}\}/g, serviceCatalogText)
-
-  return { systemPrompt, messageCount: history.length };
 }

@@ -21,7 +21,7 @@ import {
   updateComplaintByUser,
   type ServiceCatalogItem,
 } from '../case-client.service';
-import { rememberMemoryEvent } from '../hybrid-memory.service';
+import { rememberMemoryEvent, searchUserMemories } from '../hybrid-memory.service';
 import { searchDocuments, searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
 import { resolveServiceSlugFromSearch } from '../service-handler';
 import { resolveVillageSlugForPublicForm } from '../ump-utils';
@@ -188,6 +188,8 @@ async function dispatchTool(
       return toolSearchKnowledge(args, ctx);
     case 'search_documents':
       return toolSearchDocuments(args, ctx);
+    case 'search_user_memory':
+      return toolSearchUserMemory(args, ctx);
     case 'create_complaint':
       return toolCreateComplaint(args, ctx);
     case 'create_service_request':
@@ -349,8 +351,8 @@ async function toolGetServiceInfo(
       category: service.category?.name || null,
       mode: service.mode || null,
       is_online: isOnline,
-      estimated_cost: null,
-      estimated_processing_time: null,
+      estimated_cost: service.estimated_cost || null,
+      estimated_processing_time: service.estimated_processing_time || null,
       form_url: formUrl,
       requirements: requirements.map((requirement) => ({
         label: requirement.label,
@@ -433,7 +435,7 @@ async function toolSearchKnowledge(
     return { success: false, error: 'Query pencarian tidak boleh kosong.' };
   }
 
-  const result = await searchKnowledge(query, undefined, ctx.villageId);
+  const result = await searchKnowledge(query, undefined, ctx.villageId, ctx.channel);
   if (!result.context || result.total === 0) {
     return {
       success: true,
@@ -481,7 +483,7 @@ async function toolSearchDocuments(
     return { success: false, error: 'Query pencarian dokumen tidak boleh kosong.' };
   }
 
-  const result = await searchDocuments(query, undefined, ctx.villageId);
+  const result = await searchDocuments(query, undefined, ctx.villageId, ctx.channel);
   if (!result.context || result.total === 0) {
     return {
       success: true,
@@ -516,6 +518,42 @@ async function toolSearchDocuments(
     meta: {
       trustLevel: 'untrusted_retrieval',
       sourceKind: 'document_retrieval',
+    },
+  };
+}
+
+async function toolSearchUserMemory(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolCallResult> {
+  const query = typeof args.query === 'string' ? args.query.trim() : '';
+  if (!query) {
+    return { success: false, error: 'Query memori tidak boleh kosong.' };
+  }
+
+  const memories = await searchUserMemories({
+    wa_user_id: ctx.userId,
+    query,
+    village_id: ctx.villageId,
+    limit: 5,
+  });
+
+  return {
+    success: true,
+    data: {
+      found: memories.length > 0,
+      total: memories.length,
+      memories: memories.map((memory) => ({
+        created_at: memory.created_at.toISOString(),
+        memory_type: memory.memory_type,
+        content: memory.content,
+        relevance_score: Number(memory.finalScore.toFixed(3)),
+      })),
+      usage_policy: 'Gunakan hanya sebagai konteks personal user, bukan fakta resmi desa.',
+    },
+    meta: {
+      trustLevel: 'trusted_record',
+      sourceKind: 'user_memory',
     },
   };
 }

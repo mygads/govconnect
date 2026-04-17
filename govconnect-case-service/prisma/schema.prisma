@@ -132,6 +132,8 @@ model ServiceItem {
   description String   @db.Text
   slug        String   @unique
   mode        String   @default("both") // online|offline|both
+  estimated_cost            String?  @db.Text
+  estimated_processing_time String?  @db.Text
   is_active   Boolean  @default(true)
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt

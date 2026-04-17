@@ -53,6 +53,11 @@ interface ToolContext {
   channel: 'whatsapp' | 'webchat';
 }
 
+interface ConversationContext {
+  summary?: string;
+  recentMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+}
+
 /**
  * Run the agent loop for a single user message.
  */
@@ -60,14 +65,28 @@ export async function runAgent(
   userMessage: string,
   promptCtx: AgentPromptContext,
   toolCtx: ToolContext,
+  conversationCtx: ConversationContext = {},
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const systemPrompt = buildAgentSystemPrompt(promptCtx);
 
-  const messages: AgentMessage[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userMessage },
-  ];
+  const messages: AgentMessage[] = [{ role: 'system', content: systemPrompt }];
+
+  if (conversationCtx.summary) {
+    messages.push({
+      role: 'assistant',
+      content: `[Ringkasan konteks percakapan sebelumnya]\n${conversationCtx.summary}`,
+    });
+  }
+
+  for (const historyMessage of conversationCtx.recentMessages || []) {
+    messages.push({
+      role: historyMessage.role,
+      content: historyMessage.content,
+    });
+  }
+
+  messages.push({ role: 'user', content: userMessage });
 
   const toolsUsed: string[] = [];
   const toolTrace: ToolExecutionTrace[] = [];

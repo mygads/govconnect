@@ -248,8 +248,33 @@ model user_memory_entries {
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
+  vector            user_memory_vectors?
+
   @@index([wa_user_id])
   @@index([wa_user_id, created_at])
+  @@index([wa_user_id, memory_type])
+  @@index([village_id])
+}
+
+// ==================== EPISODIC MEMORY VECTORS ====================
+// Semantic retrieval layer for long-term user memory.
+
+model user_memory_vectors {
+  id                String   @id @default(cuid())
+  memory_entry_id   String   @unique
+  wa_user_id        String
+  village_id        String?
+  memory_type       String
+  content           String   @db.Text
+  importance        Float    @default(0.5)
+  embedding         Unsupported("vector(768)")
+  embedding_model   String   @default("openai/text-embedding-3-small")
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  memory_entry      user_memory_entries @relation(fields: [memory_entry_id], references: [id], onDelete: Cascade)
+
+  @@index([wa_user_id])
   @@index([wa_user_id, memory_type])
   @@index([village_id])
 }

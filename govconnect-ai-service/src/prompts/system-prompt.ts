@@ -627,7 +627,7 @@ export const JSON_SCHEMA_FOR_GEMINI = {
         request_number: { type: 'string' },
         // For KNOWLEDGE_QUERY — no hardcoded enum; categories are dynamic from Dashboard DB.
         // The micro-NLU classifier (buildUnifiedClassifyPrompt) provides category suggestions
-        // and knowledge-handler routes to the correct sub-handler based on the category slug.
+        // that downstream retrieval logic can use without a fixed enum list.
         knowledge_category: { 
           type: 'string',
         },
