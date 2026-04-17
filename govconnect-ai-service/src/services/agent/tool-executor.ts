@@ -14,6 +14,10 @@ import { getVillageProfileSummary } from '../knowledge.service';
 import { getServiceCatalog, getComplaintTypes, getComplaintStatusWithOwnership, getServiceRequestStatusWithOwnership, createComplaint, cancelComplaint, cancelServiceRequest, updateComplaintByUser, getUserHistory, getServiceRequirements } from '../case-client.service';
 import { getImportantContacts } from '../important-contacts.service';
 import { searchDocuments, searchKnowledge } from '../knowledge.service';
+import { updateConversationUserProfile } from '../channel-client.service';
+import { getAutoFillSuggestions, updateProfile } from '../user-profile.service';
+import { saveDefaultAddress } from '../user-profile.service';
+import { syncNameToChannelService } from '../ump-state';
 import type { AgentToolName } from './tool-definitions';
 
 export type ToolTrustLevel =
@@ -135,6 +139,12 @@ async function dispatchTool(
 
     case 'get_important_contacts':
       return toolGetImportantContacts(args, ctx);
+
+    case 'get_user_profile':
+      return toolGetUserProfile(ctx);
+
+    case 'update_user_profile':
+      return toolUpdateUserProfile(args, ctx);
 
     case 'search_knowledge':
       return toolSearchKnowledge(args, ctx);
@@ -304,6 +314,96 @@ async function toolGetImportantContacts(
     meta: {
       trustLevel: 'trusted_fact',
       sourceKind: 'official_contacts',
+    },
+  };
+}
+
+async function toolGetUserProfile(ctx: ToolContext): Promise<ToolCallResult> {
+  const profile = getAutoFillSuggestions(ctx.userId);
+
+  return {
+    success: true,
+    data: {
+      nama_lengkap: profile.nama_lengkap || null,
+      no_hp: profile.no_hp || null,
+      default_address: profile.alamat || null,
+      default_rt_rw: profile.rt_rw || null,
+      has_name: Boolean(profile.nama_lengkap),
+      has_phone: Boolean(profile.no_hp),
+      has_default_address: Boolean(profile.alamat),
+    },
+    meta: {
+      trustLevel: 'trusted_record',
+      sourceKind: 'user_profile',
+    },
+  };
+}
+
+async function toolUpdateUserProfile(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolCallResult> {
+  const updates: {
+    nama_lengkap?: string;
+    no_hp?: string;
+    default_address?: string;
+    default_rt_rw?: string;
+  } = {};
+
+  if (typeof args.nama_lengkap === 'string' && args.nama_lengkap.trim()) {
+    updates.nama_lengkap = args.nama_lengkap.trim();
+  }
+  if (typeof args.no_hp === 'string' && args.no_hp.trim()) {
+    updates.no_hp = args.no_hp.trim();
+  }
+  if (typeof args.default_address === 'string' && args.default_address.trim()) {
+    updates.default_address = args.default_address.trim();
+  }
+  if (typeof args.default_rt_rw === 'string' && args.default_rt_rw.trim()) {
+    updates.default_rt_rw = args.default_rt_rw.trim();
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return {
+      success: false,
+      error: 'Tidak ada data profil yang bisa diperbarui.',
+    };
+  }
+
+  updateProfile(ctx.userId, updates);
+
+  if (updates.nama_lengkap) {
+    syncNameToChannelService(ctx.userId, updates.nama_lengkap, ctx.villageId, ctx.channel);
+  }
+
+  if (updates.no_hp && ctx.channel === 'webchat') {
+    updateConversationUserProfile(
+      ctx.userId,
+      { user_phone: updates.no_hp },
+      ctx.villageId,
+      'WEBCHAT',
+    ).catch(() => {});
+  }
+
+  if (updates.default_address) {
+    saveDefaultAddress(ctx.userId, updates.default_address, updates.default_rt_rw);
+  }
+
+  const profile = getAutoFillSuggestions(ctx.userId);
+
+  return {
+    success: true,
+    data: {
+      nama_lengkap: profile.nama_lengkap || null,
+      no_hp: profile.no_hp || null,
+      default_address: profile.alamat || null,
+      default_rt_rw: profile.rt_rw || null,
+      updated_fields: Object.keys(updates),
+      message: 'Profil user berhasil diperbarui.',
+    },
+    meta: {
+      trustLevel: 'trusted_record',
+      sourceKind: 'user_profile_update',
     },
   };
 }
@@ -495,6 +595,20 @@ async function toolCreateComplaint(
     // Non-critical — fall through without urgency flag
   }
 
+  const profile = getAutoFillSuggestions(ctx.userId);
+  if (!profile.nama_lengkap) {
+    return {
+      success: false,
+      error: 'Nama lengkap pelapor belum tersedia. Minta user menyebutkan nama lengkap lalu panggil update_user_profile terlebih dahulu.',
+    };
+  }
+  if (ctx.channel === 'webchat' && !profile.no_hp) {
+    return {
+      success: false,
+      error: 'Nomor HP pelapor belum tersedia untuk webchat. Minta user menyebutkan nomor HP lalu panggil update_user_profile terlebih dahulu.',
+    };
+  }
+
   const complaintId = await createComplaint({
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
@@ -505,6 +619,8 @@ async function toolCreateComplaint(
     rt_rw,
     village_id: ctx.villageId,
     is_urgent: isUrgent,
+    reporter_name: profile.nama_lengkap,
+    reporter_phone: ctx.channel === 'webchat' ? profile.no_hp : ctx.userId,
   });
 
   if (!complaintId) {

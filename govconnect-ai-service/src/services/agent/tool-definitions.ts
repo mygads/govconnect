@@ -85,6 +85,51 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'get_user_profile',
+      description:
+        'Ambil data profil user yang sudah tersimpan di sistem: nama lengkap, nomor HP, dan alamat default. ' +
+        'Gunakan sebelum membuat laporan atau permohonan layanan untuk mengecek data mana yang masih kurang.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_user_profile',
+      description:
+        'Simpan atau perbarui data profil user yang user berikan secara eksplisit, seperti nama lengkap, nomor HP, atau alamat default. ' +
+        'Gunakan ketika user mengatakan "nama saya ...", "nomor saya ...", atau memberikan alamat rumahnya untuk dipakai lagi nanti.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nama_lengkap: {
+            type: 'string',
+            description: 'Nama lengkap user.',
+          },
+          no_hp: {
+            type: 'string',
+            description: 'Nomor HP user.',
+          },
+          default_address: {
+            type: 'string',
+            description: 'Alamat default user untuk laporan berikutnya.',
+          },
+          default_rt_rw: {
+            type: 'string',
+            description: 'RT/RW default user (opsional).',
+          },
+        },
+        required: [],
+      },
+    },
+  },
 
   // ─── 2. Knowledge retrieval tool ───
   {
@@ -365,6 +410,8 @@ export type AgentToolName =
   | 'get_service_catalog'
   | 'get_complaint_categories'
   | 'get_important_contacts'
+  | 'get_user_profile'
+  | 'update_user_profile'
   | 'search_knowledge'
   | 'search_documents'
   | 'check_complaint_status'

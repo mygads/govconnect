@@ -42,29 +42,6 @@ export async function extractNameFromTextNLU(
   return result.name;
 }
 
-export async function extractNameFromHistoryNLU(
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
-): Promise<string | null> {
-  if (!history || history.length === 0) return null;
-  // Find the last assistant message for context
-  let lastAssistantMsg = '';
-  for (let i = history.length - 1; i >= 0; i -= 1) {
-    if (history[i].role === 'assistant') {
-      lastAssistantMsg = history[i].content || '';
-      break;
-    }
-  }
-  // Check user messages from newest to oldest
-  for (let i = history.length - 1; i >= 0; i -= 1) {
-    const item = history[i];
-    if (item.role !== 'user') continue;
-    const name = await extractNameFromTextNLU(item.content, { ...context, last_assistant_message: lastAssistantMsg });
-    if (name) return name;
-  }
-  return null;
-}
-
 export function getLastAssistantMessage(history?: Array<{ role: 'user' | 'assistant'; content: string }>): string {
   if (!history || history.length === 0) return '';
   for (let i = history.length - 1; i >= 0; i -= 1) {
@@ -72,22 +49,6 @@ export function getLastAssistantMessage(history?: Array<{ role: 'user' | 'assist
     if (item.role === 'assistant') return item.content || '';
   }
   return '';
-}
-
-export function extractNameFromAssistantPrompt(text?: string): string | null {
-  const cleaned = (text || '').trim();
-  if (!cleaned) return null;
-  const match = cleaned.match(/(?:dengan|ini)\s+(?:Bapak|Ibu|Pak|Bu|Bapak\/Ibu)\s+([a-zA-Z\s]{2,30})/i);
-  if (!match?.[1]) return null;
-  const name = match[1].trim().split(/\s+/).slice(0, 2).join(' ');
-  return name.charAt(0).toUpperCase() + name.slice(1);
-}
-
-export function wasNamePrompted(history?: Array<{ role: 'user' | 'assistant'; content: string }>): boolean {
-  if (!history || history.length === 0) return false;
-  const lastAssistant = [...history].reverse().find(item => item.role === 'assistant');
-  if (!lastAssistant) return false;
-  return /(nama|dengan\s+siapa|siapa\s+nama)/i.test(lastAssistant.content);
 }
 
 // ==================== CONVERSATION HISTORY ====================

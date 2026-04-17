@@ -44,12 +44,6 @@ export const pendingCancelConfirmation = new LRUCache<string, {
   timestamp: number;
 }>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingCancelConfirmation' });
 
-/** Name confirmation state cache */
-export const pendingNameConfirmation = new LRUCache<string, {
-  name: string;
-  timestamp: number;
-}>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingNameConfirmation' });
-
 /** Online service form offer state cache */
 export const pendingServiceFormOffer = new LRUCache<string, {
   service_slug: string;
@@ -126,7 +120,7 @@ export const serviceSearchCache = new LRUCache<string, {
 registerInterval(() => {
   const caches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingNameConfirmation, pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
     serviceSearchCache,
@@ -203,7 +197,6 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
     { cache: pendingAddressConfirmation, name: 'pendingAddressConfirmation' },
     { cache: pendingAddressRequest, name: 'pendingAddressRequest' },
     { cache: pendingCancelConfirmation, name: 'pendingCancelConfirmation' },
-    { cache: pendingNameConfirmation, name: 'pendingNameConfirmation' },
     { cache: pendingServiceFormOffer, name: 'pendingServiceFormOffer' },
     { cache: pendingEmergencyComplaintOffer, name: 'pendingEmergencyComplaintOffer' },
     { cache: pendingComplaintData, name: 'pendingComplaintData' },
@@ -233,7 +226,7 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
 export function clearUserCaches(userId: string): { cleared: number } {
   const userCaches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingNameConfirmation, pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, conversationHistoryCache,
   ];
@@ -278,7 +271,7 @@ export function syncNameToChannelService(
 export function getUMPCacheStats() {
   return [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingNameConfirmation, pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
     serviceSearchCache,

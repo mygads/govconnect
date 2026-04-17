@@ -10,7 +10,7 @@
  * - Takeover mode
  * - RabbitMQ publishing
  * - Spam guard (bubble chat + duplicate suppression)
- * - Fast greeting template (bypasses AI for common greetings from new users)
+ * - Protocol/media guards before entering the agent/runtime pipeline
  * 
  * Human-like behavior:
  * - Read receipt: sent 1 second after message received (simulates reading)
@@ -41,7 +41,6 @@ export {
   handleStatusCheck,
   handleCancellationRequest,
   handleHistory,
-  handleKnowledgeQuery,
   validateResponse,
   isVagueAddress,
   processUnifiedMessage,

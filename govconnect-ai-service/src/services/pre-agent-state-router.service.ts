@@ -31,7 +31,6 @@ import {
   pendingCancelConfirmation,
   pendingComplaintData,
   pendingEmergencyComplaintOffer,
-  pendingNameConfirmation,
   pendingServiceFormOffer,
   setPendingComplaintData,
   syncNameToChannelService,
@@ -39,9 +38,7 @@ import {
 import {
   appendToHistoryCache,
   extractAddressFromMessage,
-  extractNameFromAssistantPrompt,
   extractNameFromTextNLU,
-  getLastAssistantMessage,
 } from './ump-utils';
 import { getProfile, updateProfile } from './user-profile.service';
 
@@ -79,7 +76,39 @@ function toConfirmationDecision(result: { decision?: string } | null | undefined
   return 'uncertain';
 }
 
-interface PendingNameInput {
+interface ProtocolGuardInput {
+  userId: string;
+  mediaType?: string;
+  traceId: string;
+  startTime: number;
+}
+
+export function tryHandleProtocolGuards(
+  input: ProtocolGuardInput,
+): ProcessMessageResult | null {
+  const mediaType = input.mediaType?.toLowerCase();
+  if (!mediaType || !['voice', 'audio', 'sticker', 'gif', 'video_note'].includes(mediaType)) {
+    return null;
+  }
+
+  const mediaLabels: Record<string, string> = {
+    voice: 'pesan suara',
+    audio: 'audio',
+    sticker: 'sticker',
+    gif: 'GIF',
+    video_note: 'video',
+  };
+  const label = mediaLabels[mediaType] || mediaType;
+
+  return buildGuardResult({
+    startTime: input.startTime,
+    traceId: input.traceId,
+    response: `Mohon maaf, saat ini kami belum bisa memproses ${label}. Silakan ketik pesan dalam bentuk teks ya, Pak/Bu.\n\nKetik *bantuan* untuk melihat daftar layanan yang tersedia.`,
+    intent: 'QUESTION',
+  });
+}
+
+interface PendingOfferInput {
   userId: string;
   message: string;
   channel: 'whatsapp' | 'webchat';
@@ -88,126 +117,6 @@ interface PendingNameInput {
   startTime: number;
   runWithMicroBudget: MicroBudgetRunner;
 }
-
-export async function tryHandlePendingNameConfirmation(
-  input: PendingNameInput,
-): Promise<ProcessMessageResult | null> {
-  const {
-    userId,
-    message,
-    channel,
-    villageId,
-    traceId,
-    startTime,
-    runWithMicroBudget,
-  } = input;
-
-  const pendingName = pendingNameConfirmation.get(userId);
-  if (!pendingName) {
-    return null;
-  }
-
-  const nameResult = await runWithMicroBudget(
-    () => classifyConfirmation(message.trim(), {
-      village_id: villageId,
-      wa_user_id: userId,
-      session_id: userId,
-      channel,
-    }),
-    null,
-  );
-  const decision = toConfirmationDecision(nameResult);
-
-  if (decision === 'yes') {
-    pendingNameConfirmation.delete(userId);
-    updateProfile(userId, { nama_lengkap: pendingName.name });
-    syncNameToChannelService(userId, pendingName.name, villageId, channel);
-    return buildGuardResult({
-      startTime,
-      traceId,
-      response: `Baik, terima kasih Pak/Bu ${pendingName.name}. Ada yang bisa kami bantu?`,
-      intent: 'QUESTION',
-    });
-  }
-
-  if (decision === 'no') {
-    pendingNameConfirmation.delete(userId);
-    return buildGuardResult({
-      startTime,
-      traceId,
-      response: 'Mohon maaf, boleh kami tahu nama yang benar?',
-      intent: 'QUESTION',
-    });
-  }
-
-  return buildGuardResult({
-    startTime,
-    traceId,
-    response: `Baik, apakah benar ini dengan Bapak/Ibu ${pendingName.name}? Balas YA atau BUKAN ya.`,
-    intent: 'QUESTION',
-  });
-}
-
-interface HistoryNameInput extends PendingNameInput {
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
-}
-
-export async function tryHandleHistoryNameConfirmation(
-  input: HistoryNameInput,
-): Promise<ProcessMessageResult | null> {
-  const {
-    userId,
-    message,
-    channel,
-    villageId,
-    traceId,
-    startTime,
-    conversationHistory,
-    runWithMicroBudget,
-  } = input;
-
-  const lastPromptedName = extractNameFromAssistantPrompt(
-    getLastAssistantMessage(conversationHistory),
-  );
-  if (!lastPromptedName) {
-    return null;
-  }
-
-  const historyNameResult = await runWithMicroBudget(
-    () => classifyConfirmation(message.trim(), {
-      village_id: villageId,
-      wa_user_id: userId,
-      session_id: userId,
-      channel,
-    }),
-    null,
-  );
-  const decision = toConfirmationDecision(historyNameResult);
-
-  if (decision === 'yes') {
-    updateProfile(userId, { nama_lengkap: lastPromptedName });
-    syncNameToChannelService(userId, lastPromptedName, villageId, channel);
-    return buildGuardResult({
-      startTime,
-      traceId,
-      response: `Baik, terima kasih Pak/Bu ${lastPromptedName}. Ada yang bisa kami bantu?`,
-      intent: 'QUESTION',
-    });
-  }
-
-  if (decision === 'no') {
-    return buildGuardResult({
-      startTime,
-      traceId,
-      response: 'Mohon maaf, boleh kami tahu nama yang benar?',
-      intent: 'QUESTION',
-    });
-  }
-
-  return null;
-}
-
-interface PendingOfferInput extends PendingNameInput {}
 
 export async function tryHandlePendingOffers(
   input: PendingOfferInput,
@@ -333,7 +242,6 @@ interface LatePreAgentInput {
   traceId: string;
   startTime: number;
   mediaUrl?: string;
-  knownName?: string | null;
   getUnifiedClassification: () => Promise<UnifiedClassifyResult | null>;
   runWithMicroBudget: MicroBudgetRunner;
   tracker: TrackerLike;
@@ -351,7 +259,6 @@ export async function tryHandleLatePreAgentState(
     traceId,
     startTime,
     mediaUrl,
-    knownName,
     getUnifiedClassification,
     runWithMicroBudget,
     tracker,
@@ -582,7 +489,7 @@ export async function tryHandleLatePreAgentState(
     }
 
     addPendingPhoto(userId, mediaUrl);
-    const userName = knownName || getProfile(userId).nama_lengkap;
+    const userName = getProfile(userId).nama_lengkap;
     const nameGreeting = userName ? ` ${userName}` : '';
     tracker.complete();
     return buildGuardResult({
