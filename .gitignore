@@ -84,6 +84,7 @@ docs/.doctrees/
 
 # QA artifacts (generated)
 scripts/qa-results/
+scripts/dev-runtime/
 
 # Python (if using any Python scripts)
 __pycache__/

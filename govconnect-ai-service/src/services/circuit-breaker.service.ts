@@ -39,6 +39,11 @@ const fallback = (
   error: Error,
   config: AxiosRequestConfig
 ): FallbackResponse => {
+  const httpError = error as Error & { response?: { status?: number } };
+  if (httpError?.response?.status) {
+    throw error;
+  }
+
   logger.warn('Circuit breaker fallback triggered', {
     url: config?.url,
     method: config?.method,

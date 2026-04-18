@@ -119,8 +119,8 @@ $tests = @(
   # --- Status check deterministic ---
   @{ Name = 'Check status LAP (not found)'; Message = 'cek status LAP-20260115-001' ; ExpectIntent = 'CHECK_STATUS'; MustContain=@('tidak'); MustNotContain=$commonMustNotContain; AllowLinks=$false },
 
-  # --- Out-of-KB (must not hallucinate) ---
-  @{ Name = 'Out of KB area size'; Message = 'Berapa luas wilayah desa Sanreseng Ade?' ; ExpectIntent = 'KNOWLEDGE_QUERY'; MustContain=@('belum'); MustNotContain=($commonMustNotContain + @('km2','hektar')); AllowLinks=$false }
+  # --- Document-grounded fact ---
+  @{ Name = 'Village area size from document'; Message = 'Berapa luas wilayah desa Sanreseng Ade?' ; ExpectIntent = 'DOCUMENT_SEARCH'; MustContain=@('43,09','km'); MustNotContain=($commonMustNotContain + @('belum')); AllowLinks=$false }
 )
 
 $results = New-Object System.Collections.Generic.List[object]

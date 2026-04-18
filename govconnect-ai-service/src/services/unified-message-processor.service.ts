@@ -133,6 +133,14 @@ function isCacheableAgentResult(result: ProcessMessageResult): boolean {
   return toolsUsed.every((tool) => CACHEABLE_AGENT_TOOLS.has(tool));
 }
 
+function normalizeAssistantText(text?: string): string | undefined {
+  if (!text) return text;
+
+  return text
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-')
+    .replace(/[\u00A0\u2007\u202F]/g, ' ');
+}
+
 function deriveAnalyticsIntent(result: ProcessMessageResult): string {
   if (result.intent && result.intent !== 'AGENT') {
     return result.intent;
@@ -223,10 +231,27 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
       durationMs: result.durationMs,
     });
 
+    const derivedIntent = (() => {
+      if (result.toolsUsed.includes('create_complaint')) return 'CREATE_COMPLAINT';
+      if (result.toolsUsed.includes('update_complaint')) return 'UPDATE_COMPLAINT';
+      if (result.toolsUsed.includes('create_service_request')) return 'CREATE_SERVICE_REQUEST';
+      if (result.toolsUsed.includes('get_service_request_edit_link')) return 'EDIT_SERVICE_REQUEST';
+      if (result.toolsUsed.includes('check_status')) return 'CHECK_STATUS';
+      if (result.toolsUsed.includes('cancel_request')) return 'CANCEL_REQUEST';
+      if (result.toolsUsed.includes('get_my_history')) return 'HISTORY';
+      if (result.toolsUsed.includes('search_documents')) return 'DOCUMENT_SEARCH';
+      if (result.toolsUsed.includes('search_knowledge')) return 'KNOWLEDGE_QUERY';
+      if (result.toolsUsed.includes('get_service_info')) return 'SERVICE_INFO';
+      if (result.toolsUsed.includes('get_village_profile')) return 'KNOWLEDGE_QUERY';
+      if (result.toolsUsed.includes('get_emergency_contacts')) return 'EMERGENCY_CONTACTS';
+      if (result.toolsUsed.includes('search_user_memory')) return 'MEMORY_LOOKUP';
+      return 'AGENT';
+    })();
+
     return {
       success: true,
       response: result.replyText,
-      intent: 'AGENT',
+      intent: derivedIntent,
       metadata: {
         processingTimeMs: Date.now() - startTime,
         model: result.model,
@@ -271,6 +296,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   let resolvedHistory = conversationHistory;
   let finalResult: ProcessMessageResult | null = null;
   const finish = (result: ProcessMessageResult) => {
+    result.response = normalizeAssistantText(result.response) || result.response;
+    result.guidanceText = normalizeAssistantText(result.guidanceText);
     finalResult = result;
     return result;
   };

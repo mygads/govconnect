@@ -974,19 +974,19 @@ export async function sendTypingIndicator(
   }
   
   try {
-    const resolved = await resolveAccessToken(villageId);
-    const accessToken = resolved.token;
-    if (!accessToken) return false;
-
-    if ((process.env.WA_DRY_RUN || '').toLowerCase() === 'true') {
+    if (isDryRun()) {
       logger.info('WA_DRY_RUN: Skipping typing indicator', {
-        village_id: resolved.village_id,
+        village_id: villageId,
         phone,
         state,
-        token_source: resolved.source,
+        token_source: 'dry-run',
       });
       return true;
     }
+
+    const resolved = await resolveAccessToken(villageId);
+    const accessToken = resolved.token;
+    if (!accessToken) return false;
 
     const url = `${config.WA_API_URL}/chat/presence`;
     
@@ -1047,19 +1047,19 @@ export async function markMessageAsRead(
   }
   
   try {
-    const resolved = await resolveAccessToken(villageId);
-    const accessToken = resolved.token;
-    if (!accessToken) return false;
-
-    if ((process.env.WA_DRY_RUN || '').toLowerCase() === 'true') {
+    if (isDryRun()) {
       logger.info('WA_DRY_RUN: Skipping mark-as-read', {
-        village_id: resolved.village_id,
+        village_id: villageId,
         chatPhone,
         messageCount: messageIds.length,
-        token_source: resolved.source,
+        token_source: 'dry-run',
       });
       return true;
     }
+
+    const resolved = await resolveAccessToken(villageId);
+    const accessToken = resolved.token;
+    if (!accessToken) return false;
 
     const url = `${config.WA_API_URL}/chat/markread`;
     
@@ -1113,6 +1113,18 @@ export async function sendTextMessage(
       };
     }
 
+    if (isDryRun()) {
+      const normalizedPhone = normalizePhoneNumber(to);
+      const fakeMessageId = `dryrun_${Date.now()}`;
+      logger.info('WA_DRY_RUN: Skipping WhatsApp API call', {
+        village_id: villageId,
+        to: normalizedPhone,
+        token_source: 'dry-run',
+        message_id: fakeMessageId,
+      });
+      return { success: true, message_id: fakeMessageId };
+    }
+
     const resolved = await resolveAccessToken(villageId);
     const accessToken = resolved.token;
     if (!accessToken) {
@@ -1121,19 +1133,6 @@ export async function sendTextMessage(
         success: false,
         error: 'WhatsApp not configured',
       };
-    }
-
-    // Dry-run mode: do not hit external WA API. Useful for tenant isolation verification.
-    if ((process.env.WA_DRY_RUN || '').toLowerCase() === 'true') {
-      const normalizedPhone = normalizePhoneNumber(to);
-      const fakeMessageId = `dryrun_${Date.now()}`;
-      logger.info('WA_DRY_RUN: Skipping WhatsApp API call', {
-        village_id: resolved.village_id,
-        to: normalizedPhone,
-        token_source: resolved.source,
-        message_id: fakeMessageId,
-      });
-      return { success: true, message_id: fakeMessageId };
     }
 
     // Normalize phone number - remove any non-digit characters and ensure starts with country code
@@ -1226,17 +1225,6 @@ export async function sendContactMessage(
       };
     }
 
-    const resolved = await resolveAccessToken(villageId);
-    const accessToken = resolved.token;
-    if (!accessToken) {
-      logger.warn('WhatsApp token not configured, contact not sent');
-      return {
-        success: false,
-        error: 'WhatsApp not configured',
-      };
-    }
-
-    // Normalize phone numbers
     const normalizedTo = normalizePhoneNumber(to);
     const normalizedContactPhone = normalizePhoneNumber(contact.phone);
     
@@ -1253,16 +1241,25 @@ export async function sendContactMessage(
       title: contact.title,
     });
 
-    // Dry-run mode
-    if ((process.env.WA_DRY_RUN || '').toLowerCase() === 'true') {
+    if (isDryRun()) {
       const fakeMessageId = `dryrun_contact_${Date.now()}`;
       logger.info('WA_DRY_RUN: Skipping WhatsApp contact send', {
-        village_id: resolved.village_id,
+        village_id: villageId,
         to: normalizedTo,
         contact_name: contact.name,
         message_id: fakeMessageId,
       });
       return { success: true, message_id: fakeMessageId };
+    }
+
+    const resolved = await resolveAccessToken(villageId);
+    const accessToken = resolved.token;
+    if (!accessToken) {
+      logger.warn('WhatsApp token not configured, contact not sent');
+      return {
+        success: false,
+        error: 'WhatsApp not configured',
+      };
     }
 
     const url = `${config.WA_API_URL}/chat/send/contact`;

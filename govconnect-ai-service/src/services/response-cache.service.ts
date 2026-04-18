@@ -143,6 +143,14 @@ const NON_CACHEABLE_PATTERNS = [
   /\b(lapor|ada\s+masalah).{20,}/i,
 ];
 
+const NON_CACHEABLE_RESPONSE_PATTERNS = [
+  /\bterjadi gangguan\b/i,
+  /\bcoba lagi nanti\b/i,
+  /\bsistem sedang (error|gangguan|sibuk)\b/i,
+  /\bservice unavailable\b/i,
+  /\btemporarily unavailable\b/i,
+];
+
 /**
  * Check if a query is cacheable
  */
@@ -223,6 +231,26 @@ export function setCachedResponse(
       intent,
     });
     return;
+  }
+
+  const normalizedResponse = response.trim();
+  if (!normalizedResponse) {
+    logger.debug('[ResponseCache] Empty response not cached', {
+      queryPreview: query.substring(0, 50),
+      intent,
+    });
+    return;
+  }
+
+  for (const pattern of NON_CACHEABLE_RESPONSE_PATTERNS) {
+    if (pattern.test(normalizedResponse)) {
+      logger.debug('[ResponseCache] Generic fallback response not cached', {
+        queryPreview: query.substring(0, 50),
+        intent,
+        responsePreview: normalizedResponse.substring(0, 80),
+      });
+      return;
+    }
   }
   
   const key = generateCacheKey(query, intent, villageId);

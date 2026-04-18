@@ -54,6 +54,8 @@ export interface AgentResult {
   durationMs: number;
 }
 
+type AgentToolChoice = 'auto' | 'required';
+
 interface ToolContext {
   userId: string;
   villageId?: string;
@@ -115,7 +117,9 @@ export async function runAgent(
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     iterations = i + 1;
 
-    const response = await callLLMWithTools(messages, allowedTools);
+    const toolChoice: AgentToolChoice =
+      i === 0 && allowedTools.length > 0 ? 'required' : 'auto';
+    const response = await callLLMWithTools(messages, allowedTools, toolChoice);
     if (!response) {
       return {
         replyText: 'Maaf, terjadi gangguan pada sistem. Silakan coba lagi nanti.',
@@ -296,6 +300,7 @@ function getAgentModels(): string[] {
 async function callLLMWithTools(
   messages: AgentMessage[],
   tools: typeof AGENT_TOOLS,
+  toolChoice: AgentToolChoice,
 ): Promise<any | null> {
   const gwConfig = getAgentGatewayConfig();
   if (!gwConfig.baseUrl || !gwConfig.apiKey) {
@@ -328,7 +333,7 @@ async function callLLMWithTools(
 
   if (tools.length > 0) {
     body.tools = tools;
-    body.tool_choice = 'auto';
+    body.tool_choice = toolChoice;
   }
 
   try {
@@ -423,11 +428,25 @@ async function selectAllowedTools(userMessage: string): Promise<{
     add('get_village_profile');
   }
 
+  if (!hasReference && /\b(status|notifikasi|tahap|alur|kanal|5w1h|embedding)\b/i.test(normalized)) {
+    add('search_knowledge');
+  }
+
+  if (/\b(luas wilayah|luas desa|km2|batas wilayah|jumlah penduduk|sejarah desa|profil desa|visi|misi|rpjm|rencana pembangunan)\b/i.test(normalized)) {
+    add('search_documents');
+  }
+
   if (/\b(darurat|ambulans|pemadam|polisi|nomor darurat|kontak penting)\b/i.test(normalized)) {
     add('get_emergency_contacts');
   }
 
-  if (/\b(lapor|pengaduan|keluhan|jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak)\b/i.test(normalized)) {
+  const isComplaintInfoQuery =
+    /\b(pengaduan|keluhan|laporan)\b/i.test(normalized) &&
+    /\b(contoh|prioritas|checklist|sop|panduan|jelaskan|apa|bagaimana)\b/i.test(normalized);
+
+  if (isComplaintInfoQuery) {
+    add('search_knowledge');
+  } else if (/\b(lapor|pengaduan|keluhan|jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak)\b/i.test(normalized)) {
     add('create_complaint', 'get_complaint_categories');
   }
 
@@ -437,6 +456,7 @@ async function selectAllowedTools(userMessage: string): Promise<{
 
   if (/\b(pdf|dokumen|lampiran|berkas|sop|peraturan|sk|surat keputusan|file)\b/i.test(normalized)) {
     add('search_documents');
+    add('search_knowledge');
   }
 
   if (/\b(apa|bagaimana|kenapa|mengapa|kebijakan|prosedur|aturan|faq|panduan)\b/i.test(normalized)) {

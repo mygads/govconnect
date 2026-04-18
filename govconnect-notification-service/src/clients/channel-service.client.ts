@@ -11,7 +11,7 @@ const channelServiceClient = createHttpClient('channel-service', {
   timeout: 10000,
   retries: 3,
   headers: {
-    'X-API-Key': config.internalApiKey,
+    'x-internal-api-key': config.internalApiKey,
   },
   circuitBreakerOptions: {
     failureThreshold: 5,

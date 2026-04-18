@@ -295,6 +295,7 @@ export async function getComplaintStatusWithOwnership(
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
         },
+        validateStatus: (status) => status < 500,
         timeout: 10000,
       }
     );
@@ -302,28 +303,34 @@ export async function getComplaintStatusWithOwnership(
     if (resilientHttp.isFallbackResponse(response)) {
       return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
     }
+
+    if (response.status === 404) {
+      return { success: false, error: 'NOT_FOUND', message: 'Laporan tidak ditemukan' };
+    }
+
+    if (response.status === 403) {
+      return {
+        success: false,
+        error: 'NOT_OWNER',
+        message: (response.data as any)?.message || 'Anda tidak memiliki akses untuk melihat laporan ini',
+      };
+    }
+
+    if (response.status >= 400) {
+      return {
+        success: false,
+        error: 'INTERNAL_ERROR',
+        message: (response.data as any)?.message || 'Terjadi kesalahan saat mengecek status',
+      };
+    }
     
     logger.info('✅ Complaint status fetched successfully with ownership', {
       complaint_id: complaintId,
       status: response.data.data?.status,
     });
-    
+
     return { success: true, data: response.data.data };
   } catch (error: any) {
-    const errorData = error.response?.data;
-    
-    if (error.response?.status === 404) {
-      return { success: false, error: 'NOT_FOUND', message: 'Laporan tidak ditemukan' };
-    }
-    
-    if (error.response?.status === 403) {
-      return { 
-        success: false, 
-        error: 'NOT_OWNER', 
-        message: errorData?.message || 'Anda tidak memiliki akses untuk melihat laporan ini' 
-      };
-    }
-    
     logger.error('❌ Failed to fetch complaint status with ownership', {
       complaint_id: complaintId,
       error: error.message,
