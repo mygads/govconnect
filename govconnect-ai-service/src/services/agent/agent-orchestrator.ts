@@ -15,7 +15,7 @@ import { getDefaultGatewayModels } from '../ai-gateway.service';
 import { recordTokenUsage } from '../token-usage.service';
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
 import { resolveLearnedToolPolicy } from './tool-policy.service';
-import { executeToolCall, type ToolExecutionTrace } from './tool-executor';
+import { executeToolCall, type ToolCallResult, type ToolExecutionTrace } from './tool-executor';
 import { buildAgentSystemPrompt, type AgentPromptContext } from './agent-prompt';
 
 const MAX_TOOL_ITERATIONS = 5;
@@ -40,6 +40,7 @@ interface ToolCall {
 
 export interface AgentResult {
   replyText: string;
+  guidanceText?: string;
   toolsUsed: string[];
   heuristicTools: AgentToolName[];
   learnedTools: AgentToolName[];
@@ -66,6 +67,53 @@ interface ToolContext {
 interface ConversationContext {
   summary?: string;
   recentMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+}
+
+function readStringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function derivePreferredToolReply(
+  toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
+): { replyText?: string; guidanceText?: string } {
+  for (let index = toolResults.length - 1; index >= 0; index -= 1) {
+    const payload = toolResults[index]?.result?.data;
+    if (!payload || typeof payload !== 'object') continue;
+
+    const data = payload as Record<string, unknown>;
+    const replyText =
+      readStringField(data, 'suggested_response')
+      || readStringField(data, 'reply_text')
+      || readStringField(data, 'replyText');
+    const guidanceText =
+      readStringField(data, 'guidance_text')
+      || readStringField(data, 'guidanceText');
+
+    if (replyText || guidanceText) {
+      return { replyText, guidanceText };
+    }
+  }
+
+  return {};
+}
+
+function buildAgentFallbackReply(userMessage: string, toolsUsed: string[] = []): string {
+  const normalized = (userMessage || '').toLowerCase();
+  const looksLikeStatus = /\b(lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
+  const looksLikeExternalAdminQuery =
+    /\b(cara|bagaimana|gimana|mau bikin|buat|urus|pengurusan)\b/i.test(normalized)
+    && /\b(sim|paspor|bpjs|visa|imigrasi|npwp|stnk|bpkb)\b/i.test(normalized);
+
+  if (looksLikeExternalAdminQuery) {
+    return 'Maaf Pak/Bu, informasi untuk layanan itu belum tersedia di sistem kami. Kalau perlu penjelasan lebih lanjut, silakan datang ke kantor desa pada jam kerja ya.';
+  }
+
+  if (!looksLikeStatus && (toolsUsed.includes('search_knowledge') || toolsUsed.includes('get_service_info'))) {
+    return 'Maaf Pak/Bu, informasinya belum berhasil kami temukan sekarang. Untuk sementara, silakan datang ke kantor desa pada jam kerja atau kirim pertanyaan yang lebih spesifik ya.';
+  }
+
+  return 'Maaf, saya membutuhkan waktu lebih lama untuk memproses permintaan ini. Silakan coba lagi.';
 }
 
 /**
@@ -113,6 +161,8 @@ export async function runAgent(
   let totalTokens = 0;
   let iterations = 0;
   let model = '';
+  let preferredReplyText: string | undefined;
+  let preferredGuidanceText: string | undefined;
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     iterations = i + 1;
@@ -122,7 +172,7 @@ export async function runAgent(
     const response = await callLLMWithTools(messages, allowedTools, toolChoice);
     if (!response) {
       return {
-        replyText: 'Maaf, terjadi gangguan pada sistem. Silakan coba lagi nanti.',
+        replyText: buildAgentFallbackReply(userMessage, toolsUsed),
         toolsUsed,
         heuristicTools,
         learnedTools,
@@ -172,6 +222,8 @@ export async function runAgent(
           toolTrace.push(result.trace);
 
           return {
+            toolName,
+            result: result.result,
             role: 'tool' as const,
             tool_call_id: tc.id,
             name: toolName,
@@ -182,6 +234,13 @@ export async function runAgent(
 
       // Add all tool results to message history
       for (const tr of toolResults) {
+        const preferredFromTool = derivePreferredToolReply([{ toolName: tr.toolName, result: tr.result }]);
+        if (preferredFromTool.replyText) {
+          preferredReplyText = preferredFromTool.replyText;
+        }
+        if (preferredFromTool.guidanceText) {
+          preferredGuidanceText = preferredFromTool.guidanceText;
+        }
         messages.push(tr);
       }
 
@@ -222,7 +281,8 @@ export async function runAgent(
       });
 
       return {
-        replyText: finalText,
+        replyText: preferredReplyText || finalText,
+        guidanceText: preferredGuidanceText,
         toolsUsed,
         heuristicTools,
         learnedTools,
@@ -253,7 +313,7 @@ export async function runAgent(
   });
 
   return {
-    replyText: 'Maaf, saya membutuhkan waktu lebih lama untuk memproses permintaan ini. Silakan coba lagi.',
+    replyText: buildAgentFallbackReply(userMessage, toolsUsed),
     toolsUsed,
     heuristicTools,
     learnedTools,
@@ -314,10 +374,7 @@ async function callLLMWithTools(
     return null;
   }
 
-  const model = models[0];
-
-  const body: Record<string, unknown> = {
-    model,
+  const baseBody: Record<string, unknown> = {
     messages: messages.map((m) => {
       const msg: Record<string, unknown> = { role: m.role };
       if (m.content !== undefined && m.content !== null) msg.content = m.content;
@@ -332,48 +389,56 @@ async function callLLMWithTools(
   };
 
   if (tools.length > 0) {
-    body.tools = tools;
-    body.tool_choice = toolChoice;
+    baseBody.tools = tools;
+    baseBody.tool_choice = toolChoice;
   }
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), AGENT_TIMEOUT_MS);
+  for (const model of models) {
+    const body = {
+      ...baseBody,
+      model,
+    };
 
-    const response = await fetch(`${gwConfig.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${gwConfig.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), AGENT_TIMEOUT_MS);
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      logger.error('Agent LLM call failed', {
-        status: response.status,
-        error: errText.substring(0, 200),
-        model,
+      const response = await fetch(`${gwConfig.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${gwConfig.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
       });
-      return null;
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        logger.error('Agent LLM call failed', {
+          status: response.status,
+          error: errText.substring(0, 200),
+          model,
+        });
+        continue;
+      }
+
+      const data: any = await response.json();
+
+      if (data.error) {
+        logger.error('Agent LLM returned error', { error: data.error, model });
+        continue;
+      }
+
+      return data;
+    } catch (error: any) {
+      logger.error('Agent LLM call exception', { error: error.message, model });
     }
-
-    const data: any = await response.json();
-
-    if (data.error) {
-      logger.error('Agent LLM returned error', { error: data.error, model });
-      return null;
-    }
-
-    return data;
-  } catch (error: any) {
-    logger.error('Agent LLM call exception', { error: error.message, model });
-    return null;
   }
+
+  return null;
 }
 
 async function selectAllowedTools(userMessage: string): Promise<{
@@ -398,59 +463,420 @@ async function selectAllowedTools(userMessage: string): Promise<{
   }
 
   const add = (...names: AgentToolName[]) => names.forEach((name) => heuristicSet.add(name));
+  const isServiceEditRequest =
+    /\b(edit|ubah data|update data|perbarui data|perbaiki data|revisi data)\b/i.test(normalized)
+    && /\b(lay|lyn)-[\w-]+\b/i.test(userMessage);
+  const isComplaintUpdateRequest =
+    /\b(ubah laporan|update laporan|perbarui laporan|tambah keterangan|ubah alamat|update pengaduan|revisi laporan)\b/i.test(normalized)
+    && /\blap-[\w-]+\b/i.test(userMessage);
+  const isMyStatusLookup =
+    !hasReference
+    && /\b(status|cek|periksa|tracking|lacak)\b/i.test(normalized)
+    && /\b(layanan|laporan|pengajuan|permohonan)\b/i.test(normalized)
+    && /\b(saya|milik saya)\b/i.test(normalized);
+  const hasComplaintGenericTerm = /\b(pengaduan|keluhan|laporan)\b/i.test(normalized);
+  const isServiceInfoRequest =
+    !isServiceEditRequest
+    && !isMyStatusLookup
+    && /\b(surat|layanan|dokumen|syarat|persyaratan|biaya|proses|ktp|kk|sktm|domisili|akta|pindah|kelahiran|kematian)\b/i.test(normalized);
+  const isGeneralKnowledgeQuestion = /\b(apa|bagaimana|kenapa|mengapa|kebijakan|prosedur|aturan|faq|panduan)\b/i.test(normalized);
+  const isComplaintKnowledgeRequest =
+    hasComplaintGenericTerm && /\b(contoh|prioritas|checklist|sop|panduan|prosedur|alur|status|jelaskan|apa|bagaimana)\b/i.test(normalized);
+  const isGenericKnowledgeStatusQuestion =
+    !hasReference
+    && !isMyStatusLookup
+    && /\b(status|notifikasi|tahap|alur|kanal|5w1h|embedding)\b/i.test(normalized);
+  const isMyHistoryRequest = /\b(riwayat|history|laporan saya|permohonan saya|pengajuan saya)\b/i.test(normalized);
+  const isDocumentQuery = /\b(pdf|dokumen|lampiran|berkas|sop|peraturan|sk|surat keputusan|file)\b/i.test(normalized);
+  const isVillageDocumentQuery = /\b(luas wilayah|luas desa|km2|batas wilayah|jumlah penduduk|sejarah desa|profil desa|visi|misi|rpjm|rencana pembangunan)\b/i.test(normalized);
+  const isEmergencyQuery = /\b(darurat|ambulans|pemadam|polisi|nomor darurat|kontak penting)\b/i.test(normalized);
+  const isVillageProfileQuery = /\b(alamat|lokasi|maps|gmaps|jam buka|jam operasional|kontak|nomor kantor|telepon kantor|kantor desa)\b/i.test(normalized);
+  const isMemoryQuery = /\b(sebelumnya|tadi|terakhir|alamat saya|preferensi saya|yang pernah saya|saya pernah)\b/i.test(normalized);
+  const isStatusByReference = hasReference && /\b(status|cek|periksa|tracking|lacak)\b/i.test(normalized);
+  const isCancelIntent = /\b(batal|batalkan|cancel)\b/i.test(normalized);
+  const hasComplaintIncidentKeyword = /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak)\b/i.test(normalized);
+  const hasExplicitComplaintCreationIntent = /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|aduan)\b/i.test(normalized);
+  const isServiceLikeReport = /\blapor\b/i.test(normalized)
+    && /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i.test(normalized);
 
-  if (/\b(riwayat|history|laporan saya|permohonan saya|pengajuan saya)\b/i.test(normalized)) {
+  if (isMyHistoryRequest) {
     add('get_my_history', 'search_user_memory');
   }
 
-  if (/\b(sebelumnya|tadi|terakhir|alamat saya|preferensi saya|yang pernah saya|saya pernah)\b/i.test(normalized)) {
+  if (isMyStatusLookup) {
+    add('get_my_history', 'search_user_memory');
+  }
+
+  if (isMemoryQuery) {
     add('search_user_memory');
   }
 
-  if (/\b(batal|batalkan|cancel)\b/i.test(normalized)) {
+  if (isCancelIntent) {
     add('cancel_request', 'check_status');
   }
 
-  if (hasReference && /\b(status|cek|periksa|tracking|lacak)\b/i.test(normalized)) {
+  if (isStatusByReference) {
     add('check_status');
   }
 
-  if (/\b(edit|ubah data|perbaiki data|revisi data)\b/i.test(normalized) && /\b(lay|lyn)-[\w-]+\b/i.test(userMessage)) {
+  if (isServiceEditRequest) {
     add('get_service_request_edit_link', 'check_status');
   }
 
-  if (/\b(ubah laporan|update laporan|perbarui laporan|tambah keterangan|ubah alamat|update pengaduan|revisi laporan)\b/i.test(normalized)
-    && /\blap-[\w-]+\b/i.test(userMessage)) {
+  if (isComplaintUpdateRequest) {
     add('update_complaint', 'check_status');
   }
 
-  if (/\b(alamat|lokasi|maps|gmaps|jam buka|jam operasional|kontak|nomor kantor|telepon kantor|kantor desa)\b/i.test(normalized)) {
+  if (isVillageProfileQuery) {
     add('get_village_profile');
   }
 
-  if (!hasReference && /\b(status|notifikasi|tahap|alur|kanal|5w1h|embedding)\b/i.test(normalized)) {
+  if (isGenericKnowledgeStatusQuestion) {
     add('search_knowledge');
   }
 
-  if (/\b(luas wilayah|luas desa|km2|batas wilayah|jumlah penduduk|sejarah desa|profil desa|visi|misi|rpjm|rencana pembangunan)\b/i.test(normalized)) {
+  if (isVillageDocumentQuery) {
     add('search_documents');
   }
 
-  if (/\b(darurat|ambulans|pemadam|polisi|nomor darurat|kontak penting)\b/i.test(normalized)) {
+  if (isEmergencyQuery) {
+    add('get_emergency_contacts');
+  }
+
+  if (isDocumentQuery) {
+    add('search_documents');
+    add('search_knowledge');
+  }
+
+  if (isGeneralKnowledgeQuestion) {
+    add('search_knowledge');
+  }
+
+  if (isComplaintKnowledgeRequest) {
+    add('search_knowledge');
+  }
+
+  if (isServiceInfoRequest) {
+    add('get_service_info', 'create_service_request');
+  }
+
+  if (isMyStatusLookup) {
+    heuristicSet.delete('search_knowledge');
+    heuristicSet.delete('get_service_info');
+    heuristicSet.delete('create_service_request');
+  }
+
+  if (isComplaintKnowledgeRequest) {
+    heuristicSet.delete('create_complaint');
+    heuristicSet.delete('get_complaint_categories');
+  }
+
+  if (isServiceInfoRequest) {
+    heuristicSet.delete('search_knowledge');
+  }
+
+  if (isStatusByReference) {
+    heuristicSet.delete('search_knowledge');
+  }
+
+  if (isCancelIntent) {
+    heuristicSet.delete('search_knowledge');
+  }
+
+  if (isVillageProfileQuery) {
+    heuristicSet.delete('search_knowledge');
+  }
+
+  if (isEmergencyQuery) {
+    heuristicSet.delete('search_knowledge');
+  }
+
+  if (isVillageDocumentQuery) {
+    heuristicSet.delete('search_knowledge');
+  }
+
+  if (isDocumentQuery) {
+    heuristicSet.delete('get_service_info');
+    heuristicSet.delete('create_service_request');
+  }
+
+  if (isMyHistoryRequest) {
+    heuristicSet.delete('search_knowledge');
+    heuristicSet.delete('get_service_info');
+    heuristicSet.delete('create_service_request');
+  }
+
+  if (isComplaintKnowledgeRequest) {
+    heuristicSet.delete('get_service_info');
+    heuristicSet.delete('create_service_request');
+  }
+
+  if (isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('get_service_info');
+    heuristicSet.delete('create_service_request');
+  }
+
+  if (isServiceInfoRequest) {
+    heuristicSet.delete('get_my_history');
+  }
+
+  if (isStatusByReference) {
+    heuristicSet.delete('get_my_history');
+  }
+
+  if (isCancelIntent) {
+    heuristicSet.delete('get_my_history');
+  }
+
+  if (isVillageProfileQuery) {
+    heuristicSet.delete('get_my_history');
+  }
+
+  if (isEmergencyQuery) {
+    heuristicSet.delete('get_my_history');
+  }
+
+  if (isDocumentQuery || isVillageDocumentQuery) {
+    heuristicSet.delete('get_my_history');
+    heuristicSet.delete('search_user_memory');
+  }
+
+  if (isGenericKnowledgeStatusQuestion || isGeneralKnowledgeQuestion) {
+    heuristicSet.delete('get_my_history');
+  }
+
+  if (isComplaintKnowledgeRequest) {
+    heuristicSet.delete('get_my_history');
+    heuristicSet.delete('search_user_memory');
+  }
+
+  if (isServiceInfoRequest) {
+    heuristicSet.delete('search_user_memory');
+  }
+
+  if (isStatusByReference) {
+    heuristicSet.delete('search_user_memory');
+  }
+
+  if (isCancelIntent) {
+    heuristicSet.delete('search_user_memory');
+  }
+
+  if (isVillageProfileQuery || isEmergencyQuery) {
+    heuristicSet.delete('search_user_memory');
+  }
+
+  if (isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('search_user_memory');
+  }
+
+  if (isMyStatusLookup) {
+    heuristicSet.delete('check_status');
+  }
+
+  if (isServiceInfoRequest) {
+    heuristicSet.delete('check_status');
+  }
+
+  if (isComplaintKnowledgeRequest) {
+    heuristicSet.delete('check_status');
+  }
+
+  if (isDocumentQuery || isVillageDocumentQuery) {
+    heuristicSet.delete('check_status');
+  }
+
+  if (isGeneralKnowledgeQuestion && !isComplaintKnowledgeRequest && !isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('check_status');
+  }
+
+  if (isVillageProfileQuery || isEmergencyQuery) {
+    heuristicSet.delete('check_status');
+  }
+
+  if (isMyHistoryRequest) {
+    heuristicSet.delete('check_status');
+  }
+
+  if (isMyStatusLookup) {
+    heuristicSet.delete('cancel_request');
+  }
+
+  if (isServiceInfoRequest || isComplaintKnowledgeRequest || isDocumentQuery || isVillageDocumentQuery || isVillageProfileQuery || isEmergencyQuery) {
+    heuristicSet.delete('cancel_request');
+  }
+
+  if (isGeneralKnowledgeQuestion && !isComplaintKnowledgeRequest && !isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('cancel_request');
+  }
+
+  if (isMyHistoryRequest) {
+    heuristicSet.delete('cancel_request');
+  }
+
+  if (isMyStatusLookup || isServiceInfoRequest || isComplaintKnowledgeRequest || isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('get_service_request_edit_link');
+    heuristicSet.delete('update_complaint');
+  }
+
+  if (isDocumentQuery || isVillageDocumentQuery || isVillageProfileQuery || isEmergencyQuery) {
+    heuristicSet.delete('get_service_request_edit_link');
+    heuristicSet.delete('update_complaint');
+  }
+
+  if (isMyHistoryRequest) {
+    heuristicSet.delete('get_service_request_edit_link');
+    heuristicSet.delete('update_complaint');
+  }
+
+  if (isGeneralKnowledgeQuestion && !isComplaintKnowledgeRequest && !isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('get_service_request_edit_link');
+    heuristicSet.delete('update_complaint');
+  }
+
+  if (isComplaintKnowledgeRequest || isGeneralKnowledgeQuestion || isDocumentQuery || isVillageDocumentQuery || isVillageProfileQuery || isEmergencyQuery || isMyHistoryRequest || isMyStatusLookup) {
+    heuristicSet.delete('create_service_request');
+  }
+
+  if (isServiceInfoRequest || isGeneralKnowledgeQuestion || isDocumentQuery || isVillageDocumentQuery || isVillageProfileQuery || isEmergencyQuery || isMyHistoryRequest || isMyStatusLookup || isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('create_complaint');
+    heuristicSet.delete('get_complaint_categories');
+  }
+
+  if (isComplaintKnowledgeRequest || isServiceInfoRequest || isMyHistoryRequest || isMyStatusLookup || isGenericKnowledgeStatusQuestion || isVillageProfileQuery || isEmergencyQuery) {
+    heuristicSet.delete('search_documents');
+  }
+
+  if (isVillageDocumentQuery || isDocumentQuery) {
+    heuristicSet.delete('get_village_profile');
+    heuristicSet.delete('get_emergency_contacts');
+  }
+
+  if (isEmergencyQuery) {
+    heuristicSet.delete('get_village_profile');
+  }
+
+  if (isVillageProfileQuery) {
+    heuristicSet.delete('get_emergency_contacts');
+  }
+
+  if (isMyStatusLookup) {
+    heuristicSet.delete('get_village_profile');
+    heuristicSet.delete('get_emergency_contacts');
+  }
+
+  if (isComplaintKnowledgeRequest) {
+    heuristicSet.delete('search_documents');
+  }
+
+  if (isServiceInfoRequest) {
+    heuristicSet.delete('search_documents');
+  }
+
+  if (isGeneralKnowledgeQuestion && !isComplaintKnowledgeRequest && !isDocumentQuery && !isVillageDocumentQuery && !isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('search_documents');
+  }
+
+  if (isGenericKnowledgeStatusQuestion) {
+    heuristicSet.delete('search_documents');
+  }
+
+  if (isMemoryQuery && !isMyHistoryRequest && !isMyStatusLookup) {
+    heuristicSet.delete('search_knowledge');
+  }
+
+  if (isServiceLikeReport) {
+    heuristicSet.delete('create_complaint');
+    heuristicSet.delete('get_complaint_categories');
+  }
+
+  if (isServiceLikeReport && !isServiceEditRequest && !isMyStatusLookup) {
+    add('get_service_info', 'create_service_request');
+  }
+
+  if (isMyStatusLookup) {
+    add('get_my_history');
+  }
+
+  if (isComplaintKnowledgeRequest) {
+    add('search_knowledge');
+  }
+
+  if (isServiceInfoRequest) {
+    add('get_service_info');
+  }
+
+  if (isStatusByReference) {
+    add('check_status');
+  }
+
+  if (isCancelIntent) {
+    add('cancel_request');
+  }
+
+  if (isMyHistoryRequest) {
+    add('get_my_history');
+  }
+
+  if (isVillageProfileQuery) {
+    add('get_village_profile');
+  }
+
+  if (isEmergencyQuery) {
+    add('get_emergency_contacts');
+  }
+
+  if (isVillageDocumentQuery || isDocumentQuery) {
+    add('search_documents');
+  }
+
+  if (isGenericKnowledgeStatusQuestion || isGeneralKnowledgeQuestion) {
+    add('search_knowledge');
+  }
+
+  if (isMemoryQuery && !isServiceInfoRequest && !isComplaintKnowledgeRequest && !isGenericKnowledgeStatusQuestion && !isGeneralKnowledgeQuestion && !isVillageDocumentQuery && !isDocumentQuery && !isVillageProfileQuery && !isEmergencyQuery) {
+    add('search_user_memory');
+  }
+
+  if (isMyStatusLookup || isMyHistoryRequest) {
+    add('search_user_memory');
+  }
+
+  if (isServiceInfoRequest || isServiceLikeReport) {
+    add('get_service_info');
+  }
+
+  if (isComplaintKnowledgeRequest) {
+    add('search_knowledge');
+  }
+
+  if (isGenericKnowledgeStatusQuestion) {
+    add('search_knowledge');
+  }
+
+  if (isVillageDocumentQuery || isDocumentQuery) {
+    add('search_documents');
+  }
+
+  if (isVillageProfileQuery) {
+    add('get_village_profile');
+  }
+
+  if (isEmergencyQuery) {
     add('get_emergency_contacts');
   }
 
   const isComplaintInfoQuery =
-    /\b(pengaduan|keluhan|laporan)\b/i.test(normalized) &&
-    /\b(contoh|prioritas|checklist|sop|panduan|jelaskan|apa|bagaimana)\b/i.test(normalized);
+    hasComplaintGenericTerm &&
+    /\b(contoh|prioritas|checklist|sop|panduan|prosedur|alur|status|jelaskan|apa|bagaimana)\b/i.test(normalized);
 
   if (isComplaintInfoQuery) {
     add('search_knowledge');
-  } else if (/\b(lapor|pengaduan|keluhan|jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak)\b/i.test(normalized)) {
+  } else if (!isComplaintUpdateRequest && !isServiceLikeReport && (hasExplicitComplaintCreationIntent || hasComplaintIncidentKeyword)) {
     add('create_complaint', 'get_complaint_categories');
   }
 
-  if (/\b(surat|layanan|dokumen|syarat|persyaratan|biaya|proses|ktp|kk|sktm|domisili|akta|pindah|kelahiran|kematian)\b/i.test(normalized)) {
+  if (!isServiceEditRequest && !isMyStatusLookup && /\b(surat|layanan|dokumen|syarat|persyaratan|biaya|proses|ktp|kk|sktm|domisili|akta|pindah|kelahiran|kematian)\b/i.test(normalized)) {
     add('get_service_info', 'create_service_request');
   }
 

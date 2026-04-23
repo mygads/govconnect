@@ -4,9 +4,12 @@
  */
 
 import logger from '../utils/logger';
-import axios from 'axios';
-import { config } from '../config/env';
-import { requestServiceRequestEditToken, getServiceCatalog } from './case-client.service';
+import {
+  requestServiceRequestEditToken,
+  getServiceCatalog,
+  getServiceRequirements,
+  type ServiceCatalogItem,
+} from './case-client.service';
 import { matchServiceSlug } from './micro-llm-matcher.service';
 import type { ChannelType, HandlerResult } from './ump-formatters';
 import {
@@ -64,6 +67,7 @@ export async function resolveServiceSlugFromSearch(query: string, villageId?: st
   if (!trimmedQuery) return null;
 
   const searchQuery = trimmedQuery;
+  const normalizedQuery = searchQuery.toLowerCase();
 
   // Check service search cache first (M3 optimization)
   const cacheKey = `${villageId || ''}:${searchQuery.toLowerCase()}`;
@@ -73,27 +77,18 @@ export async function resolveServiceSlugFromSearch(query: string, villageId?: st
     return { slug: cached.slug, name: cached.name };
   }
   try {
-    // Fetch candidate services from Case Service
-    const response = await axios.get(`${config.caseServiceUrl}/services/search`, {
-      params: {
-        village_id: villageId,
-        q: searchQuery,
-        limit: 10,
-      },
-      headers: { 'x-internal-api-key': config.internalApiKey },
-      timeout: 5000,
-    });
-
-    let services = Array.isArray(response.data?.data) ? response.data.data : [];
-    if (!services.length && villageId) {
-      const fallbackResponse = await axios.get(`${config.caseServiceUrl}/services`, {
-        params: { village_id: villageId },
-        headers: { 'x-internal-api-key': config.internalApiKey },
-        timeout: 5000,
-      });
-      services = Array.isArray(fallbackResponse.data?.data) ? fallbackResponse.data.data : [];
-    }
+    const services = (await getServiceCatalog(villageId)).filter((service) => service.is_active !== false);
     if (!services.length) return null;
+
+    const direct = services.find((service) =>
+      service.slug.toLowerCase() === normalizedQuery
+      || service.name.toLowerCase() === normalizedQuery
+    );
+    if (direct) {
+      const matchResult = { slug: String(direct.slug), name: String(direct.name || '') };
+      serviceSearchCache.set(cacheKey, { ...matchResult, timestamp: Date.now() });
+      return matchResult;
+    }
 
     // Use micro LLM for semantic matching
     const options = services
@@ -132,6 +127,23 @@ export async function resolveServiceSlugFromSearch(query: string, villageId?: st
       return { slug: '', name: '', alternatives: result.alternatives };
     }
 
+    const fuzzyMatches = services
+      .filter((service) => {
+        const haystack = `${service.name} ${service.slug} ${service.description || ''}`.toLowerCase();
+        return haystack.includes(normalizedQuery) || normalizedQuery.includes(service.name.toLowerCase());
+      })
+      .slice(0, 4)
+      .map((service) => ({ slug: service.slug, name: service.name }));
+
+    if (fuzzyMatches.length === 1) {
+      serviceSearchCache.set(cacheKey, { ...fuzzyMatches[0], timestamp: Date.now() });
+      return fuzzyMatches[0];
+    }
+
+    if (fuzzyMatches.length > 1) {
+      return { slug: '', name: '', alternatives: fuzzyMatches };
+    }
+
     logger.debug('resolveServiceSlugFromSearch: No match via micro LLM', { query: trimmedQuery });
     return null;
   } catch (error: any) {
@@ -146,6 +158,16 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
   let { service_slug, service_id } = llmResponse.fields || {};
   const villageId = llmResponse.fields?.village_id || '';
   const rawMessage = llmResponse.fields?._original_message || llmResponse.fields?.service_name || llmResponse.fields?.service_query || '';
+  const services = await getServiceCatalog(villageId);
+  const activeServices = services.filter((service) => service.is_active !== false);
+
+  const findServiceInCatalog = (slug?: string, id?: string): ServiceCatalogItem | null => {
+    if (id) {
+      return services.find((service) => service.id === id) || null;
+    }
+    if (!slug) return null;
+    return services.find((service) => service.slug === slug) || null;
+  };
 
   if (!service_slug && !service_id && rawMessage) {
     const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
@@ -168,33 +190,13 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
   }
 
   try {
-    const fetchService = async (slug?: string, id?: string) => {
-      let serviceUrl = '';
-      if (id) {
-        serviceUrl = `${config.caseServiceUrl}/services/${id}`;
-      } else if (slug) {
-        serviceUrl = `${config.caseServiceUrl}/services/by-slug?village_id=${villageId}&slug=${slug}`;
-      }
-      if (!serviceUrl) return null;
-      try {
-        const response = await axios.get(serviceUrl, {
-          headers: { 'x-internal-api-key': config.internalApiKey },
-          timeout: 5000,
-        });
-        return response.data?.data || null;
-      } catch (error: any) {
-        if (error.response?.status === 404) return null;
-        throw error;
-      }
-    };
-
-    let service = await fetchService(service_slug, service_id);
+    let service = findServiceInCatalog(service_slug, service_id);
 
     if (!service && rawMessage) {
       const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
       if (resolved?.slug) {
         service_slug = resolved.slug;
-        service = await fetchService(resolved.slug, undefined);
+        service = findServiceInCatalog(resolved.slug, undefined);
       }
     }
 
@@ -209,7 +211,9 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
     const resolvedVillageId = villageId || service.village_id || service.villageId || '';
 
     // Build requirements list
-    const requirements = service.requirements || [];
+    const requirements = Array.isArray(service.requirements) && service.requirements.length > 0
+      ? service.requirements
+      : await getServiceRequirements(service.id || service.slug);
     let requirementsList = '';
     if (requirements.length > 0) {
       requirementsList = requirements
@@ -223,10 +227,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
 
     // Check if service is available online
     const isOnline = service.mode === 'online' || service.mode === 'both';
-    const baseUrl = getPublicFormBaseUrl();
-    const villageSlug = await resolveVillageSlugForPublicForm(resolvedVillageId || villageId);
-
-    let replyText = `Baik Pak/Bu, untuk pembuatan ${service.name} persyaratannya antara lain:\n\n`;
+    let replyText = `Baik, untuk layanan *${service.name}* persyaratannya seperti ini:\n\n`;
     let guidanceText = '';
 
     if (requirementsList) {
@@ -242,25 +243,31 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
         timestamp: Date.now(),
       });
 
-      const formUrl = buildPublicServiceFormUrl(baseUrl, villageSlug, service.slug, userId, channel === 'webchat' ? 'webchat' : 'whatsapp');
-      guidanceText = `Jika ingin mengajukan layanan ini secara online, silakan klik link berikut:\n${formUrl}`;
+      guidanceText = 'Kalau Bapak/Ibu mau lanjut mengajukan sekarang, balas *iya* ya. Nanti saya kirim link formulirnya.';
     } else {
-      replyText += 'Layanan ini diproses secara offline di kantor desa/kelurahan.\n\nSilakan datang ke kantor dengan membawa persyaratan di atas.';
+      replyText += 'Layanan ini diproses langsung di kantor desa. Silakan datang dengan membawa persyaratan di atas ya.';
     }
 
     return { replyText, guidanceText: guidanceText || undefined };
   } catch (error: any) {
-    logger.error('Failed to fetch service info', { error: error.message, service_slug, service_id });
+    logger.error('Failed to fetch service info', {
+      error: error.message,
+      service_slug,
+      service_id,
+      villageId,
+      activeServiceCount: activeServices.length,
+    });
     return { replyText: llmResponse.reply_text || 'Baik Pak/Bu, saya cek dulu info layanan tersebut ya.' };
   }
 }
 
 // ==================== SERVICE REQUEST CREATION ====================
 
-export async function handleServiceRequestCreation(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
+export async function handleServiceRequestCreation(userId: string, channel: ChannelType, llmResponse: any): Promise<HandlerResult> {
   let { service_slug } = llmResponse.fields || {};
   const rawMessage = llmResponse.fields?._original_message || llmResponse.fields?.service_name || llmResponse.fields?.service_query || '';
   let villageId = llmResponse.fields?.village_id || '';
+  const services = await getServiceCatalog(villageId);
 
   if (!service_slug && rawMessage) {
     const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
@@ -279,26 +286,15 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
   }
 
   try {
-    let response = await axios.get(`${config.caseServiceUrl}/services/by-slug`, {
-      params: { village_id: villageId, slug: service_slug },
-      headers: { 'x-internal-api-key': config.internalApiKey },
-      timeout: 5000,
-    }).catch(() => null);
-
-    let service = response?.data?.data;
+    let service = services.find((item) => item.slug === service_slug);
 
     if (!service) {
-      logger.info('Service not found by slug, trying search', { service_slug, villageId });
+      logger.info('Service not found by slug in merged catalog, trying search', { service_slug, villageId });
       const searchQuery = service_slug.replace(/-/g, ' ');
       const resolved = await resolveServiceSlugFromSearch(searchQuery, villageId);
       if (resolved?.slug) {
         service_slug = resolved.slug;
-        response = await axios.get(`${config.caseServiceUrl}/services/by-slug`, {
-          params: { village_id: villageId, slug: service_slug },
-          headers: { 'x-internal-api-key': config.internalApiKey },
-          timeout: 5000,
-        }).catch(() => null);
-        service = response?.data?.data;
+        service = services.find((item) => item.slug === service_slug);
       }
     }
 
@@ -338,7 +334,10 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
     });
 
     const clickableUrl = formatClickableLink(formUrl, channel, 'Link Formulir Layanan');
-    return `Baik Pak/Bu, silakan mengisi permohonan melalui link berikut:\n${clickableUrl}\n\nSetelah dikirim, Bapak/Ibu akan mendapatkan nomor layanan.\n⚠️ Mohon simpan nomor layanan dengan baik.\nUntuk cek status, ketik: *status <kode layanan>*\n(Contoh: status LAY-20250209-001)`;
+    return {
+      replyText: `Baik Pak/Bu, saya kirim link formulir untuk layanan *${service.name}* ya.`,
+      guidanceText: `${clickableUrl}\n\nNomor WhatsApp Bapak/Ibu akan ikut tercatat sebagai identitas pengajuan. Setelah formulir dikirim, nanti akan muncul nomor layanan untuk cek status, ubah data, atau membatalkan pengajuan bila masih memungkinkan.`,
+    };
   } catch (error: any) {
     logger.error('Failed to validate service before sending form link', { error: error.message, service_slug, villageId });
     return llmResponse.reply_text || 'Mohon maaf Pak/Bu, saya belum bisa menyiapkan link formulirnya sekarang. Coba lagi sebentar ya.';
@@ -347,7 +346,7 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
 
 // ==================== SERVICE REQUEST EDIT ====================
 
-export async function handleServiceRequestEditLink(userId: string, channel: ChannelType, llmResponse: any): Promise<string> {
+export async function handleServiceRequestEditLink(userId: string, channel: ChannelType, llmResponse: any): Promise<HandlerResult> {
   const { request_number } = llmResponse.fields || {};
 
   if (!request_number) {
@@ -391,5 +390,8 @@ export async function handleServiceRequestEditLink(userId: string, channel: Chan
   });
 
   const clickableEditUrl = formatClickableLink(editUrl, channel, 'Link Edit Permohonan');
-  return `Baik Pak/Bu, perubahan data layanan hanya dapat dilakukan melalui website.\n\nSilakan lakukan pembaruan melalui link berikut:\n${clickableEditUrl}\n\nLink ini hanya berlaku satu kali.`;
+  return {
+    replyText: 'Baik Pak/Bu, perubahan data layanan hanya dapat dilakukan melalui website.',
+    guidanceText: `${clickableEditUrl}\n\nLink ini hanya berlaku satu kali dan hanya bisa dipakai oleh nomor yang mengajukan layanan ini.`,
+  };
 }

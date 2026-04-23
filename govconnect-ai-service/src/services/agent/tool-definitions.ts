@@ -40,7 +40,8 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       name: 'get_service_info',
       strict: true,
       description:
-        'Detail layanan administrasi: daftar layanan aktif, persyaratan, mode layanan, dan link formulir online jika tersedia. ' +
+        'Detail layanan administrasi: daftar layanan aktif, persyaratan, dan mode layanan. ' +
+        'Gunakan untuk menjelaskan syarat dan kesiapan layanan sebelum mengirim link formulir. ' +
         'Gunakan untuk pertanyaan syarat, biaya, proses, dokumen, surat, atau layanan kependudukan. ' +
         'Jika service_name kosong, tool boleh dipakai untuk menampilkan layanan aktif yang tersedia.',
       parameters: {
@@ -156,7 +157,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       strict: true,
       description:
         'Buat pengaduan infrastruktur. Wajib ada kategori, alamat, dan deskripsi. ' +
-        'Jika nama pelapor atau nomor telepon webchat belum tersedia, tool akan meminta data tambahan dulu.',
+        'Nama pelapor dan nomor telepon bersifat opsional. Untuk kanal WhatsApp jangan meminta nomor HP lagi jika masalah sudah jelas. Jangan bilang laporan berhasil dibuat jika tool ini gagal.',
       parameters: {
         type: 'object',
         properties: {

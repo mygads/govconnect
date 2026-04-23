@@ -36,6 +36,13 @@ import { getCachedResponse, setCachedResponse } from './response-cache.service';
 import { buildHybridMemorySummary } from './hybrid-memory.service';
 import { recordGuardrailEvent } from './runtime-observability.service';
 import { recordToolPolicyEvent } from './agent/tool-policy.service';
+import {
+  analyzeSentimentWithLLM,
+  getSentimentContext,
+  needsHumanEscalation,
+} from './sentiment-analysis.service';
+import { startTakeoverForUser } from './channel-client.service';
+import { getEnhancedContext } from './conversation-context.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
@@ -109,6 +116,7 @@ interface AgentProcessInput {
   memorySummary?: string;
   villageName?: string;
   userName?: string | null;
+  sentimentContext?: string;
   traceId: string;
   startTime: number;
   tracker: ReturnType<typeof createProcessingTracker>;
@@ -117,7 +125,6 @@ interface AgentProcessInput {
 
 const CACHEABLE_AGENT_TOOLS = new Set([
   'get_village_profile',
-  'get_service_info',
   'get_complaint_categories',
   'get_emergency_contacts',
   'search_knowledge',
@@ -125,6 +132,10 @@ const CACHEABLE_AGENT_TOOLS = new Set([
 ]);
 
 function isCacheableAgentResult(result: ProcessMessageResult): boolean {
+  if (result.intent === 'TAKEOVER' || result.metadata.handoff?.started) {
+    return false;
+  }
+
   const toolsUsed = Array.isArray(result.metadata?.toolsUsed) ? result.metadata.toolsUsed : [];
   if (toolsUsed.length === 0) {
     return false;
@@ -138,7 +149,69 @@ function normalizeAssistantText(text?: string): string | undefined {
 
   return text
     .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-')
-    .replace(/[\u00A0\u2007\u202F]/g, ' ');
+    .replace(/[\u00A0\u2007\u202F]/g, ' ')
+    .replace(/^\s*berdasarkan\s+(informasi|data)(\s+yang\s+(tersedia|kami miliki))?(\s+dari\s+(sumber\s+resmi\s+desa|sistem|data\s+resmi))?,?\s*/i, '')
+    .replace(/^\s*menurut\s+(informasi|data)(\s+yang\s+tersedia)?,?\s*/i, '')
+    .replace(/^\s*secara\s+singkat:\s*/i, '')
+    .trim();
+}
+
+function splitFollowUpGuidance(response: string, guidanceText?: string): { response: string; guidanceText?: string } {
+  if (!response || guidanceText) {
+    return { response, guidanceText };
+  }
+
+  const shouldSplitLine = (value: string): boolean => [
+    /^ada yang (bisa|ingin) saya bantu lagi\??$/i,
+    /^kalau (mau|ingin|perlu)\b/i,
+    /^apakah .*bantu/i,
+  ].some((pattern) => pattern.test(value));
+
+  const parts = response
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    const candidate = parts[parts.length - 1];
+    if (shouldSplitLine(candidate)) {
+      const mainResponse = parts.slice(0, -1).join('\n\n').trim();
+      if (mainResponse) {
+        return {
+          response: mainResponse,
+          guidanceText: candidate,
+        };
+      }
+    }
+  }
+
+  const lines = response
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) {
+    return { response, guidanceText };
+  }
+
+  const candidateLine = lines[lines.length - 1];
+  if (!shouldSplitLine(candidateLine)) {
+    return { response, guidanceText };
+  }
+
+  const splitMarker = response.lastIndexOf(candidateLine);
+  if (splitMarker <= 0) {
+    return { response, guidanceText };
+  }
+
+  const mainResponse = response.slice(0, splitMarker).trim();
+  if (!mainResponse) {
+    return { response, guidanceText };
+  }
+
+  return {
+    response: mainResponse,
+    guidanceText: candidateLine,
+  };
 }
 
 function deriveAnalyticsIntent(result: ProcessMessageResult): string {
@@ -168,10 +241,85 @@ function deriveAnalyticsIntent(result: ProcessMessageResult): string {
 function deriveAnalyticsSource(result: ProcessMessageResult): string {
   if (result.intent === 'SPAM') return 'spam_guard';
   if (result.intent === 'ERROR') return 'fallback_error';
+  if (result.intent === 'TAKEOVER') return 'human_handoff';
   if (result.metadata.agentMode === 'response_cache') return 'response_cache';
   if (result.metadata.agentMode === 'single_orchestrator') return 'agent';
   if (result.metadata.agentMode === 'pre_agent_guard') return 'pre_agent_guard';
   return 'orchestrator';
+}
+
+function isExplicitHumanHandoffRequest(message: string): boolean {
+  const text = (message || '').toLowerCase();
+  if (!text) return false;
+
+  return [
+    /cs\s+manusia/,
+    /petugas\s+(asli|manusia|desa)/,
+    /admin\s+(asli|manusia)/,
+    /operator/,
+    /minta\s+(dibantu|disambungkan|dialihkan).*(petugas|admin|manusia)/,
+    /hubungkan?\s+saya.*(petugas|admin|manusia)/,
+    /saya\s+mau\s+orang/,
+    /tidak\s+membantu/,
+    /ga?k\s+membantu/,
+    /jelek/,
+    /komplain\s+cs/,
+  ].some((pattern) => pattern.test(text));
+}
+
+function buildHumanHandoffReply(reason: string): string {
+  if (reason === 'user_requested_human_agent') {
+    return 'Baik, percakapan ini kami teruskan ke petugas agar dibantu lebih lanjut. Mohon tunggu sebentar ya.';
+  }
+
+  return 'Baik, supaya penanganannya lebih pas, percakapan ini kami teruskan ke petugas dulu ya. Mohon tunggu sebentar.';
+}
+
+async function maybeTriggerHumanHandoff(input: {
+  userId: string;
+  channel: 'whatsapp' | 'webchat';
+  villageId?: string;
+  message: string;
+  result: ProcessMessageResult;
+  sentiment: Awaited<ReturnType<typeof analyzeSentimentWithLLM>>;
+  isEvaluation?: boolean;
+}): Promise<{ started: boolean; reason?: string; response?: string }> {
+  if (input.isEvaluation) {
+    return { started: false };
+  }
+
+  let handoffReason: string | undefined;
+
+  if (isExplicitHumanHandoffRequest(input.message)) {
+    handoffReason = 'user_requested_human_agent';
+  } else {
+    const ctx = getEnhancedContext(input.userId);
+    if (input.result.intent === 'AGENT_ERROR') {
+      handoffReason = 'agent_error';
+    } else if (input.sentiment.isEscalationCandidate || needsHumanEscalation(input.userId)) {
+      handoffReason = 'negative_sentiment_escalation';
+    } else if (ctx.needsHumanHelp) {
+      handoffReason = 'conversation_stuck';
+    }
+  }
+
+  if (!handoffReason) {
+    return { started: false };
+  }
+
+  const started = await startTakeoverForUser(input.userId, {
+    village_id: input.villageId,
+    channel: input.channel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+    admin_id: 'system-auto-handoff',
+    admin_name: 'Petugas Desa',
+    reason: handoffReason,
+  });
+
+  return {
+    started,
+    reason: handoffReason,
+    response: started ? buildHumanHandoffReply(handoffReason) : undefined,
+  };
 }
 
 async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessageResult> {
@@ -186,6 +334,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     memorySummary,
     villageName,
     userName,
+    sentimentContext,
     traceId,
     startTime,
     tracker,
@@ -203,6 +352,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         memorySummary,
         currentDatetime: String(getWIBDateTime()),
         userName,
+        sentimentContext,
       },
       {
         userId,
@@ -251,6 +401,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     return {
       success: true,
       response: result.replyText,
+      guidanceText: result.guidanceText,
       intent: derivedIntent,
       metadata: {
         processingTimeMs: Date.now() - startTime,
@@ -296,8 +447,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   let resolvedHistory = conversationHistory;
   let finalResult: ProcessMessageResult | null = null;
   const finish = (result: ProcessMessageResult) => {
-    result.response = normalizeAssistantText(result.response) || result.response;
-    result.guidanceText = normalizeAssistantText(result.guidanceText);
+    const normalizedResponse = normalizeAssistantText(result.response) || result.response;
+    result.response = validateResponse(normalizedResponse);
+
+    if (result.guidanceText) {
+      const normalizedGuidance = normalizeAssistantText(result.guidanceText) || result.guidanceText;
+      result.guidanceText = validateResponse(normalizedGuidance);
+    }
+
+    const split = splitFollowUpGuidance(result.response, result.guidanceText);
+    result.response = split.response;
+    result.guidanceText = split.guidanceText;
     finalResult = result;
     return result;
   };
@@ -544,7 +704,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     let sanitizedMessage = sanitizeUserInput(message);
     sanitizedMessage = normalizeText(sanitizedMessage);
 
-    const [savedProfile, memorySummary] = await Promise.all([
+    const [savedProfile, memorySummary, sentiment] = await Promise.all([
       getAutoFillSuggestionsWithFallback(userId),
       buildHybridMemorySummary({
         wa_user_id: userId,
@@ -554,7 +714,14 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         channel: agentChannel,
         skip_observability: !!isEvaluation,
       }),
+      analyzeSentimentWithLLM(sanitizedMessage, userId, {
+        village_id: resolvedVillageId,
+        wa_user_id: channel === 'whatsapp' ? userId : undefined,
+        session_id: channel === 'webchat' ? userId : undefined,
+        channel,
+      }),
     ]);
+    const sentimentContext = getSentimentContext(sentiment);
 
     if (resolvedVillageId) {
       const profile = await getVillageProfileSummary(resolvedVillageId);
@@ -591,7 +758,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // ── Agent Mode (always active) ──
     // Spam guard and pending-state guards stay outside the agent, but
     // deterministic question answering now goes through the same tool-calling agent.
-    const agentResult = await processWithAgent({
+    let agentResult = await processWithAgent({
       userId,
       message: sanitizedMessage,
       channel: channel as 'whatsapp' | 'webchat',
@@ -602,11 +769,40 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       memorySummary,
       villageName: templateContext?.villageName ?? undefined,
       userName: savedProfile.nama_lengkap ?? null,
+      sentimentContext,
       traceId,
       startTime,
       tracker,
       notifyStage,
     });
+
+    agentResult.metadata.sentiment = sentiment.level;
+
+    const handoff = await maybeTriggerHumanHandoff({
+      userId,
+      channel: agentChannel,
+      villageId: resolvedVillageId,
+      message: sanitizedMessage,
+      result: agentResult,
+      sentiment,
+      isEvaluation,
+    });
+
+    if (handoff.started && handoff.response) {
+      agentResult = {
+        ...agentResult,
+        response: handoff.response,
+        guidanceText: undefined,
+        intent: 'TAKEOVER',
+        metadata: {
+          ...agentResult.metadata,
+          handoff: {
+            started: true,
+            reason: handoff.reason,
+          },
+        },
+      };
+    }
 
     if (!isEvaluation && agentResult.success && isCacheableAgentResult(agentResult)) {
       setCachedResponse(

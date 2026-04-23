@@ -37,25 +37,53 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const url = new URL(`${CASE_SERVICE_URL}/services/by-slug`);
-        url.searchParams.set("village_id", village.id);
-        url.searchParams.set("slug", serviceSlug);
-
-        const response = await fetch(url.toString(), {
-            headers: {
-                "x-internal-api-key": INTERNAL_API_KEY,
-            },
+        const profile = await prisma.village_profiles.findFirst({
+            where: { village_id: village.id },
+            select: { short_name: true },
         });
 
-        if (!response.ok) {
-            const detail = await response.text();
-            return NextResponse.json(
-                { error: "Gagal memuat layanan", detail },
-                { status: response.status }
-            );
+        const villageCandidates = Array.from(
+            new Set(
+                [village.id, village.slug, profile?.short_name]
+                    .map((value) => value?.trim())
+                    .filter((value): value is string => Boolean(value))
+            )
+        );
+
+        let result: any = null;
+        let lastErrorStatus = 404;
+        let lastErrorDetail = "{\"error\":\"Service not found\"}";
+
+        for (const candidateVillageId of villageCandidates) {
+            const url = new URL(`${CASE_SERVICE_URL}/services/by-slug`);
+            url.searchParams.set("village_id", candidateVillageId);
+            url.searchParams.set("slug", serviceSlug);
+
+            const response = await fetch(url.toString(), {
+                headers: {
+                    "x-internal-api-key": INTERNAL_API_KEY,
+                },
+            });
+
+            if (response.ok) {
+                result = await response.json();
+                break;
+            }
+
+            lastErrorStatus = response.status;
+            lastErrorDetail = await response.text();
         }
 
-        const result = await response.json();
+        if (!result) {
+            return NextResponse.json(
+                {
+                    error: "Gagal memuat layanan",
+                    detail: lastErrorDetail,
+                    village_candidates: villageCandidates,
+                },
+                { status: lastErrorStatus }
+            );
+        }
 
         // Bot WA number is owned by channel-service (per village). Best-effort: do not fail page.
         let villageWaNumber: string | null = null;

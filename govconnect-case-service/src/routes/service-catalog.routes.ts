@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
-import { query } from 'express-validator';
+import { body, query } from 'express-validator';
 import { internalAuth } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
 import {
@@ -19,6 +19,7 @@ import {
   handleGetServiceRequests,
   handleCreateServiceRequest,
   handleGetServiceRequestById,
+  handleCheckServiceRequestStatus,
   handleUpdateServiceRequestStatus,
   handleDeleteServiceRequest,
   handleGetServiceHistory,
@@ -71,12 +72,30 @@ router.get(
 );
 router.post('/service-requests', handleCreateServiceRequest);
 router.get('/service-requests/deleted', internalAuth, handleGetDeletedServiceRequests);
-router.get('/service-requests/:id', handleGetServiceRequestById);
 router.get('/service-requests/by-token', handleGetServiceRequestByToken);
+router.get('/service-requests/:id', handleGetServiceRequestById);
+router.post(
+  '/service-requests/:id/check',
+  internalAuth,
+  [
+    body('wa_user_id').optional().matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+  ],
+  validate,
+  handleCheckServiceRequestStatus
+);
 router.patch('/service-requests/:id/status', internalAuth, handleUpdateServiceRequestStatus);
 router.patch('/service-requests/:id/soft-delete', internalAuth, handleSoftDeleteServiceRequest);
 router.patch('/service-requests/:id/restore', internalAuth, handleRestoreServiceRequest);
-router.post('/service-requests/:id/cancel', internalAuth, handleCancelServiceRequest);
+router.post(
+  '/service-requests/:id/cancel',
+  internalAuth,
+  [
+    body('wa_user_id').optional().matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
+    body('cancel_reason').optional().isString(),
+  ],
+  validate,
+  handleCancelServiceRequest
+);
 router.post('/service-requests/:id/edit-token', internalAuth, handleGenerateServiceRequestEditToken);
 router.patch('/service-requests/:id/by-token', handleUpdateServiceRequestByToken);
 router.delete('/service-requests/:id', internalAuth, handleDeleteServiceRequest);

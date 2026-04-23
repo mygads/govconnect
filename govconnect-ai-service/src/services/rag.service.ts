@@ -16,6 +16,7 @@ import {
   RAGContext,
   RAGConfidence,
   RAGConflictInfo,
+  RetrievalMode,
   VectorSearchResult,
   VectorSearchOptions,
 } from '../types/embedding.types';
@@ -39,6 +40,121 @@ const DEFAULT_MIN_SCORE = 0.50; // Lowered from 0.65 for better recall (Fase 0.5
 const MIN_EFFECTIVE_SCORE = 0.35; // Lowered from 0.45 — threshold applied post-retrieval/rerank // Floor to prevent noise from cascading threshold reductions
 const MAX_CONTEXT_LENGTH = 5000; // Increased from 4000 — dedup removes waste, so we can include more
 const DEFAULT_RERANK_MIN_SCORE = 0.2;
+const DEFAULT_RETRIEVAL_MODE: RetrievalMode = 'external_rerank';
+
+function resolveRetrievalMode(mode?: RetrievalMode): RetrievalMode {
+  if (mode === 'external_rerank' || mode === 'heuristic_rerank' || mode === 'raw_no_rerank') {
+    return mode;
+  }
+
+  const envMode = (process.env.RAG_RETRIEVAL_MODE || '').trim().toLowerCase();
+  if (envMode === 'external_rerank' || envMode === 'heuristic_rerank' || envMode === 'raw_no_rerank') {
+    return envMode as RetrievalMode;
+  }
+
+  return DEFAULT_RETRIEVAL_MODE;
+}
+
+function applyRawNoRerank(results: VectorSearchResult[], topK: number, minScore: number): VectorSearchResult[] {
+  return results.filter((result) => result.score >= minScore).slice(0, topK);
+}
+
+function applyHeuristicRerank(results: VectorSearchResult[], query: string, topK: number, minScore: number): VectorSearchResult[] {
+  return rerankResults(results, query, topK).filter((result) => result.score >= minScore);
+}
+
+function markRetrievalMode(results: VectorSearchResult[], retrievalMode: RetrievalMode): VectorSearchResult[] {
+  return results.map((result) => ({
+    ...result,
+    metadata: {
+      ...(result.metadata || {}),
+      retrievalMode,
+    },
+  }));
+}
+
+function rerankRetrievedResults(
+  results: VectorSearchResult[],
+  query: string,
+  topK: number,
+  minScore: number,
+  retrievalMode: RetrievalMode,
+): Promise<{ results: VectorSearchResult[]; appliedMode: RetrievalMode }> {
+  return (async () => {
+    if (results.length <= 1) {
+      return {
+        results: markRetrievalMode(applyRawNoRerank(results, topK, minScore), retrievalMode === 'raw_no_rerank' ? 'raw_no_rerank' : retrievalMode),
+        appliedMode: retrievalMode === 'raw_no_rerank' ? 'raw_no_rerank' : retrievalMode,
+      };
+    }
+
+    if (retrievalMode === 'raw_no_rerank') {
+      return {
+        results: markRetrievalMode(applyRawNoRerank(results, topK, minScore), 'raw_no_rerank'),
+        appliedMode: 'raw_no_rerank',
+      };
+    }
+
+    if (retrievalMode === 'heuristic_rerank') {
+      return {
+        results: markRetrievalMode(applyHeuristicRerank(results, query, topK, minScore), 'heuristic_rerank'),
+        appliedMode: 'heuristic_rerank',
+      };
+    }
+
+    if (!config.rerankEnabled || !isAIGatewayEnabled('rerank')) {
+      return {
+        results: markRetrievalMode(applyHeuristicRerank(results, query, topK, minScore), 'heuristic_rerank'),
+        appliedMode: 'heuristic_rerank',
+      };
+    }
+
+    const rerankResult = await callAIGatewayRerank({
+      query,
+      documents: results.map(result => result.content),
+      topN: Math.min(topK, results.length),
+      timeoutMs: config.rerankerGateway.timeoutMs,
+      layerType: 'rag_rerank',
+      callType: 'rerank_documents',
+    });
+
+    if (!rerankResult) {
+      return {
+        results: markRetrievalMode(applyHeuristicRerank(results, query, topK, minScore), 'heuristic_rerank'),
+        appliedMode: 'heuristic_rerank',
+      };
+    }
+
+    const reranked: VectorSearchResult[] = [];
+    for (const item of rerankResult.items) {
+      const original = results[item.index];
+      if (!original) {
+        continue;
+      }
+
+      reranked.push({
+        ...original,
+        score: Math.max(0, Math.min(1, item.relevanceScore)),
+        metadata: {
+          ...(original.metadata || {}),
+          rerankScore: item.relevanceScore,
+          rerankModel: rerankResult.model,
+          retrievalMode: 'external_rerank',
+        },
+      });
+    }
+
+    const rerankThreshold = Math.max(minScore * 0.75, DEFAULT_RERANK_MIN_SCORE);
+    const filtered = reranked.filter(result => result.score >= rerankThreshold).slice(0, topK);
+    const finalResults = filtered.length > 0 ? filtered : reranked.slice(0, topK);
+
+    return {
+      results: markRetrievalMode(finalResults, 'external_rerank'),
+      appliedMode: 'external_rerank',
+    };
+  })();
+}
+
 
 /**
  * ==================== QUERY INTENT CLASSIFICATION ====================
@@ -360,6 +476,7 @@ function getRetrievalCacheKey(
     villageId?: string;
     useQueryExpansion: boolean;
     useHybridSearch: boolean;
+    retrievalMode: RetrievalMode;
   },
 ): string {
   return JSON.stringify({
@@ -405,57 +522,6 @@ function setCachedRetrieval(key: string, value: RAGContext): void {
   }
 }
 
-async function rerankRetrievedResults(
-  results: VectorSearchResult[],
-  query: string,
-  topK: number,
-  minScore: number,
-): Promise<VectorSearchResult[]> {
-  if (
-    !config.rerankEnabled ||
-    !isAIGatewayEnabled('rerank') ||
-    results.length <= 1
-  ) {
-    return rerankResults(results, query, topK).filter(r => r.score >= minScore);
-  }
-
-  const rerankResult = await callAIGatewayRerank({
-    query,
-    documents: results.map(result => result.content),
-    topN: Math.min(topK, results.length),
-    timeoutMs: config.rerankerGateway.timeoutMs,
-    layerType: 'rag_rerank',
-    callType: 'rerank_documents',
-  });
-
-  if (!rerankResult) {
-    return rerankResults(results, query, topK).filter(r => r.score >= minScore);
-  }
-
-  const reranked: VectorSearchResult[] = [];
-  for (const item of rerankResult.items) {
-    const original = results[item.index];
-    if (!original) {
-      continue;
-    }
-
-    reranked.push({
-      ...original,
-      score: Math.max(0, Math.min(1, item.relevanceScore)),
-      metadata: {
-        ...(original.metadata || {}),
-        rerankScore: item.relevanceScore,
-        rerankModel: rerankResult.model,
-      },
-    });
-  }
-
-  const rerankThreshold = Math.max(minScore * 0.75, DEFAULT_RERANK_MIN_SCORE);
-  const filtered = reranked.filter(result => result.score >= rerankThreshold).slice(0, topK);
-
-  return filtered.length > 0 ? filtered : reranked.slice(0, topK);
-}
-
 /**
  * Retrieve relevant context for a user query
  * This is the main entry point for RAG retrieval
@@ -479,9 +545,11 @@ export async function retrieveContext(
     categories,
     sourceTypes = ['knowledge', 'document'],
     villageId,
+    retrievalMode: requestedRetrievalMode,
     useQueryExpansion = true,  // Enable query expansion by default
     useHybridSearch = true,    // Enable hybrid search by default
   } = options as VectorSearchOptions & { useQueryExpansion?: boolean; useHybridSearch?: boolean };
+  const retrievalMode = resolveRetrievalMode(requestedRetrievalMode);
 
   const retrievalCacheKey = getRetrievalCacheKey(query, {
     topK,
@@ -491,6 +559,7 @@ export async function retrieveContext(
     villageId,
     useQueryExpansion,
     useHybridSearch,
+    retrievalMode,
   });
 
   const cachedRetrieval = getCachedRetrieval(retrievalCacheKey);
@@ -541,6 +610,7 @@ export async function retrieveContext(
     nluCategories: queryIntentResult.nluCategories,
     useQueryExpansion,
     useHybridSearch,
+    retrievalMode,
   });
 
   try {
@@ -564,17 +634,20 @@ export async function retrieveContext(
         useQueryExpansion: false,
       });
 
-      filteredResults = await rerankRetrievedResults(
+      const rerankOutcome = await rerankRetrievedResults(
         hybridResults,
         expandedQuery,
         topK,
         adjustedMinScore,
+        retrievalMode,
       );
-      retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults);
+      filteredResults = rerankOutcome.results;
+      retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults, rerankOutcome.appliedMode);
 
       logger.debug('Hybrid search completed', {
         query: query.substring(0, 50),
         resultCount: hybridResults.length,
+        retrievalMode: rerankOutcome.appliedMode,
         matchTypes: hybridResults.map(r => (r as HybridSearchResult).matchType),
       });
     } else {
@@ -616,13 +689,15 @@ export async function retrieveContext(
         };
       }
 
-      filteredResults = await rerankRetrievedResults(
+      const rerankOutcome = await rerankRetrievedResults(
         searchResults,
         expandedQuery,
         topK,
         adjustedMinScore,
+        retrievalMode,
       );
-      retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults);
+      filteredResults = rerankOutcome.results;
+      retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults, rerankOutcome.appliedMode);
     }
 
     if (filteredResults.length === 0) {
@@ -668,6 +743,7 @@ export async function retrieveContext(
       intent: queryIntent,
       expanded: expandedQuery !== query,
       hybrid: useHybridSearch,
+      retrievalMode: retrievalDebug?.retrievalMode || retrievalMode,
       totalResults: filteredResults.length,
       topScore: filteredResults[0]?.score.toFixed(4),
       confidence: confidence.level,
@@ -711,6 +787,7 @@ export async function retrieveContext(
 function buildHybridRetrievalDebug(
   candidates: HybridSearchResult[],
   selectedResults: VectorSearchResult[],
+  retrievalMode: RetrievalMode,
 ): RAGContext['retrievalDebug'] {
   const selectedById = new Map(
     selectedResults.map((result) => [
@@ -724,6 +801,7 @@ function buildHybridRetrievalDebug(
 
   return {
     hybridUsed: true,
+    retrievalMode,
     candidates: candidates.slice(0, 10).map((candidate) => ({
       id: candidate.id,
       title: candidate.source,
@@ -744,11 +822,13 @@ function buildHybridRetrievalDebug(
 function buildVectorRetrievalDebug(
   candidates: VectorSearchResult[],
   selectedResults: VectorSearchResult[],
+  retrievalMode: RetrievalMode,
 ): RAGContext['retrievalDebug'] {
   const selectedIds = new Set(selectedResults.map((result) => result.id));
 
   return {
     hybridUsed: false,
+    retrievalMode,
     candidates: candidates.slice(0, 10).map((candidate, index) => ({
       id: candidate.id,
       title: candidate.source,

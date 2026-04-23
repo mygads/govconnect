@@ -133,14 +133,6 @@ export async function markMessagesAsRead(
  * @returns true if user is in takeover mode, false otherwise
  */
 export async function isUserInTakeover(wa_user_id: string, village_id?: string): Promise<boolean> {
-  // Skip takeover check in testing mode (assume AI always processes)
-  if (config.testingMode) {
-    logger.debug('TESTING MODE: Skipping takeover check (AI processes)', {
-      wa_user_id,
-    });
-    return false;
-  }
-
   try {
     const url = `${config.channelServiceUrl}/internal/takeover/${encodeURIComponent(wa_user_id)}/status`;
     
@@ -168,6 +160,64 @@ export async function isUserInTakeover(wa_user_id: string, village_id?: string):
       error: error.message,
     });
     // Default to false (AI processes) if check fails
+    return false;
+  }
+}
+
+interface StartTakeoverOptions {
+  village_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  admin_id?: string;
+  admin_name?: string;
+  reason?: string;
+}
+
+export async function startTakeoverForUser(
+  channel_identifier: string,
+  options: StartTakeoverOptions = {},
+): Promise<boolean> {
+  try {
+    const url = `${config.channelServiceUrl}/internal/takeover/${encodeURIComponent(channel_identifier)}`;
+    const headers: Record<string, string> = {
+      'x-internal-api-key': config.internalApiKey,
+      'Content-Type': 'application/json',
+    };
+
+    if (options.village_id) {
+      headers['x-village-id'] = options.village_id;
+    }
+
+    await axios.post(
+      url,
+      {
+        admin_id: options.admin_id || 'system-auto-handoff',
+        admin_name: options.admin_name || 'Petugas Desa',
+        reason: options.reason || 'auto_handoff',
+        channel: options.channel || (channel_identifier.startsWith('web_') ? 'WEBCHAT' : 'WHATSAPP'),
+      },
+      {
+        headers,
+        timeout: 5000,
+      }
+    );
+
+    logger.info('Takeover started from AI service', {
+      channel_identifier,
+      village_id: options.village_id,
+      channel: options.channel,
+      reason: options.reason,
+      testingMode: config.testingMode,
+    });
+    return true;
+  } catch (error: any) {
+    logger.warn('Failed to start takeover from AI service', {
+      channel_identifier,
+      village_id: options.village_id,
+      channel: options.channel,
+      reason: options.reason,
+      error: error.message,
+      status: error.response?.status,
+    });
     return false;
   }
 }

@@ -230,38 +230,49 @@ export function buildNaturalStatusResponse(complaint: any): string {
 
   if (statusInfo.key === 'DONE') {
     const note = complaint.admin_notes || '-';
-    return `Laporan ${complaintId} telah *${statusInfo.text}*.\nCatatan penanganan: ${note}`;
+    return `Laporan *${complaintId}* sudah *${statusInfo.text.toLowerCase()}*.\nCatatan petugas: ${note}\n\nKalau masih ada yang ingin dicek, kirim saja nomornya ya.`;
   }
   if (statusInfo.key === 'REJECT') {
-    return `Laporan ${complaintId} *${statusInfo.text}*.\nAlasan penolakan: ${complaint.admin_notes || '-'}`;
+    return `Laporan *${complaintId}* *${statusInfo.text.toLowerCase()}*.\nAlasannya: ${complaint.admin_notes || '-'}\n\nKalau perlu, saya bantu cek laporan atau layanan lain juga.`;
   }
   if (statusInfo.key === 'CANCELED') {
-    return `Laporan ${complaintId} telah *${statusInfo.text}*.\nKeterangan: ${complaint.admin_notes || 'Dibatalkan oleh masyarakat'}`;
+    return `Laporan *${complaintId}* sudah *${statusInfo.text.toLowerCase()}*.\nKeterangan: ${complaint.admin_notes || 'Dibatalkan oleh masyarakat'}\n\nKalau ingin buat laporan baru atau cek nomor lain, saya bantu.`;
   }
-  return `Status laporan ${complaintId} saat ini: *${statusInfo.text}*.`;
+  if (statusInfo.key === 'PROCESS') {
+    return `Laporan *${complaintId}* saat ini *sedang diproses* oleh petugas.\n\nKalau ada tambahan lokasi atau keterangan, bisa langsung dikirim di chat ini ya.`;
+  }
+  if (statusInfo.key === 'OPEN') {
+    return `Laporan *${complaintId}* sudah kami terima dan saat ini *menunggu diproses* petugas.\n\nKalau ada detail tambahan, boleh langsung dikirim.`;
+  }
+  return `Status laporan *${complaintId}* saat ini: *${statusInfo.text}*.\n\nKalau mau, saya bantu cek yang lain juga.`;
 }
 
 export function buildNaturalServiceStatusResponse(serviceRequest: any): string {
   const statusInfo = SERVICE_STATUS_MAP[serviceRequest.status] || { emoji: '📋', text: serviceRequest.status, key: serviceRequest.status };
 
-  let message = `Baik Pak/Bu, status layanan ${serviceRequest.request_number} saat ini: *${statusInfo.text}*.`;
+  let message = `Nomor layanan *${serviceRequest.request_number}* saat ini *${statusInfo.text.toLowerCase()}*.`;
 
   if (statusInfo.key === 'OPEN') {
-    message += `\nPermohonan sedang menunggu untuk diproses.`;
+    message += `\nPermohonan sudah masuk dan sedang menunggu diproses petugas.`;
   }
   if (statusInfo.key === 'PROCESS') {
-    message += `\nPermohonan Anda sedang diproses oleh petugas desa.`;
+    message += `\nPermohonan sedang dikerjakan petugas desa.`;
   }
   if (statusInfo.key === 'DONE') {
     if (serviceRequest.admin_notes) {
-      message += `\n\nCatatan dari petugas desa:\n${serviceRequest.admin_notes}`;
+      message += `\n\nCatatan petugas:\n${serviceRequest.admin_notes}`;
     }
   }
   if (statusInfo.key === 'REJECT') {
-    message += `\n\nAlasan penolakan:\n${serviceRequest.admin_notes || '-'}`;
+    message += `\n\nAlasannya:\n${serviceRequest.admin_notes || '-'}`;
   }
   if (statusInfo.key === 'CANCELED') {
     message += `\n\nKeterangan: ${serviceRequest.admin_notes || 'Dibatalkan'}`;
+  }
+  if (statusInfo.key === 'OPEN' || statusInfo.key === 'PROCESS') {
+    message += `\n\nKalau mau, saya bisa bantu cek lagi nanti atau bantu layanan lainnya.`;
+  } else {
+    message += `\n\nKalau ada nomor layanan lain yang ingin dicek, kirim saja ya.`;
   }
   return message;
 }
@@ -388,7 +399,7 @@ export function buildServiceRequestDetailResponse(serviceRequest: any, requireme
 export function buildCancelSuccessResponse(type: 'laporan' | 'layanan', id: string, reason: string): string {
   const label = type === 'laporan' ? 'Laporan' : 'Layanan';
   const note = reason || 'Dibatalkan oleh masyarakat';
-  return `${label} ${id} telah DIBATALKAN.\nKeterangan: ${note}`;
+  return `${label} *${id}* sudah dibatalkan.\nKeterangan: ${note}\n\nKalau masih ada yang ingin dibantu, saya siap bantu lagi.`;
 }
 
 export function buildCancelErrorResponse(type: 'laporan' | 'layanan', id: string, error?: string, message?: string): string {
@@ -411,26 +422,28 @@ export function buildHistoryResponse(items: Array<{ type: string; display_id: st
   const services = items.filter(i => i.type === 'service');
 
   if (complaints.length > 0) {
-    let message = 'Berikut laporan yang pernah Anda kirimkan:\n\n';
+    let message = 'Berikut riwayat laporan Anda:\n\n';
     for (const item of complaints.slice(0, 5)) {
       const statusLabel = getStatusLabel(item.status);
       const desc = (item.description || '').trim() || 'Laporan';
       message += `${item.display_id} – ${desc} – ${statusLabel}\n`;
     }
+    message += '\nKalau ingin cek detail salah satu laporan, kirim nomor laporannya ya.';
     return message.trim();
   }
 
   if (services.length > 0) {
-    let message = 'Berikut layanan yang pernah Anda ajukan:\n\n';
+    let message = 'Berikut riwayat layanan Anda:\n\n';
     for (const item of services.slice(0, 5)) {
       const statusLabel = getStatusLabel(item.status);
       const desc = (item.description || '').trim() || 'Layanan';
       message += `${item.display_id} – ${desc} – ${statusLabel}\n`;
     }
+    message += '\nKalau ingin cek detail salah satu layanan, kirim nomor layanannya ya.';
     return message.trim();
   }
 
-  return `Berikut riwayat Anda (${total}).`;
+  return `Belum ada riwayat yang bisa saya tampilkan untuk nomor ini.\n\nKalau mau, saya bisa bantu buat laporan baru atau cek layanan lain.`;
 }
 
 export function getStatusLabel(status: string): string {

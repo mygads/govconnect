@@ -556,14 +556,7 @@ export async function cancelComplaint(
     }
     
     // Update complaint status to cancelled
-    const cancelReason = data.cancel_reason?.trim();
-    if (!cancelReason) {
-      return {
-        success: false,
-        error: 'INTERNAL_ERROR',
-        message: 'Alasan pembatalan wajib diisi',
-      };
-    }
+    const cancelReason = data.cancel_reason?.trim() || 'tanpa alasan tambahan';
     const cancelNote = `Dibatalkan oleh masyarakat: ${cancelReason}`;
     
     const updatedComplaint = await prisma.complaint.update({

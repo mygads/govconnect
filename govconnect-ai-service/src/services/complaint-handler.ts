@@ -216,7 +216,7 @@ export async function handleComplaintCreation(
   const hasName = !!userProfile.nama_lengkap;
   const hasPhone = !!userProfile.no_hp;
 
-  const needsName = !hasName;
+  const needsName = isWebchatChannel && !hasName;
   const needsPhone = isWebchatChannel && !hasPhone;
 
   if (needsName || needsPhone) {

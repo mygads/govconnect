@@ -27,14 +27,21 @@ import { recordMemoryTrace } from '../runtime-observability.service';
 import { resolveServiceSlugFromSearch } from '../service-handler';
 import { resolveVillageSlugForPublicForm } from '../ump-utils';
 import {
+  buildCancelErrorResponse,
+  buildCancelSuccessResponse,
+  buildHistoryResponse,
+  buildNaturalServiceStatusResponse,
+  buildNaturalStatusResponse,
   buildEditServiceFormUrl,
   buildPublicServiceFormUrl,
   getPublicFormBaseUrl,
   getStatusLabel,
 } from '../ump-formatters';
 import {
+  setPendingAddressRequest,
   setPendingCancelConfirmation,
   setPendingComplaintData,
+  setPendingServiceFormOffer,
 } from '../ump-state';
 import {
   getAutoFillSuggestionsWithFallback,
@@ -73,6 +80,7 @@ export interface ToolExecutionTrace {
 export interface ExecutedToolCall {
   content: string;
   trace: ToolExecutionTrace;
+  result: ToolCallResult;
 }
 
 interface ToolContext {
@@ -112,6 +120,59 @@ const OFFICE_CONTACT_HINTS = [
   'lurah',
 ];
 
+function formatServiceRequirements(
+  requirements: Array<{ label: string; required?: boolean; help_text?: string | null }>,
+): string {
+  return requirements
+    .map((requirement, index) => {
+      const suffix = requirement.required ? ' (wajib)' : ' (opsional)';
+      const helpText = requirement.help_text ? ` - ${requirement.help_text}` : '';
+      return `${index + 1}. ${requirement.label}${suffix}${helpText}`;
+    })
+    .join('\n');
+}
+
+function buildServiceInfoSuggestedResponse(input: {
+  serviceName: string;
+  description?: string | null;
+  estimatedCost?: string | null;
+  estimatedProcessingTime?: string | null;
+  requirementsText?: string;
+  isOnline: boolean;
+}): string {
+  const parts: string[] = [`Baik Pak/Bu, untuk layanan *${input.serviceName}* informasinya seperti ini:`];
+
+  if (input.requirementsText) {
+    parts.push(input.requirementsText);
+  } else if (input.description) {
+    parts.push(input.description);
+  }
+
+  if (input.estimatedProcessingTime) {
+    parts.push(`Estimasi proses: ${input.estimatedProcessingTime}`);
+  }
+
+  if (input.estimatedCost) {
+    parts.push(`Biaya: ${input.estimatedCost}`);
+  }
+
+  if (input.isOnline) {
+    parts.push('Kalau Bapak/Ibu mau lanjut mengajukan sekarang, balas *iya* ya. Nanti saya kirim link formulirnya.');
+  } else {
+    parts.push('Layanan ini diproses di kantor desa. Silakan datang sambil membawa persyaratan di atas ya.');
+  }
+
+  return parts.filter(Boolean).join('\n\n');
+}
+
+function buildServiceFormGuidanceText(formUrl: string): string {
+  return `Link formulir layanan:\n${formUrl}\n\nNomor WhatsApp Bapak/Ibu akan dipakai sebagai identitas pengajuan. Setelah formulir dikirim, nomor layanan bisa dipakai untuk cek status, ubah data, atau membatalkan pengajuan bila masih memungkinkan.`;
+}
+
+function buildServiceEditGuidanceText(editUrl: string): string {
+  return `Link edit permohonan:\n${editUrl}\n\nLink ini hanya berlaku satu kali dan hanya bisa dipakai oleh nomor yang membuat pengajuan.`;
+}
+
 export async function executeToolCall(
   toolName: AgentToolName,
   args: Record<string, unknown>,
@@ -142,6 +203,7 @@ export async function executeToolCall(
     return {
       content: JSON.stringify(result),
       trace,
+      result,
     };
   } catch (error: any) {
     const durationMs = Date.now() - startTime;
@@ -167,6 +229,14 @@ export async function executeToolCall(
         durationMs,
         trustLevel: 'action_result',
         sourceKind: 'tool_error',
+      },
+      result: {
+        success: false,
+        error: `Tool ${toolName} gagal: ${error.message}`,
+        meta: {
+          trustLevel: 'action_result',
+          sourceKind: 'tool_error',
+        },
       },
     };
   }
@@ -266,6 +336,7 @@ async function toolGetServiceInfo(
         found: false,
         services: [],
         message: 'Belum ada layanan aktif yang terdaftar.',
+        suggested_response: 'Saat ini belum ada layanan aktif yang terdaftar di sistem desa. Kalau Bapak/Ibu butuh bantuan tertentu, sebutkan keperluannya ya, nanti saya arahkan langkah berikutnya.',
       },
       meta: {
         trustLevel: 'trusted_fact',
@@ -288,6 +359,10 @@ async function toolGetServiceInfo(
           description: service.description || null,
         })),
         total: services.length,
+        suggested_response: `Berikut beberapa layanan yang tersedia saat ini:\n\n${services
+          .slice(0, 8)
+          .map((service, index) => `${index + 1}. ${service.name}`)
+          .join('\n')}\n\nKalau Bapak/Ibu butuh syarat atau cara mengajukan salah satu layanan, tinggal sebut nama layanannya ya.`,
       },
       meta: {
         trustLevel: 'trusted_fact',
@@ -305,6 +380,9 @@ async function toolGetServiceInfo(
         needs_clarification: true,
         alternatives: resolved.alternatives,
         message: 'Ada beberapa layanan yang mirip. Minta user memilih layanan yang dimaksud.',
+        suggested_response: `Ada beberapa layanan yang mirip. Biar tidak salah, mohon pilih salah satu ya:\n\n${resolved.alternatives
+          .map((alternative, index) => `${index + 1}. ${alternative}`)
+          .join('\n')}`,
       },
       meta: {
         trustLevel: 'trusted_fact',
@@ -319,6 +397,7 @@ async function toolGetServiceInfo(
       data: {
         found: false,
         message: `Layanan "${serviceName}" tidak ditemukan di katalog aktif.`,
+        suggested_response: `Maaf Pak/Bu, saya belum menemukan layanan *${serviceName}* di daftar layanan desa saat ini.\n\nKalau mau, sebutkan dokumen atau keperluannya, nanti saya bantu carikan layanan yang paling cocok.`,
       },
       meta: {
         trustLevel: 'trusted_fact',
@@ -332,16 +411,23 @@ async function toolGetServiceInfo(
     ? service.requirements
     : await getServiceRequirements(service.id || service.slug);
   const isOnline = service.mode === 'online' || service.mode === 'both';
-  const villageSlug = await resolveVillageSlugForPublicForm(ctx.villageId);
-  const formUrl = isOnline
-    ? buildPublicServiceFormUrl(
-        getPublicFormBaseUrl(),
-        villageSlug,
-        service.slug,
-        ctx.userId,
-        ctx.channel,
-      )
-    : null;
+  const formattedRequirements = requirements.map((requirement) => ({
+    label: requirement.label,
+    type: requirement.field_type,
+    required: requirement.is_required,
+    help_text: requirement.help_text || null,
+  }));
+  const requirementsText = formattedRequirements.length > 0
+    ? formatServiceRequirements(formattedRequirements)
+    : '';
+
+  if (isOnline && !ctx.isEvaluation) {
+    setPendingServiceFormOffer(ctx.userId, {
+      service_slug: service.slug,
+      village_id: ctx.villageId,
+      timestamp: Date.now(),
+    });
+  }
 
   return {
     success: true,
@@ -355,14 +441,20 @@ async function toolGetServiceInfo(
       is_online: isOnline,
       estimated_cost: service.estimated_cost || null,
       estimated_processing_time: service.estimated_processing_time || null,
-      form_url: formUrl,
-      requirements: requirements.map((requirement) => ({
-        label: requirement.label,
-        type: requirement.field_type,
-        required: requirement.is_required,
-        help_text: requirement.help_text || null,
-      })),
+      can_send_form_link: isOnline,
+      requirements: formattedRequirements,
       requirements_count: requirements.length,
+      suggested_response: buildServiceInfoSuggestedResponse({
+        serviceName: service.name,
+        description: service.description || null,
+        estimatedCost: service.estimated_cost || null,
+        estimatedProcessingTime: service.estimated_processing_time || null,
+        requirementsText,
+        isOnline,
+      }),
+      guidance_text: isOnline
+        ? 'Kalau Bapak/Ibu mau lanjut mengajukan sekarang, balas *iya* ya. Nanti saya kirim link formulirnya.'
+        : undefined,
     },
     meta: {
       trustLevel: 'trusted_fact',
@@ -435,6 +527,45 @@ async function toolSearchKnowledge(
   const query = typeof args.query === 'string' ? args.query : '';
   if (!query.trim()) {
     return { success: false, error: 'Query pencarian tidak boleh kosong.' };
+  }
+
+  const asksAboutMeaning = /\b(apa itu|maksud|fungsi|gunanya)\b/i.test(query);
+  const looksLikeStatusLookup = /\bcek\b.*\bstatus\b/i.test(query) || /\bstatus\b/i.test(query);
+  const mentionsServiceReference = /\b(nomor layanan|lay-\.\.\.|lay-)\b/i.test(query);
+  const mentionsComplaintReference = /\b(nomor laporan|lap-\.\.\.|lap-)\b/i.test(query);
+
+  if ((asksAboutMeaning || !looksLikeStatusLookup) && mentionsServiceReference) {
+    return {
+      success: true,
+      data: {
+        found: true,
+        context: '',
+        sources: [],
+        suggested_response: 'Nomor layanan *LAY-...* itu nomor pengajuan layanan Bapak/Ibu.\n\nFungsinya untuk cek status, mengubah data permohonan, atau membatalkan pengajuan kalau statusnya masih memungkinkan.',
+        guidance_text: 'Kalau Bapak/Ibu sudah punya nomor LAY-nya, tinggal kirim ke sini ya. Nanti saya bantu cek.',
+      },
+      meta: {
+        trustLevel: 'trusted_fact',
+        sourceKind: 'system_reference_explainer',
+      },
+    };
+  }
+
+  if ((asksAboutMeaning || !looksLikeStatusLookup) && mentionsComplaintReference) {
+    return {
+      success: true,
+      data: {
+        found: true,
+        context: '',
+        sources: [],
+        suggested_response: 'Nomor laporan *LAP-...* itu nomor pengaduan yang sudah tercatat di sistem.\n\nFungsinya untuk cek perkembangan laporan, menambahkan keterangan, atau membatalkan laporan kalau statusnya masih memungkinkan.',
+        guidance_text: 'Kalau Bapak/Ibu sudah punya nomor LAP-nya, tinggal kirim ke sini ya. Nanti saya bantu cek.',
+      },
+      meta: {
+        trustLevel: 'trusted_fact',
+        sourceKind: 'system_reference_explainer',
+      },
+    };
   }
 
   const result = await searchKnowledge(query, undefined, ctx.villageId, ctx.channel);
@@ -594,11 +725,36 @@ async function toolCreateComplaint(
     ? args.nama_pelapor.trim()
     : undefined;
   const noHp = typeof args.no_hp === 'string' && args.no_hp.trim() ? args.no_hp.trim() : undefined;
+  const categoryConfig = kategori ? await findComplaintCategoryConfig(kategori, ctx.villageId) : null;
+  const categoryLabel = (categoryConfig?.name || kategori || 'laporan').replace(/_/g, ' ').toLowerCase();
 
   if (!kategori || !alamat || !deskripsi) {
+    if (kategori && !alamat && !ctx.isEvaluation) {
+      setPendingAddressRequest(ctx.userId, {
+        kategori: categoryConfig?.name || kategori,
+        deskripsi: deskripsi || `Laporan ${categoryLabel}`,
+        village_id: ctx.villageId,
+        timestamp: Date.now(),
+      });
+    }
+
+    const suggestedResponse = !kategori
+      ? 'Silakan ceritakan dulu masalah yang ingin dilaporkan ya Pak/Bu, misalnya jalan rusak, lampu mati, atau sampah menumpuk.'
+      : !alamat
+        ? `Baik, mohon sebutkan lokasi ${categoryLabel} tersebut ya Pak/Bu. Kalau ada RT/RW atau patokan terdekat, sekalian ditulis.`
+        : `Siap, supaya laporannya bisa kami catat, mohon jelaskan singkat kondisi ${categoryLabel} tersebut ya Pak/Bu.`;
+
     return {
       success: false,
       error: 'Kategori, alamat, dan deskripsi harus lengkap sebelum membuat laporan.',
+      data: {
+        needs_input: !kategori ? 'kategori' : !alamat ? 'alamat' : 'deskripsi',
+        suggested_response: suggestedResponse,
+      },
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'complaint_creation_pending',
+      },
     };
   }
 
@@ -606,6 +762,14 @@ async function toolCreateComplaint(
     return {
       success: false,
       error: 'Deskripsi laporan terlalu singkat. Minta user menjelaskan masalah dengan lebih detail.',
+      data: {
+        needs_input: 'deskripsi',
+        suggested_response: `Baik, mohon jelaskan singkat kondisi ${categoryLabel} tersebut ya Pak/Bu supaya laporannya bisa langsung kami catat.`,
+      },
+      meta: {
+        trustLevel: 'action_result',
+        sourceKind: 'complaint_creation_pending',
+      },
     };
   }
 
@@ -634,60 +798,6 @@ async function toolCreateComplaint(
   if (!ctx.isEvaluation && alamat) {
     saveDefaultAddress(ctx.userId, alamat, rtRw);
   }
-
-  if (!reporterName) {
-    setPendingComplaintData(ctx.userId, {
-      kategori,
-      deskripsi,
-      alamat,
-      rt_rw: rtRw,
-      village_id: ctx.villageId,
-      channel: ctx.channel,
-      timestamp: Date.now(),
-      waitingFor: 'nama',
-    });
-
-    return {
-      success: true,
-      data: {
-        created: false,
-        pending_input: 'nama',
-        message: 'Nama lengkap pelapor belum ada. Minta user menyebutkan nama lengkap untuk melanjutkan laporan.',
-      },
-      meta: {
-        trustLevel: 'action_result',
-        sourceKind: 'complaint_pending_profile',
-      },
-    };
-  }
-
-  if (ctx.channel === 'webchat' && !reporterPhone) {
-    setPendingComplaintData(ctx.userId, {
-      kategori,
-      deskripsi,
-      alamat,
-      rt_rw: rtRw,
-      village_id: ctx.villageId,
-      channel: ctx.channel,
-      timestamp: Date.now(),
-      waitingFor: 'no_hp',
-    });
-
-    return {
-      success: true,
-      data: {
-        created: false,
-        pending_input: 'no_hp',
-        message: 'Nomor telepon pelapor belum ada. Minta user menyebutkan nomor HP untuk melanjutkan laporan.',
-      },
-      meta: {
-        trustLevel: 'action_result',
-        sourceKind: 'complaint_pending_profile',
-      },
-    };
-  }
-
-  const categoryConfig = await findComplaintCategoryConfig(kategori, ctx.villageId);
   if (ctx.isEvaluation) {
     const simulatedId = referenceFromSeed('LAP', `${ctx.userId}:${kategori}:${alamat}`);
     return {
@@ -727,6 +837,9 @@ async function toolCreateComplaint(
     return {
       success: false,
       error: 'Gagal membuat laporan. Silakan coba lagi.',
+      data: {
+        suggested_response: 'Maaf Pak/Bu, laporan belum berhasil kami catat sekarang. Coba kirim lagi sebentar ya.',
+      },
     };
   }
 
@@ -760,6 +873,9 @@ async function toolCreateComplaint(
       message: categoryConfig?.is_urgent === true
         ? `Laporan darurat berhasil dibuat dengan nomor ${complaintId}.`
         : `Laporan berhasil dibuat dengan nomor ${complaintId}.`,
+      suggested_response: categoryConfig?.is_urgent === true
+        ? `Terima kasih. Laporan darurat sudah kami catat dengan nomor *${complaintId}* dan akan segera diteruskan.\n\nKalau ada foto atau tambahan lokasi yang perlu disampaikan, bisa langsung dikirim di chat ini ya.`
+        : `Terima kasih. Laporan sudah kami catat dengan nomor *${complaintId}*.\n\nKalau ada foto atau tambahan lokasi, bisa langsung dikirim di chat ini ya.`,
     },
     meta: {
       trustLevel: 'action_result',
@@ -774,7 +890,13 @@ async function toolCreateServiceRequest(
 ): Promise<ToolCallResult> {
   const serviceSlug = typeof args.service_slug === 'string' ? args.service_slug.trim() : '';
   if (!serviceSlug) {
-    return { success: false, error: 'service_slug harus diisi.' };
+    return {
+      success: false,
+      error: 'service_slug harus diisi.',
+      data: {
+        suggested_response: 'Mohon sebutkan dulu layanan yang ingin diajukan ya Pak/Bu, nanti saya siapkan link formulirnya.',
+      },
+    };
   }
 
   const services = await getServiceCatalog(ctx.villageId);
@@ -783,6 +905,9 @@ async function toolCreateServiceRequest(
     return {
       success: false,
       error: `Layanan dengan slug "${serviceSlug}" tidak ditemukan.`,
+      data: {
+        suggested_response: 'Maaf Pak/Bu, layanan yang ingin diajukan belum saya temukan. Coba sebutkan nama layanannya lagi ya.',
+      },
     };
   }
 
@@ -794,6 +919,7 @@ async function toolCreateServiceRequest(
         service_slug: service.slug,
         service_name: service.name,
         message: `Layanan ${service.name} saat ini belum aktif.`,
+        suggested_response: `Maaf Pak/Bu, layanan *${service.name}* saat ini belum aktif. Kalau mau, saya bantu cek layanan lain yang tersedia.`,
       },
       meta: {
         trustLevel: 'action_result',
@@ -812,6 +938,7 @@ async function toolCreateServiceRequest(
         service_name: service.name,
         can_submit_online: false,
         message: `Layanan ${service.name} hanya diproses offline di kantor desa.`,
+        suggested_response: `Untuk layanan *${service.name}*, pengajuannya belum bisa lewat chat atau link ya Pak/Bu.\n\nSilakan datang ke kantor desa sambil membawa persyaratan yang diperlukan.`,
       },
       meta: {
         trustLevel: 'action_result',
@@ -839,6 +966,8 @@ async function toolCreateServiceRequest(
         form_url: formUrl,
         simulated: true,
         message: `Link formulir simulasi untuk layanan ${service.name} siap dikirim.`,
+        suggested_response: `Baik Pak/Bu, saya kirim link formulir untuk layanan *${service.name}* ya.`,
+        guidance_text: buildServiceFormGuidanceText(formUrl),
       },
       meta: {
         trustLevel: 'action_result',
@@ -870,6 +999,8 @@ async function toolCreateServiceRequest(
       can_submit_online: true,
       form_url: formUrl,
       message: `Link formulir online untuk layanan ${service.name} siap dikirim.`,
+      suggested_response: `Baik Pak/Bu, saya kirim link formulir untuk layanan *${service.name}* ya.`,
+      guidance_text: buildServiceFormGuidanceText(formUrl),
     },
     meta: {
       trustLevel: 'action_result',
@@ -888,17 +1019,32 @@ async function toolUpdateComplaint(
   const rtRw = typeof args.rt_rw === 'string' && args.rt_rw.trim() ? args.rt_rw.trim() : undefined;
 
   if (!referenceNumber) {
-    return { success: false, error: 'Nomor laporan harus diisi.' };
+    return {
+      success: false,
+      error: 'Nomor laporan harus diisi.',
+      data: {
+        suggested_response: 'Untuk memperbarui laporan, mohon kirim nomor laporannya ya Pak/Bu. Contohnya seperti *LAP-20251201-001*.',
+      },
+    };
   }
 
   if (inferReferenceKind(referenceNumber) !== 'complaint') {
-    return { success: false, error: 'Gunakan nomor laporan dengan format LAP-xxx.' };
+    return {
+      success: false,
+      error: 'Gunakan nomor laporan dengan format LAP-xxx.',
+      data: {
+        suggested_response: 'Nomor yang dikirim belum sesuai format laporan ya Pak/Bu. Mohon gunakan nomor dengan format *LAP-...*.',
+      },
+    };
   }
 
   if (!alamat && !deskripsiRaw && !rtRw) {
     return {
       success: false,
       error: 'Sertakan minimal satu perubahan: alamat, deskripsi, atau RT/RW.',
+      data: {
+        suggested_response: 'Baik, silakan kirim perubahan yang ingin ditambahkan, misalnya alamat, RT/RW, atau keterangan tambahan laporannya.',
+      },
     };
   }
 
@@ -938,6 +1084,16 @@ async function toolUpdateComplaint(
     return {
       success: false,
       error: result.message || 'Gagal memperbarui laporan.',
+      data: {
+        suggested_response:
+          result.error === 'NOT_FOUND'
+            ? `Hmm, laporan *${referenceNumber}* tidak ditemukan. Coba cek lagi nomor laporannya ya.`
+            : result.error === 'NOT_OWNER'
+              ? `Mohon maaf Pak/Bu, laporan *${referenceNumber}* bukan milik nomor ini, jadi tidak bisa diubah.`
+              : result.error === 'LOCKED'
+                ? `Laporan *${referenceNumber}* sudah selesai, dibatalkan, atau ditolak, jadi sudah tidak bisa diubah lagi.`
+                : (result.message || 'Maaf Pak/Bu, ada kendala saat memperbarui laporan.'),
+      },
     };
   }
 
@@ -967,6 +1123,7 @@ async function toolUpdateComplaint(
       reference_number: referenceNumber,
       message: result.message || 'Laporan berhasil diperbarui.',
       details: result.data || null,
+      suggested_response: `Terima kasih. Keterangan laporan *${referenceNumber}* sudah saya perbarui.`,
     },
     meta: {
       trustLevel: 'action_result',
@@ -981,11 +1138,23 @@ async function toolGetServiceRequestEditLink(
 ): Promise<ToolCallResult> {
   const referenceNumber = normalizeReferenceNumber(args.reference_number);
   if (!referenceNumber) {
-    return { success: false, error: 'Nomor permohonan layanan harus diisi.' };
+    return {
+      success: false,
+      error: 'Nomor permohonan layanan harus diisi.',
+      data: {
+        suggested_response: 'Untuk mengubah data layanan, mohon kirim nomor layanannya ya Pak/Bu. Contohnya *LAY-20251201-001*.',
+      },
+    };
   }
 
   if (inferReferenceKind(referenceNumber) !== 'service_request') {
-    return { success: false, error: 'Gunakan nomor layanan dengan format LAY-xxx.' };
+    return {
+      success: false,
+      error: 'Gunakan nomor layanan dengan format LAY-xxx.',
+      data: {
+        suggested_response: 'Nomor yang dikirim belum sesuai format layanan ya Pak/Bu. Mohon gunakan nomor dengan format *LAY-...*.',
+      },
+    };
   }
 
   if (ctx.isEvaluation) {
@@ -1005,6 +1174,8 @@ async function toolGetServiceRequestEditLink(
         expires_at: null,
         simulated: true,
         message: `Link edit simulasi untuk permohonan ${referenceNumber} siap dikirim.`,
+        suggested_response: `Baik Pak/Bu, saya kirim link edit untuk permohonan *${referenceNumber}* ya.`,
+        guidance_text: buildServiceEditGuidanceText(editUrl),
       },
       meta: {
         trustLevel: 'action_result',
@@ -1023,6 +1194,16 @@ async function toolGetServiceRequestEditLink(
     return {
       success: false,
       error: tokenResult.message || 'Gagal menyiapkan link edit layanan.',
+      data: {
+        suggested_response:
+          tokenResult.error === 'NOT_FOUND'
+            ? `Permohonan layanan *${referenceNumber}* belum saya temukan. Coba cek lagi nomornya ya Pak/Bu.`
+            : tokenResult.error === 'NOT_OWNER'
+              ? `Mohon maaf Pak/Bu, permohonan *${referenceNumber}* tidak terdaftar atas nomor ini, jadi link editnya tidak bisa saya kirim.`
+              : tokenResult.error === 'LOCKED'
+                ? `Permohonan *${referenceNumber}* sudah tidak bisa diubah karena statusnya sudah final.`
+                : (tokenResult.message || 'Maaf Pak/Bu, link editnya belum bisa saya siapkan sekarang.'),
+      },
     };
   }
 
@@ -1056,6 +1237,8 @@ async function toolGetServiceRequestEditLink(
       edit_url: editUrl,
       expires_at: tokenResult.edit_token_expires_at || null,
       message: `Link edit untuk permohonan ${referenceNumber} siap dikirim.`,
+      suggested_response: `Baik Pak/Bu, saya kirim link edit untuk permohonan *${referenceNumber}* ya.`,
+      guidance_text: buildServiceEditGuidanceText(editUrl),
     },
     meta: {
       trustLevel: 'action_result',
@@ -1070,10 +1253,24 @@ async function toolCheckStatus(
 ): Promise<ToolCallResult> {
   const referenceNumber = normalizeReferenceNumber(args.reference_number);
   if (!referenceNumber) {
-    return { success: false, error: 'Nomor referensi harus diisi.' };
+    return {
+      success: false,
+      error: 'Nomor referensi harus diisi.',
+      data: {
+        suggested_response: 'Untuk cek status, mohon kirim nomor laporan atau layanan ya Pak/Bu. Contohnya *LAP-...* atau *LAY-...*.',
+      },
+    };
   }
 
   const referenceKind = inferReferenceKind(referenceNumber);
+  const buildNotFoundResponse = (kind: 'complaint' | 'service_request') =>
+    kind === 'complaint'
+      ? `Nomor laporan *${referenceNumber}* belum kami temukan.\n\nCoba cek lagi penulisannya ya. Formatnya biasanya seperti *LAP-20251201-001*.`
+      : `Nomor layanan *${referenceNumber}* belum kami temukan.\n\nCoba cek lagi penulisannya ya. Formatnya biasanya seperti *LAY-20251201-001*.`;
+  const buildOwnershipResponse = (kind: 'complaint' | 'service_request') =>
+    kind === 'complaint'
+      ? `Laporan *${referenceNumber}* tidak terdaftar atas nomor ini, jadi belum bisa saya tampilkan di sini.\n\nKalau lupa nomornya, ketik *riwayat* ya, nanti saya bantu tampilkan daftar laporan milik Anda.`
+      : `Permohonan layanan *${referenceNumber}* tidak terdaftar atas nomor ini, jadi belum bisa saya tampilkan di sini.\n\nKalau lupa nomornya, ketik *riwayat* ya, nanti saya bantu tampilkan daftar layanan milik Anda.`;
 
   if (referenceKind === 'complaint' || referenceKind === 'unknown') {
     const complaint = await getComplaintStatusWithOwnership(referenceNumber, {
@@ -1105,6 +1302,27 @@ async function toolCheckStatus(
           status: complaint.data.status,
           status_label: getStatusLabel(complaint.data.status),
           details: complaint.data,
+          suggested_response: buildNaturalStatusResponse(complaint.data),
+        },
+        meta: {
+          trustLevel: 'trusted_record',
+          sourceKind: 'status_lookup',
+        },
+      };
+    }
+
+    if (referenceKind === 'complaint') {
+      return {
+        success: true,
+        data: {
+          found: false,
+          reference_type: 'complaint',
+          reference_number: referenceNumber,
+          message: complaint.message || 'Status laporan tidak dapat ditampilkan.',
+          suggested_response:
+            complaint.error === 'NOT_OWNER'
+              ? buildOwnershipResponse('complaint')
+              : buildNotFoundResponse('complaint'),
         },
         meta: {
           trustLevel: 'trusted_record',
@@ -1144,6 +1362,27 @@ async function toolCheckStatus(
           status: service.data.status,
           status_label: getStatusLabel(service.data.status),
           details: service.data,
+          suggested_response: buildNaturalServiceStatusResponse(service.data),
+        },
+        meta: {
+          trustLevel: 'trusted_record',
+          sourceKind: 'status_lookup',
+        },
+      };
+    }
+
+    if (referenceKind === 'service_request') {
+      return {
+        success: true,
+        data: {
+          found: false,
+          reference_type: 'service_request',
+          reference_number: referenceNumber,
+          message: service.message || 'Status layanan tidak dapat ditampilkan.',
+          suggested_response:
+            service.error === 'NOT_OWNER'
+              ? buildOwnershipResponse('service_request')
+              : buildNotFoundResponse('service_request'),
         },
         meta: {
           trustLevel: 'trusted_record',
@@ -1159,6 +1398,9 @@ async function toolCheckStatus(
       found: false,
       reference_number: referenceNumber,
       message: 'Nomor referensi tidak ditemukan atau bukan milik user.',
+      suggested_response: /\bLAY-/i.test(referenceNumber)
+        ? buildNotFoundResponse('service_request')
+        : buildNotFoundResponse('complaint'),
     },
     meta: {
       trustLevel: 'trusted_record',
@@ -1173,14 +1415,18 @@ async function toolGetMyHistory(ctx: ToolContext): Promise<ToolCallResult> {
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
     channel_identifier: ctx.channel === 'webchat' ? ctx.userId : undefined,
   });
+  const resolvedHistory = history || {
+    complaints: [],
+    services: [],
+    combined: [],
+    total: 0,
+  };
 
   return {
     success: true,
-    data: history || {
-      complaints: [],
-      services: [],
-      combined: [],
-      total: 0,
+    data: {
+      ...resolvedHistory,
+      suggested_response: buildHistoryResponse(resolvedHistory.combined || [], resolvedHistory.total || 0),
     },
     meta: {
       trustLevel: 'trusted_record',
@@ -1200,7 +1446,13 @@ async function toolCancelRequest(
     : undefined;
 
   if (!referenceNumber) {
-    return { success: false, error: 'Nomor referensi harus diisi.' };
+    return {
+      success: false,
+      error: 'Nomor referensi harus diisi.',
+      data: {
+        suggested_response: 'Untuk pembatalan, mohon kirim nomor laporan atau layanan yang ingin dibatalkan ya Pak/Bu.',
+      },
+    };
   }
 
   const referenceKind = inferReferenceKind(referenceNumber);
@@ -1208,6 +1460,9 @@ async function toolCancelRequest(
     return {
       success: false,
       error: 'Nomor referensi tidak dikenali. Gunakan format LAP-xxx atau LAY-xxx.',
+      data: {
+        suggested_response: 'Nomor yang dikirim belum sesuai format ya Pak/Bu. Mohon gunakan nomor *LAP-...* atau *LAY-...*.',
+      },
     };
   }
 
@@ -1226,6 +1481,9 @@ async function toolCancelRequest(
         needs_confirmation: true,
         reference_number: referenceNumber,
         message: `Minta konfirmasi user sebelum membatalkan ${referenceNumber}.`,
+        suggested_response: referenceKind === 'complaint'
+          ? `Apakah Bapak/Ibu yakin ingin membatalkan laporan *${referenceNumber}*?\n\nBalas *YA* untuk konfirmasi.`
+          : `Apakah Bapak/Ibu yakin ingin membatalkan layanan *${referenceNumber}*?\n\nBalas *YA* untuk konfirmasi.`,
       },
       meta: {
         trustLevel: 'action_result',
@@ -1244,6 +1502,7 @@ async function toolCancelRequest(
           reference_number: referenceNumber,
           simulated: true,
           message: `Laporan simulasi ${referenceNumber} berhasil dibatalkan.`,
+          suggested_response: buildCancelSuccessResponse('laporan', referenceNumber, `Laporan simulasi ${referenceNumber} berhasil dibatalkan.`),
         },
         meta: {
           trustLevel: 'action_result',
@@ -1258,7 +1517,13 @@ async function toolCancelRequest(
     }, cancelReason);
 
     if (!result.success) {
-      return { success: false, error: result.message || 'Gagal membatalkan laporan.' };
+      return {
+        success: false,
+        error: result.message || 'Gagal membatalkan laporan.',
+        data: {
+          suggested_response: buildCancelErrorResponse('laporan', referenceNumber, result.error, result.message),
+        },
+      };
     }
 
     void rememberMemoryEvent({
@@ -1282,6 +1547,7 @@ async function toolCancelRequest(
         reference_type: 'complaint',
         reference_number: referenceNumber,
         message: result.message || 'Laporan berhasil dibatalkan.',
+        suggested_response: buildCancelSuccessResponse('laporan', referenceNumber, result.message || 'Dibatalkan oleh pelapor'),
       },
       meta: {
         trustLevel: 'action_result',
@@ -1299,6 +1565,7 @@ async function toolCancelRequest(
         reference_number: referenceNumber,
         simulated: true,
         message: `Permohonan layanan simulasi ${referenceNumber} berhasil dibatalkan.`,
+        suggested_response: buildCancelSuccessResponse('layanan', referenceNumber, `Permohonan layanan simulasi ${referenceNumber} berhasil dibatalkan.`),
       },
       meta: {
         trustLevel: 'action_result',
@@ -1314,7 +1581,13 @@ async function toolCancelRequest(
   }, cancelReason);
 
   if (!result.success) {
-    return { success: false, error: result.message || 'Gagal membatalkan layanan.' };
+    return {
+      success: false,
+      error: result.message || 'Gagal membatalkan layanan.',
+      data: {
+        suggested_response: buildCancelErrorResponse('layanan', referenceNumber, result.error, result.message),
+      },
+    };
   }
 
   void rememberMemoryEvent({
@@ -1338,6 +1611,7 @@ async function toolCancelRequest(
       reference_type: 'service_request',
       reference_number: referenceNumber,
       message: result.message || 'Permohonan layanan berhasil dibatalkan.',
+      suggested_response: buildCancelSuccessResponse('layanan', referenceNumber, result.message || 'Dibatalkan oleh pemohon'),
     },
     meta: {
       trustLevel: 'action_result',

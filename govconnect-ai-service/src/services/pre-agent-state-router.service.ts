@@ -4,18 +4,20 @@ import {
 } from './case-client.service';
 import { updateConversationUserProfile } from './channel-client.service';
 import { rememberMemoryEvent } from './hybrid-memory.service';
-import { handleComplaintCreation, handlePendingAddressConfirmation } from './complaint-handler';
+import { handleCancellationRequest, handleComplaintCreation, handlePendingAddressConfirmation } from './complaint-handler';
 import { classifyConfirmation } from './confirmation-classifier.service';
 import {
   analyzeAddress,
   UnifiedClassifyResult,
 } from './micro-llm-matcher.service';
-import { handleServiceRequestCreation } from './service-handler';
+import { handleServiceRequestCreation, handleServiceRequestEditLink } from './service-handler';
 import { handleStatusCheck } from './status-handler';
 import {
   buildCancelErrorResponse,
   buildCancelSuccessResponse,
+  buildImportantContactsMessage,
   buildChannelParams,
+  toVCardContacts,
 } from './ump-formatters';
 import { ProcessMessageResult, normalizeHandlerResult } from './ump-types';
 import {
@@ -34,6 +36,7 @@ import {
   getPendingPhotoCount,
   getPendingServiceFormOfferWithFallback,
   setPendingComplaintData,
+  setPendingEmergencyComplaintOffer,
   syncNameToChannelService,
 } from './ump-state';
 import {
@@ -42,6 +45,7 @@ import {
   extractNameFromTextNLU,
 } from './ump-utils';
 import { getAutoFillSuggestionsWithFallback, updateProfile } from './user-profile.service';
+import { getImportantContacts } from './important-contacts.service';
 
 type MicroBudgetRunner = <T>(task: () => Promise<T>, fallback: T) => Promise<T>;
 type TrackerLike = {
@@ -53,6 +57,7 @@ function buildGuardResult(input: {
   startTime: number;
   traceId: string;
   response: string;
+  guidanceText?: string;
   intent: string;
   hasKnowledge?: boolean;
   contacts?: ProcessMessageResult['contacts'];
@@ -60,6 +65,7 @@ function buildGuardResult(input: {
   return {
     success: true,
     response: input.response,
+    guidanceText: input.guidanceText,
     contacts: input.contacts,
     intent: input.intent,
     metadata: {
@@ -75,6 +81,83 @@ function toConfirmationDecision(result: { decision?: string } | null | undefined
   if (result?.decision === 'CONFIRM') return 'yes';
   if (result?.decision === 'REJECT') return 'no';
   return 'uncertain';
+}
+
+function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncertain' {
+  const normalized = (message || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[!?.;,]/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  if (!normalized) return 'uncertain';
+
+  const explicitYesPatterns = [
+    /^(ya|iya|y|yes|oke|ok|siap|lanjut|setuju|betul|benar)$/i,
+    /^(ya|iya|yes)\s+(lanjut|boleh|setuju|batalkan|proses|silakan)$/i,
+    /^(oke|ok|siap)\s+(ya|iya|lanjut|batalkan)$/i,
+    /^boleh(\s+ya)?$/i,
+  ];
+
+  const explicitNoPatterns = [
+    /^(tidak|nggak|ga|gak|tdk|no|batal|jangan)$/i,
+    /^(tidak|nggak|ga|gak)\s+(jadi|dulu|usah|perlu)$/i,
+    /^(batal|jangan)\s+(saja|dulu|ya)$/i,
+    /^gak jadi$/i,
+  ];
+
+  if (explicitYesPatterns.some((pattern) => pattern.test(normalized))) {
+    return 'yes';
+  }
+
+  if (explicitNoPatterns.some((pattern) => pattern.test(normalized))) {
+    return 'no';
+  }
+
+  return 'uncertain';
+}
+
+const COMPLAINT_INCIDENT_PATTERN = /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|selokan|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas)\b/i;
+const COMPLAINT_INFO_QUERY_PATTERN = /\b(pengaduan|keluhan|laporan)\b/i;
+const COMPLAINT_INFO_HINT_PATTERN = /\b(apa|bagaimana|gimana|jelaskan|contoh|format|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i;
+const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengantar)\b/i;
+const EMERGENCY_PATTERN = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|polisi|pencurian|darurat|bencana)\b/i;
+const EXPLICIT_REPORT_PATTERN = /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|saya mau lapor|aduan)\b/i;
+const SERVICE_EVENT_PATTERN = /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i;
+const OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN = /\b(sim|paspor|bpjs|visa|imigrasi|npwp|stnk|bpkb)\b/i;
+
+function pickEmergencyContacts(
+  message: string,
+  contacts: Array<{ name: string; phone: string; description?: string | null; category?: { name?: string } | null }>,
+): Array<{ name: string; phone: string; description?: string | null; category?: { name?: string } | null }> {
+  const normalized = (message || '').toLowerCase();
+
+  const keywordGroups: Array<{ test: RegExp; hints: string[] }> = [
+    { test: /\b(kebakaran|damkar|pemadam)\b/i, hints: ['damkar', 'pemadam', 'kebakaran'] },
+    { test: /\b(ambulans|ambulan|sakit|pingsan|kesehatan|medis)\b/i, hints: ['ambulans', 'ambulan', 'puskesmas', 'kesehatan', 'medis', 'rumah sakit'] },
+    { test: /\b(polisi|pencurian|keamanan|kriminal)\b/i, hints: ['polisi', 'keamanan', 'danpos', 'polsek'] },
+    { test: /\b(banjir|bencana|tanah longsor)\b/i, hints: ['bencana', 'damkar', 'polisi', 'keamanan'] },
+  ];
+
+  const haystack = (contact: { name: string; description?: string | null; category?: { name?: string } | null }) =>
+    `${contact.name} ${contact.description || ''} ${contact.category?.name || ''}`.toLowerCase();
+
+  const matchedGroup = keywordGroups.find((group) => group.test.test(normalized));
+  if (matchedGroup) {
+    const prioritized = contacts.filter((contact) =>
+      matchedGroup.hints.some((hint) => haystack(contact).includes(hint)),
+    );
+    if (prioritized.length > 0) {
+      return prioritized.slice(0, 3);
+    }
+  }
+
+  const emergencyHints = ['damkar', 'pemadam', 'ambulans', 'ambulan', 'polisi', 'keamanan', 'puskesmas', 'darurat', 'bencana'];
+  const filtered = contacts.filter((contact) =>
+    emergencyHints.some((hint) => haystack(contact).includes(hint)),
+  );
+
+  return (filtered.length > 0 ? filtered : contacts).slice(0, 3);
 }
 
 interface ProtocolGuardInput {
@@ -138,16 +221,19 @@ export async function tryHandlePendingOffers(
     if (hasLapLayCode) {
       clearPendingServiceFormOffer(userId);
     } else {
-      const confirmationResult = await runWithMicroBudget(
-        () => classifyConfirmation(message.trim(), {
-          village_id: villageId,
-          wa_user_id: userId,
-          session_id: userId,
-          channel,
-        }),
-        null,
-      );
-      const decision = toConfirmationDecision(confirmationResult);
+      let decision = detectExplicitConfirmationReply(message);
+      if (decision === 'uncertain') {
+        const confirmationResult = await runWithMicroBudget(
+          () => classifyConfirmation(message.trim(), {
+            village_id: villageId,
+            wa_user_id: userId,
+            session_id: userId,
+            channel,
+          }),
+          null,
+        );
+        decision = toConfirmationDecision(confirmationResult);
+      }
 
       if (decision === 'yes') {
         clearPendingServiceFormOffer(userId);
@@ -159,10 +245,12 @@ export async function tryHandlePendingOffers(
           },
           reply_text: '',
         });
+        const normalized = normalizeHandlerResult(linkReply);
         return buildGuardResult({
           startTime,
           traceId,
-          response: linkReply,
+          response: normalized.replyText,
+          guidanceText: normalized.guidanceText,
           intent: 'CREATE_SERVICE_REQUEST',
         });
       }
@@ -186,16 +274,19 @@ export async function tryHandlePendingOffers(
     return null;
   }
 
-  const confirmationResult = await runWithMicroBudget(
-    () => classifyConfirmation(message.trim(), {
-      village_id: villageId,
-      wa_user_id: userId,
-      session_id: userId,
-      channel,
-    }),
-    null,
-  );
-  const decision = toConfirmationDecision(confirmationResult);
+  let decision = detectExplicitConfirmationReply(message);
+  if (decision === 'uncertain') {
+    const confirmationResult = await runWithMicroBudget(
+      () => classifyConfirmation(message.trim(), {
+        village_id: villageId,
+        wa_user_id: userId,
+        session_id: userId,
+        channel,
+      }),
+      null,
+    );
+    decision = toConfirmationDecision(confirmationResult);
+  }
 
   if (decision === 'yes') {
     clearPendingEmergencyComplaintOffer(userId);
@@ -462,6 +553,90 @@ export async function tryHandleLatePreAgentState(
     }
   }
 
+  if (OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN.test(message) && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)) {
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: 'Maaf Pak/Bu, informasi untuk layanan itu belum tersedia di sistem desa kami. Untuk penjelasan lebih lanjut, silakan datang langsung ke kantor desa pada jam kerja ya. Kalau ada layanan desa lain yang ingin ditanyakan, saya bantu cek.',
+      intent: 'KNOWLEDGE_QUERY',
+    });
+  }
+
+  const isEmergencyShortcut =
+    !!villageId
+    && EMERGENCY_PATTERN.test(message)
+    && !EXPLICIT_REPORT_PATTERN.test(message)
+    && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message);
+
+  if (isEmergencyShortcut) {
+    const contacts = pickEmergencyContacts(message, await getImportantContacts(villageId));
+    const contactsMessage = buildImportantContactsMessage(contacts, channel);
+    const vcardContacts = toVCardContacts(
+      contacts.map((contact) => ({
+        ...contact,
+        category: contact.category?.name ? { name: contact.category.name } : null,
+      })),
+    );
+
+    setPendingEmergencyComplaintOffer(userId, {
+      contact_entity: message.trim(),
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: contacts.length > 0
+        ? `Untuk situasi darurat seperti ini, mohon segera hubungi kontak berikut ya Pak/Bu.${contactsMessage}\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar tercatat dan diteruskan ke petugas desa. Balas *iya* kalau mau saya bantu buatkan laporannya.`
+        : 'Untuk kondisi darurat seperti ini, mohon segera hubungi petugas terkait terdekat ya Pak/Bu. Kalau Bapak/Ibu ingin, saya juga bisa bantu buatkan laporan kejadian ini agar tercatat. Balas *iya* kalau mau saya bantu lanjutkan.',
+      contacts: vcardContacts,
+      intent: 'EMERGENCY_CONTACTS',
+    });
+  }
+
+  const isComplaintInfoQuestion =
+    COMPLAINT_INFO_QUERY_PATTERN.test(message)
+    && COMPLAINT_INFO_HINT_PATTERN.test(message);
+  const isServiceLikeReportMessage =
+    /\blapor\b/i.test(message)
+    && SERVICE_EVENT_PATTERN.test(message);
+  const looksLikeComplaintShortcut =
+    !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)
+    && !isComplaintInfoQuestion
+    && !isServiceLikeReportMessage
+    && !SERVICE_ADMIN_PATTERN.test(message)
+    && (
+      COMPLAINT_INCIDENT_PATTERN.test(message)
+      || EXPLICIT_REPORT_PATTERN.test(message)
+    );
+
+  if (looksLikeComplaintShortcut) {
+    const complaintResult = await handleComplaintCreation(
+      userId,
+      channel,
+      {
+        intent: 'CREATE_COMPLAINT',
+        fields: {
+          village_id: villageId,
+          kategori: message.trim(),
+          deskripsi: message.trim(),
+        },
+        reply_text: '',
+      },
+      message,
+      mediaUrl,
+    );
+    const normalized = normalizeHandlerResult(complaintResult);
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: normalized.replyText,
+      contacts: normalized.contacts,
+      intent: 'CREATE_COMPLAINT',
+    });
+  }
+
   if (mediaUrl && message.trim().length < 5) {
     const hasActiveComplaintFlow = pendingAddr || pendingConfirm || pendingComplaint;
 
@@ -502,16 +677,26 @@ export async function tryHandleLatePreAgentState(
 
   const pendingCancel = await getPendingCancelConfirmationWithFallback(userId);
   if (pendingCancel) {
-    const cancelResult = await runWithMicroBudget(
-      () => classifyConfirmation(message.trim(), {
-        village_id: villageId,
-        wa_user_id: userId,
-        session_id: userId,
-        channel,
-      }),
-      null,
-    );
-    const decision = toConfirmationDecision(cancelResult);
+    const normalizedMessage = message.trim();
+    const isFreshCancelRequest = /\b(LAP|LAY)-?\d{8}-?\d{3}\b/i.test(normalizedMessage)
+      && /\b(batal|batalkan|cancel)\b/i.test(normalizedMessage);
+
+    if (isFreshCancelRequest) {
+      clearPendingCancelConfirmation(userId);
+    } else {
+    let decision = detectExplicitConfirmationReply(message);
+    if (decision === 'uncertain') {
+      const cancelResult = await runWithMicroBudget(
+        () => classifyConfirmation(message.trim(), {
+          village_id: villageId,
+          wa_user_id: userId,
+          session_id: userId,
+          channel,
+        }),
+        null,
+      );
+      decision = toConfirmationDecision(cancelResult);
+    }
 
     if (decision === 'yes') {
       clearPendingCancelConfirmation(userId);
@@ -589,14 +774,96 @@ export async function tryHandleLatePreAgentState(
     return buildGuardResult({
       startTime,
       traceId,
-      response: 'Mohon konfirmasi ya Pak/Bu. Balas "YA" untuk melanjutkan pembatalan, atau "TIDAK" untuk membatalkan.',
-      intent: pendingCancel.type === 'laporan' ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
-    });
+        response: 'Mohon konfirmasi ya Pak/Bu. Balas "YA" untuk melanjutkan pembatalan, atau "TIDAK" untuk membatalkan.',
+        intent: pendingCancel.type === 'laporan' ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
+      });
+    }
   }
 
   const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
   const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
+
+  if ((lapMatch || layMatch) && /\b(batal|batalkan|cancel)\b/i.test(message)) {
+    const rawCode = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase().replace(/\s/g, '');
+    const prefix = rawCode.startsWith('LAP') ? 'LAP' : 'LAY';
+    const digitsOnly = rawCode.replace(/^(LAP|LAY)-?/, '').replace(/-/g, '');
+    const code = `${prefix}-${digitsOnly.slice(0, 8)}-${digitsOnly.slice(8)}`;
+    const isComplaint = prefix === 'LAP';
+
+    tracker.preparing();
+    notifyStage('preparing', 80);
+
+    const cancelReply = await handleCancellationRequest(
+      userId,
+      isComplaint ? 'laporan' : 'layanan',
+      {
+        intent: isComplaint ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
+        fields: isComplaint ? { complaint_id: code } : { request_number: code },
+        reply_text: '',
+      },
+    );
+
+    tracker.complete();
+
+    if (channel === 'whatsapp') {
+      appendToHistoryCache(userId, 'assistant', cancelReply);
+    }
+
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: cancelReply,
+      intent: isComplaint ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
+    });
+  }
+
+  if (layMatch && /\b(edit|ubah data|update data|perbarui data|perbaiki data|revisi data)\b/i.test(message)) {
+    const rawCode = layMatch[1].toUpperCase().replace(/\s/g, '');
+    const digitsOnly = rawCode.replace(/^LAY-?/, '').replace(/-/g, '');
+    const code = `LAY-${digitsOnly.slice(0, 8)}-${digitsOnly.slice(8)}`;
+
+    tracker.preparing();
+    notifyStage('preparing', 80);
+
+    const editReply = await handleServiceRequestEditLink(userId, channel, {
+      intent: 'EDIT_SERVICE_REQUEST',
+      fields: { request_number: code },
+      reply_text: '',
+    });
+    const normalized = normalizeHandlerResult(editReply);
+
+    tracker.complete();
+
+    if (channel === 'whatsapp') {
+      appendToHistoryCache(userId, 'assistant', normalized.replyText);
+      if (normalized.guidanceText) {
+        appendToHistoryCache(userId, 'assistant', normalized.guidanceText);
+      }
+    }
+
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: normalized.replyText,
+      guidanceText: normalized.guidanceText,
+      intent: 'EDIT_SERVICE_REQUEST',
+    });
+  }
+
   if (lapMatch || layMatch) {
+    const normalized = message.toLowerCase();
+    const isExplicitNonStatusReference = /\b(batal|batalkan|cancel|edit|ubah|update|perbarui|perbaiki|revisi|detail|rincian|foto|gambar|lampiran|tambah keterangan)\b/i.test(normalized);
+    const isExplicitStatusRequest = /\b(cek|status|tracking|lacak|periksa|lihat)\b/i.test(normalized);
+    const isBareReference = normalized.trim().match(/^(lap|lay)[-\s]?\d{8}[-\s]?\d{3}$/i);
+
+    if (isExplicitNonStatusReference && !isExplicitStatusRequest) {
+      return null;
+    }
+
+    if (!isExplicitStatusRequest && !isBareReference) {
+      return null;
+    }
+
     const rawCode = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase().replace(/\s/g, '');
     const prefix = rawCode.startsWith('LAP') ? 'LAP' : 'LAY';
     const digitsOnly = rawCode.replace(/^(LAP|LAY)-?/, '').replace(/-/g, '');

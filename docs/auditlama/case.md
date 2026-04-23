@@ -214,7 +214,9 @@ Silakan lanjutkan, kami siap membantu.
 
 CASE 6.2 — User Spam
 
-W: iya iya iya
+W: iya 
+w: iya 
+w: iya
 S:
 Mohon maaf Pak/Bu, boleh kami tahu nama Anda terlebih dahulu agar kami bisa membantu?
 

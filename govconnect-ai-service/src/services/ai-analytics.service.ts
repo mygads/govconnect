@@ -86,7 +86,7 @@ interface KnowledgeStats {
 
 interface RetrievalTraceEntry {
   query: string;
-  retrievalMode: 'rag' | 'keyword' | 'document_rag';
+  retrievalMode: 'rag' | 'keyword' | 'document_rag' | 'external_rerank' | 'heuristic_rerank' | 'raw_no_rerank';
   confidence: 'none' | 'low' | 'medium' | 'high';
   hasKnowledge: boolean;
   resultCount: number;
@@ -370,7 +370,7 @@ class AIAnalyticsService {
     traceId?: string;
     waUserId?: string;
     query: string;
-    retrievalMode: 'rag' | 'keyword' | 'document_rag';
+    retrievalMode: 'rag' | 'keyword' | 'document_rag' | 'external_rerank' | 'heuristic_rerank' | 'raw_no_rerank';
     confidence: 'none' | 'low' | 'medium' | 'high';
     hasKnowledge: boolean;
     resultCount: number;
@@ -639,7 +639,7 @@ class AIAnalyticsService {
     traceId?: string;
     waUserId?: string;
     query: string;
-    retrievalMode: 'rag' | 'keyword' | 'document_rag';
+    retrievalMode: 'rag' | 'keyword' | 'document_rag' | 'external_rerank' | 'heuristic_rerank' | 'raw_no_rerank';
     confidence: 'none' | 'low' | 'medium' | 'high';
     hasKnowledge: boolean;
     resultCount: number;

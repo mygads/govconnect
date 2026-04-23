@@ -25,12 +25,19 @@ interface KnowledgeSearchResult {
   total: number;
   context: string;
   confidenceLevel?: 'none' | 'low' | 'medium' | 'high';
-  retrievalMode?: 'rag' | 'keyword' | 'document_rag';
+  retrievalMode?: 'rag' | 'keyword' | 'document_rag' | 'external_rerank' | 'heuristic_rerank' | 'raw_no_rerank';
   searchTimeMs?: number;
   topScore?: number | null;
   avgTopScore?: number | null;
   sourceTitles?: string[];
   candidateDebug?: NonNullable<RAGContext['retrievalDebug']>['candidates'];
+}
+
+function resolveKnowledgeRetrievalMode(
+  ragContext: Pick<RAGContext, 'retrievalDebug'>,
+  fallback: 'rag' | 'document_rag',
+): KnowledgeSearchResult['retrievalMode'] {
+  return ragContext.retrievalDebug?.retrievalMode || fallback;
 }
 
 interface VillageProfileSummary {
@@ -152,7 +159,7 @@ export async function searchDocuments(
         total: 0,
         context: '',
         confidenceLevel: ragContext.confidence?.level || 'none',
-        retrievalMode: 'document_rag' as const,
+        retrievalMode: resolveKnowledgeRetrievalMode(ragContext, 'document_rag'),
         searchTimeMs: ragContext.searchTimeMs,
       };
       trackKnowledgeSearch(query, villageId, empty, channel);
@@ -173,7 +180,7 @@ export async function searchDocuments(
       total: ragContext.totalResults,
       context: ragContext.contextString,
       confidenceLevel: ragContext.confidence?.level || 'medium',
-      retrievalMode: 'document_rag' as const,
+      retrievalMode: resolveKnowledgeRetrievalMode(ragContext, 'document_rag'),
       searchTimeMs: ragContext.searchTimeMs,
       topScore: ragContext.relevantChunks[0]?.score ?? null,
       avgTopScore: calculateAverageTopScore(ragContext),
@@ -373,7 +380,7 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
     total: ragContext.totalResults,
     context: ragContext.contextString,
     confidenceLevel: ragContext.confidence?.level || 'medium',
-    retrievalMode: 'rag',
+    retrievalMode: resolveKnowledgeRetrievalMode(ragContext, 'rag'),
     searchTimeMs: ragContext.searchTimeMs,
     topScore: ragContext.relevantChunks[0]?.score ?? null,
     avgTopScore: calculateAverageTopScore(ragContext),

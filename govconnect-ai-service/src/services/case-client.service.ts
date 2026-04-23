@@ -2,6 +2,7 @@ import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { resilientHttp } from './circuit-breaker.service';
+import { getVillageProfileSummary } from './knowledge.service';
 
 function normalizeTo628(input: string): string {
   const digits = (input || '').replace(/\D/g, '');
@@ -358,18 +359,20 @@ export async function getServiceRequestStatusWithOwnership(
   });
 
   try {
-    const url = `${config.caseServiceUrl}/service-requests`;
-    const response = await resilientHttp.get<{ data: any[] }>(
+    const url = `${config.caseServiceUrl}/service-requests/${encodeURIComponent(requestNumber)}/check`;
+    const response = await resilientHttp.post<{ data: any }>(
       url,
       {
-        params: {
-          request_number: requestNumber,
-          ...(channel === 'WHATSAPP' ? { wa_user_id: normalizedWaUserId } : { channel, channel_identifier: params.channel_identifier }),
-        },
+        wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
+        channel,
+        channel_identifier: params.channel_identifier,
+      },
+      {
         headers: {
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
         },
+        validateStatus: (status) => status < 500,
         timeout: 10000,
       }
     );
@@ -378,13 +381,27 @@ export async function getServiceRequestStatusWithOwnership(
       return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
     }
 
-    const data = (response.data as any)?.data?.[0];
-
-    if (!data) {
+    if (response.status === 404) {
       return { success: false, error: 'NOT_FOUND', message: 'Permohonan layanan tidak ditemukan' };
     }
 
-    return { success: true, data };
+    if (response.status === 403) {
+      return {
+        success: false,
+        error: 'NOT_OWNER',
+        message: (response.data as any)?.message || 'Permohonan layanan ini tidak terdaftar atas nomor Anda',
+      };
+    }
+
+    if (response.status >= 400) {
+      return {
+        success: false,
+        error: 'INTERNAL_ERROR',
+        message: (response.data as any)?.message || 'Terjadi kesalahan saat mengecek status layanan',
+      };
+    }
+
+    return { success: true, data: response.data.data };
   } catch (error: any) {
     logger.error('❌ Failed to fetch service request status', {
       request_number: requestNumber,
@@ -695,6 +712,8 @@ export interface ServiceCatalogItem {
   id: string;
   name: string;
   slug: string;
+  village_id?: string;
+  villageId?: string;
   code?: string;
   description?: string;
   mode?: string | null;
@@ -713,6 +732,82 @@ const serviceCatalogCacheMap = new Map<string, { data: ServiceCatalogItem[]; tim
 const SERVICE_CATALOG_TTL = 15 * 60 * 1000; // 15 minutes
 const SERVICE_CATALOG_CACHE_MAX_ENTRIES = 50; // Prevent unbounded growth
 
+function mergeServiceCatalogItem(
+  existing: ServiceCatalogItem,
+  incoming: ServiceCatalogItem,
+): ServiceCatalogItem {
+  return {
+    ...incoming,
+    ...existing,
+    requirements: Array.isArray(existing.requirements) && existing.requirements.length > 0
+      ? existing.requirements
+      : incoming.requirements,
+    category: existing.category || incoming.category,
+    description: existing.description || incoming.description,
+    estimated_cost: existing.estimated_cost || incoming.estimated_cost,
+    estimated_processing_time: existing.estimated_processing_time || incoming.estimated_processing_time,
+    mode: existing.mode || incoming.mode,
+  };
+}
+
+function dedupeServiceCatalog(items: ServiceCatalogItem[]): ServiceCatalogItem[] {
+  const byKey = new Map<string, ServiceCatalogItem>();
+
+  for (const item of items) {
+    const key = item.id || item.slug || item.name;
+    if (!key) continue;
+
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, item);
+      continue;
+    }
+
+    byKey.set(key, mergeServiceCatalogItem(existing, item));
+  }
+
+  return Array.from(byKey.values());
+}
+
+async function getServiceVillageCandidates(villageId?: string): Promise<string[]> {
+  if (!villageId) return [];
+
+  const candidates = new Set<string>([villageId]);
+
+  try {
+    const profile = await getVillageProfileSummary(villageId);
+    const alias = profile?.short_name?.trim();
+    if (alias && alias !== villageId) {
+      candidates.add(alias);
+    }
+  } catch (error: any) {
+    logger.debug('Failed to resolve village service alias, using primary village ID only', {
+      villageId,
+      error: error.message,
+    });
+  }
+
+  return Array.from(candidates);
+}
+
+async function fetchServiceCatalogFromCaseService(villageId?: string): Promise<ServiceCatalogItem[]> {
+  const url = `${config.caseServiceUrl}/services`;
+  const response = await resilientHttp.get<{ data: ServiceCatalogItem[] }>(url, {
+    params: villageId ? { village_id: villageId } : undefined,
+    headers: {
+      'x-internal-api-key': config.internalApiKey,
+      'Content-Type': 'application/json',
+    },
+    timeout: 10000,
+  });
+
+  if (resilientHttp.isFallbackResponse(response)) {
+    return [];
+  }
+
+  return Array.isArray(response.data?.data) ? response.data.data : [];
+}
+
 /**
  * Get all available services from case-service DB.
  * Results are cached per villageId for 15 minutes.
@@ -726,21 +821,14 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
   }
 
   try {
-    const url = `${config.caseServiceUrl}/services`;
-    const response = await resilientHttp.get<{ data: ServiceCatalogItem[] }>(url, {
-      params: villageId ? { village_id: villageId } : undefined,
-      headers: {
-        'x-internal-api-key': config.internalApiKey,
-        'Content-Type': 'application/json',
-      },
-      timeout: 10000,
-    });
-
-    if (resilientHttp.isFallbackResponse(response)) {
-      return cached?.data || [];
-    }
-
-    const services = Array.isArray(response.data?.data) ? response.data.data : [];
+    const villageCandidates = villageId
+      ? await getServiceVillageCandidates(villageId)
+      : [];
+    const candidateIds = villageCandidates.length > 0 ? villageCandidates : [undefined];
+    const serviceGroups = await Promise.all(
+      candidateIds.map((candidateVillageId) => fetchServiceCatalogFromCaseService(candidateVillageId))
+    );
+    const services = dedupeServiceCatalog(serviceGroups.flat());
 
     // Evict oldest entry if cache is full
     if (serviceCatalogCacheMap.size >= SERVICE_CATALOG_CACHE_MAX_ENTRIES) {
@@ -750,7 +838,11 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
 
     serviceCatalogCacheMap.set(cacheKey, { data: services, time: now });
 
-    logger.info('✅ Service catalog fetched from DB', { count: services.length, villageId: cacheKey });
+    logger.info('✅ Service catalog fetched from DB', {
+      count: services.length,
+      villageId: cacheKey,
+      candidateIds: candidateIds.filter(Boolean),
+    });
     return services;
   } catch (error: any) {
     logger.warn('❌ Failed to fetch service catalog, using cache or empty', {

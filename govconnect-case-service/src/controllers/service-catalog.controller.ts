@@ -366,12 +366,25 @@ export async function handleGetServiceRequests(req: Request, res: Response) {
 
 export async function handleCreateServiceRequest(req: Request, res: Response) {
   try {
-    const { service_id, wa_user_id, citizen_data_json, requirement_data_json } = req.body;
+    const { service_id, village_id, wa_user_id, citizen_data_json, requirement_data_json } = req.body;
     const channel = resolveChannelFromRequest(req);
     const channelIdentifier = resolveChannelIdentifier(req, channel) || req.body?.channel_identifier;
 
     if (!service_id) {
       return res.status(400).json({ error: 'service_id is required' });
+    }
+
+    const service = await prisma.serviceItem.findUnique({
+      where: { id: service_id },
+      select: { id: true, village_id: true, name: true },
+    });
+
+    if (!service) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
+
+    if (village_id && village_id !== service.village_id) {
+      return res.status(400).json({ error: 'village_id does not match selected service' });
     }
 
     let normalizedWaUserId: string | null = null;
@@ -395,6 +408,7 @@ export async function handleCreateServiceRequest(req: Request, res: Response) {
       data: {
         request_number: requestNumber,
         service_id,
+        village_id: service.village_id,
         wa_user_id: normalizedWaUserId,
         channel,
         channel_identifier: channel === 'WEBCHAT' ? String(channelIdentifier) : normalizedWaUserId,
@@ -445,6 +459,58 @@ export async function handleGetServiceRequestById(req: Request, res: Response) {
     return res.json({ data });
   } catch (error: any) {
     logger.error('Get service request by id error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function handleCheckServiceRequestStatus(req: Request, res: Response) {
+  try {
+    const id = getParam(req, 'id');
+    if (!id) {
+      return res.status(400).json({ error: 'id is required' });
+    }
+
+    const channel = resolveChannelFromRequest(req);
+    const channelIdentifier = resolveChannelIdentifier(req, channel) || req.body?.channel_identifier;
+    const wa_user_id = channel === 'WHATSAPP'
+      ? normalizeTo628(String(req.body?.wa_user_id || ''))
+      : undefined;
+
+    if (channel === 'WHATSAPP' && !wa_user_id) {
+      return res.status(400).json({ error: 'wa_user_id is required' });
+    }
+
+    if (channel === 'WEBCHAT' && !channelIdentifier) {
+      return res.status(400).json({ error: 'session_id/channel_identifier is required' });
+    }
+
+    const request = await prisma.serviceRequest.findFirst({
+      where: {
+        OR: [{ id }, { request_number: id }],
+        deleted_at: null,
+      },
+      include: {
+        service: {
+          include: {
+            requirements: {
+              orderBy: { order_index: 'asc' },
+            },
+          },
+        },
+      },
+    });
+
+    if (!request) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Permohonan layanan tidak ditemukan' });
+    }
+
+    if (!isSameRequester(request, { channel, wa_user_id, channel_identifier: channelIdentifier })) {
+      return res.status(403).json({ error: 'NOT_OWNER', message: 'Permohonan layanan ini tidak terdaftar atas nomor Anda' });
+    }
+
+    return res.json({ data: request });
+  } catch (error: any) {
+    logger.error('Check service request status error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -705,10 +771,9 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
     const channel = resolveChannelFromRequest(req);
     const { wa_user_id, cancel_reason } = req.body as { wa_user_id?: string; cancel_reason?: string };
     const channelIdentifier = resolveChannelIdentifier(req, channel) || req.body?.channel_identifier;
-
-    if (!cancel_reason || String(cancel_reason).trim() === '') {
-      return res.status(400).json({ error: 'cancel_reason wajib diisi' });
-    }
+    const normalizedCancelReason = typeof cancel_reason === 'string' && cancel_reason.trim()
+      ? cancel_reason.trim()
+      : 'tanpa alasan tambahan';
 
     if (channel === 'WHATSAPP' && !wa_user_id) {
       return res.status(400).json({ error: 'wa_user_id is required' });
@@ -737,7 +802,7 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
       return res.status(400).json({ error: 'LOCKED', message: 'Permohonan sudah selesai/dibatalkan/ditolak sehingga tidak bisa dibatalkan' });
     }
 
-    const cancelNote = `Dibatalkan oleh masyarakat: ${String(cancel_reason).trim()}`;
+    const cancelNote = `Dibatalkan oleh masyarakat: ${normalizedCancelReason}`;
     const updated = await prisma.serviceRequest.update({
       where: { id: existing.id },
       data: {

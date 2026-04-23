@@ -107,12 +107,15 @@ export interface VectorSearchResult {
 /**
  * Vector search options
  */
+export type RetrievalMode = 'external_rerank' | 'heuristic_rerank' | 'raw_no_rerank';
+
 export interface VectorSearchOptions {
   topK?: number;              // Number of results to return (default: 5)
   minScore?: number;          // Minimum similarity threshold (default: 0.7)
   categories?: string[];      // Filter by categories
   sourceTypes?: ('knowledge' | 'document')[];  // Filter by source type
   villageId?: string;         // Scope results by village
+  retrievalMode?: RetrievalMode;
 }
 
 /**
@@ -128,6 +131,7 @@ export interface RAGContext {
   conflicts?: RAGConflictInfo[];
   retrievalDebug?: {
     hybridUsed: boolean;
+    retrievalMode?: RetrievalMode;
     candidates: Array<{
       id: string;
       title: string;

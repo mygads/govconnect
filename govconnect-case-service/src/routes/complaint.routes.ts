@@ -108,7 +108,7 @@ router.post(
   [
     // Accept WhatsApp phone (628xxx) or webchat session (web_xxx)
     body('wa_user_id').optional().matches(/^(628\d{8,12}|web_[a-z0-9_]+)$/i).withMessage('Invalid user ID format'),
-    body('cancel_reason').isString().notEmpty().withMessage('cancel_reason wajib diisi'),
+    body('cancel_reason').optional().isString(),
   ],
   validate,
   handleCancelComplaint

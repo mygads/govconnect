@@ -55,10 +55,10 @@ export async function handleStatusCheck(
 
     if (!result.success) {
       if (result.error === 'NOT_FOUND') {
-        return `Mohon maaf Pak/Bu, kami tidak menemukan laporan dengan nomor *${cId}*.\n\nSilakan cek ulang format nomor laporan (contoh: LAP-20251201-001).`;
+        return `Nomor laporan *${cId}* belum kami temukan.\n\nCoba cek lagi penulisannya ya. Formatnya biasanya seperti *LAP-20251201-001*. Kalau mau, kirim nomor yang benar dan saya bantu cek lagi.`;
       }
       if (result.error === 'NOT_OWNER') {
-        return `Mohon maaf Pak/Bu, laporan *${cId}* bukan milik Anda.\n\nSilakan cek kembali nomor laporan Anda. Jika lupa, ketik "riwayat" untuk melihat daftar laporan Anda.`;
+        return `Laporan *${cId}* tidak terdaftar atas nomor Anda, jadi belum bisa saya tampilkan di sini.\n\nKalau lupa nomornya, ketik *riwayat* ya, nanti saya bantu tampilkan daftar laporan milik Anda.`;
       }
       return 'Mohon maaf Pak/Bu, ada kendala saat mengecek status. Silakan coba lagi.';
     }
@@ -97,10 +97,10 @@ export async function handleStatusCheck(
 
     if (!result.success) {
       if (result.error === 'NOT_FOUND') {
-        return `Mohon maaf Pak/Bu, kami tidak menemukan permohonan layanan dengan nomor *${request_number}*.\n\nSilakan cek ulang format nomor layanan (contoh: LAY-20251201-001).`;
+        return `Nomor layanan *${request_number}* belum kami temukan.\n\nCoba cek lagi penulisannya ya. Formatnya biasanya seperti *LAY-20251201-001*. Kalau mau, kirim lagi nomornya dan saya bantu cek.`;
       }
       if (result.error === 'NOT_OWNER') {
-        return `Mohon maaf Pak/Bu, permohonan layanan *${request_number}* bukan milik Anda.\n\nSilakan cek kembali nomor layanan Anda. Jika lupa, ketik "riwayat" untuk melihat daftar layanan Anda.`;
+        return `Permohonan layanan *${request_number}* tidak terdaftar atas nomor Anda, jadi belum bisa saya tampilkan di sini.\n\nKalau lupa nomornya, ketik *riwayat* ya, nanti saya bantu tampilkan daftar layanan milik Anda.`;
       }
       return 'Mohon maaf Pak/Bu, ada kendala saat mengecek status layanan. Silakan coba lagi.';
     }

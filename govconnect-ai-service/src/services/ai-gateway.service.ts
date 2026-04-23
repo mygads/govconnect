@@ -264,7 +264,18 @@ export function getAllAIGatewayInfo() {
 
 export function getDefaultGatewayModels(kind: 'micro' | 'full'): string[] {
   void kind;
-  return config.llmGateway.model ? [config.llmGateway.model] : [];
+
+  const fallbackModels = [
+    process.env.LLM_MODEL_FALLBACK,
+    process.env.AI_MODEL_FALLBACK,
+    process.env.LLM_MODEL_PRIORITY,
+    process.env.AI_MODEL_PRIORITY,
+  ]
+    .map((value) => (value || '').trim())
+    .filter(Boolean)
+    .flatMap((value) => value.split(',').map((item) => item.trim()).filter(Boolean));
+
+  return parseModelListEnv(config.llmGateway.model, fallbackModels);
 }
 
 export function getDefaultRAGRewriteModels(): string[] {

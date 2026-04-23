@@ -300,10 +300,9 @@ export async function handleCancelComplaint(req: Request, res: Response) {
     const { wa_user_id, cancel_reason } = req.body;
     const channel = resolveChannelFromRequest(req);
     const channelIdentifier = resolveChannelIdentifier(req, channel) || req.body?.channel_identifier;
-
-    if (!cancel_reason || String(cancel_reason).trim() === '') {
-      return res.status(400).json({ error: 'cancel_reason wajib diisi' });
-    }
+    const normalizedCancelReason = typeof cancel_reason === 'string' && cancel_reason.trim()
+      ? cancel_reason.trim()
+      : undefined;
     
     if (channel === 'WHATSAPP' && !wa_user_id) {
       return res.status(400).json({ error: 'wa_user_id is required' });
@@ -313,7 +312,12 @@ export async function handleCancelComplaint(req: Request, res: Response) {
       return res.status(400).json({ error: 'session_id/channel_identifier is required' });
     }
     
-    const result = await cancelComplaint(id, { wa_user_id, cancel_reason, channel, channel_identifier: channelIdentifier });
+    const result = await cancelComplaint(id, {
+      wa_user_id,
+      cancel_reason: normalizedCancelReason,
+      channel,
+      channel_identifier: channelIdentifier,
+    });
     
     if (!result.success) {
       const statusCode = result.error === 'NOT_FOUND' ? 404 

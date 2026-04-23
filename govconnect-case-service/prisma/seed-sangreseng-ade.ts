@@ -329,7 +329,7 @@ const COMPLAINT_SEEDS = [
     category: 'Infrastruktur & Utilitas',
     description: 'Masalah infrastruktur desa dan utilitas umum.',
     types: [
-      { name: 'Jalan Rusak', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Darurat' },
+      { name: 'Jalan Rusak', is_urgent: false, require_address: true, send_important_contacts: false },
       { name: 'Lampu Jalan Mati', is_urgent: false, require_address: true, send_important_contacts: false },
       { name: 'Jembatan Rusak', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Darurat' },
       { name: 'Drainase Tersumbat', is_urgent: false, require_address: true, send_important_contacts: false },

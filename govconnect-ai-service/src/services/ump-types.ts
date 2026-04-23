@@ -69,6 +69,10 @@ export interface ProcessMessageResult {
       policySource?: string;
       confidence?: number;
     };
+    handoff?: {
+      started: boolean;
+      reason?: string;
+    };
     toolTrace?: Array<{
       tool: string;
       success: boolean;
