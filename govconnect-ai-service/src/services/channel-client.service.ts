@@ -170,6 +170,7 @@ interface StartTakeoverOptions {
   admin_id?: string;
   admin_name?: string;
   reason?: string;
+  enrichment?: Record<string, unknown>;
 }
 
 export async function startTakeoverForUser(
@@ -194,6 +195,7 @@ export async function startTakeoverForUser(
         admin_name: options.admin_name || 'Petugas Desa',
         reason: options.reason || 'auto_handoff',
         channel: options.channel || (channel_identifier.startsWith('web_') ? 'WEBCHAT' : 'WHATSAPP'),
+        enrichment: options.enrichment,
       },
       {
         headers,

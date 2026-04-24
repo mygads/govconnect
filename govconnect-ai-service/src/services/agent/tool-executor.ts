@@ -280,7 +280,7 @@ async function dispatchTool(
     case 'cancel_request':
       return toolCancelRequest(args, ctx);
     default:
-      return { success: false, error: `Tool tidak dikenal: ${toolName}` };
+      return { success: false, error: `Tool tidak dikenal: ${toolName}`, meta: { trustLevel: 'action_result', sourceKind: 'unknown_tool' } };
   }
 }
 
@@ -558,7 +558,17 @@ async function toolSearchKnowledge(
 ): Promise<ToolCallResult> {
   const query = typeof args.query === 'string' ? args.query : '';
   if (!query.trim()) {
-    return { success: false, error: 'Query pencarian tidak boleh kosong.' };
+    return {
+      success: false,
+      error: 'Query pencarian tidak boleh kosong.',
+      data: {
+        suggested_response: 'Mohon tuliskan informasi yang ingin dicari dengan lebih spesifik ya Pak/Bu.',
+      },
+      meta: {
+        trustLevel: 'untrusted_retrieval',
+        sourceKind: 'knowledge_retrieval',
+      },
+    };
   }
 
   const asksAboutMeaning = /\b(apa itu|maksud|fungsi|gunanya)\b/i.test(query);
@@ -645,7 +655,17 @@ async function toolSearchDocuments(
 ): Promise<ToolCallResult> {
   const query = typeof args.query === 'string' ? args.query : '';
   if (!query.trim()) {
-    return { success: false, error: 'Query pencarian dokumen tidak boleh kosong.' };
+    return {
+      success: false,
+      error: 'Query pencarian dokumen tidak boleh kosong.',
+      data: {
+        suggested_response: 'Mohon tuliskan dokumen atau topik yang ingin dicari ya Pak/Bu.',
+      },
+      meta: {
+        trustLevel: 'untrusted_retrieval',
+        sourceKind: 'document_retrieval',
+      },
+    };
   }
 
   const result = await searchDocuments(query, undefined, ctx.villageId, ctx.channel);
@@ -693,7 +713,17 @@ async function toolSearchUserMemory(
 ): Promise<ToolCallResult> {
   const query = typeof args.query === 'string' ? args.query.trim() : '';
   if (!query) {
-    return { success: false, error: 'Query memori tidak boleh kosong.' };
+    return {
+      success: false,
+      error: 'Query memori tidak boleh kosong.',
+      data: {
+        suggested_response: 'Tolong sebutkan informasi sebelumnya yang ingin dicari ya Pak/Bu.',
+      },
+      meta: {
+        trustLevel: 'trusted_record',
+        sourceKind: 'user_memory',
+      },
+    };
   }
 
   const memories = await searchUserMemories({
@@ -1284,13 +1314,21 @@ async function toolCheckStatus(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolCallResult> {
-  const referenceNumber = normalizeReferenceNumber(args.reference_number);
+  const referenceNumber = normalizeReferenceNumber(
+    args.reference_number
+    || args.complaint_id
+    || args.request_number,
+  );
   if (!referenceNumber) {
     return {
       success: false,
       error: 'Nomor referensi harus diisi.',
       data: {
         suggested_response: 'Untuk cek status, mohon kirim nomor laporan atau layanan ya Pak/Bu. Contohnya *LAP-...* atau *LAY-...*.',
+      },
+      meta: {
+        trustLevel: 'trusted_record',
+        sourceKind: 'status_lookup',
       },
     };
   }

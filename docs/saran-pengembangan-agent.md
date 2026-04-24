@@ -4,23 +4,18 @@ Tanggal update: 2026-04-24
 
 Dokumen ini hanya memuat pekerjaan yang **masih tersisa**. Item yang sudah selesai implementasi dan sudah lolos verifikasi test telah dihapus dari daftar ini.
 
-## Prioritas 1 — Governance, Security, dan Auditability
+## Prioritas 1 — Governance Formal dan Compliance Lintas Layanan
 
-### 1) Policy engine eksplisit per intent family
-- Definisikan capability policy terstruktur per keluarga intent.
-- Bedakan eligibility untuk informative/retrieval/state-mutating/sensitive tools.
-- Simpan alasan pemilihan tool agar mudah diaudit.
-
-### 2) Governance formal lintas layanan
+### 1) Governance formal lintas layanan
 - Data classification: publik, internal, pribadi, sensitif.
 - Purpose limitation: data warga hanya dipakai untuk kebutuhan layanan relevan.
 - Access control berbasis role.
-- Audit trail aksi sensitif (status change, handoff, cancel/edit penting).
+- Audit trail aksi sensitif lintas layanan, terutama status change, handoff, cancel/edit penting.
 - Retention & deletion policy formal.
 - Consent/notice warga terkait pemrosesan data.
 - Incident response untuk salah kirim, kebocoran, dan respons AI sensitif.
 
-### 3) PII & compliance hardening lanjutan
+### 2) PII & compliance hardening lanjutan
 - Register field PII per service.
 - Dokumen data-flow lintas service.
 - Correlation ID lintas service untuk investigasi insiden.
@@ -46,6 +41,10 @@ Target:
 - Tool executor jadi adapter agent-facing.
 - Pre-agent router fokus policy/routing, bukan menumpuk logic bisnis.
 
+Catatan update:
+- Quick hardening untuk prompt, first-turn tool policy, reason audit, error shape tool, dan status fallback sudah dilakukan.
+- Refactor boundary penuh masih tersisa karena perlu pemisahan domain service yang lebih besar.
+
 ---
 
 ## Prioritas 3 — Observability Biaya & Kualitas
@@ -69,6 +68,10 @@ Target:
 - Ambiguity suites.
 - Hallucination/safety suites.
 - Complaint/service operational suites.
+
+Catatan update:
+- Golden-set eval dan QA script sudah dipakai sebagai gate manual.
+- Yang tersisa adalah menjadikannya layanan/harness rutin dengan dashboard dan historis regresi.
 
 ---
 
@@ -97,13 +100,31 @@ Saat handoff, petugas menerima ringkasan:
 - nomor layanan/laporan terkait,
 - alasan escalation.
 
+Catatan update:
+- Auto handoff sudah aktif dan terverifikasi pada WA resident QA.
+- Yang tersisa adalah payload enrichment terstruktur untuk dashboard/petugas.
+
+---
+
+## Prioritas 6 — Stabilitas Notifikasi Async WA
+
+### 1) Delivery notifikasi event lintas service
+- Pastikan notifikasi service request created terkirim konsisten ke WA.
+- Pastikan notifikasi status layanan PROCESS terkirim konsisten ke WA.
+- Pastikan notifikasi status laporan DONE terkirim konsisten ke WA.
+- Tambahkan observability untuk event yang tidak menghasilkan outbound message.
+
+Catatan update:
+- Flow sync agent, status lookup, cancel/edit, handoff, webchat QA, build, lint, type-check, dan golden-set sudah lolos.
+- WA resident QA masih menunjukkan notifikasi async kosong pada environment lokal meskipun status backend berubah dan bisa dicek via chat.
+
 ---
 
 ## Rencana eksekusi yang disarankan
 
 ### Fase B (berikutnya)
-1. Unifikasi state/memory architecture.
-2. Policy engine tool eligibility.
+1. Stabilkan notifikasi async WA lintas service.
+2. Unifikasi state/memory architecture.
 3. Correlation ID lintas service.
 4. Dashboard biaya per flow.
 

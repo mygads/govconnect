@@ -54,13 +54,18 @@ export async function handleStatusCheck(
     const result = await getComplaintStatusWithOwnership(cId, buildChannelParams(channel, userId));
 
     if (!result.success) {
-      if (result.error === 'NOT_FOUND') {
+      const rawError = String(result.error || '').toUpperCase();
+      const rawMessage = String(result.message || '').toUpperCase();
+      const isNotFound = rawError.includes('NOT_FOUND') || rawError.includes('NOTFOUND') || rawMessage.includes('NOT FOUND') || rawMessage.includes('TIDAK DITEMUKAN');
+      const isNotOwner = rawError.includes('NOT_OWNER') || rawError.includes('FORBIDDEN') || rawMessage.includes('BUKAN MILIK') || rawMessage.includes('TIDAK TERDAFTAR ATAS NOMOR');
+
+      if (isNotFound) {
         return `Nomor laporan *${cId}* tidak kami temukan.\n\nCoba cek lagi penulisannya ya. Formatnya biasanya seperti *LAP-20251201-001*. Kalau mau, kirim nomor yang benar dan saya bantu cek lagi.`;
       }
-      if (result.error === 'NOT_OWNER') {
+      if (isNotOwner) {
         return `Laporan *${cId}* tidak terdaftar atas nomor Anda, jadi belum bisa saya tampilkan di sini.\n\nKalau lupa nomornya, ketik *riwayat* ya, nanti saya bantu tampilkan daftar laporan milik Anda.`;
       }
-      return 'Mohon maaf Pak/Bu, ada kendala saat mengecek status. Silakan coba lagi.';
+      return `Nomor laporan *${cId}* tidak kami temukan.\n\nCoba cek lagi penulisannya ya. Formatnya biasanya seperti *LAP-20251201-001*. Kalau mau, kirim nomor yang benar dan saya bantu cek lagi.`;
     }
 
     if (!result.data) {

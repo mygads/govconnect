@@ -368,6 +368,85 @@ export async function getUsageByVillage(
 }
 
 /**
+ * Token usage grouped by intent family for cost observability.
+ */
+export async function getUsageByIntentFamily(
+  filters?: { village_id?: string; start?: string; end?: string }
+): Promise<any[]> {
+  const range = defaultRange('month');
+  const startDate = filters?.start ? new Date(filters.start) : range.start;
+  const endDate = filters?.end ? new Date(filters.end) : range.end;
+
+  const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+
+  const where = Prisma.join(conditions, ' AND ');
+
+  return prisma.$queryRaw<any[]>(Prisma.sql`
+    SELECT
+      CASE
+        WHEN intent IN ('CREATE_COMPLAINT', 'UPDATE_COMPLAINT', 'CANCEL_REQUEST') THEN 'complaint'
+        WHEN intent IN ('CREATE_SERVICE_REQUEST', 'SERVICE_INFO') THEN 'service'
+        WHEN intent IN ('CHECK_STATUS', 'HISTORY') THEN 'status_history'
+        WHEN intent IN ('KNOWLEDGE_QUERY', 'DOCUMENT_SEARCH', 'QUESTION') THEN 'knowledge'
+        WHEN intent IN ('GREETING', 'FAREWELL', 'CONFIRMATION', 'NAME_UPDATE', 'ADDRESS_INPUT') THEN 'conversation'
+        WHEN intent IN ('TAKEOVER', 'AGENT_ERROR', 'ERROR') THEN 'handoff_fallback'
+        ELSE 'other'
+      END AS intent_family,
+      COALESCE(intent, 'unknown') AS intent,
+      SUM(input_tokens)::int AS input_tokens,
+      SUM(output_tokens)::int AS output_tokens,
+      SUM(total_tokens)::int AS total_tokens,
+      SUM(cost_usd)::float AS cost_usd,
+      COUNT(*)::int AS call_count,
+      COUNT(DISTINCT COALESCE(session_id, wa_user_id))::int AS unique_conversations
+    FROM ai_token_usage
+    WHERE ${where}
+    GROUP BY intent_family, COALESCE(intent, 'unknown')
+    ORDER BY cost_usd DESC, total_tokens DESC
+  `);
+}
+
+/**
+ * Token usage grouped by tenant + high-level flow.
+ */
+export async function getUsageByTenantFlow(
+  filters?: { village_id?: string; start?: string; end?: string }
+): Promise<any[]> {
+  const range = defaultRange('month');
+  const startDate = filters?.start ? new Date(filters.start) : range.start;
+  const endDate = filters?.end ? new Date(filters.end) : range.end;
+
+  const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+
+  const where = Prisma.join(conditions, ' AND ');
+
+  return prisma.$queryRaw<any[]>(Prisma.sql`
+    SELECT
+      COALESCE(village_id, '__unknown__') AS village_id,
+      CASE
+        WHEN layer_type IN ('embedding', 'rag_expand', 'rag_rerank') THEN 'retrieval'
+        WHEN layer_type IN ('micro_nlu', 'full_nlu') THEN 'nlu'
+        WHEN layer_type = 'agent' THEN 'agent'
+        WHEN call_type = 'main_chat' THEN 'citizen_reply'
+        ELSE COALESCE(call_type, 'other')
+      END AS flow,
+      SUM(input_tokens)::int AS input_tokens,
+      SUM(output_tokens)::int AS output_tokens,
+      SUM(total_tokens)::int AS total_tokens,
+      SUM(cost_usd)::float AS cost_usd,
+      COUNT(*)::int AS call_count,
+      COUNT(DISTINCT COALESCE(session_id, wa_user_id))::int AS unique_conversations,
+      COALESCE(SUM(CASE WHEN success = false THEN 1 ELSE 0 END), 0)::int AS failed_calls
+    FROM ai_token_usage
+    WHERE ${where}
+    GROUP BY COALESCE(village_id, '__unknown__'), flow
+    ORDER BY cost_usd DESC, total_tokens DESC
+  `);
+}
+
+/**
  * Micro NLU vs Full NLU breakdown.
  */
 export async function getLayerBreakdown(

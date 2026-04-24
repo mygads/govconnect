@@ -36,6 +36,7 @@ export async function handleStartTakeover(req: Request, res: Response): Promise<
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
     const { admin_id, admin_name, reason } = req.body;
+    const enrichment = req.body?.enrichment;
     const villageId = resolveVillageId(req);
     const channel = resolveChannel(req, wa_user_id || undefined);
 
@@ -44,7 +45,15 @@ export async function handleStartTakeover(req: Request, res: Response): Promise<
       return;
     }
 
-    const session = await startTakeover(wa_user_id, admin_id, admin_name, reason, villageId, channel);
+    const session = await startTakeover(
+      wa_user_id,
+      admin_id,
+      admin_name,
+      reason,
+      villageId,
+      channel,
+      typeof enrichment === 'object' && enrichment ? enrichment : undefined,
+    );
 
     res.json({
       success: true,

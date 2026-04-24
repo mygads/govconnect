@@ -311,3 +311,13 @@ Makna:
 - Resident QA sebelumnya: [scripts/qa-results/wa-resident-qa-sanreseng-ade_20260423_221415.json](scripts/qa-results/wa-resident-qa-sanreseng-ade_20260423_221415.json)
 - Laporan sebelumnya: [docs/LOCAL-DEV-E2E-TESTING-2026-04-18.md](docs/LOCAL-DEV-E2E-TESTING-2026-04-18.md)
 - Harness WA resident: [scripts/qa-wa-resident-sanreseng-ade.ps1](scripts/qa-wa-resident-sanreseng-ade.ps1)
+
+## Update 2026-04-25: Validasi Handoff, Observability & Config Lanjutan
+
+- Endpoint /api/internal/village-behavior divalidasi dengan auth & integrasi ke i-service.
+- AI Token Usage divalidasi dengan grouping berdasarkan Intent Family & Tenant Flow.
+- Handoff Enrichment dikonfirmasi masuk ke Takeover Session di channel service.
+- Fallback error untuk start app & Prisma Generate di Windows berhasil diselesaikan dengan mematikan lock pada process 
+ode sebelum migrasi.
+- API Smoke Test Script memverifikasi keberhasilan integrasi internal.
+

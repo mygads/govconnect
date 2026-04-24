@@ -157,6 +157,29 @@ interface VillageInfo {
   slug: string
 }
 
+interface IntentFamilyUsage {
+  intent_family: string
+  intent: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cost_usd: number
+  call_count: number
+  unique_conversations: number
+}
+
+interface TenantFlowUsage {
+  village_id: string
+  flow: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cost_usd: number
+  call_count: number
+  unique_conversations: number
+  failed_calls: number
+}
+
 // ==================== Helpers ====================
 
 const USD_TO_IDR = 17_000
@@ -280,6 +303,8 @@ export default function AITokenUsagePage() {
   const [byModel, setByModel] = useState<ModelUsage[]>([])
   const [avgPerChat, setAvgPerChat] = useState<AvgPerChat | null>(null)
   const [bySource, setBySource] = useState<{ source: string; total_calls: number; total_tokens: number; input_tokens: number; output_tokens: number; total_cost_usd: number }[]>([])
+  const [byIntentFamily, setByIntentFamily] = useState<IntentFamilyUsage[]>([])
+  const [byTenantFlow, setByTenantFlow] = useState<TenantFlowUsage[]>([])
   const [summaryLoading, setSummaryLoading] = useState(true)
 
   // Periode tab data (loaded on demand)
@@ -312,19 +337,23 @@ export default function AITokenUsagePage() {
     if (user && user.role !== "superadmin") redirect("/dashboard")
   }, [user])
 
-  // Load summary data on mount (4 calls)
+  // Load summary data on mount
   const loadSummary = useCallback(async () => {
     setSummaryLoading(true)
-    const [s, bm, apc, bs] = await Promise.all([
+    const [s, bm, apc, bs, bif, btf] = await Promise.all([
       fetchData<TokenSummary>("summary"),
       fetchData<ModelUsage[]>("by-model"),
       fetchData<AvgPerChat>("avg-per-chat"),
       fetchData<{ source: string; total_calls: number; total_tokens: number; input_tokens: number; output_tokens: number; total_cost_usd: number }[]>("by-source"),
+      fetchData<IntentFamilyUsage[]>("by-intent-family"),
+      fetchData<TenantFlowUsage[]>("by-tenant-flow"),
     ])
     setSummary(s)
     setByModel(bm || [])
     setAvgPerChat(apc)
     setBySource(bs || [])
+    setByIntentFamily(bif || [])
+    setByTenantFlow(btf || [])
     setSummaryLoading(false)
   }, [])
 
@@ -554,9 +583,10 @@ export default function AITokenUsagePage() {
 
       {/* Tabs — Informasi Detail */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="ringkasan">Ikhtisar Token</TabsTrigger>
           <TabsTrigger value="biaya">Biaya</TabsTrigger>
+          <TabsTrigger value="flow">Biaya per Flow</TabsTrigger>
           <TabsTrigger value="periode">Per Periode</TabsTrigger>
           <TabsTrigger value="village">Per Desa</TabsTrigger>
           <TabsTrigger value="layer">Layer Detail</TabsTrigger>
@@ -982,6 +1012,99 @@ export default function AITokenUsagePage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ====== BIAYA PER FLOW TAB ====== */}
+        <TabsContent value="flow" className="space-y-6 mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Activity className="h-4 w-4" /> Biaya per Intent Family
+                </CardTitle>
+                <CardDescription>Observabilitas biaya berdasarkan kelompok intent.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {summaryLoading ? <Skeleton className="h-56" /> : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left text-muted-foreground">
+                          <th className="pb-2 pr-3">Intent Family</th>
+                          <th className="pb-2 pr-3 text-right">Calls</th>
+                          <th className="pb-2 pr-3 text-right">Token</th>
+                          <th className="pb-2 text-right">Biaya</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.values(byIntentFamily.reduce((acc, row) => {
+                          const key = row.intent_family || 'other'
+                          const prev = acc[key] || { intent_family: key, call_count: 0, total_tokens: 0, cost_usd: 0 }
+                          acc[key] = {
+                            ...prev,
+                            call_count: prev.call_count + row.call_count,
+                            total_tokens: prev.total_tokens + row.total_tokens,
+                            cost_usd: prev.cost_usd + row.cost_usd,
+                          }
+                          return acc
+                        }, {} as Record<string, { intent_family: string; call_count: number; total_tokens: number; cost_usd: number }>))
+                          .sort((a, b) => b.cost_usd - a.cost_usd)
+                          .map((row, idx) => (
+                            <tr key={idx} className="border-b last:border-0 hover:bg-muted/30">
+                              <td className="py-2 pr-3 font-medium">{row.intent_family}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(row.call_count)}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(row.total_tokens)}</td>
+                              <td className="py-2 text-right font-semibold text-emerald-600">{formatIDR(row.cost_usd)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Building2 className="h-4 w-4" /> Biaya per Tenant Flow
+                </CardTitle>
+                <CardDescription>Biaya per desa dan flow utama (nlu/retrieval/agent).</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {summaryLoading ? <Skeleton className="h-56" /> : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left text-muted-foreground">
+                          <th className="pb-2 pr-3">Desa</th>
+                          <th className="pb-2 pr-3">Flow</th>
+                          <th className="pb-2 pr-3 text-right">Calls</th>
+                          <th className="pb-2 pr-3 text-right">Fail</th>
+                          <th className="pb-2 text-right">Biaya</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {byTenantFlow
+                          .slice()
+                          .sort((a, b) => b.cost_usd - a.cost_usd)
+                          .slice(0, 20)
+                          .map((row, idx) => (
+                            <tr key={idx} className="border-b last:border-0 hover:bg-muted/30">
+                              <td className="py-2 pr-3">{getVillageName(row.village_id === '__unknown__' ? null : row.village_id)}</td>
+                              <td className="py-2 pr-3 font-mono text-xs">{row.flow}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(row.call_count)}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(row.failed_calls)}</td>
+                              <td className="py-2 text-right font-semibold text-emerald-600">{formatIDR(row.cost_usd)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* ====== PERIODE TAB ====== */}

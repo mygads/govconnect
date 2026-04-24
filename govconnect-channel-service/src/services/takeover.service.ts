@@ -16,6 +16,7 @@ export interface TakeoverSession {
   started_at: Date;
   ended_at: Date | null;
   reason: string | null;
+  enrichment_json?: any;
 }
 
 export interface ConversationSummary {
@@ -94,14 +95,14 @@ export async function startTakeover(
   admin_name?: string,
   reason?: string,
   village_id?: string,
-  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP',
+  enrichment?: Record<string, unknown>,
 ): Promise<TakeoverSession> {
   const resolvedVillageId = resolveVillageId(village_id);
   // End any existing takeover first
   await endTakeover(channel_identifier, resolvedVillageId, channel);
 
-  const session = await prisma.takeoverSession.create({
-    data: {
+  const createData = {
       village_id: resolvedVillageId,
       wa_user_id: channel === 'WHATSAPP' ? channel_identifier : null,
       channel,
@@ -109,8 +110,22 @@ export async function startTakeover(
       admin_id,
       admin_name,
       reason,
-    },
-  });
+      ...(enrichment ? { enrichment_json: enrichment } : {}),
+    };
+
+  let session: TakeoverSession;
+  try {
+    session = await prisma.takeoverSession.create({ data: createData as any });
+  } catch (error: any) {
+    if (!enrichment) throw error;
+    logger.warn('Takeover enrichment column unavailable, storing takeover without structured enrichment', {
+      error: error.message,
+      channel,
+      channel_identifier,
+    });
+    const { enrichment_json: _enrichmentJson, ...fallbackData } = createData as any;
+    session = await prisma.takeoverSession.create({ data: fallbackData });
+  }
 
   // Update conversation to mark as takeover
   await prisma.conversation.upsert({
@@ -609,3 +624,4 @@ export async function getPendingMessage(
     return null;
   }
 }
+

@@ -13,6 +13,7 @@ interface EnvironmentConfig {
   idPrefixComplaint: string;
   idPrefixServiceRequest: string;
   aiServiceUrl: string;
+  notificationServiceUrl: string;
 }
 
 function validateEnv(): EnvironmentConfig {
@@ -40,6 +41,7 @@ function validateEnv(): EnvironmentConfig {
     idPrefixComplaint: process.env.ID_PREFIX_COMPLAINT || 'LAP',
     idPrefixServiceRequest: process.env.ID_PREFIX_SERVICE_REQUEST || 'LAY',
     aiServiceUrl: process.env.AI_SERVICE_URL || 'http://ai-service:3002',
+    notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || 'http://notification-service:3004',
   };
 }
 

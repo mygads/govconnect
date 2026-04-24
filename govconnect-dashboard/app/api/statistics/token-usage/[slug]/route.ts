@@ -15,6 +15,8 @@ const ENDPOINT_MAP: Record<string, keyof typeof ai> = {
   'by-period-layer': 'getTokenUsageByPeriodLayer',
   'by-model': 'getTokenUsageByModel',
   'by-village': 'getTokenUsageByVillage',
+  'by-intent-family': 'getTokenUsageByIntentFamily',
+  'by-tenant-flow': 'getTokenUsageByTenantFlow',
   'layer-breakdown': 'getTokenUsageLayerBreakdown',
   'avg-per-chat': 'getTokenUsageAvgPerChat',
   'responses-by-village': 'getTokenUsageResponsesByVillage',

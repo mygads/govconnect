@@ -3,6 +3,7 @@ import axios from 'axios';
 import config from '../config/env';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import logger from '../utils/logger';
+import { correlationStorage } from '../shared/correlation-context';
 
 let connection: any = null;
 let channel: Channel | null = null;
@@ -234,14 +235,34 @@ export async function startConsumer(
 
       try {
         const data = JSON.parse(content);
+        
+        let correlationId = msg.properties?.headers?.['x-correlation-id'] || data?._meta?.correlation_id;
+        if (!correlationId && typeof require !== 'undefined') {
+           const crypto = require('crypto');
+           correlationId = crypto.randomUUID();
+        }
 
         logger.info('Received event', {
           routingKey,
+          correlationId,
           data
         });
 
         // Process message
-        await handler(routingKey, data);
+        if (correlationId) {
+          await new Promise<void>((resolve, reject) => {
+            correlationStorage.run({ correlationId }, async () => {
+              try {
+                await handler(routingKey, data);
+                resolve();
+              } catch (err) {
+                reject(err);
+              }
+            });
+          });
+        } else {
+          await handler(routingKey, data);
+        }
 
         // Acknowledge message
         channel!.ack(msg);

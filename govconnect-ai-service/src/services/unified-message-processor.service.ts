@@ -42,6 +42,7 @@ import {
 } from './sentiment-analysis.service';
 import { startTakeoverForUser } from './channel-client.service';
 import { getEnhancedContext } from './conversation-context.service';
+import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village-behavior.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
@@ -402,9 +403,13 @@ async function maybeTriggerHumanHandoff(input: {
   userId: string;
   channel: 'whatsapp' | 'webchat';
   villageId?: string;
+  villageName?: string | null;
   message: string;
   result: ProcessMessageResult;
   sentiment: Awaited<ReturnType<typeof analyzeSentimentWithLLM>>;
+  conversationSummary?: string;
+  recentConversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  memorySummary?: string;
   isEvaluation?: boolean;
 }): Promise<{ started: boolean; reason?: string; response?: string }> {
   if (input.isEvaluation) {
@@ -436,6 +441,21 @@ async function maybeTriggerHumanHandoff(input: {
     admin_id: 'system-auto-handoff',
     admin_name: 'Petugas Desa',
     reason: handoffReason,
+    enrichment: {
+      intent: input.result.intent,
+      last_user_message: input.message,
+      conversation_summary: input.conversationSummary || null,
+      recent_messages: (input.recentConversationHistory || []).slice(-6),
+      active_status: input.result.metadata.agentMode || null,
+      related_numbers: Array.from(new Set(input.message.match(/\b(?:LAP|LAY|LYN|RPT)-[A-Z0-9-]+\b/gi) || [])),
+      escalation_reason: handoffReason,
+      sentiment: input.sentiment.level,
+      channel: input.channel,
+      village_id: input.villageId || null,
+      village_name: input.villageName || null,
+      tools_used: input.result.metadata.toolsUsed || [],
+      memory_summary: input.memorySummary || null,
+    },
   });
 
   return {
@@ -467,10 +487,14 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
   notifyStage('thinking', 60);
 
   try {
+    const villageBehavior = await getVillageBehaviorConfig(villageId);
+    const villageBehaviorSummary = formatVillageBehaviorConfig(villageBehavior);
+
     const result = await runAgent(
       message,
       {
         villageName: villageName ?? undefined,
+        villageBehaviorSummary,
         memorySummary,
         currentDatetime: String(getWIBDateTime()),
         userName,
@@ -937,9 +961,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       userId,
       channel: agentChannel,
       villageId: resolvedVillageId,
+      villageName: templateContext?.villageName ?? null,
       message: sanitizedMessage,
       result: agentResult,
       sentiment,
+      conversationSummary: conversationContext.summary,
+      recentConversationHistory: conversationContext.recentMessages,
+      memorySummary,
       isEvaluation,
     });
 

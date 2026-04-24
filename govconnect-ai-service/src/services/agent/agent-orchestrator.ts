@@ -50,7 +50,9 @@ export interface AgentResult {
   matchedPolicyKey?: string;
   matchedPolicySource?: string;
   matchedPolicyConfidence?: number;
+  toolPolicyReason: string;
   firstTurnToolChoice: AgentToolChoice;
+  firstTurnToolChoiceReason: string;
   toolTrace: ToolExecutionTrace[];
   totalTokens: number;
   iterations: number;
@@ -170,18 +172,40 @@ function resolveFirstTurnToolChoice(
   heuristicTools: AgentToolName[],
   allowedToolNames: AgentToolName[],
   allowedToolsCount: number,
-): AgentToolChoice {
-  if (allowedToolsCount === 0) return 'auto';
+): { choice: AgentToolChoice; reason: string } {
+  if (allowedToolsCount === 0) {
+    return {
+      choice: 'auto',
+      reason: 'no_allowed_tools',
+    };
+  }
 
   const normalized = (userMessage || '').toLowerCase().trim();
+  const shortAmbiguousUtterance = normalized.split(/\s+/).filter(Boolean).length <= 3
+    && /\b(mau|ingin|tolong|bantu|lapor|urus|gimana|bagaimana|bingung|info|status)\b/i.test(normalized)
+    && !/\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
+  if (shortAmbiguousUtterance) {
+    return {
+      choice: 'auto',
+      reason: 'short_ambiguous_utterance',
+    };
+  }
+
   const hasKnowledgeOnlySignal = /\b(govconnect|kanal|whatsapp|webchat|5w1h|embedding|kebijakan data|penggunaan data|keamanan data|privasi|notifikasi|tahap layanan|layanan umum|pelayanan publik|alur layanan|format file|file terlalu besar|penamaan file|update data|memperbarui data|salah pilih layanan|nomor layanan|lay-)\b/i.test(normalized);
   const hasRetrievalTool = allowedToolNames.some((tool) => tool === 'search_knowledge' || tool === 'search_documents');
 
   if (hasKnowledgeOnlySignal && hasRetrievalTool) {
-    return 'required';
+    return {
+      choice: 'required',
+      reason: 'knowledge_query_with_retrieval_tools',
+    };
   }
 
-  return detectAmbiguousIntent(userMessage, heuristicTools, allowedToolNames) ? 'auto' : 'required';
+  const ambiguous = detectAmbiguousIntent(userMessage, heuristicTools, allowedToolNames);
+  return {
+    choice: ambiguous ? 'auto' : 'required',
+    reason: ambiguous ? 'ambiguous_or_multi_intent' : 'clear_operational_or_factual_intent',
+  };
 }
 
 /**
@@ -203,14 +227,17 @@ export async function runAgent(
     matchedPolicyKey,
     matchedPolicySource,
     matchedPolicyConfidence,
+    toolPolicyReason,
   } = toolSelection;
   const allowedTools = AGENT_TOOLS.filter((tool) => allowedToolNames.includes(tool.function.name as AgentToolName));
-  const firstTurnToolChoice = resolveFirstTurnToolChoice(
+  const firstTurnToolResolution = resolveFirstTurnToolChoice(
     userMessage,
     heuristicTools,
     allowedToolNames,
     allowedTools.length,
   );
+  const firstTurnToolChoice = firstTurnToolResolution.choice;
+  const firstTurnToolChoiceReason = firstTurnToolResolution.reason;
 
   const messages: AgentMessage[] = [{ role: 'system', content: systemPrompt }];
 
@@ -253,7 +280,9 @@ export async function runAgent(
         matchedPolicyKey,
         matchedPolicySource,
         matchedPolicyConfidence,
+        toolPolicyReason,
         firstTurnToolChoice,
+        firstTurnToolChoiceReason,
         toolTrace,
         totalTokens,
         iterations,
@@ -328,7 +357,9 @@ export async function runAgent(
         matchedPolicyKey,
         matchedPolicySource,
         matchedPolicyConfidence,
+        toolPolicyReason,
         firstTurnToolChoice,
+        firstTurnToolChoiceReason,
         toolTrace,
         totalTokens,
         model,
@@ -358,7 +389,9 @@ export async function runAgent(
         matchedPolicyKey,
         matchedPolicySource,
         matchedPolicyConfidence,
+        toolPolicyReason,
         firstTurnToolChoice,
+        firstTurnToolChoiceReason,
         toolTrace,
         totalTokens,
         iterations,
@@ -389,7 +422,9 @@ export async function runAgent(
     matchedPolicyKey,
     matchedPolicySource,
     matchedPolicyConfidence,
+    toolPolicyReason,
     firstTurnToolChoice,
+    firstTurnToolChoiceReason,
     toolTrace,
     totalTokens,
     iterations,
@@ -514,6 +549,7 @@ async function selectAllowedTools(userMessage: string): Promise<{
   matchedPolicyKey?: string;
   matchedPolicySource?: string;
   matchedPolicyConfidence?: number;
+  toolPolicyReason: string;
 }> {
   const normalized = userMessage.toLowerCase().trim();
   const heuristicSet = new Set<AgentToolName>();
@@ -525,6 +561,7 @@ async function selectAllowedTools(userMessage: string): Promise<{
       heuristicTools: [],
       learnedTools: [],
       allowedToolNames: [],
+      toolPolicyReason: 'greeting_only_no_tools',
     };
   }
 
@@ -1003,5 +1040,6 @@ async function selectAllowedTools(userMessage: string): Promise<{
     matchedPolicyKey: learnedPolicy.matchedPolicyKey,
     matchedPolicySource: learnedPolicy.matchedPolicySource,
     matchedPolicyConfidence: learnedPolicy.confidence,
+    toolPolicyReason: learnedTools.length > 0 ? 'learned_policy_applied' : 'heuristic_policy_applied',
   };
 }

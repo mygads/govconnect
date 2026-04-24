@@ -41,6 +41,8 @@ import {
   getUsageByPeriod,
   getUsageByModel,
   getUsageByVillage,
+  getUsageByIntentFamily,
+  getUsageByTenantFlow,
   getLayerBreakdown,
   getAvgTokensPerChat,
   getResponseCountByVillage,
@@ -808,6 +810,36 @@ app.get('/stats/token-usage/by-village', async (req: Request, res: Response) => 
     res.json(data);
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to get usage by village' });
+  }
+});
+
+// GET /stats/token-usage/by-intent-family
+app.get('/stats/token-usage/by-intent-family', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getUsageByIntentFamily(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get usage by intent family' });
+  }
+});
+
+// GET /stats/token-usage/by-tenant-flow
+app.get('/stats/token-usage/by-tenant-flow', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getUsageByTenantFlow(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get usage by tenant flow' });
   }
 });
 

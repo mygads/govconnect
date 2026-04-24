@@ -67,6 +67,25 @@ model system_settings {
   created_at  DateTime @default(now())
 }
 
+model village_behavior_configs {
+  id                   String   @id @default(cuid())
+  village_id           String   @unique
+  active_service_ids   String[] @default([])
+  important_contacts   String[] @default([])
+  service_hours        Json?
+  local_faq_priority   String[] @default([])
+  escalation_routing   Json?
+  complaint_rules      String[] @default([])
+  service_rules        String[] @default([])
+  notice               String?  @db.Text
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  village              villages @relation(fields: [village_id], references: [id], onDelete: Cascade)
+
+  @@index([village_id])
+}
+
 // ==================== AI GOLDEN SET ====================
 
 model ai_golden_set_runs {
@@ -292,6 +311,7 @@ model villages {
   important_contact_categories important_contact_categories[]
   knowledge_base_items     knowledge_base[]
   knowledge_documents      knowledge_documents[]
+  behavior_config          village_behavior_configs?
 }
 
 model village_profiles {

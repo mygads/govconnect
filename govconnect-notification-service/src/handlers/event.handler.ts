@@ -21,7 +21,7 @@ function resolveChannel(event: any): { village_id?: string; channel: 'WHATSAPP' 
   if (event.channel && event.channel_identifier) {
     return {
       village_id,
-      channel: event.channel,
+      channel: String(event.channel).toUpperCase() === 'WEBCHAT' ? 'WEBCHAT' : 'WHATSAPP',
       channel_identifier: event.channel_identifier
     };
   }
@@ -175,3 +175,4 @@ async function handleUrgentAlert(event: UrgentAlertEvent): Promise<void> {
   // Send to admin WhatsApp
   await sendAdminUrgentAlert(message, event);
 }
+

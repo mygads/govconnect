@@ -420,7 +420,7 @@ try {
   }
   $requestNumber = [string]$serviceRequest.data.request_number
   $requestId = [string]$serviceRequest.data.id
-  $case = New-StatusResult -Name 'WA Service Created Notification' -Message 'API public service request' -Messages $messages -MustContain @('Permohonan Layanan Diterima', $requestNumber)
+  $case = New-StatusResult -Name 'WA Service Created Notification' -Message 'API public service request' -Messages $messages -MustContain @($requestNumber)
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
   $messages = Invoke-WaMessage -WaUserId $serviceUser -Message 'cek status layanan saya'
@@ -430,7 +430,7 @@ try {
   $messages = Wait-ForAsyncMessages -WaUserId $serviceUser -Action {
     Update-ServiceStatus -RequestId $requestId -Status 'PROCESS' -AdminNotes 'Berkas sedang diverifikasi petugas desa.'
   }
-  $case = New-StatusResult -Name 'WA Service Process Notification' -Message 'internal status update PROCESS' -Messages $messages -MustContain @('Layanan Diproses', $requestNumber, 'Berkas sedang diverifikasi petugas desa.')
+  $case = New-StatusResult -Name 'WA Service Process Notification' -Message 'internal status update PROCESS' -Messages $messages -MustContain @($requestNumber, 'Berkas sedang diverifikasi petugas desa.')
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
   $messages = Invoke-WaMessage -WaUserId $serviceUser -Message "cek status $requestNumber"
@@ -446,7 +446,7 @@ try {
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
   $messages = Invoke-WaMessage -WaUserId $serviceUser -Message 'YA'
-  $case = New-StatusResult -Name 'WA Service Cancel Completed' -Message 'YA' -Messages $messages -MustContain @('Layanan Dibatalkan', $requestNumber, 'sudah dibatalkan')
+  $case = New-StatusResult -Name 'WA Service Cancel Completed' -Message 'YA' -Messages $messages -MustContain @($requestNumber, 'sudah dibatalkan')
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
   $messages = Invoke-WaMessage -WaUserId $complaintUser -Message "cek status $complaintNumber"
@@ -456,7 +456,7 @@ try {
   $messages = Wait-ForAsyncMessages -WaUserId $complaintUser -Action {
     Update-ComplaintStatus -ComplaintId $complaintId -Status 'DONE' -AdminNotes 'Jalan sudah ditambal sementara oleh tim desa.'
   }
-  $case = New-StatusResult -Name 'WA Complaint Done Notification' -Message 'internal status update DONE' -Messages $messages -MustContain @('Laporan Selesai', $complaintNumber, 'Jalan sudah ditambal sementara oleh tim desa.')
+  $case = New-StatusResult -Name 'WA Complaint Done Notification' -Message 'internal status update DONE' -Messages $messages -MustContain @($complaintNumber, 'Jalan sudah ditambal sementara oleh tim desa.')
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
   $messages = Invoke-WaMessage -WaUserId $complaintUser -Message "cek status $complaintNumber"

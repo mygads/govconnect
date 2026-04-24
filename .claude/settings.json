@@ -18,7 +18,18 @@
       "PowerShell(Start-Sleep -Seconds 6; Invoke-RestMethod -Method Post -Uri \"http://localhost:3002/api/webchat\" -ContentType \"application/json\" -Body \\(@{ session_id='web_probe_new2'; village_id='cmkuvo1dk0000mj60h4u4bq1w'; message='Alamat kantor desa?' } | ConvertTo-Json\\) -TimeoutSec 40 | ConvertTo-Json -Depth 8)",
       "PowerShell(& \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\wa-sim.ps1\" -VillageId cmkuvo1dk0000mj60h4u4bq1w -WaUserId 6289911449011 -Message 'mau lapor' -PollSeconds 20)",
       "PowerShell(& \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\wa-sim.ps1\" -VillageId cmkuvo1dk0000mj60h4u4bq1w -WaUserId 6289911449012 -Message 'tolong ada kebakaran sekarang' -PollSeconds 20)",
-      "PowerShell(& \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\qa-wa-resident-sanreseng-ade.ps1\")"
+      "PowerShell(& \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\qa-wa-resident-sanreseng-ade.ps1\")",
+      "Bash(npx kill-port *)",
+      "Bash(node -e \"require\\('child_process'\\).execSync\\('taskkill /F /IM node.exe /T'\\).toString\\(\\)\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File ./scripts/qa-wa-resident-sanreseng-ade.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File ./scripts/qa-webchat-sanreseng-ade.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"C:/Yoga/Programming/containers/govconnect/scripts/qa-webchat-sanreseng-ade.ps1\")",
+      "Bash(npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run type-check)",
+      "Bash(npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run dev)",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"C:/Yoga/Programming/containers/govconnect/scripts/qa-wa-resident-sanreseng-ade.ps1\" -PollSeconds 45 -Limit 40)",
+      "Bash(INTERNAL_API_KEY=\"govconnect-internal-api-key-2025\" npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run eval:golden-set)",
+      "Bash(npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run lint)",
+      "Bash(npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run build)"
     ]
   }
 }

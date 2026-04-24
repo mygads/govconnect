@@ -9,6 +9,7 @@ import { sendTextMessage, sendContactMessage } from './wa.service';
 import { updateConversation, clearAIStatus, setAIError } from './takeover.service';
 import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.service';
 import { clearUserBubble } from './spam-guard.service';
+import { getCorrelationId } from '../shared/correlation-context';
 
 let connection: any = null;
 let channel: any = null;
@@ -204,16 +205,31 @@ export async function publishEvent(routingKey: string, payload: any): Promise<vo
   }
 
   try {
-    const message = Buffer.from(JSON.stringify(payload));
+    const correlationId = getCorrelationId();
+    const eventPayload = correlationId
+      ? {
+          ...payload,
+          _meta: {
+            ...(payload?._meta || {}),
+            correlation_id: correlationId,
+          },
+        }
+      : payload;
+    const message = Buffer.from(JSON.stringify(eventPayload));
     
     channel.publish(
       rabbitmqConfig.EXCHANGE_NAME,
       routingKey,
       message,
-      { persistent: rabbitmqConfig.OPTIONS.persistent }
+      {
+        persistent: rabbitmqConfig.OPTIONS.persistent,
+        headers: {
+          ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
+        },
+      }
     );
 
-    logger.info('Event published', { routingKey, payload });
+    logger.info('Event published', { routingKey, payload: eventPayload });
   } catch (error: any) {
     logger.error('Failed to publish event', {
       routingKey,

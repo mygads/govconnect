@@ -110,6 +110,7 @@ model TakeoverSession {
   started_at   DateTime  @default(now())
   ended_at     DateTime? // null = still active
   reason       String?   // Optional reason for takeover
+  enrichment_json Json?   // Structured context for admin handoff dashboard
   
   @@index([village_id, channel, channel_identifier])
   @@index([admin_id])

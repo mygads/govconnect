@@ -3,6 +3,7 @@ import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
+import { getCorrelationId } from '../shared/correlation-context';
 
 let connection: any = null;
 let channel: any = null;
@@ -71,8 +72,45 @@ export async function connectRabbitMQ(): Promise<void> {
  * Publish event to RabbitMQ
  */
 export async function publishEvent(routingKey: string, data: any): Promise<void> {
+  const correlationId = getCorrelationId();
+  const payload = correlationId
+    ? {
+        ...data,
+        _meta: {
+          ...(data?._meta || {}),
+          correlation_id: correlationId,
+        },
+      }
+    : data;
+
   if (!channel) {
-    throw new Error('RabbitMQ channel not initialized');
+    // Fallback: deliver directly to Notification Service internal endpoint
+    // so async citizen updates still work when RabbitMQ local env is unstable.
+    try {
+      const fallbackRoutingKey = routingKey.replace(/\./g, '_');
+      await axios.post(
+        `${config.notificationServiceUrl}/internal/events/${fallbackRoutingKey}`,
+        payload,
+        {
+          headers: {
+            'x-internal-api-key': config.internalApiKey,
+            ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
+          },
+          timeout: 10000,
+        }
+      );
+      logger.warn('RabbitMQ unavailable, event delivered via HTTP fallback', {
+        routingKey,
+        notificationServiceUrl: config.notificationServiceUrl,
+      });
+      return;
+    } catch (fallbackError: any) {
+      logger.error('Event delivery failed: RabbitMQ unavailable and HTTP fallback failed', {
+        routingKey,
+        error: fallbackError.message,
+      });
+      throw new Error('RabbitMQ channel not initialized');
+    }
   }
   
   try {
@@ -82,12 +120,17 @@ export async function publishEvent(routingKey: string, data: any): Promise<void>
       RABBITMQ_CONFIG.EXCHANGE_NAME,
       routingKey,
       message,
-      { persistent: true }
+      {
+        persistent: true,
+        headers: {
+          ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
+        },
+      }
     );
     
     logger.info('📤 Event published', {
       routingKey,
-      data,
+      data: payload,
     });
   } catch (error: any) {
     logger.error('❌ Failed to publish event', {

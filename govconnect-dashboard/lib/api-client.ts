@@ -572,6 +572,26 @@ export const ai = {
   },
 
   /**
+   * Get token usage by intent family
+   */
+  async getTokenUsageByIntentFamily(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/by-intent-family${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
+   * Get token usage by tenant flow
+   */
+  async getTokenUsageByTenantFlow(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/by-tenant-flow${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
    * Get micro vs full NLU layer breakdown
    */
   async getTokenUsageLayerBreakdown(params?: Record<string, string>) {

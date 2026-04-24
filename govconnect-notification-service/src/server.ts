@@ -13,12 +13,19 @@ async function startServer() {
     await prisma.$connect();
     logger.info('✅ Database connected successfully');
 
-    // Connect to RabbitMQ
-    await connectRabbitMQ();
+    const startEventConsumer = async () => {
+      try {
+        await connectRabbitMQ();
+        await startConsumer(handleEvent);
+        logger.info('✅ Event consumer started');
+      } catch (error: any) {
+        logger.warn('RabbitMQ event consumer unavailable; HTTP fallback remains active', {
+          error: error.message,
+        });
+      }
+    };
 
-    // Start consuming events
-    await startConsumer(handleEvent);
-    logger.info('✅ Event consumer started');
+    void startEventConsumer();
 
     // Start HTTP server
     const server = app.listen(config.port, () => {
@@ -74,3 +81,4 @@ process.on('unhandledRejection', (reason: any, _promise) => {
 });
 
 startServer();
+

@@ -8,6 +8,7 @@ import logger from './utils/logger';
 import prisma from './config/database';
 import { isConnected } from './services/rabbitmq.service';
 import { swaggerSpec } from './config/swagger';
+import { handleEvent } from './handlers/event.handler';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -64,6 +65,25 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 app.get('/api-docs.json', (_req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(swaggerSpec);
+});
+
+app.post('/internal/events/:routingKey', async (req: Request, res: Response) => {
+  const apiKey = req.headers['x-internal-api-key'] || req.headers['x-api-key'];
+  if (config.internalApiKey && apiKey !== config.internalApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const routingKey = String(req.params.routingKey || '').replace(/_/g, '.');
+  try {
+    await handleEvent(routingKey, req.body);
+    return res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Internal event handling failed', {
+      routingKey,
+      error: error.message,
+    });
+    return res.status(500).json({ error: 'Internal event handling failed' });
+  }
 });
 
 app.get('/', (_req: Request, res: Response) => {
