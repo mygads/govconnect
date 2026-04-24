@@ -21,6 +21,8 @@ import { buildAgentSystemPrompt, type AgentPromptContext } from './agent-prompt'
 const MAX_TOOL_ITERATIONS = 5;
 const AGENT_TIMEOUT_MS = 30_000;
 
+type AgentToolChoice = 'auto' | 'required';
+
 export interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content?: string | null;
@@ -48,14 +50,13 @@ export interface AgentResult {
   matchedPolicyKey?: string;
   matchedPolicySource?: string;
   matchedPolicyConfidence?: number;
+  firstTurnToolChoice: AgentToolChoice;
   toolTrace: ToolExecutionTrace[];
   totalTokens: number;
   iterations: number;
   model: string;
   durationMs: number;
 }
-
-type AgentToolChoice = 'auto' | 'required';
 
 interface ToolContext {
   userId: string;
@@ -116,6 +117,73 @@ function buildAgentFallbackReply(userMessage: string, toolsUsed: string[] = []):
   return 'Maaf, saya membutuhkan waktu lebih lama untuk memproses permintaan ini. Silakan coba lagi.';
 }
 
+function detectAmbiguousIntent(userMessage: string, heuristicTools: AgentToolName[], allowedToolNames: AgentToolName[]): boolean {
+  const normalized = (userMessage || '').toLowerCase().trim();
+  if (!normalized) return true;
+
+  const hasReference = /\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
+  const isGreetingOrShort =
+    /^(halo|hai|hi|hello|assalamualaikum|permisi|p|terima kasih|makasih|thanks)[\s!.,?]*$/i.test(normalized)
+    || normalized.split(/\s+/).length <= 2;
+  const hasAmbiguousCue = /\b(gimana|bagaimana|tolong bantu|mau (urus|lapor)|bingung|itu gimana)\b/i.test(normalized);
+
+  const hasClearServiceIntent =
+    /\b(surat|layanan|ktp|kk|akta|domisili|sktm|pengantar|dokumen)\b/i.test(normalized)
+    && /\b(mau|ingin|buat|ajukan|urus|syarat|persyaratan|biaya|proses|cara)\b/i.test(normalized);
+  const hasClearComplaintIntent =
+    /\b(lapor|pengaduan|keluhan|aduan)\b/i.test(normalized)
+    && /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak)\b/i.test(normalized);
+  const hasStatusOrMutationIntent =
+    hasReference
+    && /\b(cek|status|tracking|lacak|batal|batalkan|cancel|ubah|update|edit|revisi)\b/i.test(normalized);
+
+  if (isGreetingOrShort && !hasReference) return true;
+  if (heuristicTools.length === 0) return true;
+  if (hasStatusOrMutationIntent) return false;
+  if (hasClearServiceIntent && !hasAmbiguousCue) return false;
+  if (hasClearComplaintIntent && !hasAmbiguousCue) return false;
+  if (hasAmbiguousCue && !hasReference && !hasClearServiceIntent && !hasClearComplaintIntent) return true;
+
+  const actionTools: AgentToolName[] = [
+    'create_complaint',
+    'create_service_request',
+    'update_complaint',
+    'cancel_request',
+    'get_service_request_edit_link',
+  ];
+  const lookupTools: AgentToolName[] = [
+    'search_knowledge',
+    'search_documents',
+    'get_service_info',
+    'get_village_profile',
+    'get_emergency_contacts',
+  ];
+
+  const includesActionTool = allowedToolNames.some((tool) => actionTools.includes(tool));
+  const includesLookupTool = allowedToolNames.some((tool) => lookupTools.includes(tool));
+
+  return includesActionTool && includesLookupTool && !hasReference && !hasClearServiceIntent && !hasClearComplaintIntent;
+}
+
+function resolveFirstTurnToolChoice(
+  userMessage: string,
+  heuristicTools: AgentToolName[],
+  allowedToolNames: AgentToolName[],
+  allowedToolsCount: number,
+): AgentToolChoice {
+  if (allowedToolsCount === 0) return 'auto';
+
+  const normalized = (userMessage || '').toLowerCase().trim();
+  const hasKnowledgeOnlySignal = /\b(govconnect|kanal|whatsapp|webchat|5w1h|embedding|kebijakan data|penggunaan data|keamanan data|privasi|notifikasi|tahap layanan|layanan umum|pelayanan publik|alur layanan|format file|file terlalu besar|penamaan file|update data|memperbarui data|salah pilih layanan|nomor layanan|lay-)\b/i.test(normalized);
+  const hasRetrievalTool = allowedToolNames.some((tool) => tool === 'search_knowledge' || tool === 'search_documents');
+
+  if (hasKnowledgeOnlySignal && hasRetrievalTool) {
+    return 'required';
+  }
+
+  return detectAmbiguousIntent(userMessage, heuristicTools, allowedToolNames) ? 'auto' : 'required';
+}
+
 /**
  * Run the agent loop for a single user message.
  */
@@ -137,6 +205,12 @@ export async function runAgent(
     matchedPolicyConfidence,
   } = toolSelection;
   const allowedTools = AGENT_TOOLS.filter((tool) => allowedToolNames.includes(tool.function.name as AgentToolName));
+  const firstTurnToolChoice = resolveFirstTurnToolChoice(
+    userMessage,
+    heuristicTools,
+    allowedToolNames,
+    allowedTools.length,
+  );
 
   const messages: AgentMessage[] = [{ role: 'system', content: systemPrompt }];
 
@@ -167,8 +241,7 @@ export async function runAgent(
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     iterations = i + 1;
 
-    const toolChoice: AgentToolChoice =
-      i === 0 && allowedTools.length > 0 ? 'required' : 'auto';
+    const toolChoice: AgentToolChoice = i === 0 ? firstTurnToolChoice : 'auto';
     const response = await callLLMWithTools(messages, allowedTools, toolChoice);
     if (!response) {
       return {
@@ -180,6 +253,7 @@ export async function runAgent(
         matchedPolicyKey,
         matchedPolicySource,
         matchedPolicyConfidence,
+        firstTurnToolChoice,
         toolTrace,
         totalTokens,
         iterations,
@@ -196,16 +270,13 @@ export async function runAgent(
 
     const assistantMsg = choice.message;
 
-    // If finish_reason is 'tool_calls' or message has tool_calls, execute them
     if (assistantMsg?.tool_calls && assistantMsg.tool_calls.length > 0) {
-      // Add the assistant message with tool_calls to history
       messages.push({
         role: 'assistant',
         content: assistantMsg.content as string | null,
         tool_calls: assistantMsg.tool_calls,
       });
 
-      // Execute each tool call in parallel
       const toolResults = await Promise.all(
         assistantMsg.tool_calls.map(async (tc: ToolCall) => {
           const toolName = tc.function.name as AgentToolName;
@@ -232,7 +303,6 @@ export async function runAgent(
         }),
       );
 
-      // Add all tool results to message history
       for (const tr of toolResults) {
         const preferredFromTool = derivePreferredToolReply([{ toolName: tr.toolName, result: tr.result }]);
         if (preferredFromTool.replyText) {
@@ -244,11 +314,9 @@ export async function runAgent(
         messages.push(tr);
       }
 
-      // Continue loop — LLM will process tool results
       continue;
     }
 
-    // No tool_calls — this is the final text response
     const finalText = extractText(assistantMsg?.content);
     if (finalText) {
       const durationMs = Date.now() - startTime;
@@ -260,6 +328,7 @@ export async function runAgent(
         matchedPolicyKey,
         matchedPolicySource,
         matchedPolicyConfidence,
+        firstTurnToolChoice,
         toolTrace,
         totalTokens,
         model,
@@ -267,7 +336,6 @@ export async function runAgent(
         userId: toolCtx.userId,
       });
 
-      // Record token usage
       recordTokenUsage({
         model,
         input_tokens: response.usage?.prompt_tokens ?? 0,
@@ -290,6 +358,7 @@ export async function runAgent(
         matchedPolicyKey,
         matchedPolicySource,
         matchedPolicyConfidence,
+        firstTurnToolChoice,
         toolTrace,
         totalTokens,
         iterations,
@@ -298,17 +367,16 @@ export async function runAgent(
       };
     }
 
-    // Empty response — break
     break;
   }
 
-  // Exhausted iterations or empty response
   logger.warn('Agent loop exhausted without final response', {
     iterations,
     toolsUsed,
     allowedToolNames,
     matchedPolicyKey,
     matchedPolicySource,
+    firstTurnToolChoice,
     userId: toolCtx.userId,
   });
 
@@ -321,6 +389,7 @@ export async function runAgent(
     matchedPolicyKey,
     matchedPolicySource,
     matchedPolicyConfidence,
+    firstTurnToolChoice,
     toolTrace,
     totalTokens,
     iterations,
@@ -328,8 +397,6 @@ export async function runAgent(
     durationMs: Date.now() - startTime,
   };
 }
-
-// ─── Internal helpers ───
 
 function extractText(content: unknown): string {
   if (typeof content === 'string') return content.trim();
@@ -353,7 +420,6 @@ function getAgentGatewayConfig() {
 }
 
 function getAgentModels(): string[] {
-  // Prefer full NLU models for agent (need strong function calling)
   return getDefaultGatewayModels('full');
 }
 
@@ -478,6 +544,7 @@ async function selectAllowedTools(userMessage: string): Promise<{
   const isServiceInfoRequest =
     !isServiceEditRequest
     && !isMyStatusLookup
+    && !/\b(tahap layanan umum|layanan umum|pelayanan publik|kanal pelayanan|status layanan\/pengaduan|notifikasi|salah pilih layanan|update data|memperbarui data|penamaan file|format file|file terlalu besar|penggunaan data|keamanan data)\b/i.test(normalized)
     && /\b(surat|layanan|dokumen|syarat|persyaratan|biaya|proses|ktp|kk|sktm|domisili|akta|pindah|kelahiran|kematian)\b/i.test(normalized);
   const isGeneralKnowledgeQuestion = /\b(apa|bagaimana|kenapa|mengapa|kebijakan|prosedur|aturan|faq|panduan)\b/i.test(normalized);
   const isComplaintKnowledgeRequest =
@@ -498,6 +565,17 @@ async function selectAllowedTools(userMessage: string): Promise<{
   const hasExplicitComplaintCreationIntent = /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|aduan)\b/i.test(normalized);
   const isServiceLikeReport = /\blapor\b/i.test(normalized)
     && /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i.test(normalized);
+  const isComplaintActionQuestion =
+    (hasExplicitComplaintCreationIntent || hasComplaintIncidentKeyword)
+    && !/\b(apa|bagaimana|contoh|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i.test(normalized);
+  const isKnowledgeOnlyQuestion =
+    !isMyStatusLookup
+    && !hasReference
+    && !isServiceInfoRequest
+    && !isServiceEditRequest
+    && !isComplaintUpdateRequest
+    && !isComplaintActionQuestion
+    && /\b(govconnect|kanal|whatsapp|webchat|5w1h|embedding|kebijakan data|penggunaan data|keamanan data|privasi|notifikasi|tahap layanan|layanan umum|pelayanan publik|alur layanan|format file|file terlalu besar|penamaan file|update data|memperbarui data|salah pilih layanan|nomor layanan|lay-)\b/i.test(normalized);
 
   if (isMyHistoryRequest) {
     add('get_my_history', 'search_user_memory');
@@ -781,6 +859,16 @@ async function selectAllowedTools(userMessage: string): Promise<{
     heuristicSet.delete('search_documents');
   }
 
+  if (isKnowledgeOnlyQuestion) {
+    add('search_knowledge');
+    heuristicSet.delete('get_service_info');
+    heuristicSet.delete('create_service_request');
+    heuristicSet.delete('create_complaint');
+    heuristicSet.delete('get_complaint_categories');
+    heuristicSet.delete('check_status');
+    heuristicSet.delete('cancel_request');
+  }
+
   if (isMemoryQuery && !isMyHistoryRequest && !isMyStatusLookup) {
     heuristicSet.delete('search_knowledge');
   }
@@ -830,7 +918,7 @@ async function selectAllowedTools(userMessage: string): Promise<{
     add('search_documents');
   }
 
-  if (isGenericKnowledgeStatusQuestion || isGeneralKnowledgeQuestion) {
+  if (isGenericKnowledgeStatusQuestion || isGeneralKnowledgeQuestion || isKnowledgeOnlyQuestion) {
     add('search_knowledge');
   }
 

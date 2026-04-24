@@ -68,6 +68,7 @@ export interface ProcessMessageResult {
       policyKey?: string;
       policySource?: string;
       confidence?: number;
+      firstTurnToolChoice?: 'auto' | 'required';
     };
     handoff?: {
       started: boolean;

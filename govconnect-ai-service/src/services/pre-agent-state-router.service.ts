@@ -1,6 +1,7 @@
 import {
   cancelComplaint,
   cancelServiceRequest,
+  getUserHistory,
 } from './case-client.service';
 import { updateConversationUserProfile } from './channel-client.service';
 import { rememberMemoryEvent } from './hybrid-memory.service';
@@ -35,6 +36,7 @@ import {
   getPendingEmergencyComplaintOfferWithFallback,
   getPendingPhotoCount,
   getPendingServiceFormOfferWithFallback,
+  setPendingAddressRequest,
   setPendingComplaintData,
   setPendingEmergencyComplaintOffer,
   syncNameToChannelService,
@@ -43,6 +45,7 @@ import {
   appendToHistoryCache,
   extractAddressFromMessage,
   extractNameFromTextNLU,
+  fetchConversationHistoryFromChannel,
 } from './ump-utils';
 import { getAutoFillSuggestionsWithFallback, updateProfile } from './user-profile.service';
 import { getImportantContacts } from './important-contacts.service';
@@ -121,8 +124,8 @@ const COMPLAINT_INCIDENT_PATTERN = /\b(jalan rusak|jalan berlubang|lampu mati|sa
 const COMPLAINT_INFO_QUERY_PATTERN = /\b(pengaduan|keluhan|laporan)\b/i;
 const COMPLAINT_INFO_HINT_PATTERN = /\b(apa|bagaimana|gimana|jelaskan|contoh|format|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i;
 const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengantar)\b/i;
-const EMERGENCY_PATTERN = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|polisi|pencurian|darurat|bencana)\b/i;
-const EXPLICIT_REPORT_PATTERN = /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|saya mau lapor|aduan)\b/i;
+const EMERGENCY_PATTERN = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|polisi|pencurian|darurat|bencana|banjir mendadak|longsor|gempa|tsunami|evakuasi|ledakan)\b/i;
+const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|saya mau lapor|aduan)\b/i;
 const SERVICE_EVENT_PATTERN = /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i;
 const OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN = /\b(sim|paspor|bpjs|visa|imigrasi|npwp|stnk|bpkb)\b/i;
 
@@ -357,6 +360,37 @@ export async function tryHandleLatePreAgentState(
     notifyStage,
   } = input;
 
+  const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
+  const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
+
+  if ((lapMatch || layMatch) && /\b(cek|status|tracking|lacak|periksa|lihat)\b/i.test(message)) {
+    const rawCode = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase().replace(/\s/g, '');
+    const prefix = rawCode.startsWith('LAP') ? 'LAP' : 'LAY';
+    const digitsOnly = rawCode.replace(/^(LAP|LAY)-?/, '').replace(/-/g, '');
+    const code = `${prefix}-${digitsOnly.slice(0, 8)}-${digitsOnly.slice(8)}`;
+    const isLap = prefix === 'LAP';
+
+    tracker.preparing();
+    notifyStage('preparing', 80);
+    const statusReply = await handleStatusCheck(userId, channel, {
+      intent: 'CHECK_STATUS',
+      fields: isLap ? { complaint_id: code } : { request_number: code },
+      reply_text: '',
+    }, message);
+    tracker.complete();
+
+    if (channel === 'whatsapp') {
+      appendToHistoryCache(userId, 'assistant', statusReply);
+    }
+
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: statusReply,
+      intent: 'CHECK_STATUS',
+    });
+  }
+
   const pendingConfirm = await getPendingAddressConfirmationWithFallback(userId);
   if (pendingConfirm) {
     const confirmResult = await handlePendingAddressConfirmation(
@@ -584,14 +618,25 @@ export async function tryHandleLatePreAgentState(
       timestamp: Date.now(),
     });
 
+    const emergencyFallback = 'Jika tidak tersambung, hubungi layanan darurat nasional: polisi *110*, ambulans *119*, dan pemadam *113*.';
+
     return buildGuardResult({
       startTime,
       traceId,
       response: contacts.length > 0
-        ? `Untuk situasi darurat seperti ini, mohon segera hubungi kontak berikut ya Pak/Bu.${contactsMessage}\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar tercatat dan diteruskan ke petugas desa. Balas *iya* kalau mau saya bantu buatkan laporannya.`
-        : 'Untuk kondisi darurat seperti ini, mohon segera hubungi petugas terkait terdekat ya Pak/Bu. Kalau Bapak/Ibu ingin, saya juga bisa bantu buatkan laporan kejadian ini agar tercatat. Balas *iya* kalau mau saya bantu lanjutkan.',
+        ? `Situasi ini darurat, mohon segera hubungi sekarang juga.${contactsMessage}\n\n${emergencyFallback}\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.`
+        : `Situasi ini darurat, mohon segera hubungi layanan darurat terdekat sekarang juga.\n\n${emergencyFallback}\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.`,
       contacts: vcardContacts,
       intent: 'EMERGENCY_CONTACTS',
+    });
+  }
+
+  if (/^\s*(mau\s+lapor|lapor)\s*$/i.test(message)) {
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: 'Boleh Pak/Bu. Maksudnya mau lapor pengaduan infrastruktur/lingkungan, atau lapor untuk layanan administrasi seperti kematian, kelahiran, pindah, atau surat?\n\nBalas singkat ya, misalnya: *jalan rusak* atau *lapor kematian*.',
+      intent: 'QUESTION',
     });
   }
 
@@ -610,6 +655,22 @@ export async function tryHandleLatePreAgentState(
       COMPLAINT_INCIDENT_PATTERN.test(message)
       || EXPLICIT_REPORT_PATTERN.test(message)
     );
+
+  if (looksLikeComplaintShortcut && /\b(dekat|depan|samping|belakang)\b/i.test(message) && !/\b(jl\.?|rt\.?\s*\d+|rw\.?\s*\d+|no\.?\s*\d+|dusun|desa|kelurahan|kecamatan)\b/i.test(message)) {
+    setPendingAddressRequest(userId, {
+      kategori: message.trim(),
+      deskripsi: message.trim(),
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: 'Baik Pak/Bu, mohon tambahkan detail alamat lokasi kejadian dulu ya, misalnya nama jalan, RT/RW, nomor rumah, atau patokan yang lebih lengkap.',
+      intent: 'CREATE_COMPLAINT',
+    });
+  }
 
   if (looksLikeComplaintShortcut) {
     const complaintResult = await handleComplaintCreation(
@@ -780,9 +841,6 @@ export async function tryHandleLatePreAgentState(
     }
   }
 
-  const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
-  const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
-
   if ((lapMatch || layMatch) && /\b(batal|batalkan|cancel)\b/i.test(message)) {
     const rawCode = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase().replace(/\s/g, '');
     const prefix = rawCode.startsWith('LAP') ? 'LAP' : 'LAY';
@@ -815,6 +873,45 @@ export async function tryHandleLatePreAgentState(
       response: cancelReply,
       intent: isComplaint ? 'CANCEL_COMPLAINT' : 'CANCEL_SERVICE_REQUEST',
     });
+  }
+
+  if (/\b(cek|status|tracking|lacak|periksa|lihat)\b/i.test(message) && /\blayanan\b/i.test(message) && !/\b(LAP|LAY)[-\s]?\d{8}[-\s]?\d{3}\b/i.test(message)) {
+    const history = await getUserHistory({
+      wa_user_id: channel === 'whatsapp' ? userId : undefined,
+      channel: channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
+      channel_identifier: channel === 'webchat' ? userId : undefined,
+    });
+    let requestNumber = history?.services?.[0]?.request_number || history?.combined?.find((item: any) => item.type === 'service')?.display_id;
+    if (!requestNumber && channel === 'whatsapp') {
+      const conversation = await fetchConversationHistoryFromChannel(userId, villageId);
+      const recentServiceNumbers = conversation
+        .filter((item) => item.role === 'assistant')
+        .map((item) => Array.from(item.content.matchAll(/\bLAY-\d{8}-\d{3,4}\b/gi)).map((match) => match[0].toUpperCase()))
+        .flat();
+      requestNumber = recentServiceNumbers[recentServiceNumbers.length - 1];
+    }
+
+    if (requestNumber) {
+      tracker.preparing();
+      notifyStage('preparing', 80);
+      const statusReply = await handleStatusCheck(userId, channel, {
+        intent: 'CHECK_STATUS',
+        fields: { request_number: requestNumber },
+        reply_text: '',
+      }, message);
+      tracker.complete();
+
+      if (channel === 'whatsapp') {
+        appendToHistoryCache(userId, 'assistant', statusReply);
+      }
+
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response: statusReply,
+        intent: 'CHECK_STATUS',
+      });
+    }
   }
 
   if (layMatch && /\b(edit|ubah data|update data|perbarui data|perbaiki data|revisi data)\b/i.test(message)) {

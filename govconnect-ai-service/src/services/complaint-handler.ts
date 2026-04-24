@@ -186,8 +186,11 @@ export async function handleComplaintCreation(
     return llmResponse.reply_text;
   }
 
+  const hasSpecificAddressMarker = /\b(jl\.?|rt\.?\s*\d+|rw\.?\s*\d+|no\.?\s*\d+|dusun|desa|kelurahan|kecamatan)\b/i.test(alamat || '');
+  const isLandmarkOnlyAddress = /\b(dekat|depan|samping|belakang|pos|masjid|sekolah|pasar|warung)\b/i.test(alamat || '') && !hasSpecificAddressMarker;
+
   // Check if alamat is too vague - ask for confirmation
-  if (alamat && await isVagueAddress(alamat, { village_id: villageId, wa_user_id: userId, session_id: userId, channel, kategori })) {
+  if (alamat && (isLandmarkOnlyAddress || await isVagueAddress(alamat, { village_id: villageId, wa_user_id: userId, session_id: userId, channel, kategori }))) {
     logger.info('Address is vague, asking for confirmation', { userId, alamat, kategori });
 
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);

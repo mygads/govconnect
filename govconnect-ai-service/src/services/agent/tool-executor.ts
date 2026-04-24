@@ -40,7 +40,6 @@ import {
 import {
   setPendingAddressRequest,
   setPendingCancelConfirmation,
-  setPendingComplaintData,
   setPendingServiceFormOffer,
 } from '../ump-state';
 import {
@@ -63,6 +62,7 @@ export interface ToolCallResult {
   success: boolean;
   data?: unknown;
   error?: string;
+  suggested_response?: string;
   meta?: {
     trustLevel: ToolTrustLevel;
     sourceKind: string;
@@ -103,6 +103,9 @@ const EMERGENCY_CONTACT_HINTS = [
   'bidan',
   'kebakaran',
   'bencana',
+  'banjir',
+  'longsor',
+  'evakuasi',
   'kesehatan',
 ];
 
@@ -487,10 +490,21 @@ async function toolGetComplaintCategories(ctx: ToolContext): Promise<ToolCallRes
 }
 
 async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResult> {
+  const nationalFallbackContacts = [
+    { name: 'Polisi', phone: '110', description: 'Layanan darurat kepolisian nasional', category: 'Darurat Nasional' },
+    { name: 'Ambulans', phone: '119', description: 'Layanan gawat darurat medis nasional', category: 'Darurat Nasional' },
+    { name: 'Pemadam Kebakaran', phone: '113', description: 'Layanan pemadam kebakaran nasional', category: 'Darurat Nasional' },
+  ];
+
   if (!ctx.villageId) {
     return {
-      success: false,
-      error: 'Village ID belum tersedia.',
+      success: true,
+      data: {
+        contacts: nationalFallbackContacts,
+        total: nationalFallbackContacts.length,
+        has_local_contacts: false,
+        suggested_response: 'Untuk kondisi darurat, mohon segera hubungi *110* (Polisi), *119* (Ambulans), atau *113* (Pemadam Kebakaran).',
+      },
       meta: {
         trustLevel: 'trusted_fact',
         sourceKind: 'official_emergency_contacts',
@@ -502,6 +516,22 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
   const prioritized = contacts.filter((contact) => matchContactHints(contact, EMERGENCY_CONTACT_HINTS));
   const finalContacts = (prioritized.length > 0 ? prioritized : contacts).slice(0, 8);
 
+  if (finalContacts.length === 0) {
+    return {
+      success: true,
+      data: {
+        contacts: nationalFallbackContacts,
+        total: nationalFallbackContacts.length,
+        has_local_contacts: false,
+        suggested_response: 'Kontak darurat lokal belum tersedia. Untuk kondisi darurat, mohon segera hubungi *110* (Polisi), *119* (Ambulans), atau *113* (Pemadam Kebakaran).',
+      },
+      meta: {
+        trustLevel: 'trusted_fact',
+        sourceKind: 'official_emergency_contacts',
+      },
+    };
+  }
+
   return {
     success: true,
     data: {
@@ -512,6 +542,8 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
         category: contact.category?.name || null,
       })),
       total: finalContacts.length,
+      has_local_contacts: true,
+      suggested_response: 'Berikut kontak darurat yang bisa dihubungi sekarang. Jika tidak tersambung, gunakan juga *110* (Polisi), *119* (Ambulans), atau *113* (Pemadam Kebakaran).',
     },
     meta: {
       trustLevel: 'trusted_fact',
@@ -747,6 +779,7 @@ async function toolCreateComplaint(
     return {
       success: false,
       error: 'Kategori, alamat, dan deskripsi harus lengkap sebelum membuat laporan.',
+      suggested_response: suggestedResponse,
       data: {
         needs_input: !kategori ? 'kategori' : !alamat ? 'alamat' : 'deskripsi',
         suggested_response: suggestedResponse,

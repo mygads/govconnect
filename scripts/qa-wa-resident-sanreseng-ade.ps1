@@ -373,10 +373,11 @@ function Get-TakeoverStatus {
 }
 
 $results = New-Object System.Collections.Generic.List[object]
-$serviceUser = '6289912345801'
-$complaintUser = '6289912345802'
-$infoUser = '6289912345803'
-$handoffUser = '6289912345804'
+$runSuffix = (Get-Date).ToString('HHmmss')
+$serviceUser = "628991$runSuffix`1"
+$complaintUser = "628991$runSuffix`2"
+$infoUser = "628991$runSuffix`3"
+$handoffUser = "628991$runSuffix`4"
 $serviceSlug = 'administrasi-kependudukan-keterangan-domisili'
 $service = Get-ServiceCatalogItem -ServiceSlug $serviceSlug
 $serviceRequest = $null

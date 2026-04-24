@@ -55,7 +55,7 @@ export async function handleStatusCheck(
 
     if (!result.success) {
       if (result.error === 'NOT_FOUND') {
-        return `Nomor laporan *${cId}* belum kami temukan.\n\nCoba cek lagi penulisannya ya. Formatnya biasanya seperti *LAP-20251201-001*. Kalau mau, kirim nomor yang benar dan saya bantu cek lagi.`;
+        return `Nomor laporan *${cId}* tidak kami temukan.\n\nCoba cek lagi penulisannya ya. Formatnya biasanya seperti *LAP-20251201-001*. Kalau mau, kirim nomor yang benar dan saya bantu cek lagi.`;
       }
       if (result.error === 'NOT_OWNER') {
         return `Laporan *${cId}* tidak terdaftar atas nomor Anda, jadi belum bisa saya tampilkan di sini.\n\nKalau lupa nomornya, ketik *riwayat* ya, nanti saya bantu tampilkan daftar laporan milik Anda.`;

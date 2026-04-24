@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\qa-webchat-sanreseng-ade.ps1\")",
+      "PowerShell(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'node|npm|tsx' -and $_.CommandLine -match 'govconnect-ai-service' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue })",
+      "PowerShell(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'node|npm|tsx' } | Select-Object ProcessId, Name, CommandLine)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 3002 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort,OwningProcess | ForEach-Object { $p=Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($_.OwningProcess\\)\"; [pscustomobject]@{Port=$_.LocalPort;Pid=$_.OwningProcess;CommandLine=$p.CommandLine} })",
+      "Bash(node dist/server.js)",
+      "PowerShell($deadline=\\(Get-Date\\).AddSeconds\\(45\\); do { try { $r=Invoke-RestMethod -Uri \"http://localhost:3002/stats/golden-set/history\" -Headers @{ 'x-internal-api-key'='govconnect-internal-api-key-2025' } -TimeoutSec 3; 'ready'; break } catch { Start-Sleep -Seconds 2 } } while \\(\\(Get-Date\\) -lt $deadline\\))",
+      "PowerShell(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'node|npm|tsx' -and $_.CommandLine -match 'govconnect-ai-service' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 2; Start-Process -FilePath \"C:\\\\Program Files\\\\nodejs\\\\node.exe\" -ArgumentList \"dist/server.js\" -WorkingDirectory \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\govconnect-ai-service\" -RedirectStandardOutput \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\govconnect-ai-service\\\\ai-service-start.out.log\" -RedirectStandardError \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\govconnect-ai-service\\\\ai-service-start.err.log\" -WindowStyle Hidden; Start-Sleep -Seconds 8; & \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\qa-webchat-sanreseng-ade.ps1\")",
+      "PowerShell(Get-NetTCPConnection -LocalPort 3002 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $p=Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($_.OwningProcess\\)\"; [pscustomobject]@{Pid=$_.OwningProcess; CommandLine=$p.CommandLine} })",
+      "PowerShell(Start-Sleep -Seconds 6; try { Invoke-RestMethod -Method Post -Uri \"http://localhost:3002/chat/web\" -ContentType \"application/json\" -Headers @{ 'x-internal-api-key'='govconnect-internal-api-key-2025' } -Body \\(@{ session_id='probe_web'; village_id='cmkuvo1dk0000mj60h4u4bq1w'; message='Alamat kantor desa?' } | ConvertTo-Json\\) -TimeoutSec 30 | ConvertTo-Json -Depth 6 } catch { $_.Exception.Message })",
+      "PowerShell(try { Invoke-RestMethod -Method Post -Uri \"http://localhost:3002/api/webchat\" -ContentType \"application/json\" -Body \\(@{ session_id='probe_web_new'; village_id='cmkuvo1dk0000mj60h4u4bq1w'; message='Alamat kantor desa?' } | ConvertTo-Json\\) -TimeoutSec 40 | ConvertTo-Json -Depth 8 } catch { $_.Exception.Message })",
+      "PowerShell(try { Invoke-RestMethod -Method Post -Uri \"http://localhost:3002/api/webchat\" -ContentType \"application/json\" -Body \\(@{ session_id='web_probe_new'; village_id='cmkuvo1dk0000mj60h4u4bq1w'; message='Alamat kantor desa?' } | ConvertTo-Json\\) -TimeoutSec 40 | ConvertTo-Json -Depth 8 } catch { $_.Exception.Message })",
+      "PowerShell(netstat -ano)",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"ProcessId=31696\")",
+      "PowerShell(Stop-Process -Id 31696 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Start-Sleep -Seconds 6; Invoke-RestMethod -Method Post -Uri \"http://localhost:3002/api/webchat\" -ContentType \"application/json\" -Body \\(@{ session_id='web_probe_new2'; village_id='cmkuvo1dk0000mj60h4u4bq1w'; message='Alamat kantor desa?' } | ConvertTo-Json\\) -TimeoutSec 40 | ConvertTo-Json -Depth 8)",
+      "PowerShell(& \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\wa-sim.ps1\" -VillageId cmkuvo1dk0000mj60h4u4bq1w -WaUserId 6289911449011 -Message 'mau lapor' -PollSeconds 20)",
+      "PowerShell(& \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\wa-sim.ps1\" -VillageId cmkuvo1dk0000mj60h4u4bq1w -WaUserId 6289911449012 -Message 'tolong ada kebakaran sekarang' -PollSeconds 20)",
+      "PowerShell(& \"C:\\\\Yoga\\\\Programming\\\\containers\\\\govconnect\\\\scripts\\\\qa-wa-resident-sanreseng-ade.ps1\")"
+    ]
+  }
+}
