@@ -187,10 +187,28 @@ type RuntimeGatewayResolved = {
   config: AnyGatewayConfig;
   attempts: RuntimeGatewayAttempt[];
   meta?: {
-    source?: 'db' | 'env_fallback';
+    source?: 'db';
     primaryModelId?: string;
     fallbackModelId?: string;
   };
+};
+
+type GatewayInfo = {
+  kind: GatewayLaneKind;
+  enabled: boolean;
+  configured: boolean;
+  provider: string | null;
+  baseUrl: string | null;
+  keyCount: number;
+  path: string | null;
+  model: string | null;
+  timeoutMs: number | null;
+  dimensions?: number;
+  topN?: number;
+  source: 'db' | 'unconfigured';
+  primaryModelId?: string;
+  fallbackModelId?: string;
+  error?: string;
 };
 
 function getGatewayConfig(kind: GatewayLaneKind): AnyGatewayConfig {
@@ -207,31 +225,17 @@ function getGatewayConfig(kind: GatewayLaneKind): AnyGatewayConfig {
 }
 
 async function resolveGateway(kind: GatewayLaneKind, villageId?: string | null): Promise<RuntimeGatewayResolved> {
-  try {
-    const resolved = await getRuntimeGatewayConfig(kind, villageId);
-    return {
-      config: resolved.config,
-      attempts: resolved.attempts.map((attempt) => ({
-        config: attempt.config,
-        modelId: attempt.modelId,
-        modelDisplayName: attempt.modelDisplayName,
-        providerId: attempt.providerId,
-      })),
-      meta: resolved.meta,
-    };
-  } catch (error: any) {
-    logger.warn('Falling back to env gateway config after runtime config lookup failed', {
-      lane: kind,
-      villageId,
-      error: error.message,
-    });
-    const fallback = getGatewayConfig(kind);
-    return {
-      config: fallback,
-      attempts: [{ config: fallback }],
-      meta: { source: 'env_fallback' },
-    };
-  }
+  const resolved = await getRuntimeGatewayConfig(kind, villageId);
+  return {
+    config: resolved.config,
+    attempts: resolved.attempts.map((attempt) => ({
+      config: attempt.config,
+      modelId: attempt.modelId,
+      modelDisplayName: attempt.modelDisplayName,
+      providerId: attempt.providerId,
+    })),
+    meta: resolved.meta,
+  };
 }
 
 function getConfiguredModelFromConfig(gateway: AnyGatewayConfig): string {
@@ -278,47 +282,99 @@ function estimateRerankTokens(query: string, documents: string[]): number {
   return estimateTokens(query) + documents.reduce((sum, item) => sum + estimateTokens(item), 0);
 }
 
-export function isAIGatewayEnabled(kind: GatewayLaneKind = 'llm'): boolean {
-  return getGatewayConfig(kind).enabled;
+function buildRerankPrompt(query: string, documents: string[]): GatewayChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content: 'Rank documents by relevance to the query. Return only JSON: {"results":[{"index":0,"relevance_score":0.95}]} with one result per document.',
+    },
+    {
+      role: 'user',
+      content: JSON.stringify({ query, documents }),
+    },
+  ];
 }
 
-export function getAIGatewayInfo(kind: GatewayLaneKind = 'llm') {
-  const gateway = getGatewayConfig(kind);
+function parsePromptRerankResults(text: string, documents: string[], topN: number): GatewayRerankResultItem[] {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const parsed = JSON.parse(jsonMatch?.[0] || text);
+  const rawResults = Array.isArray(parsed?.results) ? parsed.results : [];
 
+  return rawResults
+    .map((item: any) => {
+      const index = Number(item?.index);
+      const relevanceScore = Number(item?.relevance_score ?? item?.score ?? item?.relevanceScore);
+      return {
+        index,
+        relevanceScore: Number.isFinite(relevanceScore) ? relevanceScore : 0,
+        documentText: Number.isInteger(index) ? documents[index] || '' : '',
+      };
+    })
+    .filter((item: GatewayRerankResultItem) => Number.isInteger(item.index) && item.index >= 0 && item.index < documents.length)
+    .sort((a: GatewayRerankResultItem, b: GatewayRerankResultItem) => b.relevanceScore - a.relevanceScore)
+    .slice(0, topN);
+}
+
+export function isAIGatewayEnabled(_kind: GatewayLaneKind = 'llm'): boolean {
+  return true;
+}
+
+export function getAIGatewayInfo(kind: GatewayLaneKind = 'llm'): GatewayInfo {
   return {
     kind,
-    enabled: gateway.enabled,
-    provider: gateway.provider,
-    baseUrl: gateway.baseUrl,
-    keyCount: gateway.apiKeys.length,
-    path: getGatewayPath(kind),
-    model: getConfiguredModel(kind),
-    timeoutMs: getGatewayTimeout(kind),
+    enabled: false,
+    configured: false,
+    provider: null,
+    baseUrl: null,
+    keyCount: 0,
+    path: null,
+    model: null,
+    timeoutMs: null,
     dimensions: kind === 'embed' ? config.embeddingGateway.dimensions : undefined,
     topN: kind === 'rerank' ? config.rerankerGateway.topN : undefined,
-    source: 'env_fallback' as const,
+    source: 'unconfigured',
+    error: 'AI lane is not configured in the database',
   };
 }
 
-export async function getAIGatewayInfoAsync(kind: GatewayLaneKind = 'llm', villageId?: string | null) {
-  const resolved = await resolveGateway(kind, villageId);
-  const gateway = resolved.config;
+export async function getAIGatewayInfoAsync(kind: GatewayLaneKind = 'llm', villageId?: string | null): Promise<GatewayInfo> {
+  try {
+    const resolved = await resolveGateway(kind, villageId);
+    const gateway = resolved.config;
 
-  return {
-    kind,
-    enabled: gateway.enabled,
-    provider: gateway.provider,
-    baseUrl: gateway.baseUrl,
-    keyCount: gateway.apiKeys.length,
-    path: getGatewayPathFromConfig(kind, gateway),
-    model: getConfiguredModelFromConfig(gateway),
-    timeoutMs: getGatewayTimeoutFromConfig(gateway),
-    dimensions: kind === 'embed' ? (gateway as EmbeddingGatewayLaneConfig).dimensions : undefined,
-    topN: kind === 'rerank' ? (gateway as RerankGatewayLaneConfig).topN : undefined,
-    source: resolved.meta?.source || 'env_fallback',
-    primaryModelId: resolved.meta?.primaryModelId,
-    fallbackModelId: resolved.meta?.fallbackModelId,
-  };
+    return {
+      kind,
+      enabled: gateway.enabled,
+      configured: true,
+      provider: gateway.provider,
+      baseUrl: gateway.baseUrl,
+      keyCount: gateway.apiKeys.length,
+      path: getGatewayPathFromConfig(kind, gateway),
+      model: getConfiguredModelFromConfig(gateway),
+      timeoutMs: getGatewayTimeoutFromConfig(gateway),
+      dimensions: kind === 'embed' ? (gateway as EmbeddingGatewayLaneConfig).dimensions : undefined,
+      topN: kind === 'rerank' ? (gateway as RerankGatewayLaneConfig).topN : undefined,
+      source: 'db',
+      primaryModelId: resolved.meta?.primaryModelId,
+      fallbackModelId: resolved.meta?.fallbackModelId,
+    };
+  } catch (error: any) {
+    return {
+      kind,
+      enabled: false,
+      configured: false,
+      provider: null,
+      baseUrl: null,
+      keyCount: 0,
+      path: null,
+      model: null,
+      timeoutMs: null,
+      dimensions: kind === 'embed' ? config.embeddingGateway.dimensions : undefined,
+      topN: kind === 'rerank' ? config.rerankerGateway.topN : undefined,
+      source: 'unconfigured',
+      error: error.message || 'AI lane is not configured in the database',
+    };
+  }
 }
 
 export function getAllAIGatewayInfo() {
@@ -343,18 +399,7 @@ export async function getAllAIGatewayInfoAsync() {
 
 export function getDefaultGatewayModels(kind: 'micro' | 'full'): string[] {
   void kind;
-
-  const fallbackModels = [
-    process.env.LLM_MODEL_FALLBACK,
-    process.env.AI_MODEL_FALLBACK,
-    process.env.LLM_MODEL_PRIORITY,
-    process.env.AI_MODEL_PRIORITY,
-  ]
-    .map((value) => (value || '').trim())
-    .filter(Boolean)
-    .flatMap((value) => value.split(',').map((item) => item.trim()).filter(Boolean));
-
-  return parseModelListEnv(config.llmGateway.model, fallbackModels);
+  return config.llmGateway.model ? [config.llmGateway.model] : [];
 }
 
 export function getDefaultRAGRewriteModels(): string[] {
@@ -979,6 +1024,50 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
       } catch (error: any) {
         const durationMs = Date.now() - startTime;
         lastError = error.message || 'Unknown rerank gateway error';
+
+        if (/Input required: specify "prompt" or "messages"/i.test(lastError)) {
+          try {
+            const promptResult = await callAIGatewayPrompt({
+              lane: 'rag',
+              modelPriority: [model],
+              messages: buildRerankPrompt(options.query, options.documents),
+              temperature: 0,
+              maxTokens: 300,
+              timeoutMs: options.timeoutMs || gateway.timeoutMs,
+              jsonMode: true,
+              layerType: options.layerType,
+              callType: options.callType,
+              context: options.context,
+            });
+
+            if (promptResult?.text) {
+              const items = parsePromptRerankResults(promptResult.text, options.documents, options.topN || gateway.topN);
+              if (items.length > 0) {
+                logger.info('Rerank gateway prompt fallback successful', {
+                  provider: gateway.provider,
+                  model,
+                  modelId: attempt.modelId,
+                  modelDisplayName: attempt.modelDisplayName,
+                  keyLabel: apiKey.label,
+                  durationMs,
+                  resultCount: items.length,
+                  source: resolved.meta?.source,
+                });
+
+                return {
+                  items,
+                  model: promptResult.model,
+                  provider: promptResult.provider,
+                  responseId: promptResult.responseId,
+                  metrics: promptResult.metrics,
+                };
+              }
+            }
+          } catch (fallbackError: any) {
+            lastError = fallbackError.message || lastError;
+          }
+        }
+
         modelStatsService.recordFailure(model, lastError, durationMs);
 
         logger.warn('Rerank gateway call failed', {

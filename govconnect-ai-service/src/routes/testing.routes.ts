@@ -77,9 +77,9 @@ async function pingEmbedLane(): Promise<LanePingResult> {
 
   const result = await callAIGatewayEmbeddings({
     input: 'ping embedding healthcheck',
-    model: gateway.model,
+    model: gateway.model || undefined,
     dimensions: gateway.dimensions,
-    timeoutMs: gateway.timeoutMs,
+    timeoutMs: gateway.timeoutMs || undefined,
     layerType: 'embedding',
     callType: 'embedding_single',
   });
@@ -113,11 +113,11 @@ async function pingRAGLane(): Promise<LanePingResult> {
 
   const result = await callAIGatewayPrompt({
     lane: 'rag',
-    modelPriority: getDefaultRAGRewriteModels(),
+    modelPriority: gateway.model ? [gateway.model] : getDefaultRAGRewriteModels(),
     messages: [{ role: 'user', content: 'Rewrite this as a short retrieval query: cara bikin ktp baru' }],
     temperature: 0,
     maxTokens: 60,
-    timeoutMs: gateway.timeoutMs,
+    timeoutMs: gateway.timeoutMs || undefined,
     jsonMode: false,
     layerType: 'rag_expand',
     callType: 'rag_query_expand',
@@ -157,9 +157,9 @@ async function pingRerankLane(): Promise<LanePingResult> {
       'Jadwal posyandu minggu depan di balai desa.',
       'Prosedur penggantian KK hilang dan dokumen pendukung.',
     ],
-    model: gateway.model,
+    model: gateway.model || undefined,
     topN: Math.min(3, gateway.topN || 3),
-    timeoutMs: gateway.timeoutMs,
+    timeoutMs: gateway.timeoutMs || undefined,
     layerType: 'rag_rerank',
     callType: 'rerank_documents',
   });

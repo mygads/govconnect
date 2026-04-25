@@ -8,7 +8,14 @@ import {
   type RerankGatewayLaneConfig,
 } from '../config/env';
 
-export type ConfigSource = 'db' | 'env_fallback';
+export type ConfigSource = 'db';
+
+export class MissingRuntimeGatewayConfigError extends Error {
+  constructor(kind: GatewayLaneKind, villageId?: string | null) {
+    super(`AI lane ${kind} is not configured in the database${villageId ? ` for village ${villageId}` : ''}`);
+    this.name = 'MissingRuntimeGatewayConfigError';
+  }
+}
 
 type AnyGatewayConfig = ChatGatewayLaneConfig | EmbeddingGatewayLaneConfig | RerankGatewayLaneConfig;
 
@@ -43,27 +50,6 @@ function mapProvider(provider: string): AIGatewayProvider {
     return normalized;
   }
   return 'direct';
-}
-
-function fallbackConfig(kind: GatewayLaneKind): AnyGatewayConfig {
-  switch (kind) {
-    case 'embed':
-      return config.embeddingGateway;
-    case 'rag':
-      return config.ragGateway;
-    case 'rerank':
-      return config.rerankerGateway;
-    default:
-      return config.llmGateway;
-  }
-}
-
-function fallbackMeta(villageId?: string | null): RuntimeLaneInfo {
-  return { source: 'env_fallback', villageId: villageId ?? null };
-}
-
-function fallbackAttempts(kind: GatewayLaneKind): RuntimeAttempt[] {
-  return [{ config: fallbackConfig(kind) }];
 }
 
 function cacheKey(kind: GatewayLaneKind, villageId?: string | null): string {
@@ -160,13 +146,7 @@ async function loadLaneConfig(kind: GatewayLaneKind, villageId?: string | null):
   const assignment = await loadAssignment(kind, villageId);
 
   if (!assignment?.primary_model?.provider) {
-    const config = fallbackConfig(kind);
-    return {
-      expiresAt: Date.now() + CACHE_TTL_MS,
-      config,
-      attempts: fallbackAttempts(kind),
-      meta: fallbackMeta(villageId),
-    };
+    throw new MissingRuntimeGatewayConfigError(kind, villageId);
   }
 
   const attempts: RuntimeAttempt[] = [

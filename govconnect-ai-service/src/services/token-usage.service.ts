@@ -4,8 +4,8 @@
  * Persists actual LLM token usage to PostgreSQL.
  * Provides aggregation queries for the AI Usage dashboard.
  *
- * Default pricing reference (USD per 1M tokens, provider list can be extended via
- * AI_MODEL_PRICING_OVERRIDES in the environment):
+ * Default legacy pricing reference (USD per 1M tokens) used only when no DB model pricing
+ * can be resolved for a recorded usage row:
  * ┌─────────────────────────────────┬──────────┬───────────┐
  * │ Model                           │ Input    │ Output    │
  * ├─────────────────────────────────┼──────────┼───────────┤
@@ -28,32 +28,6 @@ import logger from '../utils/logger';
 
 // ==================== Pricing ====================
 
-function loadPricingOverrides(): Record<string, { input: number; output: number }> {
-  const raw = process.env.AI_MODEL_PRICING_OVERRIDES?.trim();
-  if (!raw) return {};
-
-  try {
-    const parsed = JSON.parse(raw) as Record<string, { input?: number; output?: number }>;
-    const overrides: Record<string, { input: number; output: number }> = {};
-
-    for (const [model, pricing] of Object.entries(parsed)) {
-      if (typeof pricing?.input === 'number' && typeof pricing?.output === 'number') {
-        overrides[model] = {
-          input: pricing.input,
-          output: pricing.output,
-        };
-      }
-    }
-
-    return overrides;
-  } catch (error: any) {
-    logger.warn('Invalid AI_MODEL_PRICING_OVERRIDES JSON, ignoring overrides', {
-      error: error.message,
-    });
-    return {};
-  }
-}
-
 const PRICING: Record<string, { input: number; output: number }> = {
   // Gemini 3
   'gemini-3-pro-preview':       { input: 2.00,  output: 12.00 },
@@ -73,12 +47,11 @@ const PRICING: Record<string, { input: number; output: number }> = {
   'gemini-1.5-pro':             { input: 1.25,  output: 5.00 },
   'gemini-1.5-flash':           { input: 0.075, output: 0.30 },
   'gemini-1.5-flash-8b':        { input: 0.0375, output: 0.15 },
-  ...loadPricingOverrides(),
 };
 
 const unknownPricingModels = new Set<string>();
 
-/** Find pricing for a model name — supports prefix matches and ENV overrides. */
+/** Find legacy pricing for a model name. */
 export function findPricing(model: string): { input: number; output: number } {
   if (PRICING[model]) return PRICING[model];
   // Prefix match (longest key first)
