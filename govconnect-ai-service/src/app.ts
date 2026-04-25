@@ -56,10 +56,20 @@ import {
 import { clearAllUMPCaches, clearUserCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
 import { clearVillageProfileCache, getVillageProfileCacheStats } from './services/knowledge.service';
 import { getEmbeddingCacheStats as getEmbCacheDetailStats } from './services/embedding.service';
-import { getAllAIGatewayInfo } from './services/ai-gateway.service';
+import { getAllAIGatewayInfoAsync } from './services/ai-gateway.service';
 import { matchComplaintType } from './services/micro-llm-matcher.service';
 import { getObjectStorageInfo } from './services/object-storage.service';
 import { requireInternalApiKey } from './utils/internal-auth';
+import {
+  canProcessVillageAI,
+  createTopupVoucher,
+  getWalletLedger,
+  getWalletSummary,
+  listTopupVouchers,
+  listVillageWallets,
+  redeemTopupVoucher,
+  topupVillageWallet,
+} from './services/ai-wallet.service';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -138,14 +148,16 @@ if (config.nodeEnv !== 'production') {
 }
 
 // Minimal health endpoint for Docker/K8s liveness probe (Temuan 12)
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', async (req: Request, res: Response) => {
+  const gateways = await getAllAIGatewayInfoAsync();
+
   res.json({
     status: 'ok',
     service: 'ai-orchestrator',
     timestamp: new Date().toISOString(),
-    gateways: getAllAIGatewayInfo(),
-    chatGatewayEnabled: config.llmGateway.enabled,
-    chatProvider: config.llmGateway.provider,
+    gateways,
+    chatGatewayEnabled: gateways.llm.enabled,
+    chatProvider: gateways.llm.provider,
     rerankEnabled: config.rerankEnabled,
     retrievalCacheEnabled: config.ragEnableRetrievalCache,
     documentStorage: getObjectStorageInfo(),
@@ -1231,6 +1243,140 @@ app.delete('/admin/reset-token-usage', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/admin/ai-wallet/:villageId', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    const summary = await getWalletSummary(villageId);
+    res.json({ success: true, data: summary });
+  } catch (error: any) {
+    logger.error('Failed to get AI wallet summary', { error: error.message });
+    res.status(500).json({ error: 'Failed to get AI wallet summary' });
+  }
+});
+
+app.get('/admin/ai-wallet/:villageId/ledger', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    const limit = Number(getQuery(req, 'limit') || 50);
+    const ledger = await getWalletLedger(villageId, Number.isFinite(limit) ? limit : 50);
+    res.json({ success: true, data: ledger });
+  } catch (error: any) {
+    logger.error('Failed to get AI wallet ledger', { error: error.message });
+    res.status(500).json({ error: 'Failed to get AI wallet ledger' });
+  }
+});
+
+app.get('/admin/ai-wallets', async (_req: Request, res: Response) => {
+  try {
+    const wallets = await listVillageWallets();
+    res.json({ success: true, data: wallets });
+  } catch (error: any) {
+    logger.error('Failed to list AI wallets', { error: error.message });
+    res.status(500).json({ error: 'Failed to list AI wallets' });
+  }
+});
+
+app.get('/admin/ai-wallet/:villageId/can-process', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    const result = await canProcessVillageAI(villageId);
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    logger.error('Failed to check AI wallet processability', { error: error.message });
+    res.status(500).json({ error: 'Failed to check AI wallet processability' });
+  }
+});
+
+app.post('/admin/ai-wallet/:villageId/topup', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    const { amount_usd, entry_type, reference_type, reference_id, metadata, created_by_admin_id } = req.body || {};
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    const result = await topupVillageWallet({
+      villageId,
+      amountUsd: Number(amount_usd),
+      entryType: entry_type,
+      referenceType: reference_type,
+      referenceId: reference_id,
+      metadata,
+      createdByAdminId: created_by_admin_id,
+    });
+
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    logger.error('Failed to topup AI wallet', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to topup AI wallet' });
+  }
+});
+
+app.get('/admin/ai-vouchers', async (_req: Request, res: Response) => {
+  try {
+    const vouchers = await listTopupVouchers();
+    res.json({ success: true, data: vouchers });
+  } catch (error: any) {
+    logger.error('Failed to list AI vouchers', { error: error.message });
+    res.status(500).json({ error: 'Failed to list AI vouchers' });
+  }
+});
+
+app.post('/admin/ai-vouchers', async (req: Request, res: Response) => {
+  try {
+    const { code, amount_usd, expires_at, metadata, created_by_admin_id } = req.body || {};
+    const voucher = await createTopupVoucher({
+      code,
+      amountUsd: Number(amount_usd),
+      expiresAt: expires_at ? new Date(expires_at) : null,
+      metadata,
+      createdByAdminId: created_by_admin_id,
+    });
+    res.json({ success: true, data: voucher });
+  } catch (error: any) {
+    logger.error('Failed to create AI voucher', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to create AI voucher' });
+  }
+});
+
+app.post('/admin/ai-wallet/:villageId/redeem-voucher', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    const { code, admin_id } = req.body || {};
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    const result = await redeemTopupVoucher({
+      villageId,
+      code,
+      adminId: admin_id ?? null,
+    });
+
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    logger.error('Failed to redeem AI voucher', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to redeem AI voucher' });
+  }
+});
+
 app.get('/stats/embeddings', async (req: Request, res: Response) => {
   try {
     const embeddingStats = getEmbeddingStats();
@@ -1433,18 +1579,20 @@ function getCircuitBreakerDescription(state: string): string {
 }
 
 // Root endpoint — minimal info only (Temuan 32)
-app.get('/', (req: Request, res: Response) => {
- res.json({
+app.get('/', async (req: Request, res: Response) => {
+  res.json({
     service: 'GovConnect AI Orchestrator',
     version: '1.0.0',
     status: 'running',
-    gateways: getAllAIGatewayInfo(),
+    gateways: await getAllAIGatewayInfoAsync(),
     rerankEnabled: config.rerankEnabled,
   });
 });
 
 // Full endpoint map — protected (Temuan 32)
-app.get('/admin/routes', internalAuthMiddleware, (req: Request, res: Response) => {
+app.get('/admin/routes', internalAuthMiddleware, async (req: Request, res: Response) => {
+  const gateways = await getAllAIGatewayInfoAsync();
+
   res.json({
     service: 'GovConnect AI Orchestrator',
     version: '1.0.0',
@@ -1452,7 +1600,7 @@ app.get('/admin/routes', internalAuthMiddleware, (req: Request, res: Response) =
     docs: '/api-docs',
     description: 'Stateless AI service for processing WhatsApp messages',
     gateways: {
-      ...getAllAIGatewayInfo(),
+      ...gateways,
       rerankEnabled: config.rerankEnabled,
       ragLLMRerankMaxCandidates: config.ragLLMRerankMaxCandidates,
       retrievalCacheEnabled: config.ragEnableRetrievalCache,

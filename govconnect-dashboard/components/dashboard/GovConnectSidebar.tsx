@@ -25,6 +25,7 @@ import {
   HeartPulse,
   Plug,
   MessageSquare,
+  Wallet,
 } from "lucide-react"
 
 import {
@@ -208,6 +209,12 @@ export function GovConnectSidebar() {
           icon: Activity,
           excludeRoles: ["superadmin"],
         },
+        {
+          title: "Saldo AI",
+          url: "/dashboard/ai-balance",
+          icon: Wallet,
+          excludeRoles: ["superadmin"],
+        },
       ],
     },
     // === SUPERADMIN ONLY: Kelola Desa & Admin ===
@@ -242,6 +249,12 @@ export function GovConnectSidebar() {
           title: "AI Token Usage",
           url: "/dashboard/superadmin/ai-usage",
           icon: Cpu,
+          roles: ["superadmin"],
+        },
+        {
+          title: "AI Wallets",
+          url: "/dashboard/superadmin/ai-wallets",
+          icon: Wallet,
           roles: ["superadmin"],
         },
         {

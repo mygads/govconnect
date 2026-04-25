@@ -35,6 +35,10 @@ export async function sendWhatsAppMessage(data: {
       village_id: data.village_id,
       wa_user_id: data.wa_user_id,
       message: data.message,
+    }, {
+      headers: {
+        'x-internal-api-key': config.internalApiKey,
+      },
     });
     return response.data;
   } catch (error: any) {

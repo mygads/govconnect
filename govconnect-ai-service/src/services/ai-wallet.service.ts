@@ -1,0 +1,370 @@
+import { Prisma } from '@prisma/client';
+import prisma from '../lib/prisma';
+import logger from '../utils/logger';
+
+type LedgerEntryType = 'topup' | 'usage_debit' | 'voucher_redeem' | 'manual_adjustment' | 'refund' | 'seed';
+
+type WalletStatus = 'active' | 'warning' | 'exhausted';
+
+function resolveWalletStatus(balanceUsd: number, warningThresholdUsd: number): WalletStatus {
+  if (balanceUsd <= 0) return 'exhausted';
+  if (balanceUsd < warningThresholdUsd) return 'warning';
+  return 'active';
+}
+
+function normalizeAmount(amountUsd: number): number {
+  return Number(amountUsd.toFixed(8));
+}
+
+export async function ensureVillageWallet(villageId: string) {
+  const existing = await prisma.ai_village_wallets.findUnique({
+    where: { village_id: villageId },
+  });
+
+  if (existing) return existing;
+
+  return prisma.ai_village_wallets.create({
+    data: {
+      village_id: villageId,
+      balance_usd: 0,
+      warning_threshold_usd: 1,
+      status: 'exhausted',
+      last_exhausted_at: new Date(),
+    },
+  });
+}
+
+async function createLedgerEntry(
+  tx: Prisma.TransactionClient,
+  input: {
+    villageId: string;
+    walletId: string;
+    entryType: LedgerEntryType;
+    amountUsd: number;
+    balanceBeforeUsd: number;
+    balanceAfterUsd: number;
+    actualCostUsd?: number;
+    adjustedCostUsd?: number;
+    marginUsd?: number;
+    referenceType?: string | null;
+    referenceId?: string | null;
+    metadata?: Prisma.InputJsonValue | null;
+    createdByAdminId?: string | null;
+  },
+) {
+  return tx.ai_wallet_ledger_entries.create({
+    data: {
+      village_id: input.villageId,
+      wallet_id: input.walletId,
+      entry_type: input.entryType,
+      amount_usd: normalizeAmount(input.amountUsd),
+      balance_before_usd: normalizeAmount(input.balanceBeforeUsd),
+      balance_after_usd: normalizeAmount(input.balanceAfterUsd),
+      actual_cost_usd: normalizeAmount(input.actualCostUsd ?? 0),
+      adjusted_cost_usd: normalizeAmount(input.adjustedCostUsd ?? 0),
+      margin_usd: normalizeAmount(input.marginUsd ?? 0),
+      reference_type: input.referenceType ?? null,
+      reference_id: input.referenceId ?? null,
+      metadata_json: input.metadata ?? Prisma.JsonNull,
+      created_by_admin_id: input.createdByAdminId ?? null,
+    },
+  });
+}
+
+export async function getWalletSummary(villageId: string) {
+  const wallet = await ensureVillageWallet(villageId);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  const [todayUsage, trailingUsage, recentLedger] = await Promise.all([
+    prisma.ai_wallet_ledger_entries.aggregate({
+      where: {
+        village_id: villageId,
+        entry_type: 'usage_debit',
+        created_at: { gte: todayStart },
+      },
+      _sum: { adjusted_cost_usd: true },
+    }),
+    prisma.ai_wallet_ledger_entries.aggregate({
+      where: {
+        village_id: villageId,
+        entry_type: 'usage_debit',
+        created_at: { gte: sevenDaysAgo },
+      },
+      _sum: { adjusted_cost_usd: true },
+    }),
+    prisma.ai_wallet_ledger_entries.findMany({
+      where: { village_id: villageId },
+      orderBy: { created_at: 'desc' },
+      take: 10,
+    }),
+  ]);
+
+  const todayUsageUsd = todayUsage._sum.adjusted_cost_usd ?? 0;
+  const avgDailyUsageUsd = (trailingUsage._sum.adjusted_cost_usd ?? 0) / 7;
+  const runwayDays = avgDailyUsageUsd > 0 ? wallet.balance_usd / avgDailyUsageUsd : null;
+
+  return {
+    wallet,
+    todayUsageUsd,
+    avgDailyUsageUsd,
+    runwayDays,
+    recentLedger,
+  };
+}
+
+export async function getWalletLedger(villageId: string, limit = 50) {
+  await ensureVillageWallet(villageId);
+  return prisma.ai_wallet_ledger_entries.findMany({
+    where: { village_id: villageId },
+    orderBy: { created_at: 'desc' },
+    take: Math.min(Math.max(limit, 1), 200),
+  });
+}
+
+export async function canProcessVillageAI(villageId?: string | null): Promise<{ allowed: boolean; reason?: string; balanceUsd?: number; status?: string }> {
+  if (!villageId) {
+    return { allowed: true };
+  }
+
+  const wallet = await ensureVillageWallet(villageId);
+  return {
+    allowed: wallet.balance_usd > 0 && wallet.status !== 'exhausted',
+    reason: wallet.balance_usd > 0 && wallet.status !== 'exhausted' ? undefined : 'wallet_exhausted',
+    balanceUsd: wallet.balance_usd,
+    status: wallet.status,
+  };
+}
+
+export async function topupVillageWallet(input: {
+  villageId: string;
+  amountUsd: number;
+  entryType?: Extract<LedgerEntryType, 'topup' | 'voucher_redeem' | 'manual_adjustment' | 'refund' | 'seed'>;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  metadata?: Prisma.InputJsonValue | null;
+  createdByAdminId?: string | null;
+}) {
+  if (!Number.isFinite(input.amountUsd) || input.amountUsd <= 0) {
+    throw new Error('Topup amount must be greater than 0');
+  }
+
+  await ensureVillageWallet(input.villageId);
+
+  return prisma.$transaction(async (tx) => {
+    const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
+      where: { village_id: input.villageId },
+    });
+
+    const balanceBeforeUsd = wallet.balance_usd;
+    const balanceAfterUsd = normalizeAmount(balanceBeforeUsd + input.amountUsd);
+    const status = resolveWalletStatus(balanceAfterUsd, wallet.warning_threshold_usd);
+
+    const updatedWallet = await tx.ai_village_wallets.update({
+      where: { id: wallet.id },
+      data: {
+        balance_usd: balanceAfterUsd,
+        status,
+        last_topup_at: new Date(),
+      },
+    });
+
+    const ledgerEntry = await createLedgerEntry(tx, {
+      villageId: input.villageId,
+      walletId: wallet.id,
+      entryType: input.entryType ?? 'topup',
+      amountUsd: input.amountUsd,
+      balanceBeforeUsd,
+      balanceAfterUsd,
+      referenceType: input.referenceType,
+      referenceId: input.referenceId,
+      metadata: input.metadata,
+      createdByAdminId: input.createdByAdminId,
+    });
+
+    return { wallet: updatedWallet, ledgerEntry };
+  });
+}
+
+export async function debitVillageWalletForUsage(input: {
+  villageId?: string | null;
+  adjustedCostUsd: number;
+  actualCostUsd?: number;
+  marginUsd?: number;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  metadata?: Prisma.InputJsonValue | null;
+}) {
+  if (!input.villageId || !Number.isFinite(input.adjustedCostUsd) || input.adjustedCostUsd <= 0) {
+    return null;
+  }
+
+  await ensureVillageWallet(input.villageId);
+
+  return prisma.$transaction(async (tx) => {
+    const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
+      where: { village_id: input.villageId! },
+    });
+
+    const balanceBeforeUsd = wallet.balance_usd;
+    const balanceAfterUsd = normalizeAmount(balanceBeforeUsd - input.adjustedCostUsd);
+    const status = resolveWalletStatus(balanceAfterUsd, wallet.warning_threshold_usd);
+
+    const updatedWallet = await tx.ai_village_wallets.update({
+      where: { id: wallet.id },
+      data: {
+        balance_usd: balanceAfterUsd,
+        status,
+        last_exhausted_at: status === 'exhausted' ? new Date() : wallet.last_exhausted_at,
+      },
+    });
+
+    const ledgerEntry = await createLedgerEntry(tx, {
+      villageId: input.villageId!,
+      walletId: wallet.id,
+      entryType: 'usage_debit',
+      amountUsd: -input.adjustedCostUsd,
+      balanceBeforeUsd,
+      balanceAfterUsd,
+      actualCostUsd: input.actualCostUsd,
+      adjustedCostUsd: input.adjustedCostUsd,
+      marginUsd: input.marginUsd,
+      referenceType: input.referenceType,
+      referenceId: input.referenceId,
+      metadata: input.metadata,
+    });
+
+    if (status === 'exhausted') {
+      logger.warn('Village AI wallet exhausted after usage debit', {
+        villageId: input.villageId,
+        balanceBeforeUsd,
+        balanceAfterUsd,
+      });
+    }
+
+    return { wallet: updatedWallet, ledgerEntry };
+  });
+}
+
+export async function createTopupVoucher(input: {
+  code: string;
+  amountUsd: number;
+  expiresAt?: Date | null;
+  metadata?: Prisma.InputJsonValue | null;
+  createdByAdminId?: string | null;
+}) {
+  if (!input.code.trim()) {
+    throw new Error('Voucher code is required');
+  }
+  if (!Number.isFinite(input.amountUsd) || input.amountUsd <= 0) {
+    throw new Error('Voucher amount must be greater than 0');
+  }
+
+  return prisma.ai_topup_vouchers.create({
+    data: {
+      code: input.code.trim().toUpperCase(),
+      amount_usd: normalizeAmount(input.amountUsd),
+      expires_at: input.expiresAt ?? null,
+      metadata_json: input.metadata ?? Prisma.JsonNull,
+      created_by_admin_id: input.createdByAdminId ?? null,
+    },
+  });
+}
+
+export async function listTopupVouchers(limit = 100) {
+  return prisma.ai_topup_vouchers.findMany({
+    orderBy: { created_at: 'desc' },
+    take: Math.min(Math.max(limit, 1), 500),
+  });
+}
+
+export async function redeemTopupVoucher(input: {
+  villageId: string;
+  code: string;
+  adminId?: string | null;
+}) {
+  const normalizedCode = input.code.trim().toUpperCase();
+  if (!normalizedCode) {
+    throw new Error('Voucher code is required');
+  }
+
+  const voucher = await prisma.ai_topup_vouchers.findUnique({
+    where: { code: normalizedCode },
+  });
+
+  if (!voucher || voucher.status !== 'active') {
+    throw new Error('Voucher is not active');
+  }
+
+  if (voucher.expires_at && voucher.expires_at.getTime() < Date.now()) {
+    await prisma.ai_topup_vouchers.update({
+      where: { id: voucher.id },
+      data: { status: 'expired' },
+    });
+    throw new Error('Voucher has expired');
+  }
+
+  await ensureVillageWallet(input.villageId);
+
+  return prisma.$transaction(async (tx) => {
+    const activeVoucher = await tx.ai_topup_vouchers.findUniqueOrThrow({
+      where: { id: voucher.id },
+    });
+
+    if (activeVoucher.status !== 'active') {
+      throw new Error('Voucher is not active');
+    }
+
+    const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
+      where: { village_id: input.villageId },
+    });
+
+    const balanceBeforeUsd = wallet.balance_usd;
+    const balanceAfterUsd = normalizeAmount(balanceBeforeUsd + activeVoucher.amount_usd);
+    const status = resolveWalletStatus(balanceAfterUsd, wallet.warning_threshold_usd);
+
+    const updatedWallet = await tx.ai_village_wallets.update({
+      where: { id: wallet.id },
+      data: {
+        balance_usd: balanceAfterUsd,
+        status,
+        last_topup_at: new Date(),
+      },
+    });
+
+    const updatedVoucher = await tx.ai_topup_vouchers.update({
+      where: { id: activeVoucher.id },
+      data: {
+        status: 'redeemed',
+        redeemed_by_village_id: input.villageId,
+        redeemed_by_admin_id: input.adminId ?? null,
+        redeemed_at: new Date(),
+      },
+    });
+
+    const ledgerEntry = await createLedgerEntry(tx, {
+      villageId: input.villageId,
+      walletId: wallet.id,
+      entryType: 'voucher_redeem',
+      amountUsd: activeVoucher.amount_usd,
+      balanceBeforeUsd,
+      balanceAfterUsd,
+      referenceType: 'voucher',
+      referenceId: activeVoucher.id,
+      metadata: { code: activeVoucher.code },
+      createdByAdminId: input.adminId,
+    });
+
+    return { wallet: updatedWallet, voucher: updatedVoucher, ledgerEntry };
+  });
+}
+
+export async function listVillageWallets(limit = 200) {
+  return prisma.ai_village_wallets.findMany({
+    orderBy: [{ status: 'asc' }, { updated_at: 'desc' }],
+    take: Math.min(Math.max(limit, 1), 500),
+  });
+}

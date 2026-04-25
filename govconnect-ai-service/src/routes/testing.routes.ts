@@ -5,11 +5,10 @@ import {
   callAIGatewayEmbeddings,
   callAIGatewayPrompt,
   callAIGatewayRerank,
-  getAIGatewayInfo,
-  getAllAIGatewayInfo,
+  getAIGatewayInfoAsync,
+  getAllAIGatewayInfoAsync,
   getDefaultGatewayModels,
   getDefaultRAGRewriteModels,
-  isAIGatewayEnabled,
   pingAIGateway,
 } from '../services/ai-gateway.service';
 import { processUnifiedMessage } from '../services/unified-message-processor.service';
@@ -41,7 +40,8 @@ function verifyInternalKey(req: Request, res: Response, next: Function) {
 }
 
 async function pingLLMLane(): Promise<LanePingResult> {
-  if (!isAIGatewayEnabled('llm')) {
+  const gateway = await getAIGatewayInfoAsync('llm');
+  if (!gateway.enabled) {
     return { lane: 'llm', status: 'disabled', error: 'LLM lane is not configured' };
   }
 
@@ -64,21 +64,22 @@ async function pingLLMLane(): Promise<LanePingResult> {
     responseTime: result.metrics.durationMs,
     details: {
       response: result.text,
-      gateway: getAIGatewayInfo('llm'),
+      gateway,
     },
   };
 }
 
 async function pingEmbedLane(): Promise<LanePingResult> {
-  if (!isAIGatewayEnabled('embed')) {
+  const gateway = await getAIGatewayInfoAsync('embed');
+  if (!gateway.enabled) {
     return { lane: 'embed', status: 'disabled', error: 'Embed lane is not configured' };
   }
 
   const result = await callAIGatewayEmbeddings({
     input: 'ping embedding healthcheck',
-    model: config.embeddingGateway.model,
-    dimensions: config.embeddingGateway.dimensions,
-    timeoutMs: config.embeddingGateway.timeoutMs,
+    model: gateway.model,
+    dimensions: gateway.dimensions,
+    timeoutMs: gateway.timeoutMs,
     layerType: 'embedding',
     callType: 'embedding_single',
   });
@@ -99,13 +100,14 @@ async function pingEmbedLane(): Promise<LanePingResult> {
     responseTime: result.metrics.durationMs,
     details: {
       dimensions: result.embeddings[0]?.length || 0,
-      gateway: getAIGatewayInfo('embed'),
+      gateway,
     },
   };
 }
 
 async function pingRAGLane(): Promise<LanePingResult> {
-  if (!isAIGatewayEnabled('rag')) {
+  const gateway = await getAIGatewayInfoAsync('rag');
+  if (!gateway.enabled) {
     return { lane: 'rag', status: 'disabled', error: 'RAG rewrite lane is not configured' };
   }
 
@@ -115,7 +117,7 @@ async function pingRAGLane(): Promise<LanePingResult> {
     messages: [{ role: 'user', content: 'Rewrite this as a short retrieval query: cara bikin ktp baru' }],
     temperature: 0,
     maxTokens: 60,
-    timeoutMs: config.ragGateway.timeoutMs,
+    timeoutMs: gateway.timeoutMs,
     jsonMode: false,
     layerType: 'rag_expand',
     callType: 'rag_query_expand',
@@ -137,13 +139,14 @@ async function pingRAGLane(): Promise<LanePingResult> {
     responseTime: result.metrics.durationMs,
     details: {
       response: result.text,
-      gateway: getAIGatewayInfo('rag'),
+      gateway,
     },
   };
 }
 
 async function pingRerankLane(): Promise<LanePingResult> {
-  if (!isAIGatewayEnabled('rerank')) {
+  const gateway = await getAIGatewayInfoAsync('rerank');
+  if (!gateway.enabled) {
     return { lane: 'rerank', status: 'disabled', error: 'Rerank lane is not configured' };
   }
 
@@ -154,9 +157,9 @@ async function pingRerankLane(): Promise<LanePingResult> {
       'Jadwal posyandu minggu depan di balai desa.',
       'Prosedur penggantian KK hilang dan dokumen pendukung.',
     ],
-    model: config.rerankerGateway.model,
-    topN: Math.min(3, config.rerankerGateway.topN),
-    timeoutMs: config.rerankerGateway.timeoutMs,
+    model: gateway.model,
+    topN: Math.min(3, gateway.topN || 3),
+    timeoutMs: gateway.timeoutMs,
     layerType: 'rag_rerank',
     callType: 'rerank_documents',
   });
@@ -178,7 +181,7 @@ async function pingRerankLane(): Promise<LanePingResult> {
     details: {
       topScore: result.items[0]?.relevanceScore,
       resultCount: result.items.length,
-      gateway: getAIGatewayInfo('rerank'),
+      gateway,
     },
   };
 }
@@ -206,7 +209,7 @@ router.post('/ping', verifyInternalKey, async (_req: Request, res: Response) => 
     return res.status(statusCode).json({
       success: !hasBlockingError,
       responseTime: Date.now() - startTime,
-      gateways: getAllAIGatewayInfo(),
+      gateways: await getAllAIGatewayInfoAsync(),
       tests,
     });
   } catch (error: any) {
@@ -215,7 +218,7 @@ router.post('/ping', verifyInternalKey, async (_req: Request, res: Response) => 
       success: false,
       error: 'Ping failed',
       details: error.message,
-      gateways: getAllAIGatewayInfo(),
+      gateways: await getAllAIGatewayInfoAsync(),
     });
   }
 });

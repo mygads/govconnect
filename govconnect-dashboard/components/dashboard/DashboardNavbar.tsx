@@ -17,6 +17,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar"
 import { useAuth } from "@/components/auth/AuthContext"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { NotificationCenter } from "@/components/dashboard/NotificationCenter"
+import { AIWalletNavbarControl } from "@/components/dashboard/AIWalletStatus"
 import { isSuperadmin } from "@/lib/rbac"
 
 export function DashboardNavbar() {
@@ -58,6 +59,7 @@ export function DashboardNavbar() {
       <div className="ml-auto flex items-center gap-2">
         {/* Notification Center - only for village admins (needs RealtimeProvider) */}
         {!userIsSuperadmin && <NotificationCenter />}
+        {!userIsSuperadmin && <AIWalletNavbarControl />}
 
         {/* Theme Toggle */}
         <Button

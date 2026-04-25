@@ -937,8 +937,8 @@ async function toolCreateComplaint(
         ? `Laporan darurat berhasil dibuat dengan nomor ${complaintId}.`
         : `Laporan berhasil dibuat dengan nomor ${complaintId}.`,
       suggested_response: categoryConfig?.is_urgent === true
-        ? `Terima kasih. Laporan darurat sudah kami catat dengan nomor *${complaintId}* dan akan segera diteruskan.\n\nKalau ada foto atau tambahan lokasi yang perlu disampaikan, bisa langsung dikirim di chat ini ya.`
-        : `Terima kasih. Laporan sudah kami catat dengan nomor *${complaintId}*.\n\nKalau ada foto atau tambahan lokasi, bisa langsung dikirim di chat ini ya.`,
+        ? `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.\n\nJika ada laporan lain, silakan langsung sampaikan.`
+        : `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.\n\nJika ada laporan lain, silakan langsung sampaikan.`,
     },
     meta: {
       trustLevel: 'action_result',

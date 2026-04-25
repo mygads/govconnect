@@ -6,7 +6,7 @@ import { connectRabbitMQ, startConsuming, disconnectRabbitMQ } from './services/
 import { processMessage } from './services/ai-orchestrator.service';
 import { drainActiveProcessing } from './services/unified-message-processor.service';
 import { clearAllTimers } from './utils/timer-registry';
-import { getAllAIGatewayInfo } from './services/ai-gateway.service';
+import { getAllAIGatewayInfoAsync } from './services/ai-gateway.service';
 
 // UNIFIED PROCESSOR - same architecture for WhatsApp and Webchat
 // No more pattern matching, full LLM understanding
@@ -15,10 +15,12 @@ let server: any;
 
 async function startServer() {
   try {
+    const gateways = await getAllAIGatewayInfoAsync();
+
     logger.info('🚀 Starting AI Orchestrator Service...', {
       env: config.nodeEnv,
       port: config.port,
-      gateways: getAllAIGatewayInfo(),
+      gateways,
       rerankEnabled: config.rerankEnabled,
     });
     

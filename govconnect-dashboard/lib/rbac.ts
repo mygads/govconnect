@@ -17,6 +17,7 @@ const SUPERADMIN_ONLY_RULES: RouteRule[] = [
   { path: '/dashboard/superadmin/system-health', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/llm-check', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/whatsapp', roles: ['superadmin'] },
+  { path: '/dashboard/superadmin/ai-wallets', roles: ['superadmin'] },
 ]
 
 // Routes that only village admins can access (superadmin should NOT access these)
@@ -33,6 +34,7 @@ const VILLAGE_ONLY_ROUTES: string[] = [
   '/dashboard/village-profile',
   '/dashboard/important-contacts',
   '/dashboard/knowledge-analytics',
+  '/dashboard/ai-balance',
 ]
 
 const matchPath = (pathname: string, path: string) =>

@@ -33,7 +33,8 @@
       "Bash(powershell -Command \"docker-compose up -d\")",
       "Bash(docker-compose up *)",
       "Bash(docker-compose ps *)",
-      "PowerShell(./scripts/qa-wa-resident-sanreseng-ade.ps1)"
+      "PowerShell(./scripts/qa-wa-resident-sanreseng-ade.ps1)",
+      "Bash(npm --prefix \"/c/Yoga/Programming/containers/govconnect/govconnect-dashboard\" run build)"
     ]
   }
 }

@@ -43,6 +43,7 @@ import {
 import { startTakeoverForUser } from './channel-client.service';
 import { getEnhancedContext } from './conversation-context.service';
 import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village-behavior.service';
+import { canProcessVillageAI } from './ai-wallet.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
@@ -852,6 +853,94 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         messagePreview: message,
       });
       return finish(latePreAgentResult);
+    }
+
+    const explicitHumanHandoffRequest = isExplicitHumanHandoffRequest(message);
+    const walletAccess = await canProcessVillageAI(resolvedVillageId);
+    if (!walletAccess.allowed) {
+      await recordGuardrailEvent({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'pre_agent_balance',
+        guardType: 'wallet_balance',
+        action: explicitHumanHandoffRequest ? 'handoff_allowed' : 'blocked',
+        reason: walletAccess.reason || 'wallet_exhausted',
+        messagePreview: message,
+        metadata: {
+          balance_usd: walletAccess.balanceUsd ?? null,
+          wallet_status: walletAccess.status ?? null,
+          explicit_handoff: explicitHumanHandoffRequest,
+        },
+      });
+
+      if (explicitHumanHandoffRequest) {
+        const started = !isEvaluation && await startTakeoverForUser(userId, {
+          village_id: resolvedVillageId,
+          channel: agentChannel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+          admin_id: 'system-auto-handoff',
+          admin_name: 'Petugas Desa',
+          reason: 'user_requested_human_agent_wallet_exhausted',
+          enrichment: {
+            last_user_message: message,
+            wallet_status: walletAccess.status ?? null,
+            balance_usd: walletAccess.balanceUsd ?? null,
+            village_id: resolvedVillageId ?? null,
+          },
+        });
+
+        tracker.complete();
+        notifyStage('done', 100);
+
+        return finish({
+          success: true,
+          response: started
+            ? 'Baik, karena saldo AI desa sedang habis, percakapan ini kami teruskan ke petugas agar dibantu langsung. Mohon tunggu sebentar ya.'
+            : 'Saldo AI desa sedang habis. Silakan hubungi petugas desa agar dibantu langsung.',
+          intent: 'TAKEOVER',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            hasKnowledge: false,
+            agentMode: 'pre_agent_guard',
+            toolsUsed: [],
+            traceId,
+            handoff: {
+              started: !!started,
+              reason: 'user_requested_human_agent_wallet_exhausted',
+            },
+            guardrail: {
+              stage: 'pre_agent_balance',
+              type: 'wallet_balance',
+              action: 'handoff_allowed',
+              reason: walletAccess.reason || 'wallet_exhausted',
+            },
+          },
+        });
+      }
+
+      tracker.complete();
+      notifyStage('done', 100);
+
+      return finish({
+        success: true,
+        response: 'Saldo AI desa saat ini habis, jadi pesan Bapak/Ibu kami tahan dulu sambil menunggu saldo diisi ulang oleh admin desa.',
+        guidanceText: 'Kalau ingin dibantu sekarang, silakan minta diteruskan ke petugas manusia.',
+        intent: 'AI_BALANCE_EXHAUSTED',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+          agentMode: 'pre_agent_guard',
+          toolsUsed: [],
+          traceId,
+          guardrail: {
+            stage: 'pre_agent_balance',
+            type: 'wallet_balance',
+            action: 'blocked',
+            reason: walletAccess.reason || 'wallet_exhausted',
+          },
+        },
+      });
     }
 
     // Step 2.5: AI Optimization - Pre-process message

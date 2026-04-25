@@ -148,12 +148,20 @@ model ai_token_usage {
   duration_ms     Int?     // How long the LLM call took
   
   // API Key source tracking
-  key_source      String?  // "gateway_<lane>" or legacy older values
-  key_id          String?  // gateway key label or legacy identifier
-  key_tier        String?  // gateway provider or legacy tier label
-  
+  key_source       String?  // "gateway_<lane>" or legacy older values
+  key_id           String?  // gateway key label or legacy identifier
+  key_tier         String?  // gateway provider or legacy tier label
+
+  // DB-backed provider/model and billing metadata
+  provider_id      String?
+  model_config_id  String?
+  lane_type        String?
+  actual_cost_usd  Float    @default(0)
+  adjusted_cost_usd Float   @default(0)
+  margin_usd       Float    @default(0)
+
   created_at      DateTime @default(now())
-  
+
   @@index([model])
   @@index([village_id])
   @@index([layer_type])
@@ -163,6 +171,154 @@ model ai_token_usage {
   @@index([model, created_at])
   @@index([channel, created_at])
   @@index([key_source])
+  @@index([provider_id])
+  @@index([model_config_id])
+  @@index([lane_type])
+}
+
+model ai_village_wallets {
+  id                    String    @id @default(cuid())
+  village_id            String    @unique
+  balance_usd           Float     @default(0)
+  warning_threshold_usd Float     @default(1)
+  status                String    @default("exhausted")
+  last_topup_at         DateTime?
+  last_exhausted_at     DateTime?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  ledger_entries        ai_wallet_ledger_entries[]
+
+  @@index([status])
+  @@index([updated_at])
+}
+
+model ai_wallet_ledger_entries {
+  id                 String   @id @default(cuid())
+  village_id         String
+  wallet_id          String
+  entry_type         String
+  amount_usd         Float
+  balance_before_usd Float
+  balance_after_usd  Float
+  actual_cost_usd    Float    @default(0)
+  adjusted_cost_usd  Float    @default(0)
+  margin_usd         Float    @default(0)
+  reference_type     String?
+  reference_id       String?
+  metadata_json      Json?
+  created_by_admin_id String?
+  created_at         DateTime @default(now())
+
+  wallet             ai_village_wallets @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
+
+  @@index([village_id, created_at])
+  @@index([wallet_id, created_at])
+  @@index([entry_type, created_at])
+  @@index([reference_type, reference_id])
+}
+
+model ai_topup_vouchers {
+  id                      String    @id @default(cuid())
+  code                    String    @unique
+  amount_usd              Float
+  status                  String    @default("active")
+  expires_at              DateTime?
+  redeemed_by_village_id  String?
+  redeemed_by_admin_id    String?
+  redeemed_at             DateTime?
+  metadata_json           Json?
+  created_by_admin_id     String?
+  created_at              DateTime  @default(now())
+  updated_at              DateTime  @updatedAt
+
+  @@index([status])
+  @@index([redeemed_by_village_id])
+  @@index([created_at])
+}
+
+model ai_providers {
+  id                   String   @id @default(cuid())
+  name                 String
+  slug                 String   @unique
+  provider_kind        String   @default("openai_compatible")
+  base_url             String
+  api_key_encrypted    String?  @db.Text
+  default_headers_json Json?
+  is_active            Boolean  @default(true)
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  endpoints            ai_provider_endpoints[]
+  models               ai_models[]
+
+  @@index([is_active])
+}
+
+model ai_provider_endpoints {
+  id            String   @id @default(cuid())
+  provider_id   String
+  lane_type     String
+  endpoint_path String
+  is_default    Boolean  @default(false)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  provider      ai_providers @relation(fields: [provider_id], references: [id], onDelete: Cascade)
+
+  @@index([provider_id])
+  @@index([lane_type])
+  @@unique([provider_id, lane_type, endpoint_path])
+}
+
+model ai_models {
+  id                                    String   @id @default(cuid())
+  provider_id                           String
+  lane_type                             String
+  display_name                          String
+  upstream_model_name                   String
+  endpoint_path                         String?
+  actual_pricing_type                   String   @default("per_million_tokens")
+  actual_fixed_price_usd                Float?
+  actual_input_price_per_million_usd    Float?
+  actual_output_price_per_million_usd   Float?
+  adjusted_pricing_type                 String   @default("per_million_tokens")
+  adjusted_fixed_price_usd              Float?
+  adjusted_input_price_per_million_usd  Float?
+  adjusted_output_price_per_million_usd Float?
+  is_active                             Boolean  @default(true)
+  is_publicly_selectable                Boolean  @default(true)
+  notes                                 String?  @db.Text
+  created_at                            DateTime @default(now())
+  updated_at                            DateTime @updatedAt
+
+  provider                              ai_providers @relation(fields: [provider_id], references: [id], onDelete: Cascade)
+  primary_assignments                   ai_lane_assignments[] @relation("PrimaryModel")
+  fallback_assignments                  ai_lane_assignments[] @relation("FallbackModel")
+
+  @@index([provider_id])
+  @@index([lane_type])
+  @@index([is_active])
+  @@unique([provider_id, lane_type, upstream_model_name])
+}
+
+model ai_lane_assignments {
+  id                String   @id @default(cuid())
+  lane_type         String
+  primary_model_id  String
+  fallback_model_id String?
+  village_id        String?
+  is_global_default Boolean  @default(true)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  primary_model     ai_models @relation("PrimaryModel", fields: [primary_model_id], references: [id], onDelete: Restrict)
+  fallback_model    ai_models? @relation("FallbackModel", fields: [fallback_model_id], references: [id], onDelete: SetNull)
+
+  @@index([lane_type])
+  @@index([village_id])
+  @@index([is_global_default])
+  @@unique([lane_type, village_id, is_global_default])
 }
 
 // ==================== CONVERSATION SESSIONS (Temuan 7) ====================

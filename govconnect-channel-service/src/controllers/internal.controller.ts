@@ -61,52 +61,49 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
   try {
     const { village_id, wa_user_id, message } = req.body;
 
-    // Send via WhatsApp API
     const result = await sendTextMessage(wa_user_id, message, village_id);
+    const messageId = result.message_id || `system-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-    if (result.success && result.message_id) {
-      // Save outgoing message
-      await saveOutgoingMessage({
-        village_id,
-        wa_user_id,
-        channel: 'WHATSAPP',
-        channel_identifier: wa_user_id,
-        message_id: result.message_id,
-        message_text: message,
-        source: 'SYSTEM',
-      });
+    await saveOutgoingMessage({
+      village_id,
+      wa_user_id,
+      channel: 'WHATSAPP',
+      channel_identifier: wa_user_id,
+      message_id: messageId,
+      message_text: message,
+      source: 'SYSTEM',
+    });
 
-      // Log success
-      await logSentMessage({
-        village_id,
-        wa_user_id,
-        channel: 'WHATSAPP',
-        channel_identifier: wa_user_id,
-        message_text: message,
-        status: 'sent',
-      });
+    await logSentMessage({
+      village_id,
+      wa_user_id,
+      channel: 'WHATSAPP',
+      channel_identifier: wa_user_id,
+      message_text: message,
+      status: result.success ? 'sent' : 'failed',
+      error_msg: result.success ? undefined : result.error,
+    });
 
+    if (result.success) {
       res.json({
         status: 'sent',
-        message_id: result.message_id,
+        message_id: messageId,
       });
-    } else {
-      // Log failure
-      await logSentMessage({
-        village_id,
-        wa_user_id,
-        channel: 'WHATSAPP',
-        channel_identifier: wa_user_id,
-        message_text: message,
-        status: 'failed',
-        error_msg: result.error,
-      });
-
-      res.status(500).json({
-        status: 'failed',
-        error: result.error || 'Failed to send message',
-      });
+      return;
     }
+
+    logger.warn('WhatsApp transport failed but system message was stored', {
+      village_id,
+      wa_user_id,
+      message_id: messageId,
+      error: result.error,
+    });
+
+    res.json({
+      status: 'stored_transport_failed',
+      message_id: messageId,
+      error: result.error || 'Failed to send message',
+    });
   } catch (error: any) {
     logger.error('Send message error', { error: error.message });
     res.status(500).json({ error: 'Internal server error' });

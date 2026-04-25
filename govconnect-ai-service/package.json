@@ -13,6 +13,7 @@
                     "db:push":  "npx prisma db push",
                     "db:migrate":  "npx prisma migrate dev",
                     "db:studio":  "npx prisma studio",
+                    "db:seed":  "tsx prisma/seed.ts",
                     "eval:golden-set":  "tsx scripts/run-golden-set-eval.ts",
                     "golden-set:eval":  "tsx scripts/run-golden-set-eval.ts"
                 },

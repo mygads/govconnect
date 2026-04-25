@@ -746,12 +746,24 @@ export async function tryHandleLatePreAgentState(
     const recentAssistant = history
       .filter((item) => item.role === 'assistant')
       .map((item) => item.content || '')
+      .reverse()
       .find((content) => /yakin ingin membatalkan/i.test(content) && /balas\s+ya\s+untuk\s+konfirmasi/i.test(content));
     const recentCode = recentAssistant?.match(/\b(LAP|LAY)-\d{8}-\d{3}\b/i)?.[0]?.toUpperCase();
     if (recentCode) {
       pendingCancel = {
         type: recentCode.startsWith('LAP-') ? 'laporan' as const : 'layanan' as const,
         id: recentCode,
+        reason: undefined,
+        timestamp: Date.now(),
+      };
+    }
+  }
+  if (!pendingCancel && /\bya\b/i.test(message) && channel === 'whatsapp') {
+    const explicitCancelCode = message.match(/\b(LAP|LAY)-\d{8}-\d{3}\b/i)?.[0]?.toUpperCase();
+    if (explicitCancelCode) {
+      pendingCancel = {
+        type: explicitCancelCode.startsWith('LAP-') ? 'laporan' as const : 'layanan' as const,
+        id: explicitCancelCode,
         reason: undefined,
         timestamp: Date.now(),
       };

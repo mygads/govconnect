@@ -23,6 +23,7 @@
 
 import prisma from '../lib/prisma';
 import { Prisma } from '@prisma/client';
+import { debitVillageWalletForUsage } from './ai-wallet.service';
 import logger from '../utils/logger';
 
 // ==================== Pricing ====================
@@ -147,8 +148,270 @@ export interface TokenUsageRecord {
   key_source?: string | null;  // "gateway_<lane>" | legacy values like "byok" / "env"
   key_id?: string | null;      // gateway key label or legacy key identifier
   key_tier?: string | null;    // active gateway provider or legacy tier label
+  provider_id?: string | null;
+  model_config_id?: string | null;
+  lane_type?: string | null;
+  actual_cost_usd?: number | null;
+  adjusted_cost_usd?: number | null;
+  margin_usd?: number | null;
 }
 
+interface PricingResolution {
+  provider_id: string | null;
+  model_config_id: string | null;
+  lane_type: string | null;
+  actual_cost_usd: number;
+  adjusted_cost_usd: number;
+  margin_usd: number;
+  legacy_cost_usd: number;
+}
+
+function calculatePricingByMode(
+  pricingType: string | null | undefined,
+  fixedPriceUsd: number | null | undefined,
+  inputPricePerMillionUsd: number | null | undefined,
+  outputPricePerMillionUsd: number | null | undefined,
+  inputTokens: number,
+  outputTokens: number,
+): number {
+  if (pricingType === 'fixed_per_call') {
+    return fixedPriceUsd ?? 0;
+  }
+
+  return ((inputTokens * (inputPricePerMillionUsd ?? 0)) + (outputTokens * (outputPricePerMillionUsd ?? 0))) / 1_000_000;
+}
+
+async function resolvePricing(record: TokenUsageRecord): Promise<PricingResolution> {
+  const legacy_cost_usd = calculateCost(record.model, record.input_tokens, record.output_tokens);
+
+  const modelConfig = record.model_config_id
+    ? await prisma.ai_models.findUnique({
+        where: { id: record.model_config_id },
+        select: {
+          id: true,
+          provider_id: true,
+          lane_type: true,
+          actual_pricing_type: true,
+          actual_fixed_price_usd: true,
+          actual_input_price_per_million_usd: true,
+          actual_output_price_per_million_usd: true,
+          adjusted_pricing_type: true,
+          adjusted_fixed_price_usd: true,
+          adjusted_input_price_per_million_usd: true,
+          adjusted_output_price_per_million_usd: true,
+        },
+      })
+    : await prisma.ai_models.findFirst({
+        where: {
+          upstream_model_name: record.model,
+          is_active: true,
+          ...(record.lane_type ? { lane_type: record.lane_type } : {}),
+          ...(record.provider_id ? { provider_id: record.provider_id } : {}),
+        },
+        orderBy: { updated_at: 'desc' },
+        select: {
+          id: true,
+          provider_id: true,
+          lane_type: true,
+          actual_pricing_type: true,
+          actual_fixed_price_usd: true,
+          actual_input_price_per_million_usd: true,
+          actual_output_price_per_million_usd: true,
+          adjusted_pricing_type: true,
+          adjusted_fixed_price_usd: true,
+          adjusted_input_price_per_million_usd: true,
+          adjusted_output_price_per_million_usd: true,
+        },
+      });
+
+  const actual_cost_usd = record.actual_cost_usd ?? (modelConfig
+    ? calculatePricingByMode(
+        modelConfig.actual_pricing_type,
+        modelConfig.actual_fixed_price_usd,
+        modelConfig.actual_input_price_per_million_usd,
+        modelConfig.actual_output_price_per_million_usd,
+        record.input_tokens,
+        record.output_tokens,
+      )
+    : legacy_cost_usd);
+
+  const adjusted_cost_usd = record.adjusted_cost_usd ?? (modelConfig
+    ? calculatePricingByMode(
+        modelConfig.adjusted_pricing_type,
+        modelConfig.adjusted_fixed_price_usd,
+        modelConfig.adjusted_input_price_per_million_usd,
+        modelConfig.adjusted_output_price_per_million_usd,
+        record.input_tokens,
+        record.output_tokens,
+      )
+    : legacy_cost_usd);
+
+  const margin_usd = record.margin_usd ?? (adjusted_cost_usd - actual_cost_usd);
+
+  return {
+    provider_id: record.provider_id ?? modelConfig?.provider_id ?? null,
+    model_config_id: record.model_config_id ?? modelConfig?.id ?? null,
+    lane_type: record.lane_type ?? modelConfig?.lane_type ?? null,
+    actual_cost_usd,
+    adjusted_cost_usd,
+    margin_usd,
+    legacy_cost_usd,
+  };
+}
+
+export async function findPricingForModel(model: string): Promise<{ input: number; output: number }> {
+  const modelConfig = await prisma.ai_models.findFirst({
+    where: {
+      upstream_model_name: model,
+      is_active: true,
+    },
+    orderBy: { updated_at: 'desc' },
+    select: {
+      adjusted_pricing_type: true,
+      adjusted_fixed_price_usd: true,
+      adjusted_input_price_per_million_usd: true,
+      adjusted_output_price_per_million_usd: true,
+    },
+  });
+
+  if (!modelConfig) {
+    return findPricing(model);
+  }
+
+  if (modelConfig.adjusted_pricing_type === 'fixed_per_call') {
+    return { input: modelConfig.adjusted_fixed_price_usd ?? 0, output: 0 };
+  }
+
+  return {
+    input: modelConfig.adjusted_input_price_per_million_usd ?? 0,
+    output: modelConfig.adjusted_output_price_per_million_usd ?? 0,
+  };
+}
+
+export async function calculateCostForModel(model: string, inputTokens: number, outputTokens: number): Promise<number> {
+  const pricing = await findPricingForModel(model);
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+}
+
+function getLaneTypeFromKeySource(keySource?: string | null): string | null {
+  if (!keySource?.startsWith('gateway_')) {
+    return null;
+  }
+
+  const lane = keySource.replace('gateway_', '').trim();
+  return lane || null;
+}
+
+async function attachResolvedPricing(record: TokenUsageRecord): Promise<{ record: TokenUsageRecord; pricing: PricingResolution }> {
+  const lane_type = record.lane_type ?? getLaneTypeFromKeySource(record.key_source);
+  const pricedRecord = { ...record, lane_type };
+  const pricing = await resolvePricing(pricedRecord);
+
+  return {
+    record: {
+      ...pricedRecord,
+      provider_id: pricing.provider_id,
+      model_config_id: pricing.model_config_id,
+      lane_type: pricing.lane_type,
+      actual_cost_usd: pricing.actual_cost_usd,
+      adjusted_cost_usd: pricing.adjusted_cost_usd,
+      margin_usd: pricing.margin_usd,
+    },
+    pricing,
+  };
+}
+
+export type { PricingResolution };
+
+export async function resolveTokenUsagePricing(record: TokenUsageRecord): Promise<PricingResolution> {
+  return resolvePricing(record);
+}
+
+export async function resolveTokenUsageRecord(record: TokenUsageRecord): Promise<TokenUsageRecord> {
+  return (await attachResolvedPricing(record)).record;
+}
+
+export async function ensureTokenUsagePricing(record: TokenUsageRecord): Promise<{ record: TokenUsageRecord; pricing: PricingResolution }> {
+  return attachResolvedPricing(record);
+}
+
+export async function calculateLegacyCost(record: TokenUsageRecord): Promise<number> {
+  return calculateCost(record.model, record.input_tokens, record.output_tokens);
+}
+
+export async function getLatestModelConfigForLane(lane: string | null | undefined, model: string) {
+  return prisma.ai_models.findFirst({
+    where: {
+      upstream_model_name: model,
+      is_active: true,
+      ...(lane ? { lane_type: lane } : {}),
+    },
+    orderBy: { updated_at: 'desc' },
+    select: {
+      id: true,
+      provider_id: true,
+      lane_type: true,
+    },
+  });
+}
+
+export async function enrichTokenUsageRecord(record: TokenUsageRecord): Promise<TokenUsageRecord> {
+  return (await attachResolvedPricing(record)).record;
+}
+
+export async function enrichAndResolveTokenUsage(record: TokenUsageRecord): Promise<{ record: TokenUsageRecord; pricing: PricingResolution }> {
+  return attachResolvedPricing(record);
+}
+
+export type TokenUsageWriteRecord = TokenUsageRecord;
+
+export async function calculatePersistedCost(record: TokenUsageRecord): Promise<PricingResolution> {
+  return resolvePricing(record);
+}
+
+export async function recordResolvedTokenUsage(record: TokenUsageRecord): Promise<void> {
+  return recordTokenUsage(record);
+}
+
+export async function resolveDbBackedTokenUsage(record: TokenUsageRecord): Promise<{ record: TokenUsageRecord; pricing: PricingResolution }> {
+  return attachResolvedPricing(record);
+}
+
+export async function getDbBackedPricing(record: TokenUsageRecord): Promise<PricingResolution> {
+  return resolvePricing(record);
+}
+
+export async function getDbBackedTokenUsage(record: TokenUsageRecord): Promise<TokenUsageRecord> {
+  return (await attachResolvedPricing(record)).record;
+}
+
+export async function attachDbPricing(record: TokenUsageRecord): Promise<TokenUsageRecord> {
+  return (await attachResolvedPricing(record)).record;
+}
+
+export async function resolveDbPricing(record: TokenUsageRecord): Promise<PricingResolution> {
+  return resolvePricing(record);
+}
+
+export async function getResolvedPricing(record: TokenUsageRecord): Promise<PricingResolution> {
+  return resolvePricing(record);
+}
+
+export async function getResolvedTokenUsageRecord(record: TokenUsageRecord): Promise<TokenUsageRecord> {
+  return (await attachResolvedPricing(record)).record;
+}
+
+export async function getResolvedTokenUsagePricing(record: TokenUsageRecord): Promise<PricingResolution> {
+  return resolvePricing(record);
+}
+
+export async function populateTokenUsageRecord(record: TokenUsageRecord): Promise<TokenUsageRecord> {
+  return (await attachResolvedPricing(record)).record;
+}
+
+export async function populateTokenUsagePricing(record: TokenUsageRecord): Promise<TokenUsageRecord> {
+  return (await attachResolvedPricing(record)).record;
+}
 export interface UsageMetadata {
   promptTokenCount?: number;
   candidatesTokenCount?: number;
@@ -163,36 +426,61 @@ export interface UsageMetadata {
  */
 export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> {
   try {
-    const cost_usd = calculateCost(record.model, record.input_tokens, record.output_tokens);
+    const { record: resolvedRecord, pricing } = await attachResolvedPricing(record);
 
-    await prisma.ai_token_usage.create({
+    const created = await prisma.ai_token_usage.create({
       data: {
-        model: record.model,
-        input_tokens: record.input_tokens,
-        output_tokens: record.output_tokens,
-        total_tokens: record.total_tokens,
-        cost_usd,
-        layer_type: record.layer_type,
-        call_type: record.call_type,
-        village_id: record.village_id ?? null,
-        wa_user_id: record.wa_user_id ?? null,
-        session_id: record.session_id ?? null,
-        channel: record.channel ?? null,
-        intent: record.intent ?? null,
-        success: record.success ?? true,
-        duration_ms: record.duration_ms ?? null,
-        key_source: record.key_source ?? null,
-        key_id: record.key_id ?? null,
-        key_tier: record.key_tier ?? null,
+        model: resolvedRecord.model,
+        input_tokens: resolvedRecord.input_tokens,
+        output_tokens: resolvedRecord.output_tokens,
+        total_tokens: resolvedRecord.total_tokens,
+        cost_usd: pricing.adjusted_cost_usd,
+        layer_type: resolvedRecord.layer_type,
+        call_type: resolvedRecord.call_type,
+        village_id: resolvedRecord.village_id ?? null,
+        wa_user_id: resolvedRecord.wa_user_id ?? null,
+        session_id: resolvedRecord.session_id ?? null,
+        channel: resolvedRecord.channel ?? null,
+        intent: resolvedRecord.intent ?? null,
+        success: resolvedRecord.success ?? true,
+        duration_ms: resolvedRecord.duration_ms ?? null,
+        key_source: resolvedRecord.key_source ?? null,
+        key_id: resolvedRecord.key_id ?? null,
+        key_tier: resolvedRecord.key_tier ?? null,
+        provider_id: resolvedRecord.provider_id ?? null,
+        model_config_id: resolvedRecord.model_config_id ?? null,
+        lane_type: resolvedRecord.lane_type ?? null,
+        actual_cost_usd: pricing.actual_cost_usd,
+        adjusted_cost_usd: pricing.adjusted_cost_usd,
+        margin_usd: pricing.margin_usd,
       },
     });
 
+    if ((resolvedRecord.success ?? true) && pricing.adjusted_cost_usd > 0 && resolvedRecord.village_id) {
+      await debitVillageWalletForUsage({
+        villageId: resolvedRecord.village_id,
+        adjustedCostUsd: pricing.adjusted_cost_usd,
+        actualCostUsd: pricing.actual_cost_usd,
+        marginUsd: pricing.margin_usd,
+        referenceType: 'ai_token_usage',
+        referenceId: created.id,
+        metadata: {
+          model: resolvedRecord.model,
+          call_type: resolvedRecord.call_type,
+          layer_type: resolvedRecord.layer_type,
+        },
+      });
+    }
+
     logger.debug('📊 Token usage recorded', {
-      model: record.model,
-      layer: record.layer_type,
-      call: record.call_type,
-      tokens: record.total_tokens,
-      cost_usd: cost_usd.toFixed(6),
+      model: resolvedRecord.model,
+      layer: resolvedRecord.layer_type,
+      call: resolvedRecord.call_type,
+      tokens: resolvedRecord.total_tokens,
+      adjusted_cost_usd: pricing.adjusted_cost_usd.toFixed(6),
+      actual_cost_usd: pricing.actual_cost_usd.toFixed(6),
+      margin_usd: pricing.margin_usd.toFixed(6),
+      pricing_source: pricing.model_config_id ? 'db' : 'legacy',
     });
   } catch (error: any) {
     logger.error('❌ Failed to record token usage', {

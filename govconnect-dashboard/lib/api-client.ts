@@ -641,6 +641,55 @@ export const ai = {
     });
   },
 
+  async getAIWalletSummary(villageId: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  async getAIWalletLedger(villageId: string, params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}/ledger${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  async listAIWallets() {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-wallets'), {
+      headers: getHeaders(),
+    });
+  },
+
+  async topupAIWallet(villageId: string, data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}/topup`), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
+  async redeemAIWalletVoucher(villageId: string, data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}/redeem-voucher`), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
+  async listAIVouchers() {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-vouchers'), {
+      headers: getHeaders(),
+    });
+  },
+
+  async createAIVoucher(data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-vouchers'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
   /**
    * Get golden set summary
    */

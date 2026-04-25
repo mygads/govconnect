@@ -598,8 +598,9 @@ async function selectAllowedTools(userMessage: string): Promise<{
   const isMemoryQuery = /\b(sebelumnya|tadi|terakhir|alamat saya|preferensi saya|yang pernah saya|saya pernah)\b/i.test(normalized);
   const isStatusByReference = hasReference && /\b(status|cek|periksa|tracking|lacak)\b/i.test(normalized);
   const isCancelIntent = /\b(batal|batalkan|cancel)\b/i.test(normalized);
-  const hasComplaintIncidentKeyword = /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak)\b/i.test(normalized);
+  const hasComplaintIncidentKeyword = /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak|amblas|longsor|licin|gelap|bau menyengat|tersumbat)\b/i.test(normalized);
   const hasExplicitComplaintCreationIntent = /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|aduan)\b/i.test(normalized);
+  const hasComplaintLocationDetail = /\b(rt\s*\d+|rw\s*\d+|dekat|dusun|lorong|gang|jalan\s+[a-z0-9]|jl\.?\s+[a-z0-9]|patokan|pos ronda|nomor\s*rumah)\b/i.test(normalized);
   const isServiceLikeReport = /\blapor\b/i.test(normalized)
     && /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i.test(normalized);
   const isComplaintActionQuestion =
@@ -853,7 +854,7 @@ async function selectAllowedTools(userMessage: string): Promise<{
     heuristicSet.delete('create_service_request');
   }
 
-  if (isServiceInfoRequest || isGeneralKnowledgeQuestion || isDocumentQuery || isVillageDocumentQuery || isVillageProfileQuery || isEmergencyQuery || isMyHistoryRequest || isMyStatusLookup || isGenericKnowledgeStatusQuestion) {
+  if ((isServiceInfoRequest || isGeneralKnowledgeQuestion || isDocumentQuery || isVillageDocumentQuery || isVillageProfileQuery || isEmergencyQuery || isMyHistoryRequest || isMyStatusLookup || isGenericKnowledgeStatusQuestion) && !(hasComplaintIncidentKeyword && hasComplaintLocationDetail) && !hasExplicitComplaintCreationIntent) {
     heuristicSet.delete('create_complaint');
     heuristicSet.delete('get_complaint_categories');
   }
@@ -998,6 +999,10 @@ async function selectAllowedTools(userMessage: string): Promise<{
   if (isComplaintInfoQuery) {
     add('search_knowledge');
   } else if (!isComplaintUpdateRequest && !isServiceLikeReport && (hasExplicitComplaintCreationIntent || hasComplaintIncidentKeyword)) {
+    add('create_complaint', 'get_complaint_categories');
+  }
+
+  if (!isComplaintUpdateRequest && !isServiceLikeReport && hasComplaintIncidentKeyword && hasComplaintLocationDetail) {
     add('create_complaint', 'get_complaint_categories');
   }
 
