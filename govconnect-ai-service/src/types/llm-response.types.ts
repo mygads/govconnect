@@ -64,4 +64,7 @@ export interface LLMMetrics {
   keySource?: string;  // "gateway_<lane>" or legacy "byok" / "env"
   keyId?: string | null;
   keyTier?: string;    // gateway provider or legacy tier label
+  providerId?: string | null;
+  modelConfigId?: string | null;
+  laneType?: string | null;
 }

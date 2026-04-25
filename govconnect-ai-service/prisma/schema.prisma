@@ -309,6 +309,7 @@ model ai_lane_assignments {
   fallback_model_id String?
   village_id        String?
   is_global_default Boolean  @default(true)
+  is_active         Boolean  @default(true)
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
@@ -318,6 +319,7 @@ model ai_lane_assignments {
   @@index([lane_type])
   @@index([village_id])
   @@index([is_global_default])
+  @@index([is_active])
   @@unique([lane_type, village_id, is_global_default])
 }
 

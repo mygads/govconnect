@@ -20,7 +20,7 @@
  */
 
 import logger from '../utils/logger';
-import { buildPromptMessages, callAIGatewayPrompt, getDefaultGatewayModels, isAIGatewayEnabled } from './ai-gateway.service';
+import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabled } from './ai-gateway.service';
 import { getCategorySlugs, FALLBACK_CATEGORY_SLUGS } from './dynamic-categories.service';
 
 // ==================== TYPES ====================
@@ -186,7 +186,7 @@ async function callLLMForChunking(
 
   const gatewayResult = await callAIGatewayPrompt({
     lane: 'llm',
-    modelPriority: getDefaultGatewayModels('full'),
+    modelPriority: [],
     messages: buildPromptMessages(prompt),
     temperature: 0.1,
     maxTokens: 8192,
@@ -501,7 +501,7 @@ Jawab HANYA JSON (tanpa markdown):
 
     const gatewayResult = await callAIGatewayPrompt({
       lane: 'llm',
-      modelPriority: getDefaultGatewayModels('micro'),
+      modelPriority: [],
       messages: buildPromptMessages(prompt),
       temperature: 0,
       maxTokens: 200,

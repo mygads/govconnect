@@ -31,7 +31,7 @@ export interface ConversationSummary {
   last_message_at: Date;
   unread_count: number;
   is_takeover: boolean;
-  ai_status: string | null; // null | "processing" | "error"
+  ai_status: string | null; // null | "processing" | "pending_balance" | "error"
   ai_error_message: string | null;
   pending_message_id: string | null;
 }
@@ -564,6 +564,34 @@ export async function setAIError(
     logger.info('AI error status set', { channel, channel_identifier, error_message });
   } catch (error: any) {
     logger.error('Failed to set AI error status', { error: error.message, channel, channel_identifier });
+  }
+}
+
+export async function setAIPendingBalance(
+  channel_identifier: string,
+  message_id: string | undefined,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<void> {
+  try {
+    const resolvedVillageId = resolveVillageId(village_id);
+    await prisma.conversation.update({
+      where: {
+        village_id_channel_channel_identifier: {
+          village_id: resolvedVillageId,
+          channel,
+          channel_identifier,
+        },
+      },
+      data: {
+        ai_status: 'pending_balance',
+        ai_error_message: 'Saldo AI desa habis, menunggu topup.',
+        pending_message_id: message_id || undefined,
+      },
+    });
+    logger.info('AI pending balance status set', { channel, channel_identifier, message_id });
+  } catch (error: any) {
+    logger.error('Failed to set AI pending balance status', { error: error.message, channel, channel_identifier });
   }
 }
 

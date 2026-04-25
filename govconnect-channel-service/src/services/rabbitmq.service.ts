@@ -6,7 +6,7 @@ import { rabbitmqConfig } from '../config/rabbitmq';
 import { sendTextMessage, sendContactMessage } from './wa.service';
 // NOTE: saveOutgoingMessage removed - AI Service now handles database storage via storeAIReplyInDatabase()
 // This prevents duplicate messages in live chat dashboard
-import { updateConversation, clearAIStatus, setAIError } from './takeover.service';
+import { updateConversation, clearAIStatus, setAIError, setAIPendingBalance } from './takeover.service';
 import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.service';
 import { clearUserBubble } from './spam-guard.service';
 import { getCorrelationId } from '../shared/correlation-context';
@@ -360,6 +360,8 @@ export async function startConsumingAIReply(): Promise<void> {
           guidancePreview: guidanceText?.substring(0, 100),
         });
 
+        const isBalanceExhausted = payload.intent === 'AI_BALANCE_EXHAUSTED';
+
         // Send main reply message via WhatsApp
         // NOTE: Message is already saved to database by AI Service via storeAIReplyInDatabase()
         // We only need to send to WhatsApp here - DO NOT save again to avoid duplicates!
@@ -430,35 +432,40 @@ export async function startConsumingAIReply(): Promise<void> {
             }
           }
 
-          // Update conversation summary with AI response and reset unread count (AI handled it)
-          await updateConversation(payload.wa_user_id, replyText, undefined, 'reset', payload.village_id, 'WHATSAPP');
-          await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
+          if (isBalanceExhausted) {
+            await updateConversation(payload.wa_user_id, replyText, undefined, false, payload.village_id, 'WHATSAPP');
+            await setAIPendingBalance(payload.wa_user_id, payload.message_id, payload.village_id, 'WHATSAPP');
+          } else {
+            // Update conversation summary with AI response and reset unread count (AI handled it)
+            await updateConversation(payload.wa_user_id, replyText, undefined, 'reset', payload.village_id, 'WHATSAPP');
+            await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
 
-          // Clear bubble state so next messages start fresh (not superseded)
-          clearUserBubble(payload.village_id, payload.wa_user_id);
-          
-          // Mark messages as completed - handle both single and batched messages
-          const messageIdsToComplete: string[] = [];
-          
-          if (payload.message_id) {
-            messageIdsToComplete.push(payload.message_id);
-          }
-          
-          if (payload.batched_message_ids && payload.batched_message_ids.length > 0) {
-            messageIdsToComplete.push(...payload.batched_message_ids);
-          }
-          
-          if (messageIdsToComplete.length > 0) {
-            try {
-              await markMessagesAsCompleted(messageIdsToComplete);
-              logger.info('✅ Messages marked as completed', {
-                wa_user_id: payload.wa_user_id,
-                count: messageIdsToComplete.length,
-                messageIds: messageIdsToComplete,
-              });
-            } catch (e) {
-              // Ignore - might not have pending messages
-              logger.debug('No pending messages to mark complete', { wa_user_id: payload.wa_user_id });
+            // Clear bubble state so next messages start fresh (not superseded)
+            clearUserBubble(payload.village_id, payload.wa_user_id);
+
+            // Mark messages as completed - handle both single and batched messages
+            const messageIdsToComplete: string[] = [];
+
+            if (payload.message_id) {
+              messageIdsToComplete.push(payload.message_id);
+            }
+
+            if (payload.batched_message_ids && payload.batched_message_ids.length > 0) {
+              messageIdsToComplete.push(...payload.batched_message_ids);
+            }
+
+            if (messageIdsToComplete.length > 0) {
+              try {
+                await markMessagesAsCompleted(messageIdsToComplete);
+                logger.info('✅ Messages marked as completed', {
+                  wa_user_id: payload.wa_user_id,
+                  count: messageIdsToComplete.length,
+                  messageIds: messageIdsToComplete,
+                });
+              } catch (e) {
+                // Ignore - might not have pending messages
+                logger.debug('No pending messages to mark complete', { wa_user_id: payload.wa_user_id });
+              }
             }
           }
         } else {

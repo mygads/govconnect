@@ -197,26 +197,36 @@ async function main() {
       ? await upsertModel(provider.id, config, config.fallbackModel)
       : null;
 
-    await prisma.ai_lane_assignments.upsert({
+    const existingAssignment = await prisma.ai_lane_assignments.findFirst({
       where: {
-        lane_type_village_id_is_global_default: {
-          lane_type: config.laneType,
-          village_id: null,
-          is_global_default: true,
-        },
-      },
-      update: {
-        primary_model_id: primaryModel.id,
-        fallback_model_id: fallbackModel?.id ?? null,
-      },
-      create: {
         lane_type: config.laneType,
-        primary_model_id: primaryModel.id,
-        fallback_model_id: fallbackModel?.id ?? null,
         village_id: null,
         is_global_default: true,
       },
+      select: { id: true },
     });
+
+    if (existingAssignment) {
+      await prisma.ai_lane_assignments.update({
+        where: { id: existingAssignment.id },
+        data: {
+          primary_model_id: primaryModel.id,
+          fallback_model_id: fallbackModel?.id ?? null,
+          is_active: true,
+        },
+      });
+    } else {
+      await prisma.ai_lane_assignments.create({
+        data: {
+          lane_type: config.laneType,
+          primary_model_id: primaryModel.id,
+          fallback_model_id: fallbackModel?.id ?? null,
+          village_id: null,
+          is_global_default: true,
+          is_active: true,
+        },
+      });
+    }
   }
 
   console.log(`Seeded ${laneConfigs.length} AI lane configurations from env.`);

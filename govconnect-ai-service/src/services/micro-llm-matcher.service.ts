@@ -10,12 +10,12 @@
  */
 
 import logger from '../utils/logger';
-import { buildPromptMessages, callAIGatewayPrompt, getDefaultGatewayModels, isAIGatewayEnabled } from './ai-gateway.service';
+import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabled } from './ai-gateway.service';
 import type { CallType } from './token-usage.service';
 
 // ---------- Model Priority ----------
 
-const MICRO_MODELS = getDefaultGatewayModels('micro');
+const MICRO_MODELS: string[] = [];
 
 // ---------- Generic micro LLM call (gateway-only) ----------
 

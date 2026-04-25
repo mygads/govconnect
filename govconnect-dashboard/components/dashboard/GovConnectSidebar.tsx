@@ -252,6 +252,24 @@ export function GovConnectSidebar() {
           roles: ["superadmin"],
         },
         {
+          title: "AI Providers",
+          url: "/dashboard/superadmin/providers",
+          icon: Plug,
+          roles: ["superadmin"],
+        },
+        {
+          title: "AI Models",
+          url: "/dashboard/superadmin/providers/models",
+          icon: Brain,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Lane Assignments",
+          url: "/dashboard/superadmin/providers/assignments",
+          icon: Activity,
+          roles: ["superadmin"],
+        },
+        {
           title: "AI Wallets",
           url: "/dashboard/superadmin/ai-wallets",
           icon: Wallet,

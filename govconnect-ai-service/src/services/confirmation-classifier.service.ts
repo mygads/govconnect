@@ -1,5 +1,5 @@
 import logger from '../utils/logger';
-import { buildPromptMessages, callAIGatewayPrompt, getDefaultGatewayModels, isAIGatewayEnabled } from './ai-gateway.service';
+import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabled } from './ai-gateway.service';
 
 export type ConfirmationDecision = 'CONFIRM' | 'REJECT' | 'UNCERTAIN';
 
@@ -9,7 +9,7 @@ export interface ConfirmationResult {
   reason?: string;
 }
 
-const CONFIRMATION_MODEL_PRIORITY = getDefaultGatewayModels('micro');
+const CONFIRMATION_MODEL_PRIORITY: string[] = [];
 
 // Timeout for micro LLM calls (10 seconds)
 const MICRO_LLM_TIMEOUT_MS = 10_000;

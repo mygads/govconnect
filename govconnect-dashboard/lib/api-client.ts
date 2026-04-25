@@ -690,6 +690,48 @@ export const ai = {
     });
   },
 
+  async listAIProviders() {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-providers'), {
+      headers: getHeaders(),
+    });
+  },
+
+  async createAIProvider(data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-providers'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
+  async listAIModels() {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-models'), {
+      headers: getHeaders(),
+    });
+  },
+
+  async createAIModel(data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-models'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
+  async listAILaneAssignments() {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-lane-assignments'), {
+      headers: getHeaders(),
+    });
+  },
+
+  async upsertAILaneAssignment(data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-lane-assignments'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
   /**
    * Get golden set summary
    */

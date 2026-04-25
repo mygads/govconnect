@@ -70,6 +70,14 @@ import {
   redeemTopupVoucher,
   topupVillageWallet,
 } from './services/ai-wallet.service';
+import {
+  createAIModel,
+  createAIProvider,
+  listAILaneAssignments,
+  listAIModels,
+  listAIProviders,
+  upsertAILaneAssignment,
+} from './services/ai-admin-config.service';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -1375,6 +1383,105 @@ app.post('/admin/ai-wallet/:villageId/redeem-voucher', async (req: Request, res:
     logger.error('Failed to redeem AI voucher', { error: error.message });
     res.status(400).json({ error: error.message || 'Failed to redeem AI voucher' });
   }
+});
+
+app.get('/admin/ai-providers', async (_req: Request, res: Response) => {
+  try {
+    const providers = await listAIProviders();
+    res.json({ success: true, data: providers });
+  } catch (error: any) {
+    logger.error('Failed to list AI providers', { error: error.message });
+    res.status(500).json({ error: 'Failed to list AI providers' });
+  }
+});
+
+app.post('/admin/ai-providers', async (req: Request, res: Response) => {
+  try {
+    const provider = await createAIProvider(req.body || {});
+    res.json({ success: true, data: provider });
+  } catch (error: any) {
+    logger.error('Failed to create AI provider', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to create AI provider' });
+  }
+});
+
+app.get('/admin/ai-models', async (_req: Request, res: Response) => {
+  try {
+    const models = await listAIModels();
+    res.json({ success: true, data: models });
+  } catch (error: any) {
+    logger.error('Failed to list AI models', { error: error.message });
+    res.status(500).json({ error: 'Failed to list AI models' });
+  }
+});
+
+app.post('/admin/ai-models', async (req: Request, res: Response) => {
+  try {
+    const model = await createAIModel(req.body || {});
+    res.json({ success: true, data: model });
+  } catch (error: any) {
+    logger.error('Failed to create AI model', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to create AI model' });
+  }
+});
+
+app.get('/admin/ai-lane-assignments', async (_req: Request, res: Response) => {
+  try {
+    const assignments = await listAILaneAssignments();
+    res.json({ success: true, data: assignments });
+  } catch (error: any) {
+    logger.error('Failed to list AI lane assignments', { error: error.message });
+    res.status(500).json({ error: 'Failed to list AI lane assignments' });
+  }
+});
+
+app.post('/admin/ai-lane-assignments', async (req: Request, res: Response) => {
+  try {
+    const assignment = await upsertAILaneAssignment(req.body || {});
+    res.json({ success: true, data: assignment });
+  } catch (error: any) {
+    logger.error('Failed to upsert AI lane assignment', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to upsert AI lane assignment' });
+  }
+});
+
+app.post('/admin/ai-lane-assignments/activate', async (req: Request, res: Response) => {
+  try {
+    const assignment = await upsertAILaneAssignment({ ...(req.body || {}), is_active: true });
+    res.json({ success: true, data: assignment });
+  } catch (error: any) {
+    logger.error('Failed to activate AI lane assignment', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to activate AI lane assignment' });
+  }
+});
+
+app.post('/admin/ai-lane-assignments/deactivate', async (req: Request, res: Response) => {
+  try {
+    const assignment = await upsertAILaneAssignment({ ...(req.body || {}), is_active: false });
+    res.json({ success: true, data: assignment });
+  } catch (error: any) {
+    logger.error('Failed to deactivate AI lane assignment', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to deactivate AI lane assignment' });
+  }
+});
+
+app.post('/admin/ai-wallet/:villageId/retry-pending', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    res.json({ success: true, data: { village_id: villageId, action: 'manual_retry_pending_not_implemented_yet' } });
+  } catch (error: any) {
+    logger.error('Failed to trigger AI pending retry', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to trigger AI pending retry' });
+  }
+});
+
+app.get('/healthz', (_req: Request, res: Response) => {
+  res.json({ status: 'ok' });
 });
 
 app.get('/stats/embeddings', async (req: Request, res: Response) => {

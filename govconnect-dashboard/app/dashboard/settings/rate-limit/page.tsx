@@ -39,7 +39,6 @@ import {
   MessageSquareWarning,
   Timer,
 } from "lucide-react"
-import { useAuth } from "@/components/auth/AuthContext"
 
 interface RateLimitConfig {
   enabled: boolean
@@ -100,7 +99,6 @@ interface SpamGuardData {
 }
 
 export default function RateLimitPage() {
-  const { user } = useAuth()
   const [data, setData] = useState<RateLimitData | null>(null)
   const [blacklist, setBlacklist] = useState<{ total: number; entries: BlacklistEntry[] } | null>(null)
   const [spamGuard, setSpamGuard] = useState<SpamGuardData | null>(null)

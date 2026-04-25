@@ -176,8 +176,16 @@ const nextGatewayKeyIndex: Record<GatewayLaneKind, number> = {
 
 type AnyGatewayConfig = ChatGatewayLaneConfig | EmbeddingGatewayLaneConfig | RerankGatewayLaneConfig;
 
+type RuntimeGatewayAttempt = {
+  config: AnyGatewayConfig;
+  modelId?: string;
+  modelDisplayName?: string;
+  providerId?: string;
+};
+
 type RuntimeGatewayResolved = {
   config: AnyGatewayConfig;
+  attempts: RuntimeGatewayAttempt[];
   meta?: {
     source?: 'db' | 'env_fallback';
     primaryModelId?: string;
@@ -198,20 +206,29 @@ function getGatewayConfig(kind: GatewayLaneKind): AnyGatewayConfig {
   }
 }
 
-async function resolveGateway(kind: GatewayLaneKind): Promise<RuntimeGatewayResolved> {
+async function resolveGateway(kind: GatewayLaneKind, villageId?: string | null): Promise<RuntimeGatewayResolved> {
   try {
-    const resolved = await getRuntimeGatewayConfig(kind);
+    const resolved = await getRuntimeGatewayConfig(kind, villageId);
     return {
       config: resolved.config,
+      attempts: resolved.attempts.map((attempt) => ({
+        config: attempt.config,
+        modelId: attempt.modelId,
+        modelDisplayName: attempt.modelDisplayName,
+        providerId: attempt.providerId,
+      })),
       meta: resolved.meta,
     };
   } catch (error: any) {
     logger.warn('Falling back to env gateway config after runtime config lookup failed', {
       lane: kind,
+      villageId,
       error: error.message,
     });
+    const fallback = getGatewayConfig(kind);
     return {
-      config: getGatewayConfig(kind),
+      config: fallback,
+      attempts: [{ config: fallback }],
       meta: { source: 'env_fallback' },
     };
   }
@@ -283,8 +300,8 @@ export function getAIGatewayInfo(kind: GatewayLaneKind = 'llm') {
   };
 }
 
-export async function getAIGatewayInfoAsync(kind: GatewayLaneKind = 'llm') {
-  const resolved = await resolveGateway(kind);
+export async function getAIGatewayInfoAsync(kind: GatewayLaneKind = 'llm', villageId?: string | null) {
+  const resolved = await resolveGateway(kind, villageId);
   const gateway = resolved.config;
 
   return {
@@ -494,8 +511,10 @@ function buildMetrics(
   durationMs: number,
   usage: { inputTokens: number; outputTokens: number; totalTokens: number },
   startTime: number,
+  attempt?: RuntimeGatewayAttempt,
 ): LLMMetrics {
   const provider = getGatewayConfig(kind).provider;
+  const laneType = kind === 'rag' ? 'rewrite' : kind;
 
   return {
     startTime,
@@ -508,6 +527,9 @@ function buildMetrics(
     keySource: `gateway_${kind}`,
     keyId: apiKey.label,
     keyTier: provider,
+    providerId: attempt?.providerId ?? null,
+    modelConfigId: attempt?.modelId ?? null,
+    laneType,
   };
 }
 
@@ -536,6 +558,9 @@ function recordGatewayUsage(
     key_source: metrics.keySource,
     key_id: metrics.keyId,
     key_tier: metrics.keyTier,
+    provider_id: metrics.providerId ?? null,
+    model_config_id: metrics.modelConfigId ?? null,
+    lane_type: metrics.laneType ?? null,
   }).catch(() => {});
 }
 
@@ -611,100 +636,115 @@ async function executePromptRequestWithJsonFallback(
 
 export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promise<GatewayPromptResult | null> {
   const lane = options.lane || 'llm';
-  const resolved = await resolveGateway(lane);
-  const gateway = resolved.config;
-
-  if (!gateway.enabled) {
-    return null;
-  }
-
+  const resolved = await resolveGateway(lane, options.context?.village_id);
   const configuredModels = options.modelPriority.filter(Boolean);
-  const models = configuredModels.length > 0 ? configuredModels : [getConfiguredModelFromConfig(gateway)].filter(Boolean);
-  if (models.length === 0) {
-    logger.warn('AI gateway call skipped: no models configured', { lane, source: resolved.meta?.source });
-    return null;
-  }
-
-  const apiKeys = getGatewayApiKeysInAttemptOrder(lane, gateway);
-  if (apiKeys.length === 0) {
-    logger.error('AI gateway enabled but no API keys are available', { lane, source: resolved.meta?.source });
-    return null;
-  }
-
   let lastError = 'Unknown gateway error';
+  const attemptedModels: string[] = [];
 
-  for (const model of models) {
-    for (const apiKey of apiKeys) {
-      const startTime = Date.now();
+  for (const attempt of resolved.attempts) {
+    const gateway = attempt.config;
+    if (!gateway.enabled) {
+      continue;
+    }
 
-      try {
-        const result = await executePromptRequestWithJsonFallback(lane, gateway, apiKey, model, options);
-        const durationMs = Date.now() - startTime;
-        const choice = result.choices?.[0];
-        const text = extractTextContent(choice?.message?.content).trim();
+    const models = resolved.meta?.source === 'db'
+      ? [getConfiguredModelFromConfig(gateway)].filter(Boolean)
+      : (configuredModels.length > 0 ? configuredModels : [getConfiguredModelFromConfig(gateway)].filter(Boolean));
+    const apiKeys = getGatewayApiKeysInAttemptOrder(lane, gateway);
 
-        if (!text) {
-          throw new Error('AI gateway returned empty message content');
+    if (models.length === 0 || apiKeys.length === 0) {
+      lastError = models.length === 0 ? 'No models configured' : 'No API keys available';
+      logger.warn('AI gateway attempt skipped: incomplete configuration', {
+        lane,
+        provider: gateway.provider,
+        modelId: attempt.modelId,
+        modelDisplayName: attempt.modelDisplayName,
+        modelCount: models.length,
+        apiKeyCount: apiKeys.length,
+        source: resolved.meta?.source,
+      });
+      continue;
+    }
+
+    for (const model of models) {
+      attemptedModels.push(model);
+      for (const apiKey of apiKeys) {
+        const startTime = Date.now();
+
+        try {
+          const result = await executePromptRequestWithJsonFallback(lane, gateway, apiKey, model, options);
+          const durationMs = Date.now() - startTime;
+          const choice = result.choices?.[0];
+          const text = extractTextContent(choice?.message?.content).trim();
+
+          if (!text) {
+            throw new Error('AI gateway returned empty message content');
+          }
+
+          const inputTokens = result.usage?.prompt_tokens ?? 0;
+          const outputTokens = result.usage?.completion_tokens ?? 0;
+          const totalTokens = result.usage?.total_tokens ?? (inputTokens + outputTokens);
+          const resolvedModel = result.model || model;
+          const metrics = buildMetrics(
+            lane,
+            resolvedModel,
+            apiKey,
+            durationMs,
+            { inputTokens, outputTokens, totalTokens },
+            startTime,
+            attempt,
+          );
+
+          modelStatsService.recordSuccess(resolvedModel, durationMs);
+          recordGatewayUsage(metrics, options);
+
+          logger.info('AI gateway call successful', {
+            lane,
+            provider: gateway.provider,
+            model: resolvedModel,
+            modelId: attempt.modelId,
+            modelDisplayName: attempt.modelDisplayName,
+            keyLabel: apiKey.label,
+            durationMs,
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            source: resolved.meta?.source,
+            fallbackUsed: Boolean(attempt.modelId && resolved.meta?.fallbackModelId === attempt.modelId),
+          });
+
+          return {
+            text,
+            model: resolvedModel,
+            provider: result.provider || gateway.provider,
+            responseId: result.id,
+            finishReason: choice?.finish_reason,
+            metrics,
+          };
+        } catch (error: any) {
+          const durationMs = Date.now() - startTime;
+          lastError = error.message || 'Unknown gateway error';
+          modelStatsService.recordFailure(model, lastError, durationMs);
+
+          logger.warn('AI gateway call failed', {
+            lane,
+            provider: gateway.provider,
+            model,
+            modelId: attempt.modelId,
+            modelDisplayName: attempt.modelDisplayName,
+            keyLabel: apiKey.label,
+            durationMs,
+            error: lastError,
+            source: resolved.meta?.source,
+          });
         }
-
-        const inputTokens = result.usage?.prompt_tokens ?? 0;
-        const outputTokens = result.usage?.completion_tokens ?? 0;
-        const totalTokens = result.usage?.total_tokens ?? (inputTokens + outputTokens);
-        const resolvedModel = result.model || model;
-        const metrics = buildMetrics(
-          lane,
-          resolvedModel,
-          apiKey,
-          durationMs,
-          { inputTokens, outputTokens, totalTokens },
-          startTime,
-        );
-
-        modelStatsService.recordSuccess(resolvedModel, durationMs);
-        recordGatewayUsage(metrics, options);
-
-        logger.info('AI gateway call successful', {
-          lane,
-          provider: gateway.provider,
-          model: resolvedModel,
-          keyLabel: apiKey.label,
-          durationMs,
-          inputTokens,
-          outputTokens,
-          totalTokens,
-          source: resolved.meta?.source,
-        });
-
-        return {
-          text,
-          model: resolvedModel,
-          provider: result.provider || gateway.provider,
-          responseId: result.id,
-          finishReason: choice?.finish_reason,
-          metrics,
-        };
-      } catch (error: any) {
-        const durationMs = Date.now() - startTime;
-        lastError = error.message || 'Unknown gateway error';
-        modelStatsService.recordFailure(model, lastError, durationMs);
-
-        logger.warn('AI gateway call failed', {
-          lane,
-          provider: gateway.provider,
-          model,
-          keyLabel: apiKey.label,
-          durationMs,
-          error: lastError,
-          source: resolved.meta?.source,
-        });
       }
     }
   }
 
   logger.error('All AI gateway attempts failed', {
     lane,
-    provider: gateway.provider,
-    models,
+    models: attemptedModels,
     lastError,
     source: resolved.meta?.source,
   });
@@ -714,112 +754,122 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
 
 export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions): Promise<GatewayEmbeddingResult | null> {
   const lane: GatewayLaneKind = 'embed';
-  const resolved = await resolveGateway(lane);
-  const gateway = resolved.config as EmbeddingGatewayLaneConfig;
-
-  if (!gateway.enabled) {
-    return null;
-  }
-
-  const model = (options.model || gateway.model).trim();
-  const apiKeys = getGatewayApiKeysInAttemptOrder(lane, gateway);
-  if (!model || apiKeys.length === 0) {
-    logger.error('Embedding gateway configuration is incomplete', {
-      model,
-      apiKeyCount: apiKeys.length,
-      source: resolved.meta?.source,
-    });
-    return null;
-  }
-
-  const body: Record<string, unknown> = {
-    model,
-    input: options.input,
-    encoding_format: options.encodingFormat || gateway.encodingFormat,
-    dimensions: options.dimensions || gateway.dimensions,
-  };
-
-  const openRouterProvider = buildOpenRouterProviderPreferences(gateway);
-  if (openRouterProvider) {
-    body.provider = openRouterProvider;
-  }
-  if (options.extraBody) {
-    Object.assign(body, options.extraBody);
-  }
-
+  const resolved = await resolveGateway(lane, options.context?.village_id);
   let lastError = 'Unknown embedding gateway error';
 
-  for (const apiKey of apiKeys) {
-    const startTime = Date.now();
+  for (const attempt of resolved.attempts) {
+    const gateway = attempt.config as EmbeddingGatewayLaneConfig;
+    if (!gateway.enabled) {
+      continue;
+    }
 
-    try {
-      const result = await executeGatewayRequest<GatewayEmbeddingResponse>(
-        lane,
-        gateway,
-        apiKey,
-        body,
-        options.timeoutMs || gateway.timeoutMs,
-      );
-      const durationMs = Date.now() - startTime;
-      const embeddings = (result.data || [])
-        .map(item => item.embedding)
-        .filter((item): item is number[] => Array.isArray(item) && item.length > 0);
-
-      if (embeddings.length === 0) {
-        throw new Error('Embedding gateway returned no embeddings');
-      }
-
-      const inputTokens = result.usage?.prompt_tokens ?? estimateEmbeddingTokens(options.input);
-      const totalTokens = result.usage?.total_tokens ?? inputTokens;
-      const resolvedModel = result.model || model;
-      const metrics = buildMetrics(
-        lane,
-        resolvedModel,
-        apiKey,
-        durationMs,
-        { inputTokens, outputTokens: 0, totalTokens },
-        startTime,
-      );
-
-      modelStatsService.recordSuccess(resolvedModel, durationMs);
-      recordGatewayUsage(metrics, options);
-
-      logger.info('Embedding gateway call successful', {
+    const model = (options.model || gateway.model).trim();
+    const apiKeys = getGatewayApiKeysInAttemptOrder(lane, gateway);
+    if (!model || apiKeys.length === 0) {
+      lastError = !model ? 'No model configured' : 'No API keys available';
+      logger.warn('Embedding gateway attempt skipped: incomplete configuration', {
         provider: gateway.provider,
-        model: resolvedModel,
-        keyLabel: apiKey.label,
-        durationMs,
-        embeddingCount: embeddings.length,
-        dimensions: embeddings[0]?.length,
-        source: resolved.meta?.source,
-      });
-
-      return {
-        embeddings,
-        model: resolvedModel,
-        provider: result.provider || gateway.provider,
-        responseId: result.id,
-        metrics,
-      };
-    } catch (error: any) {
-      const durationMs = Date.now() - startTime;
-      lastError = error.message || 'Unknown embedding gateway error';
-      modelStatsService.recordFailure(model, lastError, durationMs);
-
-      logger.warn('Embedding gateway call failed', {
-        provider: gateway.provider,
+        modelId: attempt.modelId,
+        modelDisplayName: attempt.modelDisplayName,
         model,
-        keyLabel: apiKey.label,
-        durationMs,
-        error: lastError,
+        apiKeyCount: apiKeys.length,
         source: resolved.meta?.source,
       });
+      continue;
+    }
+
+    const body: Record<string, unknown> = {
+      model,
+      input: options.input,
+      encoding_format: options.encodingFormat || gateway.encodingFormat,
+      dimensions: options.dimensions || gateway.dimensions,
+    };
+
+    const openRouterProvider = buildOpenRouterProviderPreferences(gateway);
+    if (openRouterProvider) {
+      body.provider = openRouterProvider;
+    }
+    if (options.extraBody) {
+      Object.assign(body, options.extraBody);
+    }
+
+    for (const apiKey of apiKeys) {
+      const startTime = Date.now();
+
+      try {
+        const result = await executeGatewayRequest<GatewayEmbeddingResponse>(
+          lane,
+          gateway,
+          apiKey,
+          body,
+          options.timeoutMs || gateway.timeoutMs,
+        );
+        const durationMs = Date.now() - startTime;
+        const embeddings = (result.data || [])
+          .map(item => item.embedding)
+          .filter((item): item is number[] => Array.isArray(item) && item.length > 0);
+
+        if (embeddings.length === 0) {
+          throw new Error('Embedding gateway returned no embeddings');
+        }
+
+        const inputTokens = result.usage?.prompt_tokens ?? estimateEmbeddingTokens(options.input);
+        const totalTokens = result.usage?.total_tokens ?? inputTokens;
+        const resolvedModel = result.model || model;
+        const metrics = buildMetrics(
+          lane,
+          resolvedModel,
+          apiKey,
+          durationMs,
+          { inputTokens, outputTokens: 0, totalTokens },
+          startTime,
+          attempt,
+        );
+
+        modelStatsService.recordSuccess(resolvedModel, durationMs);
+        recordGatewayUsage(metrics, options);
+
+        logger.info('Embedding gateway call successful', {
+          provider: gateway.provider,
+          model: resolvedModel,
+          modelId: attempt.modelId,
+          modelDisplayName: attempt.modelDisplayName,
+          keyLabel: apiKey.label,
+          durationMs,
+          embeddingCount: embeddings.length,
+          dimensions: embeddings[0]?.length,
+          source: resolved.meta?.source,
+          fallbackUsed: Boolean(attempt.modelId && resolved.meta?.fallbackModelId === attempt.modelId),
+        });
+
+        return {
+          embeddings,
+          model: resolvedModel,
+          provider: result.provider || gateway.provider,
+          responseId: result.id,
+          metrics,
+        };
+      } catch (error: any) {
+        const durationMs = Date.now() - startTime;
+        lastError = error.message || 'Unknown embedding gateway error';
+        modelStatsService.recordFailure(model, lastError, durationMs);
+
+        logger.warn('Embedding gateway call failed', {
+          provider: gateway.provider,
+          model,
+          modelId: attempt.modelId,
+          modelDisplayName: attempt.modelDisplayName,
+          keyLabel: apiKey.label,
+          durationMs,
+          error: lastError,
+          source: resolved.meta?.source,
+        });
+      }
     }
   }
 
   logger.error('All embedding gateway attempts failed', {
-    provider: gateway.provider,
-    model,
+    lane,
     lastError,
     source: resolved.meta?.source,
   });
@@ -829,114 +879,124 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
 
 export async function callAIGatewayRerank(options: GatewayRerankOptions): Promise<GatewayRerankResult | null> {
   const lane: GatewayLaneKind = 'rerank';
-  const resolved = await resolveGateway(lane);
-  const gateway = resolved.config as RerankGatewayLaneConfig;
-
-  if (!gateway.enabled) {
-    return null;
-  }
-
-  const model = (options.model || gateway.model).trim();
-  const apiKeys = getGatewayApiKeysInAttemptOrder(lane, gateway);
-  if (!model || apiKeys.length === 0) {
-    logger.error('Rerank gateway configuration is incomplete', {
-      model,
-      apiKeyCount: apiKeys.length,
-      source: resolved.meta?.source,
-    });
-    return null;
-  }
-
-  const body: Record<string, unknown> = {
-    model,
-    query: options.query,
-    documents: options.documents,
-    top_n: options.topN || gateway.topN,
-  };
-
-  const openRouterProvider = buildOpenRouterProviderPreferences(gateway);
-  if (openRouterProvider) {
-    body.provider = openRouterProvider;
-  }
-  if (options.extraBody) {
-    Object.assign(body, options.extraBody);
-  }
-
+  const resolved = await resolveGateway(lane, options.context?.village_id);
   let lastError = 'Unknown rerank gateway error';
 
-  for (const apiKey of apiKeys) {
-    const startTime = Date.now();
+  for (const attempt of resolved.attempts) {
+    const gateway = attempt.config as RerankGatewayLaneConfig;
+    if (!gateway.enabled) {
+      continue;
+    }
 
-    try {
-      const result = await executeGatewayRequest<GatewayRerankResponse>(
-        lane,
-        gateway,
-        apiKey,
-        body,
-        options.timeoutMs || gateway.timeoutMs,
-      );
-      const durationMs = Date.now() - startTime;
-      const items = (result.results || []).map(item => ({
-        index: item.index,
-        relevanceScore: item.relevance_score,
-        documentText: item.document?.text || options.documents[item.index] || '',
-      }));
-
-      if (items.length === 0) {
-        throw new Error('Rerank gateway returned no results');
-      }
-
-      const inputTokens = result.usage?.total_tokens ?? estimateRerankTokens(options.query, options.documents);
-      const totalTokens = result.usage?.total_tokens ?? inputTokens;
-      const resolvedModel = result.model || model;
-      const metrics = buildMetrics(
-        lane,
-        resolvedModel,
-        apiKey,
-        durationMs,
-        { inputTokens, outputTokens: 0, totalTokens },
-        startTime,
-      );
-
-      modelStatsService.recordSuccess(resolvedModel, durationMs);
-      recordGatewayUsage(metrics, options);
-
-      logger.info('Rerank gateway call successful', {
+    const model = (options.model || gateway.model).trim();
+    const apiKeys = getGatewayApiKeysInAttemptOrder(lane, gateway);
+    if (!model || apiKeys.length === 0) {
+      lastError = !model ? 'No model configured' : 'No API keys available';
+      logger.warn('Rerank gateway attempt skipped: incomplete configuration', {
         provider: gateway.provider,
-        model: resolvedModel,
-        keyLabel: apiKey.label,
-        durationMs,
-        resultCount: items.length,
-        topScore: items[0]?.relevanceScore,
-        source: resolved.meta?.source,
-      });
-
-      return {
-        items,
-        model: resolvedModel,
-        provider: result.provider || gateway.provider,
-        responseId: result.id,
-        metrics,
-      };
-    } catch (error: any) {
-      const durationMs = Date.now() - startTime;
-      lastError = error.message || 'Unknown rerank gateway error';
-      modelStatsService.recordFailure(model, lastError, durationMs);
-
-      logger.warn('Rerank gateway call failed', {
-        provider: gateway.provider,
+        modelId: attempt.modelId,
+        modelDisplayName: attempt.modelDisplayName,
         model,
-        keyLabel: apiKey.label,
-        durationMs,
-        error: lastError,
+        apiKeyCount: apiKeys.length,
         source: resolved.meta?.source,
       });
+      continue;
+    }
+
+    const body: Record<string, unknown> = {
+      model,
+      query: options.query,
+      documents: options.documents,
+      top_n: options.topN || gateway.topN,
+    };
+
+    const openRouterProvider = buildOpenRouterProviderPreferences(gateway);
+    if (openRouterProvider) {
+      body.provider = openRouterProvider;
+    }
+    if (options.extraBody) {
+      Object.assign(body, options.extraBody);
+    }
+
+    for (const apiKey of apiKeys) {
+      const startTime = Date.now();
+
+      try {
+        const result = await executeGatewayRequest<GatewayRerankResponse>(
+          lane,
+          gateway,
+          apiKey,
+          body,
+          options.timeoutMs || gateway.timeoutMs,
+        );
+        const durationMs = Date.now() - startTime;
+        const items = (result.results || []).map(item => ({
+          index: item.index,
+          relevanceScore: item.relevance_score,
+          documentText: item.document?.text || options.documents[item.index] || '',
+        }));
+
+        if (items.length === 0) {
+          throw new Error('Rerank gateway returned no results');
+        }
+
+        const inputTokens = result.usage?.total_tokens ?? estimateRerankTokens(options.query, options.documents);
+        const totalTokens = result.usage?.total_tokens ?? inputTokens;
+        const resolvedModel = result.model || model;
+        const metrics = buildMetrics(
+          lane,
+          resolvedModel,
+          apiKey,
+          durationMs,
+          { inputTokens, outputTokens: 0, totalTokens },
+          startTime,
+          attempt,
+        );
+
+        modelStatsService.recordSuccess(resolvedModel, durationMs);
+        recordGatewayUsage(metrics, options);
+
+        logger.info('Rerank gateway call successful', {
+          provider: gateway.provider,
+          model: resolvedModel,
+          modelId: attempt.modelId,
+          modelDisplayName: attempt.modelDisplayName,
+          keyLabel: apiKey.label,
+          durationMs,
+          resultCount: items.length,
+          topScore: items[0]?.relevanceScore,
+          source: resolved.meta?.source,
+          fallbackUsed: Boolean(attempt.modelId && resolved.meta?.fallbackModelId === attempt.modelId),
+        });
+
+        return {
+          items,
+          model: resolvedModel,
+          provider: result.provider || gateway.provider,
+          responseId: result.id,
+          metrics,
+        };
+      } catch (error: any) {
+        const durationMs = Date.now() - startTime;
+        lastError = error.message || 'Unknown rerank gateway error';
+        modelStatsService.recordFailure(model, lastError, durationMs);
+
+        logger.warn('Rerank gateway call failed', {
+          provider: gateway.provider,
+          model,
+          modelId: attempt.modelId,
+          modelDisplayName: attempt.modelDisplayName,
+          keyLabel: apiKey.label,
+          durationMs,
+          error: lastError,
+          source: resolved.meta?.source,
+        });
+      }
     }
   }
 
   logger.error('All rerank gateway attempts failed', {
-    provider: gateway.provider,
-    model,
+    lane,
     lastError,
     source: resolved.meta?.source,
   });

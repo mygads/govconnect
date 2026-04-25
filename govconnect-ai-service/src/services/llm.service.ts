@@ -8,7 +8,7 @@
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { LLMResponse, LLMResponseSchema, LLMMetrics } from '../types/llm-response.types';
-import { buildPromptMessages, callAIGatewayPrompt, getDefaultGatewayModels } from './ai-gateway.service';
+import { buildPromptMessages, callAIGatewayPrompt } from './ai-gateway.service';
 
 /**
  * Repair truncated JSON by closing all open structures.
@@ -156,11 +156,10 @@ function parseLLMResponseText(responseText: string, modelName: string): LLMRespo
 
 export async function callLLM(systemPrompt: string, _retryCount = 0): Promise<{ response: LLMResponse; metrics: LLMMetrics } | null> {
   const MAX_RETRIES = 1; // BUG-01 fix: retry once on JSON parse failure before falling back to repair
-  const envModels = getDefaultGatewayModels('full');
 
   const gatewayResult = await callAIGatewayPrompt({
     lane: 'llm',
-    modelPriority: envModels,
+    modelPriority: [],
     messages: buildPromptMessages(systemPrompt),
     temperature: config.llmTemperature,
     maxTokens: config.llmMaxTokens,
