@@ -29,7 +29,11 @@
       "Bash(powershell -ExecutionPolicy Bypass -File \"C:/Yoga/Programming/containers/govconnect/scripts/qa-wa-resident-sanreseng-ade.ps1\" -PollSeconds 45 -Limit 40)",
       "Bash(INTERNAL_API_KEY=\"govconnect-internal-api-key-2025\" npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run eval:golden-set)",
       "Bash(npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run lint)",
-      "Bash(npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run build)"
+      "Bash(npm --prefix \"C:/Yoga/Programming/containers/govconnect/govconnect-ai-service\" run build)",
+      "Bash(powershell -Command \"docker-compose up -d\")",
+      "Bash(docker-compose up *)",
+      "Bash(docker-compose ps *)",
+      "PowerShell(./scripts/qa-wa-resident-sanreseng-ade.ps1)"
     ]
   }
 }

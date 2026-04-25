@@ -40,7 +40,9 @@ const DEFAULT_MIN_SCORE = 0.50; // Lowered from 0.65 for better recall (Fase 0.5
 const MIN_EFFECTIVE_SCORE = 0.35; // Lowered from 0.45 — threshold applied post-retrieval/rerank // Floor to prevent noise from cascading threshold reductions
 const MAX_CONTEXT_LENGTH = 5000; // Increased from 4000 — dedup removes waste, so we can include more
 const DEFAULT_RERANK_MIN_SCORE = 0.2;
-const DEFAULT_RETRIEVAL_MODE: RetrievalMode = 'external_rerank';
+const DEFAULT_RETRIEVAL_MODE: RetrievalMode = 'heuristic_rerank';
+const HYBRID_RERANK_MIN_CANDIDATES = 8;
+const HYBRID_RERANK_CLOSE_SCORE_GAP = 0.08;
 
 function resolveRetrievalMode(mode?: RetrievalMode): RetrievalMode {
   if (mode === 'external_rerank' || mode === 'heuristic_rerank' || mode === 'raw_no_rerank') {
@@ -73,6 +75,24 @@ function markRetrievalMode(results: VectorSearchResult[], retrievalMode: Retriev
   }));
 }
 
+function shouldEscalateHeuristicToExternalRerank(results: VectorSearchResult[], topK: number): boolean {
+  if (!config.rerankEnabled || !isAIGatewayEnabled('rerank')) {
+    return false;
+  }
+
+  if (results.length < Math.min(HYBRID_RERANK_MIN_CANDIDATES, Math.max(topK, 1))) {
+    return false;
+  }
+
+  const sortedScores = results
+    .map((result) => result.score || 0)
+    .sort((a, b) => b - a);
+  const bestScore = sortedScores[0] || 0;
+  const comparisonScore = sortedScores[Math.min(sortedScores.length - 1, Math.max(topK - 1, 1))] || 0;
+
+  return bestScore - comparisonScore <= HYBRID_RERANK_CLOSE_SCORE_GAP;
+}
+
 function rerankRetrievedResults(
   results: VectorSearchResult[],
   query: string,
@@ -96,10 +116,13 @@ function rerankRetrievedResults(
     }
 
     if (retrievalMode === 'heuristic_rerank') {
-      return {
-        results: markRetrievalMode(applyHeuristicRerank(results, query, topK, minScore), 'heuristic_rerank'),
-        appliedMode: 'heuristic_rerank',
-      };
+      const heuristicResults = applyHeuristicRerank(results, query, topK, minScore);
+      if (!shouldEscalateHeuristicToExternalRerank(results, topK)) {
+        return {
+          results: markRetrievalMode(heuristicResults, 'heuristic_rerank'),
+          appliedMode: 'heuristic_rerank',
+        };
+      }
     }
 
     if (!config.rerankEnabled || !isAIGatewayEnabled('rerank')) {

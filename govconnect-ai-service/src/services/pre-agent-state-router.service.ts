@@ -363,7 +363,11 @@ export async function tryHandleLatePreAgentState(
   const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
   const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
 
-  if ((lapMatch || layMatch) && /\b(cek|status|tracking|lacak|periksa|lihat)\b/i.test(message)) {
+  if (
+    (lapMatch || layMatch)
+    && /\b(cek|status|tracking|lacak|periksa|lihat)\b/i.test(message)
+    && !/\b(batal|batalkan|cancel|edit|ubah data|update data|perbarui data|perbaiki data|revisi data)\b/i.test(message)
+  ) {
     const rawCode = (lapMatch?.[1] || layMatch?.[1])!.toUpperCase().replace(/\s/g, '');
     const prefix = rawCode.startsWith('LAP') ? 'LAP' : 'LAY';
     const digitsOnly = rawCode.replace(/^(LAP|LAY)-?/, '').replace(/-/g, '');
@@ -736,7 +740,23 @@ export async function tryHandleLatePreAgentState(
     });
   }
 
-  const pendingCancel = await getPendingCancelConfirmationWithFallback(userId);
+  let pendingCancel = await getPendingCancelConfirmationWithFallback(userId);
+  if (!pendingCancel && detectExplicitConfirmationReply(message) === 'yes' && channel === 'whatsapp') {
+    const history = await fetchConversationHistoryFromChannel(userId, villageId);
+    const recentAssistant = history
+      .filter((item) => item.role === 'assistant')
+      .map((item) => item.content || '')
+      .find((content) => /yakin ingin membatalkan/i.test(content) && /balas\s+ya\s+untuk\s+konfirmasi/i.test(content));
+    const recentCode = recentAssistant?.match(/\b(LAP|LAY)-\d{8}-\d{3}\b/i)?.[0]?.toUpperCase();
+    if (recentCode) {
+      pendingCancel = {
+        type: recentCode.startsWith('LAP-') ? 'laporan' as const : 'layanan' as const,
+        id: recentCode,
+        reason: undefined,
+        timestamp: Date.now(),
+      };
+    }
+  }
   if (pendingCancel) {
     const normalizedMessage = message.trim();
     const isFreshCancelRequest = /\b(LAP|LAY)-?\d{8}-?\d{3}\b/i.test(normalizedMessage)

@@ -335,8 +335,8 @@ export async function handleServiceRequestCreation(userId: string, channel: Chan
 
     const clickableUrl = formatClickableLink(formUrl, channel, 'Link Formulir Layanan');
     return {
-      replyText: `Baik Pak/Bu, saya kirim link formulir untuk layanan *${service.name}* ya.`,
-      guidanceText: `${clickableUrl}\n\nNomor WhatsApp Bapak/Ibu akan ikut tercatat sebagai identitas pengajuan. Setelah formulir dikirim, nanti akan muncul nomor layanan untuk cek status, ubah data, atau membatalkan pengajuan bila masih memungkinkan.`,
+      replyText: `Baik Pak/Bu, saya kirim link formulir untuk layanan *${service.name}* ya.\n\n${clickableUrl}`,
+      guidanceText: 'Nomor WhatsApp Bapak/Ibu akan ikut tercatat sebagai identitas pengajuan. Setelah formulir dikirim, nanti akan muncul nomor layanan untuk cek status, ubah data, atau membatalkan pengajuan bila masih memungkinkan.',
     };
   } catch (error: any) {
     logger.error('Failed to validate service before sending form link', { error: error.message, service_slug, villageId });

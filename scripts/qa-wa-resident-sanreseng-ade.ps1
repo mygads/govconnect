@@ -1,7 +1,7 @@
 param(
   [string]$ChannelBaseUrl = "http://localhost:3001",
   [string]$AiBaseUrl = "http://localhost:3002",
-  [string]$DashboardBaseUrl = "http://localhost:3010",
+  [string]$DashboardBaseUrl = "http://localhost:3011",
   [string]$CaseBaseUrl = "http://localhost:3003",
   [string]$InternalApiKey = "govconnect-internal-api-key-2025",
   [string]$VillageId = "cmkuvo1dk0000mj60h4u4bq1w",

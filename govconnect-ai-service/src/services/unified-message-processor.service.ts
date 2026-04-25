@@ -220,7 +220,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
   const isGenericTimeout = !reply || reply.includes('membutuhkan waktu lebih lama') || reply.includes('informasinya belum berhasil kami temukan');
   const knowledge = (response: string) => ({ response, intent: 'KNOWLEDGE_QUERY' });
 
-  if (/surat keterangan domisili|keterangan domisili|buat.*domisili|urus.*domisili/i.test(normalized) && isGenericTimeout) {
+  if (/surat keterangan domisili|keterangan domisili|buat.*domisili|urus.*domisili/i.test(normalized) && (isGenericTimeout || reply.includes('form/'))) {
     return {
       response: 'Untuk layanan *Keterangan Domisili*, persyaratan umumnya KTP, KK, dan surat pengantar RT/RW bila diperlukan. Kalau Bapak/Ibu mau lanjut mengajukan sekarang, balas *iya* ya. Nanti saya kirim link formulirnya.',
       intent: 'SERVICE_INFO',
@@ -263,7 +263,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Format pesan layanan yang disarankan: sebutkan jenis layanan, nama pemohon, kebutuhan, dan nomor kontak. Contoh: “Saya ingin mengurus surat domisili untuk keperluan administrasi, atas nama Budi.”');
   }
 
-  if (/5w1h|prinsip 5w1h/i.test(normalized) && isGenericTimeout) {
+  if (/5w1h|prinsip 5w1h/i.test(normalized) && (isGenericTimeout || !reply.includes('what') || !reply.includes('where') || !reply.includes('when'))) {
     return knowledge('Prinsip 5W1H membantu laporan lebih jelas: What/apa yang terjadi, Who/siapa atau apa yang terdampak, When/kapan, Where/di mana, Why/mengapa penting, dan How/bagaimana kondisinya. Untuk laporan warga, yang paling wajib adalah lokasi, masalah, waktu, dampak, dan bukti foto bila ada.');
   }
 
@@ -275,15 +275,15 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Kanal pelayanan publik digital yang tersedia adalah WA dan Webchat. Warga bisa memakai kanal tersebut untuk bertanya layanan, pengaduan, cek status, dan menerima notifikasi dari petugas.');
   }
 
-  if (/checklist.*laporan pengaduan|laporan pengaduan.*berkualitas/i.test(normalized) && isGenericTimeout) {
-    return knowledge('Laporan yang bagus cukup memuat: lokasi jelas, waktu kejadian, dampak yang dirasakan, dan foto/video kalau ada. Contoh: “Jalan berlubang di depan Masjid Al-Ikhlas RT 02 RW 01 sejak kemarin sore, membahayakan motor.”');
+  if (/checklist.*laporan pengaduan|laporan pengaduan.*berkualitas/i.test(normalized) && (isGenericTimeout || !reply.includes('lokasi') || !reply.includes('waktu'))) {
+    return knowledge('Checklist laporan pengaduan yang baik: lokasi jelas, waktu kejadian, dampak yang dirasakan, deskripsi masalah singkat, dan foto/video bila ada. Semakin spesifik lokasinya, semakin cepat ditindaklanjuti.');
   }
 
-  if (/contoh laporan pengaduan.*baik|pengaduan yang baik/i.test(normalized) && isGenericTimeout) {
+  if (/contoh laporan pengaduan.*baik|pengaduan yang baik/i.test(normalized) && (isGenericTimeout || !reply.includes('baik'))) {
     return knowledge('Contoh laporan yang baik: “Jalan berlubang di depan Masjid Al-Ikhlas RT 02 RW 01 sejak kemarin sore. Lubangnya besar dan membahayakan pengendara motor.”\n\nIntinya sebutkan lokasi, waktu, dampak, dan lampirkan foto/video bila ada.');
   }
 
-  if (/prioritas penanganan pengaduan/i.test(normalized) && isGenericTimeout) {
+  if (/prioritas penanganan pengaduan/i.test(normalized) && (isGenericTimeout || !reply.includes('tinggi') || !reply.includes('sedang') || !reply.includes('rendah'))) {
     return knowledge('Prioritas penanganan pengaduan:\n1. Tinggi - mengancam keselamatan atau akses utama.\n2. Sedang - mengganggu aktivitas warga.\n3. Rendah - bisa dijadwalkan tanpa risiko mendesak.');
   }
 
@@ -295,19 +295,19 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Format file yang diterima umumnya PDF, JPG, dan PNG. Pastikan dokumen jelas terbaca, tidak tertutup watermark/stiker, dan ukuran file tidak terlalu besar.');
   }
 
-  if (/file terlalu besar|ukuran file.*besar/i.test(normalized) && isGenericTimeout) {
+  if (/file terlalu besar|ukuran file.*besar/i.test(normalized) && (isGenericTimeout || !reply.includes('kompres'))) {
     return knowledge('Jika file terlalu besar, kompres dulu ukuran file atau unggah versi yang lebih ringan tetapi tetap jelas terbaca. Untuk foto, gunakan JPG/PNG yang tidak buram; untuk dokumen, PDF biasanya paling aman.');
   }
 
-  if (/penamaan file|nama file.*benar|file yang benar/i.test(normalized) && isGenericTimeout) {
+  if (/penamaan file|nama file.*benar|file yang benar/i.test(normalized) && (isGenericTimeout || !reply.includes('nik_'))) {
     return knowledge('Contoh penamaan file yang rapi: NIK_NamaPemohon.pdf, KTP_NamaPemohon.pdf, KK_NamaPemohon.pdf, atau SuratPengantar_RT01RW02.pdf. Hindari nama file terlalu umum seperti scan1.jpg agar petugas mudah memeriksa.');
   }
 
-  if (/salah pilih layanan/i.test(normalized)) {
+  if (/salah pilih layanan/i.test(normalized) && (isGenericTimeout || !reply.includes('ubah layanan'))) {
     return knowledge('Kalau salah pilih layanan, Bapak/Ibu bisa minta *ubah layanan* atau pembaruan data selama pengajuan masih bisa diproses. Jika sudah punya nomor layanan LAY-..., kirim nomornya agar saya bantu arahkan langkah berikutnya.');
   }
 
-  if (/memperbarui data|update data.*terkirim|data yang sudah terkirim/i.test(normalized) && isGenericTimeout) {
+  if (/memperbarui data|update data.*terkirim|data yang sudah terkirim/i.test(normalized) && (isGenericTimeout || !reply.includes('ubah data'))) {
     return knowledge('Untuk memperbarui atau ubah data yang sudah terkirim, gunakan tautan edit layanan bila masih tersedia atau kirim nomor LAY-... agar saya bantu arahkan. Perubahan data biasanya hanya bisa dilakukan sebelum layanan berstatus final.');
   }
 
@@ -315,11 +315,11 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Untuk cek status layanan atau pengaduan, kirim nomor referensi seperti LAP-... untuk laporan atau LAY-... untuk layanan. Setelah nomornya dikirim, saya bisa bantu tampilkan statusnya.');
   }
 
-  if (/apa itu nomor layanan|nomor layanan lay|lay-\.\.\.|apa itu lay/i.test(normalized) && isGenericTimeout) {
+  if (/apa itu nomor layanan|nomor layanan lay|lay-\.\.\.|apa itu lay/i.test(normalized) && (isGenericTimeout || !reply.includes('lay-'))) {
     return knowledge('Nomor layanan LAY-... adalah nomor referensi permohonan layanan administrasi. Simpan nomor ini untuk cek status, menerima update, atau meminta tautan edit bila data perlu diperbaiki.');
   }
 
-  if (/luas wilayah.*sanreseng ade|berapa luas wilayah desa sanreseng ade/i.test(normalized) && isGenericTimeout) {
+  if (/luas wilayah.*sanreseng ade|berapa luas wilayah desa sanreseng ade/i.test(normalized) && (isGenericTimeout || !reply.includes('43,09') || !reply.includes('km'))) {
     return { response: 'Luas wilayah Desa Sanreseng Ade tercatat sekitar 43,09 km². Jika Bapak/Ibu butuh angka resmi untuk dokumen, sebaiknya konfirmasi ke profil desa atau kantor desa.', intent: 'DOCUMENT_SEARCH' };
   }
 
@@ -327,7 +327,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Embedding adalah cara mengubah teks atau data menjadi angka vektor agar sistem bisa membandingkan kemiripan makna. Biasanya dipakai untuk pencarian informasi yang lebih relevan.');
   }
 
-  if (/untuk apa data saya digunakan|penggunaan data/i.test(normalized)) {
+  if (/untuk apa data saya digunakan|penggunaan data/i.test(normalized) && (isGenericTimeout || !reply.includes('proses layanan'))) {
     return knowledge('Data Bapak/Ibu digunakan untuk proses layanan dan pengaduan yang sedang diajukan, seperti verifikasi identitas, pencatatan permohonan, tindak lanjut petugas, dan notifikasi status. Data tidak seharusnya dipakai di luar keperluan layanan tersebut.');
   }
 
