@@ -46,9 +46,20 @@ export function createApp(): Application {
   const { correlationMiddleware } = require('./shared/correlation-context');
   app.use(correlationMiddleware);
 
-  // Body parser
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  // Body parser — capture raw body so webhook HMAC verification can re-hash exactly what was sent.
+  app.use(express.json({
+    limit: '10mb',
+    verify: (req: any, _res, buf) => {
+      if (buf && buf.length) req.rawBody = Buffer.from(buf);
+    },
+  }));
+  app.use(express.urlencoded({
+    extended: true,
+    limit: '10mb',
+    verify: (req: any, _res, buf) => {
+      if (buf && buf.length) req.rawBody = Buffer.from(buf);
+    },
+  }));
 
   // Legacy local media serving for backward compatibility with older records.
   // SEC-05 fix: require internal API key for uploaded media

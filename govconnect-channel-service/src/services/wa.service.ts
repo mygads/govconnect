@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { randomBytes } from 'crypto';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import prisma from '../config/database';
@@ -67,6 +68,7 @@ async function upsertSession(params: {
   waSupportUserId?: string;
   waSupportApiKey?: string;
   waSupportSessionId?: string;
+  webhookSecret?: string;
 }) {
   return prisma.wa_sessions.upsert({
     where: { village_id: params.villageId },
@@ -80,6 +82,7 @@ async function upsertSession(params: {
       wa_support_user_id: params.waSupportUserId || null,
       wa_support_api_key: params.waSupportApiKey || null,
       wa_support_session_id: params.waSupportSessionId || null,
+      webhook_secret: params.webhookSecret || null,
       last_connected_at: params.status === 'connected' ? new Date() : null,
     },
     update: {
@@ -91,6 +94,7 @@ async function upsertSession(params: {
       wa_support_user_id: params.waSupportUserId || undefined,
       wa_support_api_key: params.waSupportApiKey || undefined,
       wa_support_session_id: params.waSupportSessionId || undefined,
+      webhook_secret: params.webhookSecret || undefined,
       last_connected_at: params.status === 'connected' ? new Date() : undefined,
     },
   });
@@ -247,12 +251,14 @@ async function createSessionViaWaSupport(params: {
   villageId: string;
   villageSlug?: string;
   webhook: string;
+  webhookSecret?: string;
 }): Promise<{ token: string; sessionId: string }> {
   const sessionName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
   const result = await waSupportClient.createCustomerSession(params.apiKey, {
     session_name: sessionName,
     webhook_url: params.webhook || '',
+    webhook_secret: params.webhookSecret || undefined,
     events: 'All',
     auto_connect: true,
     auto_read_enabled: sessionSettings.autoReadMessages,
@@ -532,17 +538,22 @@ export async function createSessionForVillage(params: {
   let token: string;
   let sessionId: string | null = null;
   let waSupportApiKey: string | undefined;
+  // P1-7: generate per-session HMAC secret so genfity-wa signs outbound webhooks and we can verify them.
+  // Only generated when posting to wa-support (legacy direct path doesn't currently surface this option).
+  let webhookSecret: string | undefined;
 
   if (waSupportClient.isConfigured()) {
     // Primary path: create session via wa-support-v2
     const user = await ensureWaSupportUser(params.villageId);
     waSupportApiKey = user.apiKey;
+    webhookSecret = randomBytes(48).toString('hex'); // 96 hex chars, comfortably above the 32-char minimum
 
     const created = await createSessionViaWaSupport({
       apiKey: user.apiKey,
       villageId: params.villageId,
       villageSlug: params.villageSlug,
       webhook,
+      webhookSecret,
     });
     token = created.token;
     sessionId = created.sessionId;
@@ -596,6 +607,7 @@ export async function createSessionForVillage(params: {
     waSupportUserId: params.villageId,
     waSupportApiKey: waSupportApiKey,
     waSupportSessionId: sessionId || undefined,
+    webhookSecret,
   });
 
   if (!webhook) {

@@ -111,6 +111,7 @@ export interface CreateUserRequest {
 export interface CreateSessionRequest {
   session_name: string;
   webhook_url?: string;
+  webhook_secret?: string;
   events?: string;
   expiration_sec?: number;
   auto_connect?: boolean;
@@ -122,6 +123,7 @@ export interface CreateSessionRequest {
 export interface UpdateSessionRequest {
   session_name?: string;
   webhook_url?: string;
+  webhook_secret?: string;
   events?: string;
   expiration_sec?: number;
   auto_read_enabled?: boolean;
@@ -424,7 +426,7 @@ class WaSupportClient {
 
   /** Connect/start a session */
   async connectSession(sessionToken: string): Promise<WaSupportResult> {
-    return this.waGateway(sessionToken, '/session/connect');
+    return this.waGateway(sessionToken, '/session/connect', 'POST');
   }
 
   /** Logout a session */

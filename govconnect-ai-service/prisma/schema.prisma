@@ -246,6 +246,7 @@ model ai_providers {
   api_key_encrypted    String?  @db.Text
   default_headers_json Json?
   is_active            Boolean  @default(true)
+  priority             Int      @default(100)
   created_at           DateTime @default(now())
   updated_at           DateTime @updatedAt
 
@@ -289,6 +290,7 @@ model ai_models {
   is_active                             Boolean  @default(true)
   is_publicly_selectable                Boolean  @default(true)
   notes                                 String?  @db.Text
+  priority                              Int      @default(100)
   created_at                            DateTime @default(now())
   updated_at                            DateTime @updatedAt
 
@@ -321,6 +323,21 @@ model ai_lane_assignments {
   @@index([is_global_default])
   @@index([is_active])
   @@unique([lane_type, village_id, is_global_default])
+}
+
+// Smart routing health: 3 consecutive failures → demote provider for 1 hour.
+model ai_provider_health {
+  provider_id          String
+  lane_type            String
+  consecutive_failures Int       @default(0)
+  demoted_until        DateTime?
+  last_success_at      DateTime?
+  last_failure_at      DateTime?
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+
+  @@id([provider_id, lane_type])
+  @@index([demoted_until])
 }
 
 // ==================== CONVERSATION SESSIONS (Temuan 7) ====================

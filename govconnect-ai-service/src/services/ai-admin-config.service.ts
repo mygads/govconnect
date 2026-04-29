@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
+import { encryptSecret } from '../utils/crypto';
 import { clearRuntimeGatewayConfigCache } from './ai-runtime-config.service';
 
 type LaneType = 'llm' | 'embed' | 'rewrite' | 'rerank';
@@ -65,7 +66,7 @@ export async function createAIProvider(input: {
       slug: input.slug.trim().toLowerCase(),
       provider_kind: (input.provider_kind || 'openai_compatible').trim(),
       base_url: input.base_url.trim(),
-      api_key_encrypted: input.api_key.trim(),
+      api_key_encrypted: encryptSecret(input.api_key.trim()),
       default_headers_json: sanitizeHeaders(input.default_headers_json) ?? Prisma.JsonNull,
       is_active: input.is_active !== false,
     },

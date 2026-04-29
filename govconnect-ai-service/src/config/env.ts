@@ -6,7 +6,13 @@ export type AIGatewayProvider =
   | 'vercel'
   | 'cloudflare'
   | 'direct'
+  | 'genfity-gateway'
+  | 'openai_compatible'
   | 'unconfigured';
+
+// NOTE: when provider == 'genfity-gateway', the rerank lane should typically be `/v1/rerank`
+// (matching the genfity-ai-gateway HTTP contract). Default RERANK_PATH remains `/rerank` for
+// backwards compatibility; super admins can override via ai_models.endpoint_path.
 
 export type GatewayLaneKind = 'llm' | 'embed' | 'rag' | 'rerank';
 
@@ -63,6 +69,7 @@ interface Config {
   autoBlacklistViolations: number;
   testingMode: boolean;
   profileEncryptionKey: string;
+  aiProviderEncryptionKey: string;
   aiGateway: ChatGatewayLaneConfig;
   llmGateway: ChatGatewayLaneConfig;
   embeddingGateway: EmbeddingGatewayLaneConfig;
@@ -107,15 +114,34 @@ function firstDefined(keys: string[]): string | undefined {
 }
 
 function firstNonEmpty(keys: string[]): string | undefined {
+  let canonicalUsed: string | null = null;
+  let pickedKey: string | null = null;
+  let pickedValue: string | undefined;
+
   for (const key of keys) {
     const value = process.env[key];
     if (typeof value === 'string' && value.trim().length > 0) {
-      return value;
+      if (canonicalUsed === null) canonicalUsed = key; // first key in priority list is canonical
+      if (pickedValue === undefined) {
+        pickedValue = value;
+        pickedKey = key;
+      }
     }
   }
 
-  return undefined;
+  // Warn once per startup if a deprecated alias is in effect (M4).
+  if (pickedKey && pickedKey !== keys[0] && !aliasWarned.has(pickedKey)) {
+    aliasWarned.add(pickedKey);
+    logger.warn('Deprecated env alias in use; prefer canonical name', {
+      deprecated: pickedKey,
+      canonical: keys[0],
+    });
+  }
+
+  return pickedValue;
 }
+
+const aliasWarned = new Set<string>();
 
 function parseJSONHeaders(value: string | undefined, envLabel: string): Record<string, string> {
   if (!value?.trim()) return {};
@@ -144,7 +170,8 @@ function parseProvider(value: string | undefined): AIGatewayProvider {
     normalized === 'sumopod' ||
     normalized === 'vercel' ||
     normalized === 'cloudflare' ||
-    normalized === 'direct'
+    normalized === 'direct' ||
+    normalized === 'genfity-gateway'
   ) {
     return normalized;
   }
@@ -385,6 +412,7 @@ function validateEnv(): Config {
     autoBlacklistViolations: parseInt(process.env.AUTO_BLACKLIST_VIOLATIONS || '10', 10),
     testingMode: process.env.TESTING_MODE === 'true',
     profileEncryptionKey: process.env.PROFILE_ENCRYPTION_KEY || '',
+    aiProviderEncryptionKey: process.env.AI_PROVIDER_ENCRYPTION_KEY || process.env.PROFILE_ENCRYPTION_KEY || '',
     aiGateway: llmLane,
     llmGateway: llmLane,
     embeddingGateway: embedLane,
@@ -398,6 +426,14 @@ function validateEnv(): Config {
 
   if (config.nodeEnv === 'production' && !config.profileEncryptionKey) {
     throw new Error('FATAL: PROFILE_ENCRYPTION_KEY is required in production for UU PDP compliance');
+  }
+
+  if (config.nodeEnv === 'production' && !config.aiProviderEncryptionKey) {
+    throw new Error('FATAL: AI_PROVIDER_ENCRYPTION_KEY (or PROFILE_ENCRYPTION_KEY fallback) is required in production for AES-256-GCM at-rest encryption of provider API keys');
+  }
+
+  if (config.aiProviderEncryptionKey && config.aiProviderEncryptionKey.length < 32) {
+    logger.warn('AI_PROVIDER_ENCRYPTION_KEY appears short; recommend 64-char hex (32 bytes) or 44-char base64');
   }
 
   if (config.embeddingGateway.dimensions !== DEFAULT_EMBED_DIMENSIONS) {

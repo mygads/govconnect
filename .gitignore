@@ -100,3 +100,5 @@ env/
 # yarn.lock
 
 .claude/
+.claude/worktrees/*
+.claude/worktrees/

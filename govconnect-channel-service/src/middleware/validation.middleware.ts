@@ -1,25 +1,21 @@
 import { Request, Response, NextFunction } from 'express';
 import { body, query, validationResult } from 'express-validator';
+import { createHmac, timingSafeEqual } from 'crypto';
 import logger from '../utils/logger';
+import prisma from '../config/database';
 
 // ==================== WEBHOOK ORIGIN VERIFICATION (Temuan 10) ====================
 
 /**
- * IP Allowlist untuk webhook — hanya terima request dari IP Genfity-WA yang dikenal.
+ * IP allowlist defense layer.
  *
- * Catatan arsitektur:
- * Genfity-WA (wa-support-v2) TIDAK mengirim header HMAC signature dan
- * CreateSessionRequest TIDAK punya field webhook_secret, sehingga HMAC
- * tidak bisa diterapkan tanpa modifikasi sisi server WA.
+ * Genfity-WA *does* sign outbound webhooks with `x-hmac-signature`
+ * (hex HMAC-SHA256 of the raw body using the per-session secret configured
+ * via /session/hmac/config). Use {@link verifyWebhookHmac} for cryptographic
+ * verification; the IP allowlist below remains as a defence-in-depth.
  *
- * Strategi pengganti (defense-in-depth):
- * 1. IP allowlist — hanya terima webhook dari IP yang dikenali (layer ini)
- * 2. instanceName validation — payload harus berisi instanceName yang match session di DB
- *    (sudah ada di webhook controller via resolveVillageIdFromInstanceName)
- * 3. WA_WEBHOOK_VERIFY_TOKEN — untuk GET verification challenge (sudah ada)
- *
- * Env var: WEBHOOK_ALLOWED_IPS (comma-separated, opsional)
- * Jika kosong → verifikasi IP dilewati (dev mode / trust reverse proxy).
+ * Env var: WEBHOOK_ALLOWED_IPS (comma-separated, optional)
+ * Empty value disables the check (development / behind trusted reverse proxy).
  */
 const ALLOWED_IPS = (process.env.WEBHOOK_ALLOWED_IPS || '')
   .split(',')
@@ -56,8 +52,107 @@ export function verifyWebhookOrigin(
 }
 
 /**
- * Handle validation errors
+ * Verify the `x-hmac-signature` header that genfity-wa attaches to outbound webhooks.
+ *
+ * Strategy:
+ * 1. If neither the env nor any session has a configured secret, the signature header
+ *    will be missing — we soft-skip in dev (`WEBHOOK_HMAC_REQUIRED` !== 'true').
+ * 2. Resolve the per-session secret by looking up the village via `instanceName`
+ *    (slug) or `userID` (raw village_id) from the parsed body.
+ * 3. Recompute hex(HMAC-SHA256(rawBody, secret)) and timing-safe compare.
+ *
+ * Requires `req.rawBody` to be populated by the body parser (see app.ts).
  */
+export async function verifyWebhookHmac(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const required = String(process.env.WEBHOOK_HMAC_REQUIRED || '').toLowerCase() === 'true';
+  const signature = (req.headers['x-hmac-signature'] as string | undefined)?.trim();
+
+  if (!signature) {
+    if (required) {
+      logger.warn('Webhook rejected: x-hmac-signature header missing');
+      res.status(401).json({ error: 'Missing webhook signature' });
+      return;
+    }
+    return next();
+  }
+
+  const rawBody: Buffer | undefined = (req as any).rawBody;
+  if (!rawBody || rawBody.length === 0) {
+    logger.warn('Webhook signature present but raw body unavailable');
+    res.status(400).json({ error: 'Cannot verify signature: empty body' });
+    return;
+  }
+
+  // Resolve session by instanceName (preferred) or userID fallback.
+  // Form mode puts these on top-level fields; JSON mode nests them.
+  const body = req.body || {};
+  const candidate =
+    (typeof body.instanceName === 'string' && body.instanceName.trim()) ||
+    (typeof body.userID === 'string' && body.userID.trim()) ||
+    '';
+
+  if (!candidate) {
+    if (required) {
+      logger.warn('Webhook rejected: cannot determine session for HMAC verification');
+      res.status(400).json({ error: 'Missing instanceName/userID for signature verification' });
+      return;
+    }
+    return next();
+  }
+
+  let secret: string | null = null;
+  try {
+    const session = await prisma.wa_sessions.findFirst({
+      where: {
+        OR: [
+          { instance_name: candidate },
+          { village_id: candidate },
+          { wa_support_session_id: candidate },
+        ],
+      },
+      select: { webhook_secret: true },
+    });
+    secret = session?.webhook_secret || null;
+  } catch (err: any) {
+    logger.error('Webhook HMAC: session lookup failed', { error: err?.message });
+    res.status(500).json({ error: 'HMAC verification failed' });
+    return;
+  }
+
+  if (!secret) {
+    if (required) {
+      logger.warn('Webhook rejected: no webhook_secret stored for session', { candidate });
+      res.status(401).json({ error: 'Unknown signing key' });
+      return;
+    }
+    return next();
+  }
+
+  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+  // Strip optional "sha256=" prefix that some senders use.
+  const provided = signature.startsWith('sha256=') ? signature.slice(7) : signature;
+
+  let ok = false;
+  try {
+    const a = Buffer.from(expected, 'hex');
+    const b = Buffer.from(provided, 'hex');
+    ok = a.length === b.length && timingSafeEqual(a, b);
+  } catch {
+    ok = false;
+  }
+
+  if (!ok) {
+    logger.warn('Webhook rejected: HMAC signature mismatch', { candidate });
+    res.status(401).json({ error: 'Invalid webhook signature' });
+    return;
+  }
+
+  next();
+}
 export function handleValidationErrors(
   req: Request,
   res: Response,

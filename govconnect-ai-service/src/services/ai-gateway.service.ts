@@ -7,7 +7,9 @@ import {
 } from '../config/env';
 import type { LLMMetrics } from '../types/llm-response.types';
 import logger from '../utils/logger';
+import { scrubSecrets } from '../utils/crypto';
 import { getRuntimeGatewayConfig } from './ai-runtime-config.service';
+import * as healthService from './ai-provider-health.service';
 import { modelStatsService } from './model-stats.service';
 import { recordTokenUsage, type CallType, type LayerType } from './token-usage.service';
 
@@ -167,12 +169,30 @@ interface GatewayApiKey {
   value: string;
 }
 
-const nextGatewayKeyIndex: Record<GatewayLaneKind, number> = {
-  llm: 0,
-  embed: 0,
-  rag: 0,
-  rerank: 0,
-};
+// nextGatewayKeyIndex removed (H4): superseded by random offset in getGatewayApiKeysInAttemptOrder.
+
+// H6: per-target circuit breakers (lane:provider:baseUrl). Lazy-initialized.
+import CircuitBreaker from 'opossum';
+const gatewayBreakers = new Map<string, CircuitBreaker<any[], any>>();
+function getGatewayBreaker(key: string, action: (...args: any[]) => Promise<any>): CircuitBreaker<any[], any> {
+  let breaker = gatewayBreakers.get(key);
+  if (!breaker) {
+    breaker = new CircuitBreaker(action, {
+      timeout: 60_000,
+      errorThresholdPercentage: 60,
+      resetTimeout: 30_000,
+      volumeThreshold: 5,
+      rollingCountTimeout: 30_000,
+      rollingCountBuckets: 6,
+      name: `gateway:${key}`,
+    });
+    breaker.on('open', () => logger.warn('Gateway circuit OPEN', { breaker: key }));
+    breaker.on('halfOpen', () => logger.info('Gateway circuit HALF-OPEN', { breaker: key }));
+    breaker.on('close', () => logger.info('Gateway circuit CLOSED', { breaker: key }));
+    gatewayBreakers.set(key, breaker);
+  }
+  return breaker;
+}
 
 type AnyGatewayConfig = ChatGatewayLaneConfig | EmbeddingGatewayLaneConfig | RerankGatewayLaneConfig;
 
@@ -296,8 +316,17 @@ function buildRerankPrompt(query: string, documents: string[]): GatewayChatMessa
 }
 
 function parsePromptRerankResults(text: string, documents: string[], topN: number): GatewayRerankResultItem[] {
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  const parsed = JSON.parse(jsonMatch?.[0] || text);
+  let parsed: any = null;
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    parsed = JSON.parse(jsonMatch?.[0] || text);
+  } catch (err: any) {
+    logger.warn('Failed to parse prompt rerank JSON; returning empty', {
+      error: err.message,
+      textSnippet: (text || '').slice(0, 200),
+    });
+    return [];
+  }
   const rawResults = Array.isArray(parsed?.results) ? parsed.results : [];
 
   return rawResults
@@ -315,10 +344,29 @@ function parsePromptRerankResults(text: string, documents: string[], topN: numbe
     .slice(0, topN);
 }
 
+// Exposed for unit tests.
+export const __test_only__ = { parsePromptRerankResults };
+
+/**
+ * @deprecated Use isAIGatewayEnabledAsync — this sync variant cannot inspect DB-driven config.
+ * Returns true to preserve legacy behaviour; will be removed in a future release.
+ */
 export function isAIGatewayEnabled(_kind: GatewayLaneKind = 'llm'): boolean {
   return true;
 }
 
+export async function isAIGatewayEnabledAsync(kind: GatewayLaneKind = 'llm', villageId?: string | null): Promise<boolean> {
+  try {
+    const resolved = await getRuntimeGatewayConfig(kind, villageId);
+    return Boolean(resolved.config?.enabled);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @deprecated Use getAIGatewayInfoAsync — this sync variant cannot read the DB-backed config.
+ */
 export function getAIGatewayInfo(kind: GatewayLaneKind = 'llm'): GatewayInfo {
   return {
     kind,
@@ -377,6 +425,7 @@ export async function getAIGatewayInfoAsync(kind: GatewayLaneKind = 'llm', villa
   }
 }
 
+/** @deprecated Use getAllAIGatewayInfoAsync. */
 export function getAllAIGatewayInfo() {
   return {
     llm: getAIGatewayInfo('llm'),
@@ -398,8 +447,10 @@ export async function getAllAIGatewayInfoAsync() {
 }
 
 export function getDefaultGatewayModels(kind: 'micro' | 'full'): string[] {
+  // L2: 'micro' lane currently maps to llmGateway as well; future split possible.
   void kind;
-  return config.llmGateway.model ? [config.llmGateway.model] : [];
+  const lane = config.llmGateway;
+  return lane.model ? [lane.model] : [];
 }
 
 export function getDefaultRAGRewriteModels(): string[] {
@@ -436,8 +487,8 @@ function getGatewayApiKeysInAttemptOrder(kind: GatewayLaneKind, gateway: AnyGate
     return keys;
   }
 
-  const startIndex = nextGatewayKeyIndex[kind] % keys.length;
-  nextGatewayKeyIndex[kind] = (nextGatewayKeyIndex[kind] + 1) % keys.length;
+  // H4: random offset start avoids both shared-counter races and deterministic hot-keys.
+  const startIndex = Math.floor(Math.random() * keys.length);
   return keys.slice(startIndex).concat(keys.slice(0, startIndex));
 }
 
@@ -461,6 +512,8 @@ function buildHeaders(gateway: AnyGatewayConfig, apiKey: string): Record<string,
       headers['HTTP-Referer'] = gateway.openRouterSiteUrl;
     }
     if (gateway.openRouterAppName) {
+      // L1: send both X-Title (canonical) and the legacy X-OpenRouter-Title.
+      headers['X-Title'] = gateway.openRouterAppName;
       headers['X-OpenRouter-Title'] = gateway.openRouterAppName;
     }
   }
@@ -468,29 +521,111 @@ function buildHeaders(gateway: AnyGatewayConfig, apiKey: string): Record<string,
   return headers;
 }
 
-function buildOpenRouterProviderPreferences(gateway: AnyGatewayConfig): Record<string, unknown> | undefined {
-  if (gateway.provider !== 'openrouter') {
-    return undefined;
+/**
+ * Provider-specific request body decorations. For non-openrouter providers,
+ * we don't inject the `provider` field (which is OpenRouter-only).
+ */
+function buildProviderPreferences(gateway: AnyGatewayConfig): Record<string, unknown> | undefined {
+  switch (gateway.provider) {
+    case 'openrouter': {
+      const providerPrefs: Record<string, unknown> = {};
+      if (gateway.openRouterProviderOrder.length > 0) {
+        providerPrefs.order = gateway.openRouterProviderOrder;
+      }
+      if (!gateway.openRouterAllowFallbacks) {
+        providerPrefs.allow_fallbacks = false;
+      }
+      if (gateway.openRouterRequireParameters) {
+        providerPrefs.require_parameters = true;
+      }
+      if (gateway.openRouterZDROnly) {
+        providerPrefs.zdr = true;
+      }
+      return Object.keys(providerPrefs).length > 0 ? providerPrefs : undefined;
+    }
+    case 'sumopod':
+    case 'direct':
+    case 'genfity-gateway':
+    case 'vercel':
+    case 'cloudflare':
+    default:
+      return undefined;
   }
-
-  const providerPrefs: Record<string, unknown> = {};
-  if (gateway.openRouterProviderOrder.length > 0) {
-    providerPrefs.order = gateway.openRouterProviderOrder;
-  }
-  if (!gateway.openRouterAllowFallbacks) {
-    providerPrefs.allow_fallbacks = false;
-  }
-  if (gateway.openRouterRequireParameters) {
-    providerPrefs.require_parameters = true;
-  }
-  if (gateway.openRouterZDROnly) {
-    providerPrefs.zdr = true;
-  }
-
-  return Object.keys(providerPrefs).length > 0 ? providerPrefs : undefined;
 }
 
+// Backwards-compat alias (kept so external callers don't break).
+function buildOpenRouterProviderPreferences(gateway: AnyGatewayConfig): Record<string, unknown> | undefined {
+  return buildProviderPreferences(gateway);
+}
+
+/**
+ * Filter attempts by provider health. Returns {available, demoted}. If `available` is empty,
+ * caller should fall back to attempting the highest-priority demoted entry as a probe.
+ */
+async function partitionAttemptsByHealth(
+  lane: GatewayLaneKind,
+  attempts: RuntimeGatewayAttempt[],
+): Promise<{ available: RuntimeGatewayAttempt[]; demoted: RuntimeGatewayAttempt[] }> {
+  const dbLane = lane === 'rag' ? 'rewrite' : lane;
+  const available: RuntimeGatewayAttempt[] = [];
+  const demoted: RuntimeGatewayAttempt[] = [];
+  for (const attempt of attempts) {
+    if (!attempt.providerId) {
+      available.push(attempt);
+      continue;
+    }
+    const ok = await healthService.isAvailable(attempt.providerId, dbLane as any);
+    if (ok) {
+      available.push(attempt);
+    } else {
+      demoted.push(attempt);
+    }
+  }
+  return { available, demoted };
+}
+
+async function selectAttempts(lane: GatewayLaneKind, allAttempts: RuntimeGatewayAttempt[]): Promise<RuntimeGatewayAttempt[]> {
+  const { available, demoted } = await partitionAttemptsByHealth(lane, allAttempts);
+  if (available.length > 0) return available;
+  // All demoted: try the highest-priority demoted as a probe (best-effort).
+  if (demoted.length > 0) {
+    const dbLane = lane === 'rag' ? 'rewrite' : lane;
+    const head = demoted[0];
+    if (head.providerId && (await healthService.shouldProbe(head.providerId, dbLane as any))) {
+      logger.info('All providers demoted; sending probe to highest-priority', {
+        lane,
+        providerId: head.providerId,
+      });
+      return [head];
+    }
+  }
+  return [];
+}
+
+async function reportAttemptResult(lane: GatewayLaneKind, attempt: RuntimeGatewayAttempt, ok: boolean): Promise<void> {
+  if (!attempt.providerId) return;
+  const dbLane = lane === 'rag' ? 'rewrite' : lane;
+  if (ok) {
+    await healthService.recordSuccess(attempt.providerId, dbLane as any);
+  } else {
+    await healthService.recordFailure(attempt.providerId, dbLane as any);
+  }
+}
+
+
 async function executeGatewayRequest<T>(
+  kind: GatewayLaneKind,
+  gateway: AnyGatewayConfig,
+  apiKey: GatewayApiKey,
+  body: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<T> {
+  const breakerKey = `${kind}:${gateway.provider}:${gateway.baseUrl}`;
+  const breaker = getGatewayBreaker(breakerKey, doExecuteGatewayRequest);
+  return breaker.fire(kind, gateway, apiKey, body, timeoutMs) as Promise<T>;
+}
+
+async function doExecuteGatewayRequest<T>(
   kind: GatewayLaneKind,
   gateway: AnyGatewayConfig,
   apiKey: GatewayApiKey,
@@ -505,7 +640,7 @@ async function executeGatewayRequest<T>(
   });
 
   const responseText = await response.text();
-  let parsed: any = null;
+  let parsed: unknown = null;
 
   try {
     parsed = responseText ? JSON.parse(responseText) : null;
@@ -514,7 +649,9 @@ async function executeGatewayRequest<T>(
   }
 
   if (!response.ok) {
-    const errorMessage = parsed?.error?.message || responseText || `HTTP ${response.status}`;
+    const parsedAny = parsed as { error?: { message?: string } } | null;
+    const rawMessage = parsedAny?.error?.message || responseText || `HTTP ${response.status}`;
+    const errorMessage = scrubSecrets(rawMessage);
     throw new Error(`${kind} gateway ${response.status}: ${errorMessage}`);
   }
 
@@ -606,7 +743,7 @@ function recordGatewayUsage(
     provider_id: metrics.providerId ?? null,
     model_config_id: metrics.modelConfigId ?? null,
     lane_type: metrics.laneType ?? null,
-  }).catch(() => {});
+  }).catch((err: any) => logger.warn('Failed to record token usage', { error: err?.message || String(err) }));
 }
 
 function buildPromptBody(
@@ -686,7 +823,11 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
   let lastError = 'Unknown gateway error';
   const attemptedModels: string[] = [];
 
-  for (const attempt of resolved.attempts) {
+  // Skip 'unconfigured' attempts and apply provider-health filter (smart routing).
+  const sanitizedAttempts = resolved.attempts.filter((a) => a.config.provider !== 'unconfigured');
+  const liveAttempts = await selectAttempts(lane, sanitizedAttempts);
+
+  for (const attempt of liveAttempts) {
     const gateway = attempt.config;
     if (!gateway.enabled) {
       continue;
@@ -742,6 +883,7 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
 
           modelStatsService.recordSuccess(resolvedModel, durationMs);
           recordGatewayUsage(metrics, options);
+          await reportAttemptResult(lane, attempt, true);
 
           logger.info('AI gateway call successful', {
             lane,
@@ -770,6 +912,7 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
           const durationMs = Date.now() - startTime;
           lastError = error.message || 'Unknown gateway error';
           modelStatsService.recordFailure(model, lastError, durationMs);
+          await reportAttemptResult(lane, attempt, false);
 
           logger.warn('AI gateway call failed', {
             lane,
@@ -801,8 +944,10 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
   const lane: GatewayLaneKind = 'embed';
   const resolved = await resolveGateway(lane, options.context?.village_id);
   let lastError = 'Unknown embedding gateway error';
+  const sanitizedAttempts = resolved.attempts.filter((a) => a.config.provider !== 'unconfigured');
+  const liveAttempts = await selectAttempts(lane, sanitizedAttempts);
 
-  for (const attempt of resolved.attempts) {
+  for (const attempt of liveAttempts) {
     const gateway = attempt.config as EmbeddingGatewayLaneConfig;
     if (!gateway.enabled) {
       continue;
@@ -873,6 +1018,7 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
 
         modelStatsService.recordSuccess(resolvedModel, durationMs);
         recordGatewayUsage(metrics, options);
+        await reportAttemptResult(lane, attempt, true);
 
         logger.info('Embedding gateway call successful', {
           provider: gateway.provider,
@@ -898,6 +1044,7 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
         const durationMs = Date.now() - startTime;
         lastError = error.message || 'Unknown embedding gateway error';
         modelStatsService.recordFailure(model, lastError, durationMs);
+        await reportAttemptResult(lane, attempt, false);
 
         logger.warn('Embedding gateway call failed', {
           provider: gateway.provider,
@@ -926,8 +1073,10 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
   const lane: GatewayLaneKind = 'rerank';
   const resolved = await resolveGateway(lane, options.context?.village_id);
   let lastError = 'Unknown rerank gateway error';
+  const sanitizedAttempts = resolved.attempts.filter((a) => a.config.provider !== 'unconfigured');
+  const liveAttempts = await selectAttempts(lane, sanitizedAttempts);
 
-  for (const attempt of resolved.attempts) {
+  for (const attempt of liveAttempts) {
     const gateway = attempt.config as RerankGatewayLaneConfig;
     if (!gateway.enabled) {
       continue;
@@ -1000,6 +1149,7 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
 
         modelStatsService.recordSuccess(resolvedModel, durationMs);
         recordGatewayUsage(metrics, options);
+        await reportAttemptResult(lane, attempt, true);
 
         logger.info('Rerank gateway call successful', {
           provider: gateway.provider,
@@ -1069,6 +1219,7 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
         }
 
         modelStatsService.recordFailure(model, lastError, durationMs);
+        await reportAttemptResult(lane, attempt, false);
 
         logger.warn('Rerank gateway call failed', {
           provider: gateway.provider,

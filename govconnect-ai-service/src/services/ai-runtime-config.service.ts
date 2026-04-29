@@ -7,6 +7,8 @@ import {
   type GatewayLaneKind,
   type RerankGatewayLaneConfig,
 } from '../config/env';
+import { decryptSecret } from '../utils/crypto';
+import logger from '../utils/logger';
 
 export type ConfigSource = 'db';
 
@@ -46,10 +48,19 @@ const CACHE_TTL_MS = 30_000;
 
 function mapProvider(provider: string): AIGatewayProvider {
   const normalized = (provider || '').trim().toLowerCase();
-  if (normalized === 'openrouter' || normalized === 'sumopod' || normalized === 'vercel' || normalized === 'cloudflare' || normalized === 'direct') {
+  if (
+    normalized === 'openrouter' ||
+    normalized === 'sumopod' ||
+    normalized === 'vercel' ||
+    normalized === 'cloudflare' ||
+    normalized === 'direct' ||
+    normalized === 'genfity-gateway' ||
+    normalized === 'openai_compatible'
+  ) {
     return normalized;
   }
-  return 'direct';
+  // L3: do NOT default to 'direct' — let caller skip unknown providers.
+  return 'unconfigured';
 }
 
 function cacheKey(kind: GatewayLaneKind, villageId?: string | null): string {
@@ -61,12 +72,42 @@ function laneToDb(kind: GatewayLaneKind): 'llm' | 'embed' | 'rewrite' | 'rerank'
   return kind;
 }
 
-function buildGatewayConfig(kind: GatewayLaneKind, model: any, provider: any): AnyGatewayConfig {
+type DbModel = {
+  id: string;
+  display_name: string;
+  upstream_model_name: string;
+  endpoint_path: string | null;
+  lane_type: string;
+};
+
+type DbProvider = {
+  id: string;
+  name: string;
+  slug: string;
+  provider_kind: string | null;
+  base_url: string;
+  api_key_encrypted: string | null;
+  default_headers_json: unknown;
+};
+
+function buildGatewayConfig(kind: GatewayLaneKind, model: DbModel, provider: DbProvider): AnyGatewayConfig {
+  const encryptedKey = provider.api_key_encrypted || '';
+  let plaintextKey = '';
+  try {
+    plaintextKey = encryptedKey ? decryptSecret(encryptedKey) : '';
+  } catch (err: any) {
+    logger.error('Failed to decrypt provider API key', {
+      providerId: provider.id,
+      providerSlug: provider.slug,
+      error: err.message,
+    });
+  }
+
   const shared = {
     enabled: true,
-    provider: mapProvider(provider.provider_kind || provider.name),
+    provider: mapProvider(provider.provider_kind || provider.slug || provider.name),
     baseUrl: provider.base_url,
-    apiKeys: provider.api_key_encrypted ? [provider.api_key_encrypted] : [],
+    apiKeys: plaintextKey ? [plaintextKey] : [],
     defaultHeaders: (provider.default_headers_json as Record<string, string> | null) || {},
     openRouterSiteUrl: '',
     openRouterAppName: '',
@@ -142,6 +183,48 @@ async function loadAssignment(kind: GatewayLaneKind, villageId?: string | null) 
   });
 }
 
+/**
+ * Load all additional same-lane providers (not already in primary/fallback) ordered by
+ * model.priority then provider.priority. These become extra fallback attempts.
+ */
+async function loadExtraSameLaneAttempts(
+  kind: GatewayLaneKind,
+  excludeModelIds: string[],
+): Promise<RuntimeAttempt[]> {
+  const laneType = laneToDb(kind);
+  try {
+    const models = await prisma.ai_models.findMany({
+      where: {
+        lane_type: laneType,
+        is_active: true,
+        id: { notIn: excludeModelIds.length > 0 ? excludeModelIds : ['__none__'] },
+        provider: { is_active: true },
+      },
+      include: { provider: true },
+    });
+
+    // Sort by priority (lower number = higher priority); fall back to display_name.
+    const sorted = [...models].sort((a: any, b: any) => {
+      const ap = a.priority ?? 100;
+      const bp = b.priority ?? 100;
+      if (ap !== bp) return ap - bp;
+      const apv = a.provider?.priority ?? 100;
+      const bpv = b.provider?.priority ?? 100;
+      return apv - bpv;
+    });
+
+    return sorted.map((m: any) => ({
+      modelId: m.id,
+      modelDisplayName: m.display_name,
+      providerId: m.provider.id,
+      config: buildGatewayConfig(kind, m, m.provider),
+    }));
+  } catch (err: any) {
+    logger.debug('loadExtraSameLaneAttempts failed (priority column may be missing)', { error: err.message });
+    return [];
+  }
+}
+
 async function loadLaneConfig(kind: GatewayLaneKind, villageId?: string | null): Promise<RuntimeGatewayEntry> {
   const assignment = await loadAssignment(kind, villageId);
 
@@ -154,7 +237,7 @@ async function loadLaneConfig(kind: GatewayLaneKind, villageId?: string | null):
       modelId: assignment.primary_model.id,
       modelDisplayName: assignment.primary_model.display_name,
       providerId: assignment.primary_model.provider.id,
-      config: buildGatewayConfig(kind, assignment.primary_model, assignment.primary_model.provider),
+      config: buildGatewayConfig(kind, assignment.primary_model as any, assignment.primary_model.provider as any),
     },
   ];
 
@@ -166,9 +249,16 @@ async function loadLaneConfig(kind: GatewayLaneKind, villageId?: string | null):
       modelId: assignment.fallback_model.id,
       modelDisplayName: assignment.fallback_model.display_name,
       providerId: assignment.fallback_model.provider.id,
-      config: buildGatewayConfig(kind, assignment.fallback_model, assignment.fallback_model.provider),
+      config: buildGatewayConfig(kind, assignment.fallback_model as any, assignment.fallback_model.provider as any),
     });
   }
+
+  // Add additional same-lane providers as extra fallback attempts.
+  const extras = await loadExtraSameLaneAttempts(
+    kind,
+    attempts.map((a) => a.modelId).filter((id): id is string => Boolean(id)),
+  );
+  attempts.push(...extras);
 
   return {
     expiresAt: Date.now() + CACHE_TTL_MS,
@@ -196,8 +286,16 @@ export async function getRuntimeGatewayConfig(kind: GatewayLaneKind, villageId?:
   return loaded;
 }
 
-export function clearRuntimeGatewayConfigCache() {
-  cache.clear();
+/**
+ * Selective cache invalidation. Call without args to clear everything.
+ * TODO: integrate Redis pubsub for multi-instance invalidation.
+ */
+export function clearRuntimeGatewayConfigCache(kind?: GatewayLaneKind, villageId?: string | null): void {
+  if (!kind) {
+    cache.clear();
+    return;
+  }
+  cache.delete(cacheKey(kind, villageId));
 }
 
 export async function getRuntimeGatewayAttempts(kind: GatewayLaneKind, villageId?: string | null): Promise<RuntimeAttempt[]> {
