@@ -565,17 +565,15 @@ jobs:
             
             cd ~/genfity/govconnect
             
-            # Run migrations for dashboard (has Prisma)
-            if sudo docker compose ps dashboard | grep -q "running"; then
-              echo "📦 Running Dashboard migrations..."
-              sudo docker compose exec -T dashboard sh -c "./node_modules/.bin/prisma migrate deploy"
-            fi
-            
-            # Run migrations for other services if they have Prisma
-            for service in channel-service ai-service case-service notification-service; do
-              if sudo docker compose ps $service | grep -q "running"; then
-                echo "📦 Running $service migrations..."
-                sudo docker compose exec -T $service sh -c "./node_modules/.bin/prisma migrate deploy"
+            # Run migrations for services that are running and include Prisma.
+            for service in dashboard channel-service ai-service case-service notification-service; do
+              if sudo docker compose ps --services --status running | grep -qx "$service"; then
+                if sudo docker compose exec -T "$service" sh -c "test -x ./node_modules/.bin/prisma && test -d prisma"; then
+                  echo "📦 Running $service migrations..."
+                  sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate deploy"
+                else
+                  echo "⏭️ $service has no Prisma migrations"
+                fi
               fi
             done
             
@@ -596,11 +594,25 @@ jobs:
             DASHBOARD_PORT=$(grep -E '^DASHBOARD_PORT=' .env 2>/dev/null | tail -n 1 | cut -d= -f2-)
             DASHBOARD_PORT=${DASHBOARD_PORT:-3000}
 
-            curl -sf "http://localhost:${DASHBOARD_PORT}/" && echo " ✅ Dashboard OK" || { echo " ❌ Dashboard FAILED"; failures=$((failures + 1)); }
-            curl -sf http://localhost:3001/health && echo " ✅ Channel OK" || { echo " ❌ Channel FAILED"; failures=$((failures + 1)); }
-            curl -sf http://localhost:3002/health && echo " ✅ AI OK" || { echo " ❌ AI FAILED"; failures=$((failures + 1)); }
-            curl -sf http://localhost:3003/health && echo " ✅ Case OK" || { echo " ❌ Case FAILED"; failures=$((failures + 1)); }
-            curl -sf http://localhost:3004/health && echo " ✅ Notification OK" || { echo " ❌ Notification FAILED"; failures=$((failures + 1)); }
+            check_url() {
+              name="$1"
+              url="$2"
+              for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+                if curl -sf "$url" >/dev/null; then
+                  echo " ✅ $name OK"
+                  return 0
+                fi
+                sleep 5
+              done
+              echo " ❌ $name FAILED"
+              failures=$((failures + 1))
+            }
+
+            check_url "Dashboard" "http://localhost:${DASHBOARD_PORT}/"
+            check_url "Channel" "http://localhost:3001/health"
+            check_url "AI" "http://localhost:3002/health"
+            check_url "Case" "http://localhost:3003/health"
+            check_url "Notification" "http://localhost:3004/health"
 
             if [ "$failures" -gt 0 ]; then
               echo "❌ $failures health checks failed"

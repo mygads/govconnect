@@ -100,6 +100,8 @@ docker-compose*
 uploads/
 
 # Prisma
+!prisma/
 !prisma/schema.prisma
 !prisma/migrations/
-!prisma/migrations/**/*
+!prisma/migrations/*/
+!prisma/migrations/*/migration.sql
