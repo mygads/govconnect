@@ -51,18 +51,36 @@ export function verifyWebhookOrigin(
   next();
 }
 
-/**
- * Verify the `x-hmac-signature` header that genfity-wa attaches to outbound webhooks.
- *
- * Strategy:
- * 1. If neither the env nor any session has a configured secret, the signature header
- *    will be missing — we soft-skip in dev (`WEBHOOK_HMAC_REQUIRED` !== 'true').
- * 2. Resolve the per-session secret by looking up the village via `instanceName`
- *    (slug) or `userID` (raw village_id) from the parsed body.
- * 3. Recompute hex(HMAC-SHA256(rawBody, secret)) and timing-safe compare.
- *
- * Requires `req.rawBody` to be populated by the body parser (see app.ts).
- */
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function webhookCandidateFromBody(body: any): string {
+  const direct = firstString(body?.instanceName, body?.userID, body?.userId, body?.session_id, body?.sessionId);
+  if (direct) return direct;
+
+  if (typeof body?.jsonData === 'string') {
+    try {
+      const parsed = JSON.parse(body.jsonData);
+      return firstString(parsed?.instanceName, parsed?.userID, parsed?.userId, parsed?.session_id, parsed?.sessionId);
+    } catch {
+      return '';
+    }
+  }
+
+  return firstString(
+    body?.event?.instanceName,
+    body?.event?.userID,
+    body?.event?.userId,
+    body?.data?.instanceName,
+    body?.data?.userID,
+    body?.data?.userId
+  );
+}
+
 export async function verifyWebhookHmac(
   req: Request,
   res: Response,
@@ -70,33 +88,10 @@ export async function verifyWebhookHmac(
 ): Promise<void> {
   const required = String(process.env.WEBHOOK_HMAC_REQUIRED || '').toLowerCase() === 'true';
   const signature = (req.headers['x-hmac-signature'] as string | undefined)?.trim();
-
-  if (!signature) {
-    if (required) {
-      logger.warn('Webhook rejected: x-hmac-signature header missing');
-      res.status(401).json({ error: 'Missing webhook signature' });
-      return;
-    }
-    return next();
-  }
-
-  const rawBody: Buffer | undefined = (req as any).rawBody;
-  if (!rawBody || rawBody.length === 0) {
-    logger.warn('Webhook signature present but raw body unavailable');
-    res.status(400).json({ error: 'Cannot verify signature: empty body' });
-    return;
-  }
-
-  // Resolve session by instanceName (preferred) or userID fallback.
-  // Form mode puts these on top-level fields; JSON mode nests them.
-  const body = req.body || {};
-  const candidate =
-    (typeof body.instanceName === 'string' && body.instanceName.trim()) ||
-    (typeof body.userID === 'string' && body.userID.trim()) ||
-    '';
+  const candidate = webhookCandidateFromBody(req.body || {});
 
   if (!candidate) {
-    if (required) {
+    if (required || signature) {
       logger.warn('Webhook rejected: cannot determine session for HMAC verification');
       res.status(400).json({ error: 'Missing instanceName/userID for signature verification' });
       return;
@@ -124,7 +119,7 @@ export async function verifyWebhookHmac(
   }
 
   if (!secret) {
-    if (required) {
+    if (required || signature) {
       logger.warn('Webhook rejected: no webhook_secret stored for session', { candidate });
       res.status(401).json({ error: 'Unknown signing key' });
       return;
@@ -132,8 +127,20 @@ export async function verifyWebhookHmac(
     return next();
   }
 
+  if (!signature) {
+    logger.warn('Webhook rejected: x-hmac-signature header missing', { candidate });
+    res.status(401).json({ error: 'Missing webhook signature' });
+    return;
+  }
+
+  const rawBody: Buffer | undefined = (req as any).rawBody;
+  if (!rawBody || rawBody.length === 0) {
+    logger.warn('Webhook signature present but raw body unavailable', { candidate });
+    res.status(400).json({ error: 'Cannot verify signature: empty body' });
+    return;
+  }
+
   const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-  // Strip optional "sha256=" prefix that some senders use.
   const provided = signature.startsWith('sha256=') ? signature.slice(7) : signature;
 
   let ok = false;
