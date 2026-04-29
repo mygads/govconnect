@@ -565,10 +565,19 @@ jobs:
             
             cd ~/genfity/govconnect
             
-            # Run migrations for services that are running and include Prisma.
+            CHANNEL_NEEDS_BASELINE=$(sudo -u postgres psql -d govconnect -Atc "select case when exists (select 1 from information_schema.tables where table_schema = 'channel' and table_name = 'wa_sessions') and not exists (select 1 from information_schema.tables where table_schema = 'channel' and table_name = '_prisma_migrations') then 'true' else 'false' end")
+
+            # Run migrations for services that are running and include migration files.
             for service in dashboard channel-service ai-service case-service notification-service; do
               if sudo docker compose ps --services --status running | grep -qx "$service"; then
-                if sudo docker compose exec -T "$service" sh -c "test -x ./node_modules/.bin/prisma && test -d prisma"; then
+                if sudo docker compose exec -T "$service" sh -c "test -x ./node_modules/.bin/prisma && test -d prisma/migrations && test -n \"\$(ls -A prisma/migrations 2>/dev/null)\""; then
+                  if [ "$service" = "channel-service" ] && [ "$CHANNEL_NEEDS_BASELINE" = "true" ]; then
+                    echo "📌 Marking existing channel baseline migrations as applied..."
+                    for migration in 20240101000000_channel_baseline 20250101000000_add_wa_support_fields 20260207_add_instance_name 20260424_add_takeover_enrichment_json; do
+                      sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate resolve --applied $migration" || true
+                    done
+                  fi
+
                   echo "📦 Running $service migrations..."
                   sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate deploy"
                 else
