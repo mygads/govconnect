@@ -398,6 +398,8 @@ jobs:
           AI_BUILD: ${{ needs.build-ai-service.result }}
           CASE_BUILD: ${{ needs.build-case-service.result }}
           NOTIFICATION_BUILD: ${{ needs.build-notification-service.result }}
+          DEPLOY_ONLY: ${{ github.event.inputs.deploy_only }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           echo "🚀 Deploying GovConnect to VPS..."
           echo "📊 Build Results:"
@@ -406,7 +408,8 @@ jobs:
           echo "  - AI: $AI_BUILD"
           echo "  - Case: $CASE_BUILD"
           echo "  - Notification: $NOTIFICATION_BUILD"
-          
+          echo "  - Image tag: $IMAGE_TAG"
+
           # Build list of services to recreate (only those that were built successfully)
           SERVICES_TO_RECREATE=""
           if [ "$DASHBOARD_BUILD" == "success" ]; then
@@ -427,9 +430,14 @@ jobs:
           
           echo "📦 Services to recreate: $SERVICES_TO_RECREATE"
           
+          if [ "$DEPLOY_ONLY" == "true" ]; then
+            IMAGE_TAG="latest"
+          fi
+
           # Export for SSH
           export SERVICES_TO_RECREATE
-          
+          export IMAGE_TAG
+
           ssh $VPS_USER@$VPS_HOST "bash -s" << EOF
             set -e
             
@@ -453,24 +461,69 @@ jobs:
             
             # Login to GHCR using PAT
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
-            
+
+            # Channel schema was historically created by postgres; make the runtime
+            # migration role own its schema objects before channel-service starts.
+            if sudo -u postgres psql -d govconnect -v ON_ERROR_STOP=1 <<'SQL'
+DO \$\$
+DECLARE
+  obj record;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'channel') THEN
+    EXECUTE 'ALTER SCHEMA channel OWNER TO govconnect';
+
+    IF EXISTS (
+      SELECT 1
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = 'channel' AND t.typname = 'ChannelType'
+    ) THEN
+      EXECUTE 'ALTER TYPE channel."ChannelType" OWNER TO govconnect';
+    END IF;
+
+    FOR obj IN
+      SELECT schemaname, tablename
+      FROM pg_tables
+      WHERE schemaname = 'channel'
+    LOOP
+      EXECUTE format('ALTER TABLE %I.%I OWNER TO govconnect', obj.schemaname, obj.tablename);
+    END LOOP;
+
+    FOR obj IN
+      SELECT sequence_schema, sequence_name
+      FROM information_schema.sequences
+      WHERE sequence_schema = 'channel'
+    LOOP
+      EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO govconnect', obj.sequence_schema, obj.sequence_name);
+    END LOOP;
+  END IF;
+END \$\$;
+SQL
+            then
+              echo "✅ Channel database ownership reconciled"
+            else
+              echo "❌ Channel database ownership reconciliation failed"
+              exit 1
+            fi
+
             # Set image variables for all services
-            export IMAGE_DASHBOARD=ghcr.io/mygads/govconnect-dashboard:latest
-            export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:latest
-            export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:latest
-            export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:latest
-            export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:latest
-            
+            export IMAGE_DASHBOARD=ghcr.io/mygads/govconnect-dashboard:${IMAGE_TAG}
+            export IMAGE_CHANNEL=ghcr.io/mygads/govconnect-channel-service:${IMAGE_TAG}
+            export IMAGE_AI=ghcr.io/mygads/govconnect-ai-service:${IMAGE_TAG}
+            export IMAGE_CASE=ghcr.io/mygads/govconnect-case-service:${IMAGE_TAG}
+            export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:${IMAGE_TAG}
+            echo "📌 Deploying image tag: ${IMAGE_TAG}"
+
             # Pull only images that were built successfully
             if [ -n "\$SERVICES_TO_PULL" ]; then
               echo "📥 Pulling images for: \$SERVICES_TO_PULL"
-              sudo -E docker compose pull \$SERVICES_TO_PULL || true
+              sudo -E docker compose pull \$SERVICES_TO_PULL
               
               echo "🚀 Recreating services: \$SERVICES_TO_PULL"
               sudo -E docker compose up -d --no-deps --force-recreate \$SERVICES_TO_PULL
             else
               echo "⚠️ No services to recreate, running all services"
-              sudo -E docker compose pull --ignore-pull-failures || true
+              sudo -E docker compose pull
               sudo -E docker compose up -d
             fi
             
@@ -498,8 +551,8 @@ jobs:
             # Check if PostgreSQL is accessible
             echo "🔍 Checking PostgreSQL connection..."
             if ! sudo -u postgres psql -c '\l' >/dev/null 2>&1; then
-              echo "❌ PostgreSQL not accessible, skipping migrations"
-              exit 0
+              echo "❌ PostgreSQL not accessible, failing deployment migrations"
+              exit 1
             fi
             
             # Create databases if they don't exist
@@ -515,14 +568,14 @@ jobs:
             # Run migrations for dashboard (has Prisma)
             if sudo docker compose ps dashboard | grep -q "running"; then
               echo "📦 Running Dashboard migrations..."
-              sudo docker compose exec -T dashboard sh -c "./node_modules/.bin/prisma migrate deploy || ./node_modules/.bin/prisma db push --skip-generate" 2>&1 || echo "⚠️ Dashboard migration completed with warnings"
+              sudo docker compose exec -T dashboard sh -c "./node_modules/.bin/prisma migrate deploy"
             fi
             
             # Run migrations for other services if they have Prisma
             for service in channel-service ai-service case-service notification-service; do
               if sudo docker compose ps $service | grep -q "running"; then
                 echo "📦 Running $service migrations..."
-                sudo docker compose exec -T $service sh -c "./node_modules/.bin/prisma migrate deploy || ./node_modules/.bin/prisma db push --skip-generate" 2>&1 || echo "⚠️ $service migration completed with warnings"
+                sudo docker compose exec -T $service sh -c "./node_modules/.bin/prisma migrate deploy"
               fi
             done
             
@@ -539,22 +592,21 @@ jobs:
           
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             echo "Checking services..."
-            
-            # Check Dashboard
-            curl -sf http://localhost:3011/ && echo " ✅ Dashboard OK" || echo " ❌ Dashboard FAILED"
-            
-            # Check Channel Service
-            curl -sf http://localhost:3001/health && echo " ✅ Channel OK" || echo " ❌ Channel FAILED"
-            
-            # Check AI Service
-            curl -sf http://localhost:3002/health && echo " ✅ AI OK" || echo " ❌ AI FAILED"
-            
-            # Check Case Service
-            curl -sf http://localhost:3003/health && echo " ✅ Case OK" || echo " ❌ Case FAILED"
-            
-            # Check Notification Service
-            curl -sf http://localhost:3004/health && echo " ✅ Notification OK" || echo " ❌ Notification FAILED"
-            
+            failures=0
+            DASHBOARD_PORT=$(grep -E '^DASHBOARD_PORT=' .env 2>/dev/null | tail -n 1 | cut -d= -f2-)
+            DASHBOARD_PORT=${DASHBOARD_PORT:-3000}
+
+            curl -sf "http://localhost:${DASHBOARD_PORT}/" && echo " ✅ Dashboard OK" || { echo " ❌ Dashboard FAILED"; failures=$((failures + 1)); }
+            curl -sf http://localhost:3001/health && echo " ✅ Channel OK" || { echo " ❌ Channel FAILED"; failures=$((failures + 1)); }
+            curl -sf http://localhost:3002/health && echo " ✅ AI OK" || { echo " ❌ AI FAILED"; failures=$((failures + 1)); }
+            curl -sf http://localhost:3003/health && echo " ✅ Case OK" || { echo " ❌ Case FAILED"; failures=$((failures + 1)); }
+            curl -sf http://localhost:3004/health && echo " ✅ Notification OK" || { echo " ❌ Notification FAILED"; failures=$((failures + 1)); }
+
+            if [ "$failures" -gt 0 ]; then
+              echo "❌ $failures health checks failed"
+              exit 1
+            fi
+
             # Show container status and memory usage
             echo ""
             echo "Container Status:"

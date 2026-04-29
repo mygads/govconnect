@@ -35,7 +35,4 @@ coverage/
 Thumbs.db
 
 # Prisma
-prisma/migrations/*_*
-!prisma/migrations/.gitkeep
-
 /src/generated/prisma

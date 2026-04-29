@@ -3,6 +3,7 @@ import { body, query, validationResult } from 'express-validator';
 import { createHmac, timingSafeEqual } from 'crypto';
 import logger from '../utils/logger';
 import prisma from '../config/database';
+import { webhookCandidateFromBody } from '../utils/webhook-payload';
 
 // ==================== WEBHOOK ORIGIN VERIFICATION (Temuan 10) ====================
 
@@ -51,36 +52,6 @@ export function verifyWebhookOrigin(
   next();
 }
 
-function firstString(...values: unknown[]): string {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return '';
-}
-
-function webhookCandidateFromBody(body: any): string {
-  const direct = firstString(body?.instanceName, body?.userID, body?.userId, body?.session_id, body?.sessionId);
-  if (direct) return direct;
-
-  if (typeof body?.jsonData === 'string') {
-    try {
-      const parsed = JSON.parse(body.jsonData);
-      return firstString(parsed?.instanceName, parsed?.userID, parsed?.userId, parsed?.session_id, parsed?.sessionId);
-    } catch {
-      return '';
-    }
-  }
-
-  return firstString(
-    body?.event?.instanceName,
-    body?.event?.userID,
-    body?.event?.userId,
-    body?.data?.instanceName,
-    body?.data?.userID,
-    body?.data?.userId
-  );
-}
-
 export async function verifyWebhookHmac(
   req: Request,
   res: Response,
@@ -91,12 +62,9 @@ export async function verifyWebhookHmac(
   const candidate = webhookCandidateFromBody(req.body || {});
 
   if (!candidate) {
-    if (required || signature) {
-      logger.warn('Webhook rejected: cannot determine session for HMAC verification');
-      res.status(400).json({ error: 'Missing instanceName/userID for signature verification' });
-      return;
-    }
-    return next();
+    logger.warn('Webhook rejected: cannot determine session for HMAC verification');
+    res.status(400).json({ error: 'Missing instanceName/userID for signature verification' });
+    return;
   }
 
   let secret: string | null = null;

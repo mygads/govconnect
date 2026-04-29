@@ -14,7 +14,8 @@ import { resolveVillageIdFromInstanceName } from '../services/wa.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
 import { getQuery } from '../utils/http';
-import { 
+import { parseWebhookBody, webhookCandidateFromBody } from '../utils/webhook-payload';
+import {
   GenfityWebhookPayload,
 } from '../types/webhook.types';
 
@@ -46,35 +47,17 @@ async function isWaChannelEnabled(villageId?: string): Promise<boolean> {
  */
 export async function handleWebhook(req: Request, res: Response): Promise<void> {
   try {
-    let payload: GenfityWebhookPayload;
-    // In genfity-wa form mode, these are top-level fields alongside jsonData
-    const formInstanceName: string | undefined = req.body?.instanceName;
-    const formUserId: string | undefined = req.body?.userID;
-    
-    // Handle both JSON and form-urlencoded formats
-    if (req.body.jsonData) {
-      // Form mode: parse jsonData field
-      try {
-        payload = JSON.parse(req.body.jsonData);
-      } catch (e) {
-        logger.warn('Failed to parse jsonData field', { error: e });
-        res.json({ status: 'ok', message: 'Invalid jsonData' });
-        return;
-      }
-    } else {
-      // JSON mode: use body directly
-      payload = req.body;
+    const parsed = parseWebhookBody(req.body);
+    if (!parsed.payload) {
+      logger.warn('Failed to parse jsonData field', { error: parsed.parseError });
+      res.json({ status: 'ok', message: 'Invalid jsonData' });
+      return;
     }
 
-    // Resolve village_id (tenant) from webhook context.
-    // instanceName is the session name on the WA provider (often a slug like "desa-sanreseng-ade"),
-    // which needs to be resolved to the actual village_id (CUID) stored in the database.
-    const instanceName: string | undefined =
-      formInstanceName || payload.instanceName || formUserId || payload.userID;
-    const rawVillageId: string | undefined = instanceName;
-    // Resolve slug → CUID (if instanceName is a slug, look up wa_sessions.instance_name to get the real village_id)
-    const villageId: string | undefined = rawVillageId
-      ? await resolveVillageIdFromInstanceName(rawVillageId)
+    const payload: GenfityWebhookPayload = parsed.payload;
+    const instanceName = webhookCandidateFromBody(req.body);
+    const villageId: string | undefined = instanceName
+      ? await resolveVillageIdFromInstanceName(instanceName)
       : undefined;
 
     // Debug: Log full payload structure
