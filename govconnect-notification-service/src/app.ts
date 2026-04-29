@@ -3,12 +3,14 @@ import cors from 'cors';
 import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import promClient from 'prom-client';
+import crypto from 'crypto';
 import config from './config/env';
 import logger from './utils/logger';
 import prisma from './config/database';
 import { isConnected } from './services/rabbitmq.service';
 import { swaggerSpec } from './config/swagger';
 import { handleEvent } from './handlers/event.handler';
+import { errorResponse, successResponse } from './shared/error-response';
 
 // Initialize Prometheus default metrics
 promClient.collectDefaultMetrics({
@@ -18,8 +20,38 @@ promClient.collectDefaultMetrics({
 
 const app: Application = express();
 
+function internalApiKeyMatches(value: string | string[] | undefined): boolean {
+  const expected = config.internalApiKey?.trim();
+  const provided = Array.isArray(value) ? value[0]?.trim() : value?.trim();
+  if (!expected || !provided) return false;
+  const expectedBuf = Buffer.from(expected, 'utf8');
+  const providedBuf = Buffer.from(provided, 'utf8');
+  return expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf);
+}
+
+function internalAuthGuard(req: Request, res: Response, next: NextFunction): void {
+  const apiKey = req.headers['x-internal-api-key'] || req.headers['x-api-key'];
+  if (!internalApiKeyMatches(apiKey)) {
+    res.status(403).json(errorResponse('Forbidden'));
+    return;
+  }
+
+  next();
+}
+
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(origin => origin.trim()).filter(Boolean);
+if (!allowedOrigins || allowedOrigins.length === 0) {
+  logger.warn('ALLOWED_ORIGINS not set — CORS will reject all cross-origin requests');
+}
+
 // Middleware
-app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') || '*' }));
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins?.includes(origin)) return callback(null, true);
+    return callback(new Error(`CORS: origin ${origin} not allowed`));
+  },
+}));
 app.use(helmet());
 
 // Correlation ID middleware — must be before routes
@@ -30,7 +62,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Prometheus Metrics endpoint
-app.get('/metrics', async (_req: Request, res: Response) => {
+app.get('/metrics', internalAuthGuard, async (_req: Request, res: Response) => {
   try {
     res.set('Content-Type', promClient.register.contentType);
     const metrics = await promClient.register.metrics();
@@ -50,7 +82,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 });
 
 // Swagger API Documentation
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+app.use('/api-docs', internalAuthGuard, swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   explorer: true,
   customSiteTitle: 'GovConnect Notification Service API',
   customCss: '.swagger-ui .topbar { display: none }',
@@ -62,27 +94,27 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 }));
 
 // OpenAPI spec as JSON
-app.get('/api-docs.json', (_req, res) => {
+app.get('/api-docs.json', internalAuthGuard, (_req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(swaggerSpec);
 });
 
 app.post('/internal/events/:routingKey', async (req: Request, res: Response) => {
   const apiKey = req.headers['x-internal-api-key'] || req.headers['x-api-key'];
-  if (config.internalApiKey && apiKey !== config.internalApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (config.internalApiKey && !internalApiKeyMatches(apiKey)) {
+    return res.status(401).json(errorResponse('Unauthorized'));
   }
 
   const routingKey = String(req.params.routingKey || '').replace(/_/g, '.');
   try {
     await handleEvent(routingKey, req.body);
-    return res.json({ success: true });
+    return res.json(successResponse());
   } catch (error: any) {
     logger.error('Internal event handling failed', {
       routingKey,
       error: error.message,
     });
-    return res.status(500).json({ error: 'Internal event handling failed' });
+    return res.status(500).json(errorResponse('Internal event handling failed'));
   }
 });
 
@@ -113,7 +145,7 @@ app.get('/health/database', async (_req: Request, res: Response) => {
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
-    logger.error('Database health check failed:', error);
+    logger.error('Database health check failed', { error: error.message });
     res.status(503).json({
       status: 'error',
       database: 'disconnected',

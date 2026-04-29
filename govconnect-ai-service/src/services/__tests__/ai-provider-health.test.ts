@@ -1,12 +1,91 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// Stub prisma so health.service's $queryRawUnsafe / $executeRawUnsafe become no-ops
+const testState = vi.hoisted(() => {
+  const rows = new Map<string, any>();
+  const rowKey = (providerId: string, lane: string) => `${providerId}:${lane}`;
+  const sqlText = (strings: TemplateStringsArray) => Array.from(strings).join(' ');
+
+  const prismaMock = {
+    $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
+      const sql = sqlText(strings);
+
+      if (sql.includes('INSERT INTO ai_provider_health')) {
+        const [providerId, lane, failThreshold, demotedUntil] = values;
+        const key = rowKey(providerId, lane);
+        const existing = rows.get(key);
+        const consecutiveFailures = (existing?.consecutive_failures || 0) + 1;
+        const row = {
+          provider_id: providerId,
+          lane_type: lane,
+          consecutive_failures: consecutiveFailures,
+          demoted_until: consecutiveFailures >= failThreshold ? demotedUntil : existing?.demoted_until ?? null,
+          last_success_at: existing?.last_success_at ?? null,
+          last_failure_at: new Date(),
+          probe_in_flight_until: null,
+        };
+        rows.set(key, row);
+        return [row];
+      }
+
+      if (sql.includes('FOR UPDATE SKIP LOCKED')) {
+        const [providerId, lane] = values;
+        const row = rows.get(rowKey(providerId, lane));
+        if (
+          row?.demoted_until &&
+          row.demoted_until.getTime() <= Date.now() &&
+          (!row.probe_in_flight_until || row.probe_in_flight_until.getTime() < Date.now())
+        ) {
+          return [row];
+        }
+        return [];
+      }
+
+      if (sql.includes('SELECT provider_id')) {
+        const [providerId, lane] = values;
+        const row = rows.get(rowKey(providerId, lane));
+        return row ? [row] : [];
+      }
+
+      return [];
+    }),
+    $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
+      const sql = sqlText(strings);
+
+      if (sql.includes('UPDATE ai_provider_health')) {
+        const [probeUntil, providerId, lane] = values;
+        const key = rowKey(providerId, lane);
+        const row = rows.get(key);
+        if (row) rows.set(key, { ...row, probe_in_flight_until: probeUntil });
+        return 1;
+      }
+
+      if (sql.includes('INSERT INTO ai_provider_health')) {
+        const [providerId, lane, consecutiveFailures, demotedUntil, lastSuccessAt, lastFailureAt, probeInFlightUntil] = values;
+        rows.set(rowKey(providerId, lane), {
+          provider_id: providerId,
+          lane_type: lane,
+          consecutive_failures: consecutiveFailures,
+          demoted_until: demotedUntil,
+          last_success_at: lastSuccessAt,
+          last_failure_at: lastFailureAt,
+          probe_in_flight_until: probeInFlightUntil,
+        });
+        return 1;
+      }
+
+      return 1;
+    }),
+    $transaction: vi.fn(async (callback: any) => callback(prismaMock)),
+  };
+
+  return { rows, rowKey, prismaMock };
+});
+
 vi.mock('../../lib/prisma', () => ({
-  default: {
-    $queryRawUnsafe: vi.fn(async () => []),
-    $executeRawUnsafe: vi.fn(async () => 1),
-  },
+  default: testState.prismaMock,
 }));
+
+const prismaMock = testState.prismaMock;
 
 import {
   recordSuccess,
@@ -20,6 +99,10 @@ const PID = 'provider-1';
 
 describe('ai-provider-health', () => {
   beforeEach(() => {
+    testState.rows.clear();
+    prismaMock.$queryRaw.mockClear();
+    prismaMock.$executeRaw.mockClear();
+    prismaMock.$transaction.mockClear();
     _clearHealthCacheForTests();
   });
 
@@ -35,23 +118,38 @@ describe('ai-provider-health', () => {
     expect(await isAvailable(PID, 'llm')).toBe(false);
   });
 
-  it('success resets failure counter', async () => {
+  it('success resets failure counter and demotion', async () => {
     await recordFailure(PID, 'llm');
     await recordFailure(PID, 'llm');
+    await recordFailure(PID, 'llm');
+    expect(await isAvailable(PID, 'llm')).toBe(false);
+
     await recordSuccess(PID, 'llm');
+    expect(await isAvailable(PID, 'llm')).toBe(true);
+
     await recordFailure(PID, 'llm');
     await recordFailure(PID, 'llm');
-    expect(await isAvailable(PID, 'llm')).toBe(true); // only 2 since reset
+    expect(await isAvailable(PID, 'llm')).toBe(true);
   });
 
-  it('shouldProbe is single-shot when cooldown lapsed', async () => {
+  it('requires a single probe claim after cooldown lapses', async () => {
     await recordFailure(PID, 'llm');
     await recordFailure(PID, 'llm');
     await recordFailure(PID, 'llm');
-    // Force-expire cooldown
+
+    const row = testState.rows.get(testState.rowKey(PID, 'llm'));
+    testState.rows.set(testState.rowKey(PID, 'llm'), {
+      ...row,
+      demoted_until: new Date(Date.now() - 1000),
+      probe_in_flight_until: null,
+    });
     _clearHealthCacheForTests();
-    // Manually craft probe: simulate by checking shouldProbe with no cooldown left
-    // We can't easily fast-forward time here; assert API contract: while still demoted, no probe.
+
+    expect(await isAvailable(PID, 'llm')).toBe(false);
+    expect(await shouldProbe(PID, 'llm')).toBe(true);
     expect(await shouldProbe(PID, 'llm')).toBe(false);
+
+    await recordSuccess(PID, 'llm');
+    expect(await isAvailable(PID, 'llm')).toBe(true);
   });
 });

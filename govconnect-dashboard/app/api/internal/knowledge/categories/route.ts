@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isAuthorizedInternalRequest } from '@/lib/internal-api-auth'
 import prisma from '@/lib/prisma'
 
 /**
@@ -12,36 +13,9 @@ import prisma from '@/lib/prisma'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-function getInternalApiKey(): string | null {
-  return process.env['INTERNAL_API_KEY'] || null
-}
-
-function normalizeKey(value: string | null): string | null {
-  if (!value) return null
-  let key = value.trim()
-  if (key.toLowerCase().startsWith('bearer ')) {
-    key = key.slice('bearer '.length).trim()
-  }
-  if (
-    (key.startsWith('"') && key.endsWith('"')) ||
-    (key.startsWith("'") && key.endsWith("'"))
-  ) {
-    key = key.slice(1, -1).trim()
-  }
-  return key.length > 0 ? key : null
-}
-
 export async function GET(request: NextRequest) {
   try {
-    const expectedApiKey = normalizeKey(getInternalApiKey())
-    const apiKey =
-      normalizeKey(request.headers.get('x-internal-api-key')) ||
-      normalizeKey(request.headers.get('authorization'))
-
-    if (!expectedApiKey) {
-      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
-    }
-    if (!apiKey || apiKey !== expectedApiKey) {
+    if (!isAuthorizedInternalRequest(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

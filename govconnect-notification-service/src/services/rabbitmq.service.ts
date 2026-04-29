@@ -9,6 +9,9 @@ let connection: any = null;
 let channel: Channel | null = null;
 let activeHandler: ((routingKey: string, message: any) => Promise<void>) | null = null;
 
+const MAX_HANDLER_RETRIES = 5;
+const DLQ_NAME = 'notification-service.dlq';
+
 let isReconnecting = false;
 let isShuttingDown = false;
 let reconnectAttempts = 0;
@@ -35,6 +38,52 @@ function calculateReconnectDelay(attempt: number): number {
  */
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getRetryCount(msg: ConsumeMessage): number {
+  const value = msg.properties.headers?.['x-retry-count'];
+  return typeof value === 'number' ? value : Number(value || 0);
+}
+
+async function sendToDlq(msg: ConsumeMessage, routingKey: string, reason: string): Promise<void> {
+  if (!channel) throw new Error('RabbitMQ channel not initialized');
+  await channel.assertQueue(DLQ_NAME, { durable: true });
+  channel.sendToQueue(DLQ_NAME, msg.content, {
+    persistent: true,
+    contentType: msg.properties.contentType,
+    correlationId: msg.properties.correlationId,
+    headers: {
+      ...(msg.properties.headers || {}),
+      'x-original-routing-key': routingKey,
+      'x-dead-letter-reason': reason.slice(0, 500),
+    },
+  });
+}
+
+async function retryOrDlq(msg: ConsumeMessage, routingKey: string, error: unknown): Promise<void> {
+  if (!channel) throw new Error('RabbitMQ channel not initialized');
+  const retryCount = getRetryCount(msg);
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (retryCount >= MAX_HANDLER_RETRIES) {
+    await sendToDlq(msg, routingKey, message);
+    channel.ack(msg);
+    logger.error('Message moved to notification DLQ after max retries', { routingKey, retryCount, error: message });
+    return;
+  }
+
+  channel.publish(RABBITMQ_CONFIG.exchange, routingKey, msg.content, {
+    persistent: true,
+    contentType: msg.properties.contentType,
+    correlationId: msg.properties.correlationId,
+    headers: {
+      ...(msg.properties.headers || {}),
+      'x-retry-count': retryCount + 1,
+      'x-last-error': message.slice(0, 500),
+    },
+  });
+  channel.ack(msg);
+  logger.warn('Message republished for bounded notification retry', { routingKey, retryCount: retryCount + 1 });
 }
 
 async function ensureRabbitMqVhost(rabbitmqUrl: string): Promise<void> {
@@ -276,15 +325,12 @@ export async function startConsumer(
           content
         });
 
-        // Reject message and requeue if not a parsing error
         if (error instanceof SyntaxError) {
-          // Don't requeue if JSON is invalid
-          channel!.nack(msg, false, false);
-          logger.warn('Message rejected (invalid JSON)', { routingKey });
+          await sendToDlq(msg, routingKey, 'invalid_json');
+          channel!.ack(msg);
+          logger.warn('Message moved to notification DLQ (invalid JSON)', { routingKey });
         } else {
-          // Requeue for retry
-          channel!.nack(msg, false, true);
-          logger.warn('Message requeued for retry', { routingKey });
+          await retryOrDlq(msg, routingKey, error);
         }
       }
     },

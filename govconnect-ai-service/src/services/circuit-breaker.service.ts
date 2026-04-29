@@ -24,6 +24,51 @@ const circuitBreakerOptions: CircuitBreaker.Options = {
   rollingCountBuckets: 10, // Number of buckets in rolling window
 };
 
+const SENSITIVE_HEADER_NAMES = new Set([
+  'authorization',
+  'proxy-authorization',
+  'x-internal-api-key',
+  'x-api-key',
+  'x-goog-api-key',
+  'api-key',
+  'apikey',
+  'x-auth-token',
+  'cookie',
+  'set-cookie',
+]);
+
+function sanitizeUrl(value?: string): string | undefined {
+  if (!value) return value;
+  try {
+    const parsed = new URL(value);
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (/token|key|secret|auth|password/i.test(key)) {
+        parsed.searchParams.set(key, '[REDACTED]');
+      }
+    }
+    return parsed.toString();
+  } catch {
+    return value.replace(/([?&][^=]*(?:token|key|secret|auth|password)[^=]*=)[^&]*/gi, '$1[REDACTED]');
+  }
+}
+
+function sanitizeHeaders(headers: unknown): Record<string, unknown> | undefined {
+  if (!headers || typeof headers !== 'object') return undefined;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    sanitized[key] = SENSITIVE_HEADER_NAMES.has(key.toLowerCase()) ? '[REDACTED]' : value;
+  }
+  return sanitized;
+}
+
+function describeResponseData(data: unknown): unknown {
+  if (!data || typeof data !== 'object') {
+    return typeof data === 'string' ? { type: 'string', length: data.length } : { type: typeof data };
+  }
+  if (Array.isArray(data)) return { type: 'array', length: data.length };
+  return { type: 'object', keys: Object.keys(data as Record<string, unknown>).slice(0, 20) };
+}
+
 // Fallback response when circuit is open
 interface FallbackResponse {
   status: number;
@@ -45,7 +90,7 @@ const fallback = (
   }
 
   logger.warn('Circuit breaker fallback triggered', {
-    url: config?.url,
+    url: sanitizeUrl(config?.url),
     method: config?.method,
     errorName: error?.name,
     errorMessage: error?.message,
@@ -68,26 +113,26 @@ const httpRequest = async (
   config: AxiosRequestConfig
 ): Promise<AxiosResponse> => {
   logger.debug('Circuit breaker httpRequest called', {
-    url: config.url,
+    url: sanitizeUrl(config.url),
     method: config.method,
-    headers: config.headers,
-    dataKeys: config.data ? Object.keys(config.data) : [],
+    headers: sanitizeHeaders(config.headers),
+    dataKeys: config.data && typeof config.data === 'object' ? Object.keys(config.data) : [],
   });
   
   try {
     const response = await axios(config);
     logger.debug('Circuit breaker httpRequest success', {
-      url: config.url,
+      url: sanitizeUrl(config.url),
       status: response.status,
     });
     return response;
   } catch (error: any) {
     logger.error('Circuit breaker httpRequest error', {
-      url: config.url,
+      url: sanitizeUrl(config.url),
       errorName: error.name,
       errorMessage: error.message,
       responseStatus: error.response?.status,
-      responseData: error.response?.data,
+      responseData: describeResponseData(error.response?.data),
     });
     throw error;
   }

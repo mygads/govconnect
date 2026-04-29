@@ -481,15 +481,15 @@ export async function getComplaintStatistics(villageId?: string) {
   return {
     by_status: totalByStatus.map((item: any) => ({
       status: item.status,
-      count: item._count._all,
+      count: item._count.status,
     })),
     by_kategori: totalByKategori.map((item: any) => ({
       kategori: item.kategori,
-      count: item._count._all,
+      count: item._count.kategori,
     })),
     by_rt_rw: totalByRtRw.map((item: any) => ({
       rt_rw: item.rt_rw,
-      count: item._count._all,
+      count: item._count.rt_rw,
     })),
     recent_7_days: recentComplaints,
   };

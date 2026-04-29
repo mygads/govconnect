@@ -38,6 +38,9 @@ export function getInternalApiKey(): string {
   
   const keyValue = process.env['INTERNAL_API_KEY']?.trim() || '';
   if (!keyValue) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('INTERNAL_API_KEY is required in production');
+    }
     if (!_internalApiKeyWarned) {
       console.warn('WARNING: INTERNAL_API_KEY not set — internal service routes may fail until runtime env is injected');
       _internalApiKeyWarned = true;
@@ -72,6 +75,26 @@ const serviceUrlMap: Record<ServicePathType, string> = {
   '/notification': NOTIFICATION_SERVICE_URL,
 };
 
+function normalizeBaseUrl(name: string, value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('URL must use http or https');
+    }
+    return parsed.toString().replace(/\/$/, '');
+  } catch (error: any) {
+    const message = `${name} is invalid: ${error.message}`;
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(message);
+    }
+    console.warn(message);
+    return null;
+  }
+}
+
 /**
  * Build full URL untuk service
  * Prioritas: Direct service URL > API_BASE_URL with path prefix
@@ -79,15 +102,21 @@ const serviceUrlMap: Record<ServicePathType, string> = {
 export function buildUrl(service: ServicePathType, path: string): string {
   // Pastikan path dimulai dengan /
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  
-  // Use direct service URL if available
-  const directUrl = serviceUrlMap[service];
+  const directUrl = normalizeBaseUrl(`${service} service URL`, serviceUrlMap[service]);
   if (directUrl) {
-    return `${directUrl}${normalizedPath}`;
+    return new URL(normalizedPath, `${directUrl}/`).toString();
   }
-  
-  // Fallback to API_BASE_URL with path prefix
-  return `${API_BASE_URL}${service}${normalizedPath}`;
+
+  const fallbackUrl = normalizeBaseUrl('API_BASE_URL', API_BASE_URL);
+  if (fallbackUrl) {
+    return new URL(`${service}${normalizedPath}`, `${fallbackUrl}/`).toString();
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(`Missing service URL for ${service}; configure direct service URL or API_BASE_URL`);
+  }
+
+  return `${service}${normalizedPath}`;
 }
 
 /**

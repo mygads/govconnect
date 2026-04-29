@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isAuthorizedInternalRequest } from '@/lib/internal-api-auth'
 import prisma from '@/lib/prisma'
 
 // Internal API for AI service to check if chatbot is enabled
@@ -7,19 +8,9 @@ import prisma from '@/lib/prisma'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-function getInternalApiKey(): string | null {
-  return process.env['INTERNAL_API_KEY'] || null
-}
-
 export async function GET(request: NextRequest) {
   try {
-    // Verify internal API key
-    const expectedApiKey = getInternalApiKey()
-    if (!expectedApiKey) {
-      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
-    }
-    const apiKey = request.headers.get('x-internal-api-key')
-    if (!apiKey || apiKey !== expectedApiKey) {
+    if (!isAuthorizedInternalRequest(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

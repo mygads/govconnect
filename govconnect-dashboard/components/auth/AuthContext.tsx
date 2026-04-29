@@ -2,7 +2,6 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-// Token management is handled locally
 
 interface AdminUser {
   id: string
@@ -20,6 +19,17 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
+let csrfTokenPromise: Promise<string | null> | null = null
+
+async function getCsrfToken(): Promise<string | null> {
+  csrfTokenPromise ??= fetch('/api/csrf', { credentials: 'same-origin' })
+    .then((response) => response.ok ? response.json() : null)
+    .then((data) => data?.csrfToken || null)
+    .catch(() => null)
+
+  return csrfTokenPromise
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AdminUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -31,25 +41,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      const token = localStorage.getItem('token')
-      if (!token) {
-        setIsLoading(false)
-        return
-      }
-
-      // Token is stored in localStorage
-
       const response = await fetch('/api/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        credentials: 'same-origin',
       })
       if (response.ok) {
         const data = await response.json()
         setUser(data.user)
       } else {
-        localStorage.removeItem('token')
-        // Token cleared from localStorage
+        setUser(null)
       }
     } catch (error) {
       console.error('Auth check failed:', error)
@@ -59,9 +58,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const login = async (username: string, password: string) => {
+    const csrfToken = await getCsrfToken()
     const response = await fetch('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+      },
+      credentials: 'same-origin',
       body: JSON.stringify({ username, password })
     })
 
@@ -71,18 +75,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await response.json()
-    localStorage.setItem('token', data.token)
-    
-    // Token stored in localStorage for subsequent requests
-    
     setUser(data.user)
     router.push('/dashboard')
   }
 
-  const logout = () => {
-    localStorage.removeItem('token')
-    setUser(null)
-    router.push('/login')
+  const logout = async () => {
+    try {
+      const csrfToken = await getCsrfToken()
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: csrfToken ? { 'x-csrf-token': csrfToken } : undefined,
+      })
+    } finally {
+      setUser(null)
+      router.push('/login')
+    }
   }
 
   return (

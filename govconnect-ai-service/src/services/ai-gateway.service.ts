@@ -8,7 +8,8 @@ import {
 import type { LLMMetrics } from '../types/llm-response.types';
 import logger from '../utils/logger';
 import { scrubSecrets } from '../utils/crypto';
-import { getRuntimeGatewayConfig } from './ai-runtime-config.service';
+import { sanitizeProviderDefaultHeaders } from '../utils/provider-headers';
+import { getRuntimeGatewayConfig, onRuntimeGatewayConfigCacheClear } from './ai-runtime-config.service';
 import * as healthService from './ai-provider-health.service';
 import { modelStatsService } from './model-stats.service';
 import { recordTokenUsage, type CallType, type LayerType } from './token-usage.service';
@@ -194,6 +195,34 @@ function getGatewayBreaker(key: string, action: (...args: any[]) => Promise<any>
   return breaker;
 }
 
+export function clearGatewayBreaker(key: string): void {
+  const breaker = gatewayBreakers.get(key);
+  if (!breaker) return;
+
+  const shutdown = (breaker as { shutdown?: () => void }).shutdown;
+  if (typeof shutdown === 'function') {
+    shutdown.call(breaker);
+  }
+  gatewayBreakers.delete(key);
+}
+
+function clearGatewayBreakers(kind?: GatewayLaneKind): void {
+  if (!kind) {
+    for (const breakerKey of Array.from(gatewayBreakers.keys())) {
+      clearGatewayBreaker(breakerKey);
+    }
+    return;
+  }
+
+  for (const breakerKey of Array.from(gatewayBreakers.keys())) {
+    if (breakerKey.startsWith(`${kind}:`)) {
+      clearGatewayBreaker(breakerKey);
+    }
+  }
+}
+
+onRuntimeGatewayConfigCacheClear((kind) => clearGatewayBreakers(kind));
+
 type AnyGatewayConfig = ChatGatewayLaneConfig | EmbeddingGatewayLaneConfig | RerankGatewayLaneConfig;
 
 type RuntimeGatewayAttempt = {
@@ -201,6 +230,7 @@ type RuntimeGatewayAttempt = {
   modelId?: string;
   modelDisplayName?: string;
   providerId?: string;
+  brokenReason?: string;
 };
 
 type RuntimeGatewayResolved = {
@@ -253,6 +283,7 @@ async function resolveGateway(kind: GatewayLaneKind, villageId?: string | null):
       modelId: attempt.modelId,
       modelDisplayName: attempt.modelDisplayName,
       providerId: attempt.providerId,
+      brokenReason: attempt.brokenReason,
     })),
     meta: resolved.meta,
   };
@@ -345,15 +376,7 @@ function parsePromptRerankResults(text: string, documents: string[], topN: numbe
 }
 
 // Exposed for unit tests.
-export const __test_only__ = { parsePromptRerankResults };
-
-/**
- * @deprecated Use isAIGatewayEnabledAsync — this sync variant cannot inspect DB-driven config.
- * Returns true to preserve legacy behaviour; will be removed in a future release.
- */
-export function isAIGatewayEnabled(_kind: GatewayLaneKind = 'llm'): boolean {
-  return true;
-}
+export const __test_only__ = { parsePromptRerankResults, buildHeaders };
 
 export async function isAIGatewayEnabledAsync(kind: GatewayLaneKind = 'llm', villageId?: string | null): Promise<boolean> {
   try {
@@ -362,27 +385,6 @@ export async function isAIGatewayEnabledAsync(kind: GatewayLaneKind = 'llm', vil
   } catch {
     return false;
   }
-}
-
-/**
- * @deprecated Use getAIGatewayInfoAsync — this sync variant cannot read the DB-backed config.
- */
-export function getAIGatewayInfo(kind: GatewayLaneKind = 'llm'): GatewayInfo {
-  return {
-    kind,
-    enabled: false,
-    configured: false,
-    provider: null,
-    baseUrl: null,
-    keyCount: 0,
-    path: null,
-    model: null,
-    timeoutMs: null,
-    dimensions: kind === 'embed' ? config.embeddingGateway.dimensions : undefined,
-    topN: kind === 'rerank' ? config.rerankerGateway.topN : undefined,
-    source: 'unconfigured',
-    error: 'AI lane is not configured in the database',
-  };
 }
 
 export async function getAIGatewayInfoAsync(kind: GatewayLaneKind = 'llm', villageId?: string | null): Promise<GatewayInfo> {
@@ -423,16 +425,6 @@ export async function getAIGatewayInfoAsync(kind: GatewayLaneKind = 'llm', villa
       error: error.message || 'AI lane is not configured in the database',
     };
   }
-}
-
-/** @deprecated Use getAllAIGatewayInfoAsync. */
-export function getAllAIGatewayInfo() {
-  return {
-    llm: getAIGatewayInfo('llm'),
-    embed: getAIGatewayInfo('embed'),
-    rag: getAIGatewayInfo('rag'),
-    rerank: getAIGatewayInfo('rerank'),
-  };
 }
 
 export async function getAllAIGatewayInfoAsync() {
@@ -502,9 +494,8 @@ function getGatewayUrl(kind: GatewayLaneKind, gateway: AnyGatewayConfig = getGat
 function buildHeaders(gateway: AnyGatewayConfig, apiKey: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
-    ...gateway.defaultHeaders,
+    ...sanitizeProviderDefaultHeaders(gateway.defaultHeaders),
   };
 
   if (gateway.provider === 'openrouter') {
@@ -512,12 +503,12 @@ function buildHeaders(gateway: AnyGatewayConfig, apiKey: string): Record<string,
       headers['HTTP-Referer'] = gateway.openRouterSiteUrl;
     }
     if (gateway.openRouterAppName) {
-      // L1: send both X-Title (canonical) and the legacy X-OpenRouter-Title.
       headers['X-Title'] = gateway.openRouterAppName;
       headers['X-OpenRouter-Title'] = gateway.openRouterAppName;
     }
   }
 
+  headers.Authorization = `Bearer ${apiKey}`;
   return headers;
 }
 
@@ -551,11 +542,6 @@ function buildProviderPreferences(gateway: AnyGatewayConfig): Record<string, unk
     default:
       return undefined;
   }
-}
-
-// Backwards-compat alias (kept so external callers don't break).
-function buildOpenRouterProviderPreferences(gateway: AnyGatewayConfig): Record<string, unknown> | undefined {
-  return buildProviderPreferences(gateway);
 }
 
 /**
@@ -612,6 +598,16 @@ async function reportAttemptResult(lane: GatewayLaneKind, attempt: RuntimeGatewa
   }
 }
 
+async function reportBrokenAttemptIfNeeded(lane: GatewayLaneKind, attempt: RuntimeGatewayAttempt): Promise<void> {
+  if (!attempt.brokenReason || !attempt.providerId) return;
+  logger.warn('AI gateway attempt has broken runtime configuration', {
+    lane,
+    providerId: attempt.providerId,
+    modelId: attempt.modelId,
+    brokenReason: attempt.brokenReason,
+  });
+  await reportAttemptResult(lane, attempt, false);
+}
 
 async function executeGatewayRequest<T>(
   kind: GatewayLaneKind,
@@ -689,13 +685,14 @@ function extractTextContent(content: unknown): string {
 function buildMetrics(
   kind: GatewayLaneKind,
   model: string,
+  provider: string,
   apiKey: GatewayApiKey,
   durationMs: number,
   usage: { inputTokens: number; outputTokens: number; totalTokens: number },
   startTime: number,
   attempt?: RuntimeGatewayAttempt,
 ): LLMMetrics {
-  const provider = getGatewayConfig(kind).provider;
+  const providerLabel = attempt?.config.provider ?? provider;
   const laneType = kind === 'rag' ? 'rewrite' : kind;
 
   return {
@@ -708,7 +705,7 @@ function buildMetrics(
     totalTokens: usage.totalTokens,
     keySource: `gateway_${kind}`,
     keyId: apiKey.label,
-    keyTier: provider,
+    keyTier: providerLabel,
     providerId: attempt?.providerId ?? null,
     modelConfigId: attempt?.modelId ?? null,
     laneType,
@@ -768,7 +765,7 @@ function buildPromptBody(
     body.response_format = { type: 'json_object' };
   }
 
-  const openRouterProvider = buildOpenRouterProviderPreferences(gateway);
+  const openRouterProvider = buildProviderPreferences(gateway);
   if (openRouterProvider) {
     body.provider = openRouterProvider;
   }
@@ -849,6 +846,9 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
         apiKeyCount: apiKeys.length,
         source: resolved.meta?.source,
       });
+      if (apiKeys.length === 0) {
+        await reportBrokenAttemptIfNeeded(lane, attempt);
+      }
       continue;
     }
 
@@ -874,6 +874,7 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
           const metrics = buildMetrics(
             lane,
             resolvedModel,
+            gateway.provider,
             apiKey,
             durationMs,
             { inputTokens, outputTokens, totalTokens },
@@ -965,6 +966,9 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
         apiKeyCount: apiKeys.length,
         source: resolved.meta?.source,
       });
+      if (apiKeys.length === 0) {
+        await reportBrokenAttemptIfNeeded(lane, attempt);
+      }
       continue;
     }
 
@@ -975,7 +979,7 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
       dimensions: options.dimensions || gateway.dimensions,
     };
 
-    const openRouterProvider = buildOpenRouterProviderPreferences(gateway);
+    const openRouterProvider = buildProviderPreferences(gateway);
     if (openRouterProvider) {
       body.provider = openRouterProvider;
     }
@@ -1009,6 +1013,7 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
         const metrics = buildMetrics(
           lane,
           resolvedModel,
+          gateway.provider,
           apiKey,
           durationMs,
           { inputTokens, outputTokens: 0, totalTokens },
@@ -1094,6 +1099,9 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
         apiKeyCount: apiKeys.length,
         source: resolved.meta?.source,
       });
+      if (apiKeys.length === 0) {
+        await reportBrokenAttemptIfNeeded(lane, attempt);
+      }
       continue;
     }
 
@@ -1104,7 +1112,7 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
       top_n: options.topN || gateway.topN,
     };
 
-    const openRouterProvider = buildOpenRouterProviderPreferences(gateway);
+    const openRouterProvider = buildProviderPreferences(gateway);
     if (openRouterProvider) {
       body.provider = openRouterProvider;
     }
@@ -1140,6 +1148,7 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
         const metrics = buildMetrics(
           lane,
           resolvedModel,
+          gateway.provider,
           apiKey,
           durationMs,
           { inputTokens, outputTokens: 0, totalTokens },

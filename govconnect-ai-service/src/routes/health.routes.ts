@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getChannelServiceMetrics, resetChannelServiceCircuitBreaker } from '../clients/channel-service.client';
 import { getCaseServiceMetrics, resetCaseServiceCircuitBreaker } from '../clients/case-service.client';
+import { requireInternalApiKey } from '../utils/internal-auth';
 
 const router = Router();
 
@@ -58,7 +59,7 @@ router.get('/circuit-breakers', (req: Request, res: Response) => {
 /**
  * Reset circuit breakers endpoint
  */
-router.post('/circuit-breakers/reset', (req: Request, res: Response) => {
+router.post('/circuit-breakers/reset', requireInternalApiKey, (req: Request, res: Response) => {
   try {
     const { service } = req.body;
     

@@ -49,6 +49,27 @@ Berdasarkan runtime dan dokumentasi yang aktif, GovConnect terdiri dari beberapa
 
 Ini adalah komposisi yang masuk akal. Sistem tidak memaksakan semua masalah ke satu service AI.
 
+### AI Provider Layer & Smart Routing
+
+AI service tidak lagi bergantung pada konfigurasi gateway statis sebagai sumber utama runtime. Provider, model, assignment lane, dan health state berada di database:
+
+```text
+ai_lane_assignments
+  -> ai_models
+      -> ai_providers(api_key_encrypted, base_url, default_headers_json)
+  -> ai_provider_health(consecutive_failures, demoted_until, probe_in_flight_until)
+```
+
+Alur routing per lane:
+
+1. Resolve primary/fallback/extra active model dalam satu snapshot transaksi.
+2. Lewati provider yang masih demoted.
+3. Jalankan request ke provider aktif dengan Authorization dari secret AES-256-GCM yang didekripsi saat runtime.
+4. Setelah 3 failure beruntun, provider didemote 1 jam.
+5. Setelah cooldown, satu instance mengklaim probe 60 detik via `FOR UPDATE SKIP LOCKED` dan `probe_in_flight_until`.
+
+Boundary ini menjaga dashboard/billing tetap di aplikasi pengelola, sementara AI service tetap menjadi owner runtime routing, health, dan wallet desa.
+
 ---
 
 ## 2. Boundary deterministik vs agentic

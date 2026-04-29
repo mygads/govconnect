@@ -29,7 +29,7 @@ import {
   callAIGatewayPrompt,
   callAIGatewayRerank,
   getDefaultRAGRewriteModels,
-  isAIGatewayEnabled,
+  isAIGatewayEnabledAsync,
 } from './ai-gateway.service';
 
 /**
@@ -75,8 +75,8 @@ function markRetrievalMode(results: VectorSearchResult[], retrievalMode: Retriev
   }));
 }
 
-function shouldEscalateHeuristicToExternalRerank(results: VectorSearchResult[], topK: number): boolean {
-  if (!config.rerankEnabled || !isAIGatewayEnabled('rerank')) {
+async function shouldEscalateHeuristicToExternalRerank(results: VectorSearchResult[], topK: number): Promise<boolean> {
+  if (!config.rerankEnabled || !(await isAIGatewayEnabledAsync('rerank', null))) {
     return false;
   }
 
@@ -117,7 +117,7 @@ function rerankRetrievedResults(
 
     if (retrievalMode === 'heuristic_rerank') {
       const heuristicResults = applyHeuristicRerank(results, query, topK, minScore);
-      if (!shouldEscalateHeuristicToExternalRerank(results, topK)) {
+      if (!(await shouldEscalateHeuristicToExternalRerank(results, topK))) {
         return {
           results: markRetrievalMode(heuristicResults, 'heuristic_rerank'),
           appliedMode: 'heuristic_rerank',
@@ -125,7 +125,7 @@ function rerankRetrievedResults(
       }
     }
 
-    if (!config.rerankEnabled || !isAIGatewayEnabled('rerank')) {
+    if (!config.rerankEnabled || !(await isAIGatewayEnabledAsync('rerank', null))) {
       return {
         results: markRetrievalMode(applyHeuristicRerank(results, query, topK, minScore), 'heuristic_rerank'),
         appliedMode: 'heuristic_rerank',

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isAuthorizedInternalRequest } from '@/lib/internal-api-auth'
 import prisma from '@/lib/prisma'
 
 export const runtime = 'nodejs'
@@ -15,19 +16,6 @@ type BehaviorConfig = {
   notice?: string
 }
 
-function normalizeInternalApiKey(value: string | null): string | null {
-  if (!value) return null
-  let key = value.trim()
-  if (key.toLowerCase().startsWith('bearer ')) key = key.slice('bearer '.length).trim()
-  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) key = key.slice(1, -1).trim()
-  return key || null
-}
-
-function authorize(request: NextRequest): boolean {
-  const expected = normalizeInternalApiKey(process.env['INTERNAL_API_KEY'] || null)
-  const provided = normalizeInternalApiKey(request.headers.get('x-internal-api-key')) || normalizeInternalApiKey(request.headers.get('authorization'))
-  return !!expected && provided === expected
-}
 
 function defaultConfig(): Required<BehaviorConfig> {
   return {
@@ -74,7 +62,7 @@ async function findDedicatedConfig(villageId: string): Promise<Required<Behavior
 }
 
 export async function GET(request: NextRequest) {
-  if (!authorize(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAuthorizedInternalRequest(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const villageId = request.nextUrl.searchParams.get('village_id')
   if (!villageId) return NextResponse.json({ error: 'village_id is required' }, { status: 400 })
@@ -98,7 +86,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  if (!authorize(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAuthorizedInternalRequest(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json()
   const villageId = body?.village_id as string | undefined

@@ -343,7 +343,11 @@ export async function handleGetServiceRequests(req: Request, res: Response) {
     const service_id = getQuery(req, 'service_id');
     const status = getQuery(req, 'status');
     const request_number = getQuery(req, 'request_number');
-    const village_id = getQuery(req, 'village_id');
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) {
+      return res.status(400).json({ error: 'village_id is required for multi-tenancy isolation' });
+    }
+
     const data = await prisma.serviceRequest.findMany({
       where: {
         ...(channel_identifier ? { channel, channel_identifier } : {}),
@@ -351,8 +355,8 @@ export async function handleGetServiceRequests(req: Request, res: Response) {
         ...(service_id ? { service_id } : {}),
         ...(status ? { status } : {}),
         ...(request_number ? { request_number } : {}),
-        ...(village_id ? { service: { village_id } } : {}),
-        deleted_at: null, // Exclude soft-deleted
+        service: { village_id },
+        deleted_at: null,
       },
       include: { service: true },
       orderBy: { created_at: 'desc' }
@@ -443,9 +447,14 @@ export async function handleGetServiceRequestById(req: Request, res: Response) {
     if (!id) {
       return res.status(400).json({ error: 'id is required' });
     }
+    const village_id = getQuery(req, 'village_id') || (req.headers['x-village-id'] as string) || undefined;
+    if (!village_id) {
+      return res.status(400).json({ error: 'village_id is required for multi-tenancy isolation' });
+    }
+
     const data = await prisma.serviceRequest.findUnique({
       where: { id },
-      include: { 
+      include: {
         service: {
           include: {
             requirements: {
@@ -455,7 +464,7 @@ export async function handleGetServiceRequestById(req: Request, res: Response) {
         }
       },
     });
-    if (!data) return res.status(404).json({ error: 'Request not found' });
+    if (!data || data.service?.village_id !== village_id) return res.status(404).json({ error: 'Request not found' });
     return res.json({ data });
   } catch (error: any) {
     logger.error('Get service request by id error', { error: error.message });

@@ -122,6 +122,7 @@ export async function sendNotification(params: SendNotificationParams): Promise<
       notificationType,
       lastError: errorMsg
     });
+    throw new Error(errorMsg || 'Notification send failed');
   }
 }
 

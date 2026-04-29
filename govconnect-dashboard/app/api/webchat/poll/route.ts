@@ -5,29 +5,33 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { buildUrl, ServicePath, INTERNAL_API_KEY } from '@/lib/api-client';
+import { buildUrl, ServicePath, getInternalApiKey } from '@/lib/api-client';
+import { enforceWebchatRateLimit, validateWebchatSessionId, validateWebchatVillageId } from '@/lib/webchat-guard';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const sessionId = searchParams.get('sessionId');
-    const villageId = searchParams.get('villageId');
+    const sessionId = validateWebchatSessionId(searchParams.get('sessionId'));
+    const villageId = validateWebchatVillageId(searchParams.get('villageId'));
     const since = searchParams.get('since');
 
     if (!sessionId) {
       return NextResponse.json(
-        { success: false, error: 'Session ID diperlukan' },
+        { success: false, error: 'Session ID tidak valid' },
         { status: 400 }
       );
     }
 
-    // Validate session ID format (must start with web_)
-    if (!sessionId.startsWith('web_')) {
+    const rawVillageId = searchParams.get('villageId');
+    if (rawVillageId && !villageId) {
       return NextResponse.json(
-        { success: false, error: 'Format session ID tidak valid' },
+        { success: false, error: 'villageId tidak valid' },
         { status: 400 }
       );
     }
+
+    const rateLimitError = enforceWebchatRateLimit(request, sessionId, 'poll');
+    if (rateLimitError) return rateLimitError;
 
     // Call AI Service webchat poll endpoint
     const baseUrl = buildUrl(ServicePath.AI, `/api/webchat/${sessionId}/poll`);
@@ -42,7 +46,7 @@ export async function GET(request: NextRequest) {
     const pollResponse = await fetch(pollUrl.toString(), {
       method: 'GET',
       headers: {
-        'x-internal-api-key': INTERNAL_API_KEY,
+        'x-internal-api-key': getInternalApiKey(),
       },
     });
 

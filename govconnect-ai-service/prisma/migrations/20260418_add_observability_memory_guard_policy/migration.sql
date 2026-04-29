@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "ai_memory_traces" (
+CREATE TABLE IF NOT EXISTS "ai_memory_traces" (
     "id" TEXT NOT NULL,
     "trace_id" TEXT,
     "wa_user_id" TEXT NOT NULL,
@@ -18,7 +18,7 @@ CREATE TABLE "ai_memory_traces" (
 );
 
 -- CreateTable
-CREATE TABLE "ai_guardrail_events" (
+CREATE TABLE IF NOT EXISTS "ai_guardrail_events" (
     "id" TEXT NOT NULL,
     "trace_id" TEXT,
     "wa_user_id" TEXT,
@@ -36,7 +36,7 @@ CREATE TABLE "ai_guardrail_events" (
 );
 
 -- CreateTable
-CREATE TABLE "ai_tool_allowlist_policies" (
+CREATE TABLE IF NOT EXISTS "ai_tool_allowlist_policies" (
     "id" TEXT NOT NULL,
     "policy_key" TEXT NOT NULL,
     "source" TEXT NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE "ai_tool_allowlist_policies" (
 );
 
 -- CreateTable
-CREATE TABLE "ai_tool_policy_events" (
+CREATE TABLE IF NOT EXISTS "ai_tool_policy_events" (
     "id" TEXT NOT NULL,
     "trace_id" TEXT,
     "wa_user_id" TEXT,
@@ -73,23 +73,23 @@ CREATE TABLE "ai_tool_policy_events" (
 );
 
 -- CreateIndex
-CREATE INDEX "ai_memory_traces_wa_user_id_created_at_idx" ON "ai_memory_traces"("wa_user_id", "created_at");
-CREATE INDEX "ai_memory_traces_village_id_created_at_idx" ON "ai_memory_traces"("village_id", "created_at");
-CREATE INDEX "ai_memory_traces_source_created_at_idx" ON "ai_memory_traces"("source", "created_at");
-CREATE INDEX "ai_memory_traces_channel_created_at_idx" ON "ai_memory_traces"("channel", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_memory_traces_wa_user_id_created_at_idx" ON "ai_memory_traces"("wa_user_id", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_memory_traces_village_id_created_at_idx" ON "ai_memory_traces"("village_id", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_memory_traces_source_created_at_idx" ON "ai_memory_traces"("source", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_memory_traces_channel_created_at_idx" ON "ai_memory_traces"("channel", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ai_guardrail_events_guard_type_created_at_idx" ON "ai_guardrail_events"("guard_type", "created_at");
-CREATE INDEX "ai_guardrail_events_guard_stage_created_at_idx" ON "ai_guardrail_events"("guard_stage", "created_at");
-CREATE INDEX "ai_guardrail_events_village_id_created_at_idx" ON "ai_guardrail_events"("village_id", "created_at");
-CREATE INDEX "ai_guardrail_events_channel_created_at_idx" ON "ai_guardrail_events"("channel", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_guardrail_events_guard_type_created_at_idx" ON "ai_guardrail_events"("guard_type", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_guardrail_events_guard_stage_created_at_idx" ON "ai_guardrail_events"("guard_stage", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_guardrail_events_village_id_created_at_idx" ON "ai_guardrail_events"("village_id", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_guardrail_events_channel_created_at_idx" ON "ai_guardrail_events"("channel", "created_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ai_tool_allowlist_policies_policy_key_key" ON "ai_tool_allowlist_policies"("policy_key");
-CREATE INDEX "ai_tool_allowlist_policies_source_updated_at_idx" ON "ai_tool_allowlist_policies"("source", "updated_at");
-CREATE INDEX "ai_tool_allowlist_policies_confidence_updated_at_idx" ON "ai_tool_allowlist_policies"("confidence", "updated_at");
+CREATE UNIQUE INDEX IF NOT EXISTS "ai_tool_allowlist_policies_policy_key_key" ON "ai_tool_allowlist_policies"("policy_key");
+CREATE INDEX IF NOT EXISTS "ai_tool_allowlist_policies_source_updated_at_idx" ON "ai_tool_allowlist_policies"("source", "updated_at");
+CREATE INDEX IF NOT EXISTS "ai_tool_allowlist_policies_confidence_updated_at_idx" ON "ai_tool_allowlist_policies"("confidence", "updated_at");
 
 -- CreateIndex
-CREATE INDEX "ai_tool_policy_events_policy_key_created_at_idx" ON "ai_tool_policy_events"("policy_key", "created_at");
-CREATE INDEX "ai_tool_policy_events_village_id_created_at_idx" ON "ai_tool_policy_events"("village_id", "created_at");
-CREATE INDEX "ai_tool_policy_events_channel_created_at_idx" ON "ai_tool_policy_events"("channel", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_tool_policy_events_policy_key_created_at_idx" ON "ai_tool_policy_events"("policy_key", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_tool_policy_events_village_id_created_at_idx" ON "ai_tool_policy_events"("village_id", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_tool_policy_events_channel_created_at_idx" ON "ai_tool_policy_events"("channel", "created_at");

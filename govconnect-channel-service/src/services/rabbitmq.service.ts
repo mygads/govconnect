@@ -13,6 +13,8 @@ import { getCorrelationId } from '../shared/correlation-context';
 
 let connection: any = null;
 let channel: any = null;
+const MAX_HANDLER_RETRIES = 5;
+const DLQ_NAME = 'channel-service.dlq';
 let isReconnecting = false;
 let isShuttingDown = false;
 let reconnectAttempts = 0;
@@ -75,6 +77,59 @@ function calculateReconnectDelay(attempt: number): number {
  */
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getRetryCount(msg: any): number {
+  const value = msg.properties?.headers?.['x-retry-count'];
+  return typeof value === 'number' ? value : Number(value || 0);
+}
+
+async function sendToDlq(msg: any, routingKey: string, reason: string): Promise<void> {
+  if (!channel) throw new Error('RabbitMQ channel not initialized');
+  await channel.assertQueue(DLQ_NAME, { durable: true });
+  channel.sendToQueue(DLQ_NAME, msg.content, {
+    persistent: true,
+    contentType: msg.properties?.contentType,
+    correlationId: msg.properties?.correlationId,
+    headers: {
+      ...(msg.properties?.headers || {}),
+      'x-original-routing-key': routingKey,
+      'x-dead-letter-reason': reason.slice(0, 500),
+    },
+  });
+}
+
+async function retryOrDlq(msg: any, routingKey: string, error: unknown): Promise<void> {
+  if (!channel) throw new Error('RabbitMQ channel not initialized');
+  const retryCount = getRetryCount(msg);
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (error instanceof SyntaxError) {
+    await sendToDlq(msg, routingKey, 'invalid_json');
+    channel.ack(msg);
+    logger.warn('Message moved to channel DLQ (invalid JSON)', { routingKey });
+    return;
+  }
+
+  if (retryCount >= MAX_HANDLER_RETRIES) {
+    await sendToDlq(msg, routingKey, message);
+    channel.ack(msg);
+    logger.error('Message moved to channel DLQ after max retries', { routingKey, retryCount, error: message });
+    return;
+  }
+
+  channel.publish(rabbitmqConfig.EXCHANGE_NAME, routingKey, msg.content, {
+    persistent: rabbitmqConfig.OPTIONS.persistent,
+    contentType: msg.properties?.contentType,
+    correlationId: msg.properties?.correlationId,
+    headers: {
+      ...(msg.properties?.headers || {}),
+      'x-retry-count': retryCount + 1,
+      'x-last-error': message.slice(0, 500),
+    },
+  });
+  channel.ack(msg);
+  logger.warn('Message republished for bounded channel retry', { routingKey, retryCount: retryCount + 1 });
 }
 
 /**
@@ -473,6 +528,7 @@ export async function startConsumingAIReply(): Promise<void> {
             wa_user_id: payload.wa_user_id,
             error: result.error,
           });
+          throw new Error(result.error || 'Failed to send AI reply');
         }
 
         // Acknowledge message
@@ -481,8 +537,7 @@ export async function startConsumingAIReply(): Promise<void> {
         logger.error('Error processing AI reply event', {
           error: error.message,
         });
-        // Nack and don't requeue to avoid infinite loop
-        channel.nack(msg, false, false);
+        await retryOrDlq(msg, routingKey, error);
       }
     });
   } catch (error: any) {
@@ -570,8 +625,7 @@ export async function startConsumingAIError(): Promise<void> {
         logger.error('Error processing AI error event', {
           error: error.message,
         });
-        // Nack and don't requeue to avoid infinite loop
-        channel.nack(msg, false, false);
+        await retryOrDlq(msg, routingKey, error);
       }
     });
   } catch (error: any) {
@@ -670,8 +724,7 @@ export async function startConsumingMessageStatus(): Promise<void> {
         logger.error('Error processing message status event', {
           error: error.message,
         });
-        // Nack and don't requeue to avoid infinite loop
-        channel.nack(msg, false, false);
+        await retryOrDlq(msg, routingKey, error);
       }
     });
   } catch (error: any) {

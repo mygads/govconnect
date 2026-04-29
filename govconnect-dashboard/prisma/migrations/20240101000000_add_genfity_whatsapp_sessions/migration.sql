@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "genfity_whatsapp_sessions" (
+CREATE TABLE IF NOT EXISTS "genfity_whatsapp_sessions" (
     "id" TEXT NOT NULL,
     "village_id" TEXT NOT NULL,
     "session_id" TEXT NOT NULL,
@@ -20,16 +20,16 @@ CREATE TABLE "genfity_whatsapp_sessions" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "genfity_whatsapp_sessions_village_id_key" ON "genfity_whatsapp_sessions"("village_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "genfity_whatsapp_sessions_village_id_key" ON "genfity_whatsapp_sessions"("village_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "genfity_whatsapp_sessions_session_id_key" ON "genfity_whatsapp_sessions"("session_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "genfity_whatsapp_sessions_session_id_key" ON "genfity_whatsapp_sessions"("session_id");
 
 -- CreateIndex
-CREATE INDEX "genfity_whatsapp_sessions_village_id_idx" ON "genfity_whatsapp_sessions"("village_id");
+CREATE INDEX IF NOT EXISTS "genfity_whatsapp_sessions_village_id_idx" ON "genfity_whatsapp_sessions"("village_id");
 
 -- CreateIndex
-CREATE INDEX "genfity_whatsapp_sessions_session_id_idx" ON "genfity_whatsapp_sessions"("session_id");
+CREATE INDEX IF NOT EXISTS "genfity_whatsapp_sessions_session_id_idx" ON "genfity_whatsapp_sessions"("session_id");
 
 -- CreateIndex
-CREATE INDEX "genfity_whatsapp_sessions_connected_idx" ON "genfity_whatsapp_sessions"("connected");
+CREATE INDEX IF NOT EXISTS "genfity_whatsapp_sessions_connected_idx" ON "genfity_whatsapp_sessions"("connected");

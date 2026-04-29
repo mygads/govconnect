@@ -18,6 +18,12 @@ const SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET || '';
 const SERVICE_NAME = process.env.SERVICE_NAME || 'unknown';
 const TOKEN_TTL_SECONDS = 300; // 5 minutes
 
+function safeTimingEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  return aBuf.length === bBuf.length && crypto.timingSafeEqual(aBuf, bBuf);
+}
+
 interface ServiceTokenPayload {
   sub: string;  // service name
   iat: number;  // issued at (unix seconds)
@@ -58,7 +64,7 @@ export function verifyServiceToken(token: string): ServiceTokenPayload | null {
   // Fallback: if no secret configured, fall back to INTERNAL_API_KEY comparison
   if (!secret) {
     const legacyKey = process.env.INTERNAL_API_KEY || '';
-    if (token === legacyKey && legacyKey) {
+    if (safeTimingEqual(token, legacyKey) && legacyKey) {
       return { sub: 'legacy', iat: 0, exp: Infinity };
     }
     return null;
@@ -69,7 +75,7 @@ export function verifyServiceToken(token: string): ServiceTokenPayload | null {
   if (parts.length !== 3) {
     // Maybe it's a legacy INTERNAL_API_KEY — check that too
     const legacyKey = process.env.INTERNAL_API_KEY || '';
-    if (token === legacyKey && legacyKey) {
+    if (safeTimingEqual(token, legacyKey) && legacyKey) {
       return { sub: 'legacy', iat: 0, exp: Infinity };
     }
     return null;
@@ -78,7 +84,7 @@ export function verifyServiceToken(token: string): ServiceTokenPayload | null {
   const [headerB64, payloadB64, signature] = parts;
   const expectedSig = hmacSign(`${headerB64}.${payloadB64}`, secret);
 
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
+  if (!safeTimingEqual(signature, expectedSig)) {
     return null;
   }
 

@@ -4,7 +4,6 @@ import prisma from '../config/database';
 import { isConnected } from '../services/rabbitmq.service';
 import logger from '../utils/logger';
 import { getCaseServiceMetrics } from '../clients/case-service.client';
-import { getObjectStorageInfo } from '../services/object-storage.service';
 
 const router: ExpressRouter = Router();
 
@@ -14,7 +13,6 @@ router.get('/', (req: Request, res: Response) => {
     status: 'ok',
     service: 'channel-service',
     timestamp: new Date().toISOString(),
-    storage: getObjectStorageInfo(),
   });
 });
 

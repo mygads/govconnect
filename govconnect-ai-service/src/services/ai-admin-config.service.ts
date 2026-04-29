@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { encryptSecret } from '../utils/crypto';
+import logger from '../utils/logger';
 import { clearRuntimeGatewayConfigCache } from './ai-runtime-config.service';
+import { sanitizeProviderDefaultHeaders } from '../utils/provider-headers';
 
 type LaneType = 'llm' | 'embed' | 'rewrite' | 'rerank';
 
@@ -14,13 +16,11 @@ function normalizeLaneType(value: string): LaneType {
 }
 
 function sanitizeHeaders(value: unknown): Record<string, string> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, headerValue]) => typeof headerValue === 'string' && headerValue.trim().length > 0)
-      .map(([key, headerValue]) => [key, String(headerValue)])
-  );
+  const headers = sanitizeProviderDefaultHeaders(value);
+  return Object.keys(headers).length > 0 ? headers : null;
 }
+
+export const __test_only__ = { sanitizeHeaders, sanitizeProviderDefaultHeaders };
 
 function redactProviderSecret<T extends { api_key_encrypted?: string | null }>(provider: T) {
   const { api_key_encrypted: _apiKeyEncrypted, ...safeProvider } = provider;
@@ -54,6 +54,7 @@ export async function createAIProvider(input: {
   api_key: string;
   default_headers_json?: unknown;
   is_active?: boolean;
+  priority?: number;
 }) {
   if (!input.name?.trim()) throw new Error('Provider name is required');
   if (!input.slug?.trim()) throw new Error('Provider slug is required');
@@ -69,7 +70,51 @@ export async function createAIProvider(input: {
       api_key_encrypted: encryptSecret(input.api_key.trim()),
       default_headers_json: sanitizeHeaders(input.default_headers_json) ?? Prisma.JsonNull,
       is_active: input.is_active !== false,
+      priority: input.priority ?? 100,
     },
+  });
+
+  clearRuntimeGatewayConfigCache();
+  return redactProviderSecret(provider);
+}
+
+export async function updateAIProvider(input: {
+  id: string;
+  name?: string;
+  base_url?: string;
+  api_key?: string;
+  default_headers_json?: unknown;
+  is_active?: boolean;
+  priority?: number;
+}) {
+  if (!input.id?.trim()) throw new Error('Provider id is required');
+
+  const data: Record<string, unknown> = {};
+  if (input.name !== undefined) {
+    if (!input.name.trim()) throw new Error('Provider name cannot be empty');
+    data.name = input.name.trim();
+  }
+  if (input.base_url !== undefined) {
+    if (!input.base_url.trim()) throw new Error('Provider base_url cannot be empty');
+    data.base_url = input.base_url.trim();
+  }
+  if (input.api_key !== undefined) {
+    if (!input.api_key.trim()) throw new Error('Provider api_key cannot be empty');
+    data.api_key_encrypted = encryptSecret(input.api_key.trim());
+  }
+  if (input.default_headers_json !== undefined) {
+    data.default_headers_json = sanitizeHeaders(input.default_headers_json) ?? Prisma.JsonNull;
+  }
+  if (input.is_active !== undefined) {
+    data.is_active = input.is_active;
+  }
+  if (input.priority !== undefined) {
+    data.priority = input.priority;
+  }
+
+  const provider = await prisma.ai_providers.update({
+    where: { id: input.id },
+    data,
   });
 
   clearRuntimeGatewayConfigCache();
@@ -111,6 +156,7 @@ export async function createAIModel(input: {
   is_active?: boolean;
   is_publicly_selectable?: boolean;
   notes?: string | null;
+  priority?: number;
 }) {
   if (!input.provider_id?.trim()) throw new Error('provider_id is required');
   if (!input.display_name?.trim()) throw new Error('display_name is required');
@@ -136,7 +182,77 @@ export async function createAIModel(input: {
       is_active: input.is_active !== false,
       is_publicly_selectable: input.is_publicly_selectable !== false,
       notes: input.notes?.trim() || null,
+      priority: input.priority ?? 100,
     },
+  });
+
+  clearRuntimeGatewayConfigCache();
+  return model;
+}
+
+export async function updateAIModel(input: {
+  id: string;
+  provider_id?: string;
+  lane_type?: string;
+  display_name?: string;
+  upstream_model_name?: string;
+  endpoint_path?: string | null;
+  actual_pricing_type?: string;
+  actual_fixed_price_usd?: number | null;
+  actual_input_price_per_million_usd?: number | null;
+  actual_output_price_per_million_usd?: number | null;
+  adjusted_pricing_type?: string;
+  adjusted_fixed_price_usd?: number | null;
+  adjusted_input_price_per_million_usd?: number | null;
+  adjusted_output_price_per_million_usd?: number | null;
+  is_active?: boolean;
+  is_publicly_selectable?: boolean;
+  notes?: string | null;
+  priority?: number;
+}) {
+  if (!input.id?.trim()) throw new Error('Model id is required');
+
+  const data: Record<string, unknown> = {};
+  if (input.provider_id !== undefined) {
+    if (!input.provider_id.trim()) throw new Error('provider_id cannot be empty');
+    data.provider_id = input.provider_id;
+  }
+  if (input.lane_type !== undefined) {
+    data.lane_type = normalizeLaneType(input.lane_type);
+  }
+  if (input.display_name !== undefined) {
+    if (!input.display_name.trim()) throw new Error('display_name cannot be empty');
+    data.display_name = input.display_name.trim();
+  }
+  if (input.upstream_model_name !== undefined) {
+    if (!input.upstream_model_name.trim()) throw new Error('upstream_model_name cannot be empty');
+    data.upstream_model_name = input.upstream_model_name.trim();
+  }
+  if (input.endpoint_path !== undefined) {
+    data.endpoint_path = input.endpoint_path?.trim() || null;
+  }
+  for (const key of [
+    'actual_pricing_type',
+    'actual_fixed_price_usd',
+    'actual_input_price_per_million_usd',
+    'actual_output_price_per_million_usd',
+    'adjusted_pricing_type',
+    'adjusted_fixed_price_usd',
+    'adjusted_input_price_per_million_usd',
+    'adjusted_output_price_per_million_usd',
+    'is_active',
+    'is_publicly_selectable',
+    'priority',
+  ] as const) {
+    if (input[key] !== undefined) data[key] = input[key];
+  }
+  if (input.notes !== undefined) {
+    data.notes = input.notes?.trim() || null;
+  }
+
+  const model = await prisma.ai_models.update({
+    where: { id: input.id },
+    data,
   });
 
   clearRuntimeGatewayConfigCache();

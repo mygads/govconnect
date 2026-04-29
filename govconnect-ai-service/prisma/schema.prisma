@@ -250,26 +250,9 @@ model ai_providers {
   created_at           DateTime @default(now())
   updated_at           DateTime @updatedAt
 
-  endpoints            ai_provider_endpoints[]
   models               ai_models[]
 
   @@index([is_active])
-}
-
-model ai_provider_endpoints {
-  id            String   @id @default(cuid())
-  provider_id   String
-  lane_type     String
-  endpoint_path String
-  is_default    Boolean  @default(false)
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
-
-  provider      ai_providers @relation(fields: [provider_id], references: [id], onDelete: Cascade)
-
-  @@index([provider_id])
-  @@index([lane_type])
-  @@unique([provider_id, lane_type, endpoint_path])
 }
 
 model ai_models {
@@ -333,11 +316,13 @@ model ai_provider_health {
   demoted_until        DateTime?
   last_success_at      DateTime?
   last_failure_at      DateTime?
+  probe_in_flight_until DateTime?
   created_at           DateTime  @default(now())
   updated_at           DateTime  @updatedAt
 
   @@id([provider_id, lane_type])
   @@index([demoted_until])
+  @@index([probe_in_flight_until])
 }
 
 // ==================== CONVERSATION SESSIONS (Temuan 7) ====================

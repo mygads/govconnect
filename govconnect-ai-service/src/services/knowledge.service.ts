@@ -1,7 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { isAIGatewayEnabled } from './ai-gateway.service';
+import { isAIGatewayEnabledAsync } from './ai-gateway.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import {
   retrieveContext,
@@ -49,8 +49,12 @@ interface VillageProfileSummary {
   operating_hours?: any | null;
 }
 
-function isRAGSearchEnabled(): boolean {
-  return isAIGatewayEnabled('embed') && isAIGatewayEnabled('rag');
+async function isRAGSearchEnabled(villageId?: string): Promise<boolean> {
+  const [embedEnabled, ragEnabled] = await Promise.all([
+    isAIGatewayEnabledAsync('embed', villageId ?? null),
+    isAIGatewayEnabledAsync('rag', villageId ?? null),
+  ]);
+  return embedEnabled && ragEnabled;
 }
 
 /**
@@ -65,7 +69,7 @@ export async function searchKnowledge(
   channel: string = 'system',
 ): Promise<KnowledgeSearchResult> {
   try {
-    const ragSearchEnabled = isRAGSearchEnabled();
+    const ragSearchEnabled = await isRAGSearchEnabled(villageId);
 
     logger.info('Searching knowledge base', {
       query: query.substring(0, 100),
@@ -132,7 +136,7 @@ export async function searchDocuments(
   channel: string = 'system',
 ): Promise<KnowledgeSearchResult> {
   try {
-    const ragSearchEnabled = isRAGSearchEnabled();
+    const ragSearchEnabled = await isRAGSearchEnabled(villageId);
     if (!ragSearchEnabled) {
       const empty = {
         data: [],

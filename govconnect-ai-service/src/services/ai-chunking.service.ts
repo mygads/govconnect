@@ -20,7 +20,7 @@
  */
 
 import logger from '../utils/logger';
-import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabled } from './ai-gateway.service';
+import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabledAsync } from './ai-gateway.service';
 import { getCategorySlugs, FALLBACK_CATEGORY_SLUGS } from './dynamic-categories.service';
 
 // ==================== TYPES ====================
@@ -180,7 +180,7 @@ async function callLLMForChunking(
   timeout: number = 60_000,
   validCategories?: string[],
 ): Promise<ChunkDefinition[]> {
-  if (!isAIGatewayEnabled('llm')) {
+  if (!(await isAIGatewayEnabledAsync('llm', null))) {
     throw new Error('LLM gateway lane is not configured for AI chunking');
   }
 
@@ -495,7 +495,7 @@ KATEGORI: ${cats.join(', ')}
 Jawab HANYA JSON (tanpa markdown):
 {"title": "Judul Deskriptif", "category": "kategori"}`;
 
-    if (!isAIGatewayEnabled('llm')) {
+    if (!(await isAIGatewayEnabledAsync('llm', null))) {
       throw new Error('LLM gateway lane is not configured for short-document chunking');
     }
 

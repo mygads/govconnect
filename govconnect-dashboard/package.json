@@ -5,7 +5,12 @@
   "scripts": {
     "dev": "next dev -p 3010",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status",
+    "db:migrate:resolve": "prisma migrate resolve"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

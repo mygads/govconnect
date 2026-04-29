@@ -63,6 +63,7 @@ router.delete('/services/requirements/:id', internalAuth, handleDeleteRequiremen
 // Service requests
 router.get(
   '/service-requests',
+  internalAuth,
   [
     query('take').optional().isInt().toInt(),
     query('skip').optional().isInt().toInt(),
@@ -73,7 +74,7 @@ router.get(
 router.post('/service-requests', handleCreateServiceRequest);
 router.get('/service-requests/deleted', internalAuth, handleGetDeletedServiceRequests);
 router.get('/service-requests/by-token', handleGetServiceRequestByToken);
-router.get('/service-requests/:id', handleGetServiceRequestById);
+router.get('/service-requests/:id', internalAuth, handleGetServiceRequestById);
 router.post(
   '/service-requests/:id/check',
   internalAuth,
@@ -101,6 +102,7 @@ router.patch('/service-requests/:id/by-token', handleUpdateServiceRequestByToken
 router.delete('/service-requests/:id', internalAuth, handleDeleteServiceRequest);
 router.get(
   '/service-requests/history/:wa_user_id',
+  internalAuth,
   [
     query('take').optional().isInt().toInt(),
     query('skip').optional().isInt().toInt(),

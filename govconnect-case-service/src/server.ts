@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import app, { initializeApp } from './app';
 import { config } from './config/env';
-import { connectRabbitMQ, disconnectRabbitMQ } from './services/rabbitmq.service';
+import { connectRabbitMQ, disconnectRabbitMQ, startRabbitMQReconnect } from './services/rabbitmq.service';
 import { startAutoPurgeScheduler, stopAutoPurgeScheduler } from './services/auto-purge.service';
 import prisma from './config/database';
 import logger from './utils/logger';
@@ -17,9 +17,14 @@ async function startServer() {
     await prisma.$connect();
     logger.info('✅ Database connected');
     
-    // Connect to RabbitMQ
-    await connectRabbitMQ();
-    
+    // Connect to RabbitMQ in degraded mode; HTTP routes can still serve DB-backed reads.
+    try {
+      await connectRabbitMQ();
+    } catch (error: any) {
+      logger.error('RabbitMQ unavailable during startup; continuing with degraded event delivery', { error: error.message });
+      startRabbitMQReconnect();
+    }
+
     // Initialize app (routes, services, etc.)
     await initializeApp();
     
@@ -94,5 +99,3 @@ process.on('unhandledRejection', (reason: any) => {
   // This prevents crash loops from transient DB/network errors
 });
 
-// Start the server
-startServer();

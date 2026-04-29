@@ -24,7 +24,8 @@ const CSRF_TOKEN_LENGTH = 32
  */
 export function generateCsrfToken(): { token: string; cookie: string } {
   const token = crypto.randomBytes(CSRF_TOKEN_LENGTH).toString('hex')
-  const cookie = `${CSRF_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict; Secure`
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  const cookie = `${CSRF_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict${secure}`
   return { token, cookie }
 }
 

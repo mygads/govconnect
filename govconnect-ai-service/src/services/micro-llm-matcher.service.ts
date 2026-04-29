@@ -10,7 +10,7 @@
  */
 
 import logger from '../utils/logger';
-import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabled } from './ai-gateway.service';
+import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabledAsync } from './ai-gateway.service';
 import type { CallType } from './token-usage.service';
 
 // ---------- Model Priority ----------
@@ -24,7 +24,7 @@ async function callMicroLLM(
   call_type: CallType,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<string | null> {
-  if (!isAIGatewayEnabled('llm')) {
+  if (!(await isAIGatewayEnabledAsync('llm', context?.village_id ?? null))) {
     logger.error('Micro LLM skipped: LLM gateway lane is not configured');
     return null;
   }

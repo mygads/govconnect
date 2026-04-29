@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { verifyCsrf } from '@/lib/csrf'
 
 export async function POST(request: NextRequest) {
   try {
+    const csrfError = verifyCsrf(request)
+    if (csrfError) return csrfError
+
     const token = request.cookies.get('token')?.value
 
     if (token) {

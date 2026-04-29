@@ -5,27 +5,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { buildUrl, ServicePath, INTERNAL_API_KEY } from '@/lib/api-client';
+import { buildUrl, ServicePath, getInternalApiKey } from '@/lib/api-client';
+import { enforceWebchatRateLimit, normalizeWebchatMessage, validateWebchatSessionId, validateWebchatVillageId } from '@/lib/webchat-guard';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { sessionId, message, villageId } = body;
+    const sessionId = validateWebchatSessionId(body.sessionId);
+    const message = normalizeWebchatMessage(body.message);
+    const villageId = validateWebchatVillageId(body.villageId);
 
     if (!sessionId || !message || !villageId) {
       return NextResponse.json(
-        { success: false, error: 'Session ID, villageId, dan pesan diperlukan' },
+        { success: false, error: 'Session ID, villageId, atau pesan tidak valid' },
         { status: 400 }
       );
     }
 
-    // Validate session ID format (must start with web_)
-    if (!sessionId.startsWith('web_')) {
-      return NextResponse.json(
-        { success: false, error: 'Format session ID tidak valid' },
-        { status: 400 }
-      );
-    }
+    const rateLimitError = enforceWebchatRateLimit(request, sessionId, 'message');
+    if (rateLimitError) return rateLimitError;
 
     // Call AI Service webchat endpoint
     const aiServiceUrl = buildUrl(ServicePath.AI, '/api/webchat');
@@ -34,7 +32,7 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-internal-api-key': INTERNAL_API_KEY,
+        'x-internal-api-key': getInternalApiKey(),
       },
       body: JSON.stringify({
         session_id: sessionId,

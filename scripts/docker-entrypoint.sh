@@ -1,84 +1,74 @@
 #!/bin/sh
 # ===================================================================================
-# AUTO-MIGRATION ENTRYPOINT SCRIPT
+# STRICT AUTO-MIGRATION ENTRYPOINT SCRIPT
 # ===================================================================================
-# 
-# Script ini menjalankan database migration secara otomatis saat container start.
-# Jika ada conflict, migration tidak akan dijalankan dan service akan tetap start.
+#
+# Runs Prisma migrations before starting the application. Migration problems are
+# deployment failures: this script never falls back to schema push and never starts the
+# app after a failed migration.
 #
 # Behaviour:
-# 1. Jika ada folder prisma/migrations → gunakan prisma migrate deploy
-# 2. Jika tidak ada migrations folder → gunakan prisma db push
-# 3. Jika migration gagal (conflict) → log error, tetap start service
-# 4. Jika migration sukses → start service
+# 1. Require DATABASE_URL so Prisma can connect to the target database.
+# 2. Wait for the database to accept queries.
+# 3. Require prisma/migrations to exist and contain migration SQL.
+# 4. Run prisma migrate deploy.
+# 5. Start the application only after migrations succeed.
 #
 # ===================================================================================
 
 set -e
 
+run_prisma() {
+    if [ -x "./node_modules/.bin/prisma" ]; then
+        ./node_modules/.bin/prisma "$@"
+    else
+        npx prisma "$@"
+    fi
+}
+
 echo "=================================================="
-echo "🚀 Starting Auto-Migration Process"
+echo "Starting strict auto-migration process"
 echo "=================================================="
 
+if [ -z "${DATABASE_URL:-}" ]; then
+    echo "ERROR: DATABASE_URL is not set; refusing to start without running migrations"
+    exit 1
+fi
+
 # Wait for database to be ready
-echo "⏳ Waiting for database connection..."
+echo "Waiting for database connection..."
 MAX_RETRIES=30
 RETRY_COUNT=0
 
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if npx prisma db execute --stdin <<< "SELECT 1" 2>/dev/null; then
-        echo "✅ Database is ready!"
+while [ "$RETRY_COUNT" -lt "$MAX_RETRIES" ]; do
+    if printf 'SELECT 1;\n' | run_prisma db execute --stdin >/dev/null 2>&1; then
+        echo "Database is ready"
         break
     fi
+
     RETRY_COUNT=$((RETRY_COUNT + 1))
-    echo "   Attempt $RETRY_COUNT/$MAX_RETRIES - Database not ready, waiting..."
+    echo "Attempt $RETRY_COUNT/$MAX_RETRIES - database not ready, waiting..."
     sleep 2
 done
 
-if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-    echo "⚠️  Warning: Could not connect to database after $MAX_RETRIES attempts"
-    echo "   Proceeding without migration..."
-    exec "$@"
+if [ "$RETRY_COUNT" -eq "$MAX_RETRIES" ]; then
+    echo "ERROR: Could not connect to database after $MAX_RETRIES attempts"
+    exit 1
 fi
 
 # Run migration
-echo "🔄 Running database migration..."
+echo "Running database migrations..."
 
-if [ -d "prisma/migrations" ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then
-    echo "   Found migrations folder, using 'prisma migrate deploy'"
-    
-    if npx prisma migrate deploy 2>&1; then
-        echo "✅ Migration completed successfully!"
-    else
-        EXIT_CODE=$?
-        echo "⚠️  Migration failed with exit code $EXIT_CODE"
-        echo "   This might be due to:"
-        echo "   - Schema conflicts requiring manual resolution"
-        echo "   - Database already has incompatible schema"
-        echo "   Please run migrations manually if needed."
-        echo ""
-        echo "   Proceeding to start service anyway..."
-    fi
-else
-    echo "   No migrations folder found, using 'prisma db push'"
-    
-    if npx prisma db push --accept-data-loss 2>&1; then
-        echo "✅ Schema push completed successfully!"
-    else
-        EXIT_CODE=$?
-        echo "⚠️  Schema push failed with exit code $EXIT_CODE"
-        echo "   This might be due to:"
-        echo "   - Schema conflicts requiring manual resolution"
-        echo "   - Database already has incompatible schema"
-        echo "   Please run 'prisma db push' manually if needed."
-        echo ""
-        echo "   Proceeding to start service anyway..."
-    fi
+if [ ! -d "prisma/migrations" ] || [ -z "$(ls -A prisma/migrations 2>/dev/null)" ]; then
+    echo "ERROR: Prisma migrations missing from image; refusing to start"
+    exit 1
 fi
 
+run_prisma migrate deploy
+
+echo "Migrations completed successfully"
 echo "=================================================="
-echo "🎉 Starting application..."
+echo "Starting application"
 echo "=================================================="
 
-# Execute the main command
 exec "$@"

@@ -1,20 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 
 export async function PATCH(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
+    const [session, authError] = await requireAuth(request)
+    if (authError) return authError
 
     const body = await request.json()
     const { currentPassword, newPassword } = body
@@ -35,7 +27,7 @@ export async function PATCH(request: NextRequest) {
 
     // Get current user
     const user = await prisma.admin_users.findUnique({
-      where: { id: payload.adminId },
+      where: { id: session.adminId },
     })
 
     if (!user) {
@@ -56,7 +48,7 @@ export async function PATCH(request: NextRequest) {
 
     // Update password
     await prisma.admin_users.update({
-      where: { id: payload.adminId },
+      where: { id: session.adminId },
       data: { password_hash: hashedPassword },
     })
 

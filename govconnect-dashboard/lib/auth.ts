@@ -83,8 +83,8 @@ export async function getAdminSession(request: NextRequest): Promise<AdminSessio
       include: { admin: true }
     })
     
-    if (!session || session.expires_at < new Date()) return null
-    
+    if (!session || session.expires_at < new Date() || !session.admin.is_active) return null
+
     return {
       id: session.id,
       adminId: session.admin.id,

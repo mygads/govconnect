@@ -12,8 +12,23 @@
 
 import crypto from 'crypto';
 
-const SIGNED_URL_SECRET = process.env.SIGNED_URL_SECRET || process.env.INTERNAL_API_KEY || '';
 const DEFAULT_TTL = parseInt(process.env.SIGNED_URL_TTL || '3600', 10);
+
+function getSignedUrlSecret(): string {
+  return process.env.SIGNED_URL_SECRET?.trim() || '';
+}
+
+function safeTimingEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  return aBuf.length === bBuf.length && crypto.timingSafeEqual(aBuf, bBuf);
+}
+
+function internalApiKeyMatches(value: string | string[] | undefined): boolean {
+  const expected = process.env.INTERNAL_API_KEY?.trim();
+  const provided = Array.isArray(value) ? value[0]?.trim() : value?.trim();
+  return Boolean(expected && provided && safeTimingEqual(provided, expected));
+}
 
 /**
  * Generate a signed URL for a local file path.
@@ -24,10 +39,15 @@ export function generateSignedUrl(
   filePath: string,
   ttlSeconds: number = DEFAULT_TTL,
 ): string {
+  const secret = getSignedUrlSecret();
+  if (!secret) {
+    throw new Error('SIGNED_URL_SECRET is required to generate signed URLs');
+  }
+
   const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
   const data = `${filePath}:${expires}`;
   const sig = crypto
-    .createHmac('sha256', SIGNED_URL_SECRET)
+    .createHmac('sha256', secret)
     .update(data)
     .digest('hex');
 
@@ -50,17 +70,18 @@ export function verifySignedUrl(
     return false;
   }
 
-  // Verify HMAC
+  const secret = getSignedUrlSecret();
+  if (!secret) {
+    return false;
+  }
+
   const data = `${filePath}:${expiresNum}`;
   const expectedSig = crypto
-    .createHmac('sha256', SIGNED_URL_SECRET)
+    .createHmac('sha256', secret)
     .update(data)
     .digest('hex');
 
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSig),
-  );
+  return safeTimingEqual(signature, expectedSig);
 }
 
 /**
@@ -69,9 +90,8 @@ export function verifySignedUrl(
  */
 export function signedUrlMiddleware() {
   return (req: any, res: any, next: any) => {
-    // Allow internal service calls with API key
     const apiKey = req.headers['x-internal-api-key'] || req.headers['x-service-token'];
-    if (apiKey && apiKey === (process.env.INTERNAL_API_KEY || '')) {
+    if (internalApiKeyMatches(apiKey)) {
       return next();
     }
 

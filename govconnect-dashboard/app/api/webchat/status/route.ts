@@ -6,26 +6,30 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { buildUrl, ServicePath, INTERNAL_API_KEY } from '@/lib/api-client';
+import { buildUrl, ServicePath, getInternalApiKey } from '@/lib/api-client';
+import { enforceWebchatRateLimit, validateWebchatSessionId } from '@/lib/webchat-guard';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const sessionId = searchParams.get('sessionId');
+    const sessionId = validateWebchatSessionId(searchParams.get('sessionId'));
 
     if (!sessionId) {
       return NextResponse.json(
-        { success: false, error: 'Session ID is required' },
+        { success: false, error: 'Session ID is invalid' },
         { status: 400 }
       );
     }
+
+    const rateLimitError = enforceWebchatRateLimit(request, sessionId, 'status');
+    if (rateLimitError) return rateLimitError;
 
     // Call AI Service status endpoint
     const statusUrl = buildUrl(ServicePath.AI, `/api/status/${encodeURIComponent(sessionId)}`);
     
     const response = await fetch(statusUrl, {
       headers: {
-        'X-Internal-API-Key': INTERNAL_API_KEY,
+        'X-Internal-API-Key': getInternalApiKey(),
         'Content-Type': 'application/json',
       },
     });

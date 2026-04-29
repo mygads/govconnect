@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "ai_interaction_events" (
+CREATE TABLE IF NOT EXISTS "ai_interaction_events" (
     "id" TEXT NOT NULL,
     "analytics_session_id" TEXT NOT NULL,
     "wa_user_id" TEXT NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE "ai_interaction_events" (
 );
 
 -- CreateTable
-CREATE TABLE "ai_retrieval_traces" (
+CREATE TABLE IF NOT EXISTS "ai_retrieval_traces" (
     "id" TEXT NOT NULL,
     "trace_id" TEXT,
     "wa_user_id" TEXT,
@@ -43,28 +43,28 @@ CREATE TABLE "ai_retrieval_traces" (
 );
 
 -- CreateIndex
-CREATE INDEX "ai_interaction_events_analytics_session_id_idx" ON "ai_interaction_events"("analytics_session_id");
+CREATE INDEX IF NOT EXISTS "ai_interaction_events_analytics_session_id_idx" ON "ai_interaction_events"("analytics_session_id");
 
 -- CreateIndex
-CREATE INDEX "ai_interaction_events_wa_user_id_created_at_idx" ON "ai_interaction_events"("wa_user_id", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_interaction_events_wa_user_id_created_at_idx" ON "ai_interaction_events"("wa_user_id", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ai_interaction_events_village_id_created_at_idx" ON "ai_interaction_events"("village_id", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_interaction_events_village_id_created_at_idx" ON "ai_interaction_events"("village_id", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ai_interaction_events_intent_created_at_idx" ON "ai_interaction_events"("intent", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_interaction_events_intent_created_at_idx" ON "ai_interaction_events"("intent", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ai_interaction_events_channel_created_at_idx" ON "ai_interaction_events"("channel", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_interaction_events_channel_created_at_idx" ON "ai_interaction_events"("channel", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ai_retrieval_traces_village_id_created_at_idx" ON "ai_retrieval_traces"("village_id", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_retrieval_traces_village_id_created_at_idx" ON "ai_retrieval_traces"("village_id", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ai_retrieval_traces_retrieval_mode_created_at_idx" ON "ai_retrieval_traces"("retrieval_mode", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_retrieval_traces_retrieval_mode_created_at_idx" ON "ai_retrieval_traces"("retrieval_mode", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ai_retrieval_traces_confidence_created_at_idx" ON "ai_retrieval_traces"("confidence", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_retrieval_traces_confidence_created_at_idx" ON "ai_retrieval_traces"("confidence", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ai_retrieval_traces_channel_created_at_idx" ON "ai_retrieval_traces"("channel", "created_at");
+CREATE INDEX IF NOT EXISTS "ai_retrieval_traces_channel_created_at_idx" ON "ai_retrieval_traces"("channel", "created_at");

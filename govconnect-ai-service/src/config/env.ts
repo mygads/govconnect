@@ -171,7 +171,8 @@ function parseProvider(value: string | undefined): AIGatewayProvider {
     normalized === 'vercel' ||
     normalized === 'cloudflare' ||
     normalized === 'direct' ||
-    normalized === 'genfity-gateway'
+    normalized === 'genfity-gateway' ||
+    normalized === 'openai_compatible'
   ) {
     return normalized;
   }

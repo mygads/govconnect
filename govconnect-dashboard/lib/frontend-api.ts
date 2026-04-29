@@ -7,27 +7,36 @@
  * Browser → Dashboard API Routes → Backend Services
  */
 
-// Get auth token from localStorage
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('token');
-}
-
-// Get headers with auth token
 function getAuthHeaders(): Record<string, string> {
-  const token = getAuthToken();
   return {
     'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
   };
+}
+
+let csrfTokenPromise: Promise<string | null> | null = null;
+
+async function getCsrfHeaders(method?: string): Promise<Record<string, string>> {
+  const normalizedMethod = (method || 'GET').toUpperCase();
+  if (['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod) || typeof window === 'undefined') return {};
+
+  csrfTokenPromise ??= fetch('/api/csrf', { credentials: 'same-origin' })
+    .then((response) => response.ok ? response.json() : null)
+    .then((data) => data?.csrfToken || null)
+    .catch(() => null);
+
+  const token = await csrfTokenPromise;
+  return token ? { 'x-csrf-token': token } : {};
 }
 
 // Fetch wrapper with error handling
 async function fetchApi<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const csrfHeaders = await getCsrfHeaders(options.method);
   const response = await fetch(url, {
     ...options,
+    credentials: 'same-origin',
     headers: {
       ...getAuthHeaders(),
+      ...csrfHeaders,
       ...options.headers,
     },
   });
@@ -42,10 +51,13 @@ async function fetchApi<T>(url: string, options: RequestInit = {}): Promise<T> {
 
 // Fetch wrapper that returns raw Response (for handlers that need status codes or custom parsing)
 export async function fetchApiRaw(url: string, options: RequestInit = {}): Promise<Response> {
+  const csrfHeaders = await getCsrfHeaders(options.method);
   return fetch(url, {
     ...options,
+    credentials: 'same-origin',
     headers: {
       ...getAuthHeaders(),
+      ...csrfHeaders,
       ...options.headers,
     },
   });
@@ -54,22 +66,16 @@ export async function fetchApiRaw(url: string, options: RequestInit = {}): Promi
 // ==================== AUTH ====================
 export const auth = {
   async login(username: string, password: string) {
-    const data = await fetchApi<{ success: boolean; token: string }>('/api/auth/login', {
+    return fetchApi<{ success: boolean; user: any }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     });
-    if (data.token) {
-      localStorage.setItem('token', data.token);
-    }
-    return data;
   },
 
   async logout() {
-    const data = await fetchApi<{ success: boolean }>('/api/auth/logout', {
+    return fetchApi<{ success: boolean }>('/api/auth/logout', {
       method: 'POST',
     });
-    localStorage.removeItem('token');
-    return data;
   },
 
   async me() {
@@ -85,7 +91,7 @@ export const auth = {
 
   async changePassword(data: { currentPassword: string; newPassword: string }) {
     return fetchApi<{ success: boolean }>('/api/auth/password', {
-      method: 'POST',
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   },
@@ -348,10 +354,9 @@ export const documents = {
   },
 
   async upload(formData: FormData) {
-    const token = getAuthToken();
     const response = await fetch('/api/documents', {
       method: 'POST',
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      credentials: 'same-origin',
       body: formData,
     });
     if (!response.ok) {
@@ -735,10 +740,9 @@ export const spamGuard = {
 // ==================== UPLOADS ====================
 export const uploads = {
   async upload(formData: FormData) {
-    const token = getAuthToken();
     const response = await fetch('/api/uploads', {
       method: 'POST',
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      credentials: 'same-origin',
       body: formData,
     });
     if (!response.ok) {

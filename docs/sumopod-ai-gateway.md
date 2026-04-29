@@ -1,3 +1,5 @@
+> Status 2026-04-29: legacy provider reference only. Active GovConnect gateway behavior is DB-backed and documented in `govconnect-ai-service/docs/smart-routing.md`.
+
 AI API Quick Start
 Get started with SumoPod AI API in minutes. Compatible with OpenAI SDK and tools.
 

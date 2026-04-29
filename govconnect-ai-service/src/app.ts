@@ -34,6 +34,7 @@ import statusRoutes from './routes/status.routes';
 import testingRoutes from './routes/testing.routes';
 import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
+import { z } from 'zod';
 import { config } from './config/env';
 import { getParam, getQuery } from './utils/http';
 import { runGoldenSetEvaluation, getGoldenSetSummary } from './services/golden-set-eval.service';
@@ -58,8 +59,8 @@ import { clearVillageProfileCache, getVillageProfileCacheStats } from './service
 import { getEmbeddingCacheStats as getEmbCacheDetailStats } from './services/embedding.service';
 import { getAllAIGatewayInfoAsync } from './services/ai-gateway.service';
 import { matchComplaintType } from './services/micro-llm-matcher.service';
-import { getObjectStorageInfo } from './services/object-storage.service';
 import { requireInternalApiKey } from './utils/internal-auth';
+import { errorResponse, successResponse } from './shared/error-response';
 import {
   canProcessVillageAI,
   createTopupVoucher,
@@ -76,6 +77,8 @@ import {
   listAILaneAssignments,
   listAIModels,
   listAIProviders,
+  updateAIModel,
+  updateAIProvider,
   upsertAILaneAssignment,
 } from './services/ai-admin-config.service';
 
@@ -156,20 +159,11 @@ if (config.nodeEnv !== 'production') {
 }
 
 // Minimal health endpoint for Docker/K8s liveness probe (Temuan 12)
-app.get('/health', async (req: Request, res: Response) => {
-  const gateways = await getAllAIGatewayInfoAsync();
-
+app.get('/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'ai-orchestrator',
     timestamp: new Date().toISOString(),
-    gateways,
-    chatGatewayEnabled: gateways.llm.enabled,
-    chatProvider: gateways.llm.provider,
-    rerankEnabled: config.rerankEnabled,
-    retrievalCacheEnabled: config.ragEnableRetrievalCache,
-    documentStorage: getObjectStorageInfo(),
-    architecture: 'agent',
   });
 });
 
@@ -207,6 +201,8 @@ app.get('/admin/health/rabbitmq', internalAuthMiddleware, (req: Request, res: Re
 
 app.use('/admin', internalAuthMiddleware);
 app.use('/stats', internalAuthMiddleware);
+app.use('/rate-limit', internalAuthMiddleware);
+app.use('/spam-guard', internalAuthMiddleware);
 
 /**
  * Get AI message retry queue status
@@ -1385,83 +1381,181 @@ app.post('/admin/ai-wallet/:villageId/redeem-voucher', async (req: Request, res:
   }
 });
 
+const aiProviderCreateSchema = z.object({
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  provider_kind: z.string().min(1).optional(),
+  base_url: z.string().min(1),
+  api_key: z.string().min(1),
+  default_headers_json: z.unknown().optional(),
+  is_active: z.boolean().optional(),
+  priority: z.number().int().optional(),
+});
+
+const aiProviderUpdateSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+  base_url: z.string().min(1).optional(),
+  api_key: z.string().min(1).optional(),
+  default_headers_json: z.unknown().optional(),
+  is_active: z.boolean().optional(),
+  priority: z.number().int().optional(),
+});
+
+const nullableNumber = z.number().nullable();
+const aiModelCreateSchema = z.object({
+  provider_id: z.string().min(1),
+  lane_type: z.enum(['llm', 'embed', 'rewrite', 'rerank']),
+  display_name: z.string().min(1),
+  upstream_model_name: z.string().min(1),
+  endpoint_path: z.string().nullable().optional(),
+  actual_pricing_type: z.string().min(1).optional(),
+  actual_fixed_price_usd: nullableNumber.optional(),
+  actual_input_price_per_million_usd: nullableNumber.optional(),
+  actual_output_price_per_million_usd: nullableNumber.optional(),
+  adjusted_pricing_type: z.string().min(1).optional(),
+  adjusted_fixed_price_usd: nullableNumber.optional(),
+  adjusted_input_price_per_million_usd: nullableNumber.optional(),
+  adjusted_output_price_per_million_usd: nullableNumber.optional(),
+  is_active: z.boolean().optional(),
+  is_publicly_selectable: z.boolean().optional(),
+  notes: z.string().nullable().optional(),
+  priority: z.number().int().optional(),
+});
+
+const aiModelUpdateSchema = z.object({
+  id: z.string().min(1),
+  provider_id: z.string().min(1).optional(),
+  lane_type: z.enum(['llm', 'embed', 'rewrite', 'rerank']).optional(),
+  display_name: z.string().min(1).optional(),
+  upstream_model_name: z.string().min(1).optional(),
+  endpoint_path: z.string().nullable().optional(),
+  actual_pricing_type: z.string().min(1).optional(),
+  actual_fixed_price_usd: nullableNumber.optional(),
+  actual_input_price_per_million_usd: nullableNumber.optional(),
+  actual_output_price_per_million_usd: nullableNumber.optional(),
+  adjusted_pricing_type: z.string().min(1).optional(),
+  adjusted_fixed_price_usd: nullableNumber.optional(),
+  adjusted_input_price_per_million_usd: nullableNumber.optional(),
+  adjusted_output_price_per_million_usd: nullableNumber.optional(),
+  is_active: z.boolean().optional(),
+  is_publicly_selectable: z.boolean().optional(),
+  notes: z.string().nullable().optional(),
+  priority: z.number().int().optional(),
+});
+
+const aiLaneAssignmentSchema = z.object({
+  lane_type: z.enum(['llm', 'embed', 'rewrite', 'rerank']),
+  primary_model_id: z.string().min(1),
+  fallback_model_id: z.string().min(1).nullable().optional(),
+  village_id: z.string().min(1).nullable().optional(),
+  is_global_default: z.boolean().optional(),
+  is_active: z.boolean().optional(),
+});
+
 app.get('/admin/ai-providers', async (_req: Request, res: Response) => {
   try {
     const providers = await listAIProviders();
-    res.json({ success: true, data: providers });
+    res.json(successResponse(providers));
   } catch (error: any) {
     logger.error('Failed to list AI providers', { error: error.message });
-    res.status(500).json({ error: 'Failed to list AI providers' });
+    res.status(500).json(errorResponse('Failed to list AI providers'));
   }
 });
 
 app.post('/admin/ai-providers', async (req: Request, res: Response) => {
   try {
-    const provider = await createAIProvider(req.body || {});
-    res.json({ success: true, data: provider });
+    const provider = await createAIProvider(aiProviderCreateSchema.parse(req.body || {}));
+    res.json(successResponse(provider));
   } catch (error: any) {
     logger.error('Failed to create AI provider', { error: error.message });
-    res.status(400).json({ error: error.message || 'Failed to create AI provider' });
+    res.status(400).json(errorResponse(error.message || 'Failed to create AI provider'));
+  }
+});
+
+app.put('/admin/ai-providers/:id', async (req: Request, res: Response) => {
+  try {
+    const provider = await updateAIProvider(aiProviderUpdateSchema.parse({
+      ...(req.body || {}),
+      id: getParam(req, 'id'),
+    }));
+    res.json(successResponse(provider));
+  } catch (error: any) {
+    logger.error('Failed to update AI provider', { error: error.message });
+    res.status(400).json(errorResponse(error.message || 'Failed to update AI provider'));
   }
 });
 
 app.get('/admin/ai-models', async (_req: Request, res: Response) => {
   try {
     const models = await listAIModels();
-    res.json({ success: true, data: models });
+    res.json(successResponse(models));
   } catch (error: any) {
     logger.error('Failed to list AI models', { error: error.message });
-    res.status(500).json({ error: 'Failed to list AI models' });
+    res.status(500).json(errorResponse('Failed to list AI models'));
   }
 });
 
 app.post('/admin/ai-models', async (req: Request, res: Response) => {
   try {
-    const model = await createAIModel(req.body || {});
-    res.json({ success: true, data: model });
+    const model = await createAIModel(aiModelCreateSchema.parse(req.body || {}));
+    res.json(successResponse(model));
   } catch (error: any) {
     logger.error('Failed to create AI model', { error: error.message });
-    res.status(400).json({ error: error.message || 'Failed to create AI model' });
+    res.status(400).json(errorResponse(error.message || 'Failed to create AI model'));
+  }
+});
+
+app.put('/admin/ai-models/:id', async (req: Request, res: Response) => {
+  try {
+    const model = await updateAIModel(aiModelUpdateSchema.parse({
+      ...(req.body || {}),
+      id: getParam(req, 'id'),
+    }));
+    res.json(successResponse(model));
+  } catch (error: any) {
+    logger.error('Failed to update AI model', { error: error.message });
+    res.status(400).json(errorResponse(error.message || 'Failed to update AI model'));
   }
 });
 
 app.get('/admin/ai-lane-assignments', async (_req: Request, res: Response) => {
   try {
     const assignments = await listAILaneAssignments();
-    res.json({ success: true, data: assignments });
+    res.json(successResponse(assignments));
   } catch (error: any) {
     logger.error('Failed to list AI lane assignments', { error: error.message });
-    res.status(500).json({ error: 'Failed to list AI lane assignments' });
+    res.status(500).json(errorResponse('Failed to list AI lane assignments'));
   }
 });
 
 app.post('/admin/ai-lane-assignments', async (req: Request, res: Response) => {
   try {
-    const assignment = await upsertAILaneAssignment(req.body || {});
-    res.json({ success: true, data: assignment });
+    const assignment = await upsertAILaneAssignment(aiLaneAssignmentSchema.parse(req.body || {}));
+    res.json(successResponse(assignment));
   } catch (error: any) {
     logger.error('Failed to upsert AI lane assignment', { error: error.message });
-    res.status(400).json({ error: error.message || 'Failed to upsert AI lane assignment' });
+    res.status(400).json(errorResponse(error.message || 'Failed to upsert AI lane assignment'));
   }
 });
 
 app.post('/admin/ai-lane-assignments/activate', async (req: Request, res: Response) => {
   try {
-    const assignment = await upsertAILaneAssignment({ ...(req.body || {}), is_active: true });
-    res.json({ success: true, data: assignment });
+    const assignment = await upsertAILaneAssignment({ ...aiLaneAssignmentSchema.parse(req.body || {}), is_active: true });
+    res.json(successResponse(assignment));
   } catch (error: any) {
     logger.error('Failed to activate AI lane assignment', { error: error.message });
-    res.status(400).json({ error: error.message || 'Failed to activate AI lane assignment' });
+    res.status(400).json(errorResponse(error.message || 'Failed to activate AI lane assignment'));
   }
 });
 
 app.post('/admin/ai-lane-assignments/deactivate', async (req: Request, res: Response) => {
   try {
-    const assignment = await upsertAILaneAssignment({ ...(req.body || {}), is_active: false });
-    res.json({ success: true, data: assignment });
+    const assignment = await upsertAILaneAssignment({ ...aiLaneAssignmentSchema.parse(req.body || {}), is_active: false });
+    res.json(successResponse(assignment));
   } catch (error: any) {
     logger.error('Failed to deactivate AI lane assignment', { error: error.message });
-    res.status(400).json({ error: error.message || 'Failed to deactivate AI lane assignment' });
+    res.status(400).json(errorResponse(error.message || 'Failed to deactivate AI lane assignment'));
   }
 });
 
@@ -1686,13 +1780,11 @@ function getCircuitBreakerDescription(state: string): string {
 }
 
 // Root endpoint — minimal info only (Temuan 32)
-app.get('/', async (req: Request, res: Response) => {
+app.get('/', (req: Request, res: Response) => {
   res.json({
     service: 'GovConnect AI Orchestrator',
     version: '1.0.0',
     status: 'running',
-    gateways: await getAllAIGatewayInfoAsync(),
-    rerankEnabled: config.rerankEnabled,
   });
 });
 

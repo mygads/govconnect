@@ -63,14 +63,14 @@ async function startServer() {
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
   } catch (error: any) {
-    logger.error('Failed to start server:', error);
+    logger.error('Failed to start server', { error: error.message, stack: error.stack });
     process.exit(1);
   }
 }
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
+  logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
   process.exit(1);
 });
 

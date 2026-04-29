@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
 export async function PATCH(request: NextRequest) {
   try {
-    const payload = await getAuthUser(request)
-    if (!payload) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const [session, authError] = await requireAuth(request)
+    if (authError) return authError
 
     const body = await request.json()
     const { name } = body
@@ -17,7 +15,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     const updatedUser = await prisma.admin_users.update({
-      where: { id: payload.adminId },
+      where: { id: session.adminId },
       data: { name: name.trim() },
       select: {
         id: true,

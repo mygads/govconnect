@@ -1,5 +1,5 @@
 import logger from '../utils/logger';
-import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabled } from './ai-gateway.service';
+import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabledAsync } from './ai-gateway.service';
 
 export type ConfirmationDecision = 'CONFIRM' | 'REJECT' | 'UNCERTAIN';
 
@@ -59,7 +59,7 @@ export async function classifyConfirmation(
 ): Promise<ConfirmationResult | null> {
   const prompt = CONFIRMATION_SYSTEM_PROMPT.replace('{user_message}', message || '');
 
-  if (!isAIGatewayEnabled('llm')) {
+  if (!(await isAIGatewayEnabledAsync('llm', context?.village_id ?? null))) {
     logger.error('Confirmation classifier skipped: LLM gateway lane is not configured');
     return null;
   }

@@ -97,6 +97,7 @@ docker-compose*
 .circleci/
 
 # Prisma
-prisma/migrations/
 prisma/seed*.ts
 !prisma/schema.prisma
+!prisma/migrations/
+!prisma/migrations/**/*

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { comparePassword, generateToken } from '@/lib/auth'
+import { verifyCsrf } from '@/lib/csrf'
 
 // Simple in-memory rate limiter for login attempts
 const loginAttempts = new Map<string, { count: number; firstAttempt: number }>()
@@ -51,6 +52,9 @@ setInterval(() => {
 
 export async function POST(request: NextRequest) {
   try {
+    const csrfError = verifyCsrf(request)
+    if (csrfError) return csrfError
+
     const clientIp = getClientIp(request)
 
     // Check rate limit
@@ -132,7 +136,6 @@ export async function POST(request: NextRequest) {
 
     const response = NextResponse.json({
       success: true,
-      token,
       user: {
         id: admin.id,
         username: admin.username,
@@ -146,7 +149,8 @@ export async function POST(request: NextRequest) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 // 24 hours
+      maxAge: 60 * 60 * 24,
+      path: '/',
     })
 
     return response

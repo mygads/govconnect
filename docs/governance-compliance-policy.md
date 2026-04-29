@@ -25,6 +25,13 @@ Status: implemented baseline policy for product/runtime alignment
 - Internal service: hanya endpoint internal dengan `x-internal-api-key`/service auth.
 - Citizen: hanya data miliknya via WA/webchat/session/request token.
 
+## Secret Management
+
+- Provider API keys, gateway credentials, and other runtime secrets must be encrypted at rest before persistence.
+- AI provider keys are stored in `ai_providers.api_key_encrypted` using AES-256-GCM and decrypted only while constructing an outbound gateway attempt.
+- Provider `default_headers_json` must never carry auth-like headers; runtime code owns `Authorization: Bearer <decrypted-key>`.
+- Internal API keys are compared with timing-safe equality and should not be logged, echoed in errors, or included in observability payloads.
+
 ## Audit Trail
 
 Aksi sensitif yang wajib diaudit:
