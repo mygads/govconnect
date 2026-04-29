@@ -465,40 +465,40 @@ jobs:
             # Channel schema was historically created by postgres; make the runtime
             # migration role own its schema objects before channel-service starts.
             if sudo -u postgres psql -d govconnect -v ON_ERROR_STOP=1 <<'SQL'
-DO \$\$
-DECLARE
-  obj record;
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'channel') THEN
-    EXECUTE 'ALTER SCHEMA channel OWNER TO govconnect';
+          DO \$\$
+          DECLARE
+            obj record;
+          BEGIN
+            IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'channel') THEN
+              EXECUTE 'ALTER SCHEMA channel OWNER TO govconnect';
 
-    IF EXISTS (
-      SELECT 1
-      FROM pg_type t
-      JOIN pg_namespace n ON n.oid = t.typnamespace
-      WHERE n.nspname = 'channel' AND t.typname = 'ChannelType'
-    ) THEN
-      EXECUTE 'ALTER TYPE channel."ChannelType" OWNER TO govconnect';
-    END IF;
+              IF EXISTS (
+                SELECT 1
+                FROM pg_type t
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+                WHERE n.nspname = 'channel' AND t.typname = 'ChannelType'
+              ) THEN
+                EXECUTE 'ALTER TYPE channel."ChannelType" OWNER TO govconnect';
+              END IF;
 
-    FOR obj IN
-      SELECT schemaname, tablename
-      FROM pg_tables
-      WHERE schemaname = 'channel'
-    LOOP
-      EXECUTE format('ALTER TABLE %I.%I OWNER TO govconnect', obj.schemaname, obj.tablename);
-    END LOOP;
+              FOR obj IN
+                SELECT schemaname, tablename
+                FROM pg_tables
+                WHERE schemaname = 'channel'
+              LOOP
+                EXECUTE format('ALTER TABLE %I.%I OWNER TO govconnect', obj.schemaname, obj.tablename);
+              END LOOP;
 
-    FOR obj IN
-      SELECT sequence_schema, sequence_name
-      FROM information_schema.sequences
-      WHERE sequence_schema = 'channel'
-    LOOP
-      EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO govconnect', obj.sequence_schema, obj.sequence_name);
-    END LOOP;
-  END IF;
-END \$\$;
-SQL
+              FOR obj IN
+                SELECT sequence_schema, sequence_name
+                FROM information_schema.sequences
+                WHERE sequence_schema = 'channel'
+              LOOP
+                EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO govconnect', obj.sequence_schema, obj.sequence_name);
+              END LOOP;
+            END IF;
+          END \$\$;
+          SQL
             then
               echo "✅ Channel database ownership reconciled"
             else
