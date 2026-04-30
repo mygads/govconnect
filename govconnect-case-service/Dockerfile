@@ -72,23 +72,14 @@ USER caseuser
 
 EXPOSE 3003
 
-# Create entrypoint script with auto-migration (pin Prisma CLI to match @prisma/client version)
+# Create entrypoint script. Migrations are run sequentially by CI/CD.
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'set -e' >> /app/entrypoint.sh && \
-    echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
-    echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
-    echo '  if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
-    echo '    echo "📦 Running migrate deploy..."' >> /app/entrypoint.sh && \
-    echo '    ./node_modules/.bin/prisma migrate deploy' >> /app/entrypoint.sh && \
-    echo '  else' >> /app/entrypoint.sh && \
-    echo '    echo "❌ Prisma migrations missing from image; refusing to start"' >> /app/entrypoint.sh && \
-    echo '    exit 1' >> /app/entrypoint.sh && \
-    echo '  fi' >> /app/entrypoint.sh && \
-    echo 'else' >> /app/entrypoint.sh && \
-    echo '  echo "❌ DATABASE_URL not set; refusing to start without migrations"' >> /app/entrypoint.sh && \
+    echo 'if [ ! -d prisma/migrations ] || [ ! "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
+    echo '  echo "❌ Prisma migrations missing from image; refusing to start"' >> /app/entrypoint.sh && \
     echo '  exit 1' >> /app/entrypoint.sh && \
     echo 'fi' >> /app/entrypoint.sh && \
-    echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
+    echo 'echo "✅ Prisma migrations present"' >> /app/entrypoint.sh && \
     echo 'echo "🚀 Starting Case Service..."' >> /app/entrypoint.sh && \
     echo 'exec node dist/server.js' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh

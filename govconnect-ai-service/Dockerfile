@@ -84,21 +84,12 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo '  printf "%s\n" "DO \$sql\$ BEGIN IF EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = \$v\$vector\$v\$ AND n.nspname <> \$v\$ai\$v\$ AND pg_get_userbyid(e.extowner) = current_user) THEN EXECUTE \$v\$ALTER EXTENSION vector SET SCHEMA ai\$v\$; END IF; END \$sql\$;" | su -s /bin/sh aiuser -c "./node_modules/.bin/prisma db execute --stdin --schema prisma/schema.prisma 2>&1" || { echo "❌ pgvector schema alignment failed"; exit 1; }' >> /app/entrypoint.sh && \
     echo 'fi' >> /app/entrypoint.sh && \
     echo '' >> /app/entrypoint.sh && \
-    echo '# Run migrations as aiuser' >> /app/entrypoint.sh && \
-    echo 'echo "🔄 Running database migrations..."' >> /app/entrypoint.sh && \
-    echo 'if [ -n "$DATABASE_URL" ]; then' >> /app/entrypoint.sh && \
-    echo '  if [ -d prisma/migrations ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
-    echo '    echo "📦 Running migrate deploy..."' >> /app/entrypoint.sh && \
-    echo '    su -s /bin/sh aiuser -c "./node_modules/.bin/prisma migrate deploy"' >> /app/entrypoint.sh && \
-    echo '  else' >> /app/entrypoint.sh && \
-    echo '    echo "❌ Prisma migrations missing from image; refusing to start"' >> /app/entrypoint.sh && \
-    echo '    exit 1' >> /app/entrypoint.sh && \
-    echo '  fi' >> /app/entrypoint.sh && \
-    echo 'else' >> /app/entrypoint.sh && \
-    echo '  echo "❌ DATABASE_URL not set; refusing to start without migrations"' >> /app/entrypoint.sh && \
+    echo '# Migrations are run sequentially by CI/CD' >> /app/entrypoint.sh && \
+    echo 'if [ ! -d prisma/migrations ] || [ ! "$(ls -A prisma/migrations 2>/dev/null)" ]; then' >> /app/entrypoint.sh && \
+    echo '  echo "❌ Prisma migrations missing from image; refusing to start"' >> /app/entrypoint.sh && \
     echo '  exit 1' >> /app/entrypoint.sh && \
     echo 'fi' >> /app/entrypoint.sh && \
-    echo 'echo "✅ Database ready"' >> /app/entrypoint.sh && \
+    echo 'echo "✅ Prisma migrations present"' >> /app/entrypoint.sh && \
     echo 'echo "🚀 Starting AI Service..."' >> /app/entrypoint.sh && \
     echo 'exec su -s /bin/sh aiuser -c "node dist/server.js"' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
