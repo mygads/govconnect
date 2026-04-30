@@ -381,9 +381,8 @@ jobs:
         run: |
           if [ -n "$ENV_FILE" ]; then
             echo "📝 Updating .env file on server..."
-            ssh $VPS_USER@$VPS_HOST "mkdir -p ~/genfity/govconnect"
-            echo "$ENV_FILE" | ssh $VPS_USER@$VPS_HOST "cat > ~/genfity/govconnect/.env"
-            echo "✅ ENV file updated!"
+            printf '%s' "$ENV_FILE" | ssh $VPS_USER@$VPS_HOST "cat > /tmp/govconnect.env && sudo install -D -m 600 -o root -g root /tmp/govconnect.env /home/$VPS_USER/genfity/govconnect/.env && rm -f /tmp/govconnect.env"
+            echo "✅ ENV file updated with full replace!"
           else
             echo "⏭️ ENV_FILE secret not set, skipping .env update"
           fi
@@ -600,7 +599,7 @@ jobs:
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             echo "Checking services..."
             failures=0
-            DASHBOARD_PORT=$(grep -E '^DASHBOARD_PORT=' .env 2>/dev/null | tail -n 1 | cut -d= -f2-)
+            DASHBOARD_PORT=$(sudo grep -E '^DASHBOARD_PORT=' ~/genfity/govconnect/.env 2>/dev/null | tail -n 1 | cut -d= -f2-)
             DASHBOARD_PORT=${DASHBOARD_PORT:-3000}
 
             check_url() {
