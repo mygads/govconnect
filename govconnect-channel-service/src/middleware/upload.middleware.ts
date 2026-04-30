@@ -7,8 +7,15 @@ function isAllowedMimeType(mimeType: string): boolean {
     'application/pdf',
     'image/jpeg',
     'image/png',
+    'image/webp',
     'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'audio/mpeg',
+    'audio/mp4',
+    'audio/ogg',
+    'audio/webm',
+    'video/mp4',
+    'video/webm',
   ]);
   return allowed.has(mimeType);
 }
@@ -16,11 +23,11 @@ function isAllowedMimeType(mimeType: string): boolean {
 export const uploadPublicMedia = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    fileSize: 16 * 1024 * 1024,
   },
   fileFilter(_req: Request, file: Express.Multer.File, cb: FileFilterCallback) {
     if (!isAllowedMimeType(file.mimetype)) {
-      cb(new Error('Tipe file tidak didukung. Gunakan PDF/JPG/PNG/DOC/DOCX.'));
+      cb(new Error('Tipe file tidak didukung. Gunakan gambar, dokumen, audio, atau video WhatsApp.'));
       return;
     }
     cb(null, true);

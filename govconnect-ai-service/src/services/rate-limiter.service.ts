@@ -211,6 +211,8 @@ class RateLimiterService {
       return { allowed: true, reason: 'disabled' };
     }
 
+    const autoBlacklistViolations = Math.max(1, config.autoBlacklistViolations || 1);
+
     // Check blacklist first
     if (this.isBlacklisted(wa_user_id)) {
       const entry = this.data.blacklist[wa_user_id];
@@ -244,7 +246,7 @@ class RateLimiterService {
         });
         
         // Auto-blacklist if too many violations
-        if (userData.violations >= 10) {
+        if (userData.violations >= autoBlacklistViolations) {
           this.addToBlacklist(wa_user_id, 'Terlalu banyak pelanggaran rate limit', 'system');
         }
         
@@ -270,7 +272,7 @@ class RateLimiterService {
       });
       
       // Auto-blacklist if too many violations
-      if (userData.violations >= 10) {
+      if (userData.violations >= autoBlacklistViolations) {
         this.addToBlacklist(wa_user_id, 'Terlalu banyak pelanggaran rate limit', 'system');
       }
       
@@ -370,6 +372,7 @@ class RateLimiterService {
     if (this.data.blacklist[wa_user_id]) {
       delete this.data.blacklist[wa_user_id];
       this.removeBlacklistFromDB(wa_user_id); // Temuan 8
+      this.resetUserViolations(wa_user_id);
       logger.info('✅ User removed from blacklist', { wa_user_id });
       return true;
     }

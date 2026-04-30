@@ -36,8 +36,11 @@ interface OverviewStats {
   knowledgeHits: number
   knowledgeMisses: number
   fallbackCount: number
-  hitRate: string | number
-  missRate: string | number
+  hitRate: string | number | null
+  missRate: string | number | null
+  source?: "runtime" | "persistent_gap_fallback" | "unavailable"
+  isPartial?: boolean
+  caveat?: string | null
 }
 
 interface IntentItem {
@@ -299,6 +302,14 @@ interface AnalyticsData {
   guardrailObservability?: GuardrailObservabilityData | null
   toolPolicyObservability?: ToolPolicyObservabilityData | null
   evaluation?: EvaluationRunData | null
+  metricSources?: Record<string, string>
+  dataFreshness?: {
+    generatedAt: string
+    runtimeStatsAvailable: boolean
+    persistentGapsAvailable: boolean
+    persistentConflictsAvailable: boolean
+    latestEvalAvailable: boolean
+  }
   rawAnalytics: any
 }
 
@@ -503,7 +514,7 @@ export default function KnowledgeAnalyticsPage() {
 
   const overview = data?.overview || {
     totalQueries: 0, knowledgeHits: 0, knowledgeMisses: 0,
-    fallbackCount: 0, hitRate: 0, missRate: 0,
+    fallbackCount: 0, hitRate: null, missRate: null, source: "unavailable" as const, isPartial: true,
   }
   const intents = data?.intents || []
   const knowledgeGaps = data?.knowledgeGaps
@@ -529,6 +540,7 @@ export default function KnowledgeAnalyticsPage() {
   const evaluation = data?.evaluation
   const failedEvalItems = (evaluation?.items || []).filter((item) => item.traceGrade !== "A" || item.score < 1).slice(0, 10)
   const hitRateNum = typeof overview.hitRate === "string" ? parseFloat(overview.hitRate) : overview.hitRate
+  const hasRuntimeOverview = overview.source === "runtime" && typeof hitRateNum === "number"
 
   return (
     <div className="space-y-6">
@@ -537,7 +549,7 @@ export default function KnowledgeAnalyticsPage() {
         <div>
           <h1 className="text-3xl font-bold text-foreground">Analitik Knowledge Base</h1>
           <p className="text-muted-foreground mt-2">
-            Pantau efektivitas knowledge base dan identifikasi pertanyaan yang belum terjawab
+            Pantau knowledge gaps, konflik data, observability RAG, guardrail, tool policy, dan evaluasi kualitas. Halaman ini bukan training otomatis.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -552,6 +564,25 @@ export default function KnowledgeAnalyticsPage() {
           </Button>
         </div>
       </div>
+
+      {overview.isPartial && (
+        <Card className="border-blue-300 bg-blue-50 dark:bg-blue-950/20">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-start gap-3">
+              <HelpCircle className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-blue-800 dark:text-blue-300">Metrik ringkasan bersifat parsial</p>
+                <p className="text-sm text-blue-700 dark:text-blue-400 mt-0.5">
+                  {overview.caveat || "Runtime analytics belum tersedia. Gap, konflik, retrieval trace, guardrail, dan evaluation tetap dibaca dari sumbernya masing-masing jika tersedia."}
+                </p>
+                <p className="text-xs text-blue-700/80 dark:text-blue-400/80 mt-1">
+                  Halaman ini adalah analytics, observability, dan evaluasi kualitas; bukan training otomatis. Training dilakukan lewat perbaikan knowledge, embedding, dan golden-set evaluation.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Conflict Alert Banner */}
       {conflictStatusCounts.open > 0 && (
@@ -580,19 +611,21 @@ export default function KnowledgeAnalyticsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <BarChart3 className="h-4 w-4" /> Total Pertanyaan
+              <BarChart3 className="h-4 w-4" /> {overview.source === "runtime" ? "Interaksi AI Tercatat" : "Gap Tersimpan"}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{overview.totalQueries}</div>
-            <p className="text-xs text-muted-foreground mt-1">Semua pertanyaan masuk ke AI</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {overview.source === "runtime" ? "Dari runtime AI service" : "Fallback dari gap database"}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-green-600" /> Knowledge Hit
+              <CheckCircle className="h-4 w-4 text-green-600" /> Knowledge Hit Tercatat
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -604,7 +637,7 @@ export default function KnowledgeAnalyticsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <XCircle className="h-4 w-4 text-red-600" /> Knowledge Miss
+              <XCircle className="h-4 w-4 text-red-600" /> Knowledge Miss Tercatat
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -633,7 +666,7 @@ export default function KnowledgeAnalyticsPage() {
             <Target className="h-5 w-5" /> Coverage Rate
           </CardTitle>
           <CardDescription>
-            Persentase pertanyaan yang berhasil dijawab dari knowledge base
+            Persentase interaksi runtime yang tercatat berhasil dijawab dari knowledge base. Jika runtime stats belum ada, rate tidak dihitung.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -641,7 +674,7 @@ export default function KnowledgeAnalyticsPage() {
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Knowledge Hit Rate</span>
               <span className="text-2xl font-bold">
-                {hitRateNum > 0 ? (
+                {hasRuntimeOverview && hitRateNum > 0 ? (
                   <span className={hitRateNum >= 70 ? "text-green-600" : hitRateNum >= 40 ? "text-yellow-600" : "text-red-600"}>
                     {overview.hitRate}%
                   </span>
@@ -650,15 +683,15 @@ export default function KnowledgeAnalyticsPage() {
                 )}
               </span>
             </div>
-            <Progress value={hitRateNum || 0} className="h-3" />
+            <Progress value={hasRuntimeOverview ? hitRateNum || 0 : 0} className="h-3" />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>0%</span>
               <span className="flex items-center gap-1">
-                {hitRateNum >= 70 ? (
+                {hasRuntimeOverview && hitRateNum >= 70 ? (
                   <><TrendingUp className="h-3 w-3 text-green-600" /> Baik</>
-                ) : hitRateNum >= 40 ? (
+                ) : hasRuntimeOverview && hitRateNum >= 40 ? (
                   <><AlertTriangle className="h-3 w-3 text-yellow-600" /> Perlu ditingkatkan</>
-                ) : hitRateNum > 0 ? (
+                ) : hasRuntimeOverview && hitRateNum > 0 ? (
                   <><TrendingDown className="h-3 w-3 text-red-600" /> Perlu banyak perbaikan</>
                 ) : (
                   <>Belum ada data</>
@@ -1429,7 +1462,7 @@ export default function KnowledgeAnalyticsPage() {
         </CardHeader>
         <CardContent>
           <ul className="space-y-3">
-            {hitRateNum < 50 && hitRateNum > 0 && (
+            {hasRuntimeOverview && hitRateNum < 50 && hitRateNum > 0 && (
               <li className="flex items-start gap-2">
                 <XCircle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
                 <div>
@@ -1462,7 +1495,7 @@ export default function KnowledgeAnalyticsPage() {
                 </div>
               </li>
             )}
-            {hitRateNum >= 70 && (
+            {hasRuntimeOverview && hitRateNum >= 70 && (
               <li className="flex items-start gap-2">
                 <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 shrink-0" />
                 <div>

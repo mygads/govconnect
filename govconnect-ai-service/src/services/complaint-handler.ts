@@ -92,6 +92,13 @@ export async function buildComplaintCategoriesText(villageId?: string): Promise<
 
 // ==================== COMPLAINT CREATION ====================
 
+function getRateLimitBlockedReply(userId: string): string | null {
+  const rateLimitResult = rateLimiterService.checkRateLimit(userId);
+  if (rateLimitResult.allowed) return null;
+
+  return rateLimitResult.message || 'Mohon maaf, laporan belum bisa diproses karena batas penggunaan sudah tercapai. Silakan coba lagi nanti.';
+}
+
 /**
  * Handle complaint creation
  */
@@ -250,6 +257,9 @@ export async function handleComplaintCreation(
   }
 
   // ==================== CREATE COMPLAINT ====================
+  const rateLimitBlockedReply = getRateLimitBlockedReply(userId);
+  if (rateLimitBlockedReply) return rateLimitBlockedReply;
+
   const combinedFotoUrl = consumePendingPhotos(userId, mediaUrl);
 
   const complaintId = await createComplaint({
@@ -506,6 +516,9 @@ export async function handlePendingAddressConfirmation(
   if (addrDecision === 'yes') {
     logger.info('User confirmed vague address, creating complaint', { userId, alamat: pendingConfirm.alamat });
 
+    const rateLimitBlockedReply = getRateLimitBlockedReply(userId);
+    if (rateLimitBlockedReply) return rateLimitBlockedReply;
+
     clearPendingAddressConfirmation(userId);
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);
     const combinedFotoUrl = consumePendingPhotos(userId);
@@ -574,6 +587,9 @@ export async function handlePendingAddressConfirmation(
 
   if (looksLikeAddress) {
     logger.info('User provided more specific address', { userId, newAlamat: message });
+
+    const rateLimitBlockedReply = getRateLimitBlockedReply(userId);
+    if (rateLimitBlockedReply) return rateLimitBlockedReply;
 
     clearPendingAddressConfirmation(userId);
     if (mediaUrl) addPendingPhoto(userId, mediaUrl);

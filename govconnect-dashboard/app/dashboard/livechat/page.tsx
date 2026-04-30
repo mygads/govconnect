@@ -38,6 +38,11 @@ import {
   Loader2,
   AlertTriangle,
   RotateCcw,
+  Paperclip,
+  X,
+  FileText,
+  Video,
+  Volume2,
 } from "lucide-react"
 
 interface Conversation {
@@ -62,13 +67,32 @@ interface ProcessingStatus {
   progress: number
 }
 
+type LivechatMediaType = 'image' | 'audio' | 'document' | 'video' | 'sticker'
+
 interface Message {
   id: string
   message_text: string
+  media_type?: LivechatMediaType | null
+  media_url?: string | null
+  media_public_url?: string | null
+  mime_type?: string | null
+  file_name?: string | null
+  file_size?: number | null
+  storage_key?: string | null
   direction: "IN" | "OUT"
   source: string
   timestamp: string
   is_read?: boolean
+}
+
+interface UploadedLivechatMedia {
+  type: Exclude<LivechatMediaType, 'sticker'>
+  url: string
+  internal_url?: string
+  mime_type?: string
+  file_name?: string
+  size?: number
+  storage_key?: string
 }
 
 export default function LiveChatPage() {
@@ -86,6 +110,8 @@ export default function LiveChatPage() {
   const [isInitialLoading, setIsInitialLoading] = useState(true)
   const [isInitialMessagesLoading, setIsInitialMessagesLoading] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false)
+  const [selectedMedia, setSelectedMedia] = useState<UploadedLivechatMedia | null>(null)
   const [isTogglingTakeover, setIsTogglingTakeover] = useState(false)
 
   // Dialog states
@@ -117,6 +143,7 @@ export default function LiveChatPage() {
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const mediaInputRef = useRef<HTMLInputElement>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const selectedConversationRef = useRef<Conversation | null>(null)
   const previousMessagesLengthRef = useRef<number>(0)
@@ -419,10 +446,12 @@ export default function LiveChatPage() {
 
   // Send message
   const handleSendMessage = async () => {
-    if (!messageInput.trim() || !selectedConversation) return
+    if ((!messageInput.trim() && !selectedMedia) || !selectedConversation) return
 
-    const messageToSend = messageInput
+    const messageToSend = messageInput.trim()
+    const mediaToSend = selectedMedia
     setMessageInput("") // Clear immediately for better UX
+    setSelectedMedia(null)
     setIsSendingMessage(true)
 
     try {
@@ -435,7 +464,7 @@ export default function LiveChatPage() {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ message: messageToSend }),
+          body: JSON.stringify(mediaToSend ? { message: messageToSend, media: mediaToSend } : { message: messageToSend }),
         }
       )
 
@@ -449,6 +478,7 @@ export default function LiveChatPage() {
         })
       } else {
         setMessageInput(messageToSend) // Restore on error
+        setSelectedMedia(mediaToSend)
         throw new Error(data.error || "Gagal mengirim pesan")
       }
     } catch (error: any) {
@@ -459,6 +489,61 @@ export default function LiveChatPage() {
       })
     } finally {
       setIsSendingMessage(false)
+    }
+  }
+
+  const inferMediaType = (mimeType: string): UploadedLivechatMedia['type'] => {
+    if (mimeType.startsWith('image/')) return 'image'
+    if (mimeType.startsWith('audio/')) return 'audio'
+    if (mimeType.startsWith('video/')) return 'video'
+    return 'document'
+  }
+
+  const handleMediaSelect = async (file: File | null) => {
+    if (!file) return
+
+    setIsUploadingMedia(true)
+    try {
+      const token = localStorage.getItem("token")
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('scope', 'livechat')
+
+      const response = await fetch('/api/uploads', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      })
+
+      const result = await response.json()
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Gagal mengunggah media')
+      }
+
+      if (!result.data?.url) {
+        throw new Error('Upload berhasil tetapi URL media kosong')
+      }
+
+      setSelectedMedia({
+        type: inferMediaType(result.data?.mime_type || file.type),
+        url: result.data.url,
+        internal_url: result.data?.internal_url,
+        mime_type: result.data?.mime_type || file.type,
+        file_name: result.data?.filename || file.name,
+        size: result.data?.size || file.size,
+        storage_key: result.data?.storage_key || result.data?.path,
+      })
+    } catch (error: any) {
+      toast({
+        title: "Upload gagal",
+        description: error.message || "Gagal mengunggah media",
+        variant: "destructive",
+      })
+    } finally {
+      setIsUploadingMedia(false)
+      if (mediaInputRef.current) mediaInputRef.current.value = ''
     }
   }
 
@@ -741,14 +826,65 @@ export default function LiveChatPage() {
     return trimmed
   }
 
-  // Render message content (handle images)
+  const isMediaPlaceholder = (text: string) => /^\[(Image|Video|Audio|Document|Sticker)\](\s.*)?$/.test(text.trim())
+
+  // Render message content (handle structured media and legacy URL messages)
   const renderMessageContent = (msg: Message) => {
+    const structuredMediaUrl = msg.media_public_url || msg.media_url
+
+    if (structuredMediaUrl && msg.media_type) {
+      const renderableUrl = resolveRenderableMediaUrl(structuredMediaUrl)
+      const mediaKey = `${msg.id}:${structuredMediaUrl}`
+      const caption = isMediaPlaceholder(msg.message_text) ? '' : msg.message_text
+
+      return (
+        <div className="space-y-2">
+          {(msg.media_type === 'image' || msg.media_type === 'sticker') && (
+            failedMedia[mediaKey] ? (
+              <div className="flex items-center gap-2 rounded-lg bg-gray-100 p-3 text-gray-700 dark:bg-gray-700 dark:text-gray-100">
+                <ImageIcon className="h-4 w-4" />
+                <span className="text-sm">Gambar tidak dapat dimuat</span>
+              </div>
+            ) : (
+              <div className="relative max-w-[280px] overflow-hidden rounded-lg">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={renderableUrl}
+                  alt={msg.file_name || 'Media'}
+                  className="h-auto w-full cursor-pointer transition-opacity hover:opacity-90"
+                  onClick={() => window.open(renderableUrl, '_blank', 'noopener,noreferrer')}
+                  onError={() => setFailedMedia((current) => ({ ...current, [mediaKey]: true }))}
+                />
+              </div>
+            )
+          )}
+          {msg.media_type === 'video' && (
+            <video src={renderableUrl} controls className="max-w-[280px] rounded-lg" />
+          )}
+          {msg.media_type === 'audio' && (
+            <audio src={renderableUrl} controls className="max-w-[280px]" />
+          )}
+          {msg.media_type === 'document' && (
+            <a
+              href={renderableUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center gap-2 rounded-lg p-3 underline-offset-2 hover:underline ${msg.direction === 'OUT' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-100'}`}
+            >
+              <FileText className="h-4 w-4" />
+              <span className="text-sm font-medium">{msg.file_name || 'Buka dokumen'}</span>
+            </a>
+          )}
+          {caption && <p className="text-sm whitespace-pre-wrap break-words">{caption}</p>}
+        </div>
+      )
+    }
+
     const imageUrl = extractImageUrl(msg.message_text)
 
     if (imageUrl) {
       const renderableImageUrl = resolveRenderableMediaUrl(imageUrl)
       const mediaKey = `${msg.id}:${imageUrl}`
-      // Get caption (text without the URL)
       const caption = msg.message_text.replace(imageUrl, '').trim()
 
       return (
@@ -773,24 +909,23 @@ export default function LiveChatPage() {
             </div>
           )}
           {caption && (
-            <p className="text-sm whitespace-pre-wrap wrap-break-word">{caption}</p>
+            <p className="text-sm whitespace-pre-wrap break-words">{caption}</p>
           )}
         </div>
       )
     }
 
-    // Check if message mentions it has an image but URL not directly visible
     if (msg.message_text.includes('[Gambar]') || msg.message_text.includes('[Image]')) {
       return (
         <div className="flex items-center gap-2">
           <ImageIcon className="h-4 w-4" />
-          <p className="text-sm whitespace-pre-wrap wrap-break-word">{msg.message_text}</p>
+          <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
         </div>
       )
     }
 
     return (
-      <p className="text-sm whitespace-pre-wrap wrap-break-word">{msg.message_text}</p>
+      <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
     )
   }
 
@@ -1125,31 +1260,62 @@ export default function LiveChatPage() {
               {/* Message Input - Fixed at Bottom */}
               <div className="p-3 border-t bg-card shrink-0">
                 {selectedConversation.is_takeover ? (
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Ketik pesan..."
-                      value={messageInput}
-                      onChange={(e) => setMessageInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault()
-                          handleSendMessage()
-                        }
-                      }}
-                      disabled={isSendingMessage}
-                      className="h-10"
-                    />
-                    <Button
-                      onClick={handleSendMessage}
-                      disabled={isSendingMessage || !messageInput.trim()}
-                      className="h-10 px-4"
-                    >
-                      {isSendingMessage ? (
-                        <RefreshCw className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
-                      )}
-                    </Button>
+                  <div className="space-y-2">
+                    {selectedMedia && (
+                      <div className="flex items-center justify-between rounded-lg border bg-muted/50 px-3 py-2 text-sm">
+                        <div className="flex min-w-0 items-center gap-2">
+                          {selectedMedia.type === 'image' ? <ImageIcon className="h-4 w-4" /> : selectedMedia.type === 'video' ? <Video className="h-4 w-4" /> : selectedMedia.type === 'audio' ? <Volume2 className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                          <span className="truncate">{selectedMedia.file_name || selectedMedia.type}</span>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setSelectedMedia(null)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <input
+                        ref={mediaInputRef}
+                        type="file"
+                        className="hidden"
+                        accept="image/jpeg,image/png,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,audio/mpeg,audio/mp4,audio/ogg,audio/webm,video/mp4,video/webm"
+                        onChange={(e) => handleMediaSelect(e.target.files?.[0] || null)}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => mediaInputRef.current?.click()}
+                        disabled={isSendingMessage || isUploadingMedia || isWebchatConversation(selectedConversation)}
+                        className="h-10 w-10"
+                        title="Lampirkan media"
+                      >
+                        {isUploadingMedia ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                      </Button>
+                      <Input
+                        placeholder={selectedMedia ? "Tambahkan caption..." : "Ketik pesan..."}
+                        value={messageInput}
+                        onChange={(e) => setMessageInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault()
+                            handleSendMessage()
+                          }
+                        }}
+                        disabled={isSendingMessage}
+                        className="h-10"
+                      />
+                      <Button
+                        onClick={handleSendMessage}
+                        disabled={isSendingMessage || isUploadingMedia || (!messageInput.trim() && !selectedMedia)}
+                        className="h-10 px-4"
+                      >
+                        {isSendingMessage ? (
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="text-center text-muted-foreground py-2 bg-muted/50 rounded-lg">
@@ -1190,9 +1356,9 @@ export default function LiveChatPage() {
                 value={takeoverReasonTemplate}
                 onValueChange={(value: string) => {
                   setTakeoverReasonTemplate(value)
-                  if (value && value !== "Lainnya") {
+                  if (value && value !== "empty" && value !== "Lainnya") {
                     setTakeoverReason(value)
-                  } else if (value === "Lainnya") {
+                  } else {
                     setTakeoverReason("")
                   }
                 }}

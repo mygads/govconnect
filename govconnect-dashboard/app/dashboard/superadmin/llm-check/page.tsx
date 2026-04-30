@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { redirect } from "next/navigation"
 import {
   Activity,
@@ -11,6 +11,8 @@ import {
   Clock,
   Cpu,
   Database,
+  Loader2,
+  Play,
   Plug,
   RefreshCcw,
   Search,
@@ -19,9 +21,12 @@ import {
 } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { superadmin } from "@/lib/frontend-api"
 
@@ -49,6 +54,22 @@ interface LaneCheckResult {
   model?: string
   error?: string
   details?: any
+}
+
+interface ProviderRow {
+  id: string
+  name: string
+  slug: string
+}
+
+interface ModelRow {
+  id: string
+  lane_type: string
+  display_name: string
+  upstream_model_name: string
+  is_active: boolean
+  provider_id: string
+  provider?: ProviderRow
 }
 
 interface LLMCheckData {
@@ -111,8 +132,15 @@ function getLaneIcon(lane: LaneName) {
 export default function LLMCheckPage() {
   const { user } = useAuth()
   const [data, setData] = useState<LLMCheckData | null>(null)
+  const [providers, setProviders] = useState<ProviderRow[]>([])
+  const [adminModels, setAdminModels] = useState<ModelRow[]>([])
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
+  const [selectedLane, setSelectedLane] = useState("llm")
+  const [selectedProviderId, setSelectedProviderId] = useState("all")
+  const [selectedModelId, setSelectedModelId] = useState("")
+  const [testingModel, setTestingModel] = useState(false)
+  const [modelTestResult, setModelTestResult] = useState<any>(null)
 
   useEffect(() => {
     if (user && user.role !== "superadmin") redirect("/dashboard")
@@ -121,8 +149,18 @@ export default function LLMCheckPage() {
   const fetchCheck = useCallback(async () => {
     try {
       setChecking(true)
-      const response = await superadmin.getLLMCheck()
-      setData(response)
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+      const [checkResponse, providersRes, modelsRes] = await Promise.all([
+        superadmin.getLLMCheck(),
+        fetch("/api/superadmin/providers", { headers }),
+        fetch("/api/superadmin/ai-models", { headers }),
+      ])
+      const providersPayload = await providersRes.json()
+      const modelsPayload = await modelsRes.json()
+      setData(checkResponse)
+      setProviders(Array.isArray(providersPayload?.data) ? providersPayload.data : [])
+      setAdminModels(Array.isArray(modelsPayload?.data) ? modelsPayload.data : [])
     } catch (error) {
       console.error("AI gateway check failed:", error)
     } finally {
@@ -134,6 +172,40 @@ export default function LLMCheckPage() {
   useEffect(() => {
     fetchCheck()
   }, [fetchCheck])
+
+  const selectableModels = useMemo(() => {
+    return adminModels.filter((model) => {
+      if (!model.is_active) return false
+      if (model.lane_type !== selectedLane) return false
+      if (selectedProviderId !== "all" && model.provider_id !== selectedProviderId) return false
+      return true
+    })
+  }, [adminModels, selectedLane, selectedProviderId])
+
+  useEffect(() => {
+    setSelectedModelId((current) => selectableModels.some((model) => model.id === current) ? current : selectableModels[0]?.id || "")
+  }, [selectableModels])
+
+  const handleModelTest = async () => {
+    if (!selectedModelId) return
+    try {
+      setTestingModel(true)
+      setModelTestResult(null)
+      const token = localStorage.getItem("token")
+      const response = await fetch("/api/superadmin/ai-models/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ model_id: selectedModelId }),
+      })
+      const payload = await response.json()
+      setModelTestResult(payload)
+    } finally {
+      setTestingModel(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -178,6 +250,59 @@ export default function LLMCheckPage() {
 
       {data && (
         <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Play className="h-5 w-5" /> Test Model Tertentu</CardTitle>
+              <CardDescription>Pilih lane, provider, dan model untuk mengetes koneksi langsung dengan request minimal.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Lane</Label>
+                  <Select value={selectedLane} onValueChange={setSelectedLane}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {["llm", "embed", "rewrite", "rerank"].map((lane) => <SelectItem key={lane} value={lane}>{lane.toUpperCase()}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Provider</Label>
+                  <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Semua provider</SelectItem>
+                      {providers.map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Model</Label>
+                  <Select value={selectedModelId} onValueChange={setSelectedModelId} disabled={selectableModels.length === 0}>
+                    <SelectTrigger><SelectValue placeholder="Pilih model" /></SelectTrigger>
+                    <SelectContent>
+                      {selectableModels.map((model) => <SelectItem key={model.id} value={model.id}>{model.display_name} · {model.provider?.name || model.upstream_model_name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <Button onClick={handleModelTest} disabled={testingModel || !selectedModelId}>
+                {testingModel ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                Test Model
+              </Button>
+              {modelTestResult && (
+                <Alert variant={modelTestResult.success ? "default" : "destructive"}>
+                  <AlertTitle>{modelTestResult.success ? "Connected" : "Error"}</AlertTitle>
+                  <AlertDescription>
+                    {modelTestResult.success
+                      ? `${modelTestResult.provider} / ${modelTestResult.model} · ${modelTestResult.responseTime}ms`
+                      : modelTestResult.error || "Model test gagal"}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <Card className="border-border/60">
               <CardHeader className="pb-2">

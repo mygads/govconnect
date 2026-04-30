@@ -13,8 +13,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const response = await ai.getAIWalletSummary(villageId)
-    const payload = await response.json()
-    return NextResponse.json(payload)
+    const payload = await response.json().catch(() => ({ error: 'Invalid AI balance response' }))
+    return NextResponse.json(payload, { status: response.status })
   } catch (error) {
     console.error('AI balance summary proxy error:', error)
     return NextResponse.json({ error: 'Failed to fetch AI balance summary' }, { status: 500 })

@@ -41,6 +41,7 @@ import { runGoldenSetEvaluation, getGoldenSetSummary } from './services/golden-s
 import {
   getUsageByPeriod,
   getUsageByModel,
+  getUsageByProvider,
   getUsageByVillage,
   getUsageByIntentFamily,
   getUsageByTenantFlow,
@@ -74,6 +75,8 @@ import {
 import {
   createAIModel,
   createAIProvider,
+  deleteAIModel,
+  deleteAIProvider,
   listAILaneAssignments,
   listAIModels,
   listAIProviders,
@@ -814,6 +817,21 @@ app.get('/stats/token-usage/by-model', async (req: Request, res: Response) => {
   }
 });
 
+// GET /stats/token-usage/by-provider
+app.get('/stats/token-usage/by-provider', async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      village_id: getQuery(req, 'village_id'),
+      start: getQuery(req, 'start'),
+      end: getQuery(req, 'end'),
+    };
+    const data = await getUsageByProvider(filters);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get usage by provider' });
+  }
+});
+
 // GET /stats/token-usage/by-village
 app.get('/stats/token-usage/by-village', async (req: Request, res: Response) => {
   try {
@@ -1395,6 +1413,7 @@ const aiProviderCreateSchema = z.object({
 const aiProviderUpdateSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).optional(),
+  provider_kind: z.string().min(1).optional(),
   base_url: z.string().min(1).optional(),
   api_key: z.string().min(1).optional(),
   default_headers_json: z.unknown().optional(),
@@ -1486,6 +1505,19 @@ app.put('/admin/ai-providers/:id', async (req: Request, res: Response) => {
   }
 });
 
+app.delete('/admin/ai-providers/:id', async (req: Request, res: Response) => {
+  try {
+    const id = getParam(req, 'id');
+    if (!id) throw new Error('Provider id is required');
+
+    const result = await deleteAIProvider(id);
+    res.json(successResponse(result));
+  } catch (error: any) {
+    logger.error('Failed to delete AI provider', { error: error.message });
+    res.status(400).json(errorResponse(error.message || 'Failed to delete AI provider'));
+  }
+});
+
 app.get('/admin/ai-models', async (_req: Request, res: Response) => {
   try {
     const models = await listAIModels();
@@ -1516,6 +1548,19 @@ app.put('/admin/ai-models/:id', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Failed to update AI model', { error: error.message });
     res.status(400).json(errorResponse(error.message || 'Failed to update AI model'));
+  }
+});
+
+app.delete('/admin/ai-models/:id', async (req: Request, res: Response) => {
+  try {
+    const id = getParam(req, 'id');
+    if (!id) throw new Error('Model id is required');
+
+    const result = await deleteAIModel(id);
+    res.json(successResponse(result));
+  } catch (error: any) {
+    logger.error('Failed to delete AI model', { error: error.message });
+    res.status(400).json(errorResponse(error.message || 'Failed to delete AI model'));
   }
 });
 

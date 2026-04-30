@@ -477,6 +477,7 @@ Request
 Copy JSON
 request.json
 {
+  "enabled": true,
   "endpoint": "s3.amazonaws.com",
   "region": "us-east-1",
   "bucket": "my-whatsapp-media",
@@ -1030,7 +1031,7 @@ POST
 
 
 Send Image
-Sends an image message (base64 encoded in PNG or JPEG format).
+Sends an image message. The `Image` field accepts a public HTTP(S) URL or a base64 data URL in PNG/JPEG format.
 
 Request
 
@@ -1064,7 +1065,7 @@ POST
 
 
 Send Audio
-Send audio
+Send audio. The `Audio` field accepts a public HTTP(S) URL or a base64 data URL.
 
 Request
 
@@ -1097,7 +1098,7 @@ POST
 
 
 Send Document
-Sends any document (base64 encoded using application/octet-stream mime).
+Sends any document. The `Document` field accepts a public HTTP(S) URL or a base64 data URL.
 
 Request
 
@@ -1131,7 +1132,7 @@ POST
 
 
 Send Video
-Sends a video message (base64 encoded in MP4 or 3GPP format).
+Sends a video message. The `Video` field accepts a public HTTP(S) URL or a base64 data URL in MP4/3GPP format.
 
 Request
 

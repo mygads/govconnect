@@ -22,6 +22,20 @@ interface TestResult {
       knowledgeConfidence?: string
       sentiment?: string
       language?: string
+      agentMode?: string
+      sideEffectMode?: string
+      toolsUsed?: string[]
+      allowedTools?: string[]
+      heuristicTools?: string[]
+      learnedTools?: string[]
+      traceId?: string
+      toolTrace?: Array<{
+        tool: string
+        success: boolean
+        durationMs: number
+        trustLevel: string
+        sourceKind?: string
+      }>
     }
   }
   error?: string
@@ -77,7 +91,7 @@ export default function TestingKnowledgePage() {
       <div>
         <h1 className="text-3xl font-bold text-foreground">Uji Pengetahuan</h1>
         <p className="text-muted-foreground mt-2">
-          Uji respons AI langsung tanpa masuk ke riwayat chat.
+          Uji pipeline AI knowledge/RAG yang sama dengan WhatsApp dan Webchat, tanpa memasukkan chat ke inbox.
         </p>
       </div>
 
@@ -85,7 +99,7 @@ export default function TestingKnowledgePage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">✨ Form Uji AI</CardTitle>
           <CardDescription>
-            Masukkan pertanyaan untuk mengetes jawaban AI seperti alur WhatsApp/Web.
+            Masukkan pertanyaan knowledge untuk menguji RAG, rewrite, dan orchestrator. Workflow laporan, layanan, cek status, pembatalan, dan riwayat tidak dijalankan dari halaman ini.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -141,6 +155,16 @@ export default function TestingKnowledgePage() {
                       Knowledge: Ya
                     </Badge>
                   )}
+                  {result.data.metadata?.sideEffectMode && (
+                    <Badge className="border border-border bg-background text-foreground">
+                      Mode: {result.data.metadata.sideEffectMode}
+                    </Badge>
+                  )}
+                  {result.data.metadata?.traceId && (
+                    <Badge className="border border-border bg-background text-foreground">
+                      Trace: {result.data.metadata.traceId}
+                    </Badge>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Jawaban</p>
@@ -160,8 +184,46 @@ export default function TestingKnowledgePage() {
                   <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                     <div>Waktu Proses: {result.data.metadata.processingTimeMs} ms</div>
                     <div>Model: {result.data.metadata.model || "-"}</div>
+                    <div>Agent Mode: {result.data.metadata.agentMode || "-"}</div>
+                    <div>Confidence: {result.data.metadata.knowledgeConfidence || "-"}</div>
                     <div>Sentimen: {result.data.metadata.sentiment || "-"}</div>
                     <div>Bahasa: {result.data.metadata.language || "-"}</div>
+                  </div>
+                )}
+                {result.data.metadata && (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold">Tools Dipakai</p>
+                      <pre className="text-xs bg-muted/60 rounded-md p-3 overflow-auto">
+                        {JSON.stringify(result.data.metadata.toolsUsed || [], null, 2)}
+                      </pre>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold">Tools Diizinkan</p>
+                      <pre className="text-xs bg-muted/60 rounded-md p-3 overflow-auto">
+                        {JSON.stringify(result.data.metadata.allowedTools || [], null, 2)}
+                      </pre>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold">Tools Heuristik</p>
+                      <pre className="text-xs bg-muted/60 rounded-md p-3 overflow-auto">
+                        {JSON.stringify(result.data.metadata.heuristicTools || [], null, 2)}
+                      </pre>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold">Tools Learned Policy</p>
+                      <pre className="text-xs bg-muted/60 rounded-md p-3 overflow-auto">
+                        {JSON.stringify(result.data.metadata.learnedTools || [], null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+                {result.data.metadata?.toolTrace && result.data.metadata.toolTrace.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Tool Trace</p>
+                    <pre className="text-xs bg-muted/60 rounded-md p-3 overflow-auto">
+                      {JSON.stringify(result.data.metadata.toolTrace, null, 2)}
+                    </pre>
                   </div>
                 )}
                 {result.data.fields && Object.keys(result.data.fields).length > 0 && (

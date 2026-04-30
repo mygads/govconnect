@@ -127,18 +127,30 @@ async function callSessionGateway(
   body?: unknown,
 ): Promise<any> {
   const url = `${config.WA_API_URL}${path.startsWith('/') ? path : `/${path}`}`;
-  const response = await axios.request({
-    url,
-    method,
-    data: body,
-    headers: {
-      token: sessionToken,
-      'Content-Type': 'application/json',
-    },
-    timeout: 15000,
-  });
 
-  return response.data?.data || response.data;
+  try {
+    const response = await axios.request({
+      url,
+      method,
+      data: body,
+      headers: {
+        token: sessionToken,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+
+    return response.data?.data || response.data;
+  } catch (error: any) {
+    logger.error('WA session gateway request failed', {
+      path,
+      method,
+      status: error.response?.status,
+      response: error.response?.data,
+      error: error.message,
+    });
+    throw error;
+  }
 }
 
 async function configureSessionObjectStorage(sessionToken: string, villageId: string): Promise<void> {
@@ -150,10 +162,31 @@ async function configureSessionObjectStorage(sessionToken: string, villageId: st
     return;
   }
 
-  await callSessionGateway(sessionToken, '/session/s3/config', 'POST', s3Config);
-  await callSessionGateway(sessionToken, '/session/s3/test', 'POST');
+  try {
+    await callSessionGateway(sessionToken, '/session/s3/config', 'POST', s3Config);
+  } catch (error: any) {
+    const message = JSON.stringify(error.response?.data || error.message || '');
+    if (error.response?.status === 400 && message.includes('S3 is not enabled for this user')) {
+      logger.warn('Skipping WhatsApp session S3 bootstrap because provider user has S3 disabled', {
+        village_id: villageId,
+      });
+      return;
+    }
+    throw error;
+  }
 
-  logger.info('WhatsApp session S3 configured successfully', {
+  try {
+    await callSessionGateway(sessionToken, '/session/s3/test', 'POST');
+  } catch (error: any) {
+    logger.warn('WhatsApp session S3 test failed after config; keeping session active', {
+      village_id: villageId,
+      status: error.response?.status,
+      response: error.response?.data,
+      error: error.message,
+    });
+  }
+
+  logger.info('WhatsApp session S3 configured', {
     village_id: villageId,
     bucket: s3Config.bucket,
     endpoint: s3Config.endpoint,
@@ -1198,6 +1231,132 @@ export async function sendTextMessage(
   } catch (error: any) {
     logger.error('Failed to send WhatsApp message', {
       to,
+      error: error.message,
+      response: error.response?.data,
+      status: error.response?.status,
+    });
+
+    return {
+      success: false,
+      error: error.response?.data?.message || error.response?.data?.Message || error.message,
+    };
+  }
+}
+
+export type WhatsAppMediaType = 'image' | 'audio' | 'document' | 'video';
+
+export interface SendMediaMessageParams {
+  to: string;
+  mediaType: WhatsAppMediaType;
+  url: string;
+  caption?: string;
+  fileName?: string;
+  mimeType?: string;
+  villageId?: string;
+}
+
+export async function sendMediaMessage(
+  params: SendMediaMessageParams
+): Promise<{ success: boolean; message_id?: string; error?: string }> {
+  try {
+    const account = await getDefaultChannelAccount(params.villageId);
+    if (account && account.enabled_wa === false) {
+      logger.info('WhatsApp channel disabled, media not sent', { to: params.to, mediaType: params.mediaType });
+      return {
+        success: false,
+        error: 'WhatsApp channel disabled',
+      };
+    }
+
+    const normalizedPhone = normalizePhoneNumber(params.to);
+
+    if (isDryRun()) {
+      const fakeMessageId = `dryrun_media_${Date.now()}`;
+      logger.info('WA_DRY_RUN: Skipping WhatsApp media send', {
+        village_id: params.villageId,
+        to: normalizedPhone,
+        mediaType: params.mediaType,
+        message_id: fakeMessageId,
+      });
+      return { success: true, message_id: fakeMessageId };
+    }
+
+    const resolved = await resolveAccessToken(params.villageId);
+    const accessToken = resolved.token;
+    if (!accessToken) {
+      logger.warn('WhatsApp token not configured, media not sent');
+      return {
+        success: false,
+        error: 'WhatsApp not configured',
+      };
+    }
+
+    const endpointMap: Record<WhatsAppMediaType, string> = {
+      image: '/chat/send/image',
+      audio: '/chat/send/audio',
+      document: '/chat/send/document',
+      video: '/chat/send/video',
+    };
+    const url = `${config.WA_API_URL}${endpointMap[params.mediaType]}`;
+    const body: Record<string, unknown> = { Phone: normalizedPhone };
+
+    if (params.mediaType === 'image') {
+      body.Image = params.url;
+      if (params.caption) body.Caption = params.caption;
+    } else if (params.mediaType === 'audio') {
+      body.Audio = params.url;
+      body.PTT = false;
+    } else if (params.mediaType === 'document') {
+      body.Document = params.url;
+      body.FileName = params.fileName || 'document';
+      if (params.caption) body.Caption = params.caption;
+    } else if (params.mediaType === 'video') {
+      body.Video = params.url;
+      if (params.caption) body.Caption = params.caption;
+    }
+
+    if (params.mimeType) {
+      body.MimeType = params.mimeType;
+    }
+
+    const response = await axios.post(url, body, {
+      headers: {
+        token: accessToken,
+        'Content-Type': 'application/json',
+      },
+      timeout: 60000,
+    });
+
+    const responseData = response.data.data || response.data;
+    const messageId = responseData.Id || responseData.id;
+    const isSuccess = response.data.success === true || response.data.code === 200 || responseData.Details === 'Sent';
+
+    if (!isSuccess) {
+      logger.warn('WhatsApp media API returned non-success response', {
+        to: normalizedPhone,
+        mediaType: params.mediaType,
+        response: response.data,
+      });
+      return {
+        success: false,
+        error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+      };
+    }
+
+    logger.info('WhatsApp media sent', {
+      to: normalizedPhone,
+      mediaType: params.mediaType,
+      message_id: messageId,
+    });
+
+    return {
+      success: true,
+      message_id: messageId,
+    };
+  } catch (error: any) {
+    logger.error('Failed to send WhatsApp media', {
+      to: params.to,
+      mediaType: params.mediaType,
       error: error.message,
       response: error.response?.data,
       status: error.response?.status,

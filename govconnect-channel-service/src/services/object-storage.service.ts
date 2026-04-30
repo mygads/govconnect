@@ -21,6 +21,7 @@ export interface StoredObjectResult {
 }
 
 export interface WhatsAppSessionS3Config {
+  enabled: boolean;
   endpoint: string;
   region: string;
   bucket: string;
@@ -194,17 +195,14 @@ export function getObjectStorageInfo() {
   };
 }
 
-function normalizeEndpointForWhatsAppSession(endpoint: string): string {
-  return endpoint.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
-}
-
 export function getWhatsAppSessionS3Config(): WhatsAppSessionS3Config | null {
   if (!storageEnabled) {
     return null;
   }
 
   return {
-    endpoint: normalizeEndpointForWhatsAppSession(storageEndpoint),
+    enabled: true,
+    endpoint: storageEndpoint,
     region: storageRegion,
     bucket: storageBucket,
     access_key: storageAccessKey,

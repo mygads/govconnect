@@ -13,12 +13,17 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json().catch(() => ({}))
+    const code = typeof body.code === 'string' ? body.code.trim() : ''
+    if (!code) {
+      return NextResponse.json({ error: 'Kode voucher wajib diisi' }, { status: 400 })
+    }
+
     const response = await ai.redeemAIWalletVoucher(villageId, {
-      code: body.code,
+      code,
       admin_id: session.adminId,
     })
-    const payload = await response.json()
-    return NextResponse.json(payload)
+    const payload = await response.json().catch(() => ({ error: 'Invalid AI voucher response' }))
+    return NextResponse.json(payload, { status: response.status })
   } catch (error: any) {
     console.error('AI balance redeem proxy error:', error)
     return NextResponse.json({ error: error?.message || 'Failed to redeem AI voucher' }, { status: 500 })

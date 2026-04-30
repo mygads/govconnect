@@ -19,11 +19,40 @@ export interface MediaInfo {
 
 export interface DownloadMediaParams {
   url: string;
+  directPath?: string;
   mediaKey: string;
   mimetype: string;
   fileSha256: string;
   fileLength: number;
   fileEncSha256?: string;
+}
+
+function getStringField(source: any, keys: string[]): string {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return '';
+}
+
+function getNumberField(source: any, keys: string[]): number {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return 0;
+}
+
+function getMediaField(message: GenfityMediaMessage, keys: string[]): string {
+  return getStringField(message as any, keys);
+}
+
+function getMediaFileLength(message: GenfityMediaMessage): number {
+  return getNumberField(message as any, ['FileLength', 'fileLength', 'file_length']);
 }
 
 /**
@@ -225,7 +254,7 @@ export async function saveBase64Media(
  */
 export async function downloadWhatsAppMedia(
   mediaMessage: GenfityMediaMessage,
-  mediaType: 'image' | 'video' | 'audio' | 'document',
+  mediaType: 'image' | 'video' | 'audio' | 'document' | 'sticker',
   waUserId: string,
   messageId: string,
   villageId?: string
@@ -241,7 +270,8 @@ export async function downloadWhatsAppMedia(
       return null;
     }
 
-    if (!mediaMessage.URL) {
+    const mediaUrl = getMediaField(mediaMessage, ['URL', 'Url', 'url']);
+    if (!mediaUrl) {
       logger.warn('No media URL in message', { messageId });
       return null;
     }
@@ -252,6 +282,7 @@ export async function downloadWhatsAppMedia(
       video: '/chat/downloadvideo',
       audio: '/chat/downloadaudio',
       document: '/chat/downloaddocument',
+      sticker: '/chat/downloadsticker',
     };
     
     const endpoint = endpointMap[mediaType];
@@ -262,13 +293,17 @@ export async function downloadWhatsAppMedia(
 
     const url = `${config.WA_API_URL}${endpoint}`;
     
+    const mimeType = getMediaField(mediaMessage, ['Mimetype', 'mimetype', 'mimeType']) || 'application/octet-stream';
+
     // Build request body for media download
     const requestBody = {
-      Url: mediaMessage.URL,
-      MediaKey: '', // Will be filled if available
-      Mimetype: mediaMessage.Mimetype || '',
-      FileSHA256: mediaMessage.FileSHA256 || '',
-      FileLength: mediaMessage.FileLength || 0,
+      Url: mediaUrl,
+      DirectPath: getMediaField(mediaMessage, ['DirectPath', 'directPath', 'direct_path']),
+      MediaKey: getMediaField(mediaMessage, ['MediaKey', 'mediaKey', 'media_key']),
+      Mimetype: mimeType,
+      FileEncSHA256: getMediaField(mediaMessage, ['FileEncSHA256', 'FileEncSha256', 'fileEncSHA256', 'fileEncSha256', 'file_enc_sha256']),
+      FileSHA256: getMediaField(mediaMessage, ['FileSHA256', 'FileSha256', 'fileSHA256', 'fileSha256', 'file_sha256']),
+      FileLength: getMediaFileLength(mediaMessage),
     };
 
     logger.debug('Downloading media from WhatsApp', {
@@ -286,17 +321,18 @@ export async function downloadWhatsAppMedia(
     });
 
     // Response contains base64 encoded media
-    const base64Data = response.data.data?.Media || response.data.Media || response.data;
-    
+    const base64Data = response.data.data?.Data || response.data.Data || response.data.data?.Media || response.data.Media || response.data;
+    const responseMimeType = response.data.data?.Mimetype || response.data.Mimetype || mimeType;
+
     if (!base64Data || typeof base64Data !== 'string') {
-      logger.warn('No media data in download response', { messageId });
+      logger.warn('No media data in download response', { messageId, response: response.data });
       return null;
     }
 
     // Save the downloaded media
     const savedResult = await saveBase64Media(
       base64Data,
-      mediaMessage.Mimetype || 'application/octet-stream',
+      responseMimeType,
       waUserId,
       messageId
     );
@@ -406,9 +442,12 @@ export async function processMediaFromWebhook(
       case 'document':
         mediaMessage = msg.DocumentMessage || (msg as any).documentMessage;
         break;
+      case 'sticker':
+        mediaMessage = msg.StickerMessage || (msg as any).stickerMessage;
+        break;
     }
 
-    if (mediaMessage && mediaInfo.mediaType !== 'sticker') {
+    if (mediaMessage) {
       const downloadedResult = await downloadWhatsAppMedia(
         mediaMessage,
         mediaInfo.mediaType,

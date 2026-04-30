@@ -5,6 +5,13 @@ export interface MessageData {
   channel_identifier: string;
   message_id: string;
   message_text: string;
+  media_type?: string | null;
+  media_url?: string | null;
+  media_public_url?: string | null;
+  mime_type?: string | null;
+  file_name?: string | null;
+  file_size?: number | null;
+  storage_key?: string | null;
   timestamp?: Date;
 }
 
@@ -15,7 +22,7 @@ export interface IncomingMessageData extends MessageData {
 
 export interface OutgoingMessageData extends MessageData {
   direction: 'OUT';
-  source: 'AI' | 'SYSTEM';
+  source: 'AI' | 'SYSTEM' | 'ADMIN';
 }
 
 export interface MessageHistoryQuery {

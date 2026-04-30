@@ -137,7 +137,7 @@ router.post('/media/upload', (req: Request, res: Response, next: NextFunction): 
       // Handle multer errors (file size, file type, etc.)
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
-          res.status(400).json({ success: false, error: 'Ukuran file maksimal 5MB' });
+          res.status(400).json({ success: false, error: 'Ukuran file maksimal 16MB' });
           return;
         }
         res.status(400).json({ success: false, error: `Upload error: ${err.message}` });

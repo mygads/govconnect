@@ -111,6 +111,7 @@ interface AgentProcessInput {
   message: string;
   channel: 'whatsapp' | 'webchat';
   isEvaluation?: boolean;
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   villageId?: string;
   conversationSummary?: string;
   recentConversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -213,6 +214,41 @@ function splitFollowUpGuidance(response: string, guidanceText?: string): { respo
     response: mainResponse,
     guidanceText: candidateLine,
   };
+}
+
+function getKnowledgeTestWorkflowBlock(message: string): { response: string; intent: string } | undefined {
+  const normalized = (message || '').toLowerCase();
+  const hasReference = /\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(message);
+
+  if (hasReference && /\b(cek|status|tracking|lacak|batal|batalkan|cancel|ubah|update|edit|revisi|riwayat|history)\b/i.test(normalized)) {
+    return {
+      intent: 'KNOWLEDGE_TEST_WORKFLOW_BLOCKED',
+      response: 'Halaman uji knowledge ini tidak menjalankan cek status, pembatalan, perubahan data, atau riwayat laporan/layanan. Untuk menguji workflow itu secara end-to-end, gunakan kanal WhatsApp atau Webchat sebenarnya.',
+    };
+  }
+
+  if (/\b(lapor|pengaduan|keluhan|aduan)\b/i.test(normalized) && /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak|rt\s*\d+)\b/i.test(normalized)) {
+    return {
+      intent: 'KNOWLEDGE_TEST_WORKFLOW_BLOCKED',
+      response: 'Halaman uji knowledge ini tidak membuat laporan atau pengaduan. Di sini hanya diuji kualitas jawaban knowledge/RAG. Untuk menguji pembuatan laporan, gunakan kanal WhatsApp atau Webchat sebenarnya.',
+    };
+  }
+
+  if (/\b(buatkan|buat|ajukan|pengajuan|daftar|urus)\b/i.test(normalized) && /\b(layanan|permohonan|surat|domisili|sktm|ktp|kk|akta)\b/i.test(normalized) && !/\b(syarat|persyaratan|biaya|proses|cara|info|informasi)\b/i.test(normalized)) {
+    return {
+      intent: 'KNOWLEDGE_TEST_WORKFLOW_BLOCKED',
+      response: 'Halaman uji knowledge ini tidak membuat permohonan layanan atau link formulir. Pertanyaan syarat/prosedur tetap bisa diuji di sini, tetapi workflow pengajuan perlu dites lewat WhatsApp atau Webchat sebenarnya.',
+    };
+  }
+
+  if (/\b(riwayat|history|laporan saya|permohonan saya|layanan saya)\b/i.test(normalized)) {
+    return {
+      intent: 'KNOWLEDGE_TEST_WORKFLOW_BLOCKED',
+      response: 'Halaman uji knowledge ini tidak mengambil riwayat personal user. Di sini hanya diuji jawaban knowledge/RAG global dari data desa.',
+    };
+  }
+
+  return undefined;
 }
 
 function getResidentKnowledgeFallback(message: string, currentReply?: string): { response: string; intent: string; serviceSlug?: string } | undefined {
@@ -478,6 +514,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     villageName,
     userName,
     sentimentContext,
+    sideEffectMode,
     traceId,
     startTime,
     tracker,
@@ -500,12 +537,14 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         currentDatetime: String(getWIBDateTime()),
         userName,
         sentimentContext,
+        sideEffectMode,
       },
       {
         userId,
         villageId,
         channel,
         isEvaluation: input.isEvaluation,
+        sideEffectMode,
       },
       {
         summary: conversationSummary,
@@ -548,7 +587,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     })();
 
     const residentKnowledgeFallback = getResidentKnowledgeFallback(message, result.replyText);
-    if (residentKnowledgeFallback?.serviceSlug) {
+    if (residentKnowledgeFallback?.serviceSlug && sideEffectMode !== 'knowledge_test') {
       setPendingServiceFormOffer(userId, {
         service_slug: residentKnowledgeFallback.serviceSlug,
         village_id: villageId,
@@ -568,6 +607,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         model: result.model,
         hasKnowledge: result.toolsUsed.includes('search_knowledge') || result.toolsUsed.includes('search_documents'),
         agentMode: 'single_orchestrator',
+        sideEffectMode,
         toolsUsed: result.toolsUsed,
         allowedTools: result.allowedToolNames,
         heuristicTools: result.heuristicTools,
@@ -604,10 +644,14 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   incrementActiveProcessing();
   const startTime = Date.now();
-  const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, onStageChange } = input;
+  const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange } = input;
   let resolvedHistory = conversationHistory;
   let finalResult: ProcessMessageResult | null = null;
   const finish = (result: ProcessMessageResult) => {
+    if (sideEffectMode) {
+      result.metadata.sideEffectMode = sideEffectMode;
+    }
+
     const normalizedResponse = normalizeAssistantText(result.response) || result.response;
     result.response = validateResponse(normalizedResponse);
 
@@ -803,15 +847,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(protocolGuardResult);
     }
 
-    const pendingOfferResult = await tryHandlePendingOffers({
-      userId,
-      message,
-      channel: agentChannel,
-      villageId: resolvedVillageId,
-      traceId,
-      startTime,
-      runWithMicroBudget: withMicroNluBudget,
-    });
+    const pendingOfferResult = sideEffectMode === 'knowledge_test'
+      ? null
+      : await tryHandlePendingOffers({
+          userId,
+          message,
+          channel: agentChannel,
+          villageId: resolvedVillageId,
+          traceId,
+          startTime,
+          runWithMicroBudget: withMicroNluBudget,
+        });
     if (pendingOfferResult) {
       await recordGuardrailEvent({
         traceId,
@@ -827,19 +873,21 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(pendingOfferResult);
     }
 
-    const latePreAgentResult = await tryHandleLatePreAgentState({
-      userId,
-      message,
-      channel: agentChannel,
-      villageId: resolvedVillageId,
-      traceId,
-      startTime,
-      mediaUrl,
-      getUnifiedClassification,
-      runWithMicroBudget: withMicroNluBudget,
-      tracker,
-      notifyStage,
-    });
+    const latePreAgentResult = sideEffectMode === 'knowledge_test'
+      ? null
+      : await tryHandleLatePreAgentState({
+          userId,
+          message,
+          channel: agentChannel,
+          villageId: resolvedVillageId,
+          traceId,
+          startTime,
+          mediaUrl,
+          getUnifiedClassification,
+          runWithMicroBudget: withMicroNluBudget,
+          tracker,
+          notifyStage,
+        });
     if (latePreAgentResult) {
       await recordGuardrailEvent({
         traceId,
@@ -955,14 +1003,16 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     const [savedProfile, memorySummary, sentiment] = await Promise.all([
       getAutoFillSuggestionsWithFallback(userId),
-      buildHybridMemorySummary({
-        wa_user_id: userId,
-        query: sanitizedMessage,
-        village_id: resolvedVillageId,
-        trace_id: traceId,
-        channel: agentChannel,
-        skip_observability: !!isEvaluation,
-      }),
+      sideEffectMode === 'knowledge_test'
+        ? Promise.resolve(undefined)
+        : buildHybridMemorySummary({
+            wa_user_id: userId,
+            query: sanitizedMessage,
+            village_id: resolvedVillageId,
+            trace_id: traceId,
+            channel: agentChannel,
+            skip_observability: !!isEvaluation,
+          }),
       analyzeSentimentWithLLM(sanitizedMessage, userId, {
         village_id: resolvedVillageId,
         wa_user_id: channel === 'whatsapp' ? userId : undefined,
@@ -980,6 +1030,28 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           villageShortName: profile.short_name || null,
         };
       }
+    }
+
+    const knowledgeTestWorkflowBlock = sideEffectMode === 'knowledge_test'
+      ? getKnowledgeTestWorkflowBlock(sanitizedMessage)
+      : undefined;
+    if (knowledgeTestWorkflowBlock) {
+      tracker.complete();
+      notifyStage('done', 100);
+
+      return finish({
+        success: true,
+        response: knowledgeTestWorkflowBlock.response,
+        intent: knowledgeTestWorkflowBlock.intent,
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+          agentMode: 'pre_agent_guard',
+          toolsUsed: [],
+          allowedTools: [],
+          traceId,
+        },
+      });
     }
 
     const deterministicKnowledgeFallback = getResidentKnowledgeFallback(sanitizedMessage);
@@ -1031,6 +1103,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       message: sanitizedMessage,
       channel: channel as 'whatsapp' | 'webchat',
       isEvaluation,
+      sideEffectMode,
       villageId: resolvedVillageId,
       conversationSummary: conversationContext.summary,
       recentConversationHistory: conversationContext.recentMessages,

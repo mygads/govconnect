@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { redirect } from "next/navigation"
-import { Brain, CheckCircle2, Database, Loader2, Save, Search, Waypoints } from "lucide-react"
+import { Brain, Database, Loader2, Save, Search, Waypoints } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -17,6 +17,7 @@ interface ModelRow {
   display_name: string
   upstream_model_name: string
   is_active: boolean
+  priority?: number
   provider?: {
     name: string
     slug: string
@@ -49,11 +50,6 @@ function laneIcon(lane: string) {
     default:
       return <Brain className="h-5 w-5" />
   }
-}
-
-function modelLabel(model?: ModelRow | null) {
-  if (!model) return "Belum dipilih"
-  return `${model.display_name} · ${model.provider?.name || "Provider"}`
 }
 
 export default function SuperadminLaneAssignmentsPage() {
@@ -173,14 +169,14 @@ export default function SuperadminLaneAssignmentsPage() {
   }
 
   if (loading) {
-    return <div className="flex min-h-[240px] items-center justify-center text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Memuat assignment lane...</div>
+    return <div className="flex min-h-60 items-center justify-center text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Memuat assignment lane...</div>
   }
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground">AI Lane Assignments</h1>
-        <p className="mt-2 text-muted-foreground">Pilih satu primary dan satu fallback opsional untuk setiap lane runtime: LLM, Embed, Rewrite, dan Rerank.</p>
+        <p className="mt-2 text-muted-foreground">Pilih primary dan fallback model DB untuk setiap lane runtime.</p>
       </div>
 
       {error && <Alert variant="destructive"><AlertTitle>Terjadi kesalahan</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
@@ -191,24 +187,15 @@ export default function SuperadminLaneAssignmentsPage() {
           const laneModels = modelsByLane[lane] || []
           const assignment = assignmentsByLane[lane]
           const draft = drafts[lane] || { primary_model_id: "", fallback_model_id: noFallbackValue }
-          const primary = models.find((model) => model.id === draft.primary_model_id) || assignment?.primary_model
-          const fallback = draft.fallback_model_id === noFallbackValue ? null : models.find((model) => model.id === draft.fallback_model_id) || assignment?.fallback_model
-
           return (
             <Card key={lane} className="border-border/70">
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-3">
                   <span className="flex items-center gap-2">{laneIcon(lane)} {lane.toUpperCase()}</span>
-                  {assignment?.is_active && <span className="flex items-center gap-1 text-sm font-normal text-emerald-600"><CheckCircle2 className="h-4 w-4" /> Active</span>}
+                  {assignment?.is_active && <span className="text-sm font-normal text-emerald-600">Active</span>}
                 </CardTitle>
-                <CardDescription>Assignment global default untuk lane {lane}. Village-specific override bisa ditambahkan dari API dengan village_id.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
-                <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-                  <div><span className="font-semibold">Primary saat ini:</span> {modelLabel(assignment?.primary_model)}</div>
-                  <div><span className="font-semibold">Fallback saat ini:</span> {modelLabel(assignment?.fallback_model)}</div>
-                </div>
-
                 <div className="space-y-2">
                   <Label>Primary Model</Label>
                   <Select value={draft.primary_model_id} onValueChange={(value) => setDrafts((current) => ({ ...current, [lane]: { ...(current[lane] || { fallback_model_id: noFallbackValue }), primary_model_id: value } }))}>
@@ -217,7 +204,6 @@ export default function SuperadminLaneAssignmentsPage() {
                       {laneModels.map((model) => <SelectItem key={model.id} value={model.id}>{model.display_name} · {model.provider?.name || model.upstream_model_name}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">Primary aktif: {modelLabel(primary)}</p>
                 </div>
 
                 <div className="space-y-2">
@@ -229,7 +215,6 @@ export default function SuperadminLaneAssignmentsPage() {
                       {laneModels.map((model) => <SelectItem key={model.id} value={model.id}>{model.display_name} · {model.provider?.name || model.upstream_model_name}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">Fallback aktif: {modelLabel(fallback)}</p>
                 </div>
 
                 <Button onClick={() => saveLane(lane)} disabled={savingLane === lane || laneModels.length === 0}>

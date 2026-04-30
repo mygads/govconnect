@@ -595,6 +595,102 @@ export async function getUsageByModel(
   `);
 }
 
+export async function getUsageByProvider(
+  filters?: { village_id?: string; start?: string; end?: string }
+): Promise<any[]> {
+  const range = defaultRange('month');
+  const startDate = filters?.start ? new Date(filters.start) : range.start;
+  const endDate = filters?.end ? new Date(filters.end) : range.end;
+  const villageId = filters?.village_id ?? null;
+
+  return prisma.$queryRaw<any[]>(Prisma.sql`
+    WITH provider_rows AS (
+      SELECT
+        COALESCE(u.provider_id, '__legacy__') AS provider_key,
+        COALESCE(u.provider_id, p.id, '__legacy__') AS provider_id,
+        COALESCE(p.name, u.key_tier, 'Legacy / Unknown Provider') AS provider_name,
+        COALESCE(p.slug, u.key_tier, 'legacy-unknown') AS provider_slug,
+        COALESCE(p.provider_kind, 'legacy') AS provider_kind,
+        SUM(u.input_tokens)::int AS input_tokens,
+        SUM(u.output_tokens)::int AS output_tokens,
+        SUM(u.total_tokens)::int AS total_tokens,
+        SUM(u.cost_usd)::float AS cost_usd,
+        SUM(u.actual_cost_usd)::float AS actual_cost_usd,
+        SUM(u.adjusted_cost_usd)::float AS adjusted_cost_usd,
+        SUM(u.margin_usd)::float AS margin_usd,
+        COUNT(*)::int AS call_count,
+        AVG(u.duration_ms)::int AS avg_duration_ms
+      FROM ai_token_usage u
+      LEFT JOIN ai_providers p ON p.id = u.provider_id
+      WHERE u.created_at >= ${startDate}
+        AND u.created_at <= ${endDate}
+        AND (${villageId}::text IS NULL OR u.village_id = ${villageId})
+      GROUP BY COALESCE(u.provider_id, '__legacy__'), COALESCE(u.provider_id, p.id, '__legacy__'), COALESCE(p.name, u.key_tier, 'Legacy / Unknown Provider'), COALESCE(p.slug, u.key_tier, 'legacy-unknown'), COALESCE(p.provider_kind, 'legacy')
+    ),
+    model_rows AS (
+      SELECT
+        COALESCE(u.provider_id, '__legacy__') AS provider_key,
+        COALESCE(u.model_config_id, m.id, '__legacy__') AS model_config_id,
+        u.model,
+        COALESCE(m.display_name, u.model) AS display_name,
+        COALESCE(u.lane_type, m.lane_type, 'unknown') AS lane_type,
+        SUM(u.input_tokens)::int AS input_tokens,
+        SUM(u.output_tokens)::int AS output_tokens,
+        SUM(u.total_tokens)::int AS total_tokens,
+        SUM(u.cost_usd)::float AS cost_usd,
+        SUM(u.actual_cost_usd)::float AS actual_cost_usd,
+        SUM(u.adjusted_cost_usd)::float AS adjusted_cost_usd,
+        SUM(u.margin_usd)::float AS margin_usd,
+        COUNT(*)::int AS call_count,
+        AVG(u.duration_ms)::int AS avg_duration_ms
+      FROM ai_token_usage u
+      LEFT JOIN ai_models m ON m.id = u.model_config_id
+      WHERE u.created_at >= ${startDate}
+        AND u.created_at <= ${endDate}
+        AND (${villageId}::text IS NULL OR u.village_id = ${villageId})
+      GROUP BY COALESCE(u.provider_id, '__legacy__'), COALESCE(u.model_config_id, m.id, '__legacy__'), u.model, COALESCE(m.display_name, u.model), COALESCE(u.lane_type, m.lane_type, 'unknown')
+    )
+    SELECT
+      provider_rows.provider_id,
+      provider_rows.provider_name,
+      provider_rows.provider_slug,
+      provider_rows.provider_kind,
+      provider_rows.input_tokens,
+      provider_rows.output_tokens,
+      provider_rows.total_tokens,
+      provider_rows.cost_usd,
+      provider_rows.actual_cost_usd,
+      provider_rows.adjusted_cost_usd,
+      provider_rows.margin_usd,
+      provider_rows.call_count,
+      provider_rows.avg_duration_ms,
+      COALESCE(
+        json_agg(
+          json_build_object(
+            'model_config_id', model_rows.model_config_id,
+            'model', model_rows.model,
+            'display_name', model_rows.display_name,
+            'lane_type', model_rows.lane_type,
+            'input_tokens', model_rows.input_tokens,
+            'output_tokens', model_rows.output_tokens,
+            'total_tokens', model_rows.total_tokens,
+            'cost_usd', model_rows.cost_usd,
+            'actual_cost_usd', model_rows.actual_cost_usd,
+            'adjusted_cost_usd', model_rows.adjusted_cost_usd,
+            'margin_usd', model_rows.margin_usd,
+            'call_count', model_rows.call_count,
+            'avg_duration_ms', model_rows.avg_duration_ms
+          ) ORDER BY model_rows.cost_usd DESC, model_rows.total_tokens DESC
+        ) FILTER (WHERE model_rows.model IS NOT NULL),
+        '[]'::json
+      ) AS models
+    FROM provider_rows
+    LEFT JOIN model_rows ON model_rows.provider_key = provider_rows.provider_key
+    GROUP BY provider_rows.provider_key, provider_rows.provider_id, provider_rows.provider_name, provider_rows.provider_slug, provider_rows.provider_kind, provider_rows.input_tokens, provider_rows.output_tokens, provider_rows.total_tokens, provider_rows.cost_usd, provider_rows.actual_cost_usd, provider_rows.adjusted_cost_usd, provider_rows.margin_usd, provider_rows.call_count, provider_rows.avg_duration_ms
+    ORDER BY provider_rows.cost_usd DESC, provider_rows.total_tokens DESC
+  `);
+}
+
 /**
  * Token usage per village.
  */
@@ -895,6 +991,9 @@ export async function getTokenUsageSummary(
   rag_rerank_calls: number;
   rag_rerank_tokens: number;
   rag_rerank_cost: number;
+  agent_calls: number;
+  agent_tokens: number;
+  agent_cost: number;
   main_chat_calls: number;
   main_chat_tokens: number;
   main_chat_cost: number;
@@ -930,6 +1029,9 @@ export async function getTokenUsageSummary(
       COALESCE(SUM(CASE WHEN layer_type = 'rag_rerank' THEN 1 ELSE 0 END), 0)::int AS rag_rerank_calls,
       COALESCE(SUM(CASE WHEN layer_type = 'rag_rerank' THEN total_tokens ELSE 0 END), 0)::int AS rag_rerank_tokens,
       COALESCE(SUM(CASE WHEN layer_type = 'rag_rerank' THEN cost_usd ELSE 0 END), 0)::float AS rag_rerank_cost,
+      COALESCE(SUM(CASE WHEN layer_type = 'agent' THEN 1 ELSE 0 END), 0)::int AS agent_calls,
+      COALESCE(SUM(CASE WHEN layer_type = 'agent' THEN total_tokens ELSE 0 END), 0)::int AS agent_tokens,
+      COALESCE(SUM(CASE WHEN layer_type = 'agent' THEN cost_usd ELSE 0 END), 0)::float AS agent_cost,
       COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN 1 ELSE 0 END), 0)::int AS main_chat_calls,
       COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN total_tokens ELSE 0 END), 0)::int AS main_chat_tokens,
       COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN cost_usd ELSE 0 END), 0)::float AS main_chat_cost,
@@ -958,6 +1060,9 @@ export async function getTokenUsageSummary(
     rag_rerank_calls: 0,
     rag_rerank_tokens: 0,
     rag_rerank_cost: 0,
+    agent_calls: 0,
+    agent_tokens: 0,
+    agent_cost: 0,
     main_chat_calls: 0,
     main_chat_tokens: 0,
     main_chat_cost: 0,

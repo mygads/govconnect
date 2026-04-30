@@ -65,6 +65,7 @@ interface ToolContext {
   villageId?: string;
   channel: 'whatsapp' | 'webchat';
   isEvaluation?: boolean;
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
 }
 
 interface ConversationContext {
@@ -223,12 +224,23 @@ export async function runAgent(
   const {
     heuristicTools,
     learnedTools,
-    allowedToolNames,
+    allowedToolNames: selectedAllowedToolNames,
     matchedPolicyKey,
     matchedPolicySource,
     matchedPolicyConfidence,
     toolPolicyReason,
   } = toolSelection;
+  const knowledgeTestToolAllowlist = new Set<AgentToolName>([
+    'get_village_profile',
+    'get_service_info',
+    'get_complaint_categories',
+    'get_emergency_contacts',
+    'search_knowledge',
+    'search_documents',
+  ]);
+  const allowedToolNames = toolCtx.sideEffectMode === 'knowledge_test'
+    ? selectedAllowedToolNames.filter((tool) => knowledgeTestToolAllowlist.has(tool))
+    : selectedAllowedToolNames;
   const allowedTools = AGENT_TOOLS.filter((tool) => allowedToolNames.includes(tool.function.name as AgentToolName));
   const firstTurnToolResolution = resolveFirstTurnToolChoice(
     userMessage,

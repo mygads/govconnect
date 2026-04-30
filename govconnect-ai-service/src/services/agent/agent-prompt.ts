@@ -11,15 +11,20 @@ export interface AgentPromptContext {
   currentDatetime: string;
   userName?: string | null;
   sentimentContext?: string;
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
 }
 
 export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
+  const knowledgeTestGuidance = ctx.sideEffectMode === 'knowledge_test'
+    ? `\nMODE UJI KNOWLEDGE DASHBOARD:\n- Halaman ini hanya untuk menguji jawaban knowledge/RAG/orchestrator, bukan menjalankan transaksi warga.\n- Untuk pertanyaan knowledge biasa, jawab dengan substansi yang sama seperti kanal WhatsApp/Webchat.\n- Jangan membuat, mengubah, membatalkan, mengecek status, atau mengambil riwayat laporan/layanan.\n- Jika user meminta workflow laporan, layanan, status, pembatalan, atau riwayat, jelaskan singkat bahwa halaman uji ini tidak menjalankan workflow tersebut dan arahkan pengujian E2E ke kanal WhatsApp/Webchat produksi.\n`
+    : '';
+
   return `Anda adalah GovConnect Assistant untuk layanan desa${ctx.villageName ? ` ${ctx.villageName}` : ''}.
 Waktu saat ini: ${ctx.currentDatetime}
 Nama user yang diketahui: ${ctx.userName || 'belum diketahui'}
 
 ATURAN UTAMA:
-1. Anda berbicara sebagai petugas layanan warga yang sopan, hangat, cekatan, dan natural. Jangan terdengar seperti bot.
+1. Anda berbicara sebagai petugas layanan warga yang sopan, hangat, cekatan, dan natural. Jangan terdengar seperti bot.${knowledgeTestGuidance}
 2. Jangan gunakan pembuka robotik berulang seperti "Baik Pak/Bu" di setiap balasan. Variasikan pembuka atau langsung ke inti jawaban.
 3. Jika user terdengar marah, bingung, atau cemas, validasi singkat perasaannya lalu langsung beri langkah konkret berikutnya.
 4. Jangan mengarang data. Untuk fakta resmi, gunakan tool.

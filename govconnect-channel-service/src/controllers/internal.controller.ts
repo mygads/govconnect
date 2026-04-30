@@ -40,6 +40,13 @@ export async function getMessages(req: Request, res: Response): Promise<void> {
       messages: messages.map((m) => ({
         id: m.id,
         message_text: m.message_text,
+        media_type: m.media_type,
+        media_url: m.media_url,
+        media_public_url: m.media_public_url,
+        mime_type: m.mime_type,
+        file_name: m.file_name,
+        file_size: m.file_size,
+        storage_key: m.storage_key,
         direction: m.direction,
         source: m.source,
         timestamp: m.timestamp,

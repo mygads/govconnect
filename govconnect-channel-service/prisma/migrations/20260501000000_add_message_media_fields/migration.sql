@@ -1,0 +1,8 @@
+ALTER TABLE "messages"
+  ADD COLUMN IF NOT EXISTS "media_type" TEXT,
+  ADD COLUMN IF NOT EXISTS "media_url" TEXT,
+  ADD COLUMN IF NOT EXISTS "media_public_url" TEXT,
+  ADD COLUMN IF NOT EXISTS "mime_type" TEXT,
+  ADD COLUMN IF NOT EXISTS "file_name" TEXT,
+  ADD COLUMN IF NOT EXISTS "file_size" INTEGER,
+  ADD COLUMN IF NOT EXISTS "storage_key" TEXT;

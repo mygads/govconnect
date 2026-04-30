@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import logger from '../utils/logger';
+import prisma from '../lib/prisma';
 import { config } from '../config/env';
 import {
   callAIGatewayEmbeddings,
@@ -14,6 +15,8 @@ import {
 import { processUnifiedMessage } from '../services/unified-message-processor.service';
 import { firstHeader } from '../utils/http';
 import { internalApiKeyMatches } from '../utils/internal-auth';
+import { decryptSecret } from '../utils/crypto';
+import { sanitizeProviderDefaultHeaders } from '../utils/provider-headers';
 
 const router = Router();
 
@@ -27,6 +30,109 @@ interface LanePingResult {
   responseTime?: number;
   details?: Record<string, unknown>;
   error?: string;
+}
+
+type ModelTestLane = 'llm' | 'embed' | 'rewrite' | 'rerank';
+
+function joinUrl(baseUrl: string, path: string) {
+  return `${baseUrl.replace(/\/+$/, '')}/${(path || '').replace(/^\/+/, '')}`;
+}
+
+async function postProviderJson(provider: any, endpointPath: string, apiKey: string, body: Record<string, unknown>, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      ...sanitizeProviderDefaultHeaders(provider.default_headers_json),
+    };
+    const response = await fetch(joinUrl(provider.base_url, endpointPath), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({})) as any;
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || payload?.error || `Provider returned HTTP ${response.status}`);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function testModelById(modelId: string) {
+  const model = await prisma.ai_models.findUnique({
+    where: { id: modelId },
+    include: { provider: true },
+  });
+  if (!model?.provider) throw new Error('Model not found');
+  if (!model.is_active || !model.provider.is_active) throw new Error('Model or provider is inactive');
+  if (!model.provider.api_key_encrypted) throw new Error('Provider API key is missing');
+
+  const lane = model.lane_type as ModelTestLane;
+  const apiKey = decryptSecret(model.provider.api_key_encrypted);
+  const startTime = Date.now();
+  let details: Record<string, unknown> = {};
+
+  if (lane === 'embed') {
+    const payload = await postProviderJson(
+      model.provider,
+      model.endpoint_path || config.embeddingGateway.embeddingsPath,
+      apiKey,
+      {
+        model: model.upstream_model_name,
+        input: 'ping embedding healthcheck',
+        encoding_format: config.embeddingGateway.encodingFormat,
+        dimensions: config.embeddingGateway.dimensions,
+      },
+      config.embeddingGateway.timeoutMs,
+    );
+    details = { dimensions: payload?.data?.[0]?.embedding?.length || 0 };
+  } else if (lane === 'rerank') {
+    const payload = await postProviderJson(
+      model.provider,
+      model.endpoint_path || config.rerankerGateway.rerankPath,
+      apiKey,
+      {
+        model: model.upstream_model_name,
+        query: 'cara bikin ktp baru',
+        documents: ['Panduan pembuatan KTP baru.', 'Jadwal posyandu desa.', 'Syarat penggantian KK.'],
+        top_n: 2,
+      },
+      config.rerankerGateway.timeoutMs,
+    );
+    details = { resultCount: payload?.results?.length || 0, topScore: payload?.results?.[0]?.relevance_score };
+  } else {
+    const timeoutMs = lane === 'rewrite' ? config.ragGateway.timeoutMs : config.llmGateway.timeoutMs;
+    const endpointPath = model.endpoint_path || (lane === 'rewrite' ? config.ragGateway.chatCompletionsPath : config.llmGateway.chatCompletionsPath);
+    const payload = await postProviderJson(
+      model.provider,
+      endpointPath,
+      apiKey,
+      {
+        model: model.upstream_model_name,
+        messages: [{ role: 'user', content: lane === 'rewrite' ? 'Rewrite: cara bikin ktp baru' : 'Reply with OK only.' }],
+        temperature: 0,
+        max_tokens: 8,
+      },
+      timeoutMs,
+    );
+    details = { response: payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || '' };
+  }
+
+  return {
+    success: true,
+    lane,
+    provider: model.provider.name,
+    provider_slug: model.provider.slug,
+    model: model.display_name,
+    upstream_model: model.upstream_model_name,
+    responseTime: Date.now() - startTime,
+    details,
+  };
 }
 
 function verifyInternalKey(req: Request, res: Response, next: Function) {
@@ -223,6 +329,30 @@ router.post('/ping', verifyInternalKey, async (_req: Request, res: Response) => 
   }
 });
 
+router.post('/model', verifyInternalKey, async (req: Request, res: Response) => {
+  try {
+    const { model_id } = req.body || {};
+    if (!model_id || typeof model_id !== 'string') {
+      return res.status(400).json({ success: false, error: 'model_id is required' });
+    }
+
+    const result = await testModelById(model_id);
+    logger.info('Targeted AI model test completed', {
+      modelId: model_id,
+      lane: result.lane,
+      provider: result.provider_slug,
+      responseTime: result.responseTime,
+    });
+    return res.json(result);
+  } catch (error: any) {
+    logger.warn('Targeted AI model test failed', { error: error.message });
+    return res.status(400).json({
+      success: false,
+      error: error.message || 'Model test failed',
+    });
+  }
+});
+
 router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
   try {
     const { message, village_id, villageId, user_id } = req.body || {};
@@ -254,6 +384,7 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
       villageId: resolvedVillageId,
       conversationHistory: [],
       isEvaluation: true,
+      sideEffectMode: 'knowledge_test',
     });
 
     return res.json({

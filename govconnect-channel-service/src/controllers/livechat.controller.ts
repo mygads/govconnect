@@ -11,7 +11,7 @@ import {
   updateConversation,
 } from '../services/takeover.service';
 import { getMessageHistory, saveOutgoingMessage } from '../services/message.service';
-import { sendTextMessage } from '../services/wa.service';
+import { sendMediaMessage, sendTextMessage, WhatsAppMediaType } from '../services/wa.service';
 import logger from '../utils/logger';
 import { getParam, getQuery } from '../utils/http';
 
@@ -26,6 +26,38 @@ function resolveChannel(req: Request, identifier?: string): 'WHATSAPP' | 'WEBCHA
   if (queryChannel && queryChannel.toUpperCase() === 'WEBCHAT') return 'WEBCHAT';
   if (identifier && identifier.startsWith('web_')) return 'WEBCHAT';
   return 'WHATSAPP';
+}
+
+interface LivechatMediaPayload {
+  type: WhatsAppMediaType;
+  url: string;
+  internal_url?: string;
+  mime_type?: string;
+  file_name?: string;
+  size?: number;
+  storage_key?: string;
+}
+
+function mediaLabel(media: LivechatMediaPayload): string {
+  if (media.type === 'document') return media.file_name ? `[Document] ${media.file_name}` : '[Document]';
+  return `[${media.type.charAt(0).toUpperCase()}${media.type.slice(1)}]`;
+}
+
+function normalizeMediaPayload(value: any): LivechatMediaPayload | null {
+  if (!value || typeof value !== 'object') return null;
+  const type = value.type as WhatsAppMediaType;
+  if (!['image', 'audio', 'document', 'video'].includes(type)) return null;
+  if (typeof value.url !== 'string' || value.url.trim().length === 0) return null;
+
+  return {
+    type,
+    url: value.url.trim(),
+    internal_url: typeof value.internal_url === 'string' ? value.internal_url : undefined,
+    mime_type: typeof value.mime_type === 'string' ? value.mime_type : undefined,
+    file_name: typeof value.file_name === 'string' ? value.file_name : undefined,
+    size: typeof value.size === 'number' ? value.size : undefined,
+    storage_key: typeof value.storage_key === 'string' ? value.storage_key : undefined,
+  };
 }
 
 /**
@@ -219,6 +251,8 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
     const { message, admin_id, admin_name } = req.body;
+    const media = normalizeMediaPayload(req.body?.media);
+    const messageText = typeof message === 'string' ? message.trim() : '';
     const villageId = resolveVillageId(req);
     const channel = resolveChannel(req, wa_user_id || undefined);
 
@@ -227,16 +261,26 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       return;
     }
 
-    if (!message) {
-      res.status(400).json({ error: 'message is required' });
+    if (!messageText && !media) {
+      res.status(400).json({ error: 'message or media is required' });
+      return;
+    }
+
+    if (req.body?.media && !media) {
+      res.status(400).json({ error: 'invalid media payload' });
       return;
     }
 
     // Check if takeover is active (optional - can still send without takeover)
     const isTakeover = await isUserInTakeover(wa_user_id, villageId, channel);
     const isWebchatUser = channel === 'WEBCHAT';
+    const persistedText = messageText || (media ? mediaLabel(media) : '');
 
     if (isWebchatUser) {
+      if (media) {
+        res.status(400).json({ error: 'Media sending is only supported for WhatsApp conversations' });
+        return;
+      }
       // For webchat users, just save to database
       // User will poll for new messages via webchat endpoint
       const messageId = `admin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -247,12 +291,12 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
         channel,
         channel_identifier: wa_user_id,
         message_id: messageId,
-        message_text: message,
+        message_text: persistedText,
         source: 'ADMIN',
       });
 
       // Update conversation summary and reset unread count (admin has responded)
-      await updateConversation(wa_user_id, message, undefined, 'reset', villageId, channel);
+      await updateConversation(wa_user_id, persistedText, undefined, 'reset', villageId, channel);
 
       logger.info('Admin sent webchat message', {
         wa_user_id,
@@ -271,7 +315,17 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       });
     } else {
       // For WhatsApp users, send via WhatsApp API
-      const result = await sendTextMessage(wa_user_id, message, villageId);
+      const result = media
+        ? await sendMediaMessage({
+            to: wa_user_id,
+            mediaType: media.type,
+            url: media.url,
+            caption: messageText || undefined,
+            fileName: media.file_name,
+            mimeType: media.mime_type,
+            villageId,
+          })
+        : await sendTextMessage(wa_user_id, messageText, villageId);
 
       if (result.success) {
         // Generate message ID if not provided by WA
@@ -284,12 +338,19 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
           channel,
           channel_identifier: wa_user_id,
           message_id: messageId,
-          message_text: message,
+          message_text: persistedText,
+          media_type: media?.type,
+          media_url: media?.internal_url || media?.url,
+          media_public_url: media?.url,
+          mime_type: media?.mime_type,
+          file_name: media?.file_name,
+          file_size: media?.size,
+          storage_key: media?.storage_key,
           source: 'ADMIN',
         });
 
         // Update conversation summary and reset unread count (admin has responded)
-        await updateConversation(wa_user_id, message, undefined, 'reset', villageId, channel);
+        await updateConversation(wa_user_id, persistedText, undefined, 'reset', villageId, channel);
 
         logger.info('Admin sent WhatsApp message', {
           wa_user_id,
@@ -298,6 +359,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
           is_takeover: isTakeover,
           message_id: messageId,
           channel: 'whatsapp',
+          has_media: !!media,
         });
 
         res.json({

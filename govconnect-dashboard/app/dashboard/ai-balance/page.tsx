@@ -18,6 +18,7 @@ type WalletStatus = "active" | "warning" | "exhausted"
 
 interface WalletSummaryPayload {
   success?: boolean
+  error?: string
   data?: {
     wallet: {
       balance_usd: number
@@ -75,6 +76,7 @@ export default function AIBalancePage() {
   const [redeemCode, setRedeemCode] = useState("")
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [ledgerError, setLedgerError] = useState<string | null>(null)
 
   useEffect(() => {
     if (user && isSuperadmin(user.role)) redirect("/dashboard")
@@ -84,6 +86,7 @@ export default function AIBalancePage() {
     try {
       setLoading(true)
       setError(null)
+      setLedgerError(null)
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
 
@@ -96,11 +99,16 @@ export default function AIBalancePage() {
       const ledgerPayload = await ledgerRes.json()
 
       if (!summaryRes.ok) {
-        throw new Error("Failed to load AI balance")
+        throw new Error(summaryPayload?.error || "Gagal memuat saldo AI")
       }
 
       setSummary(summaryPayload.data ?? null)
-      setLedger(Array.isArray(ledgerPayload?.data) ? ledgerPayload.data : [])
+      if (ledgerRes.ok) {
+        setLedger(Array.isArray(ledgerPayload?.data) ? ledgerPayload.data : [])
+      } else {
+        setLedger([])
+        setLedgerError(ledgerPayload?.error || "Riwayat ledger gagal dimuat")
+      }
     } catch (err: any) {
       console.error("Failed to load AI balance page:", err)
       setError(err?.message || "Gagal memuat saldo AI")
@@ -142,7 +150,7 @@ export default function AIBalancePage() {
       })
       const payload = await response.json()
       if (!response.ok) {
-        throw new Error(payload?.error || "Gagal redeem voucher")
+        throw new Error(payload?.error || payload?.message || "Gagal redeem voucher")
       }
 
       setMessage("Voucher berhasil diredeem dan saldo sudah diperbarui.")
@@ -157,7 +165,7 @@ export default function AIBalancePage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-[240px] items-center justify-center text-muted-foreground">
+      <div className="flex min-h-60 items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Memuat saldo AI...
       </div>
     )
@@ -168,7 +176,7 @@ export default function AIBalancePage() {
       <div>
         <h1 className="text-3xl font-bold text-foreground">Saldo AI Desa</h1>
         <p className="mt-2 text-muted-foreground">
-          Pantau saldo aktif, penggunaan terbaru, dan redeem voucher untuk melanjutkan pemrosesan AI.
+          Pantau saldo aktif dalam USD, pemakaian AI terbaru, dan redeem voucher untuk melanjutkan pemrosesan AI.
         </p>
       </div>
 
@@ -176,6 +184,13 @@ export default function AIBalancePage() {
         <Alert variant="destructive">
           <AlertTitle>Gagal memuat data</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {ledgerError && (
+        <Alert>
+          <AlertTitle>Riwayat saldo belum tersedia</AlertTitle>
+          <AlertDescription>{ledgerError}</AlertDescription>
         </Alert>
       )}
 
@@ -200,11 +215,11 @@ export default function AIBalancePage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Usage Hari Ini</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">Pemakaian AI Hari Ini</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold">{formatUsd(summary?.todayUsageUsd)}</p>
-            <p className="mt-2 text-xs text-muted-foreground">Biaya adjusted yang sudah terdebit hari ini.</p>
+            <p className="mt-2 text-xs text-muted-foreground">Biaya AI yang sudah terdebit hari ini dalam USD.</p>
           </CardContent>
         </Card>
         <Card>
@@ -213,7 +228,7 @@ export default function AIBalancePage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold">{formatUsd(summary?.avgDailyUsageUsd)}</p>
-            <p className="mt-2 text-xs text-muted-foreground">Estimasi biaya harian berdasarkan 7 hari terakhir.</p>
+            <p className="mt-2 text-xs text-muted-foreground">Estimasi pemakaian USD harian berdasarkan 7 hari terakhir.</p>
           </CardContent>
         </Card>
         <Card>
@@ -222,7 +237,7 @@ export default function AIBalancePage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold">{formatRunway(summary?.runwayDays)}</p>
-            <p className="mt-2 text-xs text-muted-foreground">Semakin rendah, semakin dekat ke pending karena saldo habis.</p>
+            <p className="mt-2 text-xs text-muted-foreground">Perkiraan sampai saldo habis berdasarkan rata-rata pemakaian 7 hari.</p>
           </CardContent>
         </Card>
       </div>

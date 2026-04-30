@@ -8,13 +8,20 @@ export const dynamic = 'force-dynamic'
 const CHANNEL_SERVICE_URL = process.env.CHANNEL_SERVICE_URL || 'http://localhost:3001'
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || ''
 
-const MAX_SIZE = 5 * 1024 * 1024
+const MAX_SIZE = 16 * 1024 * 1024
 const ALLOWED_FILE_TYPES = new Set([
   'image/jpeg',
   'image/png',
+  'image/webp',
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/ogg',
+  'audio/webm',
+  'video/mp4',
+  'video/webm',
 ])
 
 async function getSession(request: NextRequest) {
@@ -41,16 +48,18 @@ export async function POST(request: NextRequest) {
 
     if (!file) return NextResponse.json({ error: 'File wajib diunggah' }, { status: 400 })
     if (!ALLOWED_FILE_TYPES.has(file.type)) {
-      return NextResponse.json({ error: 'Tipe file tidak didukung. Gunakan JPG/PNG/PDF/DOC/DOCX.' }, { status: 400 })
+      return NextResponse.json({ error: 'Tipe file tidak didukung. Gunakan gambar, dokumen, audio, atau video WhatsApp.' }, { status: 400 })
     }
     if (file.size > MAX_SIZE) {
-      return NextResponse.json({ error: 'Ukuran file maksimal 5MB' }, { status: 400 })
+      return NextResponse.json({ error: 'Ukuran file maksimal 16MB' }, { status: 400 })
     }
 
     const forward = new FormData()
     forward.append('file', file, file.name)
 
-    const response = await fetch(`${CHANNEL_SERVICE_URL}/internal/media/upload?scope=admin-updates`, {
+    const scope = formData.get('scope')?.toString() || 'admin-updates'
+
+    const response = await fetch(`${CHANNEL_SERVICE_URL}/internal/media/upload?scope=${encodeURIComponent(scope)}`, {
       method: 'POST',
       headers: { 'x-internal-api-key': INTERNAL_API_KEY },
       body: forward,
@@ -61,9 +70,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result?.error || 'Gagal mengunggah file' }, { status: response.status })
     }
 
+    if (!result?.data?.url) {
+      return NextResponse.json({ error: 'Upload berhasil tetapi URL media kosong' }, { status: 502 })
+    }
+
     return NextResponse.json({
       success: true,
       data: {
+        filename: result?.data?.filename,
+        path: result?.data?.path,
+        storage_key: result?.data?.path,
         url: result?.data?.url,
         internal_url: result?.data?.internal_url,
         mime_type: result?.data?.mime_type,

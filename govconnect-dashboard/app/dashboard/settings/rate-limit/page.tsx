@@ -514,7 +514,7 @@ export default function RateLimitPage() {
                 </TableHeader>
                 <TableBody>
                   {uniqueBans.map((ban) => (
-                    <TableRow key={ban.wa_user_id}>
+                    <TableRow key={`${ban.wa_user_id}-${ban.banType || 'identical'}-${ban.identicalText || 'rate'}`}>
                       <TableCell className="font-mono">{formatPhoneNumber(ban.wa_user_id)}</TableCell>
                       <TableCell>
                         <Badge variant={ban.banType === 'rate' ? 'destructive' : 'secondary'}>

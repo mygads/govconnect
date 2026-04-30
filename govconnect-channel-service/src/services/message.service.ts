@@ -4,6 +4,23 @@ import { MessageData } from '../types/message.types';
 
 const MAX_MESSAGES = 30;
 
+type MessageMediaFields = Pick<
+  MessageData,
+  'media_type' | 'media_url' | 'media_public_url' | 'mime_type' | 'file_name' | 'file_size' | 'storage_key'
+>;
+
+function mediaFields(data: MessageMediaFields) {
+  return {
+    media_type: data.media_type || null,
+    media_url: data.media_url || null,
+    media_public_url: data.media_public_url || null,
+    mime_type: data.mime_type || null,
+    file_name: data.file_name || null,
+    file_size: data.file_size || null,
+    storage_key: data.storage_key || null,
+  };
+}
+
 // Counter to skip FIFO on every message — only enforce periodically
 const fifoCounter = new Map<string, number>();
 const FIFO_CHECK_INTERVAL = 5; // Only run FIFO every 5th message per conversation
@@ -45,6 +62,7 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
       channel_identifier: data.channel_identifier,
       message_id: data.message_id,
       message_text: data.message_text,
+      ...mediaFields(data),
       direction: 'IN',
       source: 'WA_WEBHOOK',
       timestamp: data.timestamp || new Date(),
@@ -74,6 +92,7 @@ export async function saveOutgoingMessage(
       channel_identifier: data.channel_identifier,
       message_id: data.message_id,
       message_text: data.message_text,
+      ...mediaFields(data),
       direction: 'OUT',
       source: data.source,
       timestamp: data.timestamp || new Date(),
@@ -172,6 +191,13 @@ export async function checkDuplicateMessage(message_id: string): Promise<boolean
   });
 
   return existing !== null;
+}
+
+export async function updateMessageMedia(message_id: string, media: MessageMediaFields): Promise<void> {
+  await prisma.message.update({
+    where: { message_id },
+    data: mediaFields(media),
+  });
 }
 
 /**

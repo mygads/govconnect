@@ -22,16 +22,29 @@ export async function GET(request: NextRequest) {
       ai.getSpamGuardBans(),
     ])
 
-    const stats = statsRes.status === 'fulfilled' && statsRes.value.ok
+    const statsAvailable = statsRes.status === 'fulfilled' && statsRes.value.ok
+    const rawStats = statsAvailable
       ? await statsRes.value.json()
-      : { enabled: false, maxIdentical: 5, banDurationMs: 60000, activeTrackers: 0, activeBans: 0, supersededMessages: 0, bans: [] }
+      : null
 
     const bans = bansRes.status === 'fulfilled' && bansRes.value.ok
       ? await bansRes.value.json()
       : { total: 0, bans: [] }
 
+    const normalizedStats = {
+      enabled: rawStats?.enabled ?? statsAvailable,
+      maxIdentical: rawStats?.maxIdentical ?? rawStats?.config?.maxIdentical ?? 5,
+      banDurationMs: rawStats?.banDurationMs ?? rawStats?.config?.banDurationMs ?? 60000,
+      rateMaxMessages: rawStats?.rateMaxMessages ?? rawStats?.config?.rateMaxMessages ?? 10,
+      rateWindowMs: rawStats?.rateWindowMs ?? rawStats?.config?.rateWindowMs ?? 10000,
+      activeTrackers: rawStats?.activeTrackers ?? rawStats?.activeUsers ?? 0,
+      activeBans: rawStats?.activeBans ?? bans.total ?? 0,
+      supersededMessages: rawStats?.supersededMessages ?? rawStats?.totalInFlight ?? 0,
+      bans: Array.isArray(rawStats?.bans) ? rawStats.bans : [],
+    }
+
     return NextResponse.json({
-      stats,
+      stats: normalizedStats,
       channelBans: bans,
     })
   } catch (error) {

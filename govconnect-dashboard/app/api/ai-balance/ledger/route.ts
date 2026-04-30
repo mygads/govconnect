@@ -15,8 +15,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const response = await ai.getAIWalletLedger(villageId, { limit })
-    const payload = await response.json()
-    return NextResponse.json(payload)
+    const payload = await response.json().catch(() => ({ error: 'Invalid AI balance ledger response' }))
+    return NextResponse.json(payload, { status: response.status })
   } catch (error) {
     console.error('AI balance ledger proxy error:', error)
     return NextResponse.json({ error: 'Failed to fetch AI balance ledger' }, { status: 500 })

@@ -1,6 +1,6 @@
 "use client"
 
-import { ComponentType, useCallback, useEffect, useState } from "react"
+import { ComponentType, Fragment, useCallback, useEffect, useState } from "react"
 import { redirect } from "next/navigation"
 import {
   BarChart3,
@@ -17,10 +17,11 @@ import {
   Shield,
   Users,
   Calculator,
-  Info,
   Layers,
   Wallet,
   Trash2,
+  ChevronDown,
+  Server,
 } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -54,6 +55,9 @@ interface TokenSummary {
   rag_rerank_calls: number
   rag_rerank_tokens: number
   rag_rerank_cost: number
+  agent_calls: number
+  agent_tokens: number
+  agent_cost: number
   main_chat_calls: number
   main_chat_tokens: number
   main_chat_cost: number
@@ -82,6 +86,32 @@ interface ModelUsage {
   cost_usd: number
   call_count: number
   avg_duration_ms: number
+}
+
+interface ProviderModelUsage extends ModelUsage {
+  model_config_id: string
+  display_name: string
+  lane_type: string
+  actual_cost_usd: number
+  adjusted_cost_usd: number
+  margin_usd: number
+}
+
+interface ProviderUsage {
+  provider_id: string
+  provider_name: string
+  provider_slug: string
+  provider_kind: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cost_usd: number
+  actual_cost_usd: number
+  adjusted_cost_usd: number
+  margin_usd: number
+  call_count: number
+  avg_duration_ms: number
+  models: ProviderModelUsage[]
 }
 
 interface VillageUsage {
@@ -135,29 +165,6 @@ interface VillageInfo {
   slug: string
 }
 
-interface IntentFamilyUsage {
-  intent_family: string
-  intent: string
-  input_tokens: number
-  output_tokens: number
-  total_tokens: number
-  cost_usd: number
-  call_count: number
-  unique_conversations: number
-}
-
-interface TenantFlowUsage {
-  village_id: string
-  flow: string
-  input_tokens: number
-  output_tokens: number
-  total_tokens: number
-  cost_usd: number
-  call_count: number
-  unique_conversations: number
-  failed_calls: number
-}
-
 // ==================== Helpers ====================
 
 const USD_TO_IDR = 17_000
@@ -192,47 +199,22 @@ function sumCostUsd<T extends { cost_usd: number }>(rows: T[]): number {
   return rows.reduce((sum, row) => sum + (row.cost_usd || 0), 0)
 }
 
-function formatSourceLabel(source: string): string {
-  const normalized = source.trim().toLowerCase()
-
-  if (normalized === "gateway_llm") return "Gateway · LLM"
-  if (normalized === "gateway_embed") return "Gateway · Embed"
-  if (normalized === "gateway_rag") return "Gateway · RAG Rewrite"
-  if (normalized === "gateway_rerank") return "Gateway · Rerank"
-  if (normalized === "byok") return "Legacy BYOK"
-  if (normalized === "env") return "Legacy Direct ENV"
-  if (normalized === "unknown") return "Unknown"
-
-  return source
-}
-
-function sourceBadgeClass(source: string): string {
-  const normalized = source.trim().toLowerCase()
-
-  if (normalized.startsWith("gateway_")) {
-    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"
-  }
-  if (normalized === "byok" || normalized === "env") {
-    return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
-  }
-
-  return "bg-gray-100 text-gray-700 dark:bg-gray-900 dark:text-gray-300"
-}
-
 const LAYER_COLORS: Record<string, string> = {
-  full_nlu: "#6366f1",
+  agent: "#6366f1",
   micro_nlu: "#f59e0b",
   rag_expand: "#10b981",
   rag_rerank: "#0f766e",
   embedding: "#ef4444",
+  full_nlu: "#64748b",
 }
 
 const LAYER_LABELS: Record<string, string> = {
-  full_nlu: "Full NLU",
-  micro_nlu: "Micro NLU",
-  rag_expand: "RAG Expand",
+  agent: "Agent Orchestrator",
+  micro_nlu: "Classifier / Utility LLM",
+  rag_expand: "RAG Rewrite",
   rag_rerank: "RAG Rerank",
   embedding: "Embedding",
+  full_nlu: "Legacy Full NLU",
 }
 
 const MODEL_COLORS = [
@@ -279,10 +261,9 @@ export default function AITokenUsagePage() {
   // Ringkasan tab data (loaded on mount)
   const [summary, setSummary] = useState<TokenSummary | null>(null)
   const [byModel, setByModel] = useState<ModelUsage[]>([])
+  const [byProvider, setByProvider] = useState<ProviderUsage[]>([])
+  const [expandedProviderIds, setExpandedProviderIds] = useState<Set<string>>(new Set())
   const [avgPerChat, setAvgPerChat] = useState<AvgPerChat | null>(null)
-  const [bySource, setBySource] = useState<{ source: string; total_calls: number; total_tokens: number; input_tokens: number; output_tokens: number; total_cost_usd: number }[]>([])
-  const [byIntentFamily, setByIntentFamily] = useState<IntentFamilyUsage[]>([])
-  const [byTenantFlow, setByTenantFlow] = useState<TenantFlowUsage[]>([])
   const [summaryLoading, setSummaryLoading] = useState(true)
 
   // Periode tab data (loaded on demand)
@@ -327,20 +308,16 @@ export default function AITokenUsagePage() {
   // Load summary data on mount
   const loadSummary = useCallback(async () => {
     setSummaryLoading(true)
-    const [s, bm, apc, bs, bif, btf] = await Promise.all([
+    const [s, bm, bp, apc] = await Promise.all([
       fetchData<TokenSummary>("summary"),
       fetchData<ModelUsage[]>("by-model"),
+      fetchData<ProviderUsage[]>("by-provider"),
       fetchData<AvgPerChat>("avg-per-chat"),
-      fetchData<{ source: string; total_calls: number; total_tokens: number; input_tokens: number; output_tokens: number; total_cost_usd: number }[]>("by-source"),
-      fetchData<IntentFamilyUsage[]>("by-intent-family"),
-      fetchData<TenantFlowUsage[]>("by-tenant-flow"),
     ])
     setSummary(s)
     setByModel(bm || [])
+    setByProvider(bp || [])
     setAvgPerChat(apc)
-    setBySource(bs || [])
-    setByIntentFamily(bif || [])
-    setByTenantFlow(btf || [])
     setSummaryLoading(false)
   }, [])
 
@@ -433,8 +410,9 @@ export default function AITokenUsagePage() {
         // Clear all local state and reload
         setSummary(null)
         setByModel([])
+        setByProvider([])
+        setExpandedProviderIds(new Set())
         setAvgPerChat(null)
-        setBySource([])
         setByPeriod([])
         setByPeriodLayer([])
         setByVillage([])
@@ -467,6 +445,15 @@ export default function AITokenUsagePage() {
   }
 
   const { Bar, Line, Doughnut } = charts
+  const showLegacyFullNlu = (summary?.full_nlu_tokens || 0) > 0 || (summary?.full_nlu_calls || 0) > 0
+  const toggleProviderExpanded = (providerId: string) => {
+    setExpandedProviderIds((current) => {
+      const next = new Set(current)
+      if (next.has(providerId)) next.delete(providerId)
+      else next.add(providerId)
+      return next
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -562,20 +549,18 @@ export default function AITokenUsagePage() {
           icon={<Activity className="h-5 w-5 text-amber-600" />}
           label="Total API Calls"
           value={summaryLoading ? null : formatNumber(summary?.total_calls || 0)}
-          sub={summaryLoading ? null : `${formatNumber(summary?.full_nlu_calls || 0)} full / ${formatNumber(summary?.micro_nlu_calls || 0)} micro`}
+          sub={summaryLoading ? null : `${formatNumber(summary?.agent_calls || 0)} agent / ${formatNumber(summary?.micro_nlu_calls || 0)} classifier`}
           loading={summaryLoading}
         />
         <SummaryCard
           icon={<MessageSquare className="h-5 w-5 text-blue-600" />}
-          label="Sesi Chat (main_chat)"
-          value={summaryLoading ? null : formatNumber(summary?.main_chat_calls || 0)}
+          label="Respons Chat"          value={summaryLoading ? null : formatNumber(summary?.main_chat_calls || 0)}
           sub={summaryLoading ? null : `${formatNumber(summary?.main_chat_tokens || 0)} tokens · ${formatIDR(summary?.main_chat_cost || 0)}`}
           loading={summaryLoading}
         />
         <SummaryCard
           icon={<Layers className="h-5 w-5 text-purple-600" />}
-          label="Embedding"
-          value={summaryLoading ? null : formatNumber(summary?.embedding_tokens || 0)}
+          label="Embedding"          value={summaryLoading ? null : formatNumber(summary?.embedding_tokens || 0)}
           sub={summaryLoading ? null : `${formatNumber(summary?.embedding_calls || 0)} calls · ${formatIDR(summary?.embedding_cost || 0)}`}
           loading={summaryLoading}
         />
@@ -583,10 +568,9 @@ export default function AITokenUsagePage() {
 
       {/* Tabs — Informasi Detail */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="ringkasan">Ikhtisar Token</TabsTrigger>
           <TabsTrigger value="biaya">Biaya</TabsTrigger>
-          <TabsTrigger value="flow">Biaya per Flow</TabsTrigger>
           <TabsTrigger value="periode">Per Periode</TabsTrigger>
           <TabsTrigger value="village">Per Desa</TabsTrigger>
           <TabsTrigger value="layer">Layer Detail</TabsTrigger>
@@ -594,20 +578,19 @@ export default function AITokenUsagePage() {
 
         {/* ====== IKHTISAR TOKEN TAB ====== */}
         <TabsContent value="ringkasan" className="space-y-6 mt-4">
-          {/* Token distribution cards — Full NLU / Micro NLU / Embedding / RAG */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <div className="h-3 w-3 rounded-full bg-indigo-500" />
-                <span className="text-xs text-muted-foreground font-medium">Full NLU</span>
+                <span className="text-xs text-muted-foreground font-medium">Agent Orchestrator</span>
               </div>
-              <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.full_nlu_tokens || 0)}</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(summary?.full_nlu_calls || 0)} calls · {formatIDR(summary?.full_nlu_cost || 0)}</p>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.agent_tokens || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.agent_calls || 0)} calls · {formatIDR(summary?.agent_cost || 0)}</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <div className="h-3 w-3 rounded-full bg-amber-500" />
-                <span className="text-xs text-muted-foreground font-medium">Micro NLU</span>
+                <span className="text-xs text-muted-foreground font-medium">Classifier / Utility LLM</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.micro_nlu_tokens || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.micro_nlu_calls || 0)} calls · {formatIDR(summary?.micro_nlu_cost || 0)}</p>
@@ -623,7 +606,7 @@ export default function AITokenUsagePage() {
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <div className="h-3 w-3 rounded-full bg-teal-500" />
-                <span className="text-xs text-muted-foreground font-medium">RAG Expand</span>
+                <span className="text-xs text-muted-foreground font-medium">RAG Rewrite</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.rag_expand_tokens || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_expand_calls || 0)} calls · {formatIDR(summary?.rag_expand_cost || 0)}</p>
@@ -636,16 +619,25 @@ export default function AITokenUsagePage() {
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.rag_rerank_tokens || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_rerank_calls || 0)} calls · {formatIDR(summary?.rag_rerank_cost || 0)}</p>
             </div>
+            {showLegacyFullNlu && (
+              <div className="rounded-xl border bg-card p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="h-3 w-3 rounded-full bg-slate-500" />
+                  <span className="text-xs text-muted-foreground font-medium">Legacy Full NLU</span>
+                </div>
+                <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.full_nlu_tokens || 0)}</p>
+                <p className="text-xs text-muted-foreground">{formatNumber(summary?.full_nlu_calls || 0)} calls · {formatIDR(summary?.full_nlu_cost || 0)}</p>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Layer Distribution Doughnut (Full NLU / Micro NLU / Embedding / RAG) */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Cpu className="h-4 w-4" /> Distribusi Token per Layer
                 </CardTitle>
-                <CardDescription>Full NLU, Micro NLU, Embedding, RAG Rewrite, dan RAG Rerank</CardDescription>
+                <CardDescription>Agent, classifier/utility LLM, embedding, RAG rewrite, dan RAG rerank.</CardDescription>
               </CardHeader>
               <CardContent>
                 {summaryLoading ? <Skeleton className="h-56" /> : (
@@ -653,16 +645,24 @@ export default function AITokenUsagePage() {
                     <div className="h-56 flex items-center justify-center">
                       <Doughnut
                         data={{
-                          labels: ["Full NLU", "Micro NLU", "Embedding", "RAG Expand", "RAG Rerank"],
+                          labels: [
+                            "Agent Orchestrator",
+                            "Classifier / Utility LLM",
+                            "Embedding",
+                            "RAG Rewrite",
+                            "RAG Rerank",
+                            ...(showLegacyFullNlu ? ["Legacy Full NLU"] : []),
+                          ],
                           datasets: [{
                             data: [
-                              summary?.full_nlu_tokens || 0,
+                              summary?.agent_tokens || 0,
                               summary?.micro_nlu_tokens || 0,
                               summary?.embedding_tokens || 0,
                               summary?.rag_expand_tokens || 0,
                               summary?.rag_rerank_tokens || 0,
+                              ...(showLegacyFullNlu ? [summary?.full_nlu_tokens || 0] : []),
                             ],
-                            backgroundColor: ["#6366f1", "#f59e0b", "#a855f7", "#14b8a6", "#0f766e"],
+                            backgroundColor: ["#6366f1", "#f59e0b", "#a855f7", "#14b8a6", "#0f766e", "#64748b"],
                             borderWidth: 2,
                             borderColor: "#fff",
                           }],
@@ -772,15 +772,15 @@ export default function AITokenUsagePage() {
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <div className="rounded-lg bg-indigo-100 dark:bg-indigo-950 p-2"><Cpu className="h-4 w-4 text-indigo-600" /></div>
-                <span className="text-xs text-muted-foreground font-medium">Biaya Full NLU</span>
+                <span className="text-xs text-muted-foreground font-medium">Biaya Agent</span>
               </div>
-              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.full_nlu_cost || 0)}</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(summary?.full_nlu_calls || 0)} calls</p>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.agent_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.agent_calls || 0)} calls</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <div className="rounded-lg bg-amber-100 dark:bg-amber-950 p-2"><Zap className="h-4 w-4 text-amber-600" /></div>
-                <span className="text-xs text-muted-foreground font-medium">Biaya Micro NLU</span>
+                <span className="text-xs text-muted-foreground font-medium">Biaya Classifier</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.micro_nlu_cost || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.micro_nlu_calls || 0)} calls</p>
@@ -810,6 +810,86 @@ export default function AITokenUsagePage() {
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_rerank_calls || 0)} calls</p>
             </div>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Server className="h-4 w-4" /> Biaya per Provider
+              </CardTitle>
+              <CardDescription>Klik provider untuk melihat model di dalam provider tersebut.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {summaryLoading ? <Skeleton className="h-48" /> : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-muted-foreground">
+                        <th className="pb-2 pr-3">Provider</th>
+                        <th className="pb-2 pr-3 text-right">Calls</th>
+                        <th className="pb-2 pr-3 text-right">Input</th>
+                        <th className="pb-2 pr-3 text-right">Output</th>
+                        <th className="pb-2 pr-3 text-right">Actual</th>
+                        <th className="pb-2 pr-3 text-right">Charged</th>
+                        <th className="pb-2 text-right">Margin</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {byProvider.map((provider) => {
+                        const expanded = expandedProviderIds.has(provider.provider_id)
+                        return (
+                          <Fragment key={provider.provider_id}>
+                            <tr className="border-b hover:bg-muted/30 cursor-pointer" onClick={() => toggleProviderExpanded(provider.provider_id)}>
+                              <td className="py-2 pr-3">
+                                <div className="flex items-center gap-2 font-medium">
+                                  <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                                  {provider.provider_name}
+                                </div>
+                                <div className="ml-6 text-xs text-muted-foreground">{provider.provider_slug} · {provider.provider_kind} · {provider.models?.length || 0} model</div>
+                              </td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(provider.call_count)}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(provider.input_tokens)}</td>
+                              <td className="py-2 pr-3 text-right">{formatNumber(provider.output_tokens)}</td>
+                              <td className="py-2 pr-3 text-right text-muted-foreground">{formatIDR(provider.actual_cost_usd || provider.cost_usd)}</td>
+                              <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(provider.adjusted_cost_usd || provider.cost_usd)}</td>
+                              <td className="py-2 text-right text-muted-foreground">{formatIDR(provider.margin_usd || 0)}</td>
+                            </tr>
+                            {expanded && provider.models?.map((model) => (
+                              <tr key={`${provider.provider_id}-${model.model_config_id}-${model.model}`} className="border-b bg-muted/20 text-xs">
+                                <td className="py-2 pr-3 pl-10">
+                                  <div className="font-medium">{model.display_name}</div>
+                                  <div className="font-mono text-muted-foreground">{model.model} · {model.lane_type}</div>
+                                </td>
+                                <td className="py-2 pr-3 text-right">{formatNumber(model.call_count)}</td>
+                                <td className="py-2 pr-3 text-right">{formatNumber(model.input_tokens)}</td>
+                                <td className="py-2 pr-3 text-right">{formatNumber(model.output_tokens)}</td>
+                                <td className="py-2 pr-3 text-right text-muted-foreground">{formatIDR(model.actual_cost_usd || model.cost_usd)}</td>
+                                <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(model.adjusted_cost_usd || model.cost_usd)}</td>
+                                <td className="py-2 text-right text-muted-foreground">{formatIDR(model.margin_usd || 0)}</td>
+                              </tr>
+                            ))}
+                          </Fragment>
+                        )
+                      })}
+                      {byProvider.length > 0 && (
+                        <tr className="border-t-2 font-semibold bg-muted/30">
+                          <td className="py-2 pr-3">TOTAL</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byProvider.reduce((s, p) => s + p.call_count, 0))}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byProvider.reduce((s, p) => s + p.input_tokens, 0))}</td>
+                          <td className="py-2 pr-3 text-right">{formatNumber(byProvider.reduce((s, p) => s + p.output_tokens, 0))}</td>
+                          <td className="py-2 pr-3 text-right text-muted-foreground">{formatIDR(byProvider.reduce((s, p) => s + (p.actual_cost_usd || p.cost_usd), 0))}</td>
+                          <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(byProvider.reduce((s, p) => s + (p.adjusted_cost_usd || p.cost_usd), 0))}</td>
+                          <td className="py-2 text-right text-muted-foreground">{formatIDR(byProvider.reduce((s, p) => s + (p.margin_usd || 0), 0))}</td>
+                        </tr>
+                      )}
+                      {byProvider.length === 0 && (
+                        <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">Belum ada data provider</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Rincian Biaya per Model */}
           <Card>
@@ -869,106 +949,57 @@ export default function AITokenUsagePage() {
             </CardContent>
           </Card>
 
-          {/* Biaya per Layer / Call Type */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Activity className="h-4 w-4" /> Biaya per Layer
-                </CardTitle>
-                <CardDescription>Perbandingan biaya antara Full NLU, Micro NLU, Embedding, RAG Rewrite, dan Rerank</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {summaryLoading ? <Skeleton className="h-56" /> : (
-                  <div className="h-56 flex items-center justify-center">
-                    <Doughnut
-                      data={{
-                        labels: ["Full NLU", "Micro NLU", "Embedding", "RAG Rewrite", "RAG Rerank"],
-                        datasets: [{
-                          data: [
-                            summary?.full_nlu_cost || 0,
-                            summary?.micro_nlu_cost || 0,
-                            summary?.embedding_cost || 0,
-                            summary?.rag_expand_cost || 0,
-                            summary?.rag_rerank_cost || 0,
-                          ],
-                          backgroundColor: ["#6366f1", "#f59e0b", "#a855f7", "#14b8a6", "#0f766e"],
-                          borderWidth: 2,
-                          borderColor: "#fff",
-                        }],
-                      }}
-                      options={{
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                          legend: { position: "bottom" },
-                          tooltip: {
-                            callbacks: {
-                              label: (ctx: any) => `${ctx.label}: ${formatIDR(ctx.raw)} (${formatUSD(ctx.raw)})`,
-                            },
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Activity className="h-4 w-4" /> Biaya per Layer
+              </CardTitle>
+              <CardDescription>Perbandingan biaya antara agent, classifier/utility LLM, embedding, RAG rewrite, dan rerank.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {summaryLoading ? <Skeleton className="h-56" /> : (
+                <div className="h-56 flex items-center justify-center">
+                  <Doughnut
+                    data={{
+                      labels: [
+                        "Agent Orchestrator",
+                        "Classifier / Utility LLM",
+                        "Embedding",
+                        "RAG Rewrite",
+                        "RAG Rerank",
+                        ...(showLegacyFullNlu ? ["Legacy Full NLU"] : []),
+                      ],
+                      datasets: [{
+                        data: [
+                          summary?.agent_cost || 0,
+                          summary?.micro_nlu_cost || 0,
+                          summary?.embedding_cost || 0,
+                          summary?.rag_expand_cost || 0,
+                          summary?.rag_rerank_cost || 0,
+                          ...(showLegacyFullNlu ? [summary?.full_nlu_cost || 0] : []),
+                        ],
+                        backgroundColor: ["#6366f1", "#f59e0b", "#a855f7", "#14b8a6", "#0f766e", "#64748b"],
+                        borderWidth: 2,
+                        borderColor: "#fff",
+                      }],
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: {
+                        legend: { position: "bottom" },
+                        tooltip: {
+                          callbacks: {
+                            label: (ctx: any) => `${ctx.label}: ${formatIDR(ctx.raw)} (${formatUSD(ctx.raw)})`,
                           },
                         },
-                      }}
-                    />
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Sumber Gateway / legacy source tracking */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Shield className="h-4 w-4" /> Sumber Trafik AI
-                </CardTitle>
-                <CardDescription>Distribusi penggunaan berdasarkan lane gateway aktif. Label legacy tetap ditampilkan untuk data historis lama.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {summaryLoading ? <Skeleton className="h-24" /> : bySource.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Info className="h-4 w-4 text-amber-600" />
-                      <span className="text-sm font-medium text-amber-800 dark:text-amber-200">Belum Ada Data</span>
-                    </div>
-                    <p className="text-xs text-amber-700 dark:text-amber-300">
-                      Data sumber trafik akan muncul setelah ada request baru yang terekam dengan tracking key source.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left border-b">
-                            <th className="py-2 pr-3 font-medium text-muted-foreground">Sumber</th>
-                            <th className="py-2 pr-3 font-medium text-muted-foreground text-right">API Calls</th>
-                            <th className="py-2 pr-3 font-medium text-muted-foreground text-right">Token</th>
-                            <th className="py-2 pr-3 font-medium text-muted-foreground text-right">Biaya (IDR)</th>
-                            <th className="py-2 font-medium text-muted-foreground text-right">Biaya (USD)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {bySource.map((s) => (
-                            <tr key={s.source} className="border-b last:border-0">
-                              <td className="py-2 pr-3 font-medium text-sm">
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${sourceBadgeClass(s.source)}`}>
-                                  {formatSourceLabel(s.source)}
-                                </span>
-                              </td>
-                              <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(s.total_calls)}</td>
-                              <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(s.total_tokens)}</td>
-                              <td className="py-2 pr-3 text-right tabular-nums text-green-600">{formatIDR(s.total_cost_usd)}</td>
-                              <td className="py-2 text-right tabular-nums text-blue-600">{formatUSD(s.total_cost_usd)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Estimasi Biaya per Pesan */}
           <Card>
@@ -1012,99 +1043,6 @@ export default function AITokenUsagePage() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {/* ====== BIAYA PER FLOW TAB ====== */}
-        <TabsContent value="flow" className="space-y-6 mt-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Activity className="h-4 w-4" /> Biaya per Intent Family
-                </CardTitle>
-                <CardDescription>Observabilitas biaya berdasarkan kelompok intent.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {summaryLoading ? <Skeleton className="h-56" /> : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b text-left text-muted-foreground">
-                          <th className="pb-2 pr-3">Intent Family</th>
-                          <th className="pb-2 pr-3 text-right">Calls</th>
-                          <th className="pb-2 pr-3 text-right">Token</th>
-                          <th className="pb-2 text-right">Biaya</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Object.values(byIntentFamily.reduce((acc, row) => {
-                          const key = row.intent_family || 'other'
-                          const prev = acc[key] || { intent_family: key, call_count: 0, total_tokens: 0, cost_usd: 0 }
-                          acc[key] = {
-                            ...prev,
-                            call_count: prev.call_count + row.call_count,
-                            total_tokens: prev.total_tokens + row.total_tokens,
-                            cost_usd: prev.cost_usd + row.cost_usd,
-                          }
-                          return acc
-                        }, {} as Record<string, { intent_family: string; call_count: number; total_tokens: number; cost_usd: number }>))
-                          .sort((a, b) => b.cost_usd - a.cost_usd)
-                          .map((row, idx) => (
-                            <tr key={idx} className="border-b last:border-0 hover:bg-muted/30">
-                              <td className="py-2 pr-3 font-medium">{row.intent_family}</td>
-                              <td className="py-2 pr-3 text-right">{formatNumber(row.call_count)}</td>
-                              <td className="py-2 pr-3 text-right">{formatNumber(row.total_tokens)}</td>
-                              <td className="py-2 text-right font-semibold text-emerald-600">{formatIDR(row.cost_usd)}</td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <Building2 className="h-4 w-4" /> Biaya per Tenant Flow
-                </CardTitle>
-                <CardDescription>Biaya per desa dan flow utama (nlu/retrieval/agent).</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {summaryLoading ? <Skeleton className="h-56" /> : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b text-left text-muted-foreground">
-                          <th className="pb-2 pr-3">Desa</th>
-                          <th className="pb-2 pr-3">Flow</th>
-                          <th className="pb-2 pr-3 text-right">Calls</th>
-                          <th className="pb-2 pr-3 text-right">Fail</th>
-                          <th className="pb-2 text-right">Biaya</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {byTenantFlow
-                          .slice()
-                          .sort((a, b) => b.cost_usd - a.cost_usd)
-                          .slice(0, 20)
-                          .map((row, idx) => (
-                            <tr key={idx} className="border-b last:border-0 hover:bg-muted/30">
-                              <td className="py-2 pr-3">{getVillageName(row.village_id === '__unknown__' ? null : row.village_id)}</td>
-                              <td className="py-2 pr-3 font-mono text-xs">{row.flow}</td>
-                              <td className="py-2 pr-3 text-right">{formatNumber(row.call_count)}</td>
-                              <td className="py-2 pr-3 text-right">{formatNumber(row.failed_calls)}</td>
-                              <td className="py-2 text-right font-semibold text-emerald-600">{formatIDR(row.cost_usd)}</td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
         </TabsContent>
 
         {/* ====== PERIODE TAB ====== */}
@@ -1581,7 +1519,7 @@ export default function AITokenUsagePage() {
 
                         {/* Per-Layer Breakdown */}
                         <div>
-                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2"><Activity className="h-4 w-4" /> Breakdown per Layer (NLU / RAG / Micro NLU)</h4>
+                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2"><Activity className="h-4 w-4" /> Breakdown per Layer Runtime</h4>
                           <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                               <thead>

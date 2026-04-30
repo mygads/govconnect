@@ -19,30 +19,35 @@ $services = @(
     Workdir = Join-Path $root 'govconnect-channel-service'
     Command = 'npx tsx watch src/server.ts'
     HealthUrl = 'http://127.0.0.1:3001/health'
+    Migrate = $true
   },
   @{
     Name = 'case-service'
     Workdir = Join-Path $root 'govconnect-case-service'
     Command = 'npx tsx watch src/server.ts'
     HealthUrl = 'http://127.0.0.1:3003/health'
+    Migrate = $true
   },
   @{
     Name = 'notification-service'
     Workdir = Join-Path $root 'govconnect-notification-service'
     Command = 'npx tsx watch src/server.ts'
     HealthUrl = 'http://127.0.0.1:3004/health'
+    Migrate = $true
   },
   @{
     Name = 'ai-service'
     Workdir = Join-Path $root 'govconnect-ai-service'
     Command = 'npx tsx watch src/server.ts'
     HealthUrl = 'http://127.0.0.1:3002/health'
+    Migrate = $true
   },
   @{
     Name = 'dashboard'
     Workdir = Join-Path $root 'govconnect-dashboard'
     Command = 'npx next dev -p 3010'
     HealthUrl = 'http://127.0.0.1:3010/api/health'
+    Migrate = $true
   }
 )
 
@@ -122,7 +127,24 @@ function Ensure-DockerInfra {
   }
 }
 
+function Invoke-ServiceMigrations {
+  foreach ($service in $services) {
+    if (-not $service.Migrate) {
+      continue
+    }
+
+    Write-Host ("Applying Prisma migrations for {0}..." -f $service.Name)
+    Push-Location $service.Workdir
+    try {
+      pnpm db:migrate:deploy
+    } finally {
+      Pop-Location
+    }
+  }
+}
+
 Ensure-DockerInfra
+Invoke-ServiceMigrations
 
 foreach ($service in $services) {
   Stop-ExistingLocalProcess -Name $service.Name

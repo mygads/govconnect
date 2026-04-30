@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import {
   saveIncomingMessage,
   checkDuplicateMessage,
+  updateMessageMedia,
 } from '../services/message.service';
 // markMessageAsRead is now called by AI service when processing starts
 // Group message filtering improved - v3
@@ -258,6 +259,18 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // Wait for media processing to complete
     await mediaPromise;
 
+    if (mediaInfo.hasMedia) {
+      await updateMessageMedia(messageId, {
+        media_type: mediaInfo.mediaType,
+        media_url: mediaInfo.mediaUrl,
+        media_public_url: mediaInfo.mediaPublicUrl,
+        mime_type: mediaInfo.mimeType,
+        file_name: mediaInfo.fileName,
+        file_size: mediaInfo.fileSize,
+        storage_key: mediaInfo.storageKey,
+      });
+    }
+
     const waChannelEnabled = await isWaChannelEnabled(villageId);
     if (!waChannelEnabled) {
       logger.info('WA channel disabled, skipping AI processing', {
@@ -436,10 +449,9 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
     const messageId = info.ID;
 
     // Extract timestamp - genfity-wa uses ISO format
-    let timestamp: Date;
-    if (info.Timestamp) {
-      timestamp = new Date(info.Timestamp);
-    } else {
+    let timestamp = info.Timestamp ? new Date(info.Timestamp) : new Date();
+    if (Number.isNaN(timestamp.getTime())) {
+      logger.warn('Invalid webhook timestamp, using current time', { timestamp: info.Timestamp, messageId });
       timestamp = new Date();
     }
 
@@ -494,6 +506,24 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
         }
         else if (msgObj.DocumentMessage?.Caption) {
           messageText = msgObj.DocumentMessage.Caption;
+        }
+        // Media-only messages
+        else if (msgObj.imageMessage || msgObj.ImageMessage) {
+          messageText = '[Image]';
+        }
+        else if (msgObj.videoMessage || msgObj.VideoMessage) {
+          messageText = '[Video]';
+        }
+        else if (msgObj.audioMessage || msgObj.AudioMessage) {
+          messageText = '[Audio]';
+        }
+        else if (msgObj.documentMessage || msgObj.DocumentMessage) {
+          const documentMessage = msgObj.documentMessage || msgObj.DocumentMessage;
+          const fileName = documentMessage.fileName || documentMessage.FileName;
+          messageText = fileName ? `[Document] ${fileName}` : '[Document]';
+        }
+        else if (msgObj.stickerMessage || msgObj.StickerMessage) {
+          messageText = '[Sticker]';
         }
         // Location
         else if (msgObj.locationMessage) {

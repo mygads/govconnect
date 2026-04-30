@@ -26,6 +26,8 @@ export interface ProcessMessageInput {
   /** When true, skip side effects (profile writes, analytics, rate limits, cache writes).
    *  Used by golden-set evaluation to avoid polluting production data. */
   isEvaluation?: boolean;
+  /** Runtime behavior mode. `knowledge_test` keeps the production RAG/agent path but blocks workflow tools. */
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   /**
    * Optional callback fired when the processing stage changes.
    * Used by the WhatsApp orchestrator to send typing indicators at the right moment.
@@ -60,6 +62,7 @@ export interface ProcessMessageResult {
     sentiment?: string;
     language?: string;
     agentMode?: 'single_orchestrator' | 'deterministic_fact_router' | 'pre_agent_guard' | 'response_cache';
+    sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
     toolsUsed?: string[];
     allowedTools?: string[];
     heuristicTools?: string[];

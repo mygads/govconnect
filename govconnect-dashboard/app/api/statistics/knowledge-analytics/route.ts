@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
     // Fetch persistent knowledge gaps from DB (needed for both gap table AND fallback stats)
     let topGaps: any[] = []
     let gapStatusCounts: Record<string, number> = { open: 0, resolved: 0, ignored: 0 }
+    let gapsAvailable = false
     try {
       const [gaps, statusCounts] = await Promise.all([
         prisma.knowledge_gaps.findMany({
@@ -79,11 +80,13 @@ export async function GET(request: NextRequest) {
       for (const sc of statusCounts) {
         gapStatusCounts[sc.status] = sc._count
       }
+      gapsAvailable = true
     } catch (e) { console.log('Knowledge gaps DB unavailable') }
 
     // Fetch knowledge conflicts from DB
     let topConflicts: any[] = []
     let conflictStatusCounts: Record<string, number> = { open: 0, resolved: 0, auto_resolved: 0, ignored: 0 }
+    let conflictsAvailable = false
     try {
       const [conflicts, conflictCounts] = await Promise.all([
         prisma.knowledge_conflicts.findMany({
@@ -113,9 +116,11 @@ export async function GET(request: NextRequest) {
       for (const sc of conflictCounts) {
         conflictStatusCounts[sc.status] = sc._count
       }
+      conflictsAvailable = true
     } catch (e) { console.log('Knowledge conflicts DB unavailable') }
 
     let latestEvalRun: any = null
+    let evaluationAvailable = false
     try {
       const evalRun = await prisma.ai_golden_set_runs.findFirst({
         where: {
@@ -133,6 +138,7 @@ export async function GET(request: NextRequest) {
         },
       })
 
+      evaluationAvailable = true
       if (evalRun) {
         latestEvalRun = {
           runId: evalRun.run_id,
@@ -172,16 +178,30 @@ export async function GET(request: NextRequest) {
     } catch (e) { console.log('Golden set DB unavailable') }
 
     // Calculate knowledge coverage
-    // Prefer real-time AI stats; if AI service has reset (all zeros), use DB-based counts as fallback
+    // Runtime AI stats can reset with the AI service; DB gaps are persistent but only represent misses.
     const aiTotalQueries = analyticsData?.totalQueries || analyticsData?.total_queries || 0
     const aiKnowledgeHits = knowledgeData?.hits || flow.knowledge_hit || flow.knowledgeHit || 0
     const aiKnowledgeMisses = knowledgeData?.misses || flow.knowledge_miss || flow.knowledgeMiss || 0
     const fallbackCount = flow.fallback || flow.fallbackCount || 0
-
-    // If AI in-memory stats are zero (e.g., after restart), use DB gap counts as miss indicator
-    const totalQueries = aiTotalQueries > 0 ? aiTotalQueries : (gapStatusCounts.open + gapStatusCounts.resolved + gapStatusCounts.ignored) || 0
-    const knowledgeHits = aiKnowledgeHits
-    const knowledgeMisses = aiKnowledgeMisses > 0 ? aiKnowledgeMisses : gapStatusCounts.open || 0
+    const persistentGapCount = (gapStatusCounts.open + gapStatusCounts.resolved + gapStatusCounts.ignored) || 0
+    const overviewSource = aiTotalQueries > 0
+      ? 'runtime'
+      : persistentGapCount > 0
+        ? 'persistent_gap_fallback'
+        : 'unavailable'
+    const totalQueries = overviewSource === 'runtime' ? aiTotalQueries : persistentGapCount
+    const knowledgeHits = overviewSource === 'runtime' ? aiKnowledgeHits : 0
+    const knowledgeMisses = overviewSource === 'runtime'
+      ? aiKnowledgeMisses
+      : overviewSource === 'persistent_gap_fallback'
+        ? gapStatusCounts.open || 0
+        : 0
+    const hitRate = overviewSource === 'runtime' && totalQueries > 0
+      ? ((knowledgeHits / totalQueries) * 100).toFixed(1)
+      : null
+    const missRate = overviewSource === 'runtime' && totalQueries > 0
+      ? ((knowledgeMisses / totalQueries) * 100).toFixed(1)
+      : null
 
     return NextResponse.json({
       overview: {
@@ -189,8 +209,32 @@ export async function GET(request: NextRequest) {
         knowledgeHits,
         knowledgeMisses,
         fallbackCount,
-        hitRate: totalQueries > 0 ? ((knowledgeHits / totalQueries) * 100).toFixed(1) : 0,
-        missRate: totalQueries > 0 ? ((knowledgeMisses / totalQueries) * 100).toFixed(1) : 0,
+        hitRate,
+        missRate,
+        source: overviewSource,
+        isPartial: overviewSource !== 'runtime',
+        caveat: overviewSource === 'runtime'
+          ? null
+          : overviewSource === 'persistent_gap_fallback'
+            ? 'Runtime AI stats belum tersedia atau baru reset. Angka ini hanya memakai gap tersimpan, bukan total interaksi dan bukan hit-rate penuh.'
+            : 'Belum ada runtime analytics atau gap tersimpan untuk desa ini.',
+      },
+      metricSources: {
+        overview: overviewSource,
+        gaps: gapsAvailable ? 'database' : 'unavailable',
+        conflicts: conflictsAvailable ? 'database' : 'unavailable',
+        evaluation: evaluationAvailable ? 'database' : 'unavailable',
+        retrievalObservability: retrievalData ? 'ai-service' : 'unavailable',
+        memoryObservability: memoryData ? 'ai-service' : 'unavailable',
+        guardrailObservability: guardrailData ? 'ai-service' : 'unavailable',
+        toolPolicyObservability: toolPolicyData ? 'ai-service' : 'unavailable',
+      },
+      dataFreshness: {
+        generatedAt: new Date().toISOString(),
+        runtimeStatsAvailable: aiTotalQueries > 0,
+        persistentGapsAvailable: gapsAvailable,
+        persistentConflictsAvailable: conflictsAvailable,
+        latestEvalAvailable: !!latestEvalRun,
       },
       intents: Array.isArray(intents)
         ? intents.slice(0, 20).map((i: any) => ({

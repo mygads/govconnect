@@ -48,6 +48,7 @@ interface MenuItem {
   icon: React.ComponentType<{ className?: string }>
   roles?: string[]
   excludeRoles?: string[]
+  exact?: boolean
 }
 
 interface MenuGroup {
@@ -61,21 +62,16 @@ export function GovConnectSidebar() {
   const { state } = useSidebar()
   const { user } = useAuth()
 
-  const isActivePath = (path: string) => {
-    // Exact match for dashboard home
-    if (path === "/dashboard") {
-      return pathname === path
+  const isActivePath = (item: MenuItem) => {
+    if (item.exact || item.url === "/dashboard" || item.url === "/dashboard/statistik") {
+      return pathname === item.url
     }
-    // Exact match for statistik (not its children)
-    if (path === "/dashboard/statistik") {
-      return pathname === path
-    }
-    // For other paths, use startsWith but ensure it's a complete segment
-    if (pathname === path) {
+
+    if (pathname === item.url) {
       return true
     }
-    // Check if path is a parent of current pathname (must be followed by /)
-    return pathname.startsWith(path + "/")
+
+    return pathname.startsWith(item.url + "/")
   }
 
   const menuItems: MenuGroup[] = [
@@ -256,6 +252,7 @@ export function GovConnectSidebar() {
           url: "/dashboard/superadmin/providers",
           icon: Plug,
           roles: ["superadmin"],
+          exact: true,
         },
         {
           title: "AI Models",
@@ -358,22 +355,22 @@ export function GovConnectSidebar() {
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton
                       asChild
-                      isActive={isActivePath(item.url)}
+                      isActive={isActivePath(item)}
                       tooltip={item.title}
                       className={`
                         group relative transition-all duration-200 hover:bg-accent/80
-                        ${isActivePath(item.url) 
-                          ? 'bg-primary/10 dark:bg-primary/20 text-primary font-semibold border-l-4 border-primary' 
+                        ${isActivePath(item)
+                          ? 'bg-primary/10 dark:bg-primary/20 text-primary font-semibold border-l-4 border-primary'
                           : 'text-muted-foreground hover:text-foreground'
                         }
                       `}
                     >
                       <Link href={item.url} className="flex items-center gap-3 w-full">
                         <item.icon className={`h-4 w-4 shrink-0 transition-colors ${
-                          isActivePath(item.url) ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                          isActivePath(item) ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
                         }`} />
                         <span className="flex-1">{item.title}</span>
-                        {isActivePath(item.url) && state === "expanded" && (
+                        {isActivePath(item) && state === "expanded" && (
                           <ChevronRight className="h-4 w-4 text-primary" />
                         )}
                       </Link>

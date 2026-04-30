@@ -4,8 +4,6 @@ import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -38,11 +36,28 @@ interface CacheEntry {
   ttlMs: number
 }
 
+interface ResponseCacheStats {
+  totalHits: number
+  totalMisses: number
+  hitRate: number
+  cacheSize: number
+  avgHitCount: number
+}
+
+interface VillageProfileCacheStats {
+  name: string
+  size: number
+  maxSize: number
+  ttlMs: number
+  total: number
+}
+
 interface CacheStats {
   cacheEnabled: boolean
   activeProcessing: number
   umpCaches: CacheEntry[]
-  responseCache: any
+  villageProfileCache?: VillageProfileCacheStats
+  responseCache?: ResponseCacheStats
   timestamp: string
 }
 
@@ -52,7 +67,6 @@ export default function CacheManagementPage() {
   const [stats, setStats] = useState<CacheStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [clearing, setClearing] = useState(false)
-  const [togglingMode, setTogglingMode] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Only super admin can access
@@ -119,47 +133,14 @@ export default function CacheManagementPage() {
     }
   }
 
-  const handleToggleMode = async (enabled: boolean) => {
-    setTogglingMode(true)
-    try {
-      const response = await fetch('/api/cache', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({ action: 'set-mode', enabled }),
-      })
-
-      if (!response.ok) throw new Error('Gagal mengubah mode cache')
-
-      const data = await response.json()
-      toast({
-        title: enabled ? "Mode Production" : "Mode Development",
-        description: data.message,
-      })
-
-      // Refresh stats
-      fetchStats()
-    } catch (err: any) {
-      toast({
-        title: "Gagal",
-        description: err.message || "Gagal mengubah mode",
-        variant: "destructive",
-      })
-    } finally {
-      setTogglingMode(false)
-    }
-  }
-
   const formatTTL = (ms: number) => {
     if (ms >= 60000) return `${Math.round(ms / 60000)}m`
     return `${Math.round(ms / 1000)}s`
   }
 
-  const totalCacheEntries = stats?.umpCaches?.reduce((sum, c) => sum + c.size, 0) || 0
-  const totalHits = stats?.umpCaches?.reduce((sum, c) => sum + c.hits, 0) || 0
-  const totalMisses = stats?.umpCaches?.reduce((sum, c) => sum + c.misses, 0) || 0
+  const totalCacheEntries = (stats?.umpCaches?.reduce((sum, c) => sum + c.size, 0) || 0) + (stats?.responseCache?.cacheSize || 0) + (stats?.villageProfileCache?.size || 0)
+  const totalHits = (stats?.umpCaches?.reduce((sum, c) => sum + c.hits, 0) || 0) + (stats?.responseCache?.totalHits || 0)
+  const totalMisses = (stats?.umpCaches?.reduce((sum, c) => sum + c.misses, 0) || 0) + (stats?.responseCache?.totalMisses || 0)
   const overallHitRate = totalHits + totalMisses > 0
     ? ((totalHits / (totalHits + totalMisses)) * 100).toFixed(1)
     : '0.0'
@@ -226,13 +207,12 @@ export default function CacheManagementPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Mode</CardTitle>
+            <CardTitle className="text-sm font-medium">Jenis Cache</CardTitle>
             <Server className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <Badge variant={stats?.cacheEnabled ? "default" : "secondary"} className="text-sm">
-              {stats?.cacheEnabled ? '🚀 Production' : '🔧 Development'}
-            </Badge>
+            <div className="text-2xl font-bold">3</div>
+            <p className="text-xs text-muted-foreground">conversation, response, village profile</p>
           </CardContent>
         </Card>
 
@@ -273,33 +253,16 @@ export default function CacheManagementPage() {
 
       {/* Controls */}
       <div className="grid gap-4 md:grid-cols-2">
-        {/* Cache Mode Toggle */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Mode Cache</CardTitle>
+            <CardTitle className="text-lg">Apa fungsi cache ini?</CardTitle>
             <CardDescription>
-              Toggle antara mode Production (cache aktif) dan Development (cache mati, data selalu fresh)
+              Cache ini bukan data training. Ini hanya penyimpanan sementara di memori AI service agar percakapan, response yang aman dicache, dan profil desa tidak perlu dihitung/diambil ulang di setiap request.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="flex items-center space-x-4">
-              <Switch
-                id="cache-mode"
-                checked={stats?.cacheEnabled ?? true}
-                onCheckedChange={handleToggleMode}
-                disabled={togglingMode}
-              />
-              <Label htmlFor="cache-mode" className="text-sm">
-                {stats?.cacheEnabled
-                  ? 'Cache Aktif (Production) — Response lebih cepat'
-                  : 'Cache Mati (Development) — Data selalu fresh'}
-              </Label>
-            </div>
-            {!stats?.cacheEnabled && (
-              <p className="text-xs text-amber-600 mt-3">
-                ⚠️ Mode development akan membuat response lebih lambat karena setiap request memproses ulang data.
-              </p>
-            )}
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            <p>Hapus cache aman dilakukan setelah update profil desa, knowledge, layanan, atau saat percakapan terlihat memakai state lama.</p>
+            <p>Cache akan hilang otomatis saat service restart dan tidak mengubah data permanen di database.</p>
           </CardContent>
         </Card>
 
@@ -325,12 +288,54 @@ export default function CacheManagementPage() {
         </Card>
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Cache Runtime AI</CardTitle>
+          <CardDescription>Cache yang benar-benar dipakai runtime untuk response dan profil desa.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Cache Name</TableHead>
+                <TableHead>Fungsi</TableHead>
+                <TableHead className="text-right">Entries</TableHead>
+                <TableHead className="text-right">TTL</TableHead>
+                <TableHead className="text-right">Hits</TableHead>
+                <TableHead className="text-right">Misses</TableHead>
+                <TableHead className="text-right">Hit Rate</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow>
+                <TableCell className="font-medium text-xs">responseCache</TableCell>
+                <TableCell className="text-sm text-muted-foreground">Menyimpan response AI yang aman dicache untuk query berulang.</TableCell>
+                <TableCell className="text-right"><Badge variant="outline">{stats?.responseCache?.cacheSize ?? 0}</Badge></TableCell>
+                <TableCell className="text-right text-muted-foreground">bervariasi</TableCell>
+                <TableCell className="text-right text-green-600">{stats?.responseCache?.totalHits ?? 0}</TableCell>
+                <TableCell className="text-right text-red-500">{stats?.responseCache?.totalMisses ?? 0}</TableCell>
+                <TableCell className="text-right"><Badge variant={(stats?.responseCache?.hitRate || 0) > 0.5 ? "default" : "secondary"}>{(((stats?.responseCache?.hitRate || 0) * 100).toFixed(1))}%</Badge></TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="font-medium text-xs">villageProfileCache</TableCell>
+                <TableCell className="text-sm text-muted-foreground">Menyimpan ringkasan profil desa agar greeting dan konteks desa lebih cepat.</TableCell>
+                <TableCell className="text-right"><Badge variant="outline">{stats?.villageProfileCache?.size ?? 0}</Badge></TableCell>
+                <TableCell className="text-right text-muted-foreground">{formatTTL(stats?.villageProfileCache?.ttlMs || 0)}</TableCell>
+                <TableCell className="text-right text-muted-foreground">-</TableCell>
+                <TableCell className="text-right text-muted-foreground">-</TableCell>
+                <TableCell className="text-right"><Badge variant="secondary">n/a</Badge></TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
       {/* Cache Details Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Detail Cache</CardTitle>
+          <CardTitle>Cache State Percakapan</CardTitle>
           <CardDescription>
-            Status masing-masing cache di AI service
+            Cache sementara untuk state Unified Message Processor, bukan training data.
           </CardDescription>
         </CardHeader>
         <CardContent>

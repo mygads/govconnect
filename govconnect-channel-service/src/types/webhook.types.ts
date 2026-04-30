@@ -92,6 +92,7 @@ export interface GenfityMessage {
 }
 
 export interface GenfityMediaMessage {
+  [key: string]: any;
   URL?: string;
   Caption?: string;
   Mimetype?: string;

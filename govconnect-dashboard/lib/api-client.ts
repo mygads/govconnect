@@ -733,6 +733,21 @@ export const ai = {
     });
   },
 
+  async updateAIProvider(id: string, data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-providers/${encodeURIComponent(id)}`), {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteAIProvider(id: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-providers/${encodeURIComponent(id)}`), {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+  },
+
   async listAIModels() {
     return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-models'), {
       headers: getHeaders(),
@@ -744,6 +759,30 @@ export const ai = {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(data),
+    });
+  },
+
+  async updateAIModel(id: string, data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-models/${encodeURIComponent(id)}`), {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteAIModel(id: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-models/${encodeURIComponent(id)}`), {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+  },
+
+  async testAIModel(modelId: string) {
+    return apiFetch(buildUrl(ServicePath.AI, '/api/testing/model'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ model_id: modelId }),
+      timeout: 20000,
     });
   },
 
@@ -919,7 +958,18 @@ export const livechat = {
   /**
    * Send message
    */
-  async sendMessage(waUserId: string, data: { message: string }, villageId?: string) {
+  async sendMessage(waUserId: string, data: {
+    message?: string;
+    media?: {
+      type: 'image' | 'audio' | 'document' | 'video';
+      url: string;
+      internal_url?: string;
+      mime_type?: string;
+      file_name?: string;
+      size?: number;
+      storage_key?: string;
+    };
+  }, villageId?: string) {
     const path = withVillage(`/internal/conversations/${encodeURIComponent(waUserId)}/send`, villageId);
     return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       method: 'POST',
