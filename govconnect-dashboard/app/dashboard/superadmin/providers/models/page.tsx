@@ -5,14 +5,26 @@ import { redirect } from "next/navigation"
 import { Brain, Database, Edit2, Loader2, Play, Plus, Save, Search, Trash2, Waypoints, X } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
+import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface ProviderRow {
   id: string
@@ -49,6 +61,29 @@ interface ModelRow {
 
 const laneOptions = ["llm", "embed", "rewrite", "rerank"]
 
+type ConfirmAction = {
+  title: string
+  description: string
+  actionLabel: string
+  variant?: "default" | "destructive"
+  onConfirm: () => Promise<void> | void
+}
+
+type ModelFormSnapshot = {
+  provider_id: string
+  lane_type: string
+  display_name: string
+  upstream_model_name: string
+  endpoint_path: string
+  actual_input: string
+  actual_output: string
+  adjusted_input: string
+  adjusted_output: string
+  priority: string
+  is_active: string
+  notes: string
+}
+
 function laneIcon(lane: string) {
   switch (lane) {
     case "embed":
@@ -79,16 +114,19 @@ function priceValue(value: number | null | undefined) {
 
 export default function SuperadminAIModelsPage() {
   const { user } = useAuth()
+  const { toast } = useToast()
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [models, setModels] = useState<ModelRow[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
   const [testingModelIds, setTestingModelIds] = useState<Set<string>>(new Set())
   const [savingPriorityId, setSavingPriorityId] = useState<string | null>(null)
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, any>>({})
+  const [formOpen, setFormOpen] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
+  const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({})
 
   const [editingModelId, setEditingModelId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState("")
@@ -103,6 +141,20 @@ export default function SuperadminAIModelsPage() {
   const [priority, setPriority] = useState("100")
   const [isActive, setIsActive] = useState("true")
   const [notes, setNotes] = useState("")
+  const [formInitial, setFormInitial] = useState<ModelFormSnapshot>({
+    provider_id: "",
+    lane_type: "llm",
+    display_name: "",
+    upstream_model_name: "",
+    endpoint_path: "",
+    actual_input: "",
+    actual_output: "",
+    adjusted_input: "",
+    adjusted_output: "",
+    priority: "100",
+    is_active: "true",
+    notes: "",
+  })
 
   useEffect(() => {
     if (user && user.role !== "superadmin") redirect("/dashboard")
@@ -127,8 +179,10 @@ export default function SuperadminAIModelsPage() {
 
       const providerRows = Array.isArray(providersPayload?.data) ? providersPayload.data : []
       const editableProviders = providerRows.filter((provider: ProviderRow) => !provider.is_read_only)
+      const modelRows = Array.isArray(modelsPayload?.data) ? modelsPayload.data : []
       setProviders(providerRows)
-      setModels(Array.isArray(modelsPayload?.data) ? modelsPayload.data : [])
+      setModels(modelRows)
+      setPriorityDrafts(Object.fromEntries(modelRows.map((model: ModelRow) => [model.id, String(model.priority ?? 100)])))
       setProviderId((current) => current || editableProviders[0]?.id || "")
     } catch (err: any) {
       setError(err?.message || "Gagal memuat model AI")
@@ -146,7 +200,25 @@ export default function SuperadminAIModelsPage() {
     rows: models.filter((model) => model.lane_type === lane),
   })), [models])
 
+  const getFormSnapshot = (nextProviderId = providerId): ModelFormSnapshot => ({
+    provider_id: nextProviderId,
+    lane_type: laneType,
+    display_name: displayName.trim(),
+    upstream_model_name: upstreamModelName.trim(),
+    endpoint_path: endpointPath.trim(),
+    actual_input: actualInput.trim(),
+    actual_output: actualOutput.trim(),
+    adjusted_input: adjustedInput.trim(),
+    adjusted_output: adjustedOutput.trim(),
+    priority: priority.trim(),
+    is_active: isActive,
+    notes: notes.trim(),
+  })
+
+  const isFormDirty = JSON.stringify(getFormSnapshot()) !== JSON.stringify(formInitial)
+
   const resetForm = () => {
+    const nextProviderId = providers.find((provider) => !provider.is_read_only)?.id || ""
     setEditingModelId(null)
     setLaneType("llm")
     setDisplayName("")
@@ -159,24 +231,60 @@ export default function SuperadminAIModelsPage() {
     setPriority("100")
     setIsActive("true")
     setNotes("")
-    setProviderId(providers.find((provider) => !provider.is_read_only)?.id || "")
+    setProviderId(nextProviderId)
+    setFormInitial({
+      provider_id: nextProviderId,
+      lane_type: "llm",
+      display_name: "",
+      upstream_model_name: "",
+      endpoint_path: "",
+      actual_input: "",
+      actual_output: "",
+      adjusted_input: "",
+      adjusted_output: "",
+      priority: "100",
+      is_active: "true",
+      notes: "",
+    })
+  }
+
+  const startCreate = () => {
+    resetForm()
+    setError(null)
+    setFormOpen(true)
   }
 
   const startEdit = (model: ModelRow) => {
+    const snapshot = {
+      provider_id: model.provider_id,
+      lane_type: model.lane_type,
+      display_name: model.display_name.trim(),
+      upstream_model_name: model.upstream_model_name.trim(),
+      endpoint_path: (model.endpoint_path || "").trim(),
+      actual_input: priceValue(model.actual_input_price_per_million_usd),
+      actual_output: priceValue(model.actual_output_price_per_million_usd),
+      adjusted_input: priceValue(model.adjusted_input_price_per_million_usd),
+      adjusted_output: priceValue(model.adjusted_output_price_per_million_usd),
+      priority: String(model.priority ?? 100),
+      is_active: model.is_active ? "true" : "false",
+      notes: (model.notes || "").trim(),
+    }
     setEditingModelId(model.id)
-    setProviderId(model.provider_id)
-    setLaneType(model.lane_type)
-    setDisplayName(model.display_name)
-    setUpstreamModelName(model.upstream_model_name)
-    setEndpointPath(model.endpoint_path || "")
-    setActualInput(priceValue(model.actual_input_price_per_million_usd))
-    setActualOutput(priceValue(model.actual_output_price_per_million_usd))
-    setAdjustedInput(priceValue(model.adjusted_input_price_per_million_usd))
-    setAdjustedOutput(priceValue(model.adjusted_output_price_per_million_usd))
-    setPriority(String(model.priority ?? 100))
-    setIsActive(model.is_active ? "true" : "false")
-    setNotes(model.notes || "")
-    window.scrollTo({ top: 0, behavior: "smooth" })
+    setProviderId(snapshot.provider_id)
+    setLaneType(snapshot.lane_type)
+    setDisplayName(snapshot.display_name)
+    setUpstreamModelName(snapshot.upstream_model_name)
+    setEndpointPath(snapshot.endpoint_path)
+    setActualInput(snapshot.actual_input)
+    setActualOutput(snapshot.actual_output)
+    setAdjustedInput(snapshot.adjusted_input)
+    setAdjustedOutput(snapshot.adjusted_output)
+    setPriority(snapshot.priority)
+    setIsActive(snapshot.is_active)
+    setNotes(snapshot.notes)
+    setFormInitial(snapshot)
+    setError(null)
+    setFormOpen(true)
   }
 
   const handleTest = async (modelId: string) => {
@@ -212,10 +320,23 @@ export default function SuperadminAIModelsPage() {
     })
   }
 
-  const handlePriorityChange = async (model: ModelRow, value: string) => {
-    const nextPriority = Number(value)
-    if (!Number.isInteger(nextPriority)) return
+  const requestPrioritySave = (model: ModelRow) => {
+    const nextPriority = Number(priorityDrafts[model.id] ?? model.priority ?? 100)
+    if (!Number.isInteger(nextPriority)) {
+      toast({ title: "Gagal", description: "Priority harus angka bulat", variant: "destructive" })
+      return
+    }
+    if (nextPriority === (model.priority ?? 100)) return
 
+    setPendingConfirm({
+      title: "Simpan priority model?",
+      description: `Priority ${model.display_name} akan diubah menjadi ${nextPriority}.`,
+      actionLabel: "Simpan Priority",
+      onConfirm: () => savePriority(model, nextPriority),
+    })
+  }
+
+  const savePriority = async (model: ModelRow, nextPriority: number) => {
     try {
       setSavingPriorityId(model.id)
       setError(null)
@@ -230,25 +351,48 @@ export default function SuperadminAIModelsPage() {
       })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload?.error || "Gagal menyimpan priority")
+      toast({ title: "Berhasil", description: "Priority model berhasil disimpan." })
       await loadData()
     } catch (err: any) {
-      setError(err?.message || "Gagal menyimpan priority")
+      toast({ title: "Gagal", description: err?.message || "Gagal menyimpan priority", variant: "destructive" })
     } finally {
       setSavingPriorityId(null)
     }
   }
 
-  const handleSave = async () => {
+  const requestSave = () => {
     if (!providerId || !displayName.trim() || !upstreamModelName.trim()) {
-      setError("Provider, display name, dan upstream model wajib diisi")
+      toast({ title: "Gagal", description: "Provider, display name, dan upstream model wajib diisi", variant: "destructive" })
       return
     }
+    try {
+      parseRequiredPrice(actualInput, "Harga actual input")
+      parseRequiredPrice(actualOutput, "Harga actual output")
+      parseRequiredPrice(adjustedInput, "Harga adjusted input")
+      parseRequiredPrice(adjustedOutput, "Harga adjusted output")
+      const nextPriority = Number(priority)
+      if (!Number.isInteger(nextPriority)) throw new Error("Priority harus angka bulat")
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err?.message || "Data model tidak valid", variant: "destructive" })
+      return
+    }
+    if (!isFormDirty) return
+
+    setPendingConfirm({
+      title: editingModelId ? "Simpan perubahan model AI?" : "Tambah model AI?",
+      description: editingModelId ? `Perubahan model ${displayName.trim()} akan disimpan.` : `Model ${displayName.trim()} akan ditambahkan.`,
+      actionLabel: editingModelId ? "Simpan Perubahan" : "Simpan Model",
+      onConfirm: handleSave,
+    })
+  }
+
+  const handleSave = async () => {
+    if (!providerId || !displayName.trim() || !upstreamModelName.trim() || !isFormDirty) return
 
     try {
       setSubmitting(true)
       setError(null)
-      setMessage(null)
-      const actualInputPrice = parseRequiredPrice(actualInput, "Harga actual input")
+        const actualInputPrice = parseRequiredPrice(actualInput, "Harga actual input")
       const actualOutputPrice = parseRequiredPrice(actualOutput, "Harga actual output")
       const adjustedInputPrice = parseRequiredPrice(adjustedInput, "Harga adjusted input")
       const adjustedOutputPrice = parseRequiredPrice(adjustedOutput, "Harga adjusted output")
@@ -285,24 +429,32 @@ export default function SuperadminAIModelsPage() {
       const payload = await response.json()
       if (!response.ok) throw new Error(payload?.error || (editingModelId ? "Gagal mengubah model AI" : "Gagal membuat model AI"))
 
-      setMessage(editingModelId ? "Model AI berhasil diubah." : "Model AI berhasil ditambahkan.")
+      toast({ title: "Berhasil", description: editingModelId ? "Model AI berhasil diubah." : "Model AI berhasil ditambahkan." })
       resetForm()
+      setFormOpen(false)
       await loadData()
     } catch (err: any) {
-      setError(err?.message || (editingModelId ? "Gagal mengubah model AI" : "Gagal membuat model AI"))
+      toast({ title: "Gagal", description: err?.message || (editingModelId ? "Gagal mengubah model AI" : "Gagal membuat model AI"), variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
   }
 
-  const handleDelete = async (model: ModelRow) => {
-    if (!window.confirm(`Hapus model ${model.display_name}?`)) return
+  const requestDelete = (model: ModelRow) => {
+    setPendingConfirm({
+      title: "Hapus model AI?",
+      description: `Model ${model.display_name} akan dihapus permanen.`,
+      actionLabel: "Hapus",
+      variant: "destructive",
+      onConfirm: () => handleDelete(model),
+    })
+  }
 
+  const handleDelete = async (model: ModelRow) => {
     try {
       setDeletingModelId(model.id)
       setError(null)
-      setMessage(null)
-      const token = localStorage.getItem("token")
+        const token = localStorage.getItem("token")
       const response = await fetch(`/api/superadmin/ai-models/${encodeURIComponent(model.id)}`, {
         method: "DELETE",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -310,11 +462,14 @@ export default function SuperadminAIModelsPage() {
       const payload = await response.json()
       if (!response.ok) throw new Error(payload?.error || "Gagal menghapus model AI")
 
-      if (editingModelId === model.id) resetForm()
-      setMessage("Model AI berhasil dihapus.")
+      if (editingModelId === model.id) {
+        resetForm()
+        setFormOpen(false)
+      }
+      toast({ title: "Berhasil", description: "Model AI berhasil dihapus." })
       await loadData()
     } catch (err: any) {
-      setError(err?.message || "Gagal menghapus model AI")
+      toast({ title: "Gagal", description: err?.message || "Gagal menghapus model AI", variant: "destructive" })
     } finally {
       setDeletingModelId(null)
     }
@@ -326,84 +481,110 @@ export default function SuperadminAIModelsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">AI Models</h1>
-        <p className="mt-2 text-muted-foreground">Kelola model DB, lane runtime, endpoint, priority, dan biaya per 1 juta token.</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">AI Models</h1>
+          <p className="mt-2 text-muted-foreground">Kelola model DB, lane runtime, endpoint, priority, dan biaya per 1 juta token.</p>
+        </div>
+        <Button onClick={startCreate}><Plus className="mr-2 h-4 w-4" />Tambah Model</Button>
       </div>
 
       {error && <Alert variant="destructive"><AlertTitle>Terjadi kesalahan</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-      {message && <Alert><AlertTitle>Berhasil</AlertTitle><AlertDescription>{message}</AlertDescription></Alert>}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">{editingModelId ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />} {editingModelId ? "Edit Model" : "Tambah Model"}</CardTitle>
-          <CardDescription>Nama model boleh mengandung kata “free”, tapi biaya tetap mengikuti harga input/output. Isi 0 hanya jika memang gratis.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 xl:grid-cols-2">
-          <div className="space-y-2">
-            <Label>Provider</Label>
-            <Select value={providerId} onValueChange={setProviderId}>
-              <SelectTrigger><SelectValue placeholder="Pilih provider" /></SelectTrigger>
-              <SelectContent>
-                {providers.filter((provider) => !provider.is_read_only).map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Lane</Label>
-            <Select value={laneType} onValueChange={setLaneType}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {laneOptions.map((lane) => <SelectItem key={lane} value={lane}>{lane.toUpperCase()}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2"><Label>Display Name</Label><Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Claude Sonnet 4.7" /></div>
-          <div className="space-y-2"><Label>Upstream Model Name</Label><Input value={upstreamModelName} onChange={(e) => setUpstreamModelName(e.target.value)} placeholder="anthropic/claude-sonnet-4.7" /></div>
-          <div className="space-y-2"><Label>Endpoint Path</Label><Input value={endpointPath} onChange={(e) => setEndpointPath(e.target.value)} placeholder="/chat/completions" /></div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2"><Label>Priority</Label><Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} /></div>
+      <Dialog open={formOpen} onOpenChange={(open) => { setFormOpen(open); if (!open) resetForm() }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">{editingModelId ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />} {editingModelId ? "Edit Model" : "Tambah Model"}</DialogTitle>
+            <DialogDescription>Nama model boleh mengandung kata “free”, tapi biaya tetap mengikuti harga input/output. Isi 0 hanya jika memang gratis.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 xl:grid-cols-2">
             <div className="space-y-2">
-              <Label>Status</Label>
-              <Select value={isActive} onValueChange={setIsActive}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Label>Provider</Label>
+              <Select value={providerId} onValueChange={setProviderId}>
+                <SelectTrigger><SelectValue placeholder="Pilih provider" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="true">Active</SelectItem>
-                  <SelectItem value="false">Inactive</SelectItem>
+                  {providers.filter((provider) => !provider.is_read_only).map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          <div className="rounded-lg border p-4 space-y-4">
-            <div>
-              <div className="font-medium">Harga Actual</div>
-              <p className="text-xs text-muted-foreground">Biaya asli provider per 1 juta token.</p>
+            <div className="space-y-2">
+              <Label>Lane</Label>
+              <Select value={laneType} onValueChange={setLaneType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {laneOptions.map((lane) => <SelectItem key={lane} value={lane}>{lane.toUpperCase()}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
+            <div className="space-y-2"><Label>Display Name</Label><Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Claude Sonnet 4.7" /></div>
+            <div className="space-y-2"><Label>Upstream Model Name</Label><Input value={upstreamModelName} onChange={(e) => setUpstreamModelName(e.target.value)} placeholder="anthropic/claude-sonnet-4.7" /></div>
+            <div className="space-y-2"><Label>Endpoint Path</Label><Input value={endpointPath} onChange={(e) => setEndpointPath(e.target.value)} placeholder="/chat/completions" /></div>
             <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2"><Label>Input / 1M Token</Label><Input type="number" min="0" step="0.000001" value={actualInput} onChange={(e) => setActualInput(e.target.value)} placeholder="0" /></div>
-              <div className="space-y-2"><Label>Output / 1M Token</Label><Input type="number" min="0" step="0.000001" value={actualOutput} onChange={(e) => setActualOutput(e.target.value)} placeholder="0" /></div>
+              <div className="space-y-2"><Label>Priority</Label><Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} /></div>
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={isActive} onValueChange={setIsActive}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="true">Active</SelectItem>
+                    <SelectItem value="false">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-          </div>
 
-          <div className="rounded-lg border p-4 space-y-4">
-            <div>
-              <div className="font-medium">Harga Adjusted</div>
-              <p className="text-xs text-muted-foreground">Biaya yang dibebankan sistem per 1 juta token.</p>
+            <div className="rounded-lg border p-4 space-y-4">
+              <div>
+                <div className="font-medium">Harga Actual</div>
+                <p className="text-xs text-muted-foreground">Biaya asli provider per 1 juta token.</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2"><Label>Input / 1M Token</Label><Input type="number" min="0" step="0.000001" value={actualInput} onChange={(e) => setActualInput(e.target.value)} placeholder="0" /></div>
+                <div className="space-y-2"><Label>Output / 1M Token</Label><Input type="number" min="0" step="0.000001" value={actualOutput} onChange={(e) => setActualOutput(e.target.value)} placeholder="0" /></div>
+              </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2"><Label>Input / 1M Token</Label><Input type="number" min="0" step="0.000001" value={adjustedInput} onChange={(e) => setAdjustedInput(e.target.value)} placeholder="0" /></div>
-              <div className="space-y-2"><Label>Output / 1M Token</Label><Input type="number" min="0" step="0.000001" value={adjustedOutput} onChange={(e) => setAdjustedOutput(e.target.value)} placeholder="0" /></div>
-            </div>
-          </div>
 
-          <div className="space-y-2 xl:col-span-2"><Label>Notes</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Catatan internal untuk superadmin" /></div>
-          <div className="flex gap-2 xl:col-span-2">
-            <Button onClick={handleSave} disabled={submitting}>{submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : editingModelId ? <Save className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}{editingModelId ? "Simpan Perubahan" : "Simpan Model"}</Button>
-            {editingModelId && <Button type="button" variant="outline" onClick={resetForm} disabled={submitting}><X className="mr-2 h-4 w-4" />Batal</Button>}
+            <div className="rounded-lg border p-4 space-y-4">
+              <div>
+                <div className="font-medium">Harga Adjusted</div>
+                <p className="text-xs text-muted-foreground">Biaya yang dibebankan sistem per 1 juta token.</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2"><Label>Input / 1M Token</Label><Input type="number" min="0" step="0.000001" value={adjustedInput} onChange={(e) => setAdjustedInput(e.target.value)} placeholder="0" /></div>
+                <div className="space-y-2"><Label>Output / 1M Token</Label><Input type="number" min="0" step="0.000001" value={adjustedOutput} onChange={(e) => setAdjustedOutput(e.target.value)} placeholder="0" /></div>
+              </div>
+            </div>
+
+            <div className="space-y-2 xl:col-span-2"><Label>Notes</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Catatan internal untuk superadmin" /></div>
           </div>
-        </CardContent>
-      </Card>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setFormOpen(false)} disabled={submitting}><X className="mr-2 h-4 w-4" />Batal</Button>
+            {isFormDirty && <Button onClick={requestSave} disabled={submitting}>{submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : editingModelId ? <Save className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}{editingModelId ? "Simpan Perubahan" : "Simpan Model"}</Button>}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!pendingConfirm} onOpenChange={(open) => !open && setPendingConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{pendingConfirm?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              className={pendingConfirm?.variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+              onClick={async () => {
+                const action = pendingConfirm
+                setPendingConfirm(null)
+                await action?.onConfirm()
+              }}
+            >
+              {pendingConfirm?.actionLabel || "Lanjutkan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {grouped.map((group) => {
         const activeRows = group.rows.filter((model) => model.is_active && !model.is_read_only)
@@ -439,6 +620,8 @@ export default function SuperadminAIModelsPage() {
                     <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">Belum ada model di lane ini.</TableCell></TableRow>
                   ) : group.rows.map((model) => {
                     const isTesting = testingModelIds.has(model.id)
+                    const priorityDraft = priorityDrafts[model.id] ?? String(model.priority ?? 100)
+                    const isPriorityDirty = Number(priorityDraft) !== (model.priority ?? 100)
                     return (
                       <TableRow key={model.id}>
                         <TableCell className="font-medium">{model.display_name}</TableCell>
@@ -449,11 +632,12 @@ export default function SuperadminAIModelsPage() {
                             <Input
                               type="number"
                               className="h-8 w-20"
-                              defaultValue={model.priority ?? 100}
+                              value={priorityDraft}
                               disabled={model.is_read_only || savingPriorityId === model.id}
-                              onBlur={(event) => handlePriorityChange(model, event.target.value)}
+                              onChange={(event) => setPriorityDrafts((current) => ({ ...current, [model.id]: event.target.value }))}
                             />
                             {savingPriorityId === model.id && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                            {isPriorityDirty && !model.is_read_only && <Button size="sm" variant="outline" onClick={() => requestPrioritySave(model)} disabled={savingPriorityId === model.id}><Save className="mr-2 h-3 w-3" />Save</Button>}
                           </div>
                         </TableCell>
                         <TableCell>{formatPrice(model.actual_input_price_per_million_usd, model.actual_output_price_per_million_usd)}</TableCell>
@@ -466,7 +650,7 @@ export default function SuperadminAIModelsPage() {
                               Test
                             </Button>
                             <Button size="sm" variant="outline" onClick={() => startEdit(model)} disabled={model.is_read_only}><Edit2 className="mr-2 h-4 w-4" />Edit</Button>
-                            <Button size="sm" variant="destructive" onClick={() => handleDelete(model)} disabled={model.is_read_only || deletingModelId === model.id}>{deletingModelId === model.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}Delete</Button>
+                            <Button size="sm" variant="destructive" onClick={() => requestDelete(model)} disabled={model.is_read_only || deletingModelId === model.id}>{deletingModelId === model.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}Delete</Button>
                             {testResults[model.id] && (
                               <div className={`max-w-[220px] rounded border p-2 text-xs ${testResults[model.id]?.success ? "border-emerald-200 bg-emerald-500/10 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300" : "border-red-200 bg-red-500/10 text-red-700 dark:border-red-900 dark:text-red-300"}`}>
                                 {testResults[model.id]?.success ? `Connected · ${testResults[model.id]?.responseTime ?? 0}ms` : testResults[model.id]?.error || "Error"}

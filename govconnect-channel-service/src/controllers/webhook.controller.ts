@@ -3,6 +3,8 @@ import {
   saveIncomingMessage,
   checkDuplicateMessage,
   updateMessageMedia,
+  updateMessageDeliveryStatus,
+  publishTypingEvent,
 } from '../services/message.service';
 // markMessageAsRead is now called by AI service when processing starts
 // Group message filtering improved - v3
@@ -19,6 +21,66 @@ import { parseWebhookBody, webhookCandidateFromBody } from '../utils/webhook-pay
 import {
   GenfityWebhookPayload,
 } from '../types/webhook.types';
+
+function cleanJidPhone(value?: string | null): string | null {
+  if (!value) return null;
+  return value.split('@')[0]?.split(':')[0]?.replace(/\D/g, '') || null;
+}
+
+function eventTimestamp(payload: GenfityWebhookPayload): Date {
+  const raw = payload.event?.Info?.Timestamp || (payload.event as any)?.Timestamp || (payload as any).timestamp;
+  const parsed = raw ? new Date(raw) : new Date();
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function resolveWebhookMessageId(payload: GenfityWebhookPayload): string | null {
+  const event: any = payload.event || {};
+  const info: any = event.Info || {};
+  return info.ID || info.MessageID || info.MessageId || event.ID || event.MessageID || event.MessageId || (payload as any).message_id || null;
+}
+
+function resolvePresenceIdentifier(payload: GenfityWebhookPayload): string | null {
+  const event: any = payload.event || {};
+  const info: any = event.Info || {};
+  return cleanJidPhone(info.Chat || info.SenderAlt || info.Sender || event.Chat || event.From || (payload as any).phone);
+}
+
+async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId?: string): Promise<boolean> {
+  const type = payload.type;
+  if (['MessageSent', 'Receipt', 'ReadReceipt'].includes(type)) {
+    const messageId = resolveWebhookMessageId(payload);
+    if (!messageId) return true;
+
+    const rawState = String((payload.event as any)?.Receipt?.Type || (payload.event as any)?.Status || (payload as any).status || type).toLowerCase();
+    const failed = rawState.includes('fail') || rawState.includes('error');
+    const read = type === 'ReadReceipt' || rawState.includes('read');
+    const delivered = rawState.includes('deliver') || type === 'Receipt';
+    const status: 'sent' | 'delivered' | 'read' | 'failed' = failed ? 'failed' : read ? 'read' : delivered ? 'delivered' : 'sent';
+
+    await updateMessageDeliveryStatus(messageId, status, {
+      at: eventTimestamp(payload),
+      error: failed ? JSON.stringify((payload.event as any)?.Error || (payload as any).error || 'Delivery failed').slice(0, 500) : undefined,
+    });
+    return true;
+  }
+
+  if (['Presence', 'ChatPresence'].includes(type)) {
+    const channelIdentifier = resolvePresenceIdentifier(payload);
+    if (!channelIdentifier) return true;
+    const rawState = String((payload.event as any)?.State || (payload.event as any)?.Presence || (payload as any).state || '').toLowerCase();
+    const typingState = rawState.includes('compos') || rawState.includes('typing') ? 'composing' : 'paused';
+    publishTypingEvent({
+      village_id: villageId,
+      channel: 'WHATSAPP',
+      channel_identifier: channelIdentifier,
+      typing_state: typingState,
+      actor: 'user',
+    });
+    return true;
+  }
+
+  return false;
+}
 
 async function isWaChannelEnabled(villageId?: string): Promise<boolean> {
   if (!villageId) return true;
@@ -82,11 +144,10 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       });
     }
 
-    // Only process "Message" type events (incoming messages)
     if (payload.type !== 'Message') {
-      // Skip status notifications, receipts, etc. silently
-      logger.debug('Non-message webhook received, ignoring', { type: payload.type });
-      res.json({ status: 'ok', message: `Ignored event type: ${payload.type}` });
+      const handled = await handleNonMessageWebhook(payload, villageId);
+      logger.debug('Non-message webhook received', { type: payload.type, handled });
+      res.json({ status: 'ok', message: handled ? `Processed event type: ${payload.type}` : `Ignored event type: ${payload.type}` });
       return;
     }
 
@@ -251,10 +312,8 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       timestamp: timestamp,
     });
 
-    // Update conversation for live chat
-    // NOTE: Do NOT pass WA pushName as user_name — the AI must ask the user's name directly.
-    // PushName is the WA profile display name and is often inaccurate (nicknames, fake names, etc.)
-    await updateConversation(waUserId, message, undefined, true, villageId, 'WHATSAPP');
+    const pushName = payload.event?.Info?.PushName?.trim() || undefined;
+    await updateConversation(waUserId, message, pushName, true, villageId, 'WHATSAPP');
 
     // Wait for media processing to complete
     await mediaPromise;

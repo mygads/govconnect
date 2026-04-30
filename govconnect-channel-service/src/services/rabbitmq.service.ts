@@ -6,7 +6,7 @@ import { rabbitmqConfig } from '../config/rabbitmq';
 import { sendTextMessage, sendContactMessage } from './wa.service';
 // NOTE: saveOutgoingMessage removed - AI Service now handles database storage via storeAIReplyInDatabase()
 // This prevents duplicate messages in live chat dashboard
-import { updateConversation, clearAIStatus, setAIError, setAIPendingBalance } from './takeover.service';
+import { updateConversation, clearAIStatus, setAIError, setAIPendingBalance, isUserInTakeover } from './takeover.service';
 import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.service';
 import { clearUserBubble } from './spam-guard.service';
 import { getCorrelationId } from '../shared/correlation-context';
@@ -416,6 +416,23 @@ export async function startConsumingAIReply(): Promise<void> {
         });
 
         const isBalanceExhausted = payload.intent === 'AI_BALANCE_EXHAUSTED';
+        const inTakeover = await isUserInTakeover(payload.wa_user_id, payload.village_id, 'WHATSAPP');
+        if (inTakeover && !isBalanceExhausted) {
+          const messageIdsToComplete = [
+            ...(payload.message_id ? [payload.message_id] : []),
+            ...(payload.batched_message_ids || []),
+          ];
+          if (messageIdsToComplete.length > 0) {
+            await markMessagesAsCompleted(messageIdsToComplete);
+          }
+          await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
+          logger.info('Suppressed AI reply because takeover is active', {
+            wa_user_id: payload.wa_user_id,
+            message_id: payload.message_id,
+          });
+          channel.ack(msg);
+          return;
+        }
 
         // Send main reply message via WhatsApp
         // NOTE: Message is already saved to database by AI Service via storeAIReplyInDatabase()

@@ -15,6 +15,16 @@ import {
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 /** Format a date into a simple relative time string (no external deps). */
 function formatRelativeTime(date: Date): string {
@@ -29,6 +39,13 @@ function formatRelativeTime(date: Date): string {
   if (diffDays < 30) return `${diffDays} hari lalu`
   const diffMonths = Math.floor(diffDays / 30)
   return `${diffMonths} bulan lalu`
+}
+
+type ConfirmAction = {
+  title: string
+  description: string
+  actionLabel: string
+  onConfirm: () => Promise<void> | void
 }
 
 interface OverviewStats {
@@ -364,6 +381,7 @@ export default function KnowledgeAnalyticsPage() {
   const [deletingGapId, setDeletingGapId] = useState<string | null>(null)
   const [deletingAllGaps, setDeletingAllGaps] = useState(false)
   const [deletingAllConflicts, setDeletingAllConflicts] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
   const { toast } = useToast()
 
   // Only village admin can access this page
@@ -418,6 +436,15 @@ export default function KnowledgeAnalyticsPage() {
     window.open(`/api/statistics/knowledge-analytics/export?kind=all&format=${format}`, "_blank")
   }
 
+  const requestDeleteGap = (id: string) => {
+    setPendingConfirm({
+      title: "Hapus pertanyaan belum terjawab?",
+      description: "Data pertanyaan ini akan dihapus dari analytics.",
+      actionLabel: "Hapus",
+      onConfirm: () => handleDeleteGap(id),
+    })
+  }
+
   const handleDeleteGap = async (id: string) => {
     try {
       setDeletingGapId(id)
@@ -437,8 +464,16 @@ export default function KnowledgeAnalyticsPage() {
     }
   }
 
+  const requestDeleteAllGaps = () => {
+    setPendingConfirm({
+      title: "Hapus semua pertanyaan belum terjawab?",
+      description: "Data analytics pertanyaan belum terjawab akan di-reset.",
+      actionLabel: "Hapus Semua",
+      onConfirm: handleDeleteAllGaps,
+    })
+  }
+
   const handleDeleteAllGaps = async () => {
-    if (!confirm('Hapus semua pertanyaan belum terjawab? Data analytics akan di-reset.')) return
     try {
       setDeletingAllGaps(true)
       const response = await fetchDashboardJson<{ deleted: number }>('/api/knowledge-gaps/batch', {
@@ -457,8 +492,16 @@ export default function KnowledgeAnalyticsPage() {
     }
   }
 
+  const requestDeleteAllConflicts = () => {
+    setPendingConfirm({
+      title: "Hapus semua data konflik?",
+      description: "Data analytics konflik knowledge akan di-reset.",
+      actionLabel: "Hapus Semua",
+      onConfirm: handleDeleteAllConflicts,
+    })
+  }
+
   const handleDeleteAllConflicts = async () => {
-    if (!confirm('Hapus semua data konflik? Data analytics akan di-reset.')) return
     try {
       setDeletingAllConflicts(true)
       const response = await fetchDashboardJson<{ deleted: number }>('/api/knowledge-conflicts/batch', {
@@ -564,6 +607,28 @@ export default function KnowledgeAnalyticsPage() {
           </Button>
         </div>
       </div>
+
+      <AlertDialog open={!!pendingConfirm} onOpenChange={(open) => !open && setPendingConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{pendingConfirm?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async () => {
+                const action = pendingConfirm
+                setPendingConfirm(null)
+                await action?.onConfirm()
+              }}
+            >
+              {pendingConfirm?.actionLabel || "Hapus"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {overview.isPartial && (
         <Card className="border-blue-300 bg-blue-50 dark:bg-blue-950/20">
@@ -1550,7 +1615,7 @@ export default function KnowledgeAnalyticsPage() {
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={handleDeleteAllConflicts}
+                onClick={requestDeleteAllConflicts}
                 disabled={deletingAllConflicts}
               >
                 {deletingAllConflicts ? (
@@ -1654,7 +1719,7 @@ export default function KnowledgeAnalyticsPage() {
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={handleDeleteAllGaps}
+                onClick={requestDeleteAllGaps}
                 disabled={deletingAllGaps}
               >
                 {deletingAllGaps ? (
@@ -1718,7 +1783,7 @@ export default function KnowledgeAnalyticsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDeleteGap(gap.id)}
+                          onClick={() => requestDeleteGap(gap.id)}
                           disabled={deletingGapId === gap.id}
                           className="text-destructive hover:text-destructive hover:bg-destructive/10"
                         >

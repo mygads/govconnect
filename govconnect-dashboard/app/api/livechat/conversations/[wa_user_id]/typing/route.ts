@@ -18,10 +18,6 @@ async function getSession(request: NextRequest) {
   return session
 }
 
-/**
- * POST /api/livechat/conversations/[wa_user_id]/send
- * Send a message to a user
- */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ wa_user_id: string }> }
@@ -33,23 +29,20 @@ export async function POST(
     }
 
     const { wa_user_id } = await params
-    const body = await request.json()
+    const body = await request.json().catch(() => ({}))
+    const state = body?.state === 'paused' ? 'paused' : 'composing'
 
-    const response = await livechat.sendMessage(
+    const response = await livechat.setTyping(
       wa_user_id,
-      {
-        ...body,
-        admin_id: session.admin.id,
-        admin_name: session.admin.name,
-      },
+      { state, actor: 'admin' },
       session.admin.village_id || undefined
     )
     const data = await response.json()
     return NextResponse.json(data, { status: response.status })
   } catch (error) {
-    console.error('Error sending message:', error)
+    console.error('Error sending typing indicator:', error)
     return NextResponse.json(
-      { success: false, error: 'Failed to send message' },
+      { success: false, error: 'Failed to send typing indicator' },
       { status: 500 }
     )
   }

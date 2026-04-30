@@ -4,8 +4,9 @@ import {
   saveIncomingMessage,
   saveOutgoingMessage,
   logSentMessage,
+  checkDuplicateMessage,
 } from '../services/message.service';
-import { updateConversation, updateConversationUserProfile } from '../services/takeover.service';
+import { updateConversation, updateConversationUserProfile, isUserInTakeover } from '../services/takeover.service';
 import { sendTextMessage, sendTypingIndicator, markMessageAsRead } from '../services/wa.service';
 import logger from '../utils/logger';
 import { getQuery } from '../utils/http';
@@ -49,7 +50,15 @@ export async function getMessages(req: Request, res: Response): Promise<void> {
         storage_key: m.storage_key,
         direction: m.direction,
         source: m.source,
+        delivery_status: m.delivery_status,
+        sent_at: m.sent_at,
+        delivered_at: m.delivered_at,
+        read_at: m.read_at,
+        failed_at: m.failed_at,
+        status_error: m.status_error,
+        admin_read_at: m.admin_read_at,
         timestamp: m.timestamp,
+        createdAt: m.createdAt,
       })),
       total: messages.length,
     });
@@ -79,6 +88,8 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
       message_id: messageId,
       message_text: message,
       source: 'SYSTEM',
+      delivery_status: result.success ? 'sent' : 'failed',
+      status_error: result.success ? undefined : result.error,
     });
 
     await logSentMessage({
@@ -172,7 +183,37 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
     
     // Generate a unique message ID if not provided
     const finalMessageId = message_id || `${direction === 'IN' ? 'in' : 'ai'}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    
+    const resolvedSource = source || (metadata?.source === 'ai_service' ? 'AI' : undefined) || 'AI';
+    if (direction !== 'IN' && resolvedSource === 'AI') {
+      const inTakeover = await isUserInTakeover(resolvedIdentifier, village_id, resolvedChannel);
+      if (inTakeover) {
+        logger.info('Suppressing stale AI message because takeover is active', {
+          channel: resolvedChannel,
+          channel_identifier: resolvedIdentifier,
+          message_id: finalMessageId,
+        });
+        res.status(200).json({
+          status: 'suppressed_takeover',
+          message_id: finalMessageId,
+        });
+        return;
+      }
+    }
+
+    const isDuplicate = await checkDuplicateMessage(finalMessageId);
+    if (isDuplicate) {
+      logger.info('Message already stored, returning idempotent success', {
+        channel: resolvedChannel,
+        channel_identifier: resolvedIdentifier,
+        message_id: finalMessageId,
+      });
+      res.status(200).json({
+        status: 'already_stored',
+        message_id: finalMessageId,
+      });
+      return;
+    }
+
     let message;
     if (direction === 'IN') {
       // Save incoming message (from user)
@@ -193,7 +234,7 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
         channel_identifier: resolvedIdentifier,
         message_id: finalMessageId,
         message_text,
-        source: source || 'AI',
+        source: resolvedSource,
       });
     }
     

@@ -4,14 +4,20 @@ import {
   endTakeover,
   getActiveTakeovers,
   getActiveTakeover,
-  isUserInTakeover,
   getConversations,
   getConversation,
   markConversationAsRead,
   updateConversation,
+  TakeoverConflictError,
 } from '../services/takeover.service';
-import { getMessageHistory, saveOutgoingMessage } from '../services/message.service';
-import { sendMediaMessage, sendTextMessage, WhatsAppMediaType } from '../services/wa.service';
+import {
+  getMessageHistory,
+  markConversationMessagesAdminRead,
+  publishTypingEvent,
+  saveOutgoingMessage,
+} from '../services/message.service';
+import { subscribeLivechatEvents } from '../services/livechat-events.service';
+import { markMessageAsRead, sendMediaMessage, sendTextMessage, sendTypingIndicator, WhatsAppMediaType } from '../services/wa.service';
 import logger from '../utils/logger';
 import { getParam, getQuery } from '../utils/http';
 
@@ -26,6 +32,36 @@ function resolveChannel(req: Request, identifier?: string): 'WHATSAPP' | 'WEBCHA
   if (queryChannel && queryChannel.toUpperCase() === 'WEBCHAT') return 'WEBCHAT';
   if (identifier && identifier.startsWith('web_')) return 'WEBCHAT';
   return 'WHATSAPP';
+}
+
+export function handleLivechatEvents(req: Request, res: Response): void {
+  const villageId = resolveVillageId(req);
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event: string, data: unknown) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  send('connected', { village_id: villageId, at: Date.now() });
+
+  const unsubscribe = subscribeLivechatEvents((event) => {
+    if (villageId && event.village_id && event.village_id !== villageId) return;
+    send(event.type, event);
+  });
+
+  const heartbeat = setInterval(() => {
+    res.write(': heartbeat\n\n');
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
 }
 
 interface LivechatMediaPayload {
@@ -93,6 +129,13 @@ export async function handleStartTakeover(req: Request, res: Response): Promise<
       message: `Takeover started for ${wa_user_id}`,
     });
   } catch (error: any) {
+    if (error instanceof TakeoverConflictError) {
+      res.status(409).json({
+        error: 'Takeover already active',
+        session: error.session,
+      });
+      return;
+    }
     logger.error('Failed to start takeover', { error: error.message });
     res.status(500).json({ error: 'Failed to start takeover' });
   }
@@ -271,8 +314,13 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       return;
     }
 
-    // Check if takeover is active (optional - can still send without takeover)
-    const isTakeover = await isUserInTakeover(wa_user_id, villageId, channel);
+    const activeTakeover = await getActiveTakeover(wa_user_id, villageId, channel);
+    const isTakeover = !!activeTakeover;
+    if (activeTakeover && activeTakeover.admin_id !== admin_id) {
+      res.status(409).json({ error: 'Conversation is handled by another admin', session: activeTakeover });
+      return;
+    }
+
     const isWebchatUser = channel === 'WEBCHAT';
     const persistedText = messageText || (media ? mediaLabel(media) : '');
 
@@ -331,7 +379,59 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
         // Generate message ID if not provided by WA
         const messageId = result.message_id || `admin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-        // Save message to database so it appears in chat history
+        let stored = true;
+        try {
+          // Save message to database so it appears in chat history
+          await saveOutgoingMessage({
+            village_id: villageId,
+            wa_user_id,
+            channel,
+            channel_identifier: wa_user_id,
+            message_id: messageId,
+            message_text: persistedText,
+            media_type: media?.type,
+            media_url: media?.internal_url || media?.url,
+            media_public_url: media?.url,
+            mime_type: media?.mime_type,
+            file_name: media?.file_name,
+            file_size: media?.size,
+            storage_key: media?.storage_key,
+            source: 'ADMIN',
+            delivery_status: 'sent',
+          });
+
+          // Update conversation summary and reset unread count (admin has responded)
+          await updateConversation(wa_user_id, persistedText, undefined, 'reset', villageId, channel);
+        } catch (storeError: any) {
+          stored = false;
+          logger.error('Admin WhatsApp message sent but failed to store locally', {
+            wa_user_id,
+            message_id: messageId,
+            error: storeError.message,
+          });
+        }
+
+        logger.info('Admin sent WhatsApp message', {
+          wa_user_id,
+          admin_id,
+          admin_name,
+          is_takeover: isTakeover,
+          message_id: messageId,
+          channel: 'whatsapp',
+          has_media: !!media,
+          stored,
+        });
+
+        res.json({
+          success: true,
+          message_id: messageId,
+          is_takeover: isTakeover,
+          channel: 'whatsapp',
+          stored,
+          warning: stored ? undefined : 'Pesan sudah terkirim ke WhatsApp, tetapi gagal dicatat di livechat lokal.',
+        });
+      } else {
+        const messageId = `admin-failed-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
         await saveOutgoingMessage({
           village_id: villageId,
           wa_user_id,
@@ -347,37 +447,53 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
           file_size: media?.size,
           storage_key: media?.storage_key,
           source: 'ADMIN',
+          delivery_status: 'failed',
+          status_error: result.error || 'Failed to send message',
         });
 
-        // Update conversation summary and reset unread count (admin has responded)
-        await updateConversation(wa_user_id, persistedText, undefined, 'reset', villageId, channel);
-
-        logger.info('Admin sent WhatsApp message', {
-          wa_user_id,
-          admin_id,
-          admin_name,
-          is_takeover: isTakeover,
+        res.status(502).json({
+          success: false,
+          error: result.error || 'Failed to send message',
           message_id: messageId,
-          channel: 'whatsapp',
-          has_media: !!media,
-        });
-
-        res.json({
-          success: true,
-          message_id: messageId,
-          is_takeover: isTakeover,
-          channel: 'whatsapp',
-        });
-      } else {
-        res.status(500).json({
-          error: 'Failed to send message',
-          details: result.error,
         });
       }
     }
   } catch (error: any) {
     logger.error('Failed to send admin message', { error: error.message });
     res.status(500).json({ error: 'Failed to send message' });
+  }
+}
+
+export async function handleConversationTyping(req: Request, res: Response): Promise<void> {
+  try {
+    const wa_user_id = getParam(req, 'wa_user_id');
+    const villageId = resolveVillageId(req);
+    const channel = resolveChannel(req, wa_user_id || undefined);
+    const state = req.body?.state === 'paused' ? 'paused' : 'composing';
+    const actor = req.body?.actor === 'ai' ? 'ai' : 'admin';
+
+    if (!wa_user_id) {
+      res.status(400).json({ error: 'wa_user_id is required' });
+      return;
+    }
+
+    let provider_sent = false;
+    if (channel === 'WHATSAPP') {
+      provider_sent = await sendTypingIndicator(wa_user_id, state, villageId);
+    }
+
+    publishTypingEvent({
+      village_id: villageId,
+      channel,
+      channel_identifier: wa_user_id,
+      typing_state: state,
+      actor,
+    });
+
+    res.json({ success: true, state, provider_sent });
+  } catch (error: any) {
+    logger.error('Failed to send typing indicator', { error: error.message });
+    res.status(500).json({ error: 'Failed to send typing indicator' });
   }
 }
 
@@ -396,10 +512,17 @@ export async function handleMarkAsRead(req: Request, res: Response): Promise<voi
     const channel = resolveChannel(req, wa_user_id);
 
     await markConversationAsRead(wa_user_id, villageId, channel);
+    const messageIds = await markConversationMessagesAdminRead(wa_user_id, villageId, channel);
+    let provider_marked = false;
+    if (channel === 'WHATSAPP' && messageIds.length > 0) {
+      provider_marked = await markMessageAsRead(messageIds, wa_user_id, wa_user_id, villageId);
+    }
 
     res.json({
       success: true,
       message: 'Conversation marked as read',
+      marked_count: messageIds.length,
+      provider_marked,
     });
   } catch (error: any) {
     logger.error('Failed to mark as read', { error: error.message });

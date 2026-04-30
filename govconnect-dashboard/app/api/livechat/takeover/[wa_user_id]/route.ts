@@ -60,12 +60,15 @@ export async function POST(
     }
 
     const { wa_user_id } = await params
+    const body = await request.json().catch(() => ({}))
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
 
     const response = await livechat.startTakeover(
       wa_user_id,
       {
         admin_id: session.admin.id,
         admin_name: session.admin.name,
+        ...(reason ? { reason } : {}),
       },
       session.admin.village_id || undefined
     )

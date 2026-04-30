@@ -59,6 +59,8 @@ router.get('/active', (_req: Request, res: Response) => {
       message: status.message,
       progress: status.progress,
       elapsedMs: Date.now() - status.startTime,
+      startTime: status.startTime,
+      lastUpdate: status.lastUpdate,
       estimatedTimeMs: status.estimatedTimeMs,
     }));
     

@@ -1,3 +1,5 @@
+export type MessageDeliveryStatus = 'received' | 'sent' | 'delivered' | 'read' | 'failed';
+
 export interface MessageData {
   village_id?: string;
   wa_user_id?: string;
@@ -12,6 +14,8 @@ export interface MessageData {
   file_name?: string | null;
   file_size?: number | null;
   storage_key?: string | null;
+  delivery_status?: MessageDeliveryStatus;
+  status_error?: string | null;
   timestamp?: Date;
 }
 

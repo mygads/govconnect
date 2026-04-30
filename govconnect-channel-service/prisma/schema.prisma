@@ -32,10 +32,18 @@ model Message {
   storage_key      String?
   direction        String   // "IN" | "OUT"
   source           String   // "WA_WEBHOOK" | "AI" | "SYSTEM" | "ADMIN"
+  delivery_status  String?  // received | sent | delivered | read | failed
+  sent_at          DateTime?
+  delivered_at     DateTime?
+  read_at          DateTime?
+  failed_at        DateTime?
+  status_error     String?  @db.Text
+  admin_read_at    DateTime?
   timestamp        DateTime @default(now())
   createdAt        DateTime @default(now())
-  
+
   @@index([village_id, channel, channel_identifier, timestamp])
+  @@index([village_id, channel, channel_identifier, delivery_status])
   @@index([channel, channel_identifier])
   @@index([direction])
   @@index([message_id])

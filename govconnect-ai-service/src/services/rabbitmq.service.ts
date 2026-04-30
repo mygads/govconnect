@@ -1054,6 +1054,9 @@ export function isConnected(): boolean {
 async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
   try {
     const axios = (await import('axios')).default;
+    const sourceMessageId = payload.message_id || payload.batched_message_ids?.[0];
+    const replyMessageId = sourceMessageId ? `ai-reply-${sourceMessageId}` : undefined;
+    const guidanceMessageId = sourceMessageId ? `ai-guidance-${sourceMessageId}` : undefined;
     
     logger.info('🔄 Attempting to store AI reply in database', {
       wa_user_id: payload.wa_user_id,
@@ -1066,6 +1069,9 @@ async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
     const mainReplyData = {
       village_id: payload.village_id,
       wa_user_id: payload.wa_user_id,
+      channel: payload.channel,
+      channel_identifier: payload.channel_identifier,
+      message_id: replyMessageId,
       message_text: payload.reply_text,
       direction: 'OUT',
       message_type: 'text',
@@ -1099,6 +1105,9 @@ async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
       const guidanceData = {
         village_id: payload.village_id,
         wa_user_id: payload.wa_user_id,
+        channel: payload.channel,
+        channel_identifier: payload.channel_identifier,
+        message_id: guidanceMessageId,
         message_text: payload.guidance_text,
         direction: 'OUT',
         message_type: 'text',

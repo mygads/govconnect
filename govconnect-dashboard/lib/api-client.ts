@@ -960,6 +960,8 @@ export const livechat = {
    */
   async sendMessage(waUserId: string, data: {
     message?: string;
+    admin_id?: string;
+    admin_name?: string | null;
     media?: {
       type: 'image' | 'audio' | 'document' | 'video';
       url: string;
@@ -1001,6 +1003,15 @@ export const livechat = {
     });
   },
 
+  async setTyping(waUserId: string, data: { state: 'composing' | 'paused'; actor?: 'admin' | 'ai' }, villageId?: string) {
+    const path = withVillage(`/internal/conversations/${encodeURIComponent(waUserId)}/typing`, villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
   /**
    * Get all takeovers
    */
@@ -1023,7 +1034,7 @@ export const livechat = {
   /**
    * Start takeover
    */
-  async startTakeover(waUserId: string, data: { admin_id: string; admin_name: string }, villageId?: string) {
+  async startTakeover(waUserId: string, data: { admin_id: string; admin_name: string; reason?: string }, villageId?: string) {
     const path = withVillage(`/internal/takeover/${encodeURIComponent(waUserId)}`, villageId);
     return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       method: 'POST',

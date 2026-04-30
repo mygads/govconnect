@@ -5,13 +5,25 @@ import { redirect } from "next/navigation"
 import { CheckCircle2, Loader2, Plus, Search, Ticket, Wallet } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
+import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface WalletRow {
   id: string
@@ -41,6 +53,13 @@ interface VillageRow {
   } | null
 }
 
+type ConfirmAction = {
+  title: string
+  description: string
+  actionLabel: string
+  onConfirm: () => Promise<void> | void
+}
+
 function formatUsd(value?: number | null) {
   return `$${(value ?? 0).toFixed(2)}`
 }
@@ -52,13 +71,15 @@ function villageLabel(village?: VillageRow) {
 
 export default function SuperadminAIWalletsPage() {
   const { user } = useAuth()
+  const { toast } = useToast()
   const [wallets, setWallets] = useState<WalletRow[]>([])
   const [vouchers, setVouchers] = useState<VoucherRow[]>([])
   const [villages, setVillages] = useState<VillageRow[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [topupOpen, setTopupOpen] = useState(false)
+  const [voucherOpen, setVoucherOpen] = useState(false)
   const [topupVillageId, setTopupVillageId] = useState("")
   const [topupVillageSearch, setTopupVillageSearch] = useState("")
   const [topupVillageOpen, setTopupVillageOpen] = useState(false)
@@ -66,6 +87,7 @@ export default function SuperadminAIWalletsPage() {
   const [topupAmount, setTopupAmount] = useState("")
   const [voucherCode, setVoucherCode] = useState("")
   const [voucherAmount, setVoucherAmount] = useState("")
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   useEffect(() => {
     if (user && user.role !== "superadmin") redirect("/dashboard")
@@ -117,6 +139,12 @@ export default function SuperadminAIWalletsPage() {
   }, [villages])
 
   const selectedVillage = topupVillageId ? villageMap.get(topupVillageId) : undefined
+  const topupAmountNumber = Number(topupAmount)
+  const voucherAmountNumber = Number(voucherAmount)
+  const isTopupDirty = !!topupVillageId || topupAmount.trim() !== ""
+  const isVoucherDirty = voucherCode.trim() !== "" || voucherAmount.trim() !== ""
+  const isTopupAmountValid = Number.isFinite(topupAmountNumber) && topupAmountNumber > 0
+  const isVoucherAmountValid = Number.isFinite(voucherAmountNumber) && voucherAmountNumber > 0
 
   const filteredVillages = useMemo(() => {
     const q = topupVillageSearch.trim().toLowerCase()
@@ -136,16 +164,65 @@ export default function SuperadminAIWalletsPage() {
     })
   }, [walletSearch, wallets, villageMap])
 
+  const resetTopupForm = () => {
+    setTopupAmount("")
+    setTopupVillageId("")
+    setTopupVillageSearch("")
+    setTopupVillageOpen(false)
+  }
+
+  const resetVoucherForm = () => {
+    setVoucherCode("")
+    setVoucherAmount("")
+  }
+
+  const requestTopup = () => {
+    if (!topupVillageId.trim()) {
+      toast({ title: "Gagal", description: "Desa wajib dipilih", variant: "destructive" })
+      return
+    }
+    if (!isTopupAmountValid) {
+      toast({ title: "Gagal", description: "Amount harus lebih dari 0", variant: "destructive" })
+      return
+    }
+    if (!isTopupDirty) return
+
+    setPendingConfirm({
+      title: "Simpan topup manual?",
+      description: `Saldo ${villageLabel(selectedVillage)} akan ditambah ${formatUsd(topupAmountNumber)}.`,
+      actionLabel: "Simpan Topup",
+      onConfirm: handleTopup,
+    })
+  }
+
+  const requestCreateVoucher = () => {
+    if (!voucherCode.trim()) {
+      toast({ title: "Gagal", description: "Kode voucher wajib diisi", variant: "destructive" })
+      return
+    }
+    if (!isVoucherAmountValid) {
+      toast({ title: "Gagal", description: "Nominal voucher harus lebih dari 0", variant: "destructive" })
+      return
+    }
+    if (!isVoucherDirty) return
+
+    setPendingConfirm({
+      title: "Buat voucher topup?",
+      description: `Voucher ${voucherCode.trim()} dengan nominal ${formatUsd(voucherAmountNumber)} akan dibuat.`,
+      actionLabel: "Buat Voucher",
+      onConfirm: handleCreateVoucher,
+    })
+  }
+
   const handleTopup = async () => {
-    if (!topupVillageId.trim() || !topupAmount.trim()) {
-      setError("Desa dan amount wajib diisi")
+    if (!topupVillageId.trim() || !isTopupAmountValid) {
+      toast({ title: "Gagal", description: "Desa dan amount valid wajib diisi", variant: "destructive" })
       return
     }
 
     try {
       setSubmitting(true)
       setError(null)
-      setMessage(null)
       const token = localStorage.getItem("token")
       const response = await fetch(`/api/superadmin/ai-wallets/${encodeURIComponent(topupVillageId.trim())}/topup`, {
         method: "POST",
@@ -153,36 +230,33 @@ export default function SuperadminAIWalletsPage() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ amount_usd: Number(topupAmount), entry_type: "manual_adjustment" }),
+        body: JSON.stringify({ amount_usd: topupAmountNumber, entry_type: "manual_adjustment" }),
       })
       const payload = await response.json()
       if (!response.ok) {
         throw new Error(payload?.error || "Gagal topup saldo")
       }
 
-      setMessage(`Topup saldo ${villageLabel(selectedVillage)} berhasil disimpan.`)
-      setTopupAmount("")
-      setTopupVillageId("")
-      setTopupVillageSearch("")
-      setTopupVillageOpen(false)
+      toast({ title: "Berhasil", description: `Topup saldo ${villageLabel(selectedVillage)} berhasil disimpan.` })
+      resetTopupForm()
+      setTopupOpen(false)
       await loadData()
     } catch (err: any) {
-      setError(err?.message || "Gagal topup saldo")
+      toast({ title: "Gagal", description: err?.message || "Gagal topup saldo", variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
   }
 
   const handleCreateVoucher = async () => {
-    if (!voucherCode.trim() || !voucherAmount.trim()) {
-      setError("Kode voucher dan nominal wajib diisi")
+    if (!voucherCode.trim() || !isVoucherAmountValid) {
+      toast({ title: "Gagal", description: "Kode voucher dan nominal valid wajib diisi", variant: "destructive" })
       return
     }
 
     try {
       setSubmitting(true)
       setError(null)
-      setMessage(null)
       const token = localStorage.getItem("token")
       const response = await fetch("/api/superadmin/vouchers", {
         method: "POST",
@@ -190,19 +264,19 @@ export default function SuperadminAIWalletsPage() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ code: voucherCode.trim(), amount_usd: Number(voucherAmount) }),
+        body: JSON.stringify({ code: voucherCode.trim(), amount_usd: voucherAmountNumber }),
       })
       const payload = await response.json()
       if (!response.ok) {
         throw new Error(payload?.error || "Gagal membuat voucher")
       }
 
-      setMessage("Voucher topup berhasil dibuat.")
-      setVoucherCode("")
-      setVoucherAmount("")
+      toast({ title: "Berhasil", description: "Voucher topup berhasil dibuat." })
+      resetVoucherForm()
+      setVoucherOpen(false)
       await loadData()
     } catch (err: any) {
-      setError(err?.message || "Gagal membuat voucher")
+      toast({ title: "Gagal", description: err?.message || "Gagal membuat voucher", variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
@@ -218,9 +292,15 @@ export default function SuperadminAIWalletsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">AI Wallets</h1>
-        <p className="mt-2 text-muted-foreground">Kelola saldo desa dan voucher topup dari panel superadmin.</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">AI Wallets</h1>
+          <p className="mt-2 text-muted-foreground">Kelola saldo desa dan voucher topup dari panel superadmin.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => { resetVoucherForm(); setVoucherOpen(true) }}><Ticket className="mr-2 h-4 w-4" />Buat Voucher</Button>
+          <Button onClick={() => { resetTopupForm(); setTopupOpen(true) }}><Wallet className="mr-2 h-4 w-4" />Topup Manual</Button>
+        </div>
       </div>
 
       {error && (
@@ -229,20 +309,13 @@ export default function SuperadminAIWalletsPage() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      {message && (
-        <Alert>
-          <AlertTitle>Berhasil</AlertTitle>
-          <AlertDescription>{message}</AlertDescription>
-        </Alert>
-      )}
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Wallet className="h-5 w-5" /> Topup Manual</CardTitle>
-            <CardDescription>Cari dan pilih desa, lalu masukkan nominal USD untuk menambah saldo.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+      <Dialog open={topupOpen} onOpenChange={(open) => { setTopupOpen(open); if (!open) resetTopupForm() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Wallet className="h-5 w-5" /> Topup Manual</DialogTitle>
+            <DialogDescription>Cari dan pilih desa, lalu masukkan nominal USD untuk menambah saldo.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
             <div className="space-y-2">
               <Label>Pilih Desa</Label>
               <Popover open={topupVillageOpen} onOpenChange={setTopupVillageOpen}>
@@ -295,19 +368,24 @@ export default function SuperadminAIWalletsPage() {
               <Label htmlFor="topup-amount">Amount (USD)</Label>
               <Input id="topup-amount" type="number" min="0" step="0.01" value={topupAmount} onChange={(e) => setTopupAmount(e.target.value)} placeholder="50" />
             </div>
-            <Button onClick={handleTopup} disabled={submitting || !topupVillageId}>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setTopupOpen(false)} disabled={submitting}>Batal</Button>
+            <Button onClick={requestTopup} disabled={submitting || !isTopupDirty}>
               {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
               Simpan Topup
             </Button>
-          </CardContent>
-        </Card>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Ticket className="h-5 w-5" /> Buat Voucher</CardTitle>
-            <CardDescription>Voucher ini bisa diredeem oleh admin desa lewat halaman saldo AI.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+      <Dialog open={voucherOpen} onOpenChange={(open) => { setVoucherOpen(open); if (!open) resetVoucherForm() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Ticket className="h-5 w-5" /> Buat Voucher</DialogTitle>
+            <DialogDescription>Voucher ini bisa diredeem oleh admin desa lewat halaman saldo AI.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="voucher-code">Kode Voucher</Label>
               <Input id="voucher-code" value={voucherCode} onChange={(e) => setVoucherCode(e.target.value.toUpperCase())} placeholder="TOPUP-APRIL-50" />
@@ -316,13 +394,37 @@ export default function SuperadminAIWalletsPage() {
               <Label htmlFor="voucher-amount">Amount (USD)</Label>
               <Input id="voucher-amount" type="number" min="0" step="0.01" value={voucherAmount} onChange={(e) => setVoucherAmount(e.target.value)} placeholder="25" />
             </div>
-            <Button onClick={handleCreateVoucher} disabled={submitting}>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setVoucherOpen(false)} disabled={submitting}>Batal</Button>
+            <Button onClick={requestCreateVoucher} disabled={submitting || !isVoucherDirty}>
               {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
               Buat Voucher
             </Button>
-          </CardContent>
-        </Card>
-      </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!pendingConfirm} onOpenChange={(open) => !open && setPendingConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{pendingConfirm?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                const action = pendingConfirm
+                setPendingConfirm(null)
+                await action?.onConfirm()
+              }}
+            >
+              {pendingConfirm?.actionLabel || "Lanjutkan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card>
         <CardHeader>

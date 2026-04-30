@@ -13,6 +13,8 @@ import {
   handleMarkAsRead,
   handleDeleteConversation,
   handleRetryAI,
+  handleLivechatEvents,
+  handleConversationTyping,
 } from '../controllers/livechat.controller';
 import {
   getStatus,
@@ -86,10 +88,12 @@ router.post('/takeover/:wa_user_id', handleStartTakeover);
 router.delete('/takeover/:wa_user_id', handleEndTakeover);
 router.get('/takeover', handleGetActiveTakeovers);
 router.get('/takeover/:wa_user_id/status', handleCheckTakeover);
+router.get('/livechat/events', handleLivechatEvents);
 router.get('/conversations', handleGetConversations);
 router.get('/conversations/:wa_user_id', handleGetConversation);
 router.post('/conversations/:wa_user_id/send', handleAdminSendMessage);
 router.post('/conversations/:wa_user_id/read', handleMarkAsRead);
+router.post('/conversations/:wa_user_id/typing', handleConversationTyping);
 router.post('/conversations/:wa_user_id/retry', handleRetryAI);
 router.delete('/conversations/:wa_user_id', handleDeleteConversation);
 

@@ -1,8 +1,15 @@
 import prisma from '../config/database';
 import logger from '../utils/logger';
+import { publishLivechatEvent } from './livechat-events.service';
 
 function resolveVillageId(villageId?: string): string {
   return villageId || 'unknown';
+}
+
+export class TakeoverConflictError extends Error {
+  constructor(public readonly session: TakeoverSession) {
+    super('TAKEOVER_ALREADY_ACTIVE');
+  }
 }
 
 export interface TakeoverSession {
@@ -99,8 +106,13 @@ export async function startTakeover(
   enrichment?: Record<string, unknown>,
 ): Promise<TakeoverSession> {
   const resolvedVillageId = resolveVillageId(village_id);
-  // End any existing takeover first
-  await endTakeover(channel_identifier, resolvedVillageId, channel);
+  const existingSession = await getActiveTakeover(channel_identifier, resolvedVillageId, channel);
+  if (existingSession) {
+    if (existingSession.admin_id !== admin_id) {
+      throw new TakeoverConflictError(existingSession);
+    }
+    return existingSession;
+  }
 
   const createData = {
       village_id: resolvedVillageId,
@@ -146,6 +158,7 @@ export async function startTakeover(
     },
   });
 
+  publishLivechatEvent({ type: 'takeover', village_id: resolvedVillageId, channel, channel_identifier });
   logger.info('Takeover started', { channel, channel_identifier, admin_id, session_id: session.id });
   return session;
 }
@@ -185,6 +198,7 @@ export async function endTakeover(
         data: { is_takeover: false },
       });
 
+      publishLivechatEvent({ type: 'takeover', village_id: resolvedVillageId, channel, channel_identifier });
       logger.info('Takeover ended', { channel, channel_identifier, sessions_ended: result.count });
       return true;
     }
@@ -274,6 +288,7 @@ export async function updateConversation(
         unread_count: incrementUnread === true ? 1 : 0,
       },
     });
+    publishLivechatEvent({ type: 'conversation', village_id: resolvedVillageId, channel, channel_identifier });
   } catch (error: any) {
     logger.error('Failed to update conversation', { error: error.message, channel, channel_identifier });
   }
@@ -340,7 +355,8 @@ export async function updateConversationUserProfile(
       },
       data: updateData,
     });
-    
+    publishLivechatEvent({ type: 'conversation', village_id: resolvedVillageId, channel, channel_identifier });
+
     logger.info('Updated conversation user profile', {
       channel,
       channel_identifier,
@@ -459,6 +475,7 @@ export async function deleteConversationHistory(
       });
     }
 
+    publishLivechatEvent({ type: 'delete', village_id: resolvedVillageId, channel, channel_identifier });
     logger.info('Deleted conversation history', { channel, channel_identifier });
   } catch (error: any) {
     logger.error('Failed to delete conversation history', { error: error.message, channel, channel_identifier });
@@ -499,6 +516,7 @@ export async function setAIProcessing(
         pending_message_id: message_id,
       },
     });
+    publishLivechatEvent({ type: 'conversation', village_id: resolvedVillageId, channel, channel_identifier });
     logger.info('AI processing started', { channel, channel_identifier, message_id });
   } catch (error: any) {
     logger.error('Failed to set AI processing status', { error: error.message, channel, channel_identifier });
@@ -529,6 +547,7 @@ export async function clearAIStatus(
         pending_message_id: null,
       },
     });
+    publishLivechatEvent({ type: 'conversation', village_id: resolvedVillageId, channel, channel_identifier });
     logger.info('AI status cleared', { channel, channel_identifier });
   } catch (error: any) {
     logger.debug('Could not clear AI status', { channel, channel_identifier });
@@ -561,6 +580,7 @@ export async function setAIError(
         pending_message_id: message_id || undefined,
       },
     });
+    publishLivechatEvent({ type: 'conversation', village_id: resolvedVillageId, channel, channel_identifier });
     logger.info('AI error status set', { channel, channel_identifier, error_message });
   } catch (error: any) {
     logger.error('Failed to set AI error status', { error: error.message, channel, channel_identifier });
@@ -589,6 +609,7 @@ export async function setAIPendingBalance(
         pending_message_id: message_id || undefined,
       },
     });
+    publishLivechatEvent({ type: 'conversation', village_id: resolvedVillageId, channel, channel_identifier });
     logger.info('AI pending balance status set', { channel, channel_identifier, message_id });
   } catch (error: any) {
     logger.error('Failed to set AI pending balance status', { error: error.message, channel, channel_identifier });

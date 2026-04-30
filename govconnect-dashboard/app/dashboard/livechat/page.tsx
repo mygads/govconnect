@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -61,16 +61,27 @@ interface Conversation {
   pending_message_id: string | null
 }
 
+interface TakeoverSession {
+  admin_id: string
+  admin_name: string | null
+  started_at: string
+  reason?: string | null
+}
+
 interface ProcessingStatus {
   stage: 'receiving' | 'reading' | 'searching' | 'thinking' | 'preparing' | 'sending' | 'completed' | 'error'
   message: string
   progress: number
+  elapsedMs?: number
+  lastUpdate?: number
 }
 
 type LivechatMediaType = 'image' | 'audio' | 'document' | 'video' | 'sticker'
+type DeliveryStatus = 'received' | 'sent' | 'delivered' | 'read' | 'failed'
 
 interface Message {
   id: string
+  message_id?: string
   message_text: string
   media_type?: LivechatMediaType | null
   media_url?: string | null
@@ -81,7 +92,15 @@ interface Message {
   storage_key?: string | null
   direction: "IN" | "OUT"
   source: string
+  delivery_status?: DeliveryStatus | null
+  sent_at?: string | null
+  delivered_at?: string | null
+  read_at?: string | null
+  failed_at?: string | null
+  status_error?: string | null
+  admin_read_at?: string | null
   timestamp: string
+  createdAt?: string
   is_read?: boolean
 }
 
@@ -95,12 +114,18 @@ interface UploadedLivechatMedia {
   storage_key?: string
 }
 
+interface LightboxMedia {
+  url: string
+  alt: string
+}
+
 export default function LiveChatPage() {
   const { toast } = useToast()
 
   // State
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
+  const [currentTakeover, setCurrentTakeover] = useState<TakeoverSession | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [messageInput, setMessageInput] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
@@ -122,9 +147,11 @@ export default function LiveChatPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRetryingAI, setIsRetryingAI] = useState(false)
   const [failedMedia, setFailedMedia] = useState<Record<string, boolean>>({})
+  const [lightboxMedia, setLightboxMedia] = useState<LightboxMedia | null>(null)
 
   // Processing status state
   const [processingStatuses, setProcessingStatuses] = useState<Record<string, ProcessingStatus>>({})
+  const [typingByConversation, setTypingByConversation] = useState<Record<string, { actor: 'user' | 'admin' | 'ai'; until: number }>>({})
 
   // Takeover reason templates
   const takeoverReasonTemplates = [
@@ -145,6 +172,10 @@ export default function LiveChatPage() {
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const realtimeFailureCountRef = useRef(0)
+  const typingPauseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const selectedConversationRef = useRef<Conversation | null>(null)
   const previousMessagesLengthRef = useRef<number>(0)
 
@@ -163,19 +194,85 @@ export default function LiveChatPage() {
     return conv?.channel === "WEBCHAT" || key.startsWith("web_")
   }
 
+  const getActiveTyping = (conversationKey: string) => {
+    const typing = typingByConversation[conversationKey]
+    return typing && typing.until > Date.now() ? typing : null
+  }
+
+  const patchMessageStatus = (event: MessageEvent) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (!data.message_id) return
+      setMessages((current) => current.map((message) => {
+        const matchesId = message.id === data.message_id || message.message_id === data.message_id
+        return matchesId ? { ...message, ...data } : message
+      }))
+    } catch {
+      return
+    }
+  }
+
+  const applyTypingEvent = (event: MessageEvent) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (!data.channel_identifier || !data.actor) return
+      setTypingByConversation((current) => {
+        if (data.typing_state === 'paused') {
+          const next = { ...current }
+          delete next[data.channel_identifier]
+          return next
+        }
+        return {
+          ...current,
+          [data.channel_identifier]: { actor: data.actor, until: Date.now() + 4000 },
+        }
+      })
+    } catch {
+      return
+    }
+  }
+
   // Keep ref in sync with state
   useEffect(() => {
     selectedConversationRef.current = selectedConversation
   }, [selectedConversation])
 
-  // Dedupe messages by ID (prevent duplicate display)
-  const dedupeMessages = (msgs: Message[]): Message[] => {
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now()
+      setTypingByConversation((current) => {
+        const active = Object.fromEntries(Object.entries(current).filter(([, value]) => value.until > now))
+        return Object.keys(active).length === Object.keys(current).length ? current : active
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const getMessageSortTimes = (msg: Message) => {
+    const createdAt = msg.createdAt ? new Date(msg.createdAt).getTime() : NaN
+    const timestamp = new Date(msg.timestamp).getTime()
+    return {
+      createdAt: Number.isFinite(createdAt) ? createdAt : 0,
+      timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+    }
+  }
+
+  // Dedupe messages by ID and keep room chat oldest-to-newest like WhatsApp
+  const normalizeMessages = (msgs: Message[]): Message[] => {
     const seen = new Set<string>()
-    return msgs.filter(msg => {
-      if (seen.has(msg.id)) return false
-      seen.add(msg.id)
-      return true
-    })
+    return msgs
+      .filter(msg => {
+        if (seen.has(msg.id)) return false
+        seen.add(msg.id)
+        return true
+      })
+      .sort((a, b) => {
+        const timeA = getMessageSortTimes(a)
+        const timeB = getMessageSortTimes(b)
+        if (timeA.createdAt !== timeB.createdAt) return timeA.createdAt - timeB.createdAt
+        if (timeA.timestamp !== timeB.timestamp) return timeA.timestamp - timeB.timestamp
+        return a.id.localeCompare(b.id)
+      })
   }
 
   // Check if user is near bottom
@@ -255,6 +352,18 @@ export default function LiveChatPage() {
     isNearBottomRef.current = true
   }, [getConversationKey(selectedConversation)])
 
+  const isActiveProcessingStatus = (status?: ProcessingStatus | null) => {
+    if (!status || status.stage === 'completed' || status.stage === 'error') return false
+    if (typeof status.elapsedMs === 'number' && status.elapsedMs > 5 * 60 * 1000) return false
+    return true
+  }
+
+  const hasFreshConversationProcessing = (conv?: Conversation | null) => {
+    if (conv?.ai_status !== 'processing') return false
+    const lastMessageAt = new Date(conv.last_message_at).getTime()
+    return Number.isFinite(lastMessageAt) && Date.now() - lastMessageAt < 5 * 60 * 1000
+  }
+
   // Fetch processing statuses for all active conversations
   const fetchProcessingStatuses = useCallback(async () => {
     try {
@@ -265,19 +374,29 @@ export default function LiveChatPage() {
         },
       })
 
-      if (!response.ok) return
+      if (!response.ok) {
+        setProcessingStatuses({})
+        return
+      }
 
       const data = await response.json()
       if (data.success && data.data?.statuses) {
         const statusMap: Record<string, ProcessingStatus> = {}
         for (const status of data.data.statuses) {
-          statusMap[status.userId] = {
+          const normalizedStatus: ProcessingStatus = {
             stage: status.stage,
             message: status.message,
             progress: status.progress,
+            elapsedMs: status.elapsedMs,
+            lastUpdate: status.lastUpdate,
+          }
+          if (isActiveProcessingStatus(normalizedStatus)) {
+            statusMap[status.userId] = normalizedStatus
           }
         }
         setProcessingStatuses(statusMap)
+      } else {
+        setProcessingStatuses({})
       }
     } catch (error) {
       console.error("Error fetching processing statuses:", error)
@@ -329,7 +448,8 @@ export default function LiveChatPage() {
 
       const data = await response.json()
       if (data.success) {
-        setMessages(dedupeMessages(data.data?.messages || []))
+        setMessages(normalizeMessages(data.data?.messages || []))
+        setCurrentTakeover(data.data?.takeover_session || null)
       }
     } catch (error) {
       console.error("Error fetching messages:", error)
@@ -351,7 +471,8 @@ export default function LiveChatPage() {
 
       const data = await response.json()
       if (data.success) {
-        setMessages(dedupeMessages(data.data?.messages || []))
+        setMessages(normalizeMessages(data.data?.messages || []))
+        setCurrentTakeover(data.data?.takeover_session || null)
         previousMessagesLengthRef.current = 0 // Reset so it scrolls
 
         // Mark as read
@@ -385,19 +506,16 @@ export default function LiveChatPage() {
     loadData()
   }, [fetchConversationsSilent])
 
-  // Polling for real-time updates - only when page is visible
-  useEffect(() => {
-    const startPolling = () => {
-      if (pollingRef.current) clearInterval(pollingRef.current)
-      pollingRef.current = setInterval(() => {
-        fetchConversationsSilent()
-        fetchProcessingStatuses()
-        if (selectedConversationRef.current) {
-          fetchMessagesSilent(getConversationKey(selectedConversationRef.current))
-        }
-      }, 3000) // Poll every 3 seconds
+  const syncLivechat = useCallback(() => {
+    fetchConversationsSilent()
+    fetchProcessingStatuses()
+    if (selectedConversationRef.current) {
+      fetchMessagesSilent(getConversationKey(selectedConversationRef.current))
     }
+  }, [fetchConversationsSilent, fetchMessagesSilent, fetchProcessingStatuses])
 
+  // SSE realtime first, 3s polling fallback when realtime fails
+  useEffect(() => {
     const stopPolling = () => {
       if (pollingRef.current) {
         clearInterval(pollingRef.current)
@@ -405,33 +523,88 @@ export default function LiveChatPage() {
       }
     }
 
+    const startPollingFallback = () => {
+      if (pollingRef.current) return
+      pollingRef.current = setInterval(syncLivechat, 3000)
+    }
+
+    const stopRealtime = () => {
+      eventSourceRef.current?.close()
+      eventSourceRef.current = null
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+      }
+    }
+
+    const startRealtime = () => {
+      stopRealtime()
+      if (document.visibilityState !== 'visible') return
+
+      const source = new EventSource('/api/livechat/events')
+      eventSourceRef.current = source
+
+      source.addEventListener('open', () => {
+        realtimeFailureCountRef.current = 0
+        stopPolling()
+        syncLivechat()
+      })
+
+      const handleLivechatEvent = () => syncLivechat()
+      source.addEventListener('connected', handleLivechatEvent)
+      source.addEventListener('message', handleLivechatEvent)
+      source.addEventListener('conversation', handleLivechatEvent)
+      source.addEventListener('takeover', handleLivechatEvent)
+      source.addEventListener('delete', handleLivechatEvent)
+      source.addEventListener('message_status', patchMessageStatus)
+      source.addEventListener('typing', applyTypingEvent)
+
+      source.addEventListener('error', () => {
+        source.close()
+        eventSourceRef.current = null
+
+        realtimeFailureCountRef.current += 1
+        if (realtimeFailureCountRef.current >= 3) {
+          startPollingFallback()
+          return
+        }
+
+        const delay = Math.min(1000 * 2 ** realtimeFailureCountRef.current, 15000)
+        reconnectTimeoutRef.current = setTimeout(startRealtime, delay)
+      })
+    }
+
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        // Immediately fetch when becoming visible, then start polling
-        fetchConversationsSilent()
-        fetchProcessingStatuses()
-        startPolling()
+      if (document.visibilityState === 'visible') {
+        syncLivechat()
+        if (realtimeFailureCountRef.current >= 3) {
+          startPollingFallback()
+        } else {
+          startRealtime()
+        }
       } else {
+        stopRealtime()
         stopPolling()
       }
     }
 
-    // Start polling only if page is currently visible
-    if (document.visibilityState === "visible") {
-      startPolling()
+    if (document.visibilityState === 'visible') {
+      startRealtime()
     }
 
-    document.addEventListener("visibilitychange", handleVisibilityChange)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
+      stopRealtime()
       stopPolling()
-      document.removeEventListener("visibilitychange", handleVisibilityChange)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [fetchConversationsSilent, fetchMessagesSilent, fetchProcessingStatuses])
+  }, [syncLivechat])
 
   // Re-fetch when tab changes and close current conversation
   useEffect(() => {
     setSelectedConversation(null)
+    setCurrentTakeover(null)
     setMessages([])
     previousMessagesLengthRef.current = 0
     fetchConversationsSilent()
@@ -444,6 +617,32 @@ export default function LiveChatPage() {
     await fetchMessagesWithLoading(getConversationKey(conv))
   }
 
+  const sendTypingState = useCallback(async (state: 'composing' | 'paused') => {
+    const conversation = selectedConversationRef.current
+    if (!conversation?.is_takeover) return
+    try {
+      const token = localStorage.getItem("token")
+      await fetch(`/api/livechat/conversations/${encodeURIComponent(getConversationKey(conversation))}/typing`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ state }),
+      })
+    } catch {
+      return
+    }
+  }, [])
+
+  const handleMessageInputChange = (value: string) => {
+    setMessageInput(value)
+    if (!selectedConversationRef.current?.is_takeover) return
+    sendTypingState('composing')
+    if (typingPauseTimeoutRef.current) clearTimeout(typingPauseTimeoutRef.current)
+    typingPauseTimeoutRef.current = setTimeout(() => sendTypingState('paused'), 1200)
+  }
+
   // Send message
   const handleSendMessage = async () => {
     if ((!messageInput.trim() && !selectedMedia) || !selectedConversation) return
@@ -452,6 +651,7 @@ export default function LiveChatPage() {
     const mediaToSend = selectedMedia
     setMessageInput("") // Clear immediately for better UX
     setSelectedMedia(null)
+    sendTypingState('paused')
     setIsSendingMessage(true)
 
     try {
@@ -574,6 +774,7 @@ export default function LiveChatPage() {
 
         // Update selected conversation immediately
         setSelectedConversation(prev => prev ? { ...prev, is_takeover: true } : null)
+        setCurrentTakeover(data.data || null)
 
         // Refresh conversations
         fetchConversationsSilent()
@@ -617,6 +818,7 @@ export default function LiveChatPage() {
       if (data.success) {
         // Update selected conversation immediately
         setSelectedConversation(prev => prev ? { ...prev, is_takeover: false } : null)
+        setCurrentTakeover(null)
 
         // Refresh conversations
         fetchConversationsSilent()
@@ -660,6 +862,7 @@ export default function LiveChatPage() {
       if (data.success) {
         setShowDeleteDialog(false)
         setSelectedConversation(null)
+        setCurrentTakeover(null)
         setMessages([])
 
         // Refresh conversations list
@@ -742,6 +945,21 @@ export default function LiveChatPage() {
       return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
     }
     return date.toLocaleDateString("id-ID", { day: "numeric", month: "short" })
+  }
+
+  const getMessageStatusLabel = (msg: Message) => {
+    if (msg.delivery_status === 'failed') return 'Gagal'
+    if (msg.delivery_status === 'read') return 'Dibaca'
+    if (msg.delivery_status === 'delivered') return 'Terkirim'
+    if (msg.delivery_status === 'sent') return 'Terkirim'
+    return msg.source === 'ADMIN' ? 'Mengirim' : msg.source === 'AI' ? 'AI' : 'Sistem'
+  }
+
+  const renderMessageStatusIcon = (msg: Message) => {
+    if (msg.delivery_status === 'failed') return <AlertTriangle className="h-3.5 w-3.5 ml-1 text-red-200" />
+    if (msg.delivery_status === 'read') return <CheckCheck className="h-3.5 w-3.5 ml-1 text-blue-300" />
+    if (msg.delivery_status === 'delivered') return <CheckCheck className="h-3.5 w-3.5 ml-1" />
+    return <Check className="h-3.5 w-3.5 ml-1" />
   }
 
   // Get initials for avatar
@@ -828,6 +1046,60 @@ export default function LiveChatPage() {
 
   const isMediaPlaceholder = (text: string) => /^\[(Image|Video|Audio|Document|Sticker)\](\s.*)?$/.test(text.trim())
 
+  const renderFormattedText = (text: string, direction: Message['direction']) => {
+    const tokenRegex = /(https?:\/\/[^\s<]+)|`([^`\n]+)`|\*([^*\n]+)\*|_([^_\n]+)_|~([^~\n]+)~/g
+    const nodes: ReactNode[] = []
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+
+    const pushPlainText = (value: string, keyPrefix: string) => {
+      value.split('\n').forEach((line, index, lines) => {
+        if (line) nodes.push(<span key={`${keyPrefix}-text-${index}`}>{line}</span>)
+        if (index < lines.length - 1) nodes.push(<br key={`${keyPrefix}-br-${index}`} />)
+      })
+    }
+
+    while ((match = tokenRegex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        pushPlainText(text.slice(lastIndex, match.index), `plain-${lastIndex}`)
+      }
+
+      const key = `${match.index}-${match[0]}`
+      if (match[1]) {
+        const trailing = match[1].match(/[.,!?)]$/)?.[0] || ''
+        const href = trailing ? match[1].slice(0, -1) : match[1]
+        nodes.push(
+          <a
+            key={key}
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`break-all underline underline-offset-2 ${direction === 'OUT' ? 'text-white' : 'text-blue-600 dark:text-blue-400'}`}
+          >
+            {href}
+          </a>
+        )
+        if (trailing) nodes.push(<span key={`${key}-trailing`}>{trailing}</span>)
+      } else if (match[2]) {
+        nodes.push(<code key={key} className="rounded bg-black/10 px-1 py-0.5 text-[0.9em]">{match[2]}</code>)
+      } else if (match[3]) {
+        nodes.push(<strong key={key}>{match[3]}</strong>)
+      } else if (match[4]) {
+        nodes.push(<em key={key}>{match[4]}</em>)
+      } else if (match[5]) {
+        nodes.push(<span key={key} className="line-through">{match[5]}</span>)
+      }
+
+      lastIndex = tokenRegex.lastIndex
+    }
+
+    if (lastIndex < text.length) {
+      pushPlainText(text.slice(lastIndex), `plain-${lastIndex}`)
+    }
+
+    return <p className="text-sm whitespace-pre-wrap wrap-break-word">{nodes.length ? nodes : text}</p>
+  }
+
   // Render message content (handle structured media and legacy URL messages)
   const renderMessageContent = (msg: Message) => {
     const structuredMediaUrl = msg.media_public_url || msg.media_url
@@ -852,7 +1124,7 @@ export default function LiveChatPage() {
                   src={renderableUrl}
                   alt={msg.file_name || 'Media'}
                   className="h-auto w-full cursor-pointer transition-opacity hover:opacity-90"
-                  onClick={() => window.open(renderableUrl, '_blank', 'noopener,noreferrer')}
+                  onClick={() => setLightboxMedia({ url: renderableUrl, alt: msg.file_name || 'Media' })}
                   onError={() => setFailedMedia((current) => ({ ...current, [mediaKey]: true }))}
                 />
               </div>
@@ -875,7 +1147,7 @@ export default function LiveChatPage() {
               <span className="text-sm font-medium">{msg.file_name || 'Buka dokumen'}</span>
             </a>
           )}
-          {caption && <p className="text-sm whitespace-pre-wrap break-words">{caption}</p>}
+          {caption && renderFormattedText(caption, msg.direction)}
         </div>
       )
     }
@@ -908,9 +1180,7 @@ export default function LiveChatPage() {
               />
             </div>
           )}
-          {caption && (
-            <p className="text-sm whitespace-pre-wrap break-words">{caption}</p>
-          )}
+          {caption && renderFormattedText(caption, msg.direction)}
         </div>
       )
     }
@@ -919,14 +1189,12 @@ export default function LiveChatPage() {
       return (
         <div className="flex items-center gap-2">
           <ImageIcon className="h-4 w-4" />
-          <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+          {renderFormattedText(msg.message_text, msg.direction)}
         </div>
       )
     }
 
-    return (
-      <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
-    )
+    return renderFormattedText(msg.message_text, msg.direction)
   }
 
   if (isInitialLoading) {
@@ -1015,8 +1283,8 @@ export default function LiveChatPage() {
                           </span>
                         </div>
                         <div className="flex items-center justify-between mt-0.5">
-                          <p className="text-xs text-muted-foreground truncate pr-2">
-                            {conv.last_message || "Tidak ada pesan"}
+                          <p className={`text-xs truncate pr-2 ${getActiveTyping(getConversationKey(conv)) ? "text-emerald-600 font-medium" : "text-muted-foreground"}`}>
+                            {getActiveTyping(getConversationKey(conv)) ? "sedang mengetik..." : conv.last_message || "Tidak ada pesan"}
                           </p>
                           {conv.unread_count > 0 && (
                             <Badge variant="default" className="h-5 min-w-5 flex items-center justify-center text-xs shrink-0">
@@ -1043,12 +1311,12 @@ export default function LiveChatPage() {
                               <Hand className="h-3 w-3 mr-1" />
                               Ambil Alih
                             </Badge>
-                          ) : processingStatuses[getConversationKey(conv)] && processingStatuses[getConversationKey(conv)].stage !== 'completed' && processingStatuses[getConversationKey(conv)].stage !== 'error' ? (
+                          ) : isActiveProcessingStatus(processingStatuses[getConversationKey(conv)]) ? (
                             <Badge variant="outline" className="text-blue-600 border-blue-300 text-xs py-0 animate-pulse">
                               <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                               {processingStatuses[getConversationKey(conv)].message}
                             </Badge>
-                          ) : conv.ai_status === 'processing' ? (
+                          ) : hasFreshConversationProcessing(conv) ? (
                             <Badge variant="outline" className="text-blue-600 border-blue-300 text-xs py-0 animate-pulse">
                               <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                               AI Memproses...
@@ -1098,7 +1366,10 @@ export default function LiveChatPage() {
                     variant="ghost"
                     size="icon"
                     className="md:hidden h-8 w-8"
-                    onClick={() => setSelectedConversation(null)}
+                    onClick={() => {
+                      setSelectedConversation(null)
+                      setCurrentTakeover(null)
+                    }}
                   >
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
@@ -1167,6 +1438,13 @@ export default function LiveChatPage() {
                 </div>
               </div>
 
+              {selectedConversation.is_takeover && currentTakeover && (
+                <div className="border-t bg-orange-50 px-4 py-2 text-xs text-orange-700 dark:bg-orange-950 dark:text-orange-200">
+                  Human takeover aktif oleh <span className="font-medium">{currentTakeover.admin_name || currentTakeover.admin_id}</span>
+                  {currentTakeover.reason ? ` — ${currentTakeover.reason}` : ''}
+                </div>
+              )}
+
               {/* Messages Container - Fixed Height with Scroll */}
               <div className="relative flex-1">
                 <div
@@ -1188,7 +1466,7 @@ export default function LiveChatPage() {
                       {messages.map((msg) => (
                         <div
                           key={msg.id}
-                          className={`flex ${msg.direction === "OUT" ? "justify-end" : "justify-start"}`}
+                          className={`flex animate-in fade-in slide-in-from-bottom-1 duration-200 ${msg.direction === "OUT" ? "justify-end" : "justify-start"}`}
                         >
                           <div
                             className={`max-w-[75%] rounded-lg p-3 shadow-sm ${msg.direction === "OUT"
@@ -1197,6 +1475,11 @@ export default function LiveChatPage() {
                               }`}
                           >
                             {renderMessageContent(msg)}
+                            {msg.delivery_status === 'failed' && msg.status_error && (
+                              <div className="mt-2 rounded bg-red-600/20 px-2 py-1 text-xs text-red-50">
+                                {msg.status_error}
+                              </div>
+                            )}
                             <div className={`flex items-center gap-1 mt-1.5 text-xs ${msg.direction === "OUT" ? "text-green-100" : "text-muted-foreground"
                               }`}>
                               <span>{formatTime(msg.timestamp)}</span>
@@ -1204,20 +1487,27 @@ export default function LiveChatPage() {
                                 <>
                                   <span className="mx-0.5">•</span>
                                   <span className="capitalize text-[10px]">
-                                    {msg.source === 'ADMIN' ? 'Admin' : msg.source === 'AI' ? 'AI' : 'Sistem'}
+                                    {getMessageStatusLabel(msg)}
                                   </span>
-                                  {/* Read status indicator */}
-                                  {msg.is_read !== false ? (
-                                    <CheckCheck className="h-3.5 w-3.5 ml-1 text-blue-300" />
-                                  ) : (
-                                    <Check className="h-3.5 w-3.5 ml-1" />
-                                  )}
+                                  {renderMessageStatusIcon(msg)}
                                 </>
                               )}
                             </div>
                           </div>
                         </div>
                       ))}
+                      {selectedConversation && getActiveTyping(getConversationKey(selectedConversation)) && (
+                        <div className="flex justify-start">
+                          <div className="rounded-lg border bg-white px-3 py-2 text-xs text-emerald-700 shadow-sm dark:bg-gray-800">
+                            <span className="inline-flex items-center gap-1">
+                              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500" />
+                              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500 [animation-delay:120ms]" />
+                              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500 [animation-delay:240ms]" />
+                              sedang mengetik...
+                            </span>
+                          </div>
+                        </div>
+                      )}
                       <div ref={messagesEndRef} />
                     </div>
                   )}
@@ -1238,9 +1528,7 @@ export default function LiveChatPage() {
               </div>
 
               {/* AI Processing Status Indicator */}
-              {selectedConversation && processingStatuses[getConversationKey(selectedConversation)] &&
-                processingStatuses[getConversationKey(selectedConversation)].stage !== 'completed' &&
-                processingStatuses[getConversationKey(selectedConversation)].stage !== 'error' && (
+              {selectedConversation && isActiveProcessingStatus(processingStatuses[getConversationKey(selectedConversation)]) && (
                   <div className="px-3 py-2 border-t bg-blue-50 dark:bg-blue-950 shrink-0">
                     <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -1272,6 +1560,11 @@ export default function LiveChatPage() {
                         </Button>
                       </div>
                     )}
+                    {isWebchatConversation(selectedConversation) && (
+                      <p className="text-xs text-muted-foreground">
+                        Balasan media saat ini hanya didukung untuk percakapan WhatsApp. Webchat tetap mendukung balasan teks.
+                      </p>
+                    )}
                     <div className="flex gap-2">
                       <input
                         ref={mediaInputRef}
@@ -1287,14 +1580,14 @@ export default function LiveChatPage() {
                         onClick={() => mediaInputRef.current?.click()}
                         disabled={isSendingMessage || isUploadingMedia || isWebchatConversation(selectedConversation)}
                         className="h-10 w-10"
-                        title="Lampirkan media"
+                        title={isWebchatConversation(selectedConversation) ? "Media reply saat ini hanya didukung untuk WhatsApp" : "Lampirkan media"}
                       >
                         {isUploadingMedia ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
                       </Button>
                       <Input
                         placeholder={selectedMedia ? "Tambahkan caption..." : "Ketik pesan..."}
                         value={messageInput}
-                        onChange={(e) => setMessageInput(e.target.value)}
+                        onChange={(e) => handleMessageInputChange(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault()
@@ -1412,6 +1705,22 @@ export default function LiveChatPage() {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Image Lightbox */}
+      <Dialog open={!!lightboxMedia} onOpenChange={(open) => !open && setLightboxMedia(null)}>
+        <DialogContent className="max-w-4xl border-0 bg-transparent p-0 shadow-none">
+          {lightboxMedia && (
+            <div className="relative overflow-hidden rounded-lg bg-black/90 p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={lightboxMedia.url}
+                alt={lightboxMedia.alt}
+                className="max-h-[85vh] w-full object-contain"
+              />
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

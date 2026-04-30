@@ -5,11 +5,22 @@ import { redirect } from "next/navigation"
 import { Brain, Database, Loader2, Save, Search, Waypoints } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
+import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface ModelRow {
   id: string
@@ -39,6 +50,13 @@ interface AssignmentRow {
 const lanes = ["llm", "embed", "rewrite", "rerank"]
 const noFallbackValue = "__none__"
 
+type ConfirmAction = {
+  title: string
+  description: string
+  actionLabel: string
+  onConfirm: () => Promise<void> | void
+}
+
 function laneIcon(lane: string) {
   switch (lane) {
     case "embed":
@@ -54,13 +72,14 @@ function laneIcon(lane: string) {
 
 export default function SuperadminLaneAssignmentsPage() {
   const { user } = useAuth()
+  const { toast } = useToast()
   const [models, setModels] = useState<ModelRow[]>([])
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
   const [loading, setLoading] = useState(true)
   const [savingLane, setSavingLane] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, { primary_model_id: string; fallback_model_id: string }>>({})
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   useEffect(() => {
     if (user && user.role !== "superadmin") redirect("/dashboard")
@@ -87,19 +106,13 @@ export default function SuperadminLaneAssignmentsPage() {
       const assignmentRows = Array.isArray(assignmentsPayload?.data) ? assignmentsPayload.data : []
       setModels(modelRows)
       setAssignments(assignmentRows)
-      setDrafts((current) => {
-        const next = { ...current }
-        for (const lane of lanes) {
-          const assignment = assignmentRows.find((row: AssignmentRow) => row.lane_type === lane && row.is_global_default)
-          if (!next[lane]) {
-            next[lane] = {
-              primary_model_id: assignment?.primary_model_id || "",
-              fallback_model_id: assignment?.fallback_model_id || noFallbackValue,
-            }
-          }
-        }
-        return next
-      })
+      setDrafts(Object.fromEntries(lanes.map((lane) => {
+        const assignment = assignmentRows.find((row: AssignmentRow) => row.lane_type === lane && row.is_global_default)
+        return [lane, {
+          primary_model_id: assignment?.primary_model_id || "",
+          fallback_model_id: assignment?.fallback_model_id || noFallbackValue,
+        }]
+      })))
     } catch (err: any) {
       setError(err?.message || "Gagal memuat assignment lane")
     } finally {
@@ -119,21 +132,47 @@ export default function SuperadminLaneAssignmentsPage() {
     return Object.fromEntries(lanes.map((lane) => [lane, assignments.find((row) => row.lane_type === lane && row.is_global_default) || null])) as Record<string, AssignmentRow | null>
   }, [assignments])
 
-  const saveLane = async (lane: string) => {
+  const isLaneDirty = (lane: string) => {
+    const assignment = assignmentsByLane[lane]
+    const draft = drafts[lane]
+    if (!draft) return false
+    return draft.primary_model_id !== (assignment?.primary_model_id || "") || draft.fallback_model_id !== (assignment?.fallback_model_id || noFallbackValue)
+  }
+
+  const requestSaveLane = (lane: string) => {
     const draft = drafts[lane]
     if (!draft?.primary_model_id) {
-      setError(`Primary model untuk lane ${lane.toUpperCase()} wajib dipilih`)
+      toast({ title: "Gagal", description: `Primary model untuk lane ${lane.toUpperCase()} wajib dipilih`, variant: "destructive" })
       return
     }
     if (draft.fallback_model_id !== noFallbackValue && draft.fallback_model_id === draft.primary_model_id) {
-      setError("Fallback model harus berbeda dari primary model")
+      toast({ title: "Gagal", description: "Fallback model harus berbeda dari primary model", variant: "destructive" })
+      return
+    }
+    if (!isLaneDirty(lane)) return
+
+    setPendingConfirm({
+      title: `Simpan assignment ${lane.toUpperCase()}?`,
+      description: "Primary dan fallback model untuk lane ini akan diperbarui.",
+      actionLabel: "Simpan Assignment",
+      onConfirm: () => saveLane(lane),
+    })
+  }
+
+  const saveLane = async (lane: string) => {
+    const draft = drafts[lane]
+    if (!draft?.primary_model_id) {
+      toast({ title: "Gagal", description: `Primary model untuk lane ${lane.toUpperCase()} wajib dipilih`, variant: "destructive" })
+      return
+    }
+    if (draft.fallback_model_id !== noFallbackValue && draft.fallback_model_id === draft.primary_model_id) {
+      toast({ title: "Gagal", description: "Fallback model harus berbeda dari primary model", variant: "destructive" })
       return
     }
 
     try {
       setSavingLane(lane)
       setError(null)
-      setMessage(null)
       const token = localStorage.getItem("token")
       const response = await fetch("/api/superadmin/ai-lane-assignments", {
         method: "POST",
@@ -152,7 +191,7 @@ export default function SuperadminLaneAssignmentsPage() {
       const payload = await response.json()
       if (!response.ok) throw new Error(payload?.error || "Gagal menyimpan lane assignment")
 
-      setMessage(`Assignment ${lane.toUpperCase()} berhasil disimpan.`)
+      toast({ title: "Berhasil", description: `Assignment ${lane.toUpperCase()} berhasil disimpan.` })
       setDrafts((current) => ({
         ...current,
         [lane]: {
@@ -162,7 +201,7 @@ export default function SuperadminLaneAssignmentsPage() {
       }))
       await loadData()
     } catch (err: any) {
-      setError(err?.message || "Gagal menyimpan lane assignment")
+      toast({ title: "Gagal", description: err?.message || "Gagal menyimpan lane assignment", variant: "destructive" })
     } finally {
       setSavingLane(null)
     }
@@ -180,13 +219,34 @@ export default function SuperadminLaneAssignmentsPage() {
       </div>
 
       {error && <Alert variant="destructive"><AlertTitle>Terjadi kesalahan</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-      {message && <Alert><AlertTitle>Berhasil</AlertTitle><AlertDescription>{message}</AlertDescription></Alert>}
+
+      <AlertDialog open={!!pendingConfirm} onOpenChange={(open) => !open && setPendingConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{pendingConfirm?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                const action = pendingConfirm
+                setPendingConfirm(null)
+                await action?.onConfirm()
+              }}
+            >
+              {pendingConfirm?.actionLabel || "Lanjutkan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="grid gap-6 xl:grid-cols-2">
         {lanes.map((lane) => {
           const laneModels = modelsByLane[lane] || []
           const assignment = assignmentsByLane[lane]
           const draft = drafts[lane] || { primary_model_id: "", fallback_model_id: noFallbackValue }
+          const laneDirty = isLaneDirty(lane)
           return (
             <Card key={lane} className="border-border/70">
               <CardHeader>
@@ -217,10 +277,10 @@ export default function SuperadminLaneAssignmentsPage() {
                   </Select>
                 </div>
 
-                <Button onClick={() => saveLane(lane)} disabled={savingLane === lane || laneModels.length === 0}>
+                {laneDirty && <Button onClick={() => requestSaveLane(lane)} disabled={savingLane === lane || laneModels.length === 0}>
                   {savingLane === lane ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   Simpan {lane.toUpperCase()}
-                </Button>
+                </Button>}
               </CardContent>
             </Card>
           )

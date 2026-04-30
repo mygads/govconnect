@@ -23,6 +23,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -70,6 +80,14 @@ interface ImportantContactCategory {
   name: string
 }
 
+type ConfirmAction = {
+  title: string
+  description: string
+  actionLabel: string
+  variant?: "default" | "destructive"
+  onConfirm: () => Promise<void> | void
+}
+
 export default function ComplaintMetaPage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -87,9 +105,20 @@ export default function ComplaintMetaPage() {
   const [editingCategory, setEditingCategory] = useState<ComplaintCategory | null>(null)
   const [editingType, setEditingType] = useState<ComplaintType | null>(null)
   const [saving, setSaving] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   // Form states
+  const [categoryFormInitial, setCategoryFormInitial] = useState({ name: "", description: "" })
   const [categoryForm, setCategoryForm] = useState({ name: "", description: "" })
+  const [typeFormInitial, setTypeFormInitial] = useState({
+    category_id: "",
+    name: "",
+    description: "",
+    is_urgent: false,
+    require_address: true,
+    send_important_contacts: false,
+    important_contact_category: "",
+  })
   const [typeForm, setTypeForm] = useState({
     category_id: "",
     name: "",
@@ -99,6 +128,20 @@ export default function ComplaintMetaPage() {
     send_important_contacts: false,
     important_contact_category: "",
   })
+
+  const normalizedCategoryForm = {
+    name: categoryForm.name.trim(),
+    description: categoryForm.description.trim(),
+  }
+  const normalizedTypeForm = {
+    ...typeForm,
+    name: typeForm.name.trim(),
+    description: typeForm.description.trim(),
+    important_contact_category: typeForm.send_important_contacts ? typeForm.important_contact_category : "",
+  }
+  const isCategoryDirty = JSON.stringify(normalizedCategoryForm) !== JSON.stringify(categoryFormInitial)
+  const isTypeDirty = JSON.stringify(normalizedTypeForm) !== JSON.stringify(typeFormInitial)
+  const openConfirm = (action: ConfirmAction) => setPendingConfirm(action)
 
   const fetchAll = async () => {
     try {
@@ -149,17 +192,37 @@ export default function ComplaintMetaPage() {
   // Category handlers
   const openCategoryModal = (category?: ComplaintCategory) => {
     if (category) {
+      const next = { name: category.name, description: category.description || "" }
       setEditingCategory(category)
-      setCategoryForm({ name: category.name, description: category.description || "" })
+      setCategoryForm(next)
+      setCategoryFormInitial({ name: next.name.trim(), description: next.description.trim() })
     } else {
+      const next = { name: "", description: "" }
       setEditingCategory(null)
-      setCategoryForm({ name: "", description: "" })
+      setCategoryForm(next)
+      setCategoryFormInitial(next)
     }
     setCategoryModalOpen(true)
   }
 
+  const requestSaveCategory = () => {
+    if (!categoryForm.name.trim()) {
+      toast({ title: "Nama kategori wajib diisi", variant: "destructive" })
+      return
+    }
+    if (!isCategoryDirty) return
+    openConfirm({
+      title: editingCategory ? "Simpan perubahan kategori?" : "Tambah kategori pengaduan?",
+      description: editingCategory
+        ? `Perubahan kategori \"${categoryForm.name.trim()}\" akan disimpan.`
+        : `Kategori \"${categoryForm.name.trim()}\" akan ditambahkan.`,
+      actionLabel: "Simpan",
+      onConfirm: handleSaveCategory,
+    })
+  }
+
   const handleSaveCategory = async () => {
-    if (!categoryForm.name.trim()) return
+    if (!categoryForm.name.trim() || !isCategoryDirty) return
     setSaving(true)
 
     try {
@@ -201,9 +264,17 @@ export default function ComplaintMetaPage() {
     }
   }
 
-  const handleDeleteCategory = async (id: string) => {
-    if (!confirm("Hapus kategori ini? Kategori hanya bisa dihapus jika tidak punya jenis pengaduan.")) return
+  const requestDeleteCategory = (id: string) => {
+    openConfirm({
+      title: "Hapus kategori pengaduan?",
+      description: "Kategori hanya bisa dihapus jika tidak punya jenis pengaduan.",
+      actionLabel: "Hapus",
+      variant: "destructive",
+      onConfirm: () => handleDeleteCategory(id),
+    })
+  }
 
+  const handleDeleteCategory = async (id: string) => {
     try {
       const response = await fetch(`/api/complaints/categories/${id}`, {
         method: "DELETE",
@@ -232,8 +303,7 @@ export default function ComplaintMetaPage() {
   // Type handlers
   const openTypeModal = (type?: ComplaintType) => {
     if (type) {
-      setEditingType(type)
-      setTypeForm({
+      const next = {
         category_id: type.category_id,
         name: type.name,
         description: type.description || "",
@@ -241,10 +311,17 @@ export default function ComplaintMetaPage() {
         require_address: type.require_address,
         send_important_contacts: type.send_important_contacts,
         important_contact_category: type.important_contact_category || "",
+      }
+      setEditingType(type)
+      setTypeForm(next)
+      setTypeFormInitial({
+        ...next,
+        name: next.name.trim(),
+        description: next.description.trim(),
+        important_contact_category: next.send_important_contacts ? next.important_contact_category : "",
       })
     } else {
-      setEditingType(null)
-      setTypeForm({
+      const next = {
         category_id: "",
         name: "",
         description: "",
@@ -252,13 +329,42 @@ export default function ComplaintMetaPage() {
         require_address: true,
         send_important_contacts: false,
         important_contact_category: "",
-      })
+      }
+      setEditingType(null)
+      setTypeForm(next)
+      setTypeFormInitial(next)
     }
     setTypeModalOpen(true)
   }
 
+  const requestSaveType = () => {
+    if (!typeForm.category_id || !typeForm.name.trim()) {
+      toast({ title: "Kategori dan nama jenis wajib diisi", variant: "destructive" })
+      return
+    }
+
+    if (typeForm.send_important_contacts && !typeForm.important_contact_category) {
+      toast({
+        title: "Kategori nomor penting wajib",
+        description: "Pilih kategori nomor penting untuk jenis yang mengirim kontak darurat.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!isTypeDirty) return
+    openConfirm({
+      title: editingType ? "Simpan perubahan jenis?" : "Tambah jenis pengaduan?",
+      description: editingType
+        ? `Perubahan jenis \"${typeForm.name.trim()}\" akan disimpan.`
+        : `Jenis \"${typeForm.name.trim()}\" akan ditambahkan.`,
+      actionLabel: "Simpan",
+      onConfirm: handleSaveType,
+    })
+  }
+
   const handleSaveType = async () => {
-    if (!typeForm.category_id || !typeForm.name.trim()) return
+    if (!typeForm.category_id || !typeForm.name.trim() || !isTypeDirty) return
 
     if (typeForm.send_important_contacts && !typeForm.important_contact_category) {
       toast({
@@ -315,9 +421,17 @@ export default function ComplaintMetaPage() {
     }
   }
 
-  const handleDeleteType = async (id: string) => {
-    if (!confirm("Hapus jenis pengaduan ini?")) return
+  const requestDeleteType = (id: string) => {
+    openConfirm({
+      title: "Hapus jenis pengaduan?",
+      description: "Jenis pengaduan ini akan dihapus dari daftar kategori.",
+      actionLabel: "Hapus",
+      variant: "destructive",
+      onConfirm: () => handleDeleteType(id),
+    })
+  }
 
+  const handleDeleteType = async (id: string) => {
     try {
       const response = await fetch(`/api/complaints/types/${id}`, {
         method: "DELETE",
@@ -525,7 +639,7 @@ export default function ComplaintMetaPage() {
                               Edit
                             </DropdownMenuItem>
                             <DropdownMenuItem 
-                              onClick={() => handleDeleteCategory(category.id)}
+                              onClick={() => requestDeleteCategory(category.id)}
                               className="text-destructive"
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
@@ -632,7 +746,7 @@ export default function ComplaintMetaPage() {
                                 Edit
                               </DropdownMenuItem>
                               <DropdownMenuItem 
-                                onClick={() => handleDeleteType(type.id)}
+                                onClick={() => requestDeleteType(type.id)}
                                 className="text-destructive"
                               >
                                 <Trash2 className="h-4 w-4 mr-2" />
@@ -691,7 +805,7 @@ export default function ComplaintMetaPage() {
               <X className="h-4 w-4 mr-2" />
               Tutup
             </Button>
-            <Button onClick={handleSaveCategory} disabled={saving || !categoryForm.name.trim()}>
+            <Button onClick={requestSaveCategory} disabled={saving || !categoryForm.name.trim() || !isCategoryDirty}>
               {saving ? "Menyimpan..." : editingCategory ? "Simpan Perubahan" : "Tambah Kategori"}
             </Button>
           </DialogFooter>
@@ -826,14 +940,36 @@ export default function ComplaintMetaPage() {
               Tutup
             </Button>
             <Button 
-              onClick={handleSaveType} 
-              disabled={saving || !typeForm.name.trim() || !typeForm.category_id}
+              onClick={requestSaveType}
+              disabled={saving || !typeForm.name.trim() || !typeForm.category_id || !isTypeDirty}
             >
               {saving ? "Menyimpan..." : editingType ? "Simpan Perubahan" : "Tambah Jenis"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!pendingConfirm} onOpenChange={(open) => !open && setPendingConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{pendingConfirm?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              className={pendingConfirm?.variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+              onClick={async () => {
+                const action = pendingConfirm
+                setPendingConfirm(null)
+                await action?.onConfirm()
+              }}
+            >
+              {pendingConfirm?.actionLabel || "Lanjutkan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

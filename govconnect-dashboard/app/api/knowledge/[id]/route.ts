@@ -202,12 +202,6 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params
     
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const session = await getSession(request)
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

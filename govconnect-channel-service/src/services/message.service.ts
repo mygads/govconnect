@@ -1,6 +1,7 @@
 import prisma from '../config/database';
 import logger from '../utils/logger';
-import { MessageData } from '../types/message.types';
+import { MessageData, MessageDeliveryStatus } from '../types/message.types';
+import { publishLivechatEvent } from './livechat-events.service';
 
 const MAX_MESSAGES = 30;
 
@@ -27,6 +28,29 @@ const FIFO_CHECK_INTERVAL = 5; // Only run FIFO every 5th message per conversati
 
 function resolveVillageId(villageId?: string): string {
   return villageId || 'unknown';
+}
+
+function statusTimestampFields(status: MessageDeliveryStatus, at: Date = new Date()) {
+  return {
+    ...(status === 'sent' ? { sent_at: at } : {}),
+    ...(status === 'delivered' ? { delivered_at: at } : {}),
+    ...(status === 'read' ? { read_at: at } : {}),
+    ...(status === 'failed' ? { failed_at: at } : {}),
+  };
+}
+
+function shouldUpdateStatus(current: string | null | undefined, next: MessageDeliveryStatus): boolean {
+  const rank: Record<MessageDeliveryStatus, number> = {
+    received: 1,
+    sent: 2,
+    delivered: 3,
+    read: 4,
+    failed: 5,
+  };
+  if (!current || !(current in rank)) return true;
+  if (current === 'failed') return next === 'failed';
+  if (next === 'failed') return true;
+  return rank[next] >= rank[current as MessageDeliveryStatus];
 }
 
 /**
@@ -65,12 +89,20 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
       ...mediaFields(data),
       direction: 'IN',
       source: 'WA_WEBHOOK',
+      delivery_status: data.delivery_status || 'received',
+      status_error: data.status_error || null,
       timestamp: data.timestamp || new Date(),
     },
   });
 
   // Enforce FIFO
   await enforceFIFO(villageId, channel, data.channel_identifier);
+  publishLivechatEvent({
+    type: 'message',
+    village_id: villageId,
+    channel,
+    channel_identifier: data.channel_identifier,
+  });
 
   logger.info('Incoming message saved', { id: message.id });
   return message;
@@ -95,12 +127,21 @@ export async function saveOutgoingMessage(
       ...mediaFields(data),
       direction: 'OUT',
       source: data.source,
+      delivery_status: data.delivery_status || 'sent',
+      ...statusTimestampFields(data.delivery_status || 'sent', data.timestamp || new Date()),
+      status_error: data.status_error || null,
       timestamp: data.timestamp || new Date(),
     },
   });
 
   // Enforce FIFO
   await enforceFIFO(villageId, channel, data.channel_identifier);
+  publishLivechatEvent({
+    type: 'message',
+    village_id: villageId,
+    channel,
+    channel_identifier: data.channel_identifier,
+  });
 
   logger.info('Outgoing message saved', { id: message.id });
   return message;
@@ -129,7 +170,7 @@ async function enforceFIFO(village_id: string, channel: 'WHATSAPP' | 'WEBCHAT', 
         WHERE village_id = ${village_id}
           AND channel = ${channel}::"ChannelType"
           AND channel_identifier = ${channel_identifier}
-        ORDER BY timestamp ASC
+        ORDER BY "createdAt" ASC, timestamp ASC
         OFFSET 0
         LIMIT (
           SELECT GREATEST(
@@ -169,7 +210,11 @@ export async function getMessageHistory(
   }
   const messages = await prisma.message.findMany({
     where,
-    orderBy: { timestamp: 'desc' },
+    orderBy: [
+      { createdAt: 'desc' },
+      { timestamp: 'desc' },
+      { id: 'desc' },
+    ],
     take: limit,
   });
 
@@ -194,9 +239,107 @@ export async function checkDuplicateMessage(message_id: string): Promise<boolean
 }
 
 export async function updateMessageMedia(message_id: string, media: MessageMediaFields): Promise<void> {
-  await prisma.message.update({
+  const message = await prisma.message.update({
     where: { message_id },
     data: mediaFields(media),
+  });
+  publishLivechatEvent({
+    type: 'message',
+    village_id: message.village_id,
+    channel: message.channel,
+    channel_identifier: message.channel_identifier,
+  });
+}
+
+export async function updateMessageDeliveryStatus(
+  message_id: string,
+  status: MessageDeliveryStatus,
+  options: { at?: Date; error?: string | null } = {}
+): Promise<boolean> {
+  const existing = await prisma.message.findUnique({ where: { message_id } });
+  if (!existing || !shouldUpdateStatus(existing.delivery_status, status)) return false;
+
+  const message = await prisma.message.update({
+    where: { message_id },
+    data: {
+      delivery_status: status,
+      ...statusTimestampFields(status, options.at || new Date()),
+      ...(status === 'failed' ? { status_error: options.error || existing.status_error || 'Delivery failed' } : {}),
+    },
+  });
+
+  publishLivechatEvent({
+    type: 'message_status',
+    village_id: message.village_id,
+    channel: message.channel,
+    channel_identifier: message.channel_identifier,
+    message_id: message.message_id,
+    delivery_status: message.delivery_status,
+    sent_at: message.sent_at,
+    delivered_at: message.delivered_at,
+    read_at: message.read_at,
+    failed_at: message.failed_at,
+    status_error: message.status_error,
+  });
+  return true;
+}
+
+export async function markConversationMessagesAdminRead(
+  channel_identifier: string,
+  village_id?: string,
+  channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
+): Promise<string[]> {
+  const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
+  const where: any = {
+    channel,
+    channel_identifier,
+    direction: 'IN',
+    admin_read_at: null,
+  };
+  if (resolvedVillageId) where.village_id = resolvedVillageId;
+
+  const unreadMessages = await prisma.message.findMany({
+    where,
+    select: { message_id: true, village_id: true },
+    orderBy: [{ createdAt: 'asc' }, { timestamp: 'asc' }],
+    take: 100,
+  });
+  if (unreadMessages.length === 0) return [];
+
+  const readAt = new Date();
+  await prisma.message.updateMany({
+    where: { message_id: { in: unreadMessages.map((message) => message.message_id) } },
+    data: { admin_read_at: readAt },
+  });
+
+  for (const message of unreadMessages) {
+    publishLivechatEvent({
+      type: 'message_status',
+      village_id: resolvedVillageId || message.village_id,
+      channel,
+      channel_identifier,
+      message_id: message.message_id,
+      admin_read_at: readAt,
+    });
+  }
+
+  return unreadMessages.map((message) => message.message_id);
+}
+
+export function publishTypingEvent(params: {
+  village_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier: string;
+  typing_state: 'composing' | 'paused';
+  actor: 'user' | 'admin' | 'ai';
+}): void {
+  publishLivechatEvent({
+    type: 'typing',
+    village_id: params.village_id,
+    channel: params.channel,
+    channel_identifier: params.channel_identifier,
+    typing_state: params.typing_state,
+    actor: params.actor,
   });
 }
 

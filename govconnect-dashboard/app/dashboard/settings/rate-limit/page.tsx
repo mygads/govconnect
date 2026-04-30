@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { useToast } from "@/hooks/use-toast"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -24,6 +25,16 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
   AlertCircle,
   Shield,
@@ -98,7 +109,16 @@ interface SpamGuardData {
   channelBans: { total: number; bans: SpamBan[] }
 }
 
+type ConfirmAction = {
+  title: string
+  description: string
+  actionLabel: string
+  variant?: "default" | "destructive"
+  onConfirm: () => Promise<void> | void
+}
+
 export default function RateLimitPage() {
+  const { toast } = useToast()
   const [data, setData] = useState<RateLimitData | null>(null)
   const [blacklist, setBlacklist] = useState<{ total: number; entries: BlacklistEntry[] } | null>(null)
   const [spamGuard, setSpamGuard] = useState<SpamGuardData | null>(null)
@@ -107,6 +127,7 @@ export default function RateLimitPage() {
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [newBlacklist, setNewBlacklist] = useState({ wa_user_id: '', reason: '', expiresInDays: '' })
   const [submitting, setSubmitting] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   const fetchData = useCallback(async () => {
     try {
@@ -136,9 +157,24 @@ export default function RateLimitPage() {
     fetchData()
   }, [fetchData])
 
+  const requestAddToBlacklist = () => {
+    if (!newBlacklist.wa_user_id.trim() || !newBlacklist.reason.trim()) {
+      toast({ title: "Gagal", description: "Nomor WhatsApp dan alasan wajib diisi", variant: "destructive" })
+      return
+    }
+
+    setPendingConfirm({
+      title: "Tambah ke blacklist?",
+      description: `${newBlacklist.wa_user_id.trim()} akan diblokir dari layanan chatbot.`,
+      actionLabel: "Tambah Blacklist",
+      variant: "destructive",
+      onConfirm: handleAddToBlacklist,
+    })
+  }
+
   const handleAddToBlacklist = async () => {
-    if (!newBlacklist.wa_user_id || !newBlacklist.reason) return
-    
+    if (!newBlacklist.wa_user_id.trim() || !newBlacklist.reason.trim()) return
+
     try {
       setSubmitting(true)
       const token = localStorage.getItem('token')
@@ -150,27 +186,39 @@ export default function RateLimitPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          wa_user_id: newBlacklist.wa_user_id,
-          reason: newBlacklist.reason,
+          wa_user_id: newBlacklist.wa_user_id.trim(),
+          reason: newBlacklist.reason.trim(),
           expiresInDays: newBlacklist.expiresInDays ? parseInt(newBlacklist.expiresInDays) : undefined,
         }),
       })
 
-      if (response.ok) {
-        setAddDialogOpen(false)
-        setNewBlacklist({ wa_user_id: '', reason: '', expiresInDays: '' })
-        fetchData()
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload?.error || 'Gagal menambah blacklist')
       }
-    } catch (err) {
-      console.error('Failed to add to blacklist:', err)
+
+      toast({ title: "Berhasil", description: "Nomor berhasil ditambahkan ke blacklist." })
+      setAddDialogOpen(false)
+      setNewBlacklist({ wa_user_id: '', reason: '', expiresInDays: '' })
+      fetchData()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err?.message || 'Gagal menambah blacklist', variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
   }
 
+  const requestRemoveFromBlacklist = (wa_user_id: string) => {
+    setPendingConfirm({
+      title: "Hapus dari blacklist?",
+      description: `${wa_user_id} akan dapat memakai layanan lagi jika tidak terkena batas lain.`,
+      actionLabel: "Hapus Blacklist",
+      variant: "destructive",
+      onConfirm: () => handleRemoveFromBlacklist(wa_user_id),
+    })
+  }
+
   const handleRemoveFromBlacklist = async (wa_user_id: string) => {
-    if (!confirm(`Hapus ${wa_user_id} dari blacklist?`)) return
-    
     try {
       const token = localStorage.getItem('token')
       
@@ -179,17 +227,29 @@ export default function RateLimitPage() {
         headers: { 'Authorization': `Bearer ${token}` },
       })
 
-      if (response.ok) {
-        fetchData()
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload?.error || 'Gagal menghapus blacklist')
       }
-    } catch (err) {
-      console.error('Failed to remove from blacklist:', err)
+
+      toast({ title: "Berhasil", description: "Nomor berhasil dihapus dari blacklist." })
+      fetchData()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err?.message || 'Gagal menghapus blacklist', variant: "destructive" })
     }
   }
 
+  const requestRemoveSpamBan = (wa_user_id: string) => {
+    setPendingConfirm({
+      title: "Hapus spam ban?",
+      description: `Spam ban untuk ${wa_user_id} akan dihapus.`,
+      actionLabel: "Hapus Ban",
+      variant: "destructive",
+      onConfirm: () => handleRemoveSpamBan(wa_user_id),
+    })
+  }
+
   const handleRemoveSpamBan = async (wa_user_id: string) => {
-    if (!confirm(`Hapus spam ban untuk ${wa_user_id}?`)) return
-    
     try {
       const token = localStorage.getItem('token')
       
@@ -198,11 +258,15 @@ export default function RateLimitPage() {
         headers: { 'Authorization': `Bearer ${token}` },
       })
 
-      if (response.ok) {
-        fetchData()
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload?.error || 'Gagal menghapus spam ban')
       }
-    } catch (err) {
-      console.error('Failed to remove spam ban:', err)
+
+      toast({ title: "Berhasil", description: "Spam ban berhasil dihapus." })
+      fetchData()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err?.message || 'Gagal menghapus spam ban', variant: "destructive" })
     }
   }
 
@@ -269,6 +333,28 @@ export default function RateLimitPage() {
           Muat Ulang
         </Button>
       </div>
+
+      <AlertDialog open={!!pendingConfirm} onOpenChange={(open) => !open && setPendingConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{pendingConfirm?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              className={pendingConfirm?.variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+              onClick={async () => {
+                const action = pendingConfirm
+                setPendingConfirm(null)
+                await action?.onConfirm()
+              }}
+            >
+              {pendingConfirm?.actionLabel || "Lanjutkan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Config Card */}
       <Card className={data?.config.enabled ? 'border-green-200 dark:border-green-900' : 'border-yellow-200 dark:border-yellow-900'}>
@@ -540,7 +626,7 @@ export default function RateLimitPage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => handleRemoveSpamBan(ban.wa_user_id)}
+                          onClick={() => requestRemoveSpamBan(ban.wa_user_id)}
                           title="Hapus ban spam"
                         >
                           <Trash2 className="h-4 w-4 text-red-500" />
@@ -616,7 +702,7 @@ export default function RateLimitPage() {
                 <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
                   Batal
                 </Button>
-                <Button onClick={handleAddToBlacklist} disabled={submitting}>
+                <Button onClick={requestAddToBlacklist} disabled={submitting}>
                   {submitting ? 'Menyimpan...' : 'Tambah'}
                 </Button>
               </DialogFooter>
@@ -663,7 +749,7 @@ export default function RateLimitPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => handleRemoveFromBlacklist(entry.wa_user_id)}
+                        onClick={() => requestRemoveFromBlacklist(entry.wa_user_id)}
                       >
                         <Trash2 className="h-4 w-4 text-red-500" />
                       </Button>

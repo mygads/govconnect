@@ -100,6 +100,7 @@ const STAGE_PROGRESS: Record<ProcessingStage, number> = {
 
 // Active processing statuses
 const activeStatuses = new Map<string, ProcessingStatus>();
+const MAX_ACTIVE_STATUS_AGE_MS = 5 * 60 * 1000;
 
 // Callbacks for status updates (for real-time push)
 const statusCallbacks = new Map<string, StatusCallback[]>();
@@ -205,6 +206,7 @@ export function errorProcessing(userId: string, errorMessage?: string): void {
  * Get current status for a user
  */
 export function getStatus(userId: string): ProcessingStatus | null {
+  cleanupStaleStatuses();
   return activeStatuses.get(userId) || null;
 }
 
@@ -212,6 +214,7 @@ export function getStatus(userId: string): ProcessingStatus | null {
  * Check if user has active processing
  */
 export function isProcessing(userId: string): boolean {
+  cleanupStaleStatuses();
   const status = activeStatuses.get(userId);
   return status !== undefined && status.stage !== 'completed' && status.stage !== 'error';
 }
@@ -253,6 +256,21 @@ function notifyCallbacks(userId: string, status: ProcessingStatus): void {
 
 // ==================== HELPERS ====================
 
+function cleanupStaleStatuses(): void {
+  const now = Date.now();
+  for (const [userId, status] of activeStatuses.entries()) {
+    if (status.stage !== 'completed' && status.stage !== 'error' && now - status.startTime > MAX_ACTIVE_STATUS_AGE_MS) {
+      status.stage = 'error';
+      status.message = 'Pemrosesan AI melewati batas waktu';
+      status.progress = 0;
+      status.lastUpdate = now;
+      notifyCallbacks(userId, status);
+      activeStatuses.delete(userId);
+      logger.warn('[ProcessingStatus] Removed stale status', { userId, ageMs: now - status.startTime });
+    }
+  }
+}
+
 /**
  * Get random message for stage
  */
@@ -265,6 +283,7 @@ function getRandomMessage(stage: ProcessingStage): string {
  * Get all active statuses (for monitoring)
  */
 export function getAllActiveStatuses(): ProcessingStatus[] {
+  cleanupStaleStatuses();
   return Array.from(activeStatuses.values());
 }
 
@@ -276,6 +295,7 @@ export function getStatusSummary(): {
   byStage: Record<ProcessingStage, number>;
   avgProcessingTimeMs: number;
 } {
+  cleanupStaleStatuses();
   const statuses = Array.from(activeStatuses.values());
   
   const byStage: Record<ProcessingStage, number> = {

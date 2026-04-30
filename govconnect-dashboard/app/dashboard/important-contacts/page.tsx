@@ -55,6 +55,13 @@ interface LinkedComplaintType {
   category_name: string
 }
 
+type ConfirmAction = {
+  title: string
+  description: string
+  actionLabel: string
+  onConfirm: () => Promise<void> | void
+}
+
 export default function ImportantContactsPage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -62,11 +69,19 @@ export default function ImportantContactsPage() {
   const [contacts, setContacts] = useState<ImportantContact[]>([])
 
   // Add/Edit Category Modal
+  const [newCategoryInitial, setNewCategoryInitial] = useState("")
   const [newCategory, setNewCategory] = useState("")
   const [categoryModalOpen, setCategoryModalOpen] = useState(false)
   const [editingCategory, setEditingCategory] = useState<ContactCategory | null>(null)
+  const [saveConfirm, setSaveConfirm] = useState<ConfirmAction | null>(null)
 
   // Add/Edit Contact Modal
+  const [newContactInitial, setNewContactInitial] = useState({
+    category_id: "",
+    name: "",
+    phone: "",
+    description: "",
+  })
   const [newContact, setNewContact] = useState({
     category_id: "",
     name: "",
@@ -109,10 +124,36 @@ export default function ImportantContactsPage() {
     fetchData()
   }, [])
 
+  const normalizedCategoryName = newCategory.trim()
+  const normalizedContact = {
+    category_id: newContact.category_id,
+    name: newContact.name.trim(),
+    phone: newContact.phone.trim(),
+    description: newContact.description.trim(),
+  }
+  const isCategoryDirty = normalizedCategoryName !== newCategoryInitial
+  const isContactDirty = JSON.stringify(normalizedContact) !== JSON.stringify(newContactInitial)
+
   // ================== CATEGORY HANDLERS ==================
 
+  const requestSaveCategory = () => {
+    if (!newCategory.trim()) {
+      toast({ title: "Nama kategori wajib diisi", variant: "destructive" })
+      return
+    }
+    if (!isCategoryDirty) return
+    setSaveConfirm({
+      title: editingCategory ? "Simpan perubahan kategori?" : "Tambah kategori nomor penting?",
+      description: editingCategory
+        ? `Perubahan kategori \"${newCategory.trim()}\" akan disimpan.`
+        : `Kategori \"${newCategory.trim()}\" akan ditambahkan.`,
+      actionLabel: "Simpan",
+      onConfirm: editingCategory ? handleEditCategory : handleAddCategory,
+    })
+  }
+
   const handleAddCategory = async () => {
-    if (!newCategory.trim()) return
+    if (!newCategory.trim() || !isCategoryDirty) return
 
     try {
       await contactsApi.createCategory({ name: newCategory.trim() })
@@ -134,7 +175,7 @@ export default function ImportantContactsPage() {
   }
 
   const handleEditCategory = async () => {
-    if (!editingCategory || !newCategory.trim()) return
+    if (!editingCategory || !newCategory.trim() || !isCategoryDirty) return
 
     try {
       await contactsApi.updateCategory(editingCategory.id, { name: newCategory.trim() })
@@ -159,6 +200,7 @@ export default function ImportantContactsPage() {
   const openEditCategoryModal = (category: ContactCategory) => {
     setEditingCategory(category)
     setNewCategory(category.name)
+    setNewCategoryInitial(category.name.trim())
     setCategoryModalOpen(true)
   }
 
@@ -216,8 +258,24 @@ export default function ImportantContactsPage() {
 
   // ================== CONTACT HANDLERS ==================
 
+  const requestSaveContact = () => {
+    if (!newContact.category_id || !newContact.name.trim() || !newContact.phone.trim()) {
+      toast({ title: "Kategori, nama, dan nomor telepon wajib diisi", variant: "destructive" })
+      return
+    }
+    if (!isContactDirty) return
+    setSaveConfirm({
+      title: editingContact ? "Simpan perubahan nomor penting?" : "Tambah nomor penting?",
+      description: editingContact
+        ? `Perubahan kontak \"${newContact.name.trim()}\" akan disimpan.`
+        : `Kontak \"${newContact.name.trim()}\" akan ditambahkan.`,
+      actionLabel: "Simpan",
+      onConfirm: editingContact ? handleEditContact : handleAddContact,
+    })
+  }
+
   const handleAddContact = async () => {
-    if (!newContact.category_id || !newContact.name || !newContact.phone) return
+    if (!newContact.category_id || !newContact.name || !newContact.phone || !isContactDirty) return
 
     try {
       await contactsApi.create({
@@ -244,7 +302,7 @@ export default function ImportantContactsPage() {
   }
 
   const handleEditContact = async () => {
-    if (!editingContact || !newContact.category_id || !newContact.name || !newContact.phone) return
+    if (!editingContact || !newContact.category_id || !newContact.name || !newContact.phone || !isContactDirty) return
 
     try {
       await contactsApi.update(editingContact.id, {
@@ -272,12 +330,19 @@ export default function ImportantContactsPage() {
   }
 
   const openEditContactModal = (contact: ImportantContact) => {
-    setEditingContact(contact)
-    setNewContact({
+    const next = {
       category_id: contact.category.id,
       name: contact.name,
       phone: contact.phone,
       description: contact.description || "",
+    }
+    setEditingContact(contact)
+    setNewContact(next)
+    setNewContactInitial({
+      ...next,
+      name: next.name.trim(),
+      phone: next.phone.trim(),
+      description: next.description.trim(),
     })
     setContactModalOpen(true)
   }
@@ -314,12 +379,15 @@ export default function ImportantContactsPage() {
   const openAddCategoryModal = () => {
     setEditingCategory(null)
     setNewCategory("")
+    setNewCategoryInitial("")
     setCategoryModalOpen(true)
   }
 
   const openAddContactModal = () => {
+    const next = { category_id: "", name: "", phone: "", description: "" }
     setEditingContact(null)
-    setNewContact({ category_id: "", name: "", phone: "", description: "" })
+    setNewContact(next)
+    setNewContactInitial(next)
     setContactModalOpen(true)
   }
 
@@ -327,12 +395,15 @@ export default function ImportantContactsPage() {
     setCategoryModalOpen(false)
     setEditingCategory(null)
     setNewCategory("")
+    setNewCategoryInitial("")
   }
 
   const closeContactModal = () => {
+    const next = { category_id: "", name: "", phone: "", description: "" }
     setContactModalOpen(false)
     setEditingContact(null)
-    setNewContact({ category_id: "", name: "", phone: "", description: "" })
+    setNewContact(next)
+    setNewContactInitial(next)
   }
 
   // Get contacts count per category
@@ -513,9 +584,9 @@ export default function ImportantContactsPage() {
             <Button variant="outline" onClick={closeCategoryModal}>
               <X className="h-4 w-4 mr-2" />Batal
             </Button>
-            <Button 
-              onClick={editingCategory ? handleEditCategory : handleAddCategory} 
-              disabled={!newCategory.trim()}
+            <Button
+              onClick={requestSaveCategory}
+              disabled={!newCategory.trim() || !isCategoryDirty}
             >
               {editingCategory ? "Simpan Perubahan" : "Simpan Kategori"}
             </Button>
@@ -587,15 +658,37 @@ export default function ImportantContactsPage() {
             <Button variant="outline" onClick={closeContactModal}>
               <X className="h-4 w-4 mr-2" />Batal
             </Button>
-            <Button 
-              onClick={editingContact ? handleEditContact : handleAddContact} 
-              disabled={!newContact.category_id || !newContact.name || !newContact.phone}
+            <Button
+              onClick={requestSaveContact}
+              disabled={!newContact.category_id || !newContact.name.trim() || !newContact.phone.trim() || !isContactDirty}
             >
               {editingContact ? "Simpan Perubahan" : "Simpan Nomor"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Save Confirmation */}
+      <AlertDialog open={!!saveConfirm} onOpenChange={(open) => !open && setSaveConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{saveConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{saveConfirm?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                const action = saveConfirm
+                setSaveConfirm(null)
+                await action?.onConfirm()
+              }}
+            >
+              {saveConfirm?.actionLabel || "Simpan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Contact Confirmation */}
       <AlertDialog open={deleteContactDialogOpen} onOpenChange={setDeleteContactDialogOpen}>

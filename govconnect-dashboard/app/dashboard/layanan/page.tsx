@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { layanan, villages } from "@/lib/frontend-api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -23,6 +23,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -62,6 +72,12 @@ function slugify(value: string) {
     .replace(/-+/g, "-")
 }
 
+function orderedRequirementIds(items: ServiceRequirement[]) {
+  return [...items]
+    .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+    .map((item) => item.id)
+}
+
 interface Service {
   id: string
   name: string
@@ -89,6 +105,14 @@ interface ServiceRequirement {
   options_json?: any
   help_text?: string | null
   order_index?: number
+}
+
+type ConfirmAction = {
+  title: string
+  description: string
+  actionLabel: string
+  variant?: "default" | "destructive"
+  onConfirm: () => Promise<void> | void
 }
 
 const modeLabels: Record<string, string> = {
@@ -135,10 +159,23 @@ export default function LayananPage() {
   const [draggingRequirementId, setDraggingRequirementId] = useState<string | null>(null)
   const [dragOverRequirementId, setDragOverRequirementId] = useState<string | null>(null)
   const [isReordering, setIsReordering] = useState(false)
+  const [savedRequirementOrder, setSavedRequirementOrder] = useState<string[]>([])
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   // Form states
   const [saving, setSaving] = useState(false)
+  const [categoryFormInitial, setCategoryFormInitial] = useState({ name: "", description: "" })
   const [categoryForm, setCategoryForm] = useState({ name: "", description: "" })
+  const [serviceFormInitial, setServiceFormInitial] = useState({
+    category_id: "",
+    name: "",
+    description: "",
+    slug: "",
+    mode: "both",
+    estimated_cost: "",
+    estimated_processing_time: "",
+    is_active: true,
+  })
   const [serviceForm, setServiceForm] = useState({
     category_id: "",
     name: "",
@@ -148,6 +185,14 @@ export default function LayananPage() {
     estimated_cost: "",
     estimated_processing_time: "",
     is_active: true,
+  })
+  const [requirementFormInitial, setRequirementFormInitial] = useState({
+    label: "",
+    field_type: "text",
+    is_required: true,
+    help_text: "",
+    options: "",
+    order_index: 1,
   })
   const [requirementForm, setRequirementForm] = useState({
     label: "",
@@ -160,6 +205,31 @@ export default function LayananPage() {
 
   // Copy state
   const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  const normalizedCategoryForm = {
+    name: categoryForm.name.trim(),
+    description: categoryForm.description.trim(),
+  }
+  const normalizedServiceForm = {
+    ...serviceForm,
+    name: serviceForm.name.trim(),
+    description: serviceForm.description.trim(),
+    slug: serviceForm.slug.trim(),
+    estimated_cost: serviceForm.estimated_cost.trim(),
+    estimated_processing_time: serviceForm.estimated_processing_time.trim(),
+  }
+  const normalizedRequirementForm = {
+    ...requirementForm,
+    label: requirementForm.label.trim(),
+    help_text: requirementForm.help_text.trim(),
+    options: requirementForm.options.split(',').map((option) => option.trim()).filter(Boolean).join(', '),
+    order_index: Math.max(1, Number(requirementForm.order_index) || 1),
+  }
+  const isCategoryDirty = JSON.stringify(normalizedCategoryForm) !== JSON.stringify(categoryFormInitial)
+  const isServiceDirty = JSON.stringify(normalizedServiceForm) !== JSON.stringify(serviceFormInitial)
+  const isRequirementDirty = JSON.stringify(normalizedRequirementForm) !== JSON.stringify(requirementFormInitial)
+  const currentRequirementOrder = useMemo(() => orderedRequirementIds(requirements), [requirements])
+  const isRequirementOrderDirty = JSON.stringify(currentRequirementOrder) !== JSON.stringify(savedRequirementOrder)
 
   useEffect(() => {
     fetchAll()
@@ -207,6 +277,7 @@ export default function LayananPage() {
       const data = await layanan.getRequirements(serviceId)
       const list = data.data || []
       setRequirements(list)
+      setSavedRequirementOrder(orderedRequirementIds(list))
       return list
     } catch (err: any) {
       toast({
@@ -225,20 +296,55 @@ export default function LayananPage() {
     return Math.max(1, maxOrder + 1)
   }
 
+  const resetRequirementForm = (list = requirements) => {
+    const next = {
+      label: "",
+      field_type: "text",
+      is_required: true,
+      help_text: "",
+      options: "",
+      order_index: getNextOrderIndex(list),
+    }
+    setRequirementForm(next)
+    setRequirementFormInitial(next)
+  }
+
+  const openConfirm = (action: ConfirmAction) => setPendingConfirm(action)
+
   // Category handlers
   const openCategoryModal = (category?: ServiceCategory) => {
     if (category) {
+      const next = { name: category.name, description: category.description || "" }
       setEditingCategory(category)
-      setCategoryForm({ name: category.name, description: category.description || "" })
+      setCategoryForm(next)
+      setCategoryFormInitial({ name: next.name.trim(), description: next.description.trim() })
     } else {
+      const next = { name: "", description: "" }
       setEditingCategory(null)
-      setCategoryForm({ name: "", description: "" })
+      setCategoryForm(next)
+      setCategoryFormInitial(next)
     }
     setCategoryModalOpen(true)
   }
 
+  const requestSaveCategory = () => {
+    if (!categoryForm.name.trim()) {
+      toast({ title: "Nama kategori wajib diisi", variant: "destructive" })
+      return
+    }
+    if (!isCategoryDirty) return
+    openConfirm({
+      title: editingCategory ? "Simpan perubahan kategori?" : "Tambah kategori layanan?",
+      description: editingCategory
+        ? `Perubahan kategori \"${categoryForm.name.trim()}\" akan disimpan.`
+        : `Kategori \"${categoryForm.name.trim()}\" akan ditambahkan.`,
+      actionLabel: "Simpan",
+      onConfirm: handleSaveCategory,
+    })
+  }
+
   const handleSaveCategory = async () => {
-    if (!categoryForm.name.trim()) return
+    if (!categoryForm.name.trim() || !isCategoryDirty) return
     
     try {
       setSaving(true)
@@ -267,9 +373,17 @@ export default function LayananPage() {
     }
   }
 
+  const requestDeleteCategory = (id: string) => {
+    openConfirm({
+      title: "Hapus kategori layanan?",
+      description: "Kategori akan dihapus dan layanan di dalam kategori ini akan kehilangan kategorinya.",
+      actionLabel: "Hapus",
+      variant: "destructive",
+      onConfirm: () => handleDeleteCategory(id),
+    })
+  }
+
   const handleDeleteCategory = async (id: string) => {
-    if (!confirm("Hapus kategori ini? Layanan dalam kategori ini akan kehilangan kategorinya.")) return
-    
     try {
       await layanan.deleteCategory(id)
 
@@ -290,8 +404,7 @@ export default function LayananPage() {
   // Service handlers
   const openServiceModal = (service?: Service) => {
     if (service) {
-      setEditingService(service)
-      setServiceForm({
+      const next = {
         category_id: service.category ? categories.find(c => c.name === service.category?.name)?.id || "" : "",
         name: service.name,
         description: service.description,
@@ -300,10 +413,19 @@ export default function LayananPage() {
         estimated_cost: service.estimated_cost || "",
         estimated_processing_time: service.estimated_processing_time || "",
         is_active: service.is_active,
+      }
+      setEditingService(service)
+      setServiceForm(next)
+      setServiceFormInitial({
+        ...next,
+        name: next.name.trim(),
+        description: next.description.trim(),
+        slug: next.slug.trim(),
+        estimated_cost: next.estimated_cost.trim(),
+        estimated_processing_time: next.estimated_processing_time.trim(),
       })
     } else {
-      setEditingService(null)
-      setServiceForm({
+      const next = {
         category_id: "",
         name: "",
         description: "",
@@ -312,13 +434,32 @@ export default function LayananPage() {
         estimated_cost: "",
         estimated_processing_time: "",
         is_active: true,
-      })
+      }
+      setEditingService(null)
+      setServiceForm(next)
+      setServiceFormInitial(next)
     }
     setServiceModalOpen(true)
   }
 
+  const requestSaveService = () => {
+    if (!serviceForm.name.trim() || !serviceForm.description.trim()) {
+      toast({ title: "Nama dan deskripsi layanan wajib diisi", variant: "destructive" })
+      return
+    }
+    if (!isServiceDirty) return
+    openConfirm({
+      title: editingService ? "Simpan perubahan layanan?" : "Tambah layanan?",
+      description: editingService
+        ? `Perubahan layanan \"${serviceForm.name.trim()}\" akan disimpan.`
+        : `Layanan \"${serviceForm.name.trim()}\" akan ditambahkan ke katalog.`,
+      actionLabel: "Simpan",
+      onConfirm: handleSaveService,
+    })
+  }
+
   const handleSaveService = async () => {
-    if (!serviceForm.name.trim() || !serviceForm.description.trim()) return
+    if (!serviceForm.name.trim() || !serviceForm.description.trim() || !isServiceDirty) return
     
     try {
       setSaving(true)
@@ -354,9 +495,17 @@ export default function LayananPage() {
     }
   }
 
+  const requestDeleteService = (id: string) => {
+    openConfirm({
+      title: "Hapus layanan?",
+      description: "Layanan dan semua persyaratannya akan ikut terhapus.",
+      actionLabel: "Hapus",
+      variant: "destructive",
+      onConfirm: () => handleDeleteService(id),
+    })
+  }
+
   const handleDeleteService = async (id: string) => {
-    if (!confirm("Hapus layanan ini? Semua persyaratan akan ikut terhapus.")) return
-    
     try {
       await layanan.delete(id)
 
@@ -380,18 +529,28 @@ export default function LayananPage() {
     setEditingRequirement(null)
     setRequirementModalOpen(true)
     const list = await fetchRequirements(service.id)
-    setRequirementForm({
-      label: "",
-      field_type: "text",
-      is_required: true,
-      help_text: "",
-      options: "",
-      order_index: getNextOrderIndex(list),
+    resetRequirementForm(list)
+  }
+
+  const requestSaveRequirement = () => {
+    if (!activeService) return
+    if (!requirementForm.label.trim()) {
+      toast({ title: "Label persyaratan wajib diisi", variant: "destructive" })
+      return
+    }
+    if (!isRequirementDirty) return
+    openConfirm({
+      title: editingRequirement ? "Simpan perubahan persyaratan?" : "Tambah persyaratan?",
+      description: editingRequirement
+        ? `Perubahan persyaratan \"${requirementForm.label.trim()}\" akan disimpan.`
+        : `Persyaratan \"${requirementForm.label.trim()}\" akan ditambahkan.`,
+      actionLabel: "Simpan",
+      onConfirm: handleSaveRequirement,
     })
   }
 
   const handleSaveRequirement = async () => {
-    if (!activeService || !requirementForm.label.trim()) return
+    if (!activeService || !requirementForm.label.trim() || !isRequirementDirty) return
     
     try {
       setSaving(true)
@@ -439,25 +598,11 @@ export default function LayananPage() {
       // Clear form but keep modal open (don't close modal)
       if (!editingRequirement) {
         const updated = await fetchRequirements(activeService.id)
-        setRequirementForm({
-          label: "",
-          field_type: "text",
-          is_required: true,
-          help_text: "",
-          options: "",
-          order_index: getNextOrderIndex(updated),
-        })
+        resetRequirementForm(updated)
       } else {
         setEditingRequirement(null)
         const updated = await fetchRequirements(activeService.id)
-        setRequirementForm({
-          label: "",
-          field_type: "text",
-          is_required: true,
-          help_text: "",
-          options: "",
-          order_index: getNextOrderIndex(updated),
-        })
+        resetRequirementForm(updated)
       }
       
       fetchAll() // Refresh service list to update requirement count
@@ -473,8 +618,7 @@ export default function LayananPage() {
   }
 
   const handleEditRequirement = (req: ServiceRequirement) => {
-    setEditingRequirement(req)
-    setRequirementForm({
+    const next = {
       label: req.label,
       field_type: req.field_type,
       is_required: req.is_required,
@@ -483,13 +627,31 @@ export default function LayananPage() {
       order_index: req.order_index && req.order_index > 0
         ? req.order_index
         : getNextOrderIndex(requirements),
+    }
+    setEditingRequirement(req)
+    setRequirementForm(next)
+    setRequirementFormInitial({
+      ...next,
+      label: next.label.trim(),
+      help_text: next.help_text.trim(),
+      options: next.options.split(',').map((option) => option.trim()).filter(Boolean).join(', '),
+      order_index: Math.max(1, Number(next.order_index) || 1),
+    })
+  }
+
+  const requestDeleteRequirement = (id: string) => {
+    if (!activeService) return
+    openConfirm({
+      title: "Hapus persyaratan?",
+      description: "Persyaratan ini akan dihapus dari layanan.",
+      actionLabel: "Hapus",
+      variant: "destructive",
+      onConfirm: () => handleDeleteRequirement(id),
     })
   }
 
   const handleDeleteRequirement = async (id: string) => {
     if (!activeService) return
-    if (!confirm("Hapus persyaratan ini?")) return
-    
     try {
       await layanan.deleteRequirement(id)
 
@@ -508,7 +670,7 @@ export default function LayananPage() {
     }
   }
 
-  const handleReorderRequirements = async (dragId: string, dropId: string) => {
+  const handleReorderRequirements = (dragId: string, dropId: string) => {
     if (!activeService || dragId === dropId || isReordering) return
 
     const ordered = [...requirements].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
@@ -523,15 +685,33 @@ export default function LayananPage() {
 
     const normalized = next.map((req, idx) => ({ ...req, order_index: idx + 1 }))
     setRequirements(normalized)
+    setDraggingRequirementId(null)
+    setDragOverRequirementId(null)
+  }
+
+  const requestSaveRequirementOrder = () => {
+    if (!activeService || !isRequirementOrderDirty) return
+    openConfirm({
+      title: "Simpan urutan persyaratan?",
+      description: `Urutan persyaratan untuk layanan \"${activeService.name}\" akan diperbarui.`,
+      actionLabel: "Simpan Urutan",
+      onConfirm: handleSaveRequirementOrder,
+    })
+  }
+
+  const handleSaveRequirementOrder = async () => {
+    if (!activeService || !isRequirementOrderDirty) return
     setIsReordering(true)
 
     try {
+      const normalized = [...requirements].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
       await Promise.all(
-        normalized.map((req) =>
-          layanan.updateRequirement(req.id, { order_index: req.order_index })
+        normalized.map((req, index) =>
+          layanan.updateRequirement(req.id, { order_index: index + 1 })
         )
       )
 
+      setSavedRequirementOrder(orderedRequirementIds(normalized))
       toast({
         title: "Urutan diperbarui",
         description: "Urutan persyaratan berhasil disimpan.",
@@ -545,8 +725,6 @@ export default function LayananPage() {
       await fetchRequirements(activeService.id)
     } finally {
       setIsReordering(false)
-      setDraggingRequirementId(null)
-      setDragOverRequirementId(null)
     }
   }
 
@@ -741,7 +919,7 @@ export default function LayananPage() {
                   copiedId={copiedId}
                   onCopy={copyToClipboard}
                   onEdit={() => openServiceModal(service)}
-                  onDelete={() => handleDeleteService(service.id)}
+                  onDelete={() => requestDeleteService(service.id)}
                   onManageRequirements={() => openRequirementModal(service)}
                 />
               ))}
@@ -760,7 +938,7 @@ export default function LayananPage() {
                   copiedId={copiedId}
                   onCopy={copyToClipboard}
                   onEdit={() => openServiceModal(service)}
-                  onDelete={() => handleDeleteService(service.id)}
+                  onDelete={() => requestDeleteService(service.id)}
                   onManageRequirements={() => openRequirementModal(service)}
                 />
               ))}
@@ -807,7 +985,7 @@ export default function LayananPage() {
               <X className="h-4 w-4 mr-2" />
               Tutup
             </Button>
-            <Button onClick={handleSaveCategory} disabled={saving || !categoryForm.name.trim()}>
+            <Button onClick={requestSaveCategory} disabled={saving || !categoryForm.name.trim() || !isCategoryDirty}>
               {saving ? "Menyimpan..." : editingCategory ? "Simpan Perubahan" : "Tambah Kategori"}
             </Button>
           </DialogFooter>
@@ -886,7 +1064,7 @@ export default function LayananPage() {
                                 Edit
                               </DropdownMenuItem>
                               <DropdownMenuItem 
-                                onClick={() => handleDeleteCategory(category.id)}
+                                onClick={() => requestDeleteCategory(category.id)}
                                 className="text-destructive"
                               >
                                 <Trash2 className="h-4 w-4 mr-2" />
@@ -1052,8 +1230,8 @@ export default function LayananPage() {
               Tutup
             </Button>
             <Button 
-              onClick={handleSaveService} 
-              disabled={saving || !serviceForm.name.trim() || !serviceForm.description.trim()}
+              onClick={requestSaveService}
+              disabled={saving || !serviceForm.name.trim() || !serviceForm.description.trim() || !isServiceDirty}
             >
               {saving ? "Menyimpan..." : editingService ? "Simpan Perubahan" : "Tambah Layanan"}
             </Button>
@@ -1172,8 +1350,8 @@ export default function LayananPage() {
 
               <div className="flex gap-2">
                 <Button 
-                  onClick={handleSaveRequirement} 
-                  disabled={saving || !requirementForm.label.trim()}
+                  onClick={requestSaveRequirement}
+                  disabled={saving || !requirementForm.label.trim() || !isRequirementDirty}
                   className="flex-1"
                 >
                   {saving ? "Menyimpan..." : editingRequirement ? "Simpan Perubahan" : "Tambah Persyaratan"}
@@ -1183,14 +1361,7 @@ export default function LayananPage() {
                     variant="outline" 
                     onClick={() => {
                       setEditingRequirement(null)
-                      setRequirementForm({
-                        label: "",
-                        field_type: "text",
-                        is_required: true,
-                        help_text: "",
-                        options: "",
-                        order_index: getNextOrderIndex(requirements),
-                      })
+                      resetRequirementForm()
                     }}
                   >
                     Batal Edit
@@ -1201,9 +1372,21 @@ export default function LayananPage() {
 
             {/* List Section */}
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="font-semibold text-sm">Daftar Persyaratan</h4>
-                <Badge variant="secondary">{requirements.length} item</Badge>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-semibold text-sm">Daftar Persyaratan</h4>
+                  {isRequirementOrderDirty && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">Urutan berubah dan belum disimpan.</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {isRequirementOrderDirty && (
+                    <Button size="sm" onClick={requestSaveRequirementOrder} disabled={isReordering || saving}>
+                      {isReordering ? "Menyimpan..." : "Simpan Urutan"}
+                    </Button>
+                  )}
+                  <Badge variant="secondary">{requirements.length} item</Badge>
+                </div>
               </div>
               
               {reqLoading ? (
@@ -1283,7 +1466,7 @@ export default function LayananPage() {
                             variant="ghost" 
                             size="icon" 
                             className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => handleDeleteRequirement(req.id)}
+                            onClick={() => requestDeleteRequirement(req.id)}
                           >
                             <Trash2 className="h-3 w-3" />
                           </Button>
@@ -1304,6 +1487,28 @@ export default function LayananPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!pendingConfirm} onOpenChange={(open) => !open && setPendingConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{pendingConfirm?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              className={pendingConfirm?.variant === "destructive" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+              onClick={async () => {
+                const action = pendingConfirm
+                setPendingConfirm(null)
+                await action?.onConfirm()
+              }}
+            >
+              {pendingConfirm?.actionLabel || "Lanjutkan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

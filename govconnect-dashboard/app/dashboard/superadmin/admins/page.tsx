@@ -9,6 +9,16 @@ import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth/AuthContext"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface AdminItem {
   id: string
@@ -30,6 +40,7 @@ export default function SuperadminAdminsPage() {
   const [loading, setLoading] = useState(true)
   const [admins, setAdmins] = useState<AdminItem[]>([])
   const [updating, setUpdating] = useState<string | null>(null)
+  const [pendingToggle, setPendingToggle] = useState<{ admin: AdminItem; nextValue: boolean } | null>(null)
 
   useEffect(() => {
     if (user && user.role !== "superadmin") {
@@ -69,6 +80,10 @@ export default function SuperadminAdminsPage() {
       fetchAdmins()
     }
   }, [user])
+
+  const requestToggle = (admin: AdminItem, nextValue: boolean) => {
+    setPendingToggle({ admin, nextValue })
+  }
 
   const handleToggle = async (adminId: string, nextValue: boolean) => {
     try {
@@ -121,6 +136,29 @@ export default function SuperadminAdminsPage() {
         </p>
       </div>
 
+      <AlertDialog open={!!pendingToggle} onOpenChange={(open) => !open && setPendingToggle(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingToggle?.nextValue ? "Aktifkan admin?" : "Nonaktifkan admin?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Status admin {pendingToggle?.admin.name} akan diubah menjadi {pendingToggle?.nextValue ? "aktif" : "nonaktif"}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                const action = pendingToggle
+                setPendingToggle(null)
+                if (action) await handleToggle(action.admin.id, action.nextValue)
+              }}
+            >
+              Simpan Perubahan
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Card>
         <CardHeader>
           <CardTitle>Daftar Admin</CardTitle>
@@ -169,7 +207,7 @@ export default function SuperadminAdminsPage() {
                         <div className="flex items-center gap-3">
                           <Switch
                             checked={admin.is_active}
-                            onCheckedChange={(value: boolean) => handleToggle(admin.id, value)}
+                            onCheckedChange={(value: boolean) => requestToggle(admin, value)}
                             disabled={updating === admin.id || admin.role === "superadmin"}
                           />
                           <span className="text-xs text-muted-foreground">
