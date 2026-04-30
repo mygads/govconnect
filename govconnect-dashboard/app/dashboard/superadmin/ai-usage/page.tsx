@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { ComponentType, useCallback, useEffect, useState } from "react"
 import { redirect } from "next/navigation"
 import {
   BarChart3,
@@ -22,38 +22,16 @@ import {
   Wallet,
   Trash2,
 } from "lucide-react"
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-} from "chart.js"
-import { Bar, Line, Doughnut } from "react-chartjs-2"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+
+export const dynamic = "force-dynamic"
+
+type ChartComponent = ComponentType<{ data: any; options?: any }>
+
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/components/auth/AuthContext"
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-)
 
 // ==================== Types ====================
 
@@ -332,6 +310,15 @@ export default function AITokenUsagePage() {
   // Reset database
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [resetting, setResetting] = useState(false)
+  const [charts, setCharts] = useState<{ Bar: ChartComponent; Line: ChartComponent; Doughnut: ChartComponent } | null>(null)
+
+  useEffect(() => {
+    Promise.all([import("chart.js"), import("react-chartjs-2")]).then(([chartjs, reactChart]) => {
+      const { Chart, CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler } = chartjs
+      Chart.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler)
+      setCharts({ Bar: reactChart.Bar, Line: reactChart.Line, Doughnut: reactChart.Doughnut })
+    })
+  }, [])
 
   useEffect(() => {
     if (user && user.role !== "superadmin") redirect("/dashboard")
@@ -467,6 +454,19 @@ export default function AITokenUsagePage() {
       setShowResetConfirm(false)
     }
   }
+
+  if (!charts) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-64" />
+        <div className="grid gap-4 md:grid-cols-5">
+          {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-28" />)}
+        </div>
+      </div>
+    )
+  }
+
+  const { Bar, Line, Doughnut } = charts
 
   return (
     <div className="space-y-6">

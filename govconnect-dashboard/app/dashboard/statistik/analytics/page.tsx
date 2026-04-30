@@ -1,16 +1,15 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { ComponentType, useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, TrendingUp, TrendingDown, Clock, Calendar, BarChart3, Activity, Zap } from "lucide-react"
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement, Filler } from "chart.js"
-import { Bar, Line, Doughnut } from "react-chartjs-2"
 import { statistics } from "@/lib/frontend-api"
 import { cn } from "@/lib/utils"
 
-// Register Chart.js components
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement, Filler)
+export const dynamic = "force-dynamic"
+
+type ChartComponent = ComponentType<{ data: any; options?: any }>
 
 interface TrendData {
   period: string
@@ -47,6 +46,15 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [period, setPeriod] = useState<'weekly' | 'monthly'>('weekly')
+  const [charts, setCharts] = useState<{ Bar: ChartComponent; Line: ChartComponent; Doughnut: ChartComponent } | null>(null)
+
+  useEffect(() => {
+    Promise.all([import("chart.js"), import("react-chartjs-2")]).then(([chartjs, reactChart]) => {
+      const { Chart, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement, Filler } = chartjs
+      Chart.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement, Filler)
+      setCharts({ Bar: reactChart.Bar, Line: reactChart.Line, Doughnut: reactChart.Doughnut })
+    })
+  }, [])
 
   const fetchTrends = useCallback(async () => {
     try {
@@ -65,7 +73,7 @@ export default function AnalyticsPage() {
     fetchTrends()
   }, [fetchTrends])
 
-  if (loading) {
+  if (loading || !charts) {
     return (
       <div className="space-y-6">
         <div>
@@ -108,6 +116,8 @@ export default function AnalyticsPage() {
       </div>
     )
   }
+
+  const { Bar, Line, Doughnut } = charts
 
   // Main trend chart with predictions
   const trendChartData = {

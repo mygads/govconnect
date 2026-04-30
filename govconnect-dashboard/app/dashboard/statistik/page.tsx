@@ -1,15 +1,14 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { ComponentType, useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement } from "chart.js"
-import { Bar, Pie, Line } from "react-chartjs-2"
 import { statistics } from "@/lib/frontend-api"
 
-// Register Chart.js components
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement)
+export const dynamic = "force-dynamic"
+
+type ChartComponent = ComponentType<{ data: any; options?: any }>
 
 interface Statistics {
   complaints: {
@@ -35,6 +34,15 @@ export default function StatistikPage() {
   const [stats, setStats] = useState<Statistics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [charts, setCharts] = useState<{ Bar: ChartComponent; Pie: ChartComponent; Line: ChartComponent } | null>(null)
+
+  useEffect(() => {
+    Promise.all([import("chart.js"), import("react-chartjs-2")]).then(([chartjs, reactChart]) => {
+      const { Chart, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement } = chartjs
+      Chart.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement)
+      setCharts({ Bar: reactChart.Bar, Pie: reactChart.Pie, Line: reactChart.Line })
+    })
+  }, [])
 
   useEffect(() => {
     fetchStatistics()
@@ -53,7 +61,7 @@ export default function StatistikPage() {
     }
   }
 
-  if (loading) {
+  if (loading || !charts) {
     return (
       <div className="space-y-6">
         <div>
@@ -91,6 +99,8 @@ export default function StatistikPage() {
       </div>
     )
   }
+
+  const { Bar, Pie, Line } = charts
 
   // Complaint Status Distribution
   const complaintStatusData = {
