@@ -1,7 +1,7 @@
 # ✅ SEO Checklist GovConnect
 
 Gunakan checklist ini untuk memastikan semua aspek SEO sudah diimplementasi.
-
+lestgo
 ---
 
 ## 🔧 Technical SEO (Sudah Diimplementasi)
