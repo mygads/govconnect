@@ -292,7 +292,17 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     });
     
     if (!result.success && result.error === 'Spam message detected') {
-      if (typingStarted) await stopTyping(wa_user_id, village_id);
+      if (typingStarted) {
+        try {
+          await stopTyping(wa_user_id, village_id);
+        } catch (typingError: any) {
+          logger.warn('Failed to stop typing indicator after spam detection', {
+            wa_user_id,
+            message_id,
+            error: typingError?.message || String(typingError),
+          });
+        }
+      }
       completeProcessing(village_id, wa_user_id, message_id);
       return;
     }
@@ -322,7 +332,15 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     // This is the latest message - send the response
     // Stop typing just before sending the actual reply (human-like gap)
     if (typingStarted) {
-      await stopTyping(wa_user_id, village_id);
+      try {
+        await stopTyping(wa_user_id, village_id);
+      } catch (typingError: any) {
+        logger.warn('Failed to stop typing indicator before WhatsApp reply', {
+          wa_user_id,
+          message_id,
+          error: typingError?.message || String(typingError),
+        });
+      }
     }
 
     // Use allMessageIds to mark ALL identical messages as replied

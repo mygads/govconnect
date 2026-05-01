@@ -218,6 +218,15 @@ async function configureSessionObjectStorage(sessionToken: string, villageId: st
     if (error.response?.status === 400 && message.includes('S3 is not enabled for this user')) {
       logger.warn('Skipping WhatsApp session S3 bootstrap because provider user has S3 disabled', {
         village_id: villageId,
+        media_delivery: s3Config.media_delivery,
+      });
+      await logWaActivity({
+        villageId,
+        type: 's3_config',
+        severity: 'warning',
+        status: 'provider_disabled',
+        message: 'Provider WhatsApp menolak konfigurasi S3; media masuk bisa membutuhkan download manual.',
+        metadata: { media_delivery: s3Config.media_delivery },
       });
       return;
     }
@@ -239,6 +248,7 @@ async function configureSessionObjectStorage(sessionToken: string, villageId: st
     village_id: villageId,
     bucket: s3Config.bucket,
     endpoint: s3Config.endpoint,
+    media_delivery: s3Config.media_delivery,
   });
 }
 
@@ -1019,6 +1029,35 @@ export async function getWhatsAppS3Status(villageId: string) {
     } : null,
     provider,
   };
+}
+
+export async function syncWhatsAppS3Config(villageId: string) {
+  const session = await getSessionByVillageId(villageId);
+  if (!session) throw new Error('Session belum dibuat');
+  const localConfig = getWhatsAppSessionS3Config();
+  if (!localConfig) throw new Error('Object storage lokal belum dikonfigurasi');
+
+  const configResult = await waGatewayRequest(session.wa_token, '/session/s3/config', 'POST', localConfig);
+  let testResult: any = null;
+  try {
+    testResult = await waGatewayRequest(session.wa_token, '/session/s3/test', 'POST');
+  } catch (error: any) {
+    testResult = { error: error.message, response: error.response?.data };
+  }
+
+  await logWaActivity({
+    villageId,
+    sessionId: session.wa_support_session_id,
+    type: 's3_config',
+    severity: testResult?.error ? 'warning' : 'info',
+    status: testResult?.error ? 'synced_test_failed' : 'synced',
+    message: testResult?.error
+      ? 'Konfigurasi S3 provider WhatsApp disinkronkan, tetapi test koneksi gagal.'
+      : 'Konfigurasi S3 provider WhatsApp disinkronkan ke mode S3.',
+    metadata: { media_delivery: localConfig.media_delivery, configResult, testResult },
+  });
+
+  return { media_delivery: localConfig.media_delivery, configResult, testResult };
 }
 
 export async function testWhatsAppS3(villageId: string) {
@@ -1890,13 +1929,27 @@ export async function sendEditMessage(params: {
   });
 
   if (result.success && params.villageId) {
-    await prisma.message.updateMany({
+    const existing = await prisma.message.findFirst({
       where: { village_id: params.villageId, message_id: params.messageId, direction: 'OUT' },
-      data: {
-        message_text: params.body,
-        status_error: null,
-      },
+      select: { id: true, interactive_payload: true },
     });
+    const currentPayload = existing?.interactive_payload && typeof existing.interactive_payload === 'object' && !Array.isArray(existing.interactive_payload)
+      ? existing.interactive_payload as Record<string, unknown>
+      : {};
+    if (existing) {
+      await prisma.message.update({
+        where: { id: existing.id },
+        data: {
+          message_text: params.body,
+          status_error: null,
+          interactive_payload: {
+            ...currentPayload,
+            edited: true,
+            edited_at: new Date().toISOString(),
+          },
+        },
+      });
+    }
     await logWaActivity({
       villageId: params.villageId,
       waUserId: params.to,

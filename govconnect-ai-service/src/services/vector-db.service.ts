@@ -273,7 +273,7 @@ export async function searchVectors(
     if (sourceTypes.includes('knowledge')) {
       // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
       // Actual quality filtering happens post-RRF in rerank stage.
-      const sqlMinScore = Math.min(minScore, 0.35);
+      const sqlMinScore = minScore;
       const knowledgeQuery = villageId
         ? Prisma.sql`
             SELECT 
@@ -327,7 +327,7 @@ export async function searchVectors(
     // Search document vectors
     if (sourceTypes.includes('document')) {
       // Fase 1.1: Use SQL threshold 0.35 for recall-first candidate retrieval.
-      const sqlMinScore = Math.min(minScore, 0.35);
+      const sqlMinScore = minScore;
       const documentQuery = villageId
         ? Prisma.sql`
             SELECT 
@@ -382,7 +382,7 @@ export async function searchVectors(
     // Search question variants (maps back to parent knowledge entries)
     if (sourceTypes.includes('knowledge')) {
       try {
-        const sqlMinScore = Math.min(minScore, 0.35);
+        const sqlMinScore = minScore;
         const variantQuery = villageId
           ? Prisma.sql`
               SELECT 

@@ -21,6 +21,7 @@ import {
   getWhatsAppProxyConfig,
   syncWhatsAppHistory,
   getWhatsAppS3Status,
+  syncWhatsAppS3Config,
   testWhatsAppS3,
   deleteWhatsAppS3Config,
 } from '../services/wa.service';
@@ -811,6 +812,17 @@ export async function getWaS3Status(req: Request, res: Response): Promise<void> 
   } catch (error: any) {
     logger.error('WA S3 status error', { error: error.message });
     res.status(500).json({ success: false, error: error.message || 'Failed to load WA S3 status' });
+  }
+}
+
+export async function syncWaS3(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+    res.json({ success: true, data: await syncWhatsAppS3Config(villageId) });
+  } catch (error: any) {
+    logger.error('WA S3 sync error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to sync WA S3 config' });
   }
 }
 

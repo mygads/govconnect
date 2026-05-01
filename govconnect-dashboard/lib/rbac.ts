@@ -35,6 +35,7 @@ const VILLAGE_ONLY_ROUTES: string[] = [
   '/dashboard/village-profile',
   '/dashboard/important-contacts',
   '/dashboard/knowledge-analytics',
+  '/dashboard/ai-usage',
   '/dashboard/ai-balance',
   '/dashboard/settings/rate-limit',
 ]

@@ -2,6 +2,7 @@ import logger from '../utils/logger';
 import { GenfityWebhookPayload, GenfityMediaMessage } from '../types/webhook.types';
 import { getAccessTokenForVillage, waGatewayRequest } from './wa.service';
 import { uploadBufferToObjectStorage } from './object-storage.service';
+import { logWaActivity } from './wa-activity-log.service';
 
 export interface MediaInfo {
   hasMedia: boolean;
@@ -363,6 +364,23 @@ export async function processMediaFromWebhook(
       mediaType: mediaInfo.mediaType,
       url: mediaInfo.mediaUrl,
     });
+    if (villageId) {
+      await logWaActivity({
+        villageId,
+        waUserId,
+        type: 'media_s3_received',
+        severity: 'info',
+        status: 'ok',
+        message: 'Media WhatsApp diterima melalui S3 tanpa base64.',
+        providerMessageId: messageId,
+        metadata: {
+          mediaType: mediaInfo.mediaType,
+          mimeType: mediaInfo.mimeType,
+          storageKey: mediaInfo.storageKey,
+          fileSize: mediaInfo.fileSize,
+        },
+      });
+    }
     return mediaInfo;
   }
 
@@ -376,6 +394,18 @@ export async function processMediaFromWebhook(
     );
     
     if (savedResult) {
+      if (villageId) {
+        await logWaActivity({
+          villageId,
+          waUserId,
+          type: 'media_base64_fallback',
+          severity: 'warning',
+          status: 'stored',
+          message: 'Media WhatsApp diterima via base64 fallback dan disimpan ulang ke object storage.',
+          providerMessageId: messageId,
+          metadata: { mediaType: mediaInfo.mediaType, mimeType: payload.mimeType },
+        });
+      }
       return {
         ...mediaInfo,
         mediaUrl: savedResult.internalUrl,
@@ -405,6 +435,18 @@ export async function processMediaFromWebhook(
       );
       
       if (savedResult) {
+        if (villageId) {
+          await logWaActivity({
+            villageId,
+            waUserId,
+            type: 'media_thumbnail_fallback',
+            severity: 'warning',
+            status: 'stored',
+            message: 'Media WhatsApp memakai thumbnail fallback karena URL S3/media asli belum tersedia.',
+            providerMessageId: messageId,
+            metadata: { mediaType: mediaInfo.mediaType, mimeType: 'image/jpeg' },
+          });
+        }
         return {
           ...mediaInfo,
           mediaUrl: savedResult.internalUrl,
@@ -447,6 +489,18 @@ export async function processMediaFromWebhook(
       );
       
       if (downloadedResult) {
+        if (villageId) {
+          await logWaActivity({
+            villageId,
+            waUserId,
+            type: 'media_download_fallback',
+            severity: 'warning',
+            status: 'stored',
+            message: 'Media WhatsApp dipulihkan via endpoint download fallback dan disimpan ke object storage.',
+            providerMessageId: messageId,
+            metadata: { mediaType: mediaInfo.mediaType, storageKey: downloadedResult.storageKey },
+          });
+        }
         return {
           ...mediaInfo,
           mediaUrl: downloadedResult.internalUrl,
@@ -463,7 +517,22 @@ export async function processMediaFromWebhook(
     messageId,
     mediaType: mediaInfo.mediaType,
   });
-  
+  if (villageId) {
+    await logWaActivity({
+      villageId,
+      waUserId,
+      type: 'media_unavailable',
+      severity: 'warning',
+      status: 'missing_url',
+      message: 'Media WhatsApp belum memiliki URL; gunakan retry download manual jika diperlukan.',
+      providerMessageId: messageId,
+      metadata: {
+        mediaType: mediaInfo.mediaType,
+        mediaError: (payload as any).media_error || null,
+      },
+    });
+  }
+
   return mediaInfo;
 }
 

@@ -136,12 +136,12 @@ const storageBucket = (process.env.S3_BUCKET || '').trim();
 const storageAccessKey = (process.env.S3_ACCESS_KEY || '').trim();
 const storageSecretKey = (process.env.S3_SECRET_KEY || '').trim();
 const storagePublicUrl = normalizeBaseUrl(process.env.S3_PUBLIC_URL);
-const storageDelivery = (process.env.S3_MEDIA_DELIVERY || 's3').trim().toLowerCase();
+const requestedStorageDelivery = (process.env.S3_MEDIA_DELIVERY || 's3').trim().toLowerCase();
+const storageDelivery = ['s3', 'both', 'base64'].includes(requestedStorageDelivery) ? requestedStorageDelivery : 's3';
 const storageRegion = resolveRegion(storageEndpoint, (process.env.S3_REGION || '').trim());
 const storagePathStyle = process.env.S3_PATH_STYLE === 'true';
 const storageRetentionDays = Math.max(1, parseInt(process.env.S3_RETENTION_DAYS || '365', 10) || 365);
 const storageEnabled =
-  storageDelivery === 's3' &&
   storageEndpoint.length > 0 &&
   storageBucket.length > 0 &&
   storageAccessKey.length > 0 &&

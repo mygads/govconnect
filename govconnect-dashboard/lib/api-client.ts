@@ -689,6 +689,26 @@ export const ai = {
     });
   },
 
+  async getVillageAIUsageUsers(villageId: string, params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-usage/village/${encodeURIComponent(villageId)}/users${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  async getVillageAIUsageMessages(villageId: string, params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-usage/village/${encodeURIComponent(villageId)}/messages${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  async getVillageAIUsageMessageDetail(villageId: string, billingId: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-usage/village/${encodeURIComponent(villageId)}/messages/${encodeURIComponent(billingId)}`), {
+      headers: getHeaders(),
+    });
+  },
+
   async getAIWalletSummary(villageId: string) {
     return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}`), {
       headers: getHeaders(),
@@ -705,6 +725,18 @@ export const ai = {
   async getAIBillingReconciliation(params?: Record<string, string>) {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
     return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-billing/reconciliation${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  async getAIBillingReconciliationDetail(billingId: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-billing/reconciliation/${encodeURIComponent(billingId)}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  async getAIBillingTrace(traceId: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-billing/trace/${encodeURIComponent(traceId)}`), {
       headers: getHeaders(),
     });
   },
@@ -907,8 +939,9 @@ export const ai = {
   /**
    * Get spam guard stats from AI service
    */
-  async getSpamGuardStats() {
-    return apiFetch(buildUrl(ServicePath.AI, '/spam-guard/stats'), {
+  async getSpamGuardStats(villageId?: string | null) {
+    const qs = villageId ? `?village_id=${encodeURIComponent(villageId)}` : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/spam-guard/stats${qs}`), {
       headers: getHeaders(),
     });
   },
@@ -916,8 +949,9 @@ export const ai = {
   /**
    * Get spam guard bans from channel service
    */
-  async getSpamGuardBans() {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, '/internal/spam-guard/bans'), {
+  async getSpamGuardBans(villageId?: string | null) {
+    const qs = villageId ? `?village_id=${encodeURIComponent(villageId)}` : '';
+    return apiFetch(buildUrl(ServicePath.CHANNEL, `/internal/spam-guard/bans${qs}`), {
       headers: getHeaders(),
     });
   },

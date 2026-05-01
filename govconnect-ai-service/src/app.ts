@@ -782,6 +782,8 @@ app.get('/stats/token-usage/summary', async (req: Request, res: Response) => {
   try {
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -799,6 +801,8 @@ app.get('/stats/token-usage/by-period', async (req: Request, res: Response) => {
     const filters = {
       village_id: getQuery(req, 'village_id'),
       model: getQuery(req, 'model'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -815,6 +819,8 @@ app.get('/stats/token-usage/by-period-layer', async (req: Request, res: Response
     const period = (getQuery(req, 'period') || 'day') as 'day' | 'week' | 'month';
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -830,6 +836,8 @@ app.get('/stats/token-usage/by-model', async (req: Request, res: Response) => {
   try {
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -845,6 +853,8 @@ app.get('/stats/token-usage/by-provider', async (req: Request, res: Response) =>
   try {
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -875,6 +885,8 @@ app.get('/stats/token-usage/by-intent-family', async (req: Request, res: Respons
   try {
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -890,6 +902,8 @@ app.get('/stats/token-usage/by-tenant-flow', async (req: Request, res: Response)
   try {
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -905,6 +919,8 @@ app.get('/stats/token-usage/layer-breakdown', async (req: Request, res: Response
   try {
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -920,6 +936,8 @@ app.get('/stats/token-usage/avg-per-chat', async (req: Request, res: Response) =
   try {
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -949,6 +967,8 @@ app.get('/stats/token-usage/village-model-detail', async (req: Request, res: Res
   try {
     const filters = {
       village_id: getQuery(req, 'village_id'),
+      wa_user_id: getQuery(req, 'wa_user_id'),
+      session_id: getQuery(req, 'session_id'),
       start: getQuery(req, 'start'),
       end: getQuery(req, 'end'),
     };
@@ -967,6 +987,186 @@ app.get('/stats/token-usage/by-source', async (req: Request, res: Response) => {
     res.json(data);
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to get token usage by source' });
+  }
+});
+
+app.get('/admin/ai-usage/village/:villageId/users', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    const start = getQuery(req, 'start');
+    const end = getQuery(req, 'end');
+    const range: any = {};
+    if (start) range.gte = new Date(start);
+    if (end) range.lte = new Date(end);
+
+    const users = await prisma.ai_message_billings.groupBy({
+      by: ['wa_user_id', 'session_id'],
+      where: {
+        village_id: villageId,
+        ...(Object.keys(range).length ? { created_at: range } : {}),
+      },
+      _count: { _all: true },
+      _sum: {
+        call_count: true,
+        input_tokens: true,
+        output_tokens: true,
+        total_tokens: true,
+        actual_cost_usd: true,
+        adjusted_cost_usd: true,
+        margin_usd: true,
+      },
+      orderBy: { _sum: { adjusted_cost_usd: 'desc' } },
+    });
+
+    res.json(users.map(row => ({
+      wa_user_id: row.wa_user_id,
+      session_id: row.session_id,
+      message_count: row._count._all,
+      call_count: row._sum.call_count ?? 0,
+      input_tokens: row._sum.input_tokens ?? 0,
+      output_tokens: row._sum.output_tokens ?? 0,
+      total_tokens: row._sum.total_tokens ?? 0,
+      actual_cost_usd: row._sum.actual_cost_usd ?? 0,
+      adjusted_cost_usd: row._sum.adjusted_cost_usd ?? 0,
+      margin_usd: row._sum.margin_usd ?? 0,
+    })));
+  } catch (error: any) {
+    logger.error('Failed to get village AI usage users', { error: error.message });
+    res.status(500).json({ error: 'Failed to get village AI usage users' });
+  }
+});
+
+app.get('/admin/ai-usage/village/:villageId/messages', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    const limit = Math.min(Math.max(Number(getQuery(req, 'limit') || 50), 1), 200);
+    const offset = Math.max(Number(getQuery(req, 'offset') || 0), 0);
+    const start = getQuery(req, 'start');
+    const end = getQuery(req, 'end');
+    const dateFilter: any = {};
+    if (start) dateFilter.gte = new Date(start);
+    if (end) dateFilter.lte = new Date(end);
+
+    const where = {
+      village_id: villageId,
+      ...(getQuery(req, 'wa_user_id') ? { wa_user_id: getQuery(req, 'wa_user_id') } : {}),
+      ...(getQuery(req, 'session_id') ? { session_id: getQuery(req, 'session_id') } : {}),
+      ...(Object.keys(dateFilter).length ? { created_at: dateFilter } : {}),
+    };
+
+    const [total, rows, totals] = await Promise.all([
+      prisma.ai_message_billings.count({ where }),
+      prisma.ai_message_billings.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip: offset,
+        take: limit,
+        select: {
+          id: true,
+          message_id: true,
+          trace_id: true,
+          billing_group_id: true,
+          channel: true,
+          wa_user_id: true,
+          session_id: true,
+          input_tokens: true,
+          output_tokens: true,
+          total_tokens: true,
+          call_count: true,
+          actual_cost_usd: true,
+          adjusted_cost_usd: true,
+          margin_usd: true,
+          status: true,
+          ledger_entry_id: true,
+          error_message: true,
+          created_at: true,
+          billed_at: true,
+        },
+      }),
+      prisma.ai_message_billings.aggregate({
+        where,
+        _sum: { actual_cost_usd: true, adjusted_cost_usd: true, margin_usd: true, total_tokens: true, call_count: true },
+        _count: { _all: true },
+      }),
+    ]);
+
+    res.json({
+      total,
+      limit,
+      offset,
+      totals: {
+        messages: totals._count._all,
+        actual_cost_usd: totals._sum.actual_cost_usd ?? 0,
+        adjusted_cost_usd: totals._sum.adjusted_cost_usd ?? 0,
+        margin_usd: totals._sum.margin_usd ?? 0,
+        total_tokens: totals._sum.total_tokens ?? 0,
+        call_count: totals._sum.call_count ?? 0,
+      },
+      data: rows,
+    });
+  } catch (error: any) {
+    logger.error('Failed to get village AI usage messages', { error: error.message });
+    res.status(500).json({ error: 'Failed to get village AI usage messages' });
+  }
+});
+
+app.get('/admin/ai-usage/village/:villageId/messages/:billingId', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    const billingId = getParam(req, 'billingId');
+    if (!villageId || !billingId) {
+      res.status(400).json({ error: 'villageId and billingId are required' });
+      return;
+    }
+
+    const billing = await prisma.ai_message_billings.findFirst({
+      where: { id: billingId, village_id: villageId },
+    });
+    if (!billing) {
+      res.status(404).json({ error: 'Message billing not found' });
+      return;
+    }
+
+    const [ledgerEntry, tokenUsageRows] = await Promise.all([
+      billing.ledger_entry_id
+        ? prisma.ai_wallet_ledger_entries.findUnique({ where: { id: billing.ledger_entry_id } })
+        : Promise.resolve(null),
+      prisma.ai_token_usage.findMany({
+        where: { billing_group_id: billing.billing_group_id, village_id: villageId },
+        orderBy: { created_at: 'asc' },
+        select: {
+          id: true,
+          model: true,
+          layer_type: true,
+          call_type: true,
+          input_tokens: true,
+          output_tokens: true,
+          total_tokens: true,
+          actual_cost_usd: true,
+          adjusted_cost_usd: true,
+          margin_usd: true,
+          billing_status: true,
+          success: true,
+          duration_ms: true,
+          created_at: true,
+        },
+      }),
+    ]);
+
+    res.json({ billing, ledger_entry: ledgerEntry, token_usage: tokenUsageRows });
+  } catch (error: any) {
+    logger.error('Failed to get village AI usage message detail', { error: error.message });
+    res.status(500).json({ error: 'Failed to get village AI usage message detail' });
   }
 });
 
@@ -1290,6 +1490,98 @@ app.delete('/admin/reset-token-usage', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Failed to reset token usage', { error: error.message });
     res.status(500).json({ error: 'Failed to reset token usage data' });
+  }
+});
+
+app.get('/admin/ai-billing/trace/:traceId', async (req: Request, res: Response) => {
+  try {
+    const traceId = getParam(req, 'traceId');
+    if (!traceId) {
+      res.status(400).json(errorResponse('traceId is required'));
+      return;
+    }
+
+    const [billings, tokenUsage, retrieval, memory, guardrails, toolPolicy] = await Promise.all([
+      prisma.ai_message_billings.findMany({
+        where: { trace_id: traceId },
+        orderBy: { created_at: 'desc' },
+      }),
+      prisma.ai_token_usage.findMany({
+        where: { trace_id: traceId },
+        orderBy: { created_at: 'asc' },
+      }),
+      prisma.ai_retrieval_traces.findMany({
+        where: { trace_id: traceId },
+        orderBy: { created_at: 'asc' },
+      }),
+      prisma.ai_memory_traces.findMany({
+        where: { trace_id: traceId },
+        orderBy: { created_at: 'asc' },
+      }),
+      prisma.ai_guardrail_events.findMany({
+        where: { trace_id: traceId },
+        orderBy: { created_at: 'asc' },
+      }),
+      prisma.ai_tool_policy_events.findMany({
+        where: { trace_id: traceId },
+        orderBy: { created_at: 'asc' },
+      }),
+    ]);
+
+    res.json(successResponse({ trace_id: traceId, billings, token_usage: tokenUsage, retrieval, memory, guardrails, tool_policy: toolPolicy }));
+  } catch (error: any) {
+    logger.error('Failed to load AI trace', { error: error.message });
+    res.status(500).json(errorResponse(error.message || 'Failed to load AI trace'));
+  }
+});
+
+app.get('/admin/ai-billing/reconciliation/:billingId', async (req: Request, res: Response) => {
+  try {
+    const billingId = getParam(req, 'billingId');
+    if (!billingId) {
+      res.status(400).json(errorResponse('billingId is required'));
+      return;
+    }
+
+    const billing = await prisma.ai_message_billings.findUnique({
+      where: { id: billingId },
+    });
+
+    if (!billing) {
+      res.status(404).json(errorResponse('Message billing not found'));
+      return;
+    }
+
+    const [ledgerEntry, tokenUsageRows] = await Promise.all([
+      billing.ledger_entry_id
+        ? prisma.ai_wallet_ledger_entries.findUnique({ where: { id: billing.ledger_entry_id } })
+        : Promise.resolve(null),
+      prisma.ai_token_usage.findMany({
+        where: { billing_group_id: billing.billing_group_id },
+        orderBy: { created_at: 'asc' },
+        select: {
+          id: true,
+          model: true,
+          layer_type: true,
+          call_type: true,
+          input_tokens: true,
+          output_tokens: true,
+          total_tokens: true,
+          actual_cost_usd: true,
+          adjusted_cost_usd: true,
+          margin_usd: true,
+          billing_status: true,
+          success: true,
+          duration_ms: true,
+          created_at: true,
+        },
+      }),
+    ]);
+
+    res.json(successResponse({ billing, ledger_entry: ledgerEntry, token_usage: tokenUsageRows }));
+  } catch (error: any) {
+    logger.error('Failed to load AI billing detail', { error: error.message });
+    res.status(500).json(errorResponse(error.message || 'Failed to load AI billing detail'));
   }
 });
 

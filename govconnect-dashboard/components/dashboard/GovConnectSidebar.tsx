@@ -206,6 +206,12 @@ export function GovConnectSidebar() {
           excludeRoles: ["superadmin"],
         },
         {
+          title: "Statistik AI",
+          url: "/dashboard/ai-usage",
+          icon: Cpu,
+          excludeRoles: ["superadmin"],
+        },
+        {
           title: "Saldo AI",
           url: "/dashboard/ai-balance",
           icon: Wallet,
@@ -270,6 +276,12 @@ export function GovConnectSidebar() {
           title: "AI Wallets",
           url: "/dashboard/superadmin/ai-wallets",
           icon: Wallet,
+          roles: ["superadmin"],
+        },
+        {
+          title: "Billing Reconciliation",
+          url: "/dashboard/superadmin/ai-billing-reconciliation",
+          icon: BarChart3,
           roles: ["superadmin"],
         },
         {

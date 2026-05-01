@@ -181,6 +181,7 @@ export default function ChannelSettingsPage() {
   const [showS3DeleteDialog, setShowS3DeleteDialog] = useState(false)
   const [testingS3, setTestingS3] = useState(false)
   const [deletingS3, setDeletingS3] = useState(false)
+  const [syncingS3, setSyncingS3] = useState(false)
 
   // QR Dialog states
   const [showQrDialog, setShowQrDialog] = useState(false)
@@ -367,6 +368,22 @@ export default function ChannelSettingsPage() {
       toast({ title: 'Gagal Sync History', description: error.message || 'Gagal sync history', variant: 'destructive' })
     } finally {
       setSyncingHistory(false)
+    }
+  }
+
+  const handleSyncS3 = async () => {
+    try {
+      setSyncingS3(true)
+      const response = await fetchApiRaw(withVillage('/api/whatsapp/s3/sync'), { method: 'POST' })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal sync S3 provider')
+      await fetchOperationalDetails()
+      await fetchWaActivities()
+      toast({ title: 'S3 Provider Disinkronkan', description: 'Media WhatsApp sekarang diarahkan ke mode S3.' })
+    } catch (error: any) {
+      toast({ title: 'Gagal Sync S3', description: error.message || 'Gagal sync S3 provider', variant: 'destructive' })
+    } finally {
+      setSyncingS3(false)
     }
   }
 
@@ -1293,15 +1310,32 @@ export default function ChannelSettingsPage() {
 
             <div className="rounded-lg border p-3 text-sm">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <p className="font-medium">S3 Provider WhatsApp</p>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium">S3 Provider WhatsApp</p>
+                    <Badge className={s3Status?.local?.media_delivery === 's3' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}>
+                      Local: {s3Status?.local?.media_delivery || '-'}
+                    </Badge>
+                    <Badge className={s3Status?.provider?.media_delivery === 's3' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}>
+                      Provider: {s3Status?.provider?.media_delivery || '-'}
+                    </Badge>
+                  </div>
                   <p className="text-muted-foreground">Local: {s3Status?.localConfigured ? 'configured' : 'not configured'} · Provider: {s3Status?.provider?.error ? 'error' : s3Status?.provider ? 'available' : '-'}</p>
                   <p className="text-muted-foreground">Bucket: {s3Status?.local?.bucket || '-'}</p>
                   <p className="text-muted-foreground">Endpoint: {s3Status?.local?.endpoint || '-'}</p>
+                  {(s3Status?.local?.media_delivery && s3Status.local.media_delivery !== 's3') || (s3Status?.provider?.media_delivery && s3Status.provider.media_delivery !== 's3') ? (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p>Mode media belum S3 penuh. Base64/both hanya untuk fallback dan debug karena payload lebih berat.</p>
+                    </div>
+                  ) : null}
                   {s3Status?.provider?.error && <p className="text-red-600">{s3Status.provider.error}</p>}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={fetchOperationalDetails}>Refresh</Button>
+                  <Button type="button" variant="outline" size="sm" onClick={handleSyncS3} disabled={syncingS3 || !sessionExists || !s3Status?.localConfigured}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${syncingS3 ? "animate-spin" : ""}`} />Sync S3
+                  </Button>
                   <Button type="button" variant="outline" size="sm" onClick={handleTestS3} disabled={testingS3 || !sessionExists}>
                     <RefreshCw className={`h-4 w-4 mr-2 ${testingS3 ? "animate-spin" : ""}`} />Test
                   </Button>

@@ -52,6 +52,7 @@ import {
   BarChart3,
   Sticker,
   SmilePlus,
+  Clock3,
 } from "lucide-react"
 
 interface Conversation {
@@ -202,6 +203,7 @@ export default function LiveChatPage() {
   const [isInitialMessagesLoading, setIsInitialMessagesLoading] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [isUploadingMedia, setIsUploadingMedia] = useState(false)
+  const [mediaUploadProgress, setMediaUploadProgress] = useState(0)
   const [selectedMedia, setSelectedMedia] = useState<UploadedLivechatMedia | null>(null)
   const [villageProfileLocation, setVillageProfileLocation] = useState<VillageProfileLocation | null>(null)
   const [importantContacts, setImportantContacts] = useState<ImportantContact[]>([])
@@ -971,7 +973,44 @@ export default function LiveChatPage() {
     typingPauseTimeoutRef.current = setTimeout(() => sendTypingState('paused', true), 2200)
   }
 
-  // Send message
+  const createOptimisticMessage = (text: string, media: UploadedLivechatMedia | null, replyTo: Message | null): Message => {
+    const now = new Date().toISOString()
+    return {
+      id: `optimistic-${Date.now()}`,
+      message_id: undefined,
+      message_text: text || (media ? media.file_name || '[Media]' : ''),
+      media_type: media?.type || null,
+      media_url: media?.internal_url || media?.url || null,
+      media_public_url: media?.url || null,
+      mime_type: media?.mime_type || null,
+      file_name: media?.file_name || null,
+      file_size: media?.size || null,
+      storage_key: media?.storage_key || null,
+      quoted_message_id: replyTo?.message_id || null,
+      quoted_text: replyTo?.message_text || null,
+      message_kind: media ? 'media' : 'text',
+      direction: 'OUT',
+      source: 'ADMIN',
+      delivery_status: null,
+      timestamp: now,
+      createdAt: now,
+    }
+  }
+
+  const replaceOptimisticMessage = (optimisticId: string, data: any, fallback: Message) => {
+    setMessages((current) => normalizeMessages(current.map((message) => (
+      message.id === optimisticId
+        ? {
+            ...fallback,
+            id: data?.local_id || data?.id || optimisticId,
+            message_id: data?.message_id || fallback.message_id,
+            delivery_status: data?.delivery_status || 'sent',
+            status_error: null,
+          }
+        : message
+    ))))
+  }
+
   const sendLivechatPayload = async (payload: Record<string, unknown>) => {
     if (!selectedConversation) return null
     const token = localStorage.getItem("token")
@@ -999,9 +1038,12 @@ export default function LiveChatPage() {
     if (replyToSend?.message_id) {
       Object.assign(payload, { reply_to_message_id: replyToSend.message_id })
     }
-    setMessageInput("") // Clear immediately for better UX
+    const optimisticMessage = createOptimisticMessage(messageToSend, mediaToSend, replyToSend)
+    setMessageInput("")
     setSelectedMedia(null)
     setReplyingToMessage(null)
+    setMessages((current) => normalizeMessages([...current, optimisticMessage]))
+    setTimeout(() => scrollToBottom(true), 0)
     if (typingPauseTimeoutRef.current) clearTimeout(typingPauseTimeoutRef.current)
     sendTypingState('paused', true)
     setIsSendingMessage(true)
@@ -1010,19 +1052,17 @@ export default function LiveChatPage() {
       const data = await sendLivechatPayload(payload)
       if (!data) return
       if (data.success) {
-        // Fetch messages to get the new one
+        replaceOptimisticMessage(optimisticMessage.id, data, optimisticMessage)
         await fetchMessagesSilent(getConversationKey(selectedConversation))
-        toast({
-          title: "Pesan Terkirim",
-          description: "Pesan berhasil dikirim ke pengguna.",
-        })
       } else {
-        setMessageInput(messageToSend) // Restore on error
+        setMessages((current) => current.map((message) => message.id === optimisticMessage.id ? { ...message, delivery_status: 'failed', status_error: data.error || 'Gagal mengirim pesan' } : message))
+        setMessageInput(messageToSend)
         setSelectedMedia(mediaToSend)
         setReplyingToMessage(replyToSend)
         throw new Error(data.error || "Gagal mengirim pesan")
       }
     } catch (error: any) {
+      setMessages((current) => current.map((message) => message.id === optimisticMessage.id ? { ...message, delivery_status: 'failed', status_error: error.message || 'Gagal mengirim pesan' } : message))
       toast({
         title: "Error",
         description: error.message || "Gagal mengirim pesan",
@@ -1357,28 +1397,45 @@ export default function LiveChatPage() {
     return 'document'
   }
 
-  const handleMediaSelect = async (file: File | null) => {
-    if (!file) return
-
-    setIsUploadingMedia(true)
-    try {
-      const token = localStorage.getItem("token")
+  const uploadLivechatMedia = (file: File, token: string | null): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
       const formData = new FormData()
       formData.append('file', file)
       formData.append('scope', 'livechat')
 
-      const response = await fetch('/api/uploads', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      })
-
-      const result = await response.json()
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Gagal mengunggah media')
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return
+        setMediaUploadProgress(Math.max(1, Math.min(99, Math.round((event.loaded / event.total) * 100))))
       }
+      xhr.onload = () => {
+        try {
+          const result = JSON.parse(xhr.responseText || '{}')
+          if (xhr.status < 200 || xhr.status >= 300 || !result.success) {
+            reject(new Error(result.error || 'Gagal mengunggah media'))
+            return
+          }
+          setMediaUploadProgress(100)
+          resolve(result)
+        } catch {
+          reject(new Error('Response upload media tidak valid'))
+        }
+      }
+      xhr.onerror = () => reject(new Error('Koneksi upload media gagal'))
+      xhr.open('POST', '/api/uploads')
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.send(formData)
+    })
+  }
+
+  const handleMediaSelect = async (file: File | null) => {
+    if (!file) return
+
+    setIsUploadingMedia(true)
+    setMediaUploadProgress(0)
+    try {
+      const token = localStorage.getItem("token")
+      const result = await uploadLivechatMedia(file, token)
 
       if (!result.data?.url) {
         throw new Error('Upload berhasil tetapi URL media kosong')
@@ -1401,6 +1458,7 @@ export default function LiveChatPage() {
       })
     } finally {
       setIsUploadingMedia(false)
+      setMediaUploadProgress(0)
       if (mediaInputRef.current) mediaInputRef.current.value = ''
     }
   }
@@ -1605,16 +1663,17 @@ export default function LiveChatPage() {
   const getMessageStatusLabel = (msg: Message) => {
     if (msg.delivery_status === 'failed') return 'Gagal'
     if (msg.delivery_status === 'read') return 'Dibaca'
-    if (msg.delivery_status === 'delivered') return 'Terkirim'
+    if (msg.delivery_status === 'delivered') return 'Diterima'
     if (msg.delivery_status === 'sent') return 'Terkirim'
-    return msg.source === 'ADMIN' ? 'Mengirim' : msg.source === 'AI' ? 'AI' : 'Sistem'
+    return msg.source === 'ADMIN' ? 'Mengantre' : msg.source === 'AI' ? 'AI' : 'Sistem'
   }
 
   const renderMessageStatusIcon = (msg: Message) => {
     if (msg.delivery_status === 'failed') return <AlertTriangle className="h-3.5 w-3.5 ml-1 text-red-200" />
     if (msg.delivery_status === 'read') return <CheckCheck className="h-3.5 w-3.5 ml-1 text-blue-300" />
     if (msg.delivery_status === 'delivered') return <CheckCheck className="h-3.5 w-3.5 ml-1" />
-    return <Check className="h-3.5 w-3.5 ml-1" />
+    if (msg.delivery_status === 'sent') return <Check className="h-3.5 w-3.5 ml-1" />
+    return <Clock3 className="h-3.5 w-3.5 ml-1" />
   }
 
   // Get initials for avatar
@@ -1802,6 +1861,19 @@ export default function LiveChatPage() {
     )
   }
 
+  const humanizeChoiceLabel = (value: unknown) => {
+    if (typeof value !== 'string') return ''
+    return value
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, (char) => char.toUpperCase())
+  }
+
+  const getInteractiveButtonLabel = (button: any, index: number) => {
+    return button?.title || button?.Title || button?.text || button?.Text || humanizeChoiceLabel(button?.id || button?.ID) || `Pilihan ${index + 1}`
+  }
+
   const renderInteractiveCard = (msg: Message) => {
     if (!msg.interactive_payload || typeof msg.interactive_payload !== 'object') return null
     const payload = msg.interactive_payload
@@ -1818,7 +1890,7 @@ export default function LiveChatPage() {
           <div className="mt-2 space-y-1">
             {buttons.map((button: any, index: number) => (
               <div key={`${msg.id}-button-${index}`} className="rounded border border-current/20 px-2 py-1 text-xs">
-                {button.text || button.Text || button.id || button.ID || `Pilihan ${index + 1}`}
+                {getInteractiveButtonLabel(button, index)}
               </div>
             ))}
           </div>
@@ -2382,7 +2454,7 @@ export default function LiveChatPage() {
                             <div className="group relative">
                               {renderMessageContent(msg)}
                               {selectedConversation.is_takeover && (
-                                <div className={`absolute -top-3 z-20 flex gap-1 rounded-full border bg-background/95 p-1 shadow-lg opacity-0 transition-opacity group-hover:opacity-100 ${msg.direction === 'OUT' ? '-left-36' : '-right-36'}`}>
+                                <div className={`absolute top-1/2 z-20 flex -translate-y-1/2 gap-1 rounded-full border bg-background/95 p-1 shadow-lg opacity-0 transition-opacity group-hover:opacity-100 ${msg.direction === 'OUT' ? 'left-0 -translate-x-[calc(100%+0.5rem)]' : 'right-0 translate-x-[calc(100%+0.5rem)]'}`}>
                                   <Button
                                     type="button"
                                     variant="ghost"
@@ -2424,6 +2496,7 @@ export default function LiveChatPage() {
                             <div className={`flex items-center gap-1 mt-1.5 text-xs ${msg.direction === "OUT" ? "text-green-100" : "text-muted-foreground"
                               }`}>
                               <span>{formatTime(msg.timestamp)}</span>
+                              {msg.interactive_payload?.edited && <span className="italic opacity-80">edited</span>}
                               {msg.direction === "OUT" && (
                                 <>
                                   <span className="mx-0.5">•</span>
@@ -2504,6 +2577,17 @@ export default function LiveChatPage() {
                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setReplyingToMessage(null)}>
                           <X className="h-4 w-4" />
                         </Button>
+                      </div>
+                    )}
+                    {isUploadingMedia && (
+                      <div className="space-y-1 rounded-lg border bg-muted/50 px-3 py-2 text-sm">
+                        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                          <span>Mengunggah media...</span>
+                          <span>{mediaUploadProgress}%</span>
+                        </div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${mediaUploadProgress}%` }} />
+                        </div>
                       </div>
                     )}
                     {selectedMedia && (

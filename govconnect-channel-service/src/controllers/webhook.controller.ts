@@ -42,7 +42,8 @@ function eventTimestamp(payload: GenfityWebhookPayload): Date {
 function resolveWebhookMessageId(payload: GenfityWebhookPayload): string | null {
   const event: any = payload.event || {};
   const info: any = event.Info || {};
-  return info.ID || info.MessageID || info.MessageId || event.ID || event.MessageID || event.MessageId || (payload as any).message_id || null;
+  const messageIds = event.MessageIDs || event.MessageIds || event.messageIDs || event.messageIds || (payload as any).messageIDs || (payload as any).messageIds;
+  return info.ID || info.MessageID || info.MessageId || event.ID || event.MessageID || event.MessageId || (Array.isArray(messageIds) ? messageIds[0] : null) || (payload as any).message_id || null;
 }
 
 function resolvePresenceIdentifier(payload: GenfityWebhookPayload): string | null {
@@ -324,10 +325,10 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
     const messageId = resolveWebhookMessageId(payload);
     if (!messageId) return true;
 
-    const rawState = String((payload.event as any)?.Receipt?.Type || (payload.event as any)?.Status || (payload as any).status || type).toLowerCase();
+    const rawState = String((payload.event as any)?.Receipt?.Type || (payload.event as any)?.Status || (payload.event as any)?.state || (payload.event as any)?.State || (payload as any).state || (payload as any).status || type).toLowerCase();
     const failed = rawState.includes('fail') || rawState.includes('error');
-    const read = type === 'ReadReceipt' || rawState.includes('read');
-    const delivered = rawState.includes('deliver') || type === 'Receipt';
+    const read = rawState.includes('read');
+    const delivered = rawState.includes('deliver');
     const status: 'sent' | 'delivered' | 'read' | 'failed' = failed ? 'failed' : read ? 'read' : delivered ? 'delivered' : 'sent';
     const error = failed ? JSON.stringify((payload.event as any)?.Error || (payload as any).error || 'Delivery failed').slice(0, 500) : undefined;
 

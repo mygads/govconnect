@@ -231,6 +231,7 @@ model ai_wallet_ledger_entries {
   created_at         DateTime @default(now())
 
   wallet             ai_village_wallets @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
+  message_billing    ai_message_billings?
 
   @@index([village_id, created_at])
   @@index([wallet_id, created_at])
@@ -256,14 +257,15 @@ model ai_message_billings {
   adjusted_cost_usd   Float     @default(0)
   margin_usd          Float     @default(0)
   status              String    @default("pending")
-  ledger_entry_id     String?
+  ledger_entry_id     String?   @unique
   error_message       String?   @db.Text
   metadata_json       Json?
   created_at          DateTime  @default(now())
   billed_at           DateTime?
 
+  ledger_entry        ai_wallet_ledger_entries? @relation(fields: [ledger_entry_id], references: [id], onDelete: SetNull)
+
   @@index([village_id, created_at])
-  @@index([message_id])
   @@index([trace_id])
   @@index([status, created_at])
   @@index([ledger_entry_id])

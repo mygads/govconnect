@@ -1,25 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { ai } from '@/lib/api-client'
 
 // GET - Get spam guard stats and bans
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getAdminSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload || (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
+    const villageId = resolveVillageId(request, session)
 
     // Fetch from both AI service (stats) and Channel service (bans)
     const [statsRes, bansRes] = await Promise.allSettled([
-      ai.getSpamGuardStats(),
-      ai.getSpamGuardBans(),
+      ai.getSpamGuardStats(villageId),
+      ai.getSpamGuardBans(villageId),
     ])
 
     const statsAvailable = statsRes.status === 'fulfilled' && statsRes.value.ok
@@ -56,27 +52,21 @@ export async function GET(request: NextRequest) {
 // DELETE - Remove a spam ban
 export async function DELETE(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getAdminSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload || (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { searchParams } = new URL(request.url)
     const wa_user_id = searchParams.get('wa_user_id')
-    const village_id = searchParams.get('village_id')
+    const villageId = session.role === 'superadmin' ? searchParams.get('village_id') : session.villageId
 
     if (!wa_user_id) {
       return NextResponse.json({ error: 'wa_user_id required' }, { status: 400 })
     }
 
     try {
-      const response = await ai.removeSpamBan(wa_user_id, village_id || undefined)
+      const response = await ai.removeSpamBan(wa_user_id, villageId || undefined)
       const data = await response.json()
       return NextResponse.json(data, { status: response.ok ? 200 : response.status })
     } catch (error) {

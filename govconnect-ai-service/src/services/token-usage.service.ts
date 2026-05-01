@@ -565,6 +565,14 @@ export function extractAndRecord(
 // ==================== Read / Aggregation Queries ====================
 
 type Period = 'day' | 'week' | 'month';
+type UsageFilters = { village_id?: string | null; model?: string | null; start?: string | null; end?: string | null; wa_user_id?: string | null; session_id?: string | null };
+
+function applyCommonFilters(conditions: Prisma.Sql[], filters?: UsageFilters) {
+  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  if (filters?.model) conditions.push(Prisma.sql`model = ${filters.model}`);
+  if (filters?.wa_user_id) conditions.push(Prisma.sql`wa_user_id = ${filters.wa_user_id}`);
+  if (filters?.session_id) conditions.push(Prisma.sql`session_id = ${filters.session_id}`);
+}
 
 function periodToDateTrunc(period: Period): string {
   switch (period) {
@@ -590,7 +598,7 @@ function defaultRange(period: Period): { start: Date; end: Date } {
  */
 export async function getUsageByPeriod(
   period: Period = 'day',
-  filters?: { village_id?: string; model?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<any[]> {
   const trunc = periodToDateTrunc(period);
   const range = defaultRange(period);
@@ -598,8 +606,7 @@ export async function getUsageByPeriod(
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
   const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
-  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
-  if (filters?.model) conditions.push(Prisma.sql`model = ${filters.model}`);
+  applyCommonFilters(conditions, filters);
 
   const where = Prisma.join(conditions, ' AND ');
 
@@ -627,14 +634,14 @@ export async function getUsageByPeriod(
  * Token usage grouped by model.
  */
 export async function getUsageByModel(
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<any[]> {
   const range = defaultRange('month');
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
   const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
-  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  applyCommonFilters(conditions, filters);
 
   const where = Prisma.join(conditions, ' AND ');
 
@@ -655,12 +662,14 @@ export async function getUsageByModel(
 }
 
 export async function getUsageByProvider(
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<any[]> {
   const range = defaultRange('month');
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
   const villageId = filters?.village_id ?? null;
+  const waUserId = filters?.wa_user_id ?? null;
+  const sessionId = filters?.session_id ?? null;
 
   return prisma.$queryRaw<any[]>(Prisma.sql`
     WITH provider_rows AS (
@@ -684,6 +693,8 @@ export async function getUsageByProvider(
       WHERE u.created_at >= ${startDate}
         AND u.created_at <= ${endDate}
         AND (${villageId}::text IS NULL OR u.village_id = ${villageId})
+        AND (${waUserId}::text IS NULL OR u.wa_user_id = ${waUserId})
+        AND (${sessionId}::text IS NULL OR u.session_id = ${sessionId})
       GROUP BY COALESCE(u.provider_id, '__legacy__'), COALESCE(u.provider_id, p.id, '__legacy__'), COALESCE(p.name, u.key_tier, 'Legacy / Unknown Provider'), COALESCE(p.slug, u.key_tier, 'legacy-unknown'), COALESCE(p.provider_kind, 'legacy')
     ),
     model_rows AS (
@@ -707,6 +718,8 @@ export async function getUsageByProvider(
       WHERE u.created_at >= ${startDate}
         AND u.created_at <= ${endDate}
         AND (${villageId}::text IS NULL OR u.village_id = ${villageId})
+        AND (${waUserId}::text IS NULL OR u.wa_user_id = ${waUserId})
+        AND (${sessionId}::text IS NULL OR u.session_id = ${sessionId})
       GROUP BY COALESCE(u.provider_id, '__legacy__'), COALESCE(u.model_config_id, m.id, '__legacy__'), u.model, COALESCE(m.display_name, u.model), COALESCE(u.lane_type, m.lane_type, 'unknown')
     )
     SELECT
@@ -787,14 +800,14 @@ export async function getUsageByVillage(
  * Token usage grouped by intent family for cost observability.
  */
 export async function getUsageByIntentFamily(
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<any[]> {
   const range = defaultRange('month');
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
   const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
-  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  applyCommonFilters(conditions, filters);
 
   const where = Prisma.join(conditions, ' AND ');
 
@@ -827,14 +840,14 @@ export async function getUsageByIntentFamily(
  * Token usage grouped by tenant + high-level flow.
  */
 export async function getUsageByTenantFlow(
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<any[]> {
   const range = defaultRange('month');
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
   const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
-  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  applyCommonFilters(conditions, filters);
 
   const where = Prisma.join(conditions, ' AND ');
 
@@ -866,14 +879,14 @@ export async function getUsageByTenantFlow(
  * Micro NLU vs Full NLU breakdown.
  */
 export async function getLayerBreakdown(
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<any[]> {
   const range = defaultRange('month');
   const startDate = filters?.start ? new Date(filters.start) : range.start;
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
   const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
-  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  applyCommonFilters(conditions, filters);
 
   const where = Prisma.join(conditions, ' AND ');
 
@@ -899,7 +912,7 @@ export async function getLayerBreakdown(
  * Average tokens per chat (only main_chat calls = actual citizen messages).
  */
 export async function getAvgTokensPerChat(
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<{ avg_input: number; avg_output: number; avg_total: number; total_chats: number }> {
   const range = defaultRange('month');
   const startDate = filters?.start ? new Date(filters.start) : range.start;
@@ -909,7 +922,7 @@ export async function getAvgTokensPerChat(
     Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`,
     Prisma.sql`call_type = 'main_chat'`,
   ];
-  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  applyCommonFilters(conditions, filters);
 
   const where = Prisma.join(conditions, ' AND ');
 
@@ -956,7 +969,7 @@ export async function getResponseCountByVillage(
  * Detailed usage per village + model (for drill-down table).
  */
 export async function getUsageByVillageAndModel(
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<any[]> {
   const range = defaultRange('month');
   const startDate = filters?.start ? new Date(filters.start) : range.start;
@@ -974,6 +987,8 @@ export async function getUsageByVillageAndModel(
   } else {
     conditions.push(Prisma.sql`village_id IS NOT NULL`);
   }
+  if (filters?.wa_user_id) conditions.push(Prisma.sql`wa_user_id = ${filters.wa_user_id}`);
+  if (filters?.session_id) conditions.push(Prisma.sql`session_id = ${filters.session_id}`);
 
   const where = Prisma.join(conditions, ' AND ');
 
@@ -999,7 +1014,7 @@ export async function getUsageByVillageAndModel(
  */
 export async function getUsageByPeriodAndLayer(
   period: Period = 'day',
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<any[]> {
   const trunc = periodToDateTrunc(period);
   const range = defaultRange(period);
@@ -1007,7 +1022,7 @@ export async function getUsageByPeriodAndLayer(
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
   const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
-  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  applyCommonFilters(conditions, filters);
 
   const where = Prisma.join(conditions, ' AND ');
 
@@ -1030,7 +1045,7 @@ export async function getUsageByPeriodAndLayer(
 // ==================== Summary for quick dashboard card ====================
 
 export async function getTokenUsageSummary(
-  filters?: { village_id?: string; start?: string; end?: string }
+  filters?: UsageFilters
 ): Promise<{
   total_input_tokens: number;
   total_output_tokens: number;
@@ -1064,7 +1079,7 @@ export async function getTokenUsageSummary(
   const endDate = filters?.end ? new Date(filters.end) : range.end;
 
   const conditions: Prisma.Sql[] = [Prisma.sql`created_at >= ${startDate} AND created_at <= ${endDate}`];
-  if (filters?.village_id) conditions.push(Prisma.sql`village_id = ${filters.village_id}`);
+  applyCommonFilters(conditions, filters);
 
   const where = Prisma.join(conditions, ' AND ');
 

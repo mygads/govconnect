@@ -414,10 +414,37 @@ export async function createTopupVoucher(input: {
 }
 
 export async function listTopupVouchers(limit = 100) {
-  return prisma.ai_topup_vouchers.findMany({
+  const vouchers = await prisma.ai_topup_vouchers.findMany({
     orderBy: { created_at: 'desc' },
     take: Math.min(Math.max(limit, 1), 500),
   });
+
+  const voucherIds = vouchers.map((voucher) => voucher.id);
+  const ledgerEntries = voucherIds.length > 0
+    ? await prisma.ai_wallet_ledger_entries.findMany({
+        where: {
+          entry_type: 'voucher_redeem',
+          reference_type: 'voucher',
+          reference_id: { in: voucherIds },
+        },
+        select: {
+          id: true,
+          reference_id: true,
+          village_id: true,
+          amount_usd: true,
+          balance_before_usd: true,
+          balance_after_usd: true,
+          created_at: true,
+          created_by_admin_id: true,
+        },
+      })
+    : [];
+  const ledgerByVoucherId = new Map(ledgerEntries.map((entry) => [entry.reference_id, entry]));
+
+  return vouchers.map((voucher) => ({
+    ...voucher,
+    redeem_ledger_entry: ledgerByVoucherId.get(voucher.id) ?? null,
+  }));
 }
 
 export async function redeemTopupVoucher(input: {

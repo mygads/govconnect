@@ -363,14 +363,14 @@ function hideSupersededFailedRetries(messages: any[]): any[] {
 
   for (const message of messages) {
     if (message.direction !== 'OUT' || message.source !== 'ADMIN' || message.delivery_status !== 'failed') continue;
-    const hasLaterSentSamePayload = messages.some((candidate) => (
+    const failedAt = new Date(message.createdAt || message.timestamp).getTime();
+    const hasLaterSentAdminMessage = messages.some((candidate) => (
       candidate.direction === 'OUT' &&
       candidate.source === 'ADMIN' &&
       candidate.delivery_status !== 'failed' &&
-      candidate.message_text === message.message_text &&
-      new Date(candidate.createdAt || candidate.timestamp).getTime() > new Date(message.createdAt || message.timestamp).getTime()
+      new Date(candidate.createdAt || candidate.timestamp).getTime() > failedAt
     ));
-    if (hasLaterSentSamePayload) hidden.add(message.id);
+    if (hasLaterSentAdminMessage) hidden.add(message.id);
   }
 
   return messages.filter((message) => !hidden.has(message.id));

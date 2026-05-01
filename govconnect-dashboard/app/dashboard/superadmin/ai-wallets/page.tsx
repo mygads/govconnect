@@ -39,7 +39,20 @@ interface VoucherRow {
   amount_usd: number
   status: string
   expires_at?: string | null
+  redeemed_by_village_id?: string | null
+  redeemed_by_admin_id?: string | null
   redeemed_at?: string | null
+  created_by_admin_id?: string | null
+  created_at: string
+  redeem_ledger_entry?: {
+    id: string
+    village_id: string
+    amount_usd: number
+    balance_before_usd: number
+    balance_after_usd: number
+    created_at: string
+    created_by_admin_id?: string | null
+  } | null
 }
 
 interface VillageRow {
@@ -611,19 +624,41 @@ export default function SuperadminAIWalletsPage() {
                 <TableHead>Kode</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Nominal</TableHead>
+                <TableHead>Redeem</TableHead>
+                <TableHead>Ledger</TableHead>
                 <TableHead>Kedaluwarsa</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {vouchers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">Belum ada voucher.</TableCell>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">Belum ada voucher.</TableCell>
                 </TableRow>
               ) : vouchers.map((voucher) => (
                 <TableRow key={voucher.id}>
-                  <TableCell className="font-medium">{voucher.code}</TableCell>
+                  <TableCell>
+                    <div className="font-medium">{voucher.code}</div>
+                    <div className="text-xs text-muted-foreground">Dibuat: {new Date(voucher.created_at).toLocaleString("id-ID")}</div>
+                  </TableCell>
                   <TableCell>{voucher.status}</TableCell>
                   <TableCell>{formatUsd(voucher.amount_usd)}</TableCell>
+                  <TableCell>
+                    {voucher.redeemed_at ? (
+                      <div className="text-xs">
+                        <div>{new Date(voucher.redeemed_at).toLocaleString("id-ID")}</div>
+                        <div className="text-muted-foreground">{villageLabel(villageMap.get(voucher.redeemed_by_village_id || ""))}</div>
+                        <div className="font-mono text-muted-foreground">{voucher.redeemed_by_admin_id || "-"}</div>
+                      </div>
+                    ) : "-"}
+                  </TableCell>
+                  <TableCell>
+                    {voucher.redeem_ledger_entry ? (
+                      <div className="text-xs">
+                        <div className="font-mono">{voucher.redeem_ledger_entry.id}</div>
+                        <div className="text-muted-foreground">{formatUsd(voucher.redeem_ledger_entry.balance_before_usd)} → {formatUsd(voucher.redeem_ledger_entry.balance_after_usd)}</div>
+                      </div>
+                    ) : "-"}
+                  </TableCell>
                   <TableCell>{voucher.expires_at ? new Date(voucher.expires_at).toLocaleDateString("id-ID") : "-"}</TableCell>
                 </TableRow>
               ))}
