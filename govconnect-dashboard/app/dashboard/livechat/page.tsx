@@ -43,6 +43,10 @@ import {
   FileText,
   Video,
   Volume2,
+  Reply,
+  MapPin,
+  UserRound,
+  ListChecks,
 } from "lucide-react"
 
 interface Conversation {
@@ -76,8 +80,11 @@ interface ProcessingStatus {
   lastUpdate?: number
 }
 
+type WaSessionStatus = 'connected' | 'qr' | 'logged_out' | 'disconnected'
+
 type LivechatMediaType = 'image' | 'audio' | 'document' | 'video' | 'sticker'
 type DeliveryStatus = 'received' | 'sent' | 'delivered' | 'read' | 'failed'
+type MessageKind = 'text' | 'media' | 'location' | 'contact' | 'buttons' | 'list' | 'system'
 
 interface Message {
   id: string
@@ -90,6 +97,19 @@ interface Message {
   file_name?: string | null
   file_size?: number | null
   storage_key?: string | null
+  message_kind?: MessageKind | null
+  quoted_message_id?: string | null
+  quoted_stanza_id?: string | null
+  quoted_participant?: string | null
+  quoted_text?: string | null
+  location_latitude?: number | null
+  location_longitude?: number | null
+  location_name?: string | null
+  location_address?: string | null
+  contact_name?: string | null
+  contact_phone?: string | null
+  contact_vcard?: string | null
+  interactive_payload?: any
   direction: "IN" | "OUT"
   source: string
   delivery_status?: DeliveryStatus | null
@@ -119,6 +139,21 @@ interface LightboxMedia {
   alt: string
 }
 
+interface VillageProfileLocation {
+  name?: string | null
+  address?: string | null
+  latitude?: number | null
+  longitude?: number | null
+}
+
+interface ImportantContact {
+  id: string
+  name: string
+  phone: string
+  description?: string | null
+  category?: { name?: string | null }
+}
+
 export default function LiveChatPage() {
   const { toast } = useToast()
 
@@ -128,6 +163,7 @@ export default function LiveChatPage() {
   const [currentTakeover, setCurrentTakeover] = useState<TakeoverSession | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [messageInput, setMessageInput] = useState("")
+  const [replyingToMessage, setReplyingToMessage] = useState<Message | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [activeTab, setActiveTab] = useState<"all" | "takeover" | "bot">("all")
 
@@ -137,6 +173,13 @@ export default function LiveChatPage() {
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [isUploadingMedia, setIsUploadingMedia] = useState(false)
   const [selectedMedia, setSelectedMedia] = useState<UploadedLivechatMedia | null>(null)
+  const [villageProfileLocation, setVillageProfileLocation] = useState<VillageProfileLocation | null>(null)
+  const [importantContacts, setImportantContacts] = useState<ImportantContact[]>([])
+  const [contactSearchQuery, setContactSearchQuery] = useState("")
+  const [showContactDialog, setShowContactDialog] = useState(false)
+  const [isSendingLocation, setIsSendingLocation] = useState(false)
+  const [isSendingContact, setIsSendingContact] = useState(false)
+  const [isSendingMenu, setIsSendingMenu] = useState(false)
   const [isTogglingTakeover, setIsTogglingTakeover] = useState(false)
 
   // Dialog states
@@ -178,6 +221,8 @@ export default function LiveChatPage() {
   const typingPauseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const selectedConversationRef = useRef<Conversation | null>(null)
   const previousMessagesLengthRef = useRef<number>(0)
+  const lastWaSessionStatusRef = useRef<WaSessionStatus | null>(null)
+  const lastWaSessionToastAtRef = useRef(0)
 
   // Smart scroll state
   const [isUserScrollingUp, setIsUserScrollingUp] = useState(false)
@@ -192,6 +237,31 @@ export default function LiveChatPage() {
   const isWebchatConversation = (conv?: Conversation | null) => {
     const key = getConversationKey(conv)
     return conv?.channel === "WEBCHAT" || key.startsWith("web_")
+  }
+
+  const formatTakeoverReason = (reason?: string | null) => {
+    if (!reason) return ""
+    const labels: Record<string, string> = {
+      user_requested_human_agent: "Warga meminta dibantu petugas",
+      user_requested_human_agent_wallet_exhausted: "Warga meminta petugas karena saldo AI habis",
+      agent_error: "AI mengalami kendala menjawab",
+      negative_sentiment_escalation: "Percakapan perlu eskalasi ke petugas",
+      conversation_stuck: "Percakapan perlu ditangani petugas",
+    }
+    return labels[reason] || reason.replace(/_/g, " ")
+  }
+
+  const formatTakeoverStartedAt = (startedAt?: string | null) => {
+    if (!startedAt) return ""
+    const date = new Date(startedAt)
+    if (Number.isNaN(date.getTime())) return ""
+    return date.toLocaleString("id-ID", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
   }
 
   const getActiveTyping = (conversationKey: string) => {
@@ -226,6 +296,32 @@ export default function LiveChatPage() {
           ...current,
           [data.channel_identifier]: { actor: data.actor, until: Date.now() + 4000 },
         }
+      })
+    } catch {
+      return
+    }
+  }
+
+  const applyWaSessionStatusEvent = (event: MessageEvent) => {
+    try {
+      const data = JSON.parse(event.data)
+      const status = typeof data.wa_session_status === 'string' ? data.wa_session_status as WaSessionStatus : null
+      if (!status) return
+
+      const previousStatus = lastWaSessionStatusRef.current
+      lastWaSessionStatusRef.current = status
+      syncLivechat()
+
+      if (status === previousStatus || status !== 'logged_out') return
+
+      const now = Date.now()
+      if (now - lastWaSessionToastAtRef.current < 120_000) return
+      lastWaSessionToastAtRef.current = now
+
+      toast({
+        title: 'WhatsApp Logout',
+        description: 'Sesi WhatsApp logout. Hubungkan ulang dari pengaturan channel.',
+        variant: 'destructive',
       })
     } catch {
       return
@@ -506,6 +602,35 @@ export default function LiveChatPage() {
     loadData()
   }, [fetchConversationsSilent])
 
+  useEffect(() => {
+    const loadVillageProfileLocation = async () => {
+      try {
+        const response = await fetch('/api/village-profile', {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        })
+        if (!response.ok) return
+        const data = await response.json()
+        setVillageProfileLocation(data?.data || null)
+      } catch {
+        setVillageProfileLocation(null)
+      }
+    }
+    loadVillageProfileLocation()
+  }, [])
+
+  const loadImportantContacts = useCallback(async () => {
+    try {
+      const response = await fetch('/api/important-contacts', {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!response.ok) return
+      const data = await response.json()
+      setImportantContacts(Array.isArray(data?.data) ? data.data : [])
+    } catch {
+      setImportantContacts([])
+    }
+  }, [])
+
   const syncLivechat = useCallback(() => {
     fetchConversationsSilent()
     fetchProcessingStatuses()
@@ -558,6 +683,7 @@ export default function LiveChatPage() {
       source.addEventListener('delete', handleLivechatEvent)
       source.addEventListener('message_status', patchMessageStatus)
       source.addEventListener('typing', applyTypingEvent)
+      source.addEventListener('wa_session_status', applyWaSessionStatusEvent)
 
       source.addEventListener('error', () => {
         source.close()
@@ -605,6 +731,7 @@ export default function LiveChatPage() {
   useEffect(() => {
     setSelectedConversation(null)
     setCurrentTakeover(null)
+    setReplyingToMessage(null)
     setMessages([])
     previousMessagesLengthRef.current = 0
     fetchConversationsSilent()
@@ -613,6 +740,7 @@ export default function LiveChatPage() {
   // Select conversation
   const handleSelectConversation = async (conv: Conversation) => {
     setSelectedConversation(conv)
+    setReplyingToMessage(null)
     previousMessagesLengthRef.current = 0
     await fetchMessagesWithLoading(getConversationKey(conv))
   }
@@ -644,31 +772,42 @@ export default function LiveChatPage() {
   }
 
   // Send message
+  const sendLivechatPayload = async (payload: Record<string, unknown>) => {
+    if (!selectedConversation) return null
+    const token = localStorage.getItem("token")
+    const response = await fetch(
+      `/api/livechat/conversations/${encodeURIComponent(getConversationKey(selectedConversation))}/send`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      }
+    )
+    return response.json()
+  }
+
   const handleSendMessage = async () => {
     if ((!messageInput.trim() && !selectedMedia) || !selectedConversation) return
 
     const messageToSend = messageInput.trim()
     const mediaToSend = selectedMedia
+    const replyToSend = replyingToMessage
+    const payload = mediaToSend ? { message: messageToSend, media: mediaToSend } : { message: messageToSend }
+    if (replyToSend?.message_id) {
+      Object.assign(payload, { reply_to_message_id: replyToSend.message_id })
+    }
     setMessageInput("") // Clear immediately for better UX
     setSelectedMedia(null)
+    setReplyingToMessage(null)
     sendTypingState('paused')
     setIsSendingMessage(true)
 
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(
-        `/api/livechat/conversations/${encodeURIComponent(getConversationKey(selectedConversation))}/send`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(mediaToSend ? { message: messageToSend, media: mediaToSend } : { message: messageToSend }),
-        }
-      )
-
-      const data = await response.json()
+      const data = await sendLivechatPayload(payload)
+      if (!data) return
       if (data.success) {
         // Fetch messages to get the new one
         await fetchMessagesSilent(getConversationKey(selectedConversation))
@@ -679,6 +818,7 @@ export default function LiveChatPage() {
       } else {
         setMessageInput(messageToSend) // Restore on error
         setSelectedMedia(mediaToSend)
+        setReplyingToMessage(replyToSend)
         throw new Error(data.error || "Gagal mengirim pesan")
       }
     } catch (error: any) {
@@ -689,6 +829,124 @@ export default function LiveChatPage() {
       })
     } finally {
       setIsSendingMessage(false)
+    }
+  }
+
+  const filteredImportantContacts = importantContacts.filter((contact) => {
+    const query = contactSearchQuery.toLowerCase().trim()
+    if (!query) return true
+    return [contact.name, contact.phone, contact.description || '', contact.category?.name || '']
+      .some((value) => value.toLowerCase().includes(query))
+  })
+
+  const buildContactVCard = (contact: ImportantContact) => {
+    return [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      `FN:${contact.name}`,
+      `TEL;type=CELL;type=pref:${contact.phone}`,
+      contact.category?.name ? `ORG:${contact.category.name};` : null,
+      contact.description ? `TITLE:${contact.description}` : null,
+      'END:VCARD',
+    ].filter(Boolean).join('\n')
+  }
+
+  const handleSendVillageLocation = async () => {
+    if (!selectedConversation || villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null) return
+    setIsSendingLocation(true)
+    const replyToSend = replyingToMessage
+    try {
+      const payload: Record<string, unknown> = {
+        location: {
+          latitude: villageProfileLocation.latitude,
+          longitude: villageProfileLocation.longitude,
+          name: villageProfileLocation.name || 'Kantor Desa',
+          address: villageProfileLocation.address || undefined,
+        },
+      }
+      if (replyToSend?.message_id) payload.reply_to_message_id = replyToSend.message_id
+      setReplyingToMessage(null)
+      const data = await sendLivechatPayload(payload)
+      if (!data?.success) {
+        setReplyingToMessage(replyToSend)
+        throw new Error(data?.error || 'Gagal mengirim lokasi')
+      }
+      await fetchMessagesSilent(getConversationKey(selectedConversation))
+      toast({ title: 'Lokasi Terkirim', description: 'Lokasi kantor desa berhasil dikirim.' })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Gagal mengirim lokasi', variant: 'destructive' })
+    } finally {
+      setIsSendingLocation(false)
+    }
+  }
+
+  const handleSendGovConnectMenu = async () => {
+    if (!selectedConversation) return
+    setIsSendingMenu(true)
+    const replyToSend = replyingToMessage
+    try {
+      const payload: Record<string, unknown> = {
+        interactive: {
+          type: 'buttons',
+          title: 'Menu GovConnect',
+          body: 'Silakan pilih kebutuhan Anda. Balasan akan diproses oleh GovConnect.',
+          footer: 'Layanan desa digital',
+          buttons: [
+            { type: 'reply', id: 'lapor_masalah', title: 'Lapor Masalah' },
+            { type: 'reply', id: 'cek_layanan', title: 'Cek Layanan' },
+            { type: 'reply', id: 'hubungi_petugas', title: 'Hubungi Petugas' },
+          ],
+        },
+      }
+      if (replyToSend?.message_id) payload.reply_to_message_id = replyToSend.message_id
+      setReplyingToMessage(null)
+      const data = await sendLivechatPayload(payload)
+      if (!data?.success) {
+        setReplyingToMessage(replyToSend)
+        throw new Error(data?.error || 'Gagal mengirim menu')
+      }
+      await fetchMessagesSilent(getConversationKey(selectedConversation))
+      toast({ title: 'Menu Terkirim', description: 'Menu GovConnect berhasil dikirim.' })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Gagal mengirim menu', variant: 'destructive' })
+    } finally {
+      setIsSendingMenu(false)
+    }
+  }
+
+  const handleOpenContactDialog = async () => {
+    setShowContactDialog(true)
+    if (importantContacts.length === 0) await loadImportantContacts()
+  }
+
+  const handleSendImportantContact = async (contact: ImportantContact) => {
+    if (!selectedConversation) return
+    setIsSendingContact(true)
+    const replyToSend = replyingToMessage
+    try {
+      const payload: Record<string, unknown> = {
+        contact: {
+          name: contact.name,
+          phone: contact.phone,
+          organization: contact.category?.name || undefined,
+          title: contact.description || undefined,
+          vcard: buildContactVCard(contact),
+        },
+      }
+      if (replyToSend?.message_id) payload.reply_to_message_id = replyToSend.message_id
+      setReplyingToMessage(null)
+      const data = await sendLivechatPayload(payload)
+      if (!data?.success) {
+        setReplyingToMessage(replyToSend)
+        throw new Error(data?.error || 'Gagal mengirim kontak')
+      }
+      setShowContactDialog(false)
+      await fetchMessagesSilent(getConversationKey(selectedConversation))
+      toast({ title: 'Kontak Terkirim', description: `${contact.name} berhasil dikirim sebagai kartu kontak.` })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Gagal mengirim kontak', variant: 'destructive' })
+    } finally {
+      setIsSendingContact(false)
     }
   }
 
@@ -1100,8 +1358,95 @@ export default function LiveChatPage() {
     return <p className="text-sm whitespace-pre-wrap wrap-break-word">{nodes.length ? nodes : text}</p>
   }
 
+  const renderQuotedPreview = (msg: Message) => {
+    if (!msg.quoted_text && !msg.quoted_message_id) return null
+    return (
+      <div className={`mb-2 rounded border-l-4 px-2 py-1 text-xs ${msg.direction === 'OUT' ? 'border-green-200 bg-green-600/40 text-green-50' : 'border-emerald-500 bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-100'}`}>
+        <div className="font-medium">Membalas pesan</div>
+        <div className="line-clamp-2 opacity-90">{msg.quoted_text || msg.quoted_message_id}</div>
+      </div>
+    )
+  }
+
+  const renderLocationCard = (msg: Message) => {
+    if (msg.location_latitude == null || msg.location_longitude == null) return null
+    const label = msg.location_name || msg.location_address || 'Lokasi dibagikan'
+    const mapsUrl = `https://www.google.com/maps?q=${msg.location_latitude},${msg.location_longitude}`
+    return (
+      <a
+        href={mapsUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`flex min-w-[220px] items-start gap-3 rounded-lg p-3 hover:opacity-90 ${msg.direction === 'OUT' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-100'}`}
+      >
+        <MapPin className="mt-0.5 h-5 w-5 shrink-0" />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">{label}</div>
+          {msg.location_address && <div className="text-xs opacity-80">{msg.location_address}</div>}
+          <div className="mt-1 text-xs underline underline-offset-2">Buka di Google Maps</div>
+        </div>
+      </a>
+    )
+  }
+
+  const renderContactCard = (msg: Message) => {
+    if (!msg.contact_name && !msg.contact_phone) return null
+    return (
+      <div className={`flex min-w-[220px] items-center gap-3 rounded-lg p-3 ${msg.direction === 'OUT' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-100'}`}>
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-black/10">
+          <UserRound className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">{msg.contact_name || 'Kontak'}</div>
+          {msg.contact_phone && <div className="text-xs opacity-80">{msg.contact_phone}</div>}
+        </div>
+      </div>
+    )
+  }
+
+  const renderInteractiveCard = (msg: Message) => {
+    if (!msg.interactive_payload || typeof msg.interactive_payload !== 'object') return null
+    const payload = msg.interactive_payload
+    const buttons = Array.isArray(payload.buttons) ? payload.buttons : []
+    const sections = Array.isArray(payload.sections) ? payload.sections : []
+    return (
+      <div className={`min-w-[240px] rounded-lg p-3 ${msg.direction === 'OUT' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-100'}`}>
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <ListChecks className="h-4 w-4" />
+          {payload.title || (payload.type === 'list' ? 'Daftar pilihan' : 'Menu pilihan')}
+        </div>
+        <div className="mt-1 text-sm opacity-90">{payload.body || msg.message_text}</div>
+        {buttons.length > 0 && (
+          <div className="mt-2 space-y-1">
+            {buttons.map((button: any, index: number) => (
+              <div key={`${msg.id}-button-${index}`} className="rounded border border-current/20 px-2 py-1 text-xs">
+                {button.text || button.Text || button.id || button.ID || `Pilihan ${index + 1}`}
+              </div>
+            ))}
+          </div>
+        )}
+        {sections.length > 0 && <div className="mt-2 text-xs opacity-80">{sections.length} seksi pilihan terkirim</div>}
+      </div>
+    )
+  }
+
   // Render message content (handle structured media and legacy URL messages)
   const renderMessageContent = (msg: Message) => {
+    const locationCard = renderLocationCard(msg)
+    if (locationCard) {
+      return <div>{renderQuotedPreview(msg)}{locationCard}</div>
+    }
+
+    const contactCard = renderContactCard(msg)
+    if (contactCard) {
+      return <div>{renderQuotedPreview(msg)}{contactCard}</div>
+    }
+
+    const interactiveCard = renderInteractiveCard(msg)
+    if (interactiveCard) {
+      return <div>{renderQuotedPreview(msg)}{interactiveCard}</div>
+    }
+
     const structuredMediaUrl = msg.media_public_url || msg.media_url
 
     if (structuredMediaUrl && msg.media_type) {
@@ -1111,6 +1456,7 @@ export default function LiveChatPage() {
 
       return (
         <div className="space-y-2">
+          {renderQuotedPreview(msg)}
           {(msg.media_type === 'image' || msg.media_type === 'sticker') && (
             failedMedia[mediaKey] ? (
               <div className="flex items-center gap-2 rounded-lg bg-gray-100 p-3 text-gray-700 dark:bg-gray-700 dark:text-gray-100">
@@ -1161,6 +1507,7 @@ export default function LiveChatPage() {
 
       return (
         <div className="space-y-2">
+          {renderQuotedPreview(msg)}
           {failedMedia[mediaKey] ? (
             <div className="flex items-center gap-2 rounded-lg bg-gray-100 p-3 dark:bg-gray-700">
               <ImageIcon className="h-4 w-4" />
@@ -1194,7 +1541,7 @@ export default function LiveChatPage() {
       )
     }
 
-    return renderFormattedText(msg.message_text, msg.direction)
+    return <div>{renderQuotedPreview(msg)}{renderFormattedText(msg.message_text, msg.direction)}</div>
   }
 
   if (isInitialLoading) {
@@ -1440,8 +1787,9 @@ export default function LiveChatPage() {
 
               {selectedConversation.is_takeover && currentTakeover && (
                 <div className="border-t bg-orange-50 px-4 py-2 text-xs text-orange-700 dark:bg-orange-950 dark:text-orange-200">
-                  Human takeover aktif oleh <span className="font-medium">{currentTakeover.admin_name || currentTakeover.admin_id}</span>
-                  {currentTakeover.reason ? ` — ${currentTakeover.reason}` : ''}
+                  Ditangani petugas <span className="font-medium">{currentTakeover.admin_name || currentTakeover.admin_id}</span>
+                  {formatTakeoverStartedAt(currentTakeover.started_at) ? ` sejak ${formatTakeoverStartedAt(currentTakeover.started_at)}` : ''}
+                  {formatTakeoverReason(currentTakeover.reason) ? ` — ${formatTakeoverReason(currentTakeover.reason)}` : ''}
                 </div>
               )}
 
@@ -1474,7 +1822,21 @@ export default function LiveChatPage() {
                                 : "bg-white dark:bg-gray-800 border"
                               }`}
                           >
-                            {renderMessageContent(msg)}
+                            <div className="group relative">
+                              {renderMessageContent(msg)}
+                              {selectedConversation.is_takeover && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className={`absolute -top-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100 ${msg.direction === 'OUT' ? '-left-9 text-white hover:bg-green-600' : '-right-9'}`}
+                                  onClick={() => setReplyingToMessage(msg)}
+                                  title="Balas pesan ini"
+                                >
+                                  <Reply className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
                             {msg.delivery_status === 'failed' && msg.status_error && (
                               <div className="mt-2 rounded bg-red-600/20 px-2 py-1 text-xs text-red-50">
                                 {msg.status_error}
@@ -1549,6 +1911,22 @@ export default function LiveChatPage() {
               <div className="p-3 border-t bg-card shrink-0">
                 {selectedConversation.is_takeover ? (
                   <div className="space-y-2">
+                    {replyingToMessage && (
+                      <div className="flex items-start justify-between rounded-lg border-l-4 border-emerald-500 bg-muted/50 px-3 py-2 text-sm">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1 font-medium text-emerald-700 dark:text-emerald-300">
+                            <Reply className="h-3.5 w-3.5" />
+                            Membalas {replyingToMessage.direction === 'OUT' ? 'pesan admin' : 'pesan warga'}
+                          </div>
+                          <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                            {replyingToMessage.message_text || replyingToMessage.location_name || replyingToMessage.contact_name || replyingToMessage.message_id}
+                          </div>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setReplyingToMessage(null)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
                     {selectedMedia && (
                       <div className="flex items-center justify-between rounded-lg border bg-muted/50 px-3 py-2 text-sm">
                         <div className="flex min-w-0 items-center gap-2">
@@ -1583,6 +1961,39 @@ export default function LiveChatPage() {
                         title={isWebchatConversation(selectedConversation) ? "Media reply saat ini hanya didukung untuk WhatsApp" : "Lampirkan media"}
                       >
                         {isUploadingMedia ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={handleSendVillageLocation}
+                        disabled={isSendingMessage || isSendingLocation || isWebchatConversation(selectedConversation) || villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null}
+                        className="h-10 w-10"
+                        title={villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null ? "Isi koordinat kantor di Profil Desa untuk mengirim lokasi" : "Kirim lokasi kantor desa"}
+                      >
+                        {isSendingLocation ? <RefreshCw className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={handleOpenContactDialog}
+                        disabled={isSendingMessage || isSendingContact || isWebchatConversation(selectedConversation)}
+                        className="h-10 w-10"
+                        title={isWebchatConversation(selectedConversation) ? "Kartu kontak native hanya didukung untuk WhatsApp" : "Kirim kontak penting"}
+                      >
+                        {isSendingContact ? <RefreshCw className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={handleSendGovConnectMenu}
+                        disabled={isSendingMessage || isSendingMenu || isWebchatConversation(selectedConversation)}
+                        className="h-10 w-10"
+                        title={isWebchatConversation(selectedConversation) ? "Menu WhatsApp hanya didukung untuk WhatsApp" : "Kirim menu GovConnect"}
+                      >
+                        {isSendingMenu ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ListChecks className="h-4 w-4" />}
                       </Button>
                       <Input
                         placeholder={selectedMedia ? "Tambahkan caption..." : "Ketik pesan..."}
@@ -1632,6 +2043,50 @@ export default function LiveChatPage() {
           )}
         </div>
       </div>
+
+      <Dialog open={showContactDialog} onOpenChange={setShowContactDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Kirim Kontak Penting</DialogTitle>
+            <DialogDescription>Pilih kontak desa untuk dikirim sebagai kartu kontak WhatsApp.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="Cari nama, telepon, kategori..."
+              value={contactSearchQuery}
+              onChange={(event) => setContactSearchQuery(event.target.value)}
+            />
+            <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+              {filteredImportantContacts.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+                  Tidak ada kontak yang cocok.
+                </div>
+              ) : (
+                filteredImportantContacts.map((contact) => (
+                  <button
+                    key={contact.id}
+                    type="button"
+                    className="flex w-full items-start justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted"
+                    onClick={() => handleSendImportantContact(contact)}
+                    disabled={isSendingContact}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium">{contact.name}</div>
+                      <div className="text-sm text-muted-foreground">{contact.phone}</div>
+                      {(contact.category?.name || contact.description) && (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {[contact.category?.name, contact.description].filter(Boolean).join(' • ')}
+                        </div>
+                      )}
+                    </div>
+                    <UserRound className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Takeover Confirmation Dialog */}
       <Dialog open={showTakeoverDialog} onOpenChange={setShowTakeoverDialog}>

@@ -26,12 +26,14 @@ export async function GET(request: NextRequest) {
         where: { id: villageId },
         select: { id: true, name: true, slug: true },
       }),
-      prisma.village_profiles.findFirst({
+      (prisma.village_profiles as any).findFirst({
         where: { village_id: villageId },
         select: {
           name: true,
           address: true,
           gmaps_url: true,
+          latitude: true,
+          longitude: true,
           short_name: true,
           operating_hours: true,
         },
@@ -49,6 +51,8 @@ export async function GET(request: NextRequest) {
         short_name: village?.slug || profile?.short_name || null, // Prioritize village.slug for form URLs
         address: profile?.address || null,
         gmaps_url: profile?.gmaps_url || null,
+        latitude: profile?.latitude ?? null,
+        longitude: profile?.longitude ?? null,
         operating_hours: profile?.operating_hours || null,
       },
     })

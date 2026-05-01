@@ -11,7 +11,7 @@
 
 import logger from '../../utils/logger';
 import { config } from '../../config/env';
-import { getDefaultGatewayModels } from '../ai-gateway.service';
+import { getRuntimeGatewayAttempts } from '../ai-runtime-config.service';
 import { recordTokenUsage } from '../token-usage.service';
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
 import { resolveLearnedToolPolicy } from './tool-policy.service';
@@ -281,7 +281,7 @@ export async function runAgent(
     iterations = i + 1;
 
     const toolChoice: AgentToolChoice = i === 0 ? firstTurnToolChoice : 'auto';
-    const response = await callLLMWithTools(messages, allowedTools, toolChoice);
+    const response = await callLLMWithTools(messages, allowedTools, toolChoice, toolCtx.villageId);
     if (!response) {
       return {
         replyText: buildAgentFallbackReply(userMessage, toolsUsed),
@@ -330,7 +330,7 @@ export async function runAgent(
           }
 
           toolsUsed.push(toolName);
-          const result = await executeToolCall(toolName, args, toolCtx);
+          const result = await executeToolCall(toolName, args, { ...toolCtx, userMessage });
           toolTrace.push(result.trace);
 
           return {
@@ -379,6 +379,7 @@ export async function runAgent(
         userId: toolCtx.userId,
       });
 
+      const gatewayAttempt = response.__agentGatewayAttempt as AgentGatewayAttempt | undefined;
       recordTokenUsage({
         model,
         input_tokens: response.usage?.prompt_tokens ?? 0,
@@ -387,8 +388,13 @@ export async function runAgent(
         duration_ms: durationMs,
         layer_type: 'agent',
         call_type: 'agent_orchestrator',
+        village_id: toolCtx.villageId ?? null,
         wa_user_id: toolCtx.userId,
         channel: toolCtx.channel,
+        key_source: 'gateway_llm',
+        provider_id: gatewayAttempt?.providerId ?? null,
+        model_config_id: gatewayAttempt?.modelId ?? null,
+        lane_type: 'llm',
       });
 
       return {
@@ -457,33 +463,66 @@ function extractText(content: unknown): string {
   return '';
 }
 
-function getAgentGatewayConfig() {
-  const laneConfig = config.llmGateway || config.aiGateway;
-  return {
-    baseUrl: laneConfig?.baseUrl || '',
-    apiKey: laneConfig?.apiKeys?.[0] || '',
-    provider: laneConfig?.provider || 'openrouter',
-  };
+interface AgentGatewayAttempt {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  chatCompletionsPath: string;
+  defaultHeaders: Record<string, string>;
+  providerId?: string;
+  modelId?: string;
 }
 
-function getAgentModels(): string[] {
-  return getDefaultGatewayModels('full');
+function normalizeGatewayUrl(baseUrl: string, path: string): string {
+  const normalizedBase = baseUrl.replace(/\/+$/, '');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
+}
+
+async function getAgentGatewayAttempts(villageId?: string): Promise<AgentGatewayAttempt[]> {
+  try {
+    const attempts = await getRuntimeGatewayAttempts('llm', villageId);
+    const runtimeAttempts = attempts
+      .map((attempt) => {
+        const laneConfig = attempt.config as typeof config.llmGateway;
+        return {
+          baseUrl: laneConfig.baseUrl || '',
+          apiKey: laneConfig.apiKeys?.[0] || '',
+          model: laneConfig.model || '',
+          chatCompletionsPath: laneConfig.chatCompletionsPath || '/chat/completions',
+          defaultHeaders: laneConfig.defaultHeaders || {},
+          providerId: attempt.providerId,
+          modelId: attempt.modelId,
+        };
+      })
+      .filter((attempt) => attempt.baseUrl && attempt.apiKey && attempt.model);
+
+    if (runtimeAttempts.length > 0) return runtimeAttempts;
+  } catch (error: any) {
+    logger.warn('Agent runtime gateway config unavailable, falling back to env config', { error: error.message });
+  }
+
+  const laneConfig = config.llmGateway || config.aiGateway;
+  if (!laneConfig?.baseUrl || !laneConfig.apiKeys?.[0] || !laneConfig.model) return [];
+
+  return [{
+    baseUrl: laneConfig.baseUrl,
+    apiKey: laneConfig.apiKeys[0],
+    model: laneConfig.model,
+    chatCompletionsPath: laneConfig.chatCompletionsPath || '/chat/completions',
+    defaultHeaders: laneConfig.defaultHeaders || {},
+  }];
 }
 
 async function callLLMWithTools(
   messages: AgentMessage[],
   tools: typeof AGENT_TOOLS,
   toolChoice: AgentToolChoice,
+  villageId?: string,
 ): Promise<any | null> {
-  const gwConfig = getAgentGatewayConfig();
-  if (!gwConfig.baseUrl || !gwConfig.apiKey) {
-    logger.error('Agent gateway not configured');
-    return null;
-  }
-
-  const models = getAgentModels();
-  if (models.length === 0) {
-    logger.error('No agent models configured');
+  const attempts = await getAgentGatewayAttempts(villageId);
+  if (attempts.length === 0) {
+    logger.error('No agent gateway attempts configured');
     return null;
   }
 
@@ -506,20 +545,21 @@ async function callLLMWithTools(
     baseBody.tool_choice = toolChoice;
   }
 
-  for (const model of models) {
+  for (const attempt of attempts) {
     const body = {
       ...baseBody,
-      model,
+      model: attempt.model,
     };
 
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), AGENT_TIMEOUT_MS);
 
-      const response = await fetch(`${gwConfig.baseUrl}/chat/completions`, {
+      const response = await fetch(normalizeGatewayUrl(attempt.baseUrl, attempt.chatCompletionsPath), {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${gwConfig.apiKey}`,
+          ...attempt.defaultHeaders,
+          Authorization: `Bearer ${attempt.apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
@@ -533,7 +573,8 @@ async function callLLMWithTools(
         logger.error('Agent LLM call failed', {
           status: response.status,
           error: errText.substring(0, 200),
-          model,
+          model: attempt.model,
+          providerId: attempt.providerId,
         });
         continue;
       }
@@ -541,13 +582,13 @@ async function callLLMWithTools(
       const data: any = await response.json();
 
       if (data.error) {
-        logger.error('Agent LLM returned error', { error: data.error, model });
+        logger.error('Agent LLM returned error', { error: data.error, model: attempt.model, providerId: attempt.providerId });
         continue;
       }
 
-      return data;
+      return { ...data, __agentGatewayAttempt: attempt };
     } catch (error: any) {
-      logger.error('Agent LLM call exception', { error: error.message, model });
+      logger.error('Agent LLM call exception', { error: error.message, model: attempt.model, providerId: attempt.providerId });
     }
   }
 

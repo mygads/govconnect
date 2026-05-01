@@ -320,6 +320,8 @@ model village_profiles {
   name            String
   address         String
   gmaps_url       String?
+  latitude        Float?
+  longitude       Float?
   short_name      String
   operating_hours Json
   created_at      DateTime @default(now())

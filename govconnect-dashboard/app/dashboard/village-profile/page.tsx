@@ -45,6 +45,8 @@ export default function VillageProfilePage() {
     name: "",
     address: "",
     gmaps_url: "",
+    latitude: "",
+    longitude: "",
     short_name: "",
   })
 
@@ -67,6 +69,8 @@ export default function VillageProfilePage() {
               name: profile.name || "",
               address: profile.address || "",
               gmaps_url: profile.gmaps_url || "",
+              latitude: profile.latitude != null ? String(profile.latitude) : "",
+              longitude: profile.longitude != null ? String(profile.longitude) : "",
               short_name: profile.short_name || "",
             })
             setOperatingHours(profile.operating_hours || {})
@@ -288,6 +292,28 @@ export default function VillageProfilePage() {
                 value={form.gmaps_url}
                 onChange={(e) => setForm((prev) => ({ ...prev, gmaps_url: e.target.value }))}
                 placeholder="https://maps.google.com/?q=..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="latitude">Latitude Kantor (Opsional)</Label>
+              <Input
+                id="latitude"
+                type="number"
+                step="any"
+                value={form.latitude}
+                onChange={(e) => setForm((prev) => ({ ...prev, latitude: e.target.value }))}
+                placeholder="-6.200000"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="longitude">Longitude Kantor (Opsional)</Label>
+              <Input
+                id="longitude"
+                type="number"
+                step="any"
+                value={form.longitude}
+                onChange={(e) => setForm((prev) => ({ ...prev, longitude: e.target.value }))}
+                placeholder="106.816666"
               />
             </div>
           </CardContent>

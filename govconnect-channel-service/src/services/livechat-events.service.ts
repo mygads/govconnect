@@ -1,4 +1,4 @@
-export type LivechatEventType = 'message' | 'message_status' | 'conversation' | 'takeover' | 'delete' | 'typing' | 'heartbeat';
+export type LivechatEventType = 'message' | 'message_status' | 'conversation' | 'takeover' | 'delete' | 'typing' | 'wa_session_status' | 'heartbeat';
 
 export interface LivechatEvent {
   type: LivechatEventType;
@@ -15,6 +15,8 @@ export interface LivechatEvent {
   status_error?: string | null;
   typing_state?: 'composing' | 'paused';
   actor?: 'user' | 'admin' | 'ai';
+  wa_session_status?: string;
+  wa_session_event?: string;
   at: number;
 }
 

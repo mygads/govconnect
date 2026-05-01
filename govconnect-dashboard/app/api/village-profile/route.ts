@@ -31,7 +31,7 @@ function buildOperatingHoursText(operatingHours: Record<string, { open?: string;
     .join('\n')
 }
 
-function buildProfileKnowledgeContent(profile: { name?: string; address?: string; gmaps_url?: string | null; short_name?: string; operating_hours?: Record<string, { open?: string; close?: string }> | null }) {
+function buildProfileKnowledgeContent(profile: { name?: string; address?: string; gmaps_url?: string | null; latitude?: number | null; longitude?: number | null; short_name?: string; operating_hours?: Record<string, { open?: string; close?: string }> | null }) {
   const hoursText = buildOperatingHoursText(profile.operating_hours)
 
   const lines = [
@@ -41,6 +41,7 @@ function buildProfileKnowledgeContent(profile: { name?: string; address?: string
   lines.push(
     `Alamat Kantor: ${profile.address || '-'}`,
     `Google Maps: ${profile.gmaps_url || '-'}`,
+    `Koordinat Kantor: ${profile.latitude != null && profile.longitude != null ? `${profile.latitude}, ${profile.longitude}` : '-'}`,
     'Jam Operasional Kantor:',
     '(Catatan: "-" atau "Libur" berarti hari tersebut libur/tutup, "Belum diatur" berarti data belum diisi)',
     hoursText,
@@ -72,6 +73,8 @@ async function upsertProfileKnowledge(villageId: string, adminId: string | null,
   address?: string
   gmaps_url?: string | null
   short_name?: string
+  latitude?: number | null
+  longitude?: number | null
   operating_hours?: Record<string, { open?: string; close?: string }> | null
 }) {
   let category = await prisma.knowledge_categories.findFirst({
@@ -251,28 +254,42 @@ export async function PUT(request: NextRequest) {
 
   const body = await request.json()
   const { name, address, gmaps_url, short_name, operating_hours } = body
+  const latitude = body.latitude === '' || body.latitude === null || body.latitude === undefined ? null : Number(body.latitude)
+  const longitude = body.longitude === '' || body.longitude === null || body.longitude === undefined ? null : Number(body.longitude)
+
+  if ((latitude !== null && !Number.isFinite(latitude)) || (longitude !== null && !Number.isFinite(longitude))) {
+    return NextResponse.json({ error: 'Latitude dan longitude harus berupa angka valid' }, { status: 400 })
+  }
+
+  if ((latitude === null) !== (longitude === null)) {
+    return NextResponse.json({ error: 'Latitude dan longitude harus diisi bersama' }, { status: 400 })
+  }
 
   const existing = await prisma.village_profiles.findFirst({
     where: { village_id: session.admin.village_id }
   })
 
   const profile = existing
-    ? await prisma.village_profiles.update({
+    ? await (prisma.village_profiles as any).update({
         where: { id: existing.id },
         data: {
           name: name ?? undefined,
           address: address ?? undefined,
           gmaps_url: gmaps_url ?? undefined,
+          latitude,
+          longitude,
           short_name: short_name ?? undefined,
           operating_hours: operating_hours ?? undefined,
         }
       })
-    : await prisma.village_profiles.create({
+    : await (prisma.village_profiles as any).create({
         data: {
           village_id: session.admin.village_id,
           name: name || '',
           address: address || '',
           gmaps_url: gmaps_url || null,
+          latitude,
+          longitude,
           short_name: short_name || '',
           operating_hours: operating_hours || {},
         }
@@ -282,6 +299,8 @@ export async function PUT(request: NextRequest) {
     name: profile.name,
     address: profile.address,
     gmaps_url: profile.gmaps_url,
+    latitude: (profile as any).latitude,
+    longitude: (profile as any).longitude,
     short_name: profile.short_name,
     operating_hours: profile.operating_hours as Record<string, { open?: string; close?: string }> | null,
   })

@@ -39,8 +39,24 @@ import {
   XCircle,
   Smartphone,
   X,
-  AlertTriangle
+  AlertTriangle,
+  Clock
 } from "lucide-react"
+
+interface ObjectStorageStatus {
+  configured: boolean
+  connected: boolean | null
+  status: "connected" | "error" | "not_configured"
+  provider: string | null
+  endpoint: string | null
+  region: string | null
+  bucket: string | null
+  publicUrl: string | null
+  pathStyle: boolean
+  usageBytes: number | null
+  usageMb: number | null
+  error: string | null
+}
 
 interface ChannelSettings {
   wa_number: string
@@ -79,6 +95,29 @@ interface DuplicateInfo {
   waNumber: string
 }
 
+type WhatsAppSetupStage =
+  | "idle"
+  | "checking_object_storage"
+  | "creating_session"
+  | "session_created"
+  | "connecting_session"
+  | "waiting_genfity_wa"
+  | "waiting_whatsapp_server"
+  | "fetching_qr"
+  | "waiting_scan"
+  | "connected"
+  | "error"
+
+const whatsappSetupSteps: Array<{ stage: WhatsAppSetupStage; label: string }> = [
+  { stage: "checking_object_storage", label: "Menghubungkan object storage Cloudflare" },
+  { stage: "creating_session", label: "Membuat session WhatsApp baru" },
+  { stage: "waiting_genfity_wa", label: "Menunggu koneksi ke Genfity WA" },
+  { stage: "waiting_whatsapp_server", label: "Menunggu koneksi ke server WhatsApp" },
+  { stage: "fetching_qr", label: "Mengambil QR code" },
+  { stage: "waiting_scan", label: "Menunggu QR discan" },
+  { stage: "connected", label: "Berhasil terhubung" },
+]
+
 export default function ChannelSettingsPage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -95,6 +134,11 @@ export default function ChannelSettingsPage() {
     enabled_wa: false,
     enabled_webchat: false,
   })
+  const [objectStorage, setObjectStorage] = useState<ObjectStorageStatus | null>(null)
+  const [setupStage, setSetupStage] = useState<WhatsAppSetupStage>("idle")
+  const [setupError, setSetupError] = useState("")
+  const [setupStartedAt, setSetupStartedAt] = useState<number | null>(null)
+  const [stageTick, setStageTick] = useState(0)
 
   // QR Dialog states
   const [showQrDialog, setShowQrDialog] = useState(false)
@@ -110,6 +154,7 @@ export default function ChannelSettingsPage() {
   // Polling refs
   const statusPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const qrPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const setupStageRef = useRef<WhatsAppSetupStage>("idle")
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -117,6 +162,22 @@ export default function ChannelSettingsPage() {
       if (statusPollingRef.current) clearInterval(statusPollingRef.current)
       if (qrPollingRef.current) clearInterval(qrPollingRef.current)
     }
+  }, [])
+
+  useEffect(() => {
+    if (["idle", "connected", "error", "session_created"].includes(setupStage)) return
+    const interval = setInterval(() => setStageTick((value) => value + 1), 1000)
+    return () => clearInterval(interval)
+  }, [setupStage])
+
+  const updateSetupStage = useCallback((stage: WhatsAppSetupStage, error = "") => {
+    if (setupStageRef.current !== stage) {
+      setupStageRef.current = stage
+      setSetupStartedAt(Date.now())
+    }
+    setSetupStage(stage)
+    setSetupError(error)
+    setStageTick((value) => value + 1)
   }, [])
 
   useEffect(() => {
@@ -204,10 +265,20 @@ export default function ChannelSettingsPage() {
       }
       
       setSessionStatus(status)
-      
+      if (showQrDialog) {
+        if (status.loggedIn) {
+          updateSetupStage("connected")
+        } else if (status.connected) {
+          updateSetupStage(status.qrcode ? "waiting_scan" : "fetching_qr")
+        } else {
+          updateSetupStage("waiting_whatsapp_server")
+        }
+      }
+
       // Update QR code if available
       if (data.data?.qrcode) {
         setQrCode(data.data.qrcode)
+        if (showQrDialog && !status.loggedIn) updateSetupStage("waiting_scan")
       }
       
       // Update wa_number in settings if available
@@ -223,12 +294,13 @@ export default function ChannelSettingsPage() {
       setQrCode("")
       return null
     }
-  }, [selectedVillageId, withVillage])
+  }, [selectedVillageId, withVillage, showQrDialog, updateSetupStage])
 
   // Fetch QR code
   const fetchQRCode = useCallback(async () => {
     try {
       setQrLoading(true)
+      if (!sessionStatus?.loggedIn && !qrCode) updateSetupStage("fetching_qr")
       const response = await fetchApiRaw(withVillage("/api/whatsapp/qr"))
       
       let data: any = null
@@ -240,13 +312,16 @@ export default function ChannelSettingsPage() {
       
       if (response.ok && data?.data?.QRCode) {
         setQrCode(data.data.QRCode)
+        updateSetupStage("waiting_scan")
+      } else if (!sessionStatus?.loggedIn) {
+        updateSetupStage("waiting_whatsapp_server")
       }
     } catch (error) {
       console.error("Error fetching QR code:", error)
     } finally {
       setQrLoading(false)
     }
-  }, [withVillage])
+  }, [withVillage, sessionStatus?.loggedIn, qrCode, updateSetupStage])
 
   // Stop all polling
   const stopPolling = useCallback(() => {
@@ -355,6 +430,7 @@ export default function ChannelSettingsPage() {
       const status = await fetchSessionStatus()
       if (status?.loggedIn && status?.wa_number) {
         console.log("[QR_DIALOG] Session logged in, checking for duplicates")
+        updateSetupStage("connected")
         stopPolling()
         
         // Check for duplicate WA number
@@ -376,15 +452,16 @@ export default function ChannelSettingsPage() {
     qrPollingRef.current = setInterval(async () => {
       await fetchQRCode()
     }, 2000)
-  }, [fetchSessionStatus, fetchQRCode, stopPolling, toast, checkDuplicateWaNumber])
+  }, [fetchSessionStatus, fetchQRCode, stopPolling, toast, checkDuplicateWaNumber, updateSetupStage])
 
   // Handle close QR dialog
   const handleCloseQrDialog = useCallback(() => {
     stopPolling()
     setShowQrDialog(false)
     setQrCode("")
+    if (setupStage !== "connected") updateSetupStage("idle")
     fetchSessionStatus()
-  }, [stopPolling, fetchSessionStatus])
+  }, [stopPolling, fetchSessionStatus, setupStage, updateSetupStage])
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -400,6 +477,7 @@ export default function ChannelSettingsPage() {
             enabled_wa: Boolean(data.data?.enabled_wa),
             enabled_webchat: Boolean(data.data?.enabled_webchat ?? false),
           })
+          setObjectStorage(data.data?.object_storage || null)
         }
       } catch (error) {
         console.error("Failed to load channel settings:", error)
@@ -437,6 +515,13 @@ export default function ChannelSettingsPage() {
   const handleCreateSession = async () => {
     try {
       setSessionLoading(true)
+      updateSetupStage("checking_object_storage")
+      const settingsResponse = await fetchApiRaw(withVillage("/api/channel-settings"))
+      if (settingsResponse.ok) {
+        const settingsData = await settingsResponse.json()
+        setObjectStorage(settingsData.data?.object_storage || null)
+      }
+      updateSetupStage("creating_session")
       const response = await fetchApiRaw(withVillage("/api/whatsapp/session"), {
         method: "POST",
       })
@@ -457,7 +542,9 @@ export default function ChannelSettingsPage() {
       })
 
       setSessionExists(true)
+      updateSetupStage("session_created")
     } catch (error: any) {
+      updateSetupStage("error", error.message || "Gagal membuat session")
       toast({
         title: "Gagal",
         description: error.message || "Gagal membuat session",
@@ -508,7 +595,8 @@ export default function ChannelSettingsPage() {
     setShowQrDialog(true)
     setQrCode("")
     setIsConnecting(true)
-    
+    updateSetupStage("connecting_session")
+
     try {
       // First try to connect the session
       const connectResponse = await fetchApiRaw(withVillage("/api/whatsapp/connect"), {
@@ -530,10 +618,13 @@ export default function ChannelSettingsPage() {
         throw new Error(connectData?.error || connectData?.message || "Gagal menghubungkan session")
       }
 
+      updateSetupStage("waiting_genfity_wa")
+
       // Check initial status
       const initialStatus = await fetchSessionStatus()
-      
+
       if (initialStatus?.loggedIn) {
+        updateSetupStage("connected")
         toast({
           title: "Sudah Terhubung",
           description: "Session WhatsApp sudah terautentikasi.",
@@ -541,13 +632,17 @@ export default function ChannelSettingsPage() {
         return
       }
 
+      if (!initialStatus?.connected) updateSetupStage("waiting_whatsapp_server")
+
       // Fetch initial QR code
+      updateSetupStage("fetching_qr")
       await fetchQRCode()
       
       // Start polling
       startQrPolling()
-      
+
     } catch (error: any) {
+      updateSetupStage("error", error.message || "Gagal menghubungkan session")
       toast({
         title: "Gagal",
         description: error.message || "Gagal menghubungkan session",
@@ -601,6 +696,53 @@ export default function ChannelSettingsPage() {
   const getPhoneNumber = (jid?: string) => {
     if (!jid) return null
     return jid.split('@')[0].split(':')[0]
+  }
+
+  const getObjectStorageSetupText = () => {
+    if (!objectStorage) return "Mengecek koneksi object storage Cloudflare..."
+    if (objectStorage.status === "connected") return `Object storage Cloudflare terhubung${objectStorage.bucket ? ` ke bucket ${objectStorage.bucket}` : ""}.`
+    if (objectStorage.status === "not_configured") return "Object storage Cloudflare belum dikonfigurasi. Session tetap dibuat, tetapi media WhatsApp bisa terbatas."
+    return `Object storage Cloudflare bermasalah${objectStorage.error ? `: ${objectStorage.error}` : "."}`
+  }
+
+  const getSetupMessage = (stage: WhatsAppSetupStage = setupStage) => {
+    switch (stage) {
+      case "checking_object_storage": return getObjectStorageSetupText()
+      case "creating_session": return "Membuat session WhatsApp baru..."
+      case "session_created": return "Session sudah dibuat. Klik Lihat QR Code untuk lanjut menghubungkan ke Genfity WA dan server WhatsApp."
+      case "connecting_session": return "Menghubungkan session ke Genfity WA..."
+      case "waiting_genfity_wa": return "Menunggu koneksi ke Genfity WA..."
+      case "waiting_whatsapp_server": return "Menunggu koneksi ke server WhatsApp..."
+      case "fetching_qr": return "Mengambil QR code dari server WhatsApp..."
+      case "waiting_scan": return "QR code siap. Menunggu QR discan dari WhatsApp."
+      case "connected": return "Berhasil terhubung. Session WhatsApp siap digunakan."
+      case "error": return setupError || "Terjadi kendala saat menyiapkan session WhatsApp."
+      default: return sessionExists === false ? "Session WhatsApp belum dibuat." : "Menunggu status session WhatsApp."
+    }
+  }
+
+  const getSetupHint = (stage: WhatsAppSetupStage = setupStage) => {
+    const elapsed = setupStartedAt ? Date.now() - setupStartedAt : 0
+    if (stage === "idle" && sessionExists !== false) return "Refresh status jika session baru saja dibuat dari proses lain."
+    if (stage === "session_created") return "Progress berikutnya akan berjalan saat tombol Lihat QR Code ditekan."
+    if (stage === "checking_object_storage" && objectStorage?.status === "error") return "Session akan tetap dicoba dibuat, tetapi pengiriman atau penerimaan media WhatsApp bisa gagal sampai storage diperbaiki."
+    if (stage === "checking_object_storage" && objectStorage?.status === "not_configured") return "Konfigurasi S3/R2 diperlukan untuk media WhatsApp, terutama gambar, dokumen, dan file session yang disimpan di storage."
+    if (stage === "waiting_genfity_wa" && elapsed > 15_000) return "Masih menyiapkan session di Genfity WA. Proses ini bisa sedikit lebih lama saat service baru aktif."
+    if (stage === "waiting_whatsapp_server" && elapsed > 30_000) return "Server WhatsApp belum mengirim QR. Sistem akan mengambil QR otomatis saat tersedia."
+    if (stage === "fetching_qr") return "Jika QR belum muncul, halaman ini akan mencoba mengambil ulang otomatis."
+    return ""
+  }
+
+  const getStepState = (stage: WhatsAppSetupStage, visibleStage: WhatsAppSetupStage = setupStage) => {
+    const currentIndex = whatsappSetupSteps.findIndex((step) => step.stage === visibleStage)
+    const stepIndex = whatsappSetupSteps.findIndex((step) => step.stage === stage)
+    if (visibleStage === "idle") return "pending"
+    if (visibleStage === "session_created" && (stage === "checking_object_storage" || stage === "creating_session")) return "done"
+    if (visibleStage === "connected") return "done"
+    if (visibleStage === "error" && stepIndex === Math.max(currentIndex, 0)) return "error"
+    if (stepIndex < currentIndex) return "done"
+    if (stepIndex === currentIndex) return "active"
+    return "pending"
   }
 
   const handleSave = async (e: React.FormEvent) => {
@@ -747,9 +889,10 @@ export default function ChannelSettingsPage() {
                 <div>
                   <p className="text-sm font-medium">Kelola Session</p>
                   <p className="text-xs text-muted-foreground">
-                    {sessionExists === false && "Session belum dibuat"}
-                    {sessionExists === true && !sessionStatus?.loggedIn && "Session siap, perlu scan QR"}
-                    {sessionExists === true && sessionStatus?.loggedIn && "Session aktif dan terhubung"}
+                    {sessionLoading && (setupStage === "checking_object_storage" || setupStage === "creating_session") && getSetupMessage()}
+                    {!sessionLoading && sessionExists === false && "Session belum dibuat"}
+                    {!sessionLoading && sessionExists === true && !sessionStatus?.loggedIn && "Session siap, perlu scan QR"}
+                    {!sessionLoading && sessionExists === true && sessionStatus?.loggedIn && "Session aktif dan terhubung"}
                   </p>
                 </div>
                 <Button 
@@ -767,9 +910,9 @@ export default function ChannelSettingsPage() {
               <div className="flex flex-wrap gap-2">
                 {/* Session belum dibuat */}
                 {(sessionExists === null || sessionExists === false) && (
-                  <Button type="button" onClick={handleCreateSession} disabled={sessionLoading}>
-                    <Wifi className="h-4 w-4 mr-2" />
-                    Buat Session
+                  <Button type="button" onClick={handleCreateSession} disabled={sessionLoading} className="min-w-[220px] justify-start">
+                    {sessionLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
+                    {sessionLoading ? getSetupMessage() : "Buat Session"}
                   </Button>
                 )}
 
@@ -849,6 +992,34 @@ export default function ChannelSettingsPage() {
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            <div className="rounded-lg border bg-muted/40 p-3 space-y-3">
+              <div className="flex items-center gap-2">
+                {setupStage === "connected" ? <CheckCircle className="h-5 w-5 text-green-600" /> : setupStage === "error" ? <XCircle className="h-5 w-5 text-red-600" /> : <RefreshCw className="h-5 w-5 animate-spin text-blue-600" />}
+                <div>
+                  <p className="text-sm font-medium">{getSetupMessage() || "Menyiapkan koneksi WhatsApp..."}</p>
+                  {getSetupHint() && <p className="text-xs text-muted-foreground mt-1">{getSetupHint()}</p>}
+                </div>
+              </div>
+              <details className="group rounded-md border bg-background/70 p-2">
+                <summary className="cursor-pointer text-xs font-medium text-muted-foreground group-open:mb-2">
+                  Lihat detail progress koneksi
+                </summary>
+                <div className="space-y-2">
+                  {whatsappSetupSteps.map((step) => {
+                    const state = getStepState(step.stage)
+                    return (
+                      <div key={step.stage} className="flex items-center gap-2 text-xs">
+                        <span className={`flex h-5 w-5 items-center justify-center rounded-full border ${state === "done" ? "bg-green-100 border-green-300 text-green-700" : state === "active" ? "bg-blue-100 border-blue-300 text-blue-700" : state === "error" ? "bg-red-100 border-red-300 text-red-700" : "bg-background text-muted-foreground"}`}>
+                          {state === "done" ? <CheckCircle className="h-3 w-3" /> : state === "active" ? <RefreshCw className="h-3 w-3 animate-spin" /> : state === "error" ? <XCircle className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
+                        </span>
+                        <span className={state === "pending" ? "text-muted-foreground" : "font-medium"}>{step.label}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </details>
+            </div>
+
             {/* Session Status in Dialog */}
             <div className="bg-muted/50 p-3 rounded-lg">
               <div className="flex items-center justify-between mb-2">

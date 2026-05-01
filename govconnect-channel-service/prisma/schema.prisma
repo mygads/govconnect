@@ -39,11 +39,35 @@ model Message {
   failed_at        DateTime?
   status_error     String?  @db.Text
   admin_read_at    DateTime?
+  wa_chat_jid       String?
+  wa_sender_jid     String?
+  wa_sender_phone   String?
+  wa_chat_phone     String?
+  wa_message_type   String?
+  wa_context_info   Json?
+  wa_raw_info       Json?
+  wa_raw_message    Json?
+  quoted_message_id String?
+  quoted_stanza_id  String?
+  quoted_participant String?
+  quoted_text       String?  @db.Text
+  quoted_message_json Json?
+  message_kind      String   @default("text")
+  location_latitude Float?
+  location_longitude Float?
+  location_name     String?
+  location_address  String?  @db.Text
+  contact_name      String?
+  contact_phone     String?
+  contact_vcard     String?  @db.Text
+  interactive_payload Json?
   timestamp        DateTime @default(now())
   createdAt        DateTime @default(now())
 
   @@index([village_id, channel, channel_identifier, timestamp])
   @@index([village_id, channel, channel_identifier, delivery_status])
+  @@index([village_id, channel, channel_identifier, message_kind])
+  @@index([village_id, channel, channel_identifier, quoted_message_id])
   @@index([channel, channel_identifier])
   @@index([direction])
   @@index([message_id])

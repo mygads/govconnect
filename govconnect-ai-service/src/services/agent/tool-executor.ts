@@ -88,6 +88,7 @@ interface ToolContext {
   villageId?: string;
   channel: 'whatsapp' | 'webchat';
   isEvaluation?: boolean;
+  userMessage?: string;
 }
 
 const EMERGENCY_CONTACT_HINTS = [
@@ -160,7 +161,7 @@ function buildServiceInfoSuggestedResponse(input: {
   }
 
   if (input.isOnline) {
-    parts.push('Kalau Bapak/Ibu mau lanjut mengajukan sekarang, balas *iya* ya. Nanti saya kirim link formulirnya.');
+    parts.push(`Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *${input.serviceName}*.`);
   } else {
     parts.push('Layanan ini diproses di kantor desa. Silakan datang sambil membawa persyaratan di atas ya.');
   }
@@ -374,7 +375,7 @@ async function toolGetServiceInfo(
     };
   }
 
-  const resolved = await resolveServiceFromName(serviceName, ctx.villageId, services);
+  const resolved = await resolveServiceFromName(serviceName, ctx.villageId, services, ctx.userMessage);
   if (resolved.alternatives && resolved.alternatives.length > 0) {
     return {
       success: true,
@@ -383,8 +384,8 @@ async function toolGetServiceInfo(
         needs_clarification: true,
         alternatives: resolved.alternatives,
         message: 'Ada beberapa layanan yang mirip. Minta user memilih layanan yang dimaksud.',
-        suggested_response: `Ada beberapa layanan yang mirip. Biar tidak salah, mohon pilih salah satu ya:\n\n${resolved.alternatives
-          .map((alternative, index) => `${index + 1}. ${alternative}`)
+        suggested_response: `Ada beberapa layanan KTP yang cocok. Biar tidak salah, Bapak/Ibu maksud yang mana?\n\n${resolved.alternatives
+          .map((alternative, index) => `${index + 1}. ${alternative.name}`)
           .join('\n')}`,
       },
       meta: {
@@ -455,9 +456,6 @@ async function toolGetServiceInfo(
         requirementsText,
         isOnline,
       }),
-      guidance_text: isOnline
-        ? 'Kalau Bapak/Ibu mau lanjut mengajukan sekarang, balas *iya* ya. Nanti saya kirim link formulirnya.'
-        : undefined,
     },
     meta: {
       trustLevel: 'trusted_fact',
@@ -1691,10 +1689,55 @@ async function toolCancelRequest(
   };
 }
 
+function ktpServices(services: ServiceCatalogItem[]): ServiceCatalogItem[] {
+  return services.filter((service) => {
+    const haystack = `${service.name} ${service.slug} ${service.description || ''}`.toLowerCase();
+    return /\bktp\b|kartu tanda penduduk/i.test(haystack);
+  });
+}
+
+function findSpecificKtpService(query: string, services: ServiceCatalogItem[]): ServiceCatalogItem | null {
+  const normalized = query.toLowerCase();
+  if (!/\bktp\b|kartu tanda penduduk/i.test(normalized)) return null;
+
+  const signals: Array<{ query: RegExp; service: RegExp }> = [
+    { query: /\b(rusak|pecah|retak|patah|buram|terkelupas)\b/i, service: /\b(rusak)\b/i },
+    { query: /\b(hilang|kehilangan)\b/i, service: /\b(hilang)\b/i },
+    { query: /\b(perekaman|rekam|baru|pemula|perubahan|ubah)\b/i, service: /\b(perekaman|rekam|perubahan|ubah)\b/i },
+  ];
+
+  for (const signal of signals) {
+    if (!signal.query.test(normalized)) continue;
+    const matches = ktpServices(services).filter((service) => {
+      const haystack = `${service.name} ${service.slug} ${service.description || ''}`.toLowerCase();
+      return signal.service.test(haystack);
+    });
+    if (matches.length === 1) return matches[0];
+  }
+
+  return null;
+}
+
+function findAmbiguousServiceAlternatives(
+  query: string,
+  services: ServiceCatalogItem[],
+): Array<{ slug: string; name: string }> {
+  const normalized = query.toLowerCase();
+  const hasKtpSignal = /\bktp\b|kartu tanda penduduk/i.test(normalized);
+  const hasSpecificKtpSignal = /\b(hilang|perekaman|rekam|perubahan|ubah|baru|pemula)\b/i.test(normalized);
+
+  if (!hasKtpSignal || hasSpecificKtpSignal) return [];
+
+  return ktpServices(services)
+    .slice(0, 4)
+    .map((service) => ({ slug: service.slug, name: service.name }));
+}
+
 async function resolveServiceFromName(
   serviceName: string,
   villageId: string | undefined,
   services: ServiceCatalogItem[],
+  userMessage?: string,
 ): Promise<{
   service: ServiceCatalogItem | null;
   alternatives?: Array<{ slug: string; name: string }>;
@@ -1704,12 +1747,27 @@ async function resolveServiceFromName(
     return { service: null };
   }
 
+  const specificFromUserMessage = userMessage ? findSpecificKtpService(userMessage, services) : null;
+  if (specificFromUserMessage) {
+    return { service: specificFromUserMessage };
+  }
+
+  const ambiguousAlternatives = findAmbiguousServiceAlternatives(userMessage || serviceName, services);
+  if (ambiguousAlternatives.length > 1) {
+    return { service: null, alternatives: ambiguousAlternatives };
+  }
+
   const direct = services.find((service) =>
     service.slug.toLowerCase() === normalized
     || service.name.toLowerCase() === normalized,
   );
   if (direct) {
     return { service: direct };
+  }
+
+  const nameAmbiguousAlternatives = findAmbiguousServiceAlternatives(serviceName, services);
+  if (nameAmbiguousAlternatives.length > 1) {
+    return { service: null, alternatives: nameAmbiguousAlternatives };
   }
 
   const resolved = await resolveServiceSlugFromSearch(serviceName, villageId);

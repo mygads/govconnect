@@ -16,18 +16,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    try {
-      const response = await ai.getBlacklist()
+    const response = await ai.getBlacklist()
+    const data = await response.json().catch(() => null)
 
-      if (response.ok) {
-        const data = await response.json()
-        return NextResponse.json(data)
-      }
-    } catch (error) {
-      console.log('AI service not available:', error)
+    if (!response.ok) {
+      return NextResponse.json(
+        data || { error: 'Failed to fetch blacklist from AI service', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: response.status },
+      )
     }
 
-    return NextResponse.json({ total: 0, entries: [] })
+    return NextResponse.json(data)
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch blacklist' }, { status: 500 })
   }

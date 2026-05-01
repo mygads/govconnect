@@ -44,8 +44,12 @@ interface LedgerEntry {
   reference_id?: string | null
 }
 
-function formatUsd(value?: number | null) {
-  return `$${(value ?? 0).toFixed(2)}`
+function formatUsd(value?: number | null, options?: { preciseSmall?: boolean }) {
+  const amount = value ?? 0
+  if (options?.preciseSmall && amount !== 0 && Math.abs(amount) < 0.01) {
+    return `$${amount.toFixed(6)}`
+  }
+  return `$${amount.toFixed(2)}`
 }
 
 function formatRunway(days?: number | null) {
@@ -277,7 +281,7 @@ export default function AIBalancePage() {
                         <TableCell>{new Date(entry.created_at).toLocaleString("id-ID")}</TableCell>
                         <TableCell>{formatEntryLabel(entry.entry_type)}</TableCell>
                         <TableCell className={entry.amount_usd < 0 ? "text-red-600" : "text-emerald-600"}>
-                          {formatUsd(entry.amount_usd)}
+                          {formatUsd(entry.amount_usd, { preciseSmall: true })}
                         </TableCell>
                         <TableCell>{formatUsd(entry.balance_after_usd)}</TableCell>
                       </TableRow>

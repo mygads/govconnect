@@ -86,6 +86,14 @@ function toConfirmationDecision(result: { decision?: string } | null | undefined
   return 'uncertain';
 }
 
+function detectServiceCorrectionReply(message: string): boolean {
+  const normalized = (message || '').toLowerCase();
+  if (!/\b(salah|bukan|maksud(?:nya)?|harusnya|yang benar|ganti|ubah)\b/i.test(normalized)) {
+    return false;
+  }
+  return SERVICE_ADMIN_PATTERN.test(normalized) || SERVICE_EVENT_PATTERN.test(normalized);
+}
+
 function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncertain' {
   const normalized = (message || '')
     .trim()
@@ -224,6 +232,11 @@ export async function tryHandlePendingOffers(
     if (hasLapLayCode) {
       clearPendingServiceFormOffer(userId);
     } else {
+      if (detectServiceCorrectionReply(message)) {
+        clearPendingServiceFormOffer(userId);
+        return null;
+      }
+
       let decision = detectExplicitConfirmationReply(message);
       if (decision === 'uncertain') {
         const confirmationResult = await runWithMicroBudget(

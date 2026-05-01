@@ -29,11 +29,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe, Download, FileSpreadsheet, FileText as FilePdf, CheckSquare, Trash2, Loader2, RotateCcw, Archive } from "lucide-react"
+import { AlertCircle, AlertTriangle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe, Download, FileSpreadsheet, FileText as FilePdf, CheckSquare, Trash2, Loader2, RotateCcw, Archive } from "lucide-react"
 import { laporan } from "@/lib/frontend-api"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
 import { exportToExcel, exportToPDF } from "@/lib/export-utils"
 import { useToast } from "@/hooks/use-toast"
+import { useRealtime } from "@/components/dashboard/RealtimeProvider"
 import {
   Dialog,
   DialogContent,
@@ -49,13 +50,25 @@ interface Complaint {
   channel?: 'WHATSAPP' | 'WEBCHAT'
   channel_identifier?: string
   kategori: string
+  category?: { name?: string | null } | null
+  type?: { name?: string | null } | null
   deskripsi: string
   alamat?: string
   status: string
+  is_urgent?: boolean
   foto_url?: string
   reporter_name?: string
   reporter_phone?: string
   created_at: string
+}
+
+function formatComplaintCategory(complaint: Complaint) {
+  const categoryName = complaint.category?.name?.trim()
+  const typeName = complaint.type?.name?.trim()
+  if (categoryName && typeName) return `${categoryName} / ${typeName}`
+  if (typeName) return typeName
+  if (categoryName) return categoryName
+  return complaint.kategori?.replace(/_/g, " ") || "Belum terkategori"
 }
 
 export default function LaporanListPage() {
@@ -71,7 +84,9 @@ export default function LaporanListPage() {
   const [deletedItems, setDeletedItems] = useState<Complaint[]>([])
   const [loadingDeleted, setLoadingDeleted] = useState(false)
   const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [selectedDeletedItem, setSelectedDeletedItem] = useState<Complaint | null>(null)
   const { toast } = useToast()
+  const { refreshData } = useRealtime()
 
   useEffect(() => {
     fetchComplaints()
@@ -80,7 +95,7 @@ export default function LaporanListPage() {
   const fetchComplaints = async () => {
     try {
       setLoading(true)
-      const data = await laporan.getAll()
+      const data = await laporan.getAll({ limit: '100' })
       setComplaints(data.data || [])
       setError(null)
     } catch (err: any) {
@@ -96,7 +111,7 @@ export default function LaporanListPage() {
       search === "" ||
       complaint.complaint_id.toLowerCase().includes(searchLower) ||
       complaint.wa_user_id?.includes(search) ||
-      complaint.kategori.toLowerCase().includes(searchLower) ||
+      formatComplaintCategory(complaint).toLowerCase().includes(searchLower) ||
       (complaint.reporter_name || '').toLowerCase().includes(searchLower) ||
       (complaint.reporter_phone || '').includes(search)
 
@@ -138,6 +153,7 @@ export default function LaporanListPage() {
     setSelectedIds(new Set())
     setBulkUpdating(false)
     fetchComplaints()
+    refreshData()
   }
 
   const handleExportExcel = () => {
@@ -162,6 +178,7 @@ export default function LaporanListPage() {
       await laporan.softDelete(id)
       toast({ title: "Berhasil", description: "Pengaduan dipindahkan ke sampah" })
       fetchComplaints()
+      refreshData()
     } catch (err: any) {
       toast({ title: "Gagal", description: err.message, variant: "destructive" })
     } finally {
@@ -186,6 +203,7 @@ export default function LaporanListPage() {
     setSelectedIds(new Set())
     setBulkUpdating(false)
     fetchComplaints()
+    refreshData()
   }
 
   const fetchDeletedItems = async () => {
@@ -206,7 +224,9 @@ export default function LaporanListPage() {
       await laporan.restore(id)
       toast({ title: "Berhasil", description: "Pengaduan berhasil dipulihkan" })
       setDeletedItems(prev => prev.filter(item => item.id !== id))
+      if (selectedDeletedItem?.id === id) setSelectedDeletedItem(null)
       fetchComplaints()
+      refreshData()
     } catch (err: any) {
       toast({ title: "Gagal", description: err.message, variant: "destructive" })
     } finally {
@@ -427,13 +447,18 @@ export default function LaporanListPage() {
                         />
                       </TableCell>
                       <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {complaint.foto_url && (
                             <span title="Laporan dengan foto">
                               <ImageIcon className="h-4 w-4 text-blue-500" />
                             </span>
                           )}
-                          {complaint.complaint_id}
+                          <span>{complaint.complaint_id}</span>
+                          {complaint.is_urgent && (
+                            <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1">
+                              <AlertTriangle className="h-3 w-3" /> Darurat
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -465,7 +490,7 @@ export default function LaporanListPage() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="capitalize">
-                          {complaint.kategori.replace(/_/g, " ")}
+                          {formatComplaintCategory(complaint)}
                         </Badge>
                       </TableCell>
                       <TableCell className="max-w-xs truncate">
@@ -514,56 +539,134 @@ export default function LaporanListPage() {
 
       {/* Deleted Items Modal */}
       <Dialog open={showDeletedModal} onOpenChange={setShowDeletedModal}>
-        <DialogContent className="max-w-5xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+        <DialogContent className="w-[96vw] max-w-7xl max-h-[88vh] overflow-hidden p-0">
+          <DialogHeader className="border-b bg-muted/30 px-6 py-5">
+            <DialogTitle className="flex items-center gap-2 text-xl">
               <Archive className="h-5 w-5" /> Pengaduan yang Dihapus
             </DialogTitle>
             <DialogDescription>
               Item yang dihapus akan otomatis terhapus permanen setelah 30 hari.
             </DialogDescription>
           </DialogHeader>
-          {loadingDeleted ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : deletedItems.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Trash2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
-              <p>Tidak ada pengaduan yang dihapus</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {deletedItems.map((item) => (
-                <div key={item.id} className="border rounded-lg p-4 flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-sm">{item.complaint_id}</span>
-                      <Badge className={getStatusColor(item.status)} >{formatStatus(item.status)}</Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground truncate">{item.deskripsi}</p>
-                    <div className="flex gap-3 text-xs text-muted-foreground">
-                      <span>{item.kategori.replace(/_/g, " ")}</span>
-                      <span>{formatDate(item.created_at)}</span>
-                    </div>
+          <div className="max-h-[70vh] overflow-y-auto px-6 py-5">
+            {loadingDeleted ? (
+              <div className="flex min-h-56 items-center justify-center rounded-lg border border-dashed bg-muted/20">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : deletedItems.length === 0 ? (
+              <div className="flex min-h-64 flex-col items-center justify-center rounded-lg border border-dashed bg-muted/20 p-8 text-center text-muted-foreground">
+                <Trash2 className="mb-3 h-10 w-10 opacity-30" />
+                <p className="font-medium text-foreground">Tidak ada pengaduan yang dihapus</p>
+                <p className="mt-1 max-w-md text-sm">Pengaduan yang dipindahkan ke sampah akan muncul di sini sebelum dihapus permanen.</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-lg border">
+                <Table className="w-full table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[170px]">No. Pengaduan</TableHead>
+                      <TableHead>Ringkasan</TableHead>
+                      <TableHead className="w-[120px]">Status</TableHead>
+                      <TableHead className="w-[180px] text-right">Aksi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {deletedItems.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-mono text-sm font-semibold">{item.complaint_id}</TableCell>
+                        <TableCell className="min-w-0">
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <p className="truncate text-sm font-medium" title={formatComplaintCategory(item)}>{formatComplaintCategory(item)}</p>
+                              {item.is_urgent && (
+                                <Badge variant="outline" className="shrink-0 bg-red-50 text-red-700 border-red-200 gap-1">
+                                  <AlertTriangle className="h-3 w-3" /> Darurat
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="truncate text-sm text-muted-foreground" title={item.deskripsi}>{item.deskripsi}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell><Badge className={getStatusColor(item.status)}>{formatStatus(item.status)}</Badge></TableCell>
+                        <TableCell>
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" size="sm" onClick={() => setSelectedDeletedItem(item)}>
+                              <Eye className="h-4 w-4 mr-1" /> Detail
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleRestore(item.id)}
+                              disabled={restoringId === item.id}
+                            >
+                              {restoringId === item.id ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <RotateCcw className="h-4 w-4 mr-1" />
+                              )}
+                              Pulihkan
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!selectedDeletedItem} onOpenChange={(open) => !open && setSelectedDeletedItem(null)}>
+        <DialogContent className="w-[94vw] max-w-3xl max-h-[86vh] overflow-y-auto">
+          {selectedDeletedItem && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{selectedDeletedItem.complaint_id}</DialogTitle>
+                <DialogDescription>Detail pengaduan yang sedang berada di sampah.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Badge className={getStatusColor(selectedDeletedItem.status)}>{formatStatus(selectedDeletedItem.status)}</Badge>
+                  <Badge variant="outline">{formatComplaintCategory(selectedDeletedItem)}</Badge>
+                </div>
+                <div className="grid gap-3 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-2">
+                  <div>
+                    <p className="text-muted-foreground">Pelapor</p>
+                    <p className="font-medium">{selectedDeletedItem.reporter_name || '-'}</p>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleRestore(item.id)}
-                    disabled={restoringId === item.id}
-                    className="shrink-0"
-                  >
-                    {restoringId === item.id ? (
-                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                    ) : (
-                      <RotateCcw className="h-4 w-4 mr-1" />
-                    )}
+                  <div>
+                    <p className="text-muted-foreground">Kontak</p>
+                    <p className="font-mono">{selectedDeletedItem.reporter_phone || selectedDeletedItem.wa_user_id || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Tanggal</p>
+                    <p>{formatDate(selectedDeletedItem.created_at)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Channel</p>
+                    <p>{(selectedDeletedItem.channel || (selectedDeletedItem.wa_user_id ? 'WHATSAPP' : 'WEBCHAT')) === 'WHATSAPP' ? 'WhatsApp' : 'Webchat'}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Deskripsi</p>
+                  <p className="whitespace-pre-wrap rounded-lg border p-4 text-sm leading-6 text-foreground">{selectedDeletedItem.deskripsi}</p>
+                </div>
+                {selectedDeletedItem.alamat && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Alamat</p>
+                    <p className="rounded-lg border p-4 text-sm text-foreground">{selectedDeletedItem.alamat}</p>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button onClick={() => handleRestore(selectedDeletedItem.id)} disabled={restoringId === selectedDeletedItem.id}>
+                    {restoringId === selectedDeletedItem.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
                     Pulihkan
                   </Button>
                 </div>
-              ))}
-            </div>
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>

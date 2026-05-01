@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/database';
 import logger from '../utils/logger';
 import { getParam, getQuery } from '../utils/http';
+import { checkObjectStorageHealth } from '../services/object-storage.service';
 
 function buildWebhookUrl(): string {
   const baseUrl = process.env.PUBLIC_CHANNEL_BASE_URL || process.env.PUBLIC_BASE_URL || '';
@@ -24,9 +25,11 @@ export async function handleGetChannelAccount(req: Request, res: Response) {
     }
 
     const webhookUrl = buildWebhookUrl();
+    const objectStorage = await checkObjectStorageHealth({ includeUsage: false });
     const data = {
       ...account,
       webhook_url: account.webhook_url || webhookUrl,
+      object_storage: objectStorage,
     };
     return res.json({ data });
   } catch (error: any) {

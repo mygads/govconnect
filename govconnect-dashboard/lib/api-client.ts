@@ -962,6 +962,7 @@ export const livechat = {
     message?: string;
     admin_id?: string;
     admin_name?: string | null;
+    reply_to_message_id?: string;
     media?: {
       type: 'image' | 'audio' | 'document' | 'video';
       url: string;
@@ -970,6 +971,30 @@ export const livechat = {
       file_name?: string;
       size?: number;
       storage_key?: string;
+    };
+    location?: {
+      latitude: number;
+      longitude: number;
+      name?: string;
+      address?: string;
+    };
+    contact?: {
+      name: string;
+      phone: string;
+      organization?: string;
+      title?: string;
+      vcard?: string;
+    };
+    interactive?: {
+      type: 'buttons' | 'list';
+      body: string;
+      title?: string;
+      footer?: string;
+      image?: string;
+      buttonText?: string;
+      button_text?: string;
+      buttons?: Array<Record<string, unknown>>;
+      sections?: Array<Record<string, unknown>>;
     };
   }, villageId?: string) {
     const path = withVillage(`/internal/conversations/${encodeURIComponent(waUserId)}/send`, villageId);

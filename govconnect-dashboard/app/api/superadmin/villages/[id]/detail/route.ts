@@ -32,18 +32,24 @@ export async function GET(
     }
 
     // Get complaints from case service
-    let complaints = { data: [], pagination: null }
-    try {
-      const res = await caseService.getLaporan({ village_id: villageId, limit: '50' })
-      if (res.ok) complaints = await res.json()
-    } catch (e) { console.log('Case service unavailable') }
+    const complaintsRes = await caseService.getLaporan({ village_id: villageId, limit: '50' })
+    const complaints = await complaintsRes.json().catch(() => null)
+    if (!complaintsRes.ok) {
+      return NextResponse.json(
+        complaints || { error: 'Failed to fetch village complaints from case service', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: complaintsRes.status },
+      )
+    }
 
     // Get service requests from case service
-    let serviceRequests = { data: [], pagination: null }
-    try {
-      const res = await caseService.getServiceRequests({ village_id: villageId, limit: '50' })
-      if (res.ok) serviceRequests = await res.json()
-    } catch (e) { console.log('Case service unavailable') }
+    const serviceRequestsRes = await caseService.getServiceRequests({ village_id: villageId, limit: '50' })
+    const serviceRequests = await serviceRequestsRes.json().catch(() => null)
+    if (!serviceRequestsRes.ok) {
+      return NextResponse.json(
+        serviceRequests || { error: 'Failed to fetch village service requests from case service', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: serviceRequestsRes.status },
+      )
+    }
 
     // Get knowledge base from local DB
     const knowledgeItems = await prisma.knowledge_base.findMany({
@@ -60,11 +66,8 @@ export async function GET(
     })
 
     // Get statistics overview from case service
-    let statistics = null
-    try {
-      const res = await caseService.getOverview({ village_id: villageId })
-      if (res.ok) statistics = await res.json()
-    } catch (e) { console.log('Case service unavailable for stats') }
+    const statisticsRes = await caseService.getOverview({ village_id: villageId })
+    const statistics = statisticsRes.ok ? await statisticsRes.json().catch(() => null) : null
 
     return NextResponse.json({
       village: {

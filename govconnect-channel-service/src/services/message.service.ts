@@ -10,6 +10,32 @@ type MessageMediaFields = Pick<
   'media_type' | 'media_url' | 'media_public_url' | 'mime_type' | 'file_name' | 'file_size' | 'storage_key'
 >;
 
+type MessageRichFields = Pick<
+  MessageData,
+  | 'wa_chat_jid'
+  | 'wa_sender_jid'
+  | 'wa_sender_phone'
+  | 'wa_chat_phone'
+  | 'wa_message_type'
+  | 'wa_context_info'
+  | 'wa_raw_info'
+  | 'wa_raw_message'
+  | 'quoted_message_id'
+  | 'quoted_stanza_id'
+  | 'quoted_participant'
+  | 'quoted_text'
+  | 'quoted_message_json'
+  | 'message_kind'
+  | 'location_latitude'
+  | 'location_longitude'
+  | 'location_name'
+  | 'location_address'
+  | 'contact_name'
+  | 'contact_phone'
+  | 'contact_vcard'
+  | 'interactive_payload'
+>;
+
 function mediaFields(data: MessageMediaFields) {
   return {
     media_type: data.media_type || null,
@@ -19,6 +45,33 @@ function mediaFields(data: MessageMediaFields) {
     file_name: data.file_name || null,
     file_size: data.file_size || null,
     storage_key: data.storage_key || null,
+  };
+}
+
+function richFields(data: MessageRichFields & Pick<MessageData, 'media_type'>) {
+  return {
+    wa_chat_jid: data.wa_chat_jid || null,
+    wa_sender_jid: data.wa_sender_jid || null,
+    wa_sender_phone: data.wa_sender_phone || null,
+    wa_chat_phone: data.wa_chat_phone || null,
+    wa_message_type: data.wa_message_type || null,
+    wa_context_info: data.wa_context_info === undefined ? undefined : data.wa_context_info as any,
+    wa_raw_info: data.wa_raw_info === undefined ? undefined : data.wa_raw_info as any,
+    wa_raw_message: data.wa_raw_message === undefined ? undefined : data.wa_raw_message as any,
+    quoted_message_id: data.quoted_message_id || null,
+    quoted_stanza_id: data.quoted_stanza_id || null,
+    quoted_participant: data.quoted_participant || null,
+    quoted_text: data.quoted_text || null,
+    quoted_message_json: data.quoted_message_json === undefined ? undefined : data.quoted_message_json as any,
+    message_kind: data.message_kind || (data.media_type ? 'media' : 'text'),
+    location_latitude: data.location_latitude ?? null,
+    location_longitude: data.location_longitude ?? null,
+    location_name: data.location_name || null,
+    location_address: data.location_address || null,
+    contact_name: data.contact_name || null,
+    contact_phone: data.contact_phone || null,
+    contact_vcard: data.contact_vcard || null,
+    interactive_payload: data.interactive_payload === undefined ? undefined : data.interactive_payload as any,
   };
 }
 
@@ -87,6 +140,7 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
       message_id: data.message_id,
       message_text: data.message_text,
       ...mediaFields(data),
+      ...richFields(data),
       direction: 'IN',
       source: 'WA_WEBHOOK',
       delivery_status: data.delivery_status || 'received',
@@ -125,6 +179,7 @@ export async function saveOutgoingMessage(
       message_id: data.message_id,
       message_text: data.message_text,
       ...mediaFields(data),
+      ...richFields(data),
       direction: 'OUT',
       source: data.source,
       delivery_status: data.delivery_status || 'sent',

@@ -17,9 +17,21 @@ import {
   saveOutgoingMessage,
 } from '../services/message.service';
 import { subscribeLivechatEvents } from '../services/livechat-events.service';
-import { markMessageAsRead, sendMediaMessage, sendTextMessage, sendTypingIndicator, WhatsAppMediaType } from '../services/wa.service';
+import {
+  buildQuotedContextInfo,
+  markMessageAsRead,
+  sendButtonsMessage,
+  sendContactMessage,
+  sendListMessage,
+  sendLocationMessage,
+  sendMediaMessage,
+  sendTextMessage,
+  sendTypingIndicator,
+  WhatsAppMediaType,
+} from '../services/wa.service';
 import logger from '../utils/logger';
 import { getParam, getQuery } from '../utils/http';
+import type { MessageKind } from '../types/message.types';
 
 function resolveVillageId(req: Request): string | undefined {
   const queryVillageId = getQuery(req, 'village_id');
@@ -93,6 +105,116 @@ function normalizeMediaPayload(value: any): LivechatMediaPayload | null {
     file_name: typeof value.file_name === 'string' ? value.file_name : undefined,
     size: typeof value.size === 'number' ? value.size : undefined,
     storage_key: typeof value.storage_key === 'string' ? value.storage_key : undefined,
+  };
+}
+
+function normalizeLocationPayload(value: any) {
+  if (!value || typeof value !== 'object') return null;
+  const latitude = Number(value.latitude ?? value.lat);
+  const longitude = Number(value.longitude ?? value.lng ?? value.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return {
+    latitude,
+    longitude,
+    name: typeof value.name === 'string' ? value.name.trim() : undefined,
+    address: typeof value.address === 'string' ? value.address.trim() : undefined,
+  };
+}
+
+function normalizeContactPayload(value: any) {
+  if (!value || typeof value !== 'object') return null;
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  const phone = typeof value.phone === 'string' ? value.phone.trim() : '';
+  if (!name || !phone) return null;
+  return {
+    name,
+    phone,
+    organization: typeof value.organization === 'string' ? value.organization.trim() : undefined,
+    title: typeof value.title === 'string' ? value.title.trim() : undefined,
+    vcard: typeof value.vcard === 'string' ? value.vcard : undefined,
+  };
+}
+
+function normalizeInteractivePayload(value: any) {
+  if (!value || typeof value !== 'object') return null;
+  const type = value.type === 'list' ? 'list' : value.type === 'buttons' ? 'buttons' : null;
+  if (!type) return null;
+  if (type === 'buttons') {
+    const buttons = Array.isArray(value.buttons)
+      ? value.buttons
+          .map((button: any) => {
+            if (!button || typeof button !== 'object') return null;
+            const buttonType = typeof button.type === 'string' ? button.type.trim() : 'reply';
+            const title = typeof button.title === 'string'
+              ? button.title.trim()
+              : typeof button.text === 'string'
+                ? button.text.trim()
+                : '';
+            if (!title) return null;
+            const normalized: Record<string, unknown> = { type: buttonType, title };
+            if (typeof button.id === 'string' && button.id.trim()) normalized.id = button.id.trim();
+            if (typeof button.url === 'string' && button.url.trim()) normalized.url = button.url.trim();
+            if (typeof button.phone_number === 'string' && button.phone_number.trim()) normalized.phone_number = button.phone_number.trim();
+            if (typeof button.copy_code === 'string' && button.copy_code.trim()) normalized.copy_code = button.copy_code.trim();
+            return normalized;
+          })
+          .filter(Boolean)
+      : [];
+    const body = typeof value.body === 'string' ? value.body.trim() : '';
+    if (!body || buttons.length === 0) return null;
+    return {
+      type,
+      body,
+      title: typeof value.title === 'string' ? value.title.trim() : undefined,
+      footer: typeof value.footer === 'string' ? value.footer.trim() : undefined,
+      image: typeof value.image === 'string' ? value.image.trim() : undefined,
+      buttons,
+    };
+  }
+
+  const sections = Array.isArray(value.sections)
+    ? value.sections
+        .map((section: any) => {
+          if (!section || typeof section !== 'object') return null;
+          const rows = Array.isArray(section.rows)
+            ? section.rows
+                .map((row: any) => {
+                  if (!row || typeof row !== 'object') return null;
+                  const title = typeof row.title === 'string' ? row.title.trim() : '';
+                  if (!title) return null;
+                  const normalized: Record<string, unknown> = { title };
+                  const desc = typeof row.desc === 'string' ? row.desc.trim() : typeof row.description === 'string' ? row.description.trim() : '';
+                  const rowId = typeof row.RowId === 'string'
+                    ? row.RowId.trim()
+                    : typeof row.rowId === 'string'
+                      ? row.rowId.trim()
+                      : typeof row.id === 'string'
+                        ? row.id.trim()
+                        : '';
+                  if (desc) normalized.desc = desc;
+                  if (rowId) normalized.RowId = rowId;
+                  return normalized;
+                })
+                .filter(Boolean)
+            : [];
+          if (rows.length === 0) return null;
+          return {
+            title: typeof section.title === 'string' && section.title.trim() ? section.title.trim() : 'Menu',
+            rows,
+          };
+        })
+        .filter(Boolean)
+    : [];
+  const body = typeof value.body === 'string' ? value.body.trim() : '';
+  const buttonText = typeof value.buttonText === 'string' ? value.buttonText.trim() : typeof value.button_text === 'string' ? value.button_text.trim() : '';
+  if (!body || !buttonText || sections.length === 0) return null;
+  return {
+    type,
+    body,
+    buttonText,
+    title: typeof value.title === 'string' ? value.title.trim() : undefined,
+    footer: typeof value.footer === 'string' ? value.footer.trim() : undefined,
+    sections,
   };
 }
 
@@ -295,6 +417,10 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     const wa_user_id = getParam(req, 'wa_user_id');
     const { message, admin_id, admin_name } = req.body;
     const media = normalizeMediaPayload(req.body?.media);
+    const location = normalizeLocationPayload(req.body?.location);
+    const contact = normalizeContactPayload(req.body?.contact);
+    const interactive = normalizeInteractivePayload(req.body?.interactive);
+    const replyToMessageId = typeof req.body?.reply_to_message_id === 'string' ? req.body.reply_to_message_id.trim() : undefined;
     const messageText = typeof message === 'string' ? message.trim() : '';
     const villageId = resolveVillageId(req);
     const channel = resolveChannel(req, wa_user_id || undefined);
@@ -304,13 +430,27 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       return;
     }
 
-    if (!messageText && !media) {
-      res.status(400).json({ error: 'message or media is required' });
+    const hasTextOnlyPayload = !!messageText && !media && !location && !contact && !interactive;
+    const primaryPayloadCount = [hasTextOnlyPayload, media, location, contact, interactive].filter(Boolean).length;
+    if (primaryPayloadCount !== 1) {
+      res.status(400).json({ error: 'send exactly one of message, media, location, contact, or interactive' });
       return;
     }
 
     if (req.body?.media && !media) {
       res.status(400).json({ error: 'invalid media payload' });
+      return;
+    }
+    if (req.body?.location && !location) {
+      res.status(400).json({ error: 'invalid location payload' });
+      return;
+    }
+    if (req.body?.contact && !contact) {
+      res.status(400).json({ error: 'invalid contact payload' });
+      return;
+    }
+    if (req.body?.interactive && !interactive) {
+      res.status(400).json({ error: 'invalid interactive payload' });
       return;
     }
 
@@ -322,11 +462,17 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     }
 
     const isWebchatUser = channel === 'WEBCHAT';
-    const persistedText = messageText || (media ? mediaLabel(media) : '');
+    const messageKind: MessageKind = media ? 'media' : location ? 'location' : contact ? 'contact' : interactive?.type === 'buttons' ? 'buttons' : interactive?.type === 'list' ? 'list' : 'text';
+    const persistedText = messageText ||
+      (media ? mediaLabel(media) : '') ||
+      (location ? `Location: ${location.name || location.address || `${location.latitude}, ${location.longitude}`}` : '') ||
+      (contact ? `Contact: ${contact.name}` : '') ||
+      (interactive?.type === 'buttons' ? interactive.body : '') ||
+      (interactive?.type === 'list' ? interactive.body : '');
 
     if (isWebchatUser) {
-      if (media) {
-        res.status(400).json({ error: 'Media sending is only supported for WhatsApp conversations' });
+      if (media || location || contact || interactive) {
+        res.status(400).json({ error: 'WhatsApp native payloads are only supported for WhatsApp conversations' });
         return;
       }
       // For webchat users, just save to database
@@ -341,6 +487,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
         message_id: messageId,
         message_text: persistedText,
         source: 'ADMIN',
+        message_kind: messageKind,
       });
 
       // Update conversation summary and reset unread count (admin has responded)
@@ -362,7 +509,22 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
         channel: 'webchat',
       });
     } else {
-      // For WhatsApp users, send via WhatsApp API
+      const quoteContext = await buildQuotedContextInfo({
+        villageId,
+        channel,
+        channelIdentifier: wa_user_id,
+        messageId: replyToMessageId,
+      });
+
+      const quotedStanzaId = typeof quoteContext.ContextInfo?.StanzaId === 'string'
+        ? quoteContext.ContextInfo.StanzaId
+        : typeof quoteContext.ContextInfo?.StanzaID === 'string'
+          ? quoteContext.ContextInfo.StanzaID
+          : undefined;
+      const quotedParticipant = typeof quoteContext.ContextInfo?.Participant === 'string'
+        ? quoteContext.ContextInfo.Participant
+        : undefined;
+
       const result = media
         ? await sendMediaMessage({
             to: wa_user_id,
@@ -372,8 +534,43 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
             fileName: media.file_name,
             mimeType: media.mime_type,
             villageId,
+            ...quoteContext,
           })
-        : await sendTextMessage(wa_user_id, messageText, villageId);
+        : location
+          ? await sendLocationMessage({
+              to: wa_user_id,
+              latitude: location.latitude,
+              longitude: location.longitude,
+              name: location.name,
+              address: location.address,
+              villageId,
+              ...quoteContext,
+            })
+          : contact
+            ? await sendContactMessage(wa_user_id, contact, villageId, quoteContext)
+            : interactive?.type === 'buttons'
+              ? await sendButtonsMessage({
+                  to: wa_user_id,
+                  body: interactive.body,
+                  title: interactive.title,
+                  footer: interactive.footer,
+                  image: interactive.image,
+                  buttons: interactive.buttons,
+                  villageId,
+                  ...quoteContext,
+                })
+              : interactive?.type === 'list'
+                ? await sendListMessage({
+                    to: wa_user_id,
+                    body: interactive.body,
+                    buttonText: interactive.buttonText,
+                    title: interactive.title,
+                    footer: interactive.footer,
+                    sections: interactive.sections,
+                    villageId,
+                    ...quoteContext,
+                  })
+                : await sendTextMessage(wa_user_id, messageText, villageId, quoteContext);
 
       if (result.success) {
         // Generate message ID if not provided by WA
@@ -398,6 +595,20 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
             storage_key: media?.storage_key,
             source: 'ADMIN',
             delivery_status: 'sent',
+            message_kind: messageKind,
+            quoted_message_id: replyToMessageId,
+            quoted_stanza_id: quotedStanzaId,
+            quoted_participant: quotedParticipant,
+            quoted_text: quoteContext.QuotedText,
+            quoted_message_json: quoteContext.QuotedMessage,
+            location_latitude: location?.latitude,
+            location_longitude: location?.longitude,
+            location_name: location?.name,
+            location_address: location?.address,
+            contact_name: contact?.name,
+            contact_phone: contact?.phone,
+            contact_vcard: contact?.vcard,
+            interactive_payload: interactive,
           });
 
           // Update conversation summary and reset unread count (admin has responded)
@@ -449,6 +660,20 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
           source: 'ADMIN',
           delivery_status: 'failed',
           status_error: result.error || 'Failed to send message',
+          message_kind: messageKind,
+          quoted_message_id: replyToMessageId,
+          quoted_stanza_id: quotedStanzaId,
+          quoted_participant: quotedParticipant,
+          quoted_text: quoteContext.QuotedText,
+          quoted_message_json: quoteContext.QuotedMessage,
+          location_latitude: location?.latitude,
+          location_longitude: location?.longitude,
+          location_name: location?.name,
+          location_address: location?.address,
+          contact_name: contact?.name,
+          contact_phone: contact?.phone,
+          contact_vcard: contact?.vcard,
+          interactive_payload: interactive,
         });
 
         res.status(502).json({

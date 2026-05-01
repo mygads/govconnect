@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { randomBytes } from 'crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import prisma from '../config/database';
@@ -12,6 +12,19 @@ let sessionSettings = {
   autoReadMessages: true,
   typingIndicator: true,
 };
+
+export const REQUIRED_WEBHOOK_EVENTS = [
+  'Message',
+  'MessageSent',
+  'Receipt',
+  'ReadReceipt',
+  'Presence',
+  'ChatPresence',
+  'Connected',
+  'Disconnected',
+  'LoggedOut',
+  'QR',
+];
 
 function isDryRun(): boolean {
   return (process.env.WA_DRY_RUN || '').toLowerCase() === 'true';
@@ -201,7 +214,7 @@ async function bootstrapDirectSessionGateway(params: {
   if (params.webhook) {
     await callSessionGateway(params.token, '/webhook', 'POST', {
       WebhookURL: params.webhook,
-      Events: ['Message', 'ReadReceipt'],
+      Events: REQUIRED_WEBHOOK_EVENTS,
     });
   }
 
@@ -292,7 +305,7 @@ async function createSessionViaWaSupport(params: {
     session_name: sessionName,
     webhook_url: params.webhook || '',
     webhook_secret: params.webhookSecret || undefined,
-    events: 'All',
+    events: REQUIRED_WEBHOOK_EVENTS.join(','),
     auto_connect: true,
     auto_read_enabled: sessionSettings.autoReadMessages,
     typing_enabled: sessionSettings.typingIndicator,
@@ -427,7 +440,7 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
         jid: '',
         qrcode: '',
         name: 'dry-run',
-        events: 'All',
+        events: REQUIRED_WEBHOOK_EVENTS.join(','),
         webhook: '',
       };
     }
@@ -658,11 +671,13 @@ export async function updateStoredSessionStatus(params: {
   status?: string;
   waNumber?: string | null;
 }) {
+  const hasWaNumber = Object.prototype.hasOwnProperty.call(params, 'waNumber');
+
   return prisma.wa_sessions.update({
     where: { village_id: params.villageId },
     data: {
       status: params.status || null,
-      wa_number: params.waNumber || null,
+      ...(hasWaNumber ? { wa_number: params.waNumber } : {}),
       last_connected_at: params.status === 'connected' ? new Date() : undefined,
     },
   });
@@ -705,7 +720,7 @@ export async function deleteSessionForVillage(villageId: string) {
 /**
  * Connect WhatsApp session
  * API: POST {WA_API_URL}/session/connect
- * Body: { Subscribe: ["Message", "ReadReceipt"], Immediate: true }
+ * Body: { Subscribe: REQUIRED_WEBHOOK_EVENTS, Immediate: true }
  */
 export async function connectSession(token: string): Promise<{ details: string }> {
   try {
@@ -721,7 +736,7 @@ export async function connectSession(token: string): Promise<{ details: string }
     const url = `${config.WA_API_URL}/session/connect`;
     
     const response = await axios.post(url, {
-      Subscribe: ['Message', 'ReadReceipt'],
+      Subscribe: REQUIRED_WEBHOOK_EVENTS,
       Immediate: true,
     }, {
       headers: {
@@ -1136,6 +1151,130 @@ export async function markMessageAsRead(
 // MESSAGE SENDING FUNCTIONS
 // =====================================================
 
+type WaSendResult = { success: boolean; message_id?: string; error?: string };
+
+export interface WaQuoteContext {
+  ContextInfo?: Record<string, unknown>;
+  QuotedText?: string;
+  QuotedMessage?: unknown;
+}
+
+export interface SendTextMessageOptions extends WaQuoteContext {
+  id?: string;
+}
+
+function extractWaMessageId(data: any): string | undefined {
+  return data?.Id || data?.id || data?.MessageID || data?.message_id || data?.messageId;
+}
+
+function isWaSendSuccess(responseData: any, raw: any): boolean {
+  return raw?.success === true || raw?.code === 200 || responseData?.Details === 'Sent' || responseData?.details === 'Sent';
+}
+
+async function ensureWaSendEnabled(villageId: string | undefined, to: string, kind: string): Promise<WaSendResult | null> {
+  const account = await getDefaultChannelAccount(villageId);
+  if (account && account.enabled_wa === false) {
+    logger.info('WhatsApp channel disabled, message not sent', { to, kind });
+    return { success: false, error: 'WhatsApp channel disabled' };
+  }
+  return null;
+}
+
+async function postWaSend(params: {
+  villageId?: string;
+  to: string;
+  kind: string;
+  endpoint: string;
+  body: Record<string, unknown>;
+  timeout?: number;
+}): Promise<WaSendResult> {
+  const disabled = await ensureWaSendEnabled(params.villageId, params.to, params.kind);
+  if (disabled) return disabled;
+
+  const normalizedPhone = normalizePhoneNumber(params.to);
+  if (isDryRun()) {
+    const fakeMessageId = `dryrun_${params.kind}_${Date.now()}`;
+    logger.info('WA_DRY_RUN: Skipping WhatsApp API call', {
+      village_id: params.villageId,
+      to: normalizedPhone,
+      kind: params.kind,
+      message_id: fakeMessageId,
+    });
+    return { success: true, message_id: fakeMessageId };
+  }
+
+  const resolved = await resolveAccessToken(params.villageId);
+  const accessToken = resolved.token;
+  if (!accessToken) {
+    logger.warn('WhatsApp token not configured, message not sent', { kind: params.kind });
+    return { success: false, error: 'WhatsApp not configured' };
+  }
+
+  const url = `${config.WA_API_URL}${params.endpoint}`;
+  const response = await axios.post(
+    url,
+    { Phone: normalizedPhone, ...params.body },
+    {
+      headers: {
+        token: accessToken,
+        'Content-Type': 'application/json',
+      },
+      timeout: params.timeout || 30000,
+    }
+  );
+
+  const responseData = response.data.data || response.data;
+  if (!isWaSendSuccess(responseData, response.data)) {
+    logger.warn('WhatsApp API returned non-success response', {
+      to: normalizedPhone,
+      kind: params.kind,
+      response: response.data,
+    });
+    return {
+      success: false,
+      error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+    };
+  }
+
+  return {
+    success: true,
+    message_id: extractWaMessageId(responseData),
+  };
+}
+
+export async function buildQuotedContextInfo(params: {
+  villageId?: string;
+  channel: 'WHATSAPP' | 'WEBCHAT';
+  channelIdentifier: string;
+  messageId?: string;
+}): Promise<WaQuoteContext> {
+  if (!params.messageId || params.channel !== 'WHATSAPP') return {};
+
+  const where: any = {
+    village_id: params.villageId || 'unknown',
+    channel: params.channel,
+    channel_identifier: params.channelIdentifier,
+    message_id: params.messageId,
+  };
+
+  const message = await prisma.message.findFirst({ where }) as any;
+  if (!message) return {};
+
+  const stanzaId = message.wa_message_type === 'outgoing' ? message.message_id : message.wa_raw_info?.ID || message.message_id;
+  const participant = message.wa_sender_jid || message.wa_chat_jid || `${params.channelIdentifier}@s.whatsapp.net`;
+  const contextInfo = {
+    StanzaId: stanzaId,
+    StanzaID: stanzaId,
+    Participant: participant,
+  };
+
+  return {
+    ContextInfo: contextInfo,
+    QuotedText: message.message_text,
+    QuotedMessage: message.quoted_message_json || message.wa_raw_message || undefined,
+  };
+}
+
 /**
  * Send text message via clivy-wa-support/genfity-wa API
  * 
@@ -1146,7 +1285,8 @@ export async function markMessageAsRead(
 export async function sendTextMessage(
   to: string,
   message: string,
-  villageId?: string
+  villageId?: string,
+  options: SendTextMessageOptions = {}
 ): Promise<{ success: boolean; message_id?: string; error?: string }> {
   try {
     const account = await getDefaultChannelAccount(villageId);
@@ -1192,6 +1332,10 @@ export async function sendTextMessage(
       {
         Phone: normalizedPhone,
         Body: message,
+        ...(options.id ? { Id: options.id } : {}),
+        ...(options.ContextInfo ? { ContextInfo: options.ContextInfo } : {}),
+        ...(options.QuotedText ? { QuotedText: options.QuotedText } : {}),
+        ...(options.QuotedMessage ? { QuotedMessage: options.QuotedMessage } : {}),
       },
       {
         headers: {
@@ -1245,7 +1389,7 @@ export async function sendTextMessage(
 
 export type WhatsAppMediaType = 'image' | 'audio' | 'document' | 'video';
 
-export interface SendMediaMessageParams {
+export interface SendMediaMessageParams extends WaQuoteContext {
   to: string;
   mediaType: WhatsAppMediaType;
   url: string;
@@ -1318,6 +1462,9 @@ export async function sendMediaMessage(
     if (params.mimeType) {
       body.MimeType = params.mimeType;
     }
+    if (params.ContextInfo) body.ContextInfo = params.ContextInfo;
+    if (params.QuotedText) body.QuotedText = params.QuotedText;
+    if (params.QuotedMessage) body.QuotedMessage = params.QuotedMessage;
 
     const response = await axios.post(url, body, {
       headers: {
@@ -1369,6 +1516,117 @@ export async function sendMediaMessage(
   }
 }
 
+export interface SendLocationMessageParams extends WaQuoteContext {
+  to: string;
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+  villageId?: string;
+}
+
+export async function sendLocationMessage(params: SendLocationMessageParams): Promise<WaSendResult> {
+  try {
+    const body: Record<string, unknown> = {
+      Latitude: params.latitude,
+      Longitude: params.longitude,
+    };
+    if (params.name) body.Name = params.name;
+    if (params.address) body.Address = params.address;
+    if (params.ContextInfo) body.ContextInfo = params.ContextInfo;
+    if (params.QuotedText) body.QuotedText = params.QuotedText;
+    if (params.QuotedMessage) body.QuotedMessage = params.QuotedMessage;
+
+    const result = await postWaSend({
+      villageId: params.villageId,
+      to: params.to,
+      kind: 'location',
+      endpoint: '/chat/send/location',
+      body,
+      timeout: 30000,
+    });
+    if (result.success) logger.info('WhatsApp location sent', { to: params.to, message_id: result.message_id });
+    return result;
+  } catch (error: any) {
+    logger.error('Failed to send WhatsApp location', { to: params.to, error: error.message, response: error.response?.data });
+    return { success: false, error: error.response?.data?.message || error.response?.data?.Message || error.message };
+  }
+}
+
+export interface SendButtonsMessageParams extends WaQuoteContext {
+  to: string;
+  body: string;
+  title?: string;
+  footer?: string;
+  image?: string;
+  buttons: Array<Record<string, unknown>>;
+  villageId?: string;
+}
+
+export async function sendButtonsMessage(params: SendButtonsMessageParams): Promise<WaSendResult> {
+  try {
+    const body: Record<string, unknown> = {
+      Body: params.body,
+      Buttons: params.buttons,
+    };
+    if (params.title) body.Title = params.title;
+    if (params.footer) body.Footer = params.footer;
+    if (params.image) body.Image = params.image;
+    if (params.ContextInfo) body.ContextInfo = params.ContextInfo;
+    if (params.QuotedText) body.QuotedText = params.QuotedText;
+    if (params.QuotedMessage) body.QuotedMessage = params.QuotedMessage;
+
+    return await postWaSend({
+      villageId: params.villageId,
+      to: params.to,
+      kind: 'buttons',
+      endpoint: '/chat/send/buttons',
+      body,
+      timeout: 30000,
+    });
+  } catch (error: any) {
+    logger.error('Failed to send WhatsApp buttons', { to: params.to, error: error.message, response: error.response?.data });
+    return { success: false, error: error.response?.data?.message || error.response?.data?.Message || error.message };
+  }
+}
+
+export interface SendListMessageParams extends WaQuoteContext {
+  to: string;
+  body: string;
+  buttonText: string;
+  title?: string;
+  footer?: string;
+  sections: Array<Record<string, unknown>>;
+  villageId?: string;
+}
+
+export async function sendListMessage(params: SendListMessageParams): Promise<WaSendResult> {
+  try {
+    const body: Record<string, unknown> = {
+      Desc: params.body,
+      ButtonText: params.buttonText,
+      Sections: params.sections,
+    };
+    if (params.title) body.TopText = params.title;
+    if (params.footer) body.FooterText = params.footer;
+    if (params.ContextInfo) body.ContextInfo = params.ContextInfo;
+    if (params.QuotedText) body.QuotedText = params.QuotedText;
+    if (params.QuotedMessage) body.QuotedMessage = params.QuotedMessage;
+
+    return await postWaSend({
+      villageId: params.villageId,
+      to: params.to,
+      kind: 'list',
+      endpoint: '/chat/send/list',
+      body,
+      timeout: 30000,
+    });
+  } catch (error: any) {
+    logger.error('Failed to send WhatsApp list', { to: params.to, error: error.message, response: error.response?.data });
+    return { success: false, error: error.response?.data?.message || error.response?.data?.Message || error.message };
+  }
+}
+
 /**
  * Send contact/vCard message via genfity-wa API
  * 
@@ -1383,8 +1641,10 @@ export async function sendContactMessage(
     phone: string;
     organization?: string;
     title?: string;
+    vcard?: string;
   },
-  villageId?: string
+  villageId?: string,
+  options: WaQuoteContext = {}
 ): Promise<{ success: boolean; message_id?: string; error?: string }> {
   try {
     const account = await getDefaultChannelAccount(villageId);
@@ -1404,8 +1664,7 @@ export async function sendContactMessage(
       ? `+${normalizedContactPhone}` 
       : normalizedContactPhone;
 
-    // Build vCard string
-    const vcard = buildVCard({
+    const vcard = contact.vcard || buildVCard({
       name: contact.name,
       phone: vcardPhone,
       organization: contact.organization,
@@ -1443,6 +1702,9 @@ export async function sendContactMessage(
         Phone: normalizedTo,
         Name: contact.name,
         Vcard: vcard,
+        ...(options.ContextInfo ? { ContextInfo: options.ContextInfo } : {}),
+        ...(options.QuotedText ? { QuotedText: options.QuotedText } : {}),
+        ...(options.QuotedMessage ? { QuotedMessage: options.QuotedMessage } : {}),
       },
       {
         headers: {
@@ -1558,11 +1820,19 @@ function normalizePhoneNumber(phone: string): string {
  * Validate webhook signature (optional, for production)
  */
 export function validateWebhookSignature(
-  _signature: string,
-  _body: string,
-  _secret: string
+  signature: string,
+  body: string | Buffer,
+  secret: string
 ): boolean {
-  // TODO: Implement HMAC signature verification
-  // For now, return true (skip verification in development)
-  return true;
+  if (!signature || !secret) return false;
+  const provided = signature.trim().startsWith('sha256=') ? signature.trim().slice(7) : signature.trim();
+  const expected = createHmac('sha256', secret).update(body).digest('hex');
+
+  try {
+    const expectedBuffer = Buffer.from(expected, 'hex');
+    const providedBuffer = Buffer.from(provided, 'hex');
+    return expectedBuffer.length === providedBuffer.length && timingSafeEqual(expectedBuffer, providedBuffer);
+  } catch {
+    return false;
+  }
 }

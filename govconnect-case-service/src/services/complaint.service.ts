@@ -369,6 +369,10 @@ export async function getComplaintsList(filters: ComplaintFilters) {
       orderBy: { created_at: 'desc' },
       take: limit,
       skip: offset,
+      include: {
+        category: true,
+        type: true,
+      },
     }),
     prisma.complaint.count({ where }),
   ]);

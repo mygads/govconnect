@@ -33,25 +33,24 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    try {
-      const url = new URL(buildUrl(ServicePath.CASE, '/services'))
-      if (session.admin.village_id) {
-        url.searchParams.set('village_id', session.admin.village_id)
-      }
-
-      const response = await apiFetch(url.toString(), {
-        headers: getHeaders(),
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        return NextResponse.json(data)
-      }
-    } catch (error) {
-      console.log('Case service not available for layanan')
+    const url = new URL(buildUrl(ServicePath.CASE, '/services'))
+    if (session.admin.village_id) {
+      url.searchParams.set('village_id', session.admin.village_id)
     }
 
-    return NextResponse.json({ data: [] })
+    const response = await apiFetch(url.toString(), {
+      headers: getHeaders(),
+    })
+
+    const data = await response.json().catch(() => null)
+    if (!response.ok) {
+      return NextResponse.json(
+        data || { error: 'Failed to fetch layanan from case service', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: response.status },
+      )
+    }
+
+    return NextResponse.json(data)
   } catch (error) {
     console.error('Error fetching layanan:', error)
     return NextResponse.json({ error: 'Failed to fetch layanan' }, { status: 500 })

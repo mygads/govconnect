@@ -103,9 +103,9 @@ export async function resolveServiceSlugFromSearch(query: string, villageId?: st
 
     const result = await matchServiceSlug(searchQuery, options);
 
-    if (result?.matched_slug && result.confidence >= 0.5) {
+    if (result?.matched_slug) {
       const matched = services.find((s: any) => s.slug === result.matched_slug);
-      if (matched) {
+      if (matched && result.confidence >= 0.75) {
         logger.debug('resolveServiceSlugFromSearch: Micro LLM match', {
           query: searchQuery,
           matched_slug: result.matched_slug,
@@ -115,6 +115,21 @@ export async function resolveServiceSlugFromSearch(query: string, villageId?: st
         const matchResult = { slug: String(matched.slug), name: String(matched.name || '') };
         serviceSearchCache.set(cacheKey, { ...matchResult, timestamp: Date.now() });
         return matchResult;
+      }
+
+      if (matched && result.confidence >= 0.5) {
+        const alternatives = [
+          { slug: String(matched.slug), name: String(matched.name || '') },
+          ...(result.alternatives || []).filter((alternative) => alternative.slug !== matched.slug),
+        ].slice(0, 4);
+        logger.info('resolveServiceSlugFromSearch: Low-confidence match, asking confirmation', {
+          query: searchQuery,
+          matched_slug: result.matched_slug,
+          confidence: result.confidence,
+          reason: result.reason,
+          alternatives,
+        });
+        return { slug: '', name: '', alternatives };
       }
     }
 
@@ -243,7 +258,7 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
         timestamp: Date.now(),
       });
 
-      guidanceText = 'Kalau Bapak/Ibu mau lanjut mengajukan sekarang, balas *iya* ya. Nanti saya kirim link formulirnya.';
+      guidanceText = `Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *${service.name}*.`;
     } else {
       replyText += 'Layanan ini diproses langsung di kantor desa. Silakan datang dengan membawa persyaratan di atas ya.';
     }

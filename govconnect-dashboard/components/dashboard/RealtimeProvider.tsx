@@ -2,8 +2,9 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import { laporan, statistics } from '@/lib/frontend-api'
-import { 
-  getNotificationSettings, 
+import {
+  DEFAULT_NOTIFICATION_SETTINGS,
+  getNotificationSettings,
   playNotificationSound,
   showBrowserNotification,
   requestNotificationPermission,
@@ -18,6 +19,7 @@ interface Complaint {
   deskripsi: string
   status: string
   is_urgent?: boolean
+  deleted_at?: string | null
   created_at: string
 }
 
@@ -90,7 +92,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   const [recentComplaints, setRecentComplaints] = useState<Complaint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [settings, setSettings] = useState<NotificationSettings>(getNotificationSettings())
+  const [settings, setSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS)
   
   const previousComplaintsRef = useRef<Set<string>>(new Set())
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -107,7 +109,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       const allComplaints: Complaint[] = complaintsData.data || []
       
       // Filter urgent complaints - is_urgent is set from database via ComplaintType.is_urgent
-      const urgent = allComplaints.filter(c => {
+      const activeComplaints = allComplaints.filter(c => !c.deleted_at)
+
+      const urgent = activeComplaints.filter(c => {
         return c.is_urgent === true && (c.status === 'OPEN' || c.status === 'baru')
       })
       
@@ -219,14 +223,18 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     }
   }, [settings.enabled])
 
+  useEffect(() => {
+    setSettings(getNotificationSettings())
+  }, [])
+
   // Initial load and polling
   useEffect(() => {
     // Request notification permission
     requestNotificationPermission()
-    
+
     // Initial fetch
     fetchData()
-    
+
     // Start polling (every 30 seconds)
     pollingIntervalRef.current = setInterval(fetchData, 30000)
     

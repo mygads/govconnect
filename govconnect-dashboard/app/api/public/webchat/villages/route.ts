@@ -18,7 +18,10 @@ export async function GET() {
     });
 
     if (!channelResp.ok) {
-      return NextResponse.json({ success: true, data: [] });
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch webchat villages', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: channelResp.status },
+      );
     }
 
     const channelJson = await channelResp.json();
@@ -53,6 +56,9 @@ export async function GET() {
     return NextResponse.json({ success: true, data: villages });
   } catch (error) {
     console.error('Public webchat villages error:', error);
-    return NextResponse.json({ success: true, data: [] });
+    return NextResponse.json(
+      { success: false, error: 'Failed to fetch webchat villages', code: 'UPSTREAM_UNAVAILABLE' },
+      { status: 503 },
+    );
   }
 }

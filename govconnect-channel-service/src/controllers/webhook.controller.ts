@@ -11,9 +11,10 @@ import {
 import { processMediaFromWebhook, MediaInfo } from '../services/media.service';
 import { updateConversation, isUserInTakeover, setAIProcessing } from '../services/takeover.service';
 import { addPendingMessage } from '../services/pending-message.service';
+import { publishLivechatEvent } from '../services/livechat-events.service';
 import { addMessageToBatch, cancelBatch } from '../services/message-batcher.service';
 import { checkSpamGuard } from '../services/spam-guard.service';
-import { resolveVillageIdFromInstanceName } from '../services/wa.service';
+import { getStoredSession, resolveVillageIdFromInstanceName, updateStoredSessionStatus } from '../services/wa.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
 import { getQuery } from '../utils/http';
@@ -21,6 +22,7 @@ import { parseWebhookBody, webhookCandidateFromBody } from '../utils/webhook-pay
 import {
   GenfityWebhookPayload,
 } from '../types/webhook.types';
+import type { MessageKind } from '../types/message.types';
 
 function cleanJidPhone(value?: string | null): string | null {
   if (!value) return null;
@@ -43,6 +45,89 @@ function resolvePresenceIdentifier(payload: GenfityWebhookPayload): string | nul
   const event: any = payload.event || {};
   const info: any = event.Info || {};
   return cleanJidPhone(info.Chat || info.SenderAlt || info.Sender || event.Chat || event.From || (payload as any).phone);
+}
+
+function pickObject(value: any, ...keys: string[]): any {
+  if (!value || typeof value !== 'object') return null;
+  for (const key of keys) {
+    if (value[key] && typeof value[key] === 'object') return value[key];
+  }
+  return null;
+}
+
+function pickValue(value: any, ...keys: string[]): any {
+  if (!value || typeof value !== 'object') return undefined;
+  for (const key of keys) {
+    if (value[key] !== undefined && value[key] !== null) return value[key];
+  }
+  return undefined;
+}
+
+function extractTextFromMessageObject(message: any): string | null {
+  if (!message || typeof message !== 'object') return null;
+  return (
+    pickValue(message, 'conversation', 'Conversation') ||
+    pickValue(pickObject(message, 'extendedTextMessage', 'ExtendedTextMessage'), 'text', 'Text') ||
+    pickValue(pickObject(message, 'imageMessage', 'ImageMessage'), 'caption', 'Caption') ||
+    pickValue(pickObject(message, 'videoMessage', 'VideoMessage'), 'caption', 'Caption') ||
+    pickValue(pickObject(message, 'documentMessage', 'DocumentMessage'), 'caption', 'Caption') ||
+    null
+  );
+}
+
+function normalizeMessageKind(message: any, info: any): MessageKind {
+  const type = String(info?.Type || info?.MessageType || '').toLowerCase();
+  if (pickObject(message, 'locationMessage', 'LocationMessage') || type.includes('location')) return 'location';
+  if (pickObject(message, 'contactMessage', 'ContactMessage') || type.includes('contact')) return 'contact';
+  if (pickObject(message, 'buttonsResponseMessage', 'ButtonsResponseMessage', 'buttonsMessage', 'ButtonsMessage')) return 'buttons';
+  if (pickObject(message, 'listResponseMessage', 'ListResponseMessage', 'listMessage', 'ListMessage')) return 'list';
+  if (pickObject(message, 'imageMessage', 'ImageMessage', 'videoMessage', 'VideoMessage', 'audioMessage', 'AudioMessage', 'documentMessage', 'DocumentMessage', 'stickerMessage', 'StickerMessage')) return 'media';
+  return 'text';
+}
+
+function normalizeNumber(value: any): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeWaMetadata(payload: GenfityWebhookPayload) {
+  const event: any = payload.event || {};
+  const info: any = event.Info || {};
+  const message: any = event.Message || {};
+  const extendedText = pickObject(message, 'extendedTextMessage', 'ExtendedTextMessage');
+  const contextInfo = pickValue(extendedText, 'contextInfo', 'ContextInfo') || pickValue(message, 'contextInfo', 'ContextInfo') || null;
+  const quotedMessage = contextInfo ? pickValue(contextInfo, 'quotedMessage', 'QuotedMessage') : null;
+  const location = pickObject(message, 'locationMessage', 'LocationMessage');
+  const contact = pickObject(message, 'contactMessage', 'ContactMessage');
+  const buttons = pickObject(message, 'buttonsResponseMessage', 'ButtonsResponseMessage', 'buttonsMessage', 'ButtonsMessage');
+  const list = pickObject(message, 'listResponseMessage', 'ListResponseMessage', 'listMessage', 'ListMessage');
+  const messageKind = normalizeMessageKind(message, info);
+  const quotedText = quotedMessage ? extractTextFromMessageObject(quotedMessage) : null;
+
+  return {
+    wa_chat_jid: typeof info.Chat === 'string' ? info.Chat : null,
+    wa_sender_jid: typeof info.Sender === 'string' ? info.Sender : typeof info.SenderAlt === 'string' ? info.SenderAlt : null,
+    wa_sender_phone: cleanJidPhone(typeof info.Sender === 'string' ? info.Sender : info.Sender?.User || info.SenderAlt),
+    wa_chat_phone: cleanJidPhone(info.Chat || info.SenderAlt),
+    wa_message_type: info.Type || info.MessageType || null,
+    wa_context_info: contextInfo,
+    wa_raw_info: info,
+    wa_raw_message: message,
+    quoted_message_id: pickValue(contextInfo, 'stanzaId', 'StanzaId', 'StanzaID') || null,
+    quoted_stanza_id: pickValue(contextInfo, 'stanzaId', 'StanzaId', 'StanzaID') || null,
+    quoted_participant: pickValue(contextInfo, 'participant', 'Participant') || null,
+    quoted_text: quotedText,
+    quoted_message_json: quotedMessage,
+    message_kind: messageKind,
+    location_latitude: location ? normalizeNumber(pickValue(location, 'degreesLatitude', 'DegreesLatitude', 'latitude', 'Latitude')) : null,
+    location_longitude: location ? normalizeNumber(pickValue(location, 'degreesLongitude', 'DegreesLongitude', 'longitude', 'Longitude')) : null,
+    location_name: location ? pickValue(location, 'name', 'Name') || null : null,
+    location_address: location ? pickValue(location, 'address', 'Address', 'jpegThumbnailCaption') || null : null,
+    contact_name: contact ? pickValue(contact, 'displayName', 'DisplayName') || null : null,
+    contact_phone: contact ? cleanJidPhone(pickValue(contact, 'phoneNumber', 'PhoneNumber', 'displayName', 'DisplayName')) : null,
+    contact_vcard: contact ? pickValue(contact, 'vcard', 'Vcard') || null : null,
+    interactive_payload: buttons || list || null,
+  };
 }
 
 async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId?: string): Promise<boolean> {
@@ -75,6 +160,42 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
       channel_identifier: channelIdentifier,
       typing_state: typingState,
       actor: 'user',
+    });
+    return true;
+  }
+
+  if (['Connected', 'Disconnected', 'LoggedOut', 'QR'].includes(type)) {
+    const status = type === 'Connected' ? 'connected' : type === 'QR' ? 'qr' : type === 'LoggedOut' ? 'logged_out' : 'disconnected';
+    let previousStatus: string | null | undefined;
+
+    if (villageId) {
+      const storedSession = await getStoredSession(villageId).catch((error) => {
+        logger.warn('Failed to load WA session before status webhook update', { villageId, status, error: error.message });
+        return null;
+      });
+      previousStatus = storedSession?.status;
+
+      if (type === 'QR' && previousStatus === 'connected') {
+        logger.info('Ignoring QR lifecycle event for already connected WA session', { villageId });
+        return true;
+      }
+
+      if (previousStatus !== status) {
+        await updateStoredSessionStatus({ villageId, status }).catch((error) => {
+          logger.warn('Failed to update WA session status from webhook', { villageId, status, error: error.message });
+        });
+      }
+    }
+
+    if (previousStatus === status) {
+      return true;
+    }
+
+    publishLivechatEvent({
+      type: 'wa_session_status',
+      village_id: villageId,
+      wa_session_status: status,
+      wa_session_event: type,
     });
     return true;
   }
@@ -200,8 +321,9 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 
     // Parse genfity-wa webhook payload
     const { message, from, messageId, timestamp } = parseGenfityPayload(payload);
+    const waMetadata = normalizeWaMetadata(payload);
 
-    logger.debug('Parsed payload result', { message, from, messageId, timestamp });
+    logger.debug('Parsed payload result', { message, from, messageId, timestamp, messageKind: waMetadata.message_kind });
 
     if (!message || !from || !messageId) {
       logger.warn('No valid message in webhook payload', {
@@ -309,6 +431,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       channel_identifier: waUserId,
       message_id: messageId,
       message_text: message,
+      ...waMetadata,
       timestamp: timestamp,
     });
 
@@ -597,6 +720,15 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
         }
         else if (msgObj.ContactMessage) {
           messageText = `👤 Contact: ${msgObj.ContactMessage.DisplayName}`;
+        }
+        else if (msgObj.buttonsResponseMessage || msgObj.ButtonsResponseMessage) {
+          const response = msgObj.buttonsResponseMessage || msgObj.ButtonsResponseMessage;
+          messageText = pickValue(response, 'selectedDisplayText', 'SelectedDisplayText', 'selectedButtonId', 'SelectedButtonId') || '[Button response]';
+        }
+        else if (msgObj.listResponseMessage || msgObj.ListResponseMessage) {
+          const response = msgObj.listResponseMessage || msgObj.ListResponseMessage;
+          const row = pickObject(response, 'singleSelectReply', 'SingleSelectReply');
+          messageText = pickValue(row, 'selectedRowId', 'SelectedRowId') || pickValue(response, 'title', 'Title', 'description', 'Description') || '[List response]';
         }
       }
     }

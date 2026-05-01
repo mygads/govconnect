@@ -21,6 +21,7 @@ import { AlertCircle, ArrowLeft, CheckCircle, Loader2, MapPin, MessageSquare, Ph
 import { laporan } from "@/lib/frontend-api"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
 import { printReceipt } from "@/lib/export-utils"
+import { useToast } from "@/hooks/use-toast"
 
 interface ComplaintUpdate {
   id: string
@@ -36,6 +37,8 @@ interface Complaint {
   channel?: 'WHATSAPP' | 'WEBCHAT'
   channel_identifier?: string
   kategori: string
+  category?: { name?: string | null } | null
+  type?: { name?: string | null } | null
   deskripsi: string
   alamat?: string
   rt_rw?: string
@@ -48,9 +51,19 @@ interface Complaint {
   updates?: ComplaintUpdate[]
 }
 
+function formatComplaintCategory(complaint: Complaint) {
+  const categoryName = complaint.category?.name?.trim()
+  const typeName = complaint.type?.name?.trim()
+  if (categoryName && typeName) return `${categoryName} / ${typeName}`
+  if (typeName) return typeName
+  if (categoryName) return categoryName
+  return complaint.kategori?.replace(/_/g, " ") || "Belum terkategori"
+}
+
 export default function LaporanDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const { toast } = useToast()
   const [complaint, setComplaint] = useState<Complaint | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -108,19 +121,34 @@ export default function LaporanDetailPage() {
   const handleUpdateStatus = async () => {
     if (!complaint || !newStatus) return
 
+    const requiresNotes = ["DONE", "CANCELED", "REJECT"].includes(newStatus)
+    const trimmedNotes = adminNotes.trim()
+    if (requiresNotes && !trimmedNotes) {
+      toast({
+        title: "Catatan wajib diisi",
+        description: "Status selesai, dibatalkan, atau ditolak wajib menyertakan catatan admin.",
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       setUpdating(true)
       await laporan.updateStatus(complaint.id, {
         status: newStatus,
-        admin_notes: adminNotes || undefined,
+        admin_notes: trimmedNotes || undefined,
       })
-      
-      // Refresh data
+
       await fetchComplaintDetail(complaint.id)
       setAdminNotes("")
       setError(null)
+      toast({ title: "Berhasil", description: "Status pengaduan berhasil diperbarui." })
     } catch (err: any) {
-      setError(err.message || "Gagal memperbarui status")
+      toast({
+        title: "Gagal memperbarui status",
+        description: err.message || "Gagal memperbarui status",
+        variant: "destructive",
+      })
     } finally {
       setUpdating(false)
     }
@@ -277,7 +305,7 @@ export default function LaporanDetailPage() {
               <div className="space-y-2">
                 <Label className="text-muted-foreground">Kategori</Label>
                 <Badge variant="outline" className="capitalize text-base px-3 py-1">
-                  {complaint.kategori.replace(/_/g, " ")}
+                  {formatComplaintCategory(complaint)}
                 </Badge>
               </div>
 
@@ -402,7 +430,9 @@ export default function LaporanDetailPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="notes">Catatan Admin (Opsional)</Label>
+                <Label htmlFor="notes">
+                  Catatan Admin {["DONE", "CANCELED", "REJECT"].includes(newStatus) ? "(Wajib)" : "(Opsional)"}
+                </Label>
                 <Textarea
                   id="notes"
                   placeholder="Tambahkan catatan untuk warga..."
@@ -410,6 +440,9 @@ export default function LaporanDetailPage() {
                   onChange={(e) => setAdminNotes(e.target.value)}
                   rows={4}
                 />
+                {["DONE", "CANCELED", "REJECT"].includes(newStatus) && !adminNotes.trim() && (
+                  <p className="text-xs text-destructive">Catatan wajib diisi untuk status selesai, dibatalkan, atau ditolak.</p>
+                )}
               </div>
 
               <Button

@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { GovConnectSidebar } from "@/components/dashboard/GovConnectSidebar"
@@ -21,8 +21,13 @@ export default function DashboardLayoutClient({ children }: DashboardLayoutClien
   const pathname = usePathname()
   const router = useRouter()
   const { user, isLoading } = useAuth()
+  const [mounted, setMounted] = useState(false)
 
   const userIsSuperadmin = isSuperadmin(user?.role)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     if (isLoading || !user) return
@@ -30,6 +35,10 @@ export default function DashboardLayoutClient({ children }: DashboardLayoutClien
       router.replace('/dashboard')
     }
   }, [isLoading, pathname, router, user])
+
+  if (!mounted) {
+    return <div className="min-h-screen bg-gray-50 dark:bg-gray-900" />
+  }
 
   const dashboardContent = (
     <SidebarProvider>

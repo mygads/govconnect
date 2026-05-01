@@ -19,32 +19,22 @@ export async function GET(request: NextRequest) {
     const limit = searchParams.get('limit') || '20'
     const offset = searchParams.get('offset') || '0'
 
-    // Try to forward request to case service
-    try {
-      const response = await caseService.getLaporan({ 
-        status, 
-        limit, 
-        offset,
-        village_id: villageId || undefined 
-      })
+    const response = await caseService.getLaporan({
+      status,
+      limit,
+      offset,
+      village_id: villageId || undefined,
+    })
 
-      if (response.ok) {
-        const data = await response.json()
-        return NextResponse.json(data)
-      }
-    } catch (error) {
-      console.log('Case service not available, using mock data')
+    const data = await response.json().catch(() => null)
+    if (!response.ok) {
+      return NextResponse.json(
+        data || { error: 'Failed to fetch laporan from case service' },
+        { status: response.status },
+      )
     }
 
-    // Return empty data if case service not available
-    return NextResponse.json({
-      data: [],
-      pagination: {
-        total: 0,
-        limit: parseInt(limit),
-        offset: parseInt(offset)
-      }
-    })
+    return NextResponse.json(data)
   } catch (error) {
     console.error('Error fetching laporan:', error)
     return NextResponse.json(

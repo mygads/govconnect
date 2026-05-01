@@ -13,57 +13,34 @@ export async function GET(request: NextRequest) {
     // Get village_id from session (required for village_admin, optional for superadmin)
     const villageId = resolveVillageId(request, session)
 
-    // Try to forward request to case service
-    try {
-      const response = await caseService.getOverview({ 
-        village_id: villageId || undefined 
-      })
+    const response = await caseService.getOverview({
+      village_id: villageId || undefined,
+    })
 
-      if (response.ok) {
-        const data = await response.json()
-        console.log('Case service statistics response:', data)
-        // Transform data to match dashboard expectations
-        // Case service returns: { totalLaporan, totalLayanan, laporan: {open, process, done, canceled, reject, hariIni}, layanan: {open, process, done, canceled, reject, hariIni} }
-        return NextResponse.json({
-          complaints: {
-            total: data.totalLaporan || 0,
-            open: data.laporan?.open || 0,
-            process: data.laporan?.process || 0,
-            done: data.laporan?.done || 0,
-            canceled: data.laporan?.canceled || 0,
-            reject: data.laporan?.reject || 0,
-          },
-          services: {
-            total: data.totalLayanan || 0,
-            open: data.layanan?.open || 0,
-            process: data.layanan?.process || 0,
-            done: data.layanan?.done || 0,
-            canceled: data.layanan?.canceled || 0,
-            reject: data.layanan?.reject || 0,
-          },
-        })
-      }
-    } catch (error) {
-      console.log('Case service not available, using mock data:', error)
+    const data = await response.json().catch(() => null)
+    if (!response.ok) {
+      return NextResponse.json(
+        data || { error: 'Failed to fetch statistics from case service', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: response.status },
+      )
     }
 
-    // Return mock data if case service not available
     return NextResponse.json({
       complaints: {
-        total: 0,
-        open: 0,
-        process: 0,
-        done: 0,
-        canceled: 0,
-        reject: 0,
+        total: data.totalLaporan || 0,
+        open: data.laporan?.open || 0,
+        process: data.laporan?.process || 0,
+        done: data.laporan?.done || 0,
+        canceled: data.laporan?.canceled || 0,
+        reject: data.laporan?.reject || 0,
       },
       services: {
-        total: 0,
-        open: 0,
-        process: 0,
-        done: 0,
-        canceled: 0,
-        reject: 0,
+        total: data.totalLayanan || 0,
+        open: data.layanan?.open || 0,
+        process: data.layanan?.process || 0,
+        done: data.layanan?.done || 0,
+        canceled: data.layanan?.canceled || 0,
+        reject: data.layanan?.reject || 0,
       },
     })
   } catch (error) {

@@ -23,7 +23,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { id } = await context.params
-    const response = await apiFetch(buildUrl(ServicePath.CASE, `/service-requests/${id}`), {
+    const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}`))
+    if (session.admin.village_id) {
+      url.searchParams.set('village_id', session.admin.village_id)
+    }
+
+    const response = await apiFetch(url.toString(), {
       headers: getHeaders(),
     })
 

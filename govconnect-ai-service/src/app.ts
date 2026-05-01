@@ -36,6 +36,7 @@ import { swaggerSpec } from './config/swagger';
 import axios from 'axios';
 import { z } from 'zod';
 import { config } from './config/env';
+import prisma from './lib/prisma';
 import { getParam, getQuery } from './utils/http';
 import { runGoldenSetEvaluation, getGoldenSetSummary } from './services/golden-set-eval.service';
 import {
@@ -200,6 +201,26 @@ app.get('/admin/health/rabbitmq', internalAuthMiddleware, (req: Request, res: Re
       },
     },
   });
+});
+
+app.get('/admin/health/database', internalAuthMiddleware, async (req: Request, res: Response) => {
+  void req;
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return res.json({
+      status: 'ok',
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    logger.error('AI database health check failed', { error: error.message });
+    return res.status(503).json({
+      status: 'error',
+      database: 'disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 app.use('/admin', internalAuthMiddleware);

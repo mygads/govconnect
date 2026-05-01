@@ -4,6 +4,7 @@ import prisma from '../config/database';
 import { isConnected } from '../services/rabbitmq.service';
 import logger from '../utils/logger';
 import { getCaseServiceMetrics } from '../clients/case-service.client';
+import { checkObjectStorageHealth } from '../services/object-storage.service';
 
 const router: ExpressRouter = Router();
 
@@ -49,6 +50,23 @@ router.get('/rabbitmq', (req: Request, res: Response) => {
       rabbitmq: 'disconnected',
     });
   }
+});
+
+router.get('/object-storage', async (req: Request, res: Response) => {
+  void req;
+  const health = await checkObjectStorageHealth({ includeUsage: true });
+  const payload = {
+    ...health,
+    status: health.status === 'connected' ? 'ok' : health.status,
+    objectStorage: health.status === 'connected' ? 'connected' : health.status === 'not_configured' ? 'not_configured' : 'disconnected',
+    timestamp: new Date().toISOString(),
+  };
+
+  if (health.status === 'error') {
+    return res.status(503).json(payload);
+  }
+
+  return res.json(payload);
 });
 
 /**

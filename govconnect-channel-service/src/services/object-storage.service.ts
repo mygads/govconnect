@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import path from 'path';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import logger from '../utils/logger';
 
 interface UploadBufferParams {
@@ -33,8 +33,31 @@ export interface WhatsAppSessionS3Config {
   retention_days: number;
 }
 
+export interface ObjectStorageHealth {
+  configured: boolean;
+  connected: boolean | null;
+  status: 'connected' | 'error' | 'not_configured';
+  provider: string | null;
+  endpoint: string | null;
+  region: string | null;
+  bucket: string | null;
+  publicUrl: string | null;
+  pathStyle: boolean;
+  usageBytes: number | null;
+  usageMb: number | null;
+  error: string | null;
+}
+
 function normalizeBaseUrl(value: string | undefined): string {
   return (value || '').trim().replace(/\/+$/, '');
+}
+
+function sanitizeErrorMessage(error: any): string {
+  let message = error?.message || String(error || 'Unknown object storage error');
+  for (const secret of [storageAccessKey, storageSecretKey]) {
+    if (secret) message = message.split(secret).join('[redacted]');
+  }
+  return message.slice(0, 500);
 }
 
 function isR2Endpoint(endpoint: string): boolean {
@@ -212,6 +235,64 @@ export function getWhatsAppSessionS3Config(): WhatsAppSessionS3Config | null {
     media_delivery: storageDelivery,
     retention_days: storageRetentionDays,
   };
+}
+
+export async function checkObjectStorageHealth(options: { includeUsage?: boolean } = {}): Promise<ObjectStorageHealth> {
+  const info = getObjectStorageInfo();
+  const base: ObjectStorageHealth = {
+    configured: storageEnabled,
+    connected: storageEnabled ? false : null,
+    status: storageEnabled ? 'error' : 'not_configured',
+    provider: info.provider,
+    endpoint: info.endpoint,
+    region: info.region,
+    bucket: info.bucket,
+    publicUrl: info.publicUrl,
+    pathStyle: info.pathStyle,
+    usageBytes: null,
+    usageMb: null,
+    error: null,
+  };
+
+  if (!storageEnabled || !s3Client) {
+    return base;
+  }
+
+  try {
+    let usageBytes = 0;
+    let continuationToken: string | undefined;
+
+    do {
+      const result = await s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: storageBucket,
+          MaxKeys: options.includeUsage ? 1000 : 1,
+          ContinuationToken: continuationToken,
+        }),
+      );
+
+      if (options.includeUsage) {
+        usageBytes += (result.Contents || []).reduce((total, item) => total + (item.Size || 0), 0);
+        continuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
+      } else {
+        continuationToken = undefined;
+      }
+    } while (continuationToken);
+
+    return {
+      ...base,
+      connected: true,
+      status: 'connected',
+      usageBytes: options.includeUsage ? usageBytes : null,
+      usageMb: options.includeUsage ? Number((usageBytes / 1024 / 1024).toFixed(2)) : null,
+    };
+  } catch (error: any) {
+    logger.warn('Object storage health check failed', { error: error.message, bucket: storageBucket });
+    return {
+      ...base,
+      error: sanitizeErrorMessage(error),
+    };
+  }
 }
 
 export async function uploadBufferToObjectStorage(params: UploadBufferParams): Promise<StoredObjectResult> {

@@ -1,4 +1,5 @@
 export type MessageDeliveryStatus = 'received' | 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageKind = 'text' | 'media' | 'location' | 'contact' | 'buttons' | 'list' | 'system';
 
 export interface MessageData {
   village_id?: string;
@@ -16,6 +17,28 @@ export interface MessageData {
   storage_key?: string | null;
   delivery_status?: MessageDeliveryStatus;
   status_error?: string | null;
+  wa_chat_jid?: string | null;
+  wa_sender_jid?: string | null;
+  wa_sender_phone?: string | null;
+  wa_chat_phone?: string | null;
+  wa_message_type?: string | null;
+  wa_context_info?: unknown;
+  wa_raw_info?: unknown;
+  wa_raw_message?: unknown;
+  quoted_message_id?: string | null;
+  quoted_stanza_id?: string | null;
+  quoted_participant?: string | null;
+  quoted_text?: string | null;
+  quoted_message_json?: unknown;
+  message_kind?: MessageKind;
+  location_latitude?: number | null;
+  location_longitude?: number | null;
+  location_name?: string | null;
+  location_address?: string | null;
+  contact_name?: string | null;
+  contact_phone?: string | null;
+  contact_vcard?: string | null;
+  interactive_payload?: unknown;
   timestamp?: Date;
 }
 

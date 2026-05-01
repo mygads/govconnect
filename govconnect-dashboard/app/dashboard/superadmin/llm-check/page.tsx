@@ -3,20 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { redirect } from "next/navigation"
 import {
-  Activity,
   AlertTriangle,
   ArrowUpDown,
   Brain,
   CheckCircle2,
-  Clock,
-  Cpu,
   Database,
   Loader2,
   Play,
-  Plug,
   RefreshCcw,
   Search,
-  Server,
   XCircle,
 } from "lucide-react"
 
@@ -28,33 +23,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { superadmin } from "@/lib/frontend-api"
 
-type LaneName = "llm" | "embed" | "rag" | "rerank"
-
-interface GatewayInfo {
-  kind: LaneName
-  enabled: boolean
-  provider: string
-  baseUrl: string
-  keyCount: number
-  path: string
-  model: string
-  timeoutMs: number
-  dimensions?: number
-  topN?: number
-}
-
-interface LaneCheckResult {
-  lane: LaneName
-  label: string
-  status: string
-  responseTime: number
-  provider?: string
-  model?: string
-  error?: string
-  details?: any
-}
+type LaneName = "llm" | "embed" | "rewrite" | "rerank"
 
 interface ProviderRow {
   id: string
@@ -64,7 +34,7 @@ interface ProviderRow {
 
 interface ModelRow {
   id: string
-  lane_type: string
+  lane_type: LaneName | string
   display_name: string
   upstream_model_name: string
   is_active: boolean
@@ -72,55 +42,43 @@ interface ModelRow {
   provider?: ProviderRow
 }
 
-interface LLMCheckData {
-  timestamp: string
-  aiServiceStatus: string
-  aiServiceResponseTime?: number
-  aiServiceDetails?: {
-    gateways?: Record<LaneName, GatewayInfo>
-    rerankEnabled?: boolean
-    retrievalCacheEnabled?: boolean
-  }
-  aiServiceError?: string
-  models?: any
-  laneChecks: LaneCheckResult[]
-  pingDetails?: any
+interface ModelTestResult {
+  success?: boolean
+  provider?: string
+  model?: string
+  responseTime?: number
+  error?: string
+  details?: any
 }
 
-function getStatusIcon(status: string) {
-  if (status === "healthy" || status === "connected") {
-    return <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-  }
-  if (status === "disabled") {
-    return <AlertTriangle className="h-5 w-5 text-amber-500" />
-  }
-  if (status === "unhealthy" || status === "error" || status === "failed" || status === "unreachable") {
-    return <XCircle className="h-5 w-5 text-red-500" />
-  }
-  return <AlertTriangle className="h-5 w-5 text-amber-500" />
+interface ErrorLogEntry {
+  id: string
+  label: string
+  message: string
+  at: string
 }
 
-function getStatusBadge(status: string) {
-  if (status === "healthy" || status === "connected") {
+const laneOptions: LaneName[] = ["llm", "embed", "rewrite", "rerank"]
+
+function getStatusIcon(result?: ModelTestResult) {
+  if (!result) return <AlertTriangle className="h-5 w-5 text-muted-foreground" />
+  if (result.success) return <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+  return <XCircle className="h-5 w-5 text-red-500" />
+}
+
+function getStatusBadge(result?: ModelTestResult) {
+  if (!result) return <Badge variant="secondary">Belum dites</Badge>
+  if (result.success) {
     return <Badge className="border-emerald-200 bg-emerald-500/10 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300">Connected</Badge>
   }
-  if (status === "disabled") {
-    return <Badge className="border-amber-200 bg-amber-500/10 text-amber-700 dark:border-amber-900 dark:text-amber-300">Disabled</Badge>
-  }
-  if (status === "failed" || status === "unreachable") {
-    return <Badge className="border-red-200 bg-red-500/10 text-red-700 dark:border-red-900 dark:text-red-300">Unreachable</Badge>
-  }
-  if (status === "unhealthy" || status === "error") {
-    return <Badge className="border-red-200 bg-red-500/10 text-red-700 dark:border-red-900 dark:text-red-300">Error</Badge>
-  }
-  return <Badge variant="secondary">Unknown</Badge>
+  return <Badge className="border-red-200 bg-red-500/10 text-red-700 dark:border-red-900 dark:text-red-300">Error</Badge>
 }
 
-function getLaneIcon(lane: LaneName) {
+function getLaneIcon(lane: string) {
   switch (lane) {
     case "embed":
       return <Database className="h-4 w-4" />
-    case "rag":
+    case "rewrite":
       return <Search className="h-4 w-4" />
     case "rerank":
       return <ArrowUpDown className="h-4 w-4" />
@@ -129,109 +87,149 @@ function getLaneIcon(lane: LaneName) {
   }
 }
 
+function modelLabel(model: ModelRow) {
+  return `${model.display_name || model.upstream_model_name} · ${model.provider?.name || model.upstream_model_name}`
+}
+
 export default function LLMCheckPage() {
   const { user } = useAuth()
-  const [data, setData] = useState<LLMCheckData | null>(null)
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [adminModels, setAdminModels] = useState<ModelRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [checking, setChecking] = useState(false)
-  const [selectedLane, setSelectedLane] = useState("llm")
+  const [loadingCatalog, setLoadingCatalog] = useState(false)
+  const [selectedLane, setSelectedLane] = useState<LaneName>("llm")
   const [selectedProviderId, setSelectedProviderId] = useState("all")
   const [selectedModelId, setSelectedModelId] = useState("")
-  const [testingModel, setTestingModel] = useState(false)
-  const [modelTestResult, setModelTestResult] = useState<any>(null)
+  const [runningModelIds, setRunningModelIds] = useState<Set<string>>(new Set())
+  const [testResults, setTestResults] = useState<Record<string, ModelTestResult>>({})
+  const [errorLogs, setErrorLogs] = useState<ErrorLogEntry[]>([])
 
   useEffect(() => {
     if (user && user.role !== "superadmin") redirect("/dashboard")
   }, [user])
 
-  const fetchCheck = useCallback(async () => {
+  const appendErrorLog = useCallback((label: string, message: string) => {
+    setErrorLogs((current) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        label,
+        message,
+        at: new Date().toISOString(),
+      },
+      ...current,
+    ].slice(0, 30))
+  }, [])
+
+  const loadCatalog = useCallback(async () => {
     try {
-      setChecking(true)
+      setLoadingCatalog(true)
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
-      const [checkResponse, providersRes, modelsRes] = await Promise.all([
-        superadmin.getLLMCheck(),
+      const [providersRes, modelsRes] = await Promise.all([
         fetch("/api/superadmin/providers", { headers }),
         fetch("/api/superadmin/ai-models", { headers }),
       ])
-      const providersPayload = await providersRes.json()
-      const modelsPayload = await modelsRes.json()
-      setData(checkResponse)
+      const providersPayload = await providersRes.json().catch(() => ({}))
+      const modelsPayload = await modelsRes.json().catch(() => ({}))
+
+      if (!providersRes.ok) throw new Error(providersPayload?.error || "Gagal memuat provider")
+      if (!modelsRes.ok) throw new Error(modelsPayload?.error || "Gagal memuat model")
+
       setProviders(Array.isArray(providersPayload?.data) ? providersPayload.data : [])
       setAdminModels(Array.isArray(modelsPayload?.data) ? modelsPayload.data : [])
-    } catch (error) {
-      console.error("AI gateway check failed:", error)
+    } catch (error: any) {
+      appendErrorLog("Load catalog", error?.message || "Gagal memuat data model/provider")
     } finally {
       setLoading(false)
-      setChecking(false)
+      setLoadingCatalog(false)
     }
-  }, [])
+  }, [appendErrorLog])
 
   useEffect(() => {
-    fetchCheck()
-  }, [fetchCheck])
+    loadCatalog()
+  }, [loadCatalog])
+
+  const activeModels = useMemo(() => adminModels.filter((model) => model.is_active), [adminModels])
 
   const selectableModels = useMemo(() => {
-    return adminModels.filter((model) => {
-      if (!model.is_active) return false
+    return activeModels.filter((model) => {
       if (model.lane_type !== selectedLane) return false
       if (selectedProviderId !== "all" && model.provider_id !== selectedProviderId) return false
       return true
     })
-  }, [adminModels, selectedLane, selectedProviderId])
+  }, [activeModels, selectedLane, selectedProviderId])
 
   useEffect(() => {
     setSelectedModelId((current) => selectableModels.some((model) => model.id === current) ? current : selectableModels[0]?.id || "")
   }, [selectableModels])
 
-  const handleModelTest = async () => {
-    if (!selectedModelId) return
-    try {
-      setTestingModel(true)
-      setModelTestResult(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch("/api/superadmin/ai-models/test", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ model_id: selectedModelId }),
-      })
-      const payload = await response.json()
-      setModelTestResult(payload)
-    } finally {
-      setTestingModel(false)
+  const runModelTest = useCallback(async (model: ModelRow): Promise<ModelTestResult> => {
+    const token = localStorage.getItem("token")
+    const response = await fetch("/api/superadmin/ai-models/test", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ model_id: model.id }),
+    })
+    const payload = await response.json().catch(() => ({ success: false, error: `HTTP ${response.status}` }))
+    if (!response.ok || payload?.success === false) {
+      return { ...payload, success: false, error: payload?.error || `HTTP ${response.status}` }
     }
+    return payload
+  }, [])
+
+  const testModels = useCallback(async (models: ModelRow[], label: string) => {
+    if (models.length === 0) return
+    const ids = models.map((model) => model.id)
+    setRunningModelIds((current) => new Set([...current, ...ids]))
+
+    const results = await Promise.all(models.map(async (model) => {
+      try {
+        const result = await runModelTest(model)
+        if (!result.success) appendErrorLog(modelLabel(model), result.error || "Model test gagal")
+        return { model, result }
+      } catch (error: any) {
+        const result = { success: false, error: error?.message || "Model test gagal" }
+        appendErrorLog(modelLabel(model), result.error)
+        return { model, result }
+      }
+    }))
+
+    setTestResults((current) => {
+      const next = { ...current }
+      for (const { model, result } of results) next[model.id] = result
+      return next
+    })
+    setRunningModelIds((current) => {
+      const next = new Set(current)
+      for (const id of ids) next.delete(id)
+      return next
+    })
+
+    const failed = results.filter(({ result }) => !result.success).length
+    if (failed > 0) appendErrorLog(label, `${failed} dari ${results.length} model gagal dites`)
+  }, [appendErrorLog, runModelTest])
+
+  const handleSelectedModelTest = () => {
+    const model = activeModels.find((item) => item.id === selectedModelId)
+    if (model) testModels([model], modelLabel(model))
   }
+
+  const isRunning = runningModelIds.size > 0
 
   if (loading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-72" />
+        <Skeleton className="h-48" />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {[1, 2, 3, 4, 5].map((index) => (
-            <Skeleton key={index} className="h-36" />
-          ))}
+          {[1, 2, 3, 4, 5].map((index) => <Skeleton key={index} className="h-36" />)}
         </div>
-        <Skeleton className="h-64" />
       </div>
     )
   }
-
-  const models = data?.models
-  const modelList = Array.isArray(models?.models)
-    ? models.models
-    : Array.isArray(models?.data)
-      ? models.data
-      : Array.isArray(models)
-        ? models
-        : []
-  const gatewayEntries = data?.aiServiceDetails?.gateways
-    ? Object.values(data.aiServiceDetails.gateways)
-    : []
 
   return (
     <div className="space-y-6">
@@ -239,249 +237,138 @@ export default function LLMCheckPage() {
         <div>
           <h1 className="text-3xl font-bold text-foreground">AI Gateway Check</h1>
           <p className="mt-2 text-muted-foreground">
-            Verifikasi koneksi health service dan 4 lane gateway: LLM, embed, RAG rewrite, dan rerank.
+            Test model dilakukan manual: pilih satu model, cek satu group lane, atau cek semua model aktif.
           </p>
         </div>
-        <Button onClick={fetchCheck} variant="outline" disabled={checking}>
-          <RefreshCcw className={`mr-2 h-4 w-4 ${checking ? "animate-spin" : ""}`} />
-          {checking ? "Memeriksa..." : "Tes Ulang"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={loadCatalog} variant="outline" disabled={loadingCatalog || isRunning}>
+            <RefreshCcw className={`mr-2 h-4 w-4 ${loadingCatalog ? "animate-spin" : ""}`} />
+            Refresh Model
+          </Button>
+          <Button onClick={() => testModels(selectableModels, `Group ${selectedLane.toUpperCase()}`)} variant="outline" disabled={isRunning || selectableModels.length === 0}>
+            {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : getLaneIcon(selectedLane)}
+            Cek Group {selectedLane.toUpperCase()}
+          </Button>
+          <Button onClick={() => testModels(activeModels, "Cek semua model")} disabled={isRunning || activeModels.length === 0}>
+            {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+            Cek Semua
+          </Button>
+        </div>
       </div>
 
-      {data && (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Play className="h-5 w-5" /> Test Model Tertentu</CardTitle>
-              <CardDescription>Pilih lane, provider, dan model untuk mengetes koneksi langsung dengan request minimal.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>Lane</Label>
-                  <Select value={selectedLane} onValueChange={setSelectedLane}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {["llm", "embed", "rewrite", "rerank"].map((lane) => <SelectItem key={lane} value={lane}>{lane.toUpperCase()}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Provider</Label>
-                  <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Semua provider</SelectItem>
-                      {providers.map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Model</Label>
-                  <Select value={selectedModelId} onValueChange={setSelectedModelId} disabled={selectableModels.length === 0}>
-                    <SelectTrigger><SelectValue placeholder="Pilih model" /></SelectTrigger>
-                    <SelectContent>
-                      {selectableModels.map((model) => <SelectItem key={model.id} value={model.id}>{model.display_name} · {model.provider?.name || model.upstream_model_name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <Button onClick={handleModelTest} disabled={testingModel || !selectedModelId}>
-                {testingModel ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-                Test Model
-              </Button>
-              {modelTestResult && (
-                <Alert variant={modelTestResult.success ? "default" : "destructive"}>
-                  <AlertTitle>{modelTestResult.success ? "Connected" : "Error"}</AlertTitle>
-                  <AlertDescription>
-                    {modelTestResult.success
-                      ? `${modelTestResult.provider} / ${modelTestResult.model} · ${modelTestResult.responseTime}ms`
-                      : modelTestResult.error || "Model test gagal"}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Play className="h-5 w-5" /> Test Model</CardTitle>
+          <CardDescription>Pilih lane, provider, dan model. Halaman ini tidak menjalankan check otomatis saat dibuka.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label>Group / Lane</Label>
+              <Select value={selectedLane} onValueChange={(value) => setSelectedLane(value as LaneName)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {laneOptions.map((lane) => <SelectItem key={lane} value={lane}>{lane.toUpperCase()}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Provider</Label>
+              <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Semua provider</SelectItem>
+                  {providers.map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Model</Label>
+              <Select value={selectedModelId} onValueChange={setSelectedModelId} disabled={selectableModels.length === 0}>
+                <SelectTrigger><SelectValue placeholder="Pilih model" /></SelectTrigger>
+                <SelectContent>
+                  {selectableModels.map((model) => <SelectItem key={model.id} value={model.id}>{modelLabel(model)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={handleSelectedModelTest} disabled={isRunning || !selectedModelId}>
+              {selectedModelId && runningModelIds.has(selectedModelId) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+              Test Model Dipilih
+            </Button>
+            <Button onClick={() => testModels(selectableModels, `Group ${selectedLane.toUpperCase()}`)} variant="outline" disabled={isRunning || selectableModels.length === 0}>
+              Cek Semua di Group Ini
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <Card className="border-border/60">
+      {errorLogs.length > 0 && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Log Error</AlertTitle>
+          <AlertDescription>
+            <div className="mt-2 space-y-2">
+              {errorLogs.map((log) => (
+                <div key={log.id} className="rounded-md border border-red-200/70 bg-red-500/10 p-2 text-xs dark:border-red-900">
+                  <div className="font-medium">{log.label}</div>
+                  <div>{log.message}</div>
+                  <div className="text-red-700/70 dark:text-red-300/70">{new Date(log.at).toLocaleString("id-ID")}</div>
+                </div>
+              ))}
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {selectableModels.map((model) => {
+          const result = testResults[model.id]
+          const running = runningModelIds.has(model.id)
+          return (
+            <Card key={model.id} className="border-border/60">
               <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                  <Server className="h-4 w-4" />
-                  AI Service
+                <CardTitle className="flex items-start justify-between gap-3 text-sm font-medium">
+                  <span className="flex min-w-0 items-center gap-2">
+                    {getLaneIcon(model.lane_type)}
+                    <span className="break-all">{model.display_name || model.upstream_model_name}</span>
+                  </span>
+                  {getStatusBadge(result)}
                 </CardTitle>
+                <CardDescription className="break-all">
+                  {model.provider?.name || "Provider"} · {model.upstream_model_name}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center gap-3">
-                  {getStatusIcon(data.aiServiceStatus)}
-                  <div className="space-y-1">
-                    {getStatusBadge(data.aiServiceStatus)}
-                    {data.aiServiceResponseTime != null && (
-                      <p className="text-xs text-muted-foreground">
-                        <Clock className="mr-1 inline h-3 w-3" />
-                        {data.aiServiceResponseTime}ms
-                      </p>
-                    )}
+                  {running ? <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /> : getStatusIcon(result)}
+                  <div className="text-xs text-muted-foreground">
+                    <div>Lane: <span className="font-medium text-foreground">{model.lane_type.toUpperCase()}</span></div>
+                    {result?.responseTime != null && <div>Response: <span className="font-medium text-foreground">{result.responseTime}ms</span></div>}
                   </div>
                 </div>
-                {data.aiServiceError && (
+                {result?.error && (
                   <div className="rounded-lg border border-red-200 bg-red-500/10 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-300">
-                    {data.aiServiceError}
+                    {result.error}
                   </div>
                 )}
+                <Button size="sm" variant="outline" onClick={() => testModels([model], modelLabel(model))} disabled={isRunning}>
+                  {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                  Test
+                </Button>
               </CardContent>
             </Card>
+          )
+        })}
+      </div>
 
-            {data.laneChecks.map((lane) => (
-              <Card key={lane.lane} className="border-border/60">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                    {getLaneIcon(lane.lane)}
-                    {lane.label}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    {getStatusIcon(lane.status)}
-                    <div className="space-y-1">
-                      {getStatusBadge(lane.status)}
-                      {lane.responseTime > 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          <Clock className="mr-1 inline h-3 w-3" />
-                          {lane.responseTime}ms
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="space-y-1 text-xs text-muted-foreground">
-                    {lane.provider && <p>Provider: <span className="font-medium text-foreground">{lane.provider}</span></p>}
-                    {lane.model && <p>Model: <span className="font-medium break-all text-foreground">{lane.model}</span></p>}
-                  </div>
-                  {lane.error && (
-                    <div className="rounded-lg border border-red-200 bg-red-500/10 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-300">
-                      {lane.error}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          {gatewayEntries.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Plug className="h-5 w-5" />
-                  Konfigurasi Gateway Aktif
-                </CardTitle>
-                <CardDescription>
-                  Snapshot lane dari endpoint health AI Service.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  {gatewayEntries.map((gateway) => (
-                    <div key={gateway.kind} className="rounded-xl border border-border/60 bg-background p-4">
-                      <div className="mb-3 flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-foreground">{gateway.kind.toUpperCase()}</p>
-                          <p className="text-xs text-muted-foreground">{gateway.provider}</p>
-                        </div>
-                        {getStatusBadge(gateway.enabled ? "connected" : "disabled")}
-                      </div>
-                      <div className="space-y-2 text-xs text-muted-foreground">
-                        <p className="break-all font-medium text-foreground">{gateway.model}</p>
-                        <p>Path: <span className="font-mono">{gateway.path}</span></p>
-                        <p>Timeout: {gateway.timeoutMs}ms</p>
-                        <p>Keys: {gateway.keyCount}</p>
-                        {gateway.dimensions != null && <p>Dimensions: {gateway.dimensions}</p>}
-                        {gateway.topN != null && <p>Top N: {gateway.topN}</p>}
-                        <p className="break-all font-mono text-[11px]">{gateway.baseUrl}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline">
-                    Rerank: {data.aiServiceDetails?.rerankEnabled ? "On" : "Off"}
-                  </Badge>
-                  <Badge variant="outline">
-                    Retrieval Cache: {data.aiServiceDetails?.retrievalCacheEnabled ? "On" : "Off"}
-                  </Badge>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {modelList.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Cpu className="h-5 w-5" />
-                  Model Activity
-                </CardTitle>
-                <CardDescription>
-                  Statistik model dari AI Service untuk memastikan traffic sudah lewat gateway baru.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {modelList.map((model: any, index: number) => (
-                    <div key={index} className="rounded-xl border border-border/60 p-4">
-                      <p className="text-sm font-semibold text-foreground break-all">
-                        {model.name || model.model || `Model ${index + 1}`}
-                      </p>
-                      {model.total_requests != null && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Requests: {model.total_requests}
-                        </p>
-                      )}
-                      {model.totalCalls != null && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Calls: {model.totalCalls}
-                        </p>
-                      )}
-                      {model.avg_response_time != null && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Avg: {model.avg_response_time}ms
-                        </p>
-                      )}
-                      {model.avgResponseTimeMs != null && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Avg: {model.avgResponseTimeMs}ms
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5" />
-                Raw Health Payload
-              </CardTitle>
-              <CardDescription>
-                Payload asli untuk inspeksi cepat provider, path, dan hasil ping per lane.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <pre className="max-h-80 overflow-auto rounded-lg bg-muted p-4 text-xs font-mono">
-                {JSON.stringify({
-                  health: data.aiServiceDetails,
-                  ping: data.pingDetails,
-                }, null, 2)}
-              </pre>
-            </CardContent>
-          </Card>
-
-          <p className="text-center text-xs text-muted-foreground">
-            Terakhir diperiksa: {new Date(data.timestamp).toLocaleString("id-ID")}
-          </p>
-        </>
+      {selectableModels.length === 0 && (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            Tidak ada model aktif untuk filter ini.
+          </CardContent>
+        </Card>
       )}
     </div>
   )

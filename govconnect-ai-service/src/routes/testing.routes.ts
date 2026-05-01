@@ -41,13 +41,14 @@ function joinUrl(baseUrl: string, path: string) {
 async function postProviderJson(provider: any, endpointPath: string, apiKey: string, body: Record<string, unknown>, timeoutMs: number) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const url = joinUrl(provider.base_url, endpointPath);
   try {
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
       ...sanitizeProviderDefaultHeaders(provider.default_headers_json),
     };
-    const response = await fetch(joinUrl(provider.base_url, endpointPath), {
+    const response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -58,6 +59,20 @@ async function postProviderJson(provider: any, endpointPath: string, apiKey: str
       throw new Error(payload?.error?.message || payload?.error || `Provider returned HTTP ${response.status}`);
     }
     return payload;
+  } catch (error: any) {
+    const cause = error?.cause?.message || error?.cause?.code;
+    const message = error?.name === 'AbortError'
+      ? `Provider request timed out after ${timeoutMs}ms`
+      : cause
+        ? `${error.message}: ${cause}`
+        : error?.message || 'Provider request failed';
+    logger.warn('AI provider model test request failed', {
+      provider: provider.slug || provider.name,
+      endpointPath,
+      url,
+      error: message,
+    });
+    throw new Error(message);
   } finally {
     clearTimeout(timeout);
   }
@@ -92,19 +107,39 @@ async function testModelById(modelId: string) {
     );
     details = { dimensions: payload?.data?.[0]?.embedding?.length || 0 };
   } else if (lane === 'rerank') {
-    const payload = await postProviderJson(
-      model.provider,
-      model.endpoint_path || config.rerankerGateway.rerankPath,
-      apiKey,
-      {
-        model: model.upstream_model_name,
-        query: 'cara bikin ktp baru',
-        documents: ['Panduan pembuatan KTP baru.', 'Jadwal posyandu desa.', 'Syarat penggantian KK.'],
-        top_n: 2,
-      },
-      config.rerankerGateway.timeoutMs,
-    );
-    details = { resultCount: payload?.results?.length || 0, topScore: payload?.results?.[0]?.relevance_score };
+    try {
+      const payload = await postProviderJson(
+        model.provider,
+        model.endpoint_path || config.rerankerGateway.rerankPath,
+        apiKey,
+        {
+          model: model.upstream_model_name,
+          query: 'cara bikin ktp baru',
+          documents: ['Panduan pembuatan KTP baru.', 'Jadwal posyandu desa.', 'Syarat penggantian KK.'],
+          top_n: 2,
+        },
+        config.rerankerGateway.timeoutMs,
+      );
+      details = { mode: 'native_rerank', resultCount: payload?.results?.length || 0, topScore: payload?.results?.[0]?.relevance_score };
+    } catch (error: any) {
+      if (!/Input required: specify "prompt" or "messages"|messages|prompt/i.test(error.message || '')) throw error;
+      const payload = await postProviderJson(
+        model.provider,
+        model.endpoint_path || config.ragGateway.chatCompletionsPath || config.llmGateway.chatCompletionsPath,
+        apiKey,
+        {
+          model: model.upstream_model_name,
+          messages: [{ role: 'user', content: 'Rank these documents for the query "cara bikin ktp baru" and reply with OK only.' }],
+          temperature: 0,
+          max_tokens: 8,
+        },
+        config.rerankerGateway.timeoutMs,
+      );
+      details = {
+        mode: 'prompt_fallback',
+        response: payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || '',
+      };
+    }
   } else {
     const timeoutMs = lane === 'rewrite' ? config.ragGateway.timeoutMs : config.llmGateway.timeoutMs;
     const endpointPath = model.endpoint_path || (lane === 'rewrite' ? config.ragGateway.chatCompletionsPath : config.llmGateway.chatCompletionsPath);

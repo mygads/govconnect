@@ -449,6 +449,10 @@ export async function handleGetDeletedComplaints(req: Request, res: Response) {
     const data = await prisma.complaint.findMany({
       where: { village_id, deleted_at: { not: null } },
       orderBy: { deleted_at: 'desc' },
+      include: {
+        category: true,
+        type: true,
+      },
     });
 
     return res.json({ data });

@@ -7,7 +7,15 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Search, RefreshCw, FileText, User, Phone, CreditCard, ChevronRight, Trash2, Loader2, RotateCcw, Archive } from "lucide-react"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Search, RefreshCw, FileText, User, Phone, CreditCard, ChevronRight, Trash2, Loader2, RotateCcw, Archive, Eye } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -51,6 +59,7 @@ export default function ServiceRequestsPage() {
   const [deletedItems, setDeletedItems] = useState<ServiceRequest[]>([])
   const [loadingDeleted, setLoadingDeleted] = useState(false)
   const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [selectedDeletedItem, setSelectedDeletedItem] = useState<ServiceRequest | null>(null)
   const { toast } = useToast()
 
   const fetchRequests = async () => {
@@ -155,6 +164,7 @@ export default function ServiceRequestsPage() {
       if (!res.ok) throw new Error("Gagal memulihkan")
       toast({ title: "Berhasil", description: "Permohonan berhasil dipulihkan" })
       setDeletedItems(prev => prev.filter(item => item.id !== id))
+      if (selectedDeletedItem?.id === id) setSelectedDeletedItem(null)
       fetchRequests()
     } catch (err: any) {
       toast({ title: "Gagal", description: err.message, variant: "destructive" })
@@ -313,56 +323,129 @@ export default function ServiceRequestsPage() {
 
       {/* Deleted Items Modal */}
       <Dialog open={showDeletedModal} onOpenChange={setShowDeletedModal}>
-        <DialogContent className="max-w-5xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+        <DialogContent className="w-[96vw] max-w-7xl max-h-[88vh] overflow-hidden p-0">
+          <DialogHeader className="border-b bg-muted/30 px-6 py-5">
+            <DialogTitle className="flex items-center gap-2 text-xl">
               <Archive className="h-5 w-5" /> Permohonan yang Dihapus
             </DialogTitle>
             <DialogDescription>
               Item yang dihapus akan otomatis terhapus permanen setelah 30 hari.
             </DialogDescription>
           </DialogHeader>
-          {loadingDeleted ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : deletedItems.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Trash2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
-              <p>Tidak ada permohonan yang dihapus</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {deletedItems.map((item) => (
-                <div key={item.id} className="border rounded-lg p-4 flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-sm">{item.request_number}</span>
-                      <Badge className={getStatusBadge(item.status)}>{item.status}</Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">{item.service?.name || '-'}</p>
-                    <div className="flex gap-3 text-xs text-muted-foreground">
-                      <span>{item.citizen_data_json?.nama_lengkap || '-'}</span>
-                      <span>{new Date(item.created_at).toLocaleString("id-ID")}</span>
-                    </div>
+          <div className="max-h-[70vh] overflow-y-auto px-6 py-5">
+            {loadingDeleted ? (
+              <div className="flex min-h-56 items-center justify-center rounded-lg border border-dashed bg-muted/20">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : deletedItems.length === 0 ? (
+              <div className="flex min-h-64 flex-col items-center justify-center rounded-lg border border-dashed bg-muted/20 p-8 text-center text-muted-foreground">
+                <Trash2 className="mb-3 h-10 w-10 opacity-30" />
+                <p className="font-medium text-foreground">Tidak ada permohonan yang dihapus</p>
+                <p className="mt-1 max-w-md text-sm">Permohonan yang dipindahkan ke sampah akan muncul di sini sebelum dihapus permanen.</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-lg border">
+                <Table className="w-full table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[180px]">No. Permohonan</TableHead>
+                      <TableHead>Ringkasan</TableHead>
+                      <TableHead className="w-[120px]">Status</TableHead>
+                      <TableHead className="w-[180px] text-right">Aksi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {deletedItems.map((item) => {
+                      const nama = item.citizen_data_json?.nama_lengkap || '-'
+                      const noHp = item.citizen_data_json?.no_hp || item.wa_user_id
+                      return (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-mono text-sm font-semibold">{item.request_number}</TableCell>
+                          <TableCell className="min-w-0">
+                            <div className="min-w-0 space-y-1">
+                              <p className="truncate text-sm font-medium" title={item.service?.name || undefined}>{item.service?.name || '-'}</p>
+                              <p className="truncate text-sm text-muted-foreground" title={`${nama} • ${noHp}`}>{nama} • {noHp}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell><Badge className={getStatusBadge(item.status)}>{item.status}</Badge></TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-2">
+                              <Button variant="outline" size="sm" onClick={() => setSelectedDeletedItem(item)}>
+                                <Eye className="h-4 w-4 mr-1" /> Detail
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleRestore(item.id)}
+                                disabled={restoringId === item.id}
+                              >
+                                {restoringId === item.id ? (
+                                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="h-4 w-4 mr-1" />
+                                )}
+                                Pulihkan
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!selectedDeletedItem} onOpenChange={(open) => !open && setSelectedDeletedItem(null)}>
+        <DialogContent className="w-[94vw] max-w-3xl max-h-[86vh] overflow-y-auto">
+          {selectedDeletedItem && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{selectedDeletedItem.request_number}</DialogTitle>
+                <DialogDescription>Detail permohonan yang sedang berada di sampah.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Badge className={getStatusBadge(selectedDeletedItem.status)}>{selectedDeletedItem.status}</Badge>
+                  <Badge variant="outline">{selectedDeletedItem.service?.name || '-'}</Badge>
+                </div>
+                <div className="grid gap-3 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-2">
+                  <div>
+                    <p className="text-muted-foreground">Nama Pemohon</p>
+                    <p className="font-medium">{selectedDeletedItem.citizen_data_json?.nama_lengkap || '-'}</p>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleRestore(item.id)}
-                    disabled={restoringId === item.id}
-                    className="shrink-0"
-                  >
-                    {restoringId === item.id ? (
-                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                    ) : (
-                      <RotateCcw className="h-4 w-4 mr-1" />
-                    )}
+                  <div>
+                    <p className="text-muted-foreground">No. HP</p>
+                    <p className="font-mono">{selectedDeletedItem.citizen_data_json?.no_hp || selectedDeletedItem.wa_user_id || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">NIK</p>
+                    <p className="font-mono">{selectedDeletedItem.citizen_data_json?.nik || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Tanggal</p>
+                    <p>{new Date(selectedDeletedItem.created_at).toLocaleString("id-ID")}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Data Pemohon</p>
+                  <div className="rounded-lg border p-4 text-sm">
+                    <pre className="whitespace-pre-wrap wrap-break-word font-sans text-sm leading-6 text-foreground">
+                      {JSON.stringify(selectedDeletedItem.citizen_data_json || {}, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button onClick={() => handleRestore(selectedDeletedItem.id)} disabled={restoringId === selectedDeletedItem.id}>
+                    {restoringId === selectedDeletedItem.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
                     Pulihkan
                   </Button>
                 </div>
-              ))}
-            </div>
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>

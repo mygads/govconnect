@@ -259,7 +259,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
 
   if (/surat keterangan domisili|keterangan domisili|buat.*domisili|urus.*domisili/i.test(normalized) && (isGenericTimeout || reply.includes('form/'))) {
     return {
-      response: 'Untuk layanan *Keterangan Domisili*, persyaratan umumnya KTP, KK, dan surat pengantar RT/RW bila diperlukan. Kalau Bapak/Ibu mau lanjut mengajukan sekarang, balas *iya* ya. Nanti saya kirim link formulirnya.',
+      response: 'Untuk layanan *Keterangan Domisili*, persyaratan umumnya KTP, KK, dan surat pengantar RT/RW bila diperlukan. Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait Keterangan Domisili.',
       intent: 'SERVICE_INFO',
       serviceSlug: 'administrasi-kependudukan-keterangan-domisili',
     };
@@ -267,7 +267,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
 
   if (/\bktp\b/i.test(normalized) && isGenericTimeout) {
     return {
-      response: 'Untuk layanan KTP, persyaratan umumnya KK, surat pengantar RT/RW, pas foto bila diminta, dan KTP lama atau surat kehilangan jika penggantian. Kalau mau lanjut mengajukan, balas *iya* ya.',
+      response: 'Ada beberapa layanan KTP yang mungkin sesuai, misalnya perekaman/perubahan KTP atau pergantian KTP. Biar tidak salah, Bapak/Ibu maksud KTP rusak, hilang, atau perekaman/perubahan data?',
       intent: 'SERVICE_INFO',
       serviceSlug: 'administrasi-kependudukan-surat-pengantar-ktp',
     };
@@ -275,7 +275,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
 
   if (/\bkk\b|kartu keluarga/i.test(normalized) && isGenericTimeout) {
     return {
-      response: 'Untuk layanan KK, persyaratan umumnya KTP/KK lama, surat pengantar RT/RW, dan dokumen pendukung sesuai kebutuhan perubahan data. Kalau mau lanjut mengajukan, balas *iya* ya.',
+      response: 'Untuk layanan KK, persyaratan umumnya KTP/KK lama, surat pengantar RT/RW, dan dokumen pendukung sesuai kebutuhan perubahan data. Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait layanan KK.',
       intent: 'SERVICE_INFO',
     };
   }
@@ -870,6 +870,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         reason: pendingOfferResult.intent,
         messagePreview: message,
       });
+      tracker.complete();
+      notifyStage('done', 100);
       return finish(pendingOfferResult);
     }
 
