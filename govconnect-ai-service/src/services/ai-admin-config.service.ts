@@ -142,6 +142,8 @@ export async function syncEnvManagedAIConfig() {
         endpoint_path: lane.endpointPath,
         is_active: true,
         is_publicly_selectable: true,
+        supports_vision: lane.laneType === 'llm',
+        supports_audio: false,
         notes: `${ENV_MODEL_NOTE_PREFIX}${lane.laneType}`,
         priority: 100,
       },
@@ -155,6 +157,8 @@ export async function syncEnvManagedAIConfig() {
         adjusted_pricing_type: 'per_million_tokens',
         is_active: true,
         is_publicly_selectable: true,
+        supports_vision: lane.laneType === 'llm',
+        supports_audio: false,
         notes: `${ENV_MODEL_NOTE_PREFIX}${lane.laneType}`,
         priority: 100,
       },
@@ -367,6 +371,8 @@ export async function createAIModel(input: {
   adjusted_output_price_per_million_usd?: number | null;
   is_active?: boolean;
   is_publicly_selectable?: boolean;
+  supports_vision?: boolean;
+  supports_audio?: boolean;
   notes?: string | null;
   priority?: number;
 }) {
@@ -394,6 +400,8 @@ export async function createAIModel(input: {
       adjusted_output_price_per_million_usd: input.adjusted_output_price_per_million_usd ?? null,
       is_active: input.is_active !== false,
       is_publicly_selectable: input.is_publicly_selectable !== false,
+      supports_vision: input.supports_vision === true,
+      supports_audio: input.supports_audio === true,
       notes: input.notes?.trim() || null,
       priority: input.priority ?? 100,
     },
@@ -420,6 +428,8 @@ export async function updateAIModel(input: {
   adjusted_output_price_per_million_usd?: number | null;
   is_active?: boolean;
   is_publicly_selectable?: boolean;
+  supports_vision?: boolean;
+  supports_audio?: boolean;
   notes?: string | null;
   priority?: number;
 }) {
@@ -457,6 +467,8 @@ export async function updateAIModel(input: {
     'adjusted_output_price_per_million_usd',
     'is_active',
     'is_publicly_selectable',
+    'supports_vision',
+    'supports_audio',
     'priority',
   ] as const) {
     if (input[key] !== undefined) data[key] = input[key];

@@ -1206,9 +1206,8 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
       delete usageWhereBase.status;
     }
     const usageWhere = usageWhereBase;
-    const [generationTotal, usageTotal, generationRows, usageRows] = await Promise.all([
+    const [generationTotal, generationRows, usageRows] = await Promise.all([
       (prisma as any).ai_generation_logs.count({ where: generationWhere }),
-      prisma.ai_token_usage.count({ where: usageWhere }),
       (prisma as any).ai_generation_logs.findMany({
         where: generationWhere,
         orderBy: { created_at: 'desc' },
@@ -1257,6 +1256,7 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
     const providerMap = new Map(providers.map((provider) => [provider.id, provider]));
     const modelMap = new Map(models.map((model) => [model.id, model]));
 
+    const fallbackRows = usageRows.filter((row) => !loggedTokenIds.has(row.id));
     const rows = [
       ...generationRows.map((row: any) => ({
         ...row,
@@ -1264,7 +1264,7 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
         provider_info: row.provider_id ? providerMap.get(row.provider_id) ?? null : null,
         model_info: row.model_config_id ? modelMap.get(row.model_config_id) ?? null : null,
       })),
-      ...usageRows.filter((row) => !loggedTokenIds.has(row.id)).map((row) => ({
+      ...fallbackRows.map((row) => ({
         id: `usage_${row.id}`,
         token_usage_id: row.id,
         village_id: row.village_id,
@@ -1300,7 +1300,7 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
       })),
     ].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(offset, offset + limit);
 
-    res.json({ total: generationTotal + usageTotal, limit, offset, data: rows });
+    res.json({ total: generationTotal + fallbackRows.length, limit, offset, data: rows });
   } catch (error: any) {
     logger.error('Failed to get AI generation logs', { error: error.message });
     res.status(500).json(errorResponse(error.message || 'Failed to get AI generation logs'));
@@ -2090,6 +2090,8 @@ const aiModelCreateSchema = z.object({
   adjusted_output_price_per_million_usd: nullableNumber.optional(),
   is_active: z.boolean().optional(),
   is_publicly_selectable: z.boolean().optional(),
+  supports_vision: z.boolean().optional(),
+  supports_audio: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   priority: z.number().int().optional(),
 });
@@ -2111,6 +2113,8 @@ const aiModelUpdateSchema = z.object({
   adjusted_output_price_per_million_usd: nullableNumber.optional(),
   is_active: z.boolean().optional(),
   is_publicly_selectable: z.boolean().optional(),
+  supports_vision: z.boolean().optional(),
+  supports_audio: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   priority: z.number().int().optional(),
 });

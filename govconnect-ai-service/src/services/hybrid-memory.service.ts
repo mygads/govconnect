@@ -336,6 +336,10 @@ export async function searchUserMemories(input: {
             taskType: 'RETRIEVAL_QUERY',
             outputDimensionality: 768,
             useCache: true,
+            context: {
+              village_id: input.village_id,
+              wa_user_id: input.wa_user_id,
+            },
           });
 
           return await searchUserMemoryVectors(queryEmbedding.values, {

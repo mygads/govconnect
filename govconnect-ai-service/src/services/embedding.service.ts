@@ -180,6 +180,7 @@ async function requestGatewayEmbeddings(
   model: string,
   outputDimensionality: number,
   layerCall: 'embedding_single' | 'embedding_batch',
+  context?: EmbeddingConfig['context'],
 ): Promise<{ embeddings: number[][]; model: string; durationMs: number }> {
   if (!config.embeddingGateway.enabled) {
     throw new Error('EMBED lane is not configured');
@@ -194,6 +195,7 @@ async function requestGatewayEmbeddings(
         timeoutMs: config.embeddingGateway.timeoutMs,
         layerType: 'embedding',
         callType: layerCall,
+        context,
       }),
     'embedding-gateway',
   );
@@ -274,7 +276,7 @@ export async function generateEmbedding(
   }
 
   try {
-    const gatewayResult = await requestGatewayEmbeddings(text, model, outputDimensionality, 'embedding_single');
+    const gatewayResult = await requestGatewayEmbeddings(text, model, outputDimensionality, 'embedding_single', options.context);
     const rawValues = gatewayResult.embeddings[0];
     const finalized = finalizeEmbeddingValues(rawValues, outputDimensionality, normalize);
 
@@ -373,7 +375,7 @@ export async function generateBatchEmbeddings(
   }
 
   try {
-    const gatewayResult = await requestGatewayEmbeddings(nonBlankTexts, model, outputDimensionality, 'embedding_batch');
+    const gatewayResult = await requestGatewayEmbeddings(nonBlankTexts, model, outputDimensionality, 'embedding_batch', options.context);
     const nonBlankEmbeddings = gatewayResult.embeddings.map((values) => {
       const finalized = finalizeEmbeddingValues(values, outputDimensionality, normalize);
       return {

@@ -99,7 +99,7 @@ function rerankRetrievedResults(
   topK: number,
   minScore: number,
   retrievalMode: RetrievalMode,
-  context?: { village_id?: string },
+  context?: { village_id?: string | null; wa_user_id?: string | null; session_id?: string | null; channel?: string | null },
 ): Promise<{ results: VectorSearchResult[]; appliedMode: RetrievalMode }> {
   return (async () => {
     if (results.length <= 1) {
@@ -380,7 +380,10 @@ function normalizeForExpansionCache(q: string): string {
  * LLM expansion is used as FALLBACK only for multi-word queries where dict provides no enrichment.
  * Results are cached for 15 minutes to avoid redundant LLM calls.
  */
-export async function expandQuery(query: string): Promise<string> {
+export async function expandQuery(
+  query: string,
+  context?: { village_id?: string | null; wa_user_id?: string | null; session_id?: string | null; channel?: string | null },
+): Promise<string> {
   if (!query.trim()) return query;
 
   const words = query.trim().toLowerCase().split(/\s+/);
@@ -429,6 +432,7 @@ export async function expandQuery(query: string): Promise<string> {
         jsonMode: false,
         layerType: 'rag_expand',
         callType: 'rag_query_expand',
+        context,
       });
 
       const expanded = gatewayResult?.text?.trim();
@@ -670,8 +674,15 @@ export async function retrieveContext(
   });
 
   try {
+    const expansionContext = {
+      village_id: villageId,
+      wa_user_id: waUserId,
+      session_id: sessionId,
+      channel,
+    };
+
     // Step 1: Expand query with synonyms for better recall
-    const expandedQuery = useQueryExpansion ? await expandQuery(query) : query;
+    const expandedQuery = useQueryExpansion ? await expandQuery(query, expansionContext) : query;
 
     let filteredResults: VectorSearchResult[];
     let retrievalDebug: RAGContext['retrievalDebug'] | undefined;
@@ -696,7 +707,7 @@ export async function retrieveContext(
         topK,
         adjustedMinScore,
         retrievalMode,
-        { village_id: villageId },
+        expansionContext,
       );
       filteredResults = rerankOutcome.results;
       retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults, rerankOutcome.appliedMode);
@@ -713,6 +724,7 @@ export async function retrieveContext(
         taskType: 'RETRIEVAL_QUERY',
         outputDimensionality: 768,
         useCache: true,
+        context: expansionContext,
       });
 
       const searchResults = await searchVectors(queryEmbedding.values, {
@@ -752,7 +764,7 @@ export async function retrieveContext(
         topK,
         adjustedMinScore,
         retrievalMode,
-        { village_id: villageId },
+        expansionContext,
       );
       filteredResults = rerankOutcome.results;
       retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults, rerankOutcome.appliedMode);

@@ -102,7 +102,8 @@ export type CallType =
   | 'hallucination_check'
   | 'sentiment_urgency'
   | 'rerank_documents'
-  | 'agent_orchestrator';
+  | 'agent_orchestrator'
+  | 'media_analysis';
 
 export interface TokenUsageRecord {
   model: string;

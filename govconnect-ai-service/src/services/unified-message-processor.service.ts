@@ -45,6 +45,7 @@ import { getEnhancedContext } from './conversation-context.service';
 import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village-behavior.service';
 import { canProcessVillageAI } from './ai-wallet.service';
 import { finishAiBillingTurn, startAiBillingTurn, type AiBillingTurnHandle } from './ai-turn-billing.service';
+import { analyzeIncomingMedia } from './media-analysis.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
@@ -544,6 +545,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         userId,
         villageId,
         channel,
+        traceId,
         isEvaluation: input.isEvaluation,
         sideEffectMode,
       },
@@ -646,6 +648,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   incrementActiveProcessing();
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange, messageId, batchedMessageIds } = input;
+  let workingMessage = message;
   let resolvedHistory = conversationHistory;
   let finalResult: ProcessMessageResult | null = null;
   const finish = (result: ProcessMessageResult) => {
@@ -701,7 +704,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     traceId,
     userId,
     channel,
-    messageLength: message.length,
+    messageLength: workingMessage.length,
     hasHistory: !!conversationHistory,
     hasMedia: !!mediaUrl,
   });
@@ -713,8 +716,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     
     // Step 0: Input length guard — reject absurdly long messages before any LLM work
     const MAX_INPUT_LENGTH = 4000; // ~1000 tokens, well above any realistic user message
-    if (message.length > MAX_INPUT_LENGTH) {
-      logger.warn('🚫 [UnifiedProcessor] Message too long, rejected', { traceId, userId, channel, length: message.length });
+    if (workingMessage.length > MAX_INPUT_LENGTH) {
+      logger.warn('🚫 [UnifiedProcessor] Message too long, rejected', { traceId, userId, channel, length: workingMessage.length });
       await recordGuardrailEvent({
         traceId,
         waUserId: userId,
@@ -724,9 +727,9 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         guardType: 'input_length',
         action: 'blocked',
         reason: 'message_too_long',
-        messagePreview: message,
+        messagePreview: workingMessage,
         metadata: {
-          length: message.length,
+          length: workingMessage.length,
           maxLength: MAX_INPUT_LENGTH,
         },
       });
@@ -749,7 +752,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     // Step 1: Spam check
-    if (isSpamMessage(message)) {
+    if (isSpamMessage(workingMessage)) {
       logger.warn('🚫 [UnifiedProcessor] Spam detected', { userId, channel });
       await recordGuardrailEvent({
         traceId,
@@ -760,7 +763,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         guardType: 'spam_content',
         action: 'blocked',
         reason: 'content_spam_pattern',
-        messagePreview: message,
+        messagePreview: workingMessage,
       });
       return finish({
         success: false,
@@ -814,6 +817,34 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       }
     };
 
+    if ((channel === 'whatsapp' || channel === 'webchat') && mediaUrl && (input.mediaType === 'image' || input.mediaType === 'photo' || input.mediaType === 'audio' || input.mediaType === 'voice')) {
+      const mediaAnalysis = await analyzeIncomingMedia({
+        mediaUrl,
+        mediaType: input.mediaType,
+        message: workingMessage,
+        villageId: resolvedVillageId,
+        userId,
+        channel,
+      });
+      if (mediaAnalysis?.status === 'ok') {
+        workingMessage = `${workingMessage}\n\n[Analisis media AI]\n${mediaAnalysis.description}`.trim();
+      } else if (mediaAnalysis?.response && workingMessage.trim().length < 8) {
+        tracker.complete();
+        notifyStage('done', 100);
+        return finish({
+          success: true,
+          response: mediaAnalysis.response,
+          intent: 'QUESTION',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            hasKnowledge: false,
+            traceId,
+            agentMode: 'pre_agent_guard',
+          },
+        });
+      }
+    }
+
     // Classify greeting once via micro NLU and cache the result for multiple usage points
     // Uses unified classifier that returns message_type + rag_needed + categories in ONE call
     let unifiedClassifyResult: UnifiedClassifyResult | null = null;
@@ -823,7 +854,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         unifiedClassified = true;
         try {
           unifiedClassifyResult = await withMicroNluBudget(
-            () => classifyMessage(message.trim(), {
+            () => classifyMessage(workingMessage.trim(), {
               village_id: resolvedVillageId,
               wa_user_id: userId,
               session_id: userId,
@@ -842,7 +873,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     if (channel === 'whatsapp' && (!resolvedHistory || resolvedHistory.length === 0)) {
       resolvedHistory = await fetchConversationHistoryFromChannel(userId, resolvedVillageId);
       // Append current user message to cache so subsequent calls see it
-      appendToHistoryCache(userId, 'user', message);
+      appendToHistoryCache(userId, 'user', workingMessage);
       logger.info('📚 [UnifiedProcessor] Loaded WhatsApp history', {
         userId,
         historyCount: resolvedHistory?.length || 0,
@@ -865,7 +896,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         guardType: 'unsupported_media',
         action: 'handled',
         reason: input.mediaType,
-        messagePreview: message,
+        messagePreview: workingMessage,
       });
       tracker.complete();
       return finish(protocolGuardResult);
@@ -875,7 +906,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       ? null
       : await tryHandlePendingOffers({
           userId,
-          message,
+          message: workingMessage,
           channel: agentChannel,
           villageId: resolvedVillageId,
           traceId,
@@ -892,7 +923,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         guardType: 'pending_offer',
         action: 'handled',
         reason: pendingOfferResult.intent,
-        messagePreview: message,
+        messagePreview: workingMessage,
       });
       tracker.complete();
       notifyStage('done', 100);
@@ -903,7 +934,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       ? null
       : await tryHandleLatePreAgentState({
           userId,
-          message,
+          message: workingMessage,
           channel: agentChannel,
           villageId: resolvedVillageId,
           traceId,
@@ -924,12 +955,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         guardType: 'pending_state',
         action: 'handled',
         reason: latePreAgentResult.intent,
-        messagePreview: message,
+        messagePreview: workingMessage,
       });
       return finish(latePreAgentResult);
     }
 
-    const explicitHumanHandoffRequest = isExplicitHumanHandoffRequest(message);
+    const explicitHumanHandoffRequest = isExplicitHumanHandoffRequest(workingMessage);
     const walletAccess = await canProcessVillageAI(resolvedVillageId);
     if (!walletAccess.allowed) {
       await recordGuardrailEvent({
@@ -941,7 +972,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         guardType: 'wallet_balance',
         action: explicitHumanHandoffRequest ? 'handoff_allowed' : 'blocked',
         reason: walletAccess.reason || 'wallet_exhausted',
-        messagePreview: message,
+        messagePreview: workingMessage,
         metadata: {
           balance_usd: walletAccess.balanceUsd ?? null,
           wallet_status: walletAccess.status ?? null,
@@ -957,7 +988,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           admin_name: 'Petugas Desa',
           reason: 'user_requested_human_agent_wallet_exhausted',
           enrichment: {
-            last_user_message: message,
+            last_user_message: workingMessage,
             wallet_status: walletAccess.status ?? null,
             balance_usd: walletAccess.balanceUsd ?? null,
             village_id: resolvedVillageId ?? null,
@@ -1024,7 +1055,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
 
     // Step 3: Sanitize and correct typos
-    let sanitizedMessage = sanitizeUserInput(message);
+    let sanitizedMessage = sanitizeUserInput(workingMessage);
     sanitizedMessage = normalizeText(sanitizedMessage);
 
     const [savedProfile, memorySummary, sentiment] = await Promise.all([
@@ -1216,7 +1247,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Get smart fallback - tries to continue conversation flow if possible
     const fallbackResponse = errorType 
       ? getErrorFallback(errorType)
-      : getSmartFallback(userId, undefined, message);
+      : getSmartFallback(userId, undefined, workingMessage);
     
     return finish({
       success: false,
@@ -1249,7 +1280,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           waUserId: userId,
           villageId,
           channel,
-          query: message,
+          query: workingMessage,
           heuristicTools: (analyticsResult.metadata.heuristicTools || []) as any,
           learnedTools: (analyticsResult.metadata.learnedTools || []) as any,
           allowedTools: (analyticsResult.metadata.allowedTools || []) as any,

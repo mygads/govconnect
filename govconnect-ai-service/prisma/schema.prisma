@@ -3,6 +3,8 @@
 
 generator client {
   provider        = "prisma-client-js"
+  output          = "../node_modules/@prisma/client/.prisma/client"
+  engineType      = "binary"
   previewFeatures = ["postgresqlExtensions"]
 }
 
@@ -372,6 +374,8 @@ model ai_models {
   adjusted_output_price_per_million_usd Float?
   is_active                             Boolean  @default(true)
   is_publicly_selectable                Boolean  @default(true)
+  supports_vision                       Boolean  @default(false)
+  supports_audio                        Boolean  @default(false)
   notes                                 String?  @db.Text
   priority                              Int      @default(100)
   created_at                            DateTime @default(now())

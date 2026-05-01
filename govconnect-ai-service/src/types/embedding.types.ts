@@ -53,6 +53,12 @@ export interface EmbeddingConfig {
   taskType?: EmbeddingTaskType;              // Default: RETRIEVAL_DOCUMENT
   normalize?: boolean;                       // Default: true for dims < 3072
   useCache?: boolean;                        // Default: true for RETRIEVAL_QUERY
+  context?: {
+    village_id?: string | null;
+    wa_user_id?: string | null;
+    session_id?: string | null;
+    channel?: string | null;
+  };
 }
 
 /**

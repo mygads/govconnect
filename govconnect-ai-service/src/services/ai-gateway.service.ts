@@ -20,9 +20,24 @@ export type PromptLaneKind = 'llm' | 'rag';
 
 export type GatewayMessageRole = 'system' | 'user' | 'assistant';
 
+export type GatewayMessageContent = string | Array<
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+  | { type: 'input_audio'; input_audio: { data: string; format: string } }
+>;
+
+export type GatewayRequiredCapability = 'vision' | 'audio';
+
+export class NoCapableGatewayModelError extends Error {
+  constructor(capability: GatewayRequiredCapability) {
+    super(`No active ${capability}-capable AI model is configured`);
+    this.name = 'NoCapableGatewayModelError';
+  }
+}
+
 export interface GatewayChatMessage {
   role: GatewayMessageRole;
-  content: string;
+  content: GatewayMessageContent;
 }
 
 interface GatewayUsage {
@@ -110,6 +125,7 @@ export interface GatewayPromptOptions {
   callType?: CallType;
   context?: TokenContext;
   extraBody?: Record<string, unknown>;
+  requiredCapability?: GatewayRequiredCapability;
 }
 
 export interface GatewayPromptResult {
@@ -232,6 +248,8 @@ type RuntimeGatewayAttempt = {
   modelId?: string;
   modelDisplayName?: string;
   providerId?: string;
+  supportsVision?: boolean;
+  supportsAudio?: boolean;
   brokenReason?: string;
 };
 
@@ -282,9 +300,9 @@ async function resolveGateway(kind: GatewayLaneKind, villageId?: string | null):
     config: resolved.config,
     attempts: resolved.attempts.map((attempt) => ({
       config: attempt.config,
-      modelId: attempt.modelId,
-      modelDisplayName: attempt.modelDisplayName,
       providerId: attempt.providerId,
+      supportsVision: attempt.supportsVision,
+      supportsAudio: attempt.supportsAudio,
       brokenReason: attempt.brokenReason,
     })),
     meta: resolved.meta,
@@ -572,6 +590,12 @@ async function partitionAttemptsByHealth(
   return { available, demoted };
 }
 
+function attemptSupportsCapability(attempt: RuntimeGatewayAttempt, capability?: GatewayRequiredCapability): boolean {
+  if (!capability) return true;
+  if (capability === 'vision') return attempt.supportsVision === true;
+  return attempt.supportsAudio === true;
+}
+
 async function selectAttempts(lane: GatewayLaneKind, allAttempts: RuntimeGatewayAttempt[]): Promise<RuntimeGatewayAttempt[]> {
   const { available, demoted } = await partitionAttemptsByHealth(lane, allAttempts);
   if (available.length > 0) return available;
@@ -685,7 +709,12 @@ function extractTextContent(content: unknown): string {
 }
 
 function promptPreview(messages: GatewayChatMessage[]): string {
-  return messages.map((message) => `${message.role}: ${message.content}`).join('\n\n');
+  return messages.map((message) => {
+    const content = typeof message.content === 'string'
+      ? message.content
+      : message.content.map((part) => part.type === 'text' ? part.text : `[${part.type}]`).join(' ');
+    return `${message.role}: ${content}`;
+  }).join('\n\n');
 }
 
 function buildMetrics(
@@ -865,8 +894,18 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
   let lastError = 'Unknown gateway error';
   const attemptedModels: string[] = [];
 
-  // Skip 'unconfigured' attempts and apply provider-health filter (smart routing).
-  const sanitizedAttempts = resolved.attempts.filter((a) => a.config.provider !== 'unconfigured');
+  // Skip 'unconfigured' attempts, enforce requested media capability, and apply provider-health filter.
+  const sanitizedAttempts = resolved.attempts
+    .filter((a) => a.config.provider !== 'unconfigured')
+    .filter((a) => attemptSupportsCapability(a, options.requiredCapability));
+  if (options.requiredCapability && sanitizedAttempts.length === 0) {
+    logger.warn('No AI gateway attempts support requested capability', {
+      lane,
+      requiredCapability: options.requiredCapability,
+      source: resolved.meta?.source,
+    });
+    throw new NoCapableGatewayModelError(options.requiredCapability);
+  }
   const liveAttempts = await selectAttempts(lane, sanitizedAttempts);
 
   for (const attempt of liveAttempts) {

@@ -55,7 +55,7 @@ function preview(value?: string | null): string | null {
 
 export async function recordGenerationLog(record: GenerationLogRecord): Promise<void> {
   try {
-    await (prisma as any).ai_generation_logs.create({
+    await prisma.ai_generation_logs.create({
       data: {
         token_usage_id: record.token_usage_id ?? null,
         village_id: record.village_id ?? null,

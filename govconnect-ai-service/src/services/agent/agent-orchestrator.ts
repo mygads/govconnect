@@ -65,6 +65,7 @@ interface ToolContext {
   userId: string;
   villageId?: string;
   channel: 'whatsapp' | 'webchat';
+  traceId?: string;
   isEvaluation?: boolean;
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
 }

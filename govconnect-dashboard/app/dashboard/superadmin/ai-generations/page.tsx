@@ -55,7 +55,7 @@ interface DetailResponse {
   }
 }
 
-const USD_TO_IDR = 17_000
+const USD_TO_IDR = 18_000
 const defaultStart = () => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
 const defaultEnd = () => new Date().toISOString().slice(0, 16)
 
@@ -67,8 +67,30 @@ function formatNumber(value: number) {
   return (value || 0).toLocaleString("id-ID")
 }
 
+function formatUSD(usd: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 4, maximumFractionDigits: 6 }).format(usd || 0)
+}
+
 function formatIDR(usd: number) {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format((usd || 0) * USD_TO_IDR)
+}
+
+function formatCost(usd: number) {
+  return `${formatUSD(usd)} / ${formatIDR(usd)}`
+}
+
+function gatewayLabel(value?: string | null) {
+  const labels: Record<string, string> = {
+    gateway_llm: "AI Gateway · LLM",
+    gateway_embed: "AI Gateway · Embed",
+    gateway_rerank: "AI Gateway · Rerank",
+    gateway_rag: "AI Gateway · RAG Rewrite",
+    llm: "LLM",
+    embed: "Embedding",
+    rerank: "Rerank",
+    rewrite: "RAG Rewrite",
+  }
+  return value ? labels[value] || value.replace(/_/g, " ") : "-"
 }
 
 function speed(row: GenerationRow) {
@@ -87,7 +109,7 @@ function toCsv(rows: GenerationRow[]) {
     row.model_info?.display_name || row.model,
     row.input_tokens,
     row.output_tokens,
-    formatIDR(row.adjusted_cost_usd),
+    formatCost(row.actual_cost_usd),
     speed(row),
     row.finish_reason || "-",
     row.status,
@@ -250,12 +272,12 @@ export default function AIGenerationLogsPage() {
                   <TableCell>{row.village?.name || row.village_id || "-"}</TableCell>
                   <TableCell>
                     <div className="font-medium">{row.provider_info?.name || row.provider || "-"}</div>
-                    <div className="text-xs text-muted-foreground">{row.gateway_source || row.lane_type || "-"}</div>
+                    <div className="text-xs text-muted-foreground">{gatewayLabel(row.gateway_source || row.lane_type)}</div>
                   </TableCell>
                   <TableCell>{row.model_info?.display_name || row.model}</TableCell>
                   <TableCell>{formatNumber(row.input_tokens)}</TableCell>
                   <TableCell>{formatNumber(row.output_tokens)}</TableCell>
-                  <TableCell>{formatIDR(row.adjusted_cost_usd)}</TableCell>
+                  <TableCell>{formatCost(row.actual_cost_usd)}</TableCell>
                   <TableCell className="whitespace-nowrap">{speed(row)}</TableCell>
                   <TableCell>{row.finish_reason || "-"}</TableCell>
                   <TableCell><Badge variant={row.status === "success" ? "default" : "destructive"}>{row.status}</Badge></TableCell>
@@ -277,10 +299,10 @@ export default function AIGenerationLogsPage() {
             <div className="space-y-4 p-4">
               {!detail.has_raw_payload && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Raw prompt/response tidak tersedia untuk row historis ini karena belum dipersist saat call dibuat.</div>}
               <div className="grid gap-3 md:grid-cols-2">
-                <Card><CardHeader><CardTitle>Provider</CardTitle></CardHeader><CardContent className="text-sm">{detail.provider?.name || detail.log?.provider || detail.token_usage?.key_tier || "-"}<br /><span className="text-muted-foreground">{detail.provider?.base_url || detail.log?.gateway_source || detail.token_usage?.key_source || "-"}</span></CardContent></Card>
+                <Card><CardHeader><CardTitle>Provider</CardTitle></CardHeader><CardContent className="text-sm">{detail.provider?.name || detail.log?.provider || detail.token_usage?.key_tier || "-"}<br /><span className="text-muted-foreground">{detail.provider?.base_url || gatewayLabel(detail.log?.gateway_source || detail.token_usage?.key_source)}</span></CardContent></Card>
                 <Card><CardHeader><CardTitle>Model</CardTitle></CardHeader><CardContent className="text-sm">{detail.model?.display_name || detail.log?.model || detail.token_usage?.model || "-"}<br /><span className="text-muted-foreground">{detail.model?.upstream_model_name || "-"}</span></CardContent></Card>
                 <Card><CardHeader><CardTitle>Tokens</CardTitle></CardHeader><CardContent className="text-sm">Input {formatNumber(detail.log?.input_tokens ?? detail.token_usage?.input_tokens ?? 0)} · Output {formatNumber(detail.log?.output_tokens ?? detail.token_usage?.output_tokens ?? 0)} · Total {formatNumber(detail.log?.total_tokens ?? detail.token_usage?.total_tokens ?? 0)}</CardContent></Card>
-                <Card><CardHeader><CardTitle>Cost & Latency</CardTitle></CardHeader><CardContent className="text-sm">{formatIDR(detail.log?.adjusted_cost_usd ?? detail.token_usage?.adjusted_cost_usd ?? 0)} · {detail.log?.duration_ms ?? detail.token_usage?.duration_ms ?? "-"} ms</CardContent></Card>
+                <Card><CardHeader><CardTitle>Cost & Latency</CardTitle></CardHeader><CardContent className="text-sm">{formatCost(detail.log?.actual_cost_usd ?? detail.token_usage?.actual_cost_usd ?? 0)} · {detail.log?.duration_ms ?? detail.token_usage?.duration_ms ?? "-"} ms</CardContent></Card>
               </div>
               <Card><CardHeader><CardTitle>Billing / Message Context</CardTitle></CardHeader><CardContent className="grid gap-2 text-sm md:grid-cols-2"><div>Trace: {detail.log?.trace_id || detail.token_usage?.trace_id || "-"}</div><div>Message: {detail.log?.message_id || detail.token_usage?.message_id || "-"}</div><div>Billing Group: {detail.log?.billing_group_id || detail.token_usage?.billing_group_id || "-"}</div><div>WA User: {detail.log?.wa_user_id || detail.token_usage?.wa_user_id || "-"}</div></CardContent></Card>
               <Card><CardHeader><CardTitle>Prompt / Request</CardTitle></CardHeader><CardContent className="space-y-3"><p className="whitespace-pre-wrap text-sm">{detail.log?.prompt_preview || "Tidak ada prompt preview."}</p><JsonBlock value={detail.log?.request_json} /></CardContent></Card>

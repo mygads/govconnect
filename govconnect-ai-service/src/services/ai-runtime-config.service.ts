@@ -26,6 +26,8 @@ type RuntimeAttempt = {
   modelId?: string;
   modelDisplayName?: string;
   providerId?: string;
+  supportsVision?: boolean;
+  supportsAudio?: boolean;
   brokenReason?: string;
   config: AnyGatewayConfig;
 };
@@ -98,6 +100,8 @@ type DbModel = {
   upstream_model_name: string;
   endpoint_path: string | null;
   lane_type: string;
+  supports_vision?: boolean;
+  supports_audio?: boolean;
 };
 
 type DbProvider = {
@@ -226,6 +230,8 @@ function buildRuntimeAttempt(kind: GatewayLaneKind, model: DbModel, provider: Db
     modelId: model.id,
     modelDisplayName: model.display_name,
     providerId: provider.id,
+    supportsVision: model.supports_vision === true,
+    supportsAudio: model.supports_audio === true,
     brokenReason: keyState.brokenReason,
     config: buildGatewayConfig(kind, model, provider, keyState),
   };

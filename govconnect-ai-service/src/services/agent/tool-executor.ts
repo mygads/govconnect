@@ -87,6 +87,7 @@ interface ToolContext {
   userId: string;
   villageId?: string;
   channel: 'whatsapp' | 'webchat';
+  traceId?: string;
   isEvaluation?: boolean;
   userMessage?: string;
 }
@@ -733,6 +734,7 @@ async function toolSearchUserMemory(
 
   if (!ctx.isEvaluation) {
     await recordMemoryTrace({
+      traceId: ctx.traceId,
       waUserId: ctx.userId,
       villageId: ctx.villageId,
       channel: ctx.channel,

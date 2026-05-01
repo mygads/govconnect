@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { redirect } from "next/navigation"
-import { AlertTriangle, Brain, Database, Edit2, Loader2, Play, Plus, Save, Search, Trash2, Waypoints, X } from "lucide-react"
+import { AlertTriangle, Brain, Database, Edit2, Eye, Loader2, Mic, Play, Plus, Save, Search, Trash2, Waypoints, X } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
@@ -50,6 +50,8 @@ interface ModelRow {
   adjusted_input_price_per_million_usd?: number | null
   adjusted_output_price_per_million_usd?: number | null
   is_active: boolean
+  supports_vision?: boolean
+  supports_audio?: boolean
   priority?: number
   is_read_only?: boolean
   notes?: string | null
@@ -138,6 +140,8 @@ type ModelFormSnapshot = {
   adjusted_output: string
   priority: string
   is_active: string
+  supports_vision: string
+  supports_audio: string
   notes: string
 }
 
@@ -199,6 +203,8 @@ export default function SuperadminAIModelsPage() {
   const [adjustedOutput, setAdjustedOutput] = useState("")
   const [priority, setPriority] = useState("100")
   const [isActive, setIsActive] = useState("true")
+  const [supportsVision, setSupportsVision] = useState("false")
+  const [supportsAudio, setSupportsAudio] = useState("false")
   const [notes, setNotes] = useState("")
   const [formInitial, setFormInitial] = useState<ModelFormSnapshot>({
     provider_id: "",
@@ -212,6 +218,8 @@ export default function SuperadminAIModelsPage() {
     adjusted_output: "",
     priority: "100",
     is_active: "true",
+    supports_vision: "false",
+    supports_audio: "false",
     notes: "",
   })
 
@@ -290,6 +298,8 @@ export default function SuperadminAIModelsPage() {
     adjusted_output: adjustedOutput.trim(),
     priority: priority.trim(),
     is_active: isActive,
+    supports_vision: supportsVision,
+    supports_audio: supportsAudio,
     notes: notes.trim(),
   })
 
@@ -311,6 +321,8 @@ export default function SuperadminAIModelsPage() {
     setAdjustedOutput("")
     setPriority("100")
     setIsActive("true")
+    setSupportsVision("false")
+    setSupportsAudio("false")
     setNotes("")
     setDraftTestResult(null)
     setProviderId(nextProviderId)
@@ -326,6 +338,8 @@ export default function SuperadminAIModelsPage() {
       adjusted_output: "",
       priority: "100",
       is_active: "true",
+      supports_vision: "false",
+      supports_audio: "false",
       notes: "",
     })
   }
@@ -349,6 +363,8 @@ export default function SuperadminAIModelsPage() {
       adjusted_output: priceValue(model.adjusted_output_price_per_million_usd),
       priority: String(model.priority ?? 100),
       is_active: model.is_active ? "true" : "false",
+      supports_vision: model.supports_vision ? "true" : "false",
+      supports_audio: model.supports_audio ? "true" : "false",
       notes: (model.notes || "").trim(),
     }
     setEditingModelId(model.id)
@@ -363,6 +379,8 @@ export default function SuperadminAIModelsPage() {
     setAdjustedOutput(snapshot.adjusted_output)
     setPriority(snapshot.priority)
     setIsActive(snapshot.is_active)
+    setSupportsVision(snapshot.supports_vision)
+    setSupportsAudio(snapshot.supports_audio)
     setNotes(snapshot.notes)
     setFormInitial(snapshot)
     setDraftTestResult(null)
@@ -534,6 +552,8 @@ export default function SuperadminAIModelsPage() {
         adjusted_input_price_per_million_usd: adjustedInputPrice,
         adjusted_output_price_per_million_usd: adjustedOutputPrice,
         is_active: isActive === "true",
+        supports_vision: supportsVision === "true",
+        supports_audio: supportsAudio === "true",
         priority: nextPriority,
         notes: notes.trim() || null,
       }
@@ -679,7 +699,7 @@ export default function SuperadminAIModelsPage() {
                 </p>
               )}
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2"><Label>Priority</Label><Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} /></div>
               <div className="space-y-2">
                 <Label>Status</Label>
@@ -690,6 +710,17 @@ export default function SuperadminAIModelsPage() {
                     <SelectItem value="false">Inactive</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Capability</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant={supportsVision === "true" ? "default" : "outline"} onClick={() => setSupportsVision(supportsVision === "true" ? "false" : "true")} disabled={laneType !== "llm"}>
+                    <Eye className="mr-2 h-4 w-4" />Image
+                  </Button>
+                  <Button type="button" size="sm" variant={supportsAudio === "true" ? "default" : "outline"} onClick={() => setSupportsAudio(supportsAudio === "true" ? "false" : "true")} disabled={laneType !== "llm"}>
+                    <Mic className="mr-2 h-4 w-4" />Audio
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -770,7 +801,7 @@ export default function SuperadminAIModelsPage() {
                     <TableHead>Upstream</TableHead>
                     <TableHead>Priority</TableHead>
                     <TableHead>Actual</TableHead>
-                    <TableHead>Adjusted</TableHead>
+                    <TableHead>Capability</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Aksi</TableHead>
                   </TableRow>
@@ -801,7 +832,13 @@ export default function SuperadminAIModelsPage() {
                           </div>
                         </TableCell>
                         <TableCell>{formatPrice(model.actual_input_price_per_million_usd, model.actual_output_price_per_million_usd)}</TableCell>
-                        <TableCell>{formatPrice(model.adjusted_input_price_per_million_usd, model.adjusted_output_price_per_million_usd)}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {model.supports_vision && <Badge variant="secondary"><Eye className="mr-1 h-3 w-3" />Image</Badge>}
+                            {model.supports_audio && <Badge variant="secondary"><Mic className="mr-1 h-3 w-3" />Audio</Badge>}
+                            {!model.supports_vision && !model.supports_audio && <span className="text-xs text-muted-foreground">Text only</span>}
+                          </div>
+                        </TableCell>
                         <TableCell>{model.is_active ? "active" : "inactive"}</TableCell>
                         <TableCell>
                           <div className="flex flex-wrap items-center gap-2">
