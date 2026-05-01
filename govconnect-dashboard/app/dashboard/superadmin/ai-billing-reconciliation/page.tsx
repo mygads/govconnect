@@ -70,6 +70,18 @@ interface ReconciliationData {
   recent_billings?: BillingRow[]
 }
 
+interface RetryBillingResult {
+  id: string
+  status: string
+  error?: string
+}
+
+interface RetryBillingResponse {
+  village_id: string
+  attempted: number
+  results: RetryBillingResult[]
+}
+
 interface AITraceStage {
   id: string
   stage: string
@@ -166,6 +178,7 @@ export default function AIBillingReconciliationPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [aiTrace, setAiTrace] = useState<AITraceData | null>(null)
   const [traceLoading, setTraceLoading] = useState(false)
+  const [retryResult, setRetryResult] = useState<RetryBillingResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
@@ -224,6 +237,7 @@ export default function AIBillingReconciliationPage() {
       return
     }
     setRetrying(true)
+    setRetryResult(null)
     setError(null)
     try {
       const response = await fetch(`/api/superadmin/ai-wallets/${encodeURIComponent(targetVillageId)}/retry-pending`, {
@@ -234,6 +248,7 @@ export default function AIBillingReconciliationPage() {
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload?.error || "Gagal retry billing pending")
       setRetryVillageId(targetVillageId)
+      setRetryResult(payload.data)
       await loadData()
       if (selectedBillingId) await loadBillingDetail(selectedBillingId)
       if (aiTrace?.trace_id) await loadAITrace(aiTrace.trace_id)
@@ -286,6 +301,16 @@ export default function AIBillingReconciliationPage() {
           <AlertTitle>{data.healthy ? "Rekonsiliasi sehat" : "Ada mismatch billing"}</AlertTitle>
           <AlertDescription>
             {data.healthy ? "Tidak ada unbilled usage, failed billing, atau mismatch nominal." : "Periksa tabel mismatch dan count anomali di bawah."}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {retryResult && (
+        <Alert>
+          <CheckCircle2 className="h-4 w-4" />
+          <AlertTitle>Retry billing selesai</AlertTitle>
+          <AlertDescription>
+            Desa {retryResult.village_id}: {retryResult.attempted} billing dicoba. {retryResult.results.map((row) => `${row.id}: ${row.status}${row.error ? ` (${row.error})` : ""}`).join("; ") || "Tidak ada billing pending/failed."}
           </AlertDescription>
         </Alert>
       )}

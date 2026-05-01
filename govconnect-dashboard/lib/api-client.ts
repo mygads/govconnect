@@ -709,6 +709,19 @@ export const ai = {
     });
   },
 
+  async getAIGenerationLogs(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-usage/generations${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  async getAIGenerationLogDetail(id: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-usage/generations/${encodeURIComponent(id)}`), {
+      headers: getHeaders(),
+    });
+  },
+
   async getAIWalletSummary(villageId: string) {
     return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}`), {
       headers: getHeaders(),

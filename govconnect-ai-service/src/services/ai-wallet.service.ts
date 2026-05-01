@@ -504,14 +504,25 @@ export async function redeemTopupVoucher(input: {
       },
     });
 
-    const updatedVoucher = await tx.ai_topup_vouchers.update({
-      where: { id: activeVoucher.id },
+    const updatedVoucher = await tx.ai_topup_vouchers.updateMany({
+      where: {
+        id: activeVoucher.id,
+        status: 'active',
+      },
       data: {
         status: 'redeemed',
         redeemed_by_village_id: input.villageId,
         redeemed_by_admin_id: input.adminId ?? null,
         redeemed_at: new Date(),
       },
+    });
+
+    if (updatedVoucher.count !== 1) {
+      throw new Error('Voucher is not active');
+    }
+
+    const redeemedVoucher = await tx.ai_topup_vouchers.findUniqueOrThrow({
+      where: { id: activeVoucher.id },
     });
 
     const ledgerEntry = await createLedgerEntry(tx, {
@@ -527,7 +538,7 @@ export async function redeemTopupVoucher(input: {
       createdByAdminId: input.adminId,
     });
 
-    return { wallet: updatedWallet, voucher: updatedVoucher, ledgerEntry };
+    return { wallet: updatedWallet, voucher: redeemedVoucher, ledgerEntry };
   });
 }
 

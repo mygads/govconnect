@@ -254,6 +254,12 @@ export function GovConnectSidebar() {
           roles: ["superadmin"],
         },
         {
+          title: "AI Generation Logs",
+          url: "/dashboard/superadmin/ai-generations",
+          icon: Activity,
+          roles: ["superadmin"],
+        },
+        {
           title: "AI Providers",
           url: "/dashboard/superadmin/providers",
           icon: Plug,

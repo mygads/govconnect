@@ -271,6 +271,53 @@ model ai_message_billings {
   @@index([ledger_entry_id])
 }
 
+model ai_generation_logs {
+  id                  String   @id @default(cuid())
+  token_usage_id      String?
+  village_id          String?
+  wa_user_id          String?
+  session_id          String?
+  channel             String?
+  message_id          String?
+  trace_id            String?
+  billing_group_id    String?
+  lane_type           String?
+  layer_type          String?
+  call_type           String?
+  provider_id         String?
+  model_config_id     String?
+  provider            String?
+  model               String
+  gateway_source      String?
+  response_id         String?
+  finish_reason       String?
+  streaming           Boolean  @default(false)
+  input_tokens        Int      @default(0)
+  output_tokens       Int      @default(0)
+  total_tokens        Int      @default(0)
+  actual_cost_usd     Float    @default(0)
+  adjusted_cost_usd   Float    @default(0)
+  duration_ms         Int?
+  status              String   @default("success")
+  error_message       String?  @db.Text
+  request_json        Json?
+  response_json       Json?
+  prompt_preview      String?  @db.Text
+  completion_preview  String?  @db.Text
+  created_at          DateTime @default(now())
+
+  @@index([token_usage_id])
+  @@index([village_id, created_at])
+  @@index([trace_id])
+  @@index([billing_group_id])
+  @@index([provider_id])
+  @@index([model_config_id])
+  @@index([lane_type])
+  @@index([layer_type])
+  @@index([call_type])
+  @@index([status, created_at])
+}
+
 model ai_topup_vouchers {
   id                      String    @id @default(cuid())
   code                    String    @unique

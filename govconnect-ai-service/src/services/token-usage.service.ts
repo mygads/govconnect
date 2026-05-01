@@ -398,7 +398,7 @@ export async function calculatePersistedCost(record: TokenUsageRecord): Promise<
 }
 
 export async function recordResolvedTokenUsage(record: TokenUsageRecord): Promise<void> {
-  return recordTokenUsage(record);
+  await recordTokenUsage(record);
 }
 
 export async function resolveDbBackedTokenUsage(record: TokenUsageRecord): Promise<{ record: TokenUsageRecord; pricing: PricingResolution }> {
@@ -452,7 +452,7 @@ export interface UsageMetadata {
  * Record a single LLM call's token usage to the database.
  * Fire-and-forget — errors are logged but never thrown.
  */
-export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> {
+export async function recordTokenUsage(record: TokenUsageRecord): Promise<string | null> {
   try {
     const { record: resolvedRecord, pricing } = await attachResolvedPricing(record);
     const billingContext = getCurrentBillingContext();
@@ -460,7 +460,7 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> 
     const traceId = resolvedRecord.trace_id ?? billingContext?.trace_id ?? null;
     const billingGroupId = resolvedRecord.billing_group_id ?? billingContext?.billing_group_id ?? null;
 
-    await prisma.ai_token_usage.create({
+    const created = await prisma.ai_token_usage.create({
       data: {
         model: resolvedRecord.model,
         input_tokens: resolvedRecord.input_tokens,
@@ -513,11 +513,14 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> 
       pricing_source: pricing.pricing_source,
       billing_group_id: billingGroupId,
     });
+
+    return created.id;
   } catch (error: any) {
     logger.error('❌ Failed to record token usage', {
       error: error.message,
       model: record.model,
     });
+    return null;
   }
 }
 

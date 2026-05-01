@@ -1170,6 +1170,181 @@ app.get('/admin/ai-usage/village/:villageId/messages/:billingId', async (req: Re
   }
 });
 
+app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(Math.max(Number(getQuery(req, 'limit') || 50), 1), 200);
+    const offset = Math.max(Number(getQuery(req, 'offset') || 0), 0);
+    const start = getQuery(req, 'start');
+    const end = getQuery(req, 'end');
+    const search = getQuery(req, 'search');
+    const dateFilter: any = {};
+    if (start) dateFilter.gte = new Date(start);
+    if (end) dateFilter.lte = new Date(end);
+
+    const commonWhere: any = {
+      ...(getQuery(req, 'village_id') ? { village_id: getQuery(req, 'village_id') } : {}),
+      ...(getQuery(req, 'provider_id') ? { provider_id: getQuery(req, 'provider_id') } : {}),
+      ...(getQuery(req, 'lane_type') ? { lane_type: getQuery(req, 'lane_type') } : {}),
+      ...(getQuery(req, 'layer_type') ? { layer_type: getQuery(req, 'layer_type') } : {}),
+      ...(getQuery(req, 'call_type') ? { call_type: getQuery(req, 'call_type') } : {}),
+      ...(getQuery(req, 'status') ? { status: getQuery(req, 'status') } : {}),
+      ...(Object.keys(dateFilter).length ? { created_at: dateFilter } : {}),
+    };
+    const searchWhere = search ? {
+      OR: [
+        { trace_id: { contains: search, mode: 'insensitive' } },
+        { message_id: { contains: search, mode: 'insensitive' } },
+        { wa_user_id: { contains: search, mode: 'insensitive' } },
+        { session_id: { contains: search, mode: 'insensitive' } },
+      ],
+    } : {};
+
+    const generationWhere = { ...commonWhere, ...searchWhere };
+    const usageWhereBase: any = { ...commonWhere, ...searchWhere };
+    if (usageWhereBase.status) {
+      usageWhereBase.success = usageWhereBase.status === 'success';
+      delete usageWhereBase.status;
+    }
+    const usageWhere = usageWhereBase;
+    const [generationTotal, usageTotal, generationRows, usageRows] = await Promise.all([
+      (prisma as any).ai_generation_logs.count({ where: generationWhere }),
+      prisma.ai_token_usage.count({ where: usageWhere }),
+      (prisma as any).ai_generation_logs.findMany({
+        where: generationWhere,
+        orderBy: { created_at: 'desc' },
+        take: limit + offset,
+      }),
+      prisma.ai_token_usage.findMany({
+        where: usageWhere,
+        orderBy: { created_at: 'desc' },
+        take: limit + offset,
+        select: {
+          id: true,
+          village_id: true,
+          wa_user_id: true,
+          session_id: true,
+          channel: true,
+          message_id: true,
+          trace_id: true,
+          billing_group_id: true,
+          lane_type: true,
+          layer_type: true,
+          call_type: true,
+          provider_id: true,
+          model_config_id: true,
+          key_source: true,
+          key_tier: true,
+          model: true,
+          input_tokens: true,
+          output_tokens: true,
+          total_tokens: true,
+          actual_cost_usd: true,
+          adjusted_cost_usd: true,
+          duration_ms: true,
+          success: true,
+          created_at: true,
+        },
+      }),
+    ]);
+
+    const loggedTokenIds = new Set(generationRows.map((row: any) => row.token_usage_id).filter(Boolean));
+    const providerIds = Array.from(new Set([...generationRows, ...usageRows].map((row: any) => row.provider_id).filter(Boolean))) as string[];
+    const modelIds = Array.from(new Set([...generationRows, ...usageRows].map((row: any) => row.model_config_id).filter(Boolean))) as string[];
+    const [providers, models] = await Promise.all([
+      providerIds.length ? prisma.ai_providers.findMany({ where: { id: { in: providerIds } }, select: { id: true, name: true, slug: true, provider_kind: true } }) : Promise.resolve([]),
+      modelIds.length ? prisma.ai_models.findMany({ where: { id: { in: modelIds } }, select: { id: true, display_name: true, upstream_model_name: true, lane_type: true } }) : Promise.resolve([]),
+    ]);
+    const providerMap = new Map(providers.map((provider) => [provider.id, provider]));
+    const modelMap = new Map(models.map((model) => [model.id, model]));
+
+    const rows = [
+      ...generationRows.map((row: any) => ({
+        ...row,
+        has_raw_payload: Boolean(row.request_json || row.response_json || row.prompt_preview || row.completion_preview),
+        provider_info: row.provider_id ? providerMap.get(row.provider_id) ?? null : null,
+        model_info: row.model_config_id ? modelMap.get(row.model_config_id) ?? null : null,
+      })),
+      ...usageRows.filter((row) => !loggedTokenIds.has(row.id)).map((row) => ({
+        id: `usage_${row.id}`,
+        token_usage_id: row.id,
+        village_id: row.village_id,
+        wa_user_id: row.wa_user_id,
+        session_id: row.session_id,
+        channel: row.channel,
+        message_id: row.message_id,
+        trace_id: row.trace_id,
+        billing_group_id: row.billing_group_id,
+        lane_type: row.lane_type,
+        layer_type: row.layer_type,
+        call_type: row.call_type,
+        provider_id: row.provider_id,
+        model_config_id: row.model_config_id,
+        provider: row.key_tier,
+        model: row.model,
+        gateway_source: row.key_source,
+        response_id: null,
+        finish_reason: null,
+        streaming: false,
+        input_tokens: row.input_tokens,
+        output_tokens: row.output_tokens,
+        total_tokens: row.total_tokens,
+        actual_cost_usd: row.actual_cost_usd,
+        adjusted_cost_usd: row.adjusted_cost_usd,
+        duration_ms: row.duration_ms,
+        status: row.success ? 'success' : 'failed',
+        error_message: null,
+        created_at: row.created_at,
+        has_raw_payload: false,
+        provider_info: row.provider_id ? providerMap.get(row.provider_id) ?? null : null,
+        model_info: row.model_config_id ? modelMap.get(row.model_config_id) ?? null : null,
+      })),
+    ].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(offset, offset + limit);
+
+    res.json({ total: generationTotal + usageTotal, limit, offset, data: rows });
+  } catch (error: any) {
+    logger.error('Failed to get AI generation logs', { error: error.message });
+    res.status(500).json(errorResponse(error.message || 'Failed to get AI generation logs'));
+  }
+});
+
+app.get('/admin/ai-usage/generations/:id', async (req: Request, res: Response) => {
+  try {
+    const id = getParam(req, 'id');
+    if (!id) {
+      res.status(400).json(errorResponse('Generation id is required'));
+      return;
+    }
+
+    const usageId = id.startsWith('usage_') ? id.slice(6) : null;
+    const log = usageId ? null : await (prisma as any).ai_generation_logs.findUnique({ where: { id } });
+    const tokenUsageId = usageId || log?.token_usage_id;
+    const tokenUsage = tokenUsageId ? await prisma.ai_token_usage.findUnique({ where: { id: tokenUsageId } }) : null;
+    const billingGroupId = log?.billing_group_id || tokenUsage?.billing_group_id;
+    const billing = billingGroupId ? await prisma.ai_message_billings.findUnique({ where: { billing_group_id: billingGroupId } }) : null;
+    const [provider, model] = await Promise.all([
+      (log?.provider_id || tokenUsage?.provider_id) ? prisma.ai_providers.findUnique({ where: { id: (log?.provider_id || tokenUsage?.provider_id) as string }, select: { id: true, name: true, slug: true, provider_kind: true, base_url: true } }) : Promise.resolve(null),
+      (log?.model_config_id || tokenUsage?.model_config_id) ? prisma.ai_models.findUnique({ where: { id: (log?.model_config_id || tokenUsage?.model_config_id) as string }, select: { id: true, display_name: true, upstream_model_name: true, lane_type: true } }) : Promise.resolve(null),
+    ]);
+
+    if (!log && !tokenUsage) {
+      res.status(404).json(errorResponse('Generation log not found'));
+      return;
+    }
+
+    res.json(successResponse({
+      log: log ? { ...log, has_raw_payload: Boolean(log.request_json || log.response_json || log.prompt_preview || log.completion_preview) } : null,
+      token_usage: tokenUsage,
+      billing,
+      provider,
+      model,
+      has_raw_payload: Boolean(log?.request_json || log?.response_json || log?.prompt_preview || log?.completion_preview),
+    }));
+  } catch (error: any) {
+    logger.error('Failed to get AI generation log detail', { error: error.message });
+    res.status(500).json(errorResponse(error.message || 'Failed to get AI generation log detail'));
+  }
+});
+
 // ===========================================
 // Golden Set Evaluation Endpoints
 app.get('/stats/golden-set', (req: Request, res: Response) => {

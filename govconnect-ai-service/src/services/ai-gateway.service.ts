@@ -13,6 +13,7 @@ import { getRuntimeGatewayConfig, onRuntimeGatewayConfigCacheClear } from './ai-
 import * as healthService from './ai-provider-health.service';
 import { modelStatsService } from './model-stats.service';
 import { registerUsageWrite } from './ai-turn-billing.service';
+import { recordGenerationLog } from './generation-log.service';
 import { recordTokenUsage, type CallType, type LayerType } from './token-usage.service';
 
 export type PromptLaneKind = 'llm' | 'rag';
@@ -683,6 +684,10 @@ function extractTextContent(content: unknown): string {
   return '';
 }
 
+function promptPreview(messages: GatewayChatMessage[]): string {
+  return messages.map((message) => `${message.role}: ${message.content}`).join('\n\n');
+}
+
 function buildMetrics(
   kind: GatewayLaneKind,
   model: string,
@@ -716,6 +721,17 @@ function buildMetrics(
 function recordGatewayUsage(
   metrics: LLMMetrics,
   options: { layerType?: LayerType; callType?: CallType; context?: TokenContext },
+  generation?: {
+    provider?: string | null;
+    responseId?: string | null;
+    finishReason?: string | null;
+    requestJson?: unknown;
+    responseJson?: unknown;
+    promptPreview?: string | null;
+    completionPreview?: string | null;
+    status?: string;
+    errorMessage?: string | null;
+  },
 ): void {
   if (!options.layerType || !options.callType) {
     return;
@@ -733,7 +749,7 @@ function recordGatewayUsage(
     session_id: options.context?.session_id ?? null,
     channel: options.context?.channel ?? null,
     intent: options.context?.intent ?? null,
-    success: true,
+    success: generation?.status !== 'failed',
     duration_ms: metrics.durationMs,
     key_source: metrics.keySource,
     key_id: metrics.keyId,
@@ -741,7 +757,34 @@ function recordGatewayUsage(
     provider_id: metrics.providerId ?? null,
     model_config_id: metrics.modelConfigId ?? null,
     lane_type: metrics.laneType ?? null,
-  }).catch((err: any) => logger.warn('Failed to record token usage', { error: err?.message || String(err) }));
+  }).then((tokenUsageId) => recordGenerationLog({
+    token_usage_id: tokenUsageId,
+    village_id: options.context?.village_id ?? null,
+    wa_user_id: options.context?.wa_user_id ?? null,
+    session_id: options.context?.session_id ?? null,
+    channel: options.context?.channel ?? null,
+    lane_type: metrics.laneType ?? null,
+    layer_type: options.layerType,
+    call_type: options.callType,
+    provider_id: metrics.providerId ?? null,
+    model_config_id: metrics.modelConfigId ?? null,
+    provider: generation?.provider ?? metrics.keyTier ?? null,
+    model: metrics.model,
+    gateway_source: metrics.keySource,
+    response_id: generation?.responseId ?? null,
+    finish_reason: generation?.finishReason ?? null,
+    streaming: false,
+    input_tokens: metrics.inputTokens,
+    output_tokens: metrics.outputTokens,
+    total_tokens: metrics.totalTokens,
+    duration_ms: metrics.durationMs,
+    status: generation?.status ?? 'success',
+    error_message: generation?.errorMessage ?? null,
+    request_json: generation?.requestJson,
+    response_json: generation?.responseJson,
+    prompt_preview: generation?.promptPreview ?? null,
+    completion_preview: generation?.completionPreview ?? null,
+  })).catch((err: any) => logger.warn('Failed to record token usage', { error: err?.message || String(err) }));
   registerUsageWrite(usageWrite);
 }
 
@@ -885,7 +928,15 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
           );
 
           modelStatsService.recordSuccess(resolvedModel, durationMs);
-          recordGatewayUsage(metrics, options);
+          recordGatewayUsage(metrics, options, {
+            provider: result.provider || gateway.provider,
+            responseId: result.id ?? null,
+            finishReason: choice?.finish_reason ?? null,
+            requestJson: buildPromptBody(gateway, model, options, !!options.jsonMode),
+            responseJson: result,
+            promptPreview: promptPreview(options.messages),
+            completionPreview: text,
+          });
           await reportAttemptResult(lane, attempt, true);
 
           logger.info('AI gateway call successful', {
@@ -1024,7 +1075,14 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
         );
 
         modelStatsService.recordSuccess(resolvedModel, durationMs);
-        recordGatewayUsage(metrics, options);
+        recordGatewayUsage(metrics, options, {
+          provider: result.provider || gateway.provider,
+          responseId: result.id ?? null,
+          requestJson: body,
+          responseJson: { ...result, data: Array.isArray(result.data) ? result.data.map((item) => ({ index: item.index, embedding_length: item.embedding?.length ?? 0 })) : [] },
+          promptPreview: Array.isArray(options.input) ? `${options.input.length} embedding inputs` : options.input,
+          completionPreview: `${embeddings.length} embedding vectors`,
+        });
         await reportAttemptResult(lane, attempt, true);
 
         logger.info('Embedding gateway call successful', {
@@ -1159,7 +1217,14 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
         );
 
         modelStatsService.recordSuccess(resolvedModel, durationMs);
-        recordGatewayUsage(metrics, options);
+        recordGatewayUsage(metrics, options, {
+          provider: result.provider || gateway.provider,
+          responseId: result.id ?? null,
+          requestJson: body,
+          responseJson: result,
+          promptPreview: `${options.query}\n\nDocuments: ${options.documents.length}`,
+          completionPreview: JSON.stringify(items.slice(0, 10)),
+        });
         await reportAttemptResult(lane, attempt, true);
 
         logger.info('Rerank gateway call successful', {
@@ -1226,7 +1291,15 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
                 );
 
                 modelStatsService.recordSuccess(resolvedModel, metrics.durationMs);
-                recordGatewayUsage(metrics, options);
+                recordGatewayUsage(metrics, options, {
+                  provider: promptResponse.provider || gateway.provider,
+                  responseId: promptResponse.id ?? null,
+                  finishReason: promptResponse.choices?.[0]?.finish_reason ?? null,
+                  requestJson: buildPromptBody(gateway, model, promptOptions, true),
+                  responseJson: promptResponse,
+                  promptPreview: promptPreview(promptOptions.messages),
+                  completionPreview: text,
+                });
                 await reportAttemptResult(lane, attempt, true);
 
                 logger.info('Rerank gateway prompt fallback successful', {

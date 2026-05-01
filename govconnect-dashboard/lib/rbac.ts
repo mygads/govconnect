@@ -10,6 +10,7 @@ const DISABLED_PATH_PREFIXES: string[] = []
 // Routes that only superadmin can access
 const SUPERADMIN_ONLY_RULES: RouteRule[] = [
   { path: '/dashboard/superadmin/ai-usage', roles: ['superadmin'] },
+  { path: '/dashboard/superadmin/ai-generations', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/villages', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/admins', roles: ['superadmin'] },
   { path: '/dashboard/superadmin/register', roles: ['superadmin'] },
