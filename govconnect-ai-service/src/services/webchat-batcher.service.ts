@@ -20,6 +20,7 @@ const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || process.env.WEBCHA
 const MAX_BATCH_SIZE = parseInt(process.env.MAX_BATCH_SIZE || '10', 10); // Max messages per batch
 
 interface BatchedMessage {
+  id: string;
   message: string;
   timestamp: Date;
 }
@@ -40,6 +41,8 @@ interface SessionBatch {
 export interface BatchResult {
   combinedMessage: string;
   messageCount: number;
+  messageIds: string[];
+  primaryMessageId: string;
   isBatched: boolean;
   isPrimary: boolean; // Only the primary request should process the message
 }
@@ -53,7 +56,8 @@ const sessionBatches = new Map<string, SessionBatch>();
  */
 export function addWebchatMessageToBatch(
   session_id: string,
-  message: string
+  message: string,
+  messageId = `webmsg:${session_id}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`,
 ): Promise<BatchResult> {
   return new Promise((resolve, reject) => {
     const now = Date.now();
@@ -79,6 +83,7 @@ export function addWebchatMessageToBatch(
     
     // Add message to batch
     batch.messages.push({
+      id: messageId,
       message,
       timestamp: new Date(),
     });
@@ -161,10 +166,13 @@ function processBatch(session_id: string): void {
   }
   
   // Resolve all pending responses - only the first one is primary
+  const messageIds = messages.map((message) => message.id);
   for (let i = 0; i < pendingResponses.length; i++) {
     const result: BatchResult = {
       combinedMessage,
       messageCount: messages.length,
+      messageIds,
+      primaryMessageId: messageIds[0],
       isBatched: messages.length > 1,
       isPrimary: i === 0, // Only the first request should process
     };

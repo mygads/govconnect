@@ -252,20 +252,16 @@ export default function LayananPage() {
       setLoading(true)
       const [servicesData, categoriesData] = await Promise.all([
         layanan.getAll(),
-        layanan.getCategories().catch(() => null),
+        layanan.getCategories(),
       ])
 
       setServices(servicesData.data || [])
-
-      if (categoriesData) {
-        setCategories(categoriesData.data || [])
-      } else {
-        setCategories([])
-      }
-
+      setCategories(categoriesData.data || [])
       setError(null)
     } catch (err: any) {
-      setError(err.message || "Gagal memuat data")
+      const message = err.message || "Gagal memuat data"
+      setError(message)
+      toast({ title: "Gagal memuat layanan", description: message, variant: "destructive" })
     } finally {
       setLoading(false)
     }

@@ -141,7 +141,12 @@ model ai_token_usage {
   wa_user_id      String?
   session_id      String?  // webchat session or WA user id
   channel         String?  // "whatsapp" | "webchat"
-  
+  message_id      String?
+  trace_id        String?
+  billing_group_id String?
+  billing_status  String   @default("unbilled")
+  billed_at       DateTime?
+
   // LLM response context
   intent          String?  // The detected intent (for main_chat calls)
   success         Boolean  @default(true)
@@ -159,6 +164,16 @@ model ai_token_usage {
   actual_cost_usd  Float    @default(0)
   adjusted_cost_usd Float   @default(0)
   margin_usd       Float    @default(0)
+  pricing_source   String?
+  actual_pricing_type String?
+  actual_fixed_price_usd Float?
+  actual_input_price_per_million_usd Float?
+  actual_output_price_per_million_usd Float?
+  adjusted_pricing_type String?
+  adjusted_fixed_price_usd Float?
+  adjusted_input_price_per_million_usd Float?
+  adjusted_output_price_per_million_usd Float?
+  pricing_snapshot_json Json?
 
   created_at      DateTime @default(now())
 
@@ -174,6 +189,11 @@ model ai_token_usage {
   @@index([provider_id])
   @@index([model_config_id])
   @@index([lane_type])
+  @@index([village_id, message_id])
+  @@index([trace_id])
+  @@index([billing_group_id])
+  @@index([billing_status, created_at])
+  @@index([village_id, billing_status, created_at])
 }
 
 model ai_village_wallets {
@@ -216,6 +236,37 @@ model ai_wallet_ledger_entries {
   @@index([wallet_id, created_at])
   @@index([entry_type, created_at])
   @@index([reference_type, reference_id])
+}
+
+model ai_message_billings {
+  id                  String    @id @default(cuid())
+  village_id          String?
+  message_id          String?
+  trace_id            String
+  billing_group_id    String    @unique
+  channel             String?
+  wa_user_id          String?
+  session_id          String?
+  batched_message_ids String[]
+  input_tokens        Int       @default(0)
+  output_tokens       Int       @default(0)
+  total_tokens        Int       @default(0)
+  call_count          Int       @default(0)
+  actual_cost_usd     Float     @default(0)
+  adjusted_cost_usd   Float     @default(0)
+  margin_usd          Float     @default(0)
+  status              String    @default("pending")
+  ledger_entry_id     String?
+  error_message       String?   @db.Text
+  metadata_json       Json?
+  created_at          DateTime  @default(now())
+  billed_at           DateTime?
+
+  @@index([village_id, created_at])
+  @@index([message_id])
+  @@index([trace_id])
+  @@index([status, created_at])
+  @@index([ledger_entry_id])
 }
 
 model ai_topup_vouchers {

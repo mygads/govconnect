@@ -21,6 +21,13 @@ function sanitizeHeaders(value: unknown): Record<string, string> | null {
   return Object.keys(headers).length > 0 ? headers : null;
 }
 
+function normalizeEndpointPath(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) throw new Error('endpoint_path must be a path, not a full URL');
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
 export const __test_only__ = { sanitizeHeaders, sanitizeProviderDefaultHeaders };
 
 function redactProviderSecret<T extends { api_key_encrypted?: string | null }>(provider: T) {
@@ -376,7 +383,7 @@ export async function createAIModel(input: {
       lane_type: laneType,
       display_name: input.display_name.trim(),
       upstream_model_name: input.upstream_model_name.trim(),
-      endpoint_path: input.endpoint_path?.trim() || null,
+      endpoint_path: normalizeEndpointPath(input.endpoint_path),
       actual_pricing_type: (input.actual_pricing_type || 'per_million_tokens').trim(),
       actual_fixed_price_usd: input.actual_fixed_price_usd ?? null,
       actual_input_price_per_million_usd: input.actual_input_price_per_million_usd ?? null,
@@ -437,7 +444,7 @@ export async function updateAIModel(input: {
     data.upstream_model_name = input.upstream_model_name.trim();
   }
   if (input.endpoint_path !== undefined) {
-    data.endpoint_path = input.endpoint_path?.trim() || null;
+    data.endpoint_path = normalizeEndpointPath(input.endpoint_path);
   }
   for (const key of [
     'actual_pricing_type',

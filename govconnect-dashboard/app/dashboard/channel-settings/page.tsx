@@ -73,6 +73,35 @@ interface SessionStatus {
   qrcode?: string
 }
 
+interface WebhookAuditIssue {
+  severity: "info" | "warning" | "error"
+  code: string
+  message: string
+}
+
+interface WebhookAudit {
+  providerActiveEvents: string[]
+  requiredEvents: string[]
+  subscribedEvents: string[]
+  missingEvents: string[]
+  webhookUrl: string
+  expectedWebhookUrl: string
+  webhookMatches: boolean
+  hmacConfigured: boolean
+  dbStatus: string | null
+  issues: WebhookAuditIssue[]
+}
+
+interface WaActivityItem {
+  id: string
+  type: string
+  severity: "info" | "warning" | "error"
+  status: string | null
+  message: string
+  provider_event: string | null
+  created_at: string
+}
+
 interface AuthMeResponse {
   user: {
     id: string
@@ -139,6 +168,9 @@ export default function ChannelSettingsPage() {
   const [setupError, setSetupError] = useState("")
   const [setupStartedAt, setSetupStartedAt] = useState<number | null>(null)
   const [stageTick, setStageTick] = useState(0)
+  const [webhookAudit, setWebhookAudit] = useState<WebhookAudit | null>(null)
+  const [waActivities, setWaActivities] = useState<WaActivityItem[]>([])
+  const [syncingWebhook, setSyncingWebhook] = useState(false)
 
   // QR Dialog states
   const [showQrDialog, setShowQrDialog] = useState(false)
@@ -211,6 +243,64 @@ export default function ChannelSettingsPage() {
     const joiner = path.includes("?") ? "&" : "?"
     return `${path}${joiner}village_id=${encodeURIComponent(selectedVillageId)}`
   }, [selectedVillageId])
+
+  const fetchWebhookAudit = useCallback(async () => {
+    if (!selectedVillageId) {
+      setWebhookAudit(null)
+      return null
+    }
+    try {
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/webhook-audit"))
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setWebhookAudit(null)
+        return null
+      }
+      setWebhookAudit(data?.data || null)
+      return data?.data || null
+    } catch (error) {
+      console.error("Error fetching webhook audit:", error)
+      setWebhookAudit(null)
+      return null
+    }
+  }, [selectedVillageId, withVillage])
+
+  const fetchWaActivities = useCallback(async () => {
+    if (!selectedVillageId) {
+      setWaActivities([])
+      return
+    }
+    try {
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/activity?limit=8"))
+      const data = await response.json().catch(() => null)
+      if (response.ok) setWaActivities(data?.data || [])
+    } catch (error) {
+      console.error("Error fetching WA activities:", error)
+    }
+  }, [selectedVillageId, withVillage])
+
+  const handleSyncWebhook = async () => {
+    try {
+      setSyncingWebhook(true)
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/webhook-sync"), { method: "POST" })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.error || data?.message || "Gagal sinkron webhook")
+      setWebhookAudit(data?.data || null)
+      await fetchWaActivities()
+      toast({
+        title: "Webhook Disinkronkan",
+        description: "Konfigurasi webhook/session WhatsApp sudah diperiksa dan diperbaiki jika perlu.",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Gagal Sinkron",
+        description: error.message || "Gagal sinkron webhook",
+        variant: "destructive",
+      })
+    } finally {
+      setSyncingWebhook(false)
+    }
+  }
 
   // Fetch session status - returns the status data
   const fetchSessionStatus = useCallback(async (): Promise<SessionStatus | null> => {
@@ -488,7 +578,9 @@ export default function ChannelSettingsPage() {
 
     fetchSettings()
     fetchSessionStatus()
-  }, [selectedVillageId, withVillage, fetchSessionStatus])
+    fetchWebhookAudit()
+    fetchWaActivities()
+  }, [selectedVillageId, withVillage, fetchSessionStatus, fetchWebhookAudit, fetchWaActivities])
 
   // Auto-refresh session status every 15 seconds (outside QR dialog)
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -553,6 +645,8 @@ export default function ChannelSettingsPage() {
     } finally {
       setSessionLoading(false)
       fetchSessionStatus()
+      fetchWebhookAudit()
+      fetchWaActivities()
     }
   }
 
@@ -743,6 +837,19 @@ export default function ChannelSettingsPage() {
     if (stepIndex < currentIndex) return "done"
     if (stepIndex === currentIndex) return "active"
     return "pending"
+  }
+
+  const getAuditSeverity = () => {
+    if (!webhookAudit) return "unknown"
+    if (webhookAudit.issues.some((issue) => issue.severity === "error")) return "error"
+    if (webhookAudit.issues.some((issue) => issue.severity === "warning")) return "warning"
+    return "ok"
+  }
+
+  const formatActivityTime = (value: string) => {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return "-"
+    return date.toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
   }
 
   const handleSave = async (e: React.FormEvent) => {
@@ -966,6 +1073,96 @@ export default function ChannelSettingsPage() {
                 checked={settings.enabled_webchat}
                 onCheckedChange={(value: boolean) => setSettings((prev) => ({ ...prev, enabled_webchat: value }))}
               />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <RefreshCw className="h-5 w-5" />
+              Webhook & Session Sync
+            </CardTitle>
+            <CardDescription>Audit konfigurasi provider, event webhook, dan HMAC session WhatsApp.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                {getAuditSeverity() === "ok" && <Badge className="bg-green-100 text-green-800">Audit OK</Badge>}
+                {getAuditSeverity() === "warning" && <Badge className="bg-amber-100 text-amber-800">Ada Warning</Badge>}
+                {getAuditSeverity() === "error" && <Badge className="bg-red-100 text-red-800">Ada Error</Badge>}
+                {getAuditSeverity() === "unknown" && <Badge variant="secondary">Belum Diaudit</Badge>}
+                {webhookAudit && <span className="text-xs text-muted-foreground">DB: {webhookAudit.dbStatus || "-"}</span>}
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={fetchWebhookAudit} disabled={!selectedVillageId || syncingWebhook}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Audit
+                </Button>
+                <Button type="button" size="sm" onClick={handleSyncWebhook} disabled={!selectedVillageId || syncingWebhook}>
+                  <RefreshCw className={`h-4 w-4 mr-2 ${syncingWebhook ? "animate-spin" : ""}`} />
+                  Sync Webhook
+                </Button>
+              </div>
+            </div>
+
+            {webhookAudit && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div className="rounded-lg border p-3">
+                  <p className="text-muted-foreground">Required / Subscribed</p>
+                  <p className="font-semibold">{webhookAudit.requiredEvents.length} / {webhookAudit.subscribedEvents.length}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-muted-foreground">Missing Events</p>
+                  <p className={webhookAudit.missingEvents.length ? "font-semibold text-amber-700" : "font-semibold text-green-700"}>{webhookAudit.missingEvents.length}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-muted-foreground">Webhook / HMAC</p>
+                  <p className="font-semibold">{webhookAudit.webhookMatches ? "URL OK" : "URL mismatch"} · {webhookAudit.hmacConfigured ? "HMAC OK" : "HMAC belum ada"}</p>
+                </div>
+              </div>
+            )}
+
+            {webhookAudit?.missingEvents?.length ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                Event belum aktif: {webhookAudit.missingEvents.join(", ")}
+              </div>
+            ) : null}
+
+            {webhookAudit?.issues?.length ? (
+              <div className="space-y-2">
+                {webhookAudit.issues.slice(0, 4).map((issue) => (
+                  <div key={`${issue.code}-${issue.message}`} className="flex items-start gap-2 rounded-lg border p-3 text-sm">
+                    <AlertTriangle className={`mt-0.5 h-4 w-4 ${issue.severity === "error" ? "text-red-600" : "text-amber-600"}`} />
+                    <div>
+                      <p className="font-medium">{issue.message}</p>
+                      <p className="text-xs text-muted-foreground">{issue.code}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="rounded-lg border p-3">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-sm font-medium">Aktivitas WhatsApp Terbaru</p>
+                <Button type="button" variant="ghost" size="sm" onClick={fetchWaActivities}>Refresh</Button>
+              </div>
+              {waActivities.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Belum ada aktivitas WA tersimpan.</p>
+              ) : (
+                <div className="space-y-2">
+                  {waActivities.map((activity) => (
+                    <div key={activity.id} className="flex items-start justify-between gap-3 text-sm">
+                      <div>
+                        <p className="font-medium">{activity.message}</p>
+                        <p className="text-xs text-muted-foreground">{activity.type}{activity.status ? ` · ${activity.status}` : ""}{activity.provider_event ? ` · ${activity.provider_event}` : ""}</p>
+                      </div>
+                      <span className="shrink-0 text-xs text-muted-foreground">{formatActivityTime(activity.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

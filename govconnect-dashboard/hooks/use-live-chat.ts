@@ -35,6 +35,7 @@ export function useLiveChat() {
   const [state, setState] = useState<LiveChatState>(INITIAL_STATE);
   const [isLoaded, setIsLoaded] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
+  const [serviceError, setServiceError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const statusPollingRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -267,18 +268,21 @@ export function useLiveChat() {
       statusPollingRef.current = setInterval(async () => {
         try {
           const statusResponse = await fetch(`/api/webchat/status?sessionId=${sessionId}`);
-          if (statusResponse.ok) {
-            const statusData = await statusResponse.json();
-            if (statusData.success && statusData.data?.status) {
-              setProcessingStatus({
-                stage: statusData.data.status.stage,
-                message: statusData.data.status.message,
-                progress: statusData.data.status.progress,
-              });
-            }
+          const statusData = await statusResponse.json().catch(() => null);
+          if (!statusResponse.ok) {
+            setServiceError(statusData?.error || 'Status webchat tidak dapat dimuat.');
+            return;
           }
-        } catch (e) {
-          // Silently fail - status polling is best effort
+          if (statusData?.success && statusData.data?.status) {
+            setServiceError(null);
+            setProcessingStatus({
+              stage: statusData.data.status.stage,
+              message: statusData.data.status.message,
+              progress: statusData.data.status.progress,
+            });
+          }
+        } catch (e: any) {
+          setServiceError(e?.message || 'Status webchat tidak dapat dimuat.');
         }
       }, 500);
     }
@@ -300,12 +304,25 @@ export function useLiveChat() {
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        updateMessageStatus(userMessage.id, 'error');
+        const fallback = data?.fallbackResponse || data?.error || 'Maaf, sistem sedang bermasalah. Silakan coba lagi nanti.';
+        setServiceError(data?.error || fallback);
+        addMessage({
+          content: fallback,
+          role: 'assistant',
+          status: 'delivered',
+        });
+        return;
+      }
 
       // Update user message status to delivered
       updateMessageStatus(userMessage.id, 'delivered');
+      setServiceError(null);
 
-      if (data.success && data.response) {
+      if (data?.success && data.response) {
         // Add AI response
         addMessage({
           content: data.response,
@@ -327,7 +344,7 @@ export function useLiveChat() {
         setTimeout(() => {
           updateMessageStatus(userMessage.id, 'read');
         }, 500);
-      } else if (data.success && (data.response === '' || data.intent === 'TAKEOVER')) {
+      } else if (data?.success && (data.response === '' || data.intent === 'TAKEOVER')) {
         // Takeover mode or silent response — AI returned empty reply.
         // Don't add any bubble; admin will respond via poll.
         updateMessageStatus(userMessage.id, 'read');
@@ -342,7 +359,8 @@ export function useLiveChat() {
     } catch (error) {
       console.error('Error sending message:', error);
       updateMessageStatus(userMessage.id, 'error');
-      
+      setServiceError('Tidak dapat terhubung ke server webchat.');
+
       addMessage({
         content: 'Maaf, tidak dapat terhubung ke server. Silakan coba lagi nanti.',
         role: 'assistant',
@@ -361,14 +379,24 @@ export function useLiveChat() {
 
   // Clear chat / Start new session
   const clearChat = useCallback(() => {
-    // Clear AI caches/profile so user starts fresh (fire-and-forget)
     const oldSessionId = state.session?.sessionId;
     if (oldSessionId) {
       fetch('/api/webchat/clear-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: oldSessionId }),
-      }).catch(() => { /* non-blocking */ });
+      })
+        .then(async (response) => {
+          const data = await response.json().catch(() => null);
+          if (!response.ok || data?.success === false) {
+            setServiceError(data?.error || 'Sesi lama tidak dapat dibersihkan di server.');
+            return;
+          }
+          setServiceError(null);
+        })
+        .catch((error: any) => {
+          setServiceError(error?.message || 'Sesi lama tidak dapat dibersihkan di server.');
+        });
     }
 
     setState(prev => {
@@ -417,10 +445,13 @@ export function useLiveChat() {
           `/api/webchat/poll?sessionId=${encodeURIComponent(sessionId)}&villageId=${encodeURIComponent(villageId)}&since=${lastPollRef.current.toISOString()}`
         );
         
-        if (!response.ok) return;
-        
-        const data = await response.json();
-        
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+          setServiceError(data?.error || 'Gagal mengambil pesan admin terbaru.');
+          return;
+        }
+        setServiceError(null);
+
         // Update takeover status
         setIsTakeover(data.is_takeover || false);
         setAdminName(data.admin_name || null);
@@ -483,8 +514,8 @@ export function useLiveChat() {
             }, 100);
           }
         }
-      } catch (error) {
-        // Silently fail - polling is best effort
+      } catch (error: any) {
+        setServiceError(error?.message || 'Gagal mengambil pesan admin terbaru.');
         console.debug('Poll error:', error);
       }
     }, 2000); // Poll every 2 seconds for faster response
@@ -505,7 +536,8 @@ export function useLiveChat() {
     isLoaded,
     isTakeover,
     adminName,
-    
+    serviceError,
+
     // Actions
     openChat,
     closeChat,

@@ -5,6 +5,7 @@ import { config } from '../config/env';
 import prisma from '../config/database';
 import { waSupportClient } from '../clients/wa-support.client';
 import { getWhatsAppSessionS3Config } from './object-storage.service';
+import { logWaActivity } from './wa-activity-log.service';
 
 // In-memory settings cache (since we're using single session)
 // Both default to true — govconnect always reads and shows typing
@@ -24,6 +25,16 @@ export const REQUIRED_WEBHOOK_EVENTS = [
   'Disconnected',
   'LoggedOut',
   'QR',
+  'ConnectFailure',
+  'PairSuccess',
+  'StreamReplaced',
+  'AppStateSyncComplete',
+  'HistorySync',
+  'CallOffer',
+  'CallAccept',
+  'CallTerminate',
+  'CallOfferNotice',
+  'PushNameSetting',
 ];
 
 function isDryRun(): boolean {
@@ -83,6 +94,8 @@ async function upsertSession(params: {
   waSupportSessionId?: string;
   webhookSecret?: string;
 }) {
+  const hasWaNumber = Object.prototype.hasOwnProperty.call(params, 'waNumber');
+
   return prisma.wa_sessions.upsert({
     where: { village_id: params.villageId },
     create: {
@@ -102,7 +115,7 @@ async function upsertSession(params: {
       admin_id: params.adminId,
       wa_token: params.token,
       status: params.status || null,
-      wa_number: params.waNumber || null,
+      ...(hasWaNumber ? { wa_number: params.waNumber } : {}),
       instance_name: params.instanceName || undefined,
       wa_support_user_id: params.waSupportUserId || undefined,
       wa_support_api_key: params.waSupportApiKey || undefined,
@@ -126,11 +139,38 @@ async function getDefaultChannelAccount(villageId?: string) {
   }
 }
 
-function getPublicWhatsAppWebhookUrl(): string {
+export function getPublicWhatsAppWebhookUrl(): string {
   const base = (process.env.PUBLIC_CHANNEL_BASE_URL || process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
-  // Channel Service supports multiple webhook paths (/, /webhook, /webhook/whatsapp).
-  // Use /webhook as the canonical public URL.
   return base ? `${base}/webhook` : '';
+}
+
+export async function waGatewayRequest(
+  sessionToken: string,
+  path: string,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'POST',
+  body?: unknown,
+): Promise<any> {
+  if (waSupportClient.isConfigured()) {
+    const result = await waSupportClient.waGateway(sessionToken, path, method, body);
+    if (result.success) return result.data?.data || result.data;
+    const error = new Error(result.error?.message || 'WA support gateway request failed') as Error & { response?: { status?: number; data?: unknown } };
+    error.response = { status: result.error?.statusCode, data: result.error };
+    throw error;
+  }
+
+  const url = `${config.WA_API_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  const response = await axios.request({
+    url,
+    method,
+    data: body,
+    headers: {
+      token: sessionToken,
+      'Content-Type': 'application/json',
+    },
+    timeout: 15000,
+  });
+
+  return response.data?.data || response.data;
 }
 
 async function callSessionGateway(
@@ -139,25 +179,13 @@ async function callSessionGateway(
   method: 'GET' | 'POST' | 'DELETE' = 'POST',
   body?: unknown,
 ): Promise<any> {
-  const url = `${config.WA_API_URL}${path.startsWith('/') ? path : `/${path}`}`;
-
   try {
-    const response = await axios.request({
-      url,
-      method,
-      data: body,
-      headers: {
-        token: sessionToken,
-        'Content-Type': 'application/json',
-      },
-      timeout: 15000,
-    });
-
-    return response.data?.data || response.data;
+    return await waGatewayRequest(sessionToken, path, method, body);
   } catch (error: any) {
     logger.error('WA session gateway request failed', {
       path,
       method,
+      gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct',
       status: error.response?.status,
       response: error.response?.data,
       error: error.message,
@@ -445,18 +473,8 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
       };
     }
 
-    const url = `${config.WA_API_URL}/session/status`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        token,
-      },
-      timeout: 10000,
-    });
+    const data = await waGatewayRequest(token, '/session/status', 'GET');
 
-    const data = response.data.data || response.data;
-    
-    // genfity-wa returns lowercase fields
     return {
       connected: data.connected || false,
       loggedIn: data.loggedIn || false,
@@ -486,16 +504,7 @@ export async function getWebhookEvents(villageId?: string): Promise<string[]> {
       return ['Message'];
     }
 
-    const url = `${config.WA_API_URL}/webhook/events?active=true`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        token: resolved.token,
-      },
-      timeout: 10000,
-    });
-
-    const data = response.data.data || response.data;
+    const data = await waGatewayRequest(resolved.token, '/webhook/events?active=true', 'GET');
     return data.events || ['Message'];
   } catch (error: any) {
     logger.warn('Failed to get webhook events, using default', { error: error.message });
@@ -514,19 +523,10 @@ export async function getWebhookConfig(villageId?: string): Promise<{ subscribe:
       return { subscribe: ['Message'], webhook: '' };
     }
 
-    const url = `${config.WA_API_URL}/webhook`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        token: resolved.token,
-      },
-      timeout: 10000,
-    });
-
-    const data = response.data.data || response.data;
+    const data = await waGatewayRequest(resolved.token, '/webhook', 'GET');
     return {
-      subscribe: data.subscribe || ['Message'],
-      webhook: data.webhook || '',
+      subscribe: data.subscribe || data.events || ['Message'],
+      webhook: data.webhook || data.WebhookURL || '',
     };
   } catch (error: any) {
     logger.warn('Failed to get webhook config', { error: error.message });
@@ -581,6 +581,7 @@ export async function createSessionForVillage(params: {
   }
 
   const webhook = getPublicWhatsAppWebhookUrl();
+  const instanceName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
   let token: string;
   let sessionId: string | null = null;
   let waSupportApiKey: string | undefined;
@@ -592,7 +593,27 @@ export async function createSessionForVillage(params: {
     // Primary path: create session via wa-support-v2
     const user = await ensureWaSupportUser(params.villageId);
     waSupportApiKey = user.apiKey;
-    webhookSecret = randomBytes(48).toString('hex'); // 96 hex chars, comfortably above the 32-char minimum
+    webhookSecret = randomBytes(48).toString('hex');
+
+    await upsertSession({
+      villageId: params.villageId,
+      adminId: params.adminId,
+      token: `pending:${Date.now()}`,
+      status: 'creating',
+      instanceName,
+      waSupportUserId: params.villageId,
+      waSupportApiKey,
+      webhookSecret,
+    });
+
+    await logWaActivity({
+      villageId: params.villageId,
+      type: 'session_create',
+      severity: 'info',
+      status: 'creating',
+      message: 'Membuat session WhatsApp melalui wa-support.',
+      metadata: { instanceName, webhookConfigured: !!webhook },
+    });
 
     const created = await createSessionViaWaSupport({
       apiKey: user.apiKey,
@@ -607,7 +628,17 @@ export async function createSessionForVillage(params: {
     try {
       await configureSessionObjectStorage(token, params.villageId);
     } catch (error: any) {
+      await logWaActivity({
+        villageId: params.villageId,
+        sessionId: created.sessionId,
+        type: 'session_create',
+        severity: 'error',
+        status: 'failed',
+        message: 'Gagal mengonfigurasi object storage session WhatsApp.',
+        metadata: { error: error.message },
+      });
       await deleteSessionFromWaSupport(user.apiKey, created.sessionId);
+      await updateStoredSessionStatus({ villageId: params.villageId, status: 'error' }).catch(() => null);
       throw error;
     }
   } else if (isDryRun()) {
@@ -642,18 +673,32 @@ export async function createSessionForVillage(params: {
     }
   }
 
-  // Compute the instance_name (session name on WA provider)
-  const instanceName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const gateway = waSupportClient.isConfigured() ? 'wa-support' : isDryRun() ? 'dry-run' : 'direct';
 
   await upsertSession({
     villageId: params.villageId,
     adminId: params.adminId,
     token,
+    status: 'created',
     instanceName,
-    waSupportUserId: params.villageId,
+    waSupportUserId: gateway === 'wa-support' ? params.villageId : undefined,
     waSupportApiKey: waSupportApiKey,
     waSupportSessionId: sessionId || undefined,
     webhookSecret,
+  });
+
+  await logWaActivity({
+    villageId: params.villageId,
+    sessionId,
+    type: 'session_create',
+    severity: 'info',
+    status: 'created',
+    message: gateway === 'wa-support'
+      ? 'Session WhatsApp berhasil dibuat melalui wa-support.'
+      : gateway === 'dry-run'
+        ? 'Session WhatsApp dry-run berhasil dibuat tanpa memanggil provider.'
+        : 'Session WhatsApp berhasil dibuat langsung ke provider WA.',
+    metadata: { instanceName, webhookConfigured: !!webhook, gateway },
   });
 
   if (!webhook) {
@@ -733,21 +778,11 @@ export async function connectSession(token: string): Promise<{ details: string }
       return { details: 'Connected (dry-run)' };
     }
 
-    const url = `${config.WA_API_URL}/session/connect`;
-    
-    const response = await axios.post(url, {
+    const data = await waGatewayRequest(token, '/session/connect', 'POST', {
       Subscribe: REQUIRED_WEBHOOK_EVENTS,
       Immediate: true,
-    }, {
-      headers: {
-        token,
-        'Content-Type': 'application/json',
-      },
-      timeout: 30000,
     });
-
-    const data = response.data.data || response.data;
-    logger.info('WhatsApp session connected', { details: data });
+    logger.info('WhatsApp session connected', { details: data, gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct' });
     
     return {
       details: data.Details || data.details || 'Connected',
@@ -782,17 +817,8 @@ export async function disconnectSession(token: string): Promise<{ details: strin
       return { details: 'Disconnected (dry-run)' };
     }
 
-    const url = `${config.WA_API_URL}/session/disconnect`;
-    
-    const response = await axios.post(url, {}, {
-      headers: {
-        token,
-      },
-      timeout: 10000,
-    });
-
-    const data = response.data.data || response.data;
-    logger.info('WhatsApp session disconnected', { details: data });
+    const data = await waGatewayRequest(token, '/session/disconnect', 'POST', {});
+    logger.info('WhatsApp session disconnected', { details: data, gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct' });
     
     return {
       details: data.Details || 'Disconnected',
@@ -820,17 +846,8 @@ export async function logoutSession(token: string): Promise<{ details: string }>
       return { details: 'Logged out (dry-run)' };
     }
 
-    const url = `${config.WA_API_URL}/session/logout`;
-    
-    const response = await axios.post(url, {}, {
-      headers: {
-        token,
-      },
-      timeout: 10000,
-    });
-
-    const data = response.data.data || response.data;
-    logger.info('WhatsApp session logged out', { details: data });
+    const data = await waGatewayRequest(token, '/session/logout', 'POST', {});
+    logger.info('WhatsApp session logged out', { details: data, gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct' });
     
     return {
       details: data.Details || 'Logged out',
@@ -859,19 +876,10 @@ export async function getQRCode(token: string): Promise<{ QRCode: string; alread
       return { QRCode: 'dry-run-qr-not-available' };
     }
 
-    const url = `${config.WA_API_URL}/session/qr`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        token,
-      },
-      timeout: 10000,
-    });
+    const data = await waGatewayRequest(token, '/session/qr', 'GET');
 
-    const data = response.data.data || response.data;
-    
     return {
-      QRCode: data.QRCode || '',
+      QRCode: data.QRCode || data.qrcode || '',
     };
   } catch (error: any) {
     // Handle "already logged in" case - this is not an error
@@ -909,20 +917,8 @@ export async function pairPhone(token: string, phone: string): Promise<{ Linking
       return { LinkingCode: 'DRYRUN-CODE' };
     }
 
-    const url = `${config.WA_API_URL}/session/pairphone`;
-    
-    const response = await axios.post(url, {
-      Phone: phone,
-    }, {
-      headers: {
-        token,
-        'Content-Type': 'application/json',
-      },
-      timeout: 30000,
-    });
-
-    const data = response.data.data || response.data;
-    logger.info('Phone pairing initiated', { phone });
+    const data = await waGatewayRequest(token, '/session/pairphone', 'POST', { Phone: phone });
+    logger.info('Phone pairing initiated', { phone, gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct' });
     
     return {
       LinkingCode: data.LinkingCode || data.linkingCode || '',
@@ -1003,7 +999,67 @@ export async function updateSessionSettings(
     // Table might not exist, settings will be in-memory only
     logger.warn('Failed to persist settings to database, using in-memory only');
   }
-  
+
+  if (waSupportClient.isConfigured()) {
+    const supportPayload: { auto_read_enabled?: boolean; typing_enabled?: boolean } = {};
+    if (updates.autoReadMessages !== undefined) supportPayload.auto_read_enabled = sessionSettings.autoReadMessages;
+    if (updates.typingIndicator !== undefined) supportPayload.typing_enabled = sessionSettings.typingIndicator;
+
+    if (Object.keys(supportPayload).length > 0) {
+      try {
+        const sessions = await prisma.wa_sessions.findMany({
+          where: {
+            wa_support_api_key: { not: null },
+            wa_support_session_id: { not: null },
+          },
+          select: {
+            village_id: true,
+            wa_support_api_key: true,
+            wa_support_session_id: true,
+          },
+        });
+
+        await Promise.all(sessions.map(async (session) => {
+          const result = await waSupportClient.updateSessionSettings(
+            session.wa_support_api_key!,
+            session.wa_support_session_id!,
+            supportPayload,
+          );
+
+          if (!result.success) {
+            await logWaActivity({
+              villageId: session.village_id,
+              sessionId: session.wa_support_session_id,
+              type: 'session_settings',
+              severity: 'warning',
+              status: 'sync_failed',
+              message: 'Setting WhatsApp tersimpan lokal, tetapi gagal disinkronkan ke wa-support.',
+              metadata: { settings: supportPayload, error: result.error },
+            });
+            logger.warn('Failed to sync WA settings to wa-support session', {
+              village_id: session.village_id,
+              session_id: session.wa_support_session_id,
+              error: result.error,
+            });
+            return;
+          }
+
+          await logWaActivity({
+            villageId: session.village_id,
+            sessionId: session.wa_support_session_id,
+            type: 'session_settings',
+            severity: 'info',
+            status: 'synced',
+            message: 'Setting WhatsApp berhasil disinkronkan ke wa-support.',
+            metadata: { settings: supportPayload },
+          });
+        }));
+      } catch (error: any) {
+        logger.warn('Failed to sync WA settings to wa-support sessions', { error: error.message });
+      }
+    }
+  }
+
   return sessionSettings;
 }
 
@@ -1048,18 +1104,10 @@ export async function sendTypingIndicator(
     const accessToken = resolved.token;
     if (!accessToken) return false;
 
-    const url = `${config.WA_API_URL}/chat/presence`;
-    
-    await axios.post(url, {
+    await waGatewayRequest(accessToken, '/chat/presence', 'POST', {
       Phone: phone,
       State: state,
       Media: '',
-    }, {
-      headers: {
-        token: accessToken,
-        'Content-Type': 'application/json',
-      },
-      timeout: 5000,
     });
 
     return true;
@@ -1121,18 +1169,10 @@ export async function markMessageAsRead(
     const accessToken = resolved.token;
     if (!accessToken) return false;
 
-    const url = `${config.WA_API_URL}/chat/markread`;
-    
-    await axios.post(url, {
+    await waGatewayRequest(accessToken, '/chat/markread', 'POST', {
       Id: messageIds,
       ChatPhone: chatPhone,
       SenderPhone: senderPhone,
-    }, {
-      headers: {
-        token: accessToken,
-        'Content-Type': 'application/json',
-      },
-      timeout: 5000,
     });
 
     logger.info('Messages marked as read', { messageIds, chatPhone, autoReadEnabled: true });
@@ -1151,7 +1191,14 @@ export async function markMessageAsRead(
 // MESSAGE SENDING FUNCTIONS
 // =====================================================
 
-type WaSendResult = { success: boolean; message_id?: string; error?: string };
+type WaSendResult = {
+  success: boolean;
+  message_id?: string;
+  error?: string;
+  endpoint?: string;
+  gateway?: 'wa-support' | 'direct' | 'dry-run';
+  provider_response?: unknown;
+};
 
 export interface WaQuoteContext {
   ContextInfo?: Record<string, unknown>;
@@ -1200,7 +1247,7 @@ async function postWaSend(params: {
       kind: params.kind,
       message_id: fakeMessageId,
     });
-    return { success: true, message_id: fakeMessageId };
+    return { success: true, message_id: fakeMessageId, gateway: 'dry-run' };
   }
 
   const resolved = await resolveAccessToken(params.villageId);
@@ -1210,35 +1257,30 @@ async function postWaSend(params: {
     return { success: false, error: 'WhatsApp not configured' };
   }
 
-  const url = `${config.WA_API_URL}${params.endpoint}`;
-  const response = await axios.post(
-    url,
-    { Phone: normalizedPhone, ...params.body },
-    {
-      headers: {
-        token: accessToken,
-        'Content-Type': 'application/json',
-      },
-      timeout: params.timeout || 30000,
-    }
-  );
-
-  const responseData = response.data.data || response.data;
-  if (!isWaSendSuccess(responseData, response.data)) {
+  const gateway = waSupportClient.isConfigured() ? 'wa-support' : 'direct';
+  const responseData = await waGatewayRequest(accessToken, params.endpoint, 'POST', { Phone: normalizedPhone, ...params.body });
+  if (!isWaSendSuccess(responseData, responseData)) {
     logger.warn('WhatsApp API returned non-success response', {
       to: normalizedPhone,
       kind: params.kind,
-      response: response.data,
+      endpoint: params.endpoint,
+      gateway,
+      response: responseData,
     });
     return {
       success: false,
       error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+      endpoint: params.endpoint,
+      gateway,
+      provider_response: responseData,
     };
   }
 
   return {
     success: true,
     message_id: extractWaMessageId(responseData),
+    endpoint: params.endpoint,
+    gateway,
   };
 }
 
@@ -1271,7 +1313,6 @@ export async function buildQuotedContextInfo(params: {
   return {
     ContextInfo: contextInfo,
     QuotedText: message.message_text,
-    QuotedMessage: message.quoted_message_json || message.wa_raw_message || undefined,
   };
 }
 
@@ -1287,7 +1328,7 @@ export async function sendTextMessage(
   message: string,
   villageId?: string,
   options: SendTextMessageOptions = {}
-): Promise<{ success: boolean; message_id?: string; error?: string }> {
+): Promise<WaSendResult> {
   try {
     const account = await getDefaultChannelAccount(villageId);
     if (account && account.enabled_wa === false) {
@@ -1323,54 +1364,50 @@ export async function sendTextMessage(
     // Normalize phone number - remove any non-digit characters and ensure starts with country code
     const normalizedPhone = normalizePhoneNumber(to);
 
-    const url = `${config.WA_API_URL}/chat/send/text`;
+    const gateway = waSupportClient.isConfigured() ? 'wa-support' : 'direct';
+    const endpoint = '/chat/send/text';
+    logger.debug('Sending WhatsApp message', { to: normalizedPhone, gateway });
 
-    logger.debug('Sending WhatsApp message', { url, to: normalizedPhone });
-
-    const response = await axios.post(
-      url,
-      {
-        Phone: normalizedPhone,
-        Body: message,
-        ...(options.id ? { Id: options.id } : {}),
-        ...(options.ContextInfo ? { ContextInfo: options.ContextInfo } : {}),
-        ...(options.QuotedText ? { QuotedText: options.QuotedText } : {}),
-        ...(options.QuotedMessage ? { QuotedMessage: options.QuotedMessage } : {}),
-      },
-      {
-        headers: {
-          token: accessToken,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000, // 30 seconds timeout
-      }
-    );
-
-    // genfity-wa returns { code: 200, data: { Details: "Sent", Id: "msgid", Timestamp: "..." }, success: true }
-    const responseData = response.data.data || response.data;
+    const responseData = await waGatewayRequest(accessToken, endpoint, 'POST', {
+      Phone: normalizedPhone,
+      Body: message,
+      ...(options.id ? { Id: options.id } : {}),
+      ...(options.ContextInfo ? { ContextInfo: options.ContextInfo } : {}),
+      ...(options.QuotedText ? { QuotedText: options.QuotedText } : {}),
+      ...(options.QuotedMessage ? { QuotedMessage: options.QuotedMessage } : {}),
+    });
     const messageId = responseData.Id || responseData.id;
-    const isSuccess = response.data.success === true || response.data.code === 200 || responseData.Details === 'Sent';
+    const isSuccess = isWaSendSuccess(responseData, responseData);
 
     if (!isSuccess) {
-      logger.warn('WhatsApp API returned non-success response', { 
+      logger.warn('WhatsApp API returned non-success response', {
         to: normalizedPhone,
-        response: response.data
+        endpoint,
+        gateway,
+        response: responseData
       });
       return {
         success: false,
         error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+        endpoint,
+        gateway,
+        provider_response: responseData,
       };
     }
 
-    logger.info('WhatsApp message sent', { 
-      to: normalizedPhone, 
+    logger.info('WhatsApp message sent', {
+      to: normalizedPhone,
       message_id: messageId,
-      details: responseData.Details 
+      details: responseData.Details,
+      endpoint,
+      gateway,
     });
 
     return {
       success: true,
       message_id: messageId,
+      endpoint,
+      gateway,
     };
   } catch (error: any) {
     logger.error('Failed to send WhatsApp message', {
@@ -1383,6 +1420,9 @@ export async function sendTextMessage(
     return {
       success: false,
       error: error.response?.data?.message || error.response?.data?.Message || error.message,
+      endpoint: '/chat/send/text',
+      gateway: waSupportClient.isConfigured() ? 'wa-support' : isDryRun() ? 'dry-run' : 'direct',
+      provider_response: error.response?.data,
     };
   }
 }
@@ -1401,7 +1441,7 @@ export interface SendMediaMessageParams extends WaQuoteContext {
 
 export async function sendMediaMessage(
   params: SendMediaMessageParams
-): Promise<{ success: boolean; message_id?: string; error?: string }> {
+): Promise<WaSendResult> {
   try {
     const account = await getDefaultChannelAccount(params.villageId);
     if (account && account.enabled_wa === false) {
@@ -1441,7 +1481,6 @@ export async function sendMediaMessage(
       document: '/chat/send/document',
       video: '/chat/send/video',
     };
-    const url = `${config.WA_API_URL}${endpointMap[params.mediaType]}`;
     const body: Record<string, unknown> = { Phone: normalizedPhone };
 
     if (params.mediaType === 'image') {
@@ -1466,27 +1505,26 @@ export async function sendMediaMessage(
     if (params.QuotedText) body.QuotedText = params.QuotedText;
     if (params.QuotedMessage) body.QuotedMessage = params.QuotedMessage;
 
-    const response = await axios.post(url, body, {
-      headers: {
-        token: accessToken,
-        'Content-Type': 'application/json',
-      },
-      timeout: 60000,
-    });
-
-    const responseData = response.data.data || response.data;
+    const endpoint = endpointMap[params.mediaType];
+    const gateway = waSupportClient.isConfigured() ? 'wa-support' : 'direct';
+    const responseData = await waGatewayRequest(accessToken, endpoint, 'POST', body);
     const messageId = responseData.Id || responseData.id;
-    const isSuccess = response.data.success === true || response.data.code === 200 || responseData.Details === 'Sent';
+    const isSuccess = isWaSendSuccess(responseData, responseData);
 
     if (!isSuccess) {
       logger.warn('WhatsApp media API returned non-success response', {
         to: normalizedPhone,
         mediaType: params.mediaType,
-        response: response.data,
+        endpoint,
+        gateway,
+        response: responseData,
       });
       return {
         success: false,
         error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+        endpoint,
+        gateway,
+        provider_response: responseData,
       };
     }
 
@@ -1494,11 +1532,15 @@ export async function sendMediaMessage(
       to: normalizedPhone,
       mediaType: params.mediaType,
       message_id: messageId,
+      endpoint,
+      gateway,
     });
 
     return {
       success: true,
       message_id: messageId,
+      endpoint,
+      gateway,
     };
   } catch (error: any) {
     logger.error('Failed to send WhatsApp media', {
@@ -1512,6 +1554,9 @@ export async function sendMediaMessage(
     return {
       success: false,
       error: error.response?.data?.message || error.response?.data?.Message || error.message,
+      endpoint: `/chat/send/${params.mediaType}`,
+      gateway: waSupportClient.isConfigured() ? 'wa-support' : isDryRun() ? 'dry-run' : 'direct',
+      provider_response: error.response?.data,
     };
   }
 }
@@ -1692,38 +1737,24 @@ export async function sendContactMessage(
       };
     }
 
-    const url = `${config.WA_API_URL}/chat/send/contact`;
+    logger.debug('Sending WhatsApp contact', { to: normalizedTo, contact_name: contact.name, gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct' });
 
-    logger.debug('Sending WhatsApp contact', { url, to: normalizedTo, contact_name: contact.name });
-
-    const response = await axios.post(
-      url,
-      {
-        Phone: normalizedTo,
-        Name: contact.name,
-        Vcard: vcard,
-        ...(options.ContextInfo ? { ContextInfo: options.ContextInfo } : {}),
-        ...(options.QuotedText ? { QuotedText: options.QuotedText } : {}),
-        ...(options.QuotedMessage ? { QuotedMessage: options.QuotedMessage } : {}),
-      },
-      {
-        headers: {
-          token: accessToken,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
-
-    const responseData = response.data.data || response.data;
+    const responseData = await waGatewayRequest(accessToken, '/chat/send/contact', 'POST', {
+      Phone: normalizedTo,
+      Name: contact.name,
+      Vcard: vcard,
+      ...(options.ContextInfo ? { ContextInfo: options.ContextInfo } : {}),
+      ...(options.QuotedText ? { QuotedText: options.QuotedText } : {}),
+      ...(options.QuotedMessage ? { QuotedMessage: options.QuotedMessage } : {}),
+    });
     const messageId = responseData.Id || responseData.id;
-    const isSuccess = response.data.success === true || response.data.code === 200 || responseData.Details === 'Sent';
+    const isSuccess = isWaSendSuccess(responseData, responseData);
 
     if (!isSuccess) {
-      logger.warn('WhatsApp API returned non-success for contact', { 
+      logger.warn('WhatsApp API returned non-success for contact', {
         to: normalizedTo,
         contact_name: contact.name,
-        response: response.data
+        response: responseData
       });
       return {
         success: false,

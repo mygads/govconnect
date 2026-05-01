@@ -31,9 +31,19 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const status = searchParams.get('status') || 'all'
+    const search = searchParams.get('search') || undefined
+    const limit = searchParams.get('limit') || undefined
+    const offset = searchParams.get('offset') || undefined
 
-    const response = await livechat.getConversations(status, session.admin.village_id || undefined)
-    const data = await response.json()
+    const response = await livechat.getConversations(status, session.admin.village_id || undefined, search, limit, offset)
+    const data = await response.json().catch(() => null)
+    if (!response.ok) {
+      return NextResponse.json(
+        data || { success: false, error: 'Failed to fetch conversations', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: response.status },
+      )
+    }
+
     return NextResponse.json(data)
   } catch (error) {
     console.error('Error fetching conversations:', error)

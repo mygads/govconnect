@@ -12,6 +12,7 @@ import { sanitizeProviderDefaultHeaders } from '../utils/provider-headers';
 import { getRuntimeGatewayConfig, onRuntimeGatewayConfigCacheClear } from './ai-runtime-config.service';
 import * as healthService from './ai-provider-health.service';
 import { modelStatsService } from './model-stats.service';
+import { registerUsageWrite } from './ai-turn-billing.service';
 import { recordTokenUsage, type CallType, type LayerType } from './token-usage.service';
 
 export type PromptLaneKind = 'llm' | 'rag';
@@ -720,7 +721,7 @@ function recordGatewayUsage(
     return;
   }
 
-  recordTokenUsage({
+  const usageWrite = recordTokenUsage({
     model: metrics.model,
     input_tokens: metrics.inputTokens,
     output_tokens: metrics.outputTokens,
@@ -741,6 +742,7 @@ function recordGatewayUsage(
     model_config_id: metrics.modelConfigId ?? null,
     lane_type: metrics.laneType ?? null,
   }).catch((err: any) => logger.warn('Failed to record token usage', { error: err?.message || String(err) }));
+  registerUsageWrite(usageWrite);
 }
 
 function buildPromptBody(
@@ -777,7 +779,7 @@ function buildPromptBody(
 }
 
 async function executePromptRequestWithJsonFallback(
-  lane: PromptLaneKind,
+  lane: GatewayLaneKind,
   gateway: AnyGatewayConfig,
   apiKey: GatewayApiKey,
   model: string,
@@ -1186,8 +1188,7 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
 
         if (/Input required: specify "prompt" or "messages"/i.test(lastError)) {
           try {
-            const promptResult = await callAIGatewayPrompt({
-              lane: 'rag',
+            const promptOptions: GatewayPromptOptions = {
               modelPriority: [model],
               messages: buildRerankPrompt(options.query, options.documents),
               temperature: 0,
@@ -1197,28 +1198,54 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
               layerType: options.layerType,
               callType: options.callType,
               context: options.context,
-            });
-
-            if (promptResult?.text) {
-              const items = parsePromptRerankResults(promptResult.text, options.documents, options.topN || gateway.topN);
+            };
+            const promptResponse = await executePromptRequestWithJsonFallback(
+              lane,
+              gateway,
+              apiKey,
+              model,
+              promptOptions,
+            );
+            const text = extractTextContent(promptResponse.choices?.[0]?.message?.content);
+            if (text) {
+              const items = parsePromptRerankResults(text, options.documents, options.topN || gateway.topN);
               if (items.length > 0) {
+                const outputTokens = promptResponse.usage?.completion_tokens ?? estimateTokens(text);
+                const inputTokens = promptResponse.usage?.prompt_tokens ?? estimateRerankTokens(options.query, options.documents);
+                const totalTokens = promptResponse.usage?.total_tokens ?? inputTokens + outputTokens;
+                const resolvedModel = promptResponse.model || model;
+                const metrics = buildMetrics(
+                  lane,
+                  resolvedModel,
+                  gateway.provider,
+                  apiKey,
+                  Date.now() - startTime,
+                  { inputTokens, outputTokens, totalTokens },
+                  startTime,
+                  attempt,
+                );
+
+                modelStatsService.recordSuccess(resolvedModel, metrics.durationMs);
+                recordGatewayUsage(metrics, options);
+                await reportAttemptResult(lane, attempt, true);
+
                 logger.info('Rerank gateway prompt fallback successful', {
                   provider: gateway.provider,
-                  model,
+                  model: resolvedModel,
                   modelId: attempt.modelId,
                   modelDisplayName: attempt.modelDisplayName,
                   keyLabel: apiKey.label,
-                  durationMs,
+                  durationMs: metrics.durationMs,
                   resultCount: items.length,
                   source: resolved.meta?.source,
                 });
 
                 return {
                   items,
-                  model: promptResult.model,
-                  provider: promptResult.provider,
-                  responseId: promptResult.responseId,
-                  metrics: promptResult.metrics,
+                  model: resolvedModel,
+                  provider: promptResponse.provider || gateway.provider,
+                  responseId: promptResponse.id,
+                  metrics,
                 };
               }
             }

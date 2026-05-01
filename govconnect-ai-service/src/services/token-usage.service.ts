@@ -23,8 +23,8 @@
 
 import prisma from '../lib/prisma';
 import { Prisma } from '@prisma/client';
-import { debitVillageWalletForUsage } from './ai-wallet.service';
 import logger from '../utils/logger';
+import { getCurrentBillingContext, registerUsageWrite } from './ai-turn-billing.service';
 
 // ==================== Pricing ====================
 
@@ -124,6 +124,9 @@ export interface TokenUsageRecord {
   provider_id?: string | null;
   model_config_id?: string | null;
   lane_type?: string | null;
+  message_id?: string | null;
+  trace_id?: string | null;
+  billing_group_id?: string | null;
   actual_cost_usd?: number | null;
   adjusted_cost_usd?: number | null;
   margin_usd?: number | null;
@@ -137,6 +140,16 @@ interface PricingResolution {
   adjusted_cost_usd: number;
   margin_usd: number;
   legacy_cost_usd: number;
+  pricing_source: 'db' | 'legacy' | 'override';
+  actual_pricing_type: string | null;
+  actual_fixed_price_usd: number | null;
+  actual_input_price_per_million_usd: number | null;
+  actual_output_price_per_million_usd: number | null;
+  adjusted_pricing_type: string | null;
+  adjusted_fixed_price_usd: number | null;
+  adjusted_input_price_per_million_usd: number | null;
+  adjusted_output_price_per_million_usd: number | null;
+  pricing_snapshot_json: Prisma.InputJsonValue;
 }
 
 function calculatePricingByMode(
@@ -155,7 +168,8 @@ function calculatePricingByMode(
 }
 
 async function resolvePricing(record: TokenUsageRecord): Promise<PricingResolution> {
-  const legacy_cost_usd = calculateCost(record.model, record.input_tokens, record.output_tokens);
+  const legacyPricing = findPricing(record.model);
+  const legacy_cost_usd = (record.input_tokens * legacyPricing.input + record.output_tokens * legacyPricing.output) / 1_000_000;
 
   const modelConfig = record.model_config_id
     ? await prisma.ai_models.findUnique({
@@ -220,6 +234,37 @@ async function resolvePricing(record: TokenUsageRecord): Promise<PricingResoluti
     : legacy_cost_usd);
 
   const margin_usd = record.margin_usd ?? (adjusted_cost_usd - actual_cost_usd);
+  const pricing_source: PricingResolution['pricing_source'] = record.actual_cost_usd != null || record.adjusted_cost_usd != null
+    ? 'override'
+    : modelConfig
+      ? 'db'
+      : 'legacy';
+  const actual_pricing_type = modelConfig?.actual_pricing_type ?? (pricing_source === 'legacy' ? 'per_million_tokens' : null);
+  const actual_fixed_price_usd = modelConfig?.actual_fixed_price_usd ?? null;
+  const actual_input_price_per_million_usd = modelConfig?.actual_input_price_per_million_usd ?? (pricing_source === 'legacy' ? legacyPricing.input : null);
+  const actual_output_price_per_million_usd = modelConfig?.actual_output_price_per_million_usd ?? (pricing_source === 'legacy' ? legacyPricing.output : null);
+  const adjusted_pricing_type = modelConfig?.adjusted_pricing_type ?? (pricing_source === 'legacy' ? 'per_million_tokens' : null);
+  const adjusted_fixed_price_usd = modelConfig?.adjusted_fixed_price_usd ?? null;
+  const adjusted_input_price_per_million_usd = modelConfig?.adjusted_input_price_per_million_usd ?? (pricing_source === 'legacy' ? legacyPricing.input : null);
+  const adjusted_output_price_per_million_usd = modelConfig?.adjusted_output_price_per_million_usd ?? (pricing_source === 'legacy' ? legacyPricing.output : null);
+  const pricing_snapshot_json = {
+    source: pricing_source,
+    model: record.model,
+    model_config_id: record.model_config_id ?? modelConfig?.id ?? null,
+    provider_id: record.provider_id ?? modelConfig?.provider_id ?? null,
+    actual: {
+      pricing_type: actual_pricing_type,
+      fixed_price_usd: actual_fixed_price_usd,
+      input_price_per_million_usd: actual_input_price_per_million_usd,
+      output_price_per_million_usd: actual_output_price_per_million_usd,
+    },
+    adjusted: {
+      pricing_type: adjusted_pricing_type,
+      fixed_price_usd: adjusted_fixed_price_usd,
+      input_price_per_million_usd: adjusted_input_price_per_million_usd,
+      output_price_per_million_usd: adjusted_output_price_per_million_usd,
+    },
+  } as Prisma.InputJsonValue;
 
   return {
     provider_id: record.provider_id ?? modelConfig?.provider_id ?? null,
@@ -229,6 +274,16 @@ async function resolvePricing(record: TokenUsageRecord): Promise<PricingResoluti
     adjusted_cost_usd,
     margin_usd,
     legacy_cost_usd,
+    pricing_source,
+    actual_pricing_type,
+    actual_fixed_price_usd,
+    actual_input_price_per_million_usd,
+    actual_output_price_per_million_usd,
+    adjusted_pricing_type,
+    adjusted_fixed_price_usd,
+    adjusted_input_price_per_million_usd,
+    adjusted_output_price_per_million_usd,
+    pricing_snapshot_json,
   };
 }
 
@@ -400,8 +455,12 @@ export interface UsageMetadata {
 export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> {
   try {
     const { record: resolvedRecord, pricing } = await attachResolvedPricing(record);
+    const billingContext = getCurrentBillingContext();
+    const messageId = resolvedRecord.message_id ?? billingContext?.message_id ?? null;
+    const traceId = resolvedRecord.trace_id ?? billingContext?.trace_id ?? null;
+    const billingGroupId = resolvedRecord.billing_group_id ?? billingContext?.billing_group_id ?? null;
 
-    const created = await prisma.ai_token_usage.create({
+    await prisma.ai_token_usage.create({
       data: {
         model: resolvedRecord.model,
         input_tokens: resolvedRecord.input_tokens,
@@ -410,10 +469,14 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> 
         cost_usd: pricing.adjusted_cost_usd,
         layer_type: resolvedRecord.layer_type,
         call_type: resolvedRecord.call_type,
-        village_id: resolvedRecord.village_id ?? null,
-        wa_user_id: resolvedRecord.wa_user_id ?? null,
-        session_id: resolvedRecord.session_id ?? null,
-        channel: resolvedRecord.channel ?? null,
+        village_id: resolvedRecord.village_id ?? billingContext?.village_id ?? null,
+        wa_user_id: resolvedRecord.wa_user_id ?? billingContext?.wa_user_id ?? null,
+        session_id: resolvedRecord.session_id ?? billingContext?.session_id ?? null,
+        channel: resolvedRecord.channel ?? billingContext?.channel ?? null,
+        message_id: messageId,
+        trace_id: traceId,
+        billing_group_id: billingGroupId,
+        billing_status: billingGroupId ? 'unbilled' : 'not_billable',
         intent: resolvedRecord.intent ?? null,
         success: resolvedRecord.success ?? true,
         duration_ms: resolvedRecord.duration_ms ?? null,
@@ -426,24 +489,18 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> 
         actual_cost_usd: pricing.actual_cost_usd,
         adjusted_cost_usd: pricing.adjusted_cost_usd,
         margin_usd: pricing.margin_usd,
+        pricing_source: pricing.pricing_source,
+        actual_pricing_type: pricing.actual_pricing_type,
+        actual_fixed_price_usd: pricing.actual_fixed_price_usd,
+        actual_input_price_per_million_usd: pricing.actual_input_price_per_million_usd,
+        actual_output_price_per_million_usd: pricing.actual_output_price_per_million_usd,
+        adjusted_pricing_type: pricing.adjusted_pricing_type,
+        adjusted_fixed_price_usd: pricing.adjusted_fixed_price_usd,
+        adjusted_input_price_per_million_usd: pricing.adjusted_input_price_per_million_usd,
+        adjusted_output_price_per_million_usd: pricing.adjusted_output_price_per_million_usd,
+        pricing_snapshot_json: pricing.pricing_snapshot_json,
       },
     });
-
-    if ((resolvedRecord.success ?? true) && pricing.adjusted_cost_usd > 0 && resolvedRecord.village_id) {
-      await debitVillageWalletForUsage({
-        villageId: resolvedRecord.village_id,
-        adjustedCostUsd: pricing.adjusted_cost_usd,
-        actualCostUsd: pricing.actual_cost_usd,
-        marginUsd: pricing.margin_usd,
-        referenceType: 'ai_token_usage',
-        referenceId: created.id,
-        metadata: {
-          model: resolvedRecord.model,
-          call_type: resolvedRecord.call_type,
-          layer_type: resolvedRecord.layer_type,
-        },
-      });
-    }
 
     logger.debug('📊 Token usage recorded', {
       model: resolvedRecord.model,
@@ -453,7 +510,8 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<void> 
       adjusted_cost_usd: pricing.adjusted_cost_usd.toFixed(6),
       actual_cost_usd: pricing.actual_cost_usd.toFixed(6),
       margin_usd: pricing.margin_usd.toFixed(6),
-      pricing_source: pricing.model_config_id ? 'db' : 'legacy',
+      pricing_source: pricing.pricing_source,
+      billing_group_id: billingGroupId,
     });
   } catch (error: any) {
     logger.error('❌ Failed to record token usage', {
@@ -490,7 +548,7 @@ export function extractAndRecord(
   const totalTokens = meta.totalTokenCount ?? (inputTokens + outputTokens);
 
   // Fire and forget
-  recordTokenUsage({
+  const usageWrite = recordTokenUsage({
     model,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
@@ -499,6 +557,7 @@ export function extractAndRecord(
     call_type,
     ...context,
   });
+  registerUsageWrite(usageWrite);
 
   return { inputTokens, outputTokens, totalTokens };
 }

@@ -44,6 +44,7 @@ import { startTakeoverForUser } from './channel-client.service';
 import { getEnhancedContext } from './conversation-context.service';
 import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village-behavior.service';
 import { canProcessVillageAI } from './ai-wallet.service';
+import { finishAiBillingTurn, startAiBillingTurn, type AiBillingTurnHandle } from './ai-turn-billing.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
@@ -644,7 +645,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   incrementActiveProcessing();
   const startTime = Date.now();
-  const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange } = input;
+  const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange, messageId, batchedMessageIds } = input;
   let resolvedHistory = conversationHistory;
   let finalResult: ProcessMessageResult | null = null;
   const finish = (result: ProcessMessageResult) => {
@@ -669,7 +670,23 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   
   // Generate trace ID for correlating all logs in this request
   const traceId = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  
+  const resolvedMessageId = messageId || `webchat:${userId}:${traceId}`;
+  const billingGroupId = villageId
+    ? `msg:${villageId}:${resolvedMessageId}`
+    : `${channel}:${userId}:${traceId}`;
+  const billingTurn: AiBillingTurnHandle | null = sideEffectMode === 'knowledge_test' || isEvaluation
+    ? null
+    : startAiBillingTurn({
+        village_id: villageId ?? null,
+        message_id: resolvedMessageId,
+        trace_id: traceId,
+        billing_group_id: billingGroupId,
+        batched_message_ids: batchedMessageIds ?? [],
+        wa_user_id: channel === 'whatsapp' ? userId : null,
+        session_id: channel === 'webchat' ? userId : null,
+        channel,
+      });
+
   const tracker = createProcessingTracker(userId);
   
   // Wire up onStageChange callback so the caller (e.g. WhatsApp orchestrator)
@@ -1235,6 +1252,15 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           policySource: analyticsResult.metadata.toolPolicy?.policySource,
         });
       }
+    }
+    try {
+      await finishAiBillingTurn(billingTurn);
+    } catch (billingError: any) {
+      logger.error('AI message billing finalization failed', {
+        traceId,
+        billingGroupId,
+        error: billingError?.message || String(billingError),
+      });
     }
     decrementActiveProcessing();
   }

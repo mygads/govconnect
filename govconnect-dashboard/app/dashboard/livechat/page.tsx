@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Dialog,
   DialogContent,
@@ -56,6 +56,10 @@ interface Conversation {
   channel_identifier: string
   user_name: string | null
   user_phone: string | null  // Collected phone number (for webchat)
+  profile_name?: string | null
+  profile_avatar_url?: string | null
+  profile_is_whatsapp?: boolean | null
+  profile_synced_at?: string | null
   last_message: string | null
   last_message_at: string
   unread_count: number
@@ -166,6 +170,11 @@ export default function LiveChatPage() {
   const [replyingToMessage, setReplyingToMessage] = useState<Message | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [activeTab, setActiveTab] = useState<"all" | "takeover" | "bot">("all")
+  const [conversationError, setConversationError] = useState<string | null>(null)
+  const [messageError, setMessageError] = useState<string | null>(null)
+  const [villageProfileError, setVillageProfileError] = useState<string | null>(null)
+  const [importantContactsError, setImportantContactsError] = useState<string | null>(null)
+  const [conversationPagination, setConversationPagination] = useState({ total: 0, limit: 50, offset: 0 })
 
   // Loading states - only for initial load
   const [isInitialLoading, setIsInitialLoading] = useState(true)
@@ -219,10 +228,15 @@ export default function LiveChatPage() {
   const eventSourceRef = useRef<EventSource | null>(null)
   const realtimeFailureCountRef = useRef(0)
   const typingPauseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const lastTypingStateRef = useRef<'composing' | 'paused' | null>(null)
+  const lastTypingSentAtRef = useRef(0)
+  const typingInFlightRef = useRef(false)
+  const pendingTypingStateRef = useRef<{ state: 'composing' | 'paused'; force: boolean } | null>(null)
   const selectedConversationRef = useRef<Conversation | null>(null)
   const previousMessagesLengthRef = useRef<number>(0)
   const lastWaSessionStatusRef = useRef<WaSessionStatus | null>(null)
   const lastWaSessionToastAtRef = useRef(0)
+  const hasLoadedConversationsRef = useRef(false)
 
   // Smart scroll state
   const [isUserScrollingUp, setIsUserScrollingUp] = useState(false)
@@ -267,6 +281,12 @@ export default function LiveChatPage() {
   const getActiveTyping = (conversationKey: string) => {
     const typing = typingByConversation[conversationKey]
     return typing && typing.until > Date.now() ? typing : null
+  }
+
+  const getTypingLabel = (typing: { actor: 'user' | 'admin' | 'ai'; until: number } | null, compact = false) => {
+    if (!typing || typing.actor === 'admin') return null
+    if (typing.actor === 'ai') return compact ? 'AI sedang mengetik...' : 'AI sedang mengetik...'
+    return compact ? 'warga sedang mengetik...' : 'Warga sedang mengetik...'
   }
 
   const patchMessageStatus = (event: MessageEvent) => {
@@ -445,6 +465,7 @@ export default function LiveChatPage() {
     setHasNewMessages(false)
     setNewMessageCount(0)
     setFailedMedia({})
+    setMessageError(null)
     isNearBottomRef.current = true
   }, [getConversationKey(selectedConversation)])
 
@@ -503,17 +524,30 @@ export default function LiveChatPage() {
   const fetchConversationsSilent = useCallback(async () => {
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch(`/api/livechat/conversations?status=${activeTab}`, {
+      const params = new URLSearchParams({
+        status: activeTab,
+        limit: String(conversationPagination.limit),
+        offset: String(conversationPagination.offset),
+      })
+      if (searchQuery.trim()) params.set('search', searchQuery.trim())
+      const response = await fetch(`/api/livechat/conversations?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       })
 
-      if (!response.ok) return
+      if (!response.ok) throw new Error(`Gagal memuat percakapan (${response.status})`)
 
       const data = await response.json()
       if (data.success) {
+        setConversationError(null)
         setConversations(data.data || [])
+        setConversationPagination((current) => ({
+          ...current,
+          total: data.pagination?.total ?? data.count ?? 0,
+          limit: data.pagination?.limit ?? current.limit,
+          offset: data.pagination?.offset ?? current.offset,
+        }))
 
         // Update selected conversation if it exists in the new data
         if (selectedConversationRef.current) {
@@ -525,10 +559,11 @@ export default function LiveChatPage() {
           }
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching conversations:", error)
+      setConversationError(error?.message || "Gagal memuat percakapan")
     }
-  }, [activeTab])
+  }, [activeTab, searchQuery, conversationPagination.limit, conversationPagination.offset])
 
   // Fetch messages silently (no loading state for polling)
   const fetchMessagesSilent = useCallback(async (conversationKey: string) => {
@@ -540,14 +575,19 @@ export default function LiveChatPage() {
         },
       })
 
-      if (!response.ok) return
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setMessageError(data?.error || `Gagal memuat pesan (${response.status})`)
+        return
+      }
 
-      const data = await response.json()
-      if (data.success) {
+      if (data?.success) {
+        setMessageError(null)
         setMessages(normalizeMessages(data.data?.messages || []))
         setCurrentTakeover(data.data?.takeover_session || null)
       }
-    } catch (error) {
+    } catch (error: any) {
+      setMessageError(error?.message || "Gagal memuat pesan")
       console.error("Error fetching messages:", error)
     }
   }, [])
@@ -563,10 +603,11 @@ export default function LiveChatPage() {
         },
       })
 
-      if (!response.ok) throw new Error("Gagal mengambil pesan")
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.error || "Gagal mengambil pesan")
 
-      const data = await response.json()
-      if (data.success) {
+      if (data?.success) {
+        setMessageError(null)
         setMessages(normalizeMessages(data.data?.messages || []))
         setCurrentTakeover(data.data?.takeover_session || null)
         previousMessagesLengthRef.current = 0 // Reset so it scrolls
@@ -585,22 +626,33 @@ export default function LiveChatPage() {
         // Force scroll to bottom on initial load
         setTimeout(() => scrollToBottom(true), 100)
       }
-    } catch (error) {
+    } catch (error: any) {
+      setMessageError(error?.message || "Gagal mengambil pesan")
       console.error("Error fetching messages:", error)
     } finally {
       setIsInitialMessagesLoading(false)
     }
   }, [fetchConversationsSilent, scrollToBottom])
 
-  // Initial load
+  // Initial load and subsequent list refreshes
   useEffect(() => {
     const loadData = async () => {
-      setIsInitialLoading(true)
+      if (!hasLoadedConversationsRef.current) {
+        setIsInitialLoading(true)
+        await fetchConversationsSilent()
+        hasLoadedConversationsRef.current = true
+        setIsInitialLoading(false)
+        return
+      }
+
       await fetchConversationsSilent()
-      setIsInitialLoading(false)
     }
     loadData()
   }, [fetchConversationsSilent])
+
+  useEffect(() => {
+    setConversationPagination((current) => current.offset === 0 ? current : { ...current, offset: 0 })
+  }, [activeTab, searchQuery])
 
   useEffect(() => {
     const loadVillageProfileLocation = async () => {
@@ -608,10 +660,16 @@ export default function LiveChatPage() {
         const response = await fetch('/api/village-profile', {
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         })
-        if (!response.ok) return
-        const data = await response.json()
+        const data = await response.json().catch(() => null)
+        if (!response.ok) {
+          setVillageProfileError(data?.error || `Gagal memuat profil desa (${response.status})`)
+          setVillageProfileLocation(null)
+          return
+        }
+        setVillageProfileError(null)
         setVillageProfileLocation(data?.data || null)
-      } catch {
+      } catch (error: any) {
+        setVillageProfileError(error?.message || 'Gagal memuat profil desa')
         setVillageProfileLocation(null)
       }
     }
@@ -623,10 +681,16 @@ export default function LiveChatPage() {
       const response = await fetch('/api/important-contacts', {
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
-      if (!response.ok) return
-      const data = await response.json()
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setImportantContactsError(data?.error || `Gagal memuat kontak penting (${response.status})`)
+        setImportantContacts([])
+        return
+      }
+      setImportantContactsError(null)
       setImportantContacts(Array.isArray(data?.data) ? data.data : [])
-    } catch {
+    } catch (error: any) {
+      setImportantContactsError(error?.message || 'Gagal memuat kontak penting')
       setImportantContacts([])
     }
   }, [])
@@ -723,6 +787,7 @@ export default function LiveChatPage() {
     return () => {
       stopRealtime()
       stopPolling()
+      if (typingPauseTimeoutRef.current) clearTimeout(typingPauseTimeoutRef.current)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [syncLivechat])
@@ -742,12 +807,31 @@ export default function LiveChatPage() {
     setSelectedConversation(conv)
     setReplyingToMessage(null)
     previousMessagesLengthRef.current = 0
+    lastTypingStateRef.current = null
+    lastTypingSentAtRef.current = 0
+    pendingTypingStateRef.current = null
+    if (typingPauseTimeoutRef.current) clearTimeout(typingPauseTimeoutRef.current)
     await fetchMessagesWithLoading(getConversationKey(conv))
   }
 
-  const sendTypingState = useCallback(async (state: 'composing' | 'paused') => {
+  const sendTypingState = useCallback(async (state: 'composing' | 'paused', force = false) => {
     const conversation = selectedConversationRef.current
     if (!conversation?.is_takeover) return
+
+    if (typingInFlightRef.current) {
+      pendingTypingStateRef.current = { state, force }
+      return
+    }
+
+    const now = Date.now()
+    const sameState = lastTypingStateRef.current === state
+    const minInterval = state === 'composing' ? 1800 : 1200
+    if (!force && sameState && now - lastTypingSentAtRef.current < minInterval) return
+
+    lastTypingStateRef.current = state
+    lastTypingSentAtRef.current = now
+    typingInFlightRef.current = true
+
     try {
       const token = localStorage.getItem("token")
       await fetch(`/api/livechat/conversations/${encodeURIComponent(getConversationKey(conversation))}/typing`, {
@@ -756,10 +840,15 @@ export default function LiveChatPage() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ state }),
+        body: JSON.stringify({ state, actor: 'admin' }),
       })
     } catch {
       return
+    } finally {
+      typingInFlightRef.current = false
+      const pending = pendingTypingStateRef.current
+      pendingTypingStateRef.current = null
+      if (pending) setTimeout(() => sendTypingState(pending.state, pending.force), 0)
     }
   }, [])
 
@@ -768,7 +857,7 @@ export default function LiveChatPage() {
     if (!selectedConversationRef.current?.is_takeover) return
     sendTypingState('composing')
     if (typingPauseTimeoutRef.current) clearTimeout(typingPauseTimeoutRef.current)
-    typingPauseTimeoutRef.current = setTimeout(() => sendTypingState('paused'), 1200)
+    typingPauseTimeoutRef.current = setTimeout(() => sendTypingState('paused', true), 2200)
   }
 
   // Send message
@@ -802,7 +891,8 @@ export default function LiveChatPage() {
     setMessageInput("") // Clear immediately for better UX
     setSelectedMedia(null)
     setReplyingToMessage(null)
-    sendTypingState('paused')
+    if (typingPauseTimeoutRef.current) clearTimeout(typingPauseTimeoutRef.current)
+    sendTypingState('paused', true)
     setIsSendingMessage(true)
 
     try {
@@ -1182,16 +1272,11 @@ export default function LiveChatPage() {
     }
   }
 
-  // Filter conversations by search
-  const filteredConversations = conversations.filter((conv) => {
-    const searchLower = searchQuery.toLowerCase()
-    const key = getConversationKey(conv).toLowerCase()
-    return (
-      key.includes(searchLower) ||
-      conv.user_name?.toLowerCase().includes(searchLower) ||
-      conv.last_message?.toLowerCase().includes(searchLower)
-    )
-  })
+  const filteredConversations = conversations
+  const conversationStart = conversationPagination.offset + (filteredConversations.length > 0 ? 1 : 0)
+  const conversationEnd = conversationPagination.offset + filteredConversations.length
+  const hasPreviousConversations = conversationPagination.offset > 0
+  const hasNextConversations = conversationPagination.offset + conversationPagination.limit < conversationPagination.total
 
   // Format timestamp
   const formatTime = (timestamp: string) => {
@@ -1221,21 +1306,22 @@ export default function LiveChatPage() {
   }
 
   // Get initials for avatar
-  const getInitials = (name: string | null, phone: string) => {
+  const getInitials = (name: string | null | undefined, phone: string) => {
     if (name) {
       return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     }
     return phone ? phone.slice(-2) : "??"
   }
 
+  const getConversationAvatarUrl = (conv?: Conversation | null) => {
+    if (!conv || isWebchatConversation(conv)) return null
+    return conv.profile_avatar_url || null
+  }
+
   // Get display name for conversation (prioritize collected name over session ID)
   const getDisplayName = (conv: Conversation) => {
-    // For webchat: use collected name if available, otherwise use session ID
-    // For WA: use collected name > WA push name > phone number
-    if (conv.user_name) {
-      return conv.user_name
-    }
-    // If no name, show channel identifier (phone for WA, session ID for webchat)
+    if (conv.user_name) return conv.user_name
+    if (conv.profile_name) return conv.profile_name
     return getConversationKey(conv)
   }
 
@@ -1590,6 +1676,12 @@ export default function LiveChatPage() {
             </div>
           </div>
 
+          {conversationError && (
+            <div className="border-b bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
+              {conversationError}
+            </div>
+          )}
+
           {/* Conversation List */}
           <div className="flex-1 overflow-y-auto">
             {filteredConversations.length === 0 ? (
@@ -1608,8 +1700,9 @@ export default function LiveChatPage() {
                   >
                     <div className="flex items-start gap-3">
                       <Avatar className="h-10 w-10 shrink-0">
+                        {getConversationAvatarUrl(conv) && <AvatarImage src={getConversationAvatarUrl(conv) || undefined} alt={getDisplayName(conv)} />}
                         <AvatarFallback className={`text-xs ${conv.is_takeover ? "bg-orange-500 text-white" : "bg-green-500 text-white"}`}>
-                          {getInitials(conv.user_name, getConversationKey(conv))}
+                          {getInitials(getDisplayName(conv), getConversationKey(conv))}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 min-w-0">
@@ -1630,8 +1723,8 @@ export default function LiveChatPage() {
                           </span>
                         </div>
                         <div className="flex items-center justify-between mt-0.5">
-                          <p className={`text-xs truncate pr-2 ${getActiveTyping(getConversationKey(conv)) ? "text-emerald-600 font-medium" : "text-muted-foreground"}`}>
-                            {getActiveTyping(getConversationKey(conv)) ? "sedang mengetik..." : conv.last_message || "Tidak ada pesan"}
+                          <p className={`text-xs truncate pr-2 ${getTypingLabel(getActiveTyping(getConversationKey(conv)), true) ? "text-emerald-600 font-medium" : "text-muted-foreground"}`}>
+                            {getTypingLabel(getActiveTyping(getConversationKey(conv)), true) || conv.last_message || "Tidak ada pesan"}
                           </p>
                           {conv.unread_count > 0 && (
                             <Badge variant="default" className="h-5 min-w-5 flex items-center justify-center text-xs shrink-0">
@@ -1700,6 +1793,36 @@ export default function LiveChatPage() {
               </div>
             )}
           </div>
+
+          <div className="flex items-center justify-between gap-2 border-t p-3 text-xs text-muted-foreground">
+            <span>
+              Menampilkan {conversationStart}-{conversationEnd} dari {conversationPagination.total} percakapan
+            </span>
+            <div className="flex gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!hasPreviousConversations}
+                onClick={() => setConversationPagination((current) => ({
+                  ...current,
+                  offset: Math.max(current.offset - current.limit, 0),
+                }))}
+              >
+                Sebelumnya
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!hasNextConversations}
+                onClick={() => setConversationPagination((current) => ({
+                  ...current,
+                  offset: current.offset + current.limit,
+                }))}
+              >
+                Berikutnya
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Right Panel - Chat View */}
@@ -1721,8 +1844,9 @@ export default function LiveChatPage() {
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
                   <Avatar className="h-9 w-9">
+                    {getConversationAvatarUrl(selectedConversation) && <AvatarImage src={getConversationAvatarUrl(selectedConversation) || undefined} alt={getDisplayName(selectedConversation)} />}
                     <AvatarFallback className={`text-xs ${selectedConversation.is_takeover ? "bg-orange-500 text-white" : "bg-green-500 text-white"}`}>
-                      {getInitials(selectedConversation.user_name, getConversationKey(selectedConversation))}
+                      {getInitials(getDisplayName(selectedConversation), getConversationKey(selectedConversation))}
                     </AvatarFallback>
                   </Avatar>
                   <div>
@@ -1793,6 +1917,12 @@ export default function LiveChatPage() {
                 </div>
               )}
 
+              {messageError && (
+                <div className="border-t bg-red-50 px-4 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                  {messageError}
+                </div>
+              )}
+
               {/* Messages Container - Fixed Height with Scroll */}
               <div className="relative flex-1">
                 <div
@@ -1858,14 +1988,14 @@ export default function LiveChatPage() {
                           </div>
                         </div>
                       ))}
-                      {selectedConversation && getActiveTyping(getConversationKey(selectedConversation)) && (
+                      {selectedConversation && getTypingLabel(getActiveTyping(getConversationKey(selectedConversation))) && (
                         <div className="flex justify-start">
                           <div className="rounded-lg border bg-white px-3 py-2 text-xs text-emerald-700 shadow-sm dark:bg-gray-800">
                             <span className="inline-flex items-center gap-1">
                               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500" />
                               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500 [animation-delay:120ms]" />
                               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-500 [animation-delay:240ms]" />
-                              sedang mengetik...
+                              {getTypingLabel(getActiveTyping(getConversationKey(selectedConversation)))}
                             </span>
                           </div>
                         </div>
@@ -1969,7 +2099,7 @@ export default function LiveChatPage() {
                         onClick={handleSendVillageLocation}
                         disabled={isSendingMessage || isSendingLocation || isWebchatConversation(selectedConversation) || villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null}
                         className="h-10 w-10"
-                        title={villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null ? "Isi koordinat kantor di Profil Desa untuk mengirim lokasi" : "Kirim lokasi kantor desa"}
+                        title={villageProfileError || (villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null ? "Isi koordinat kantor di Profil Desa untuk mengirim lokasi" : "Kirim lokasi kantor desa")}
                       >
                         {isSendingLocation ? <RefreshCw className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
                       </Button>
@@ -1980,7 +2110,7 @@ export default function LiveChatPage() {
                         onClick={handleOpenContactDialog}
                         disabled={isSendingMessage || isSendingContact || isWebchatConversation(selectedConversation)}
                         className="h-10 w-10"
-                        title={isWebchatConversation(selectedConversation) ? "Kartu kontak native hanya didukung untuk WhatsApp" : "Kirim kontak penting"}
+                        title={importantContactsError || (isWebchatConversation(selectedConversation) ? "Kartu kontak native hanya didukung untuk WhatsApp" : "Kirim kontak penting")}
                       >
                         {isSendingContact ? <RefreshCw className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}
                       </Button>
@@ -2056,6 +2186,11 @@ export default function LiveChatPage() {
               value={contactSearchQuery}
               onChange={(event) => setContactSearchQuery(event.target.value)}
             />
+            {importantContactsError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+                {importantContactsError}
+              </div>
+            )}
             <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
               {filteredImportantContacts.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">

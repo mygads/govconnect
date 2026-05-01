@@ -146,6 +146,7 @@ export interface ComplaintFilters {
   village_id?: string;
   category_id?: string;
   type_id?: string;
+  search?: string;
   limit?: number;
   offset?: number;
 }
@@ -346,8 +347,8 @@ export async function getComplaintByIdWithOwnership(
  * Get complaints list with filters and pagination
  */
 export async function getComplaintsList(filters: ComplaintFilters) {
-  const { status, kategori, rt_rw, wa_user_id, channel, channel_identifier, village_id, category_id, type_id, limit = 20, offset = 0 } = filters;
-  
+  const { status, kategori, rt_rw, wa_user_id, channel, channel_identifier, village_id, category_id, type_id, search, limit = 20, offset = 0 } = filters;
+
   const where: any = {};
   if (status) where.status = status;
   if (kategori) where.kategori = kategori;
@@ -360,6 +361,20 @@ export async function getComplaintsList(filters: ComplaintFilters) {
   if (village_id) where.village_id = village_id;
   if (category_id) where.category_id = category_id;
   if (type_id) where.type_id = type_id;
+  if (search?.trim()) {
+    const query = search.trim();
+    where.OR = [
+      { complaint_id: { contains: query, mode: 'insensitive' } },
+      { wa_user_id: { contains: query, mode: 'insensitive' } },
+      { channel_identifier: { contains: query, mode: 'insensitive' } },
+      { reporter_name: { contains: query, mode: 'insensitive' } },
+      { reporter_phone: { contains: query, mode: 'insensitive' } },
+      { kategori: { contains: query, mode: 'insensitive' } },
+      { deskripsi: { contains: query, mode: 'insensitive' } },
+      { category: { name: { contains: query, mode: 'insensitive' } } },
+      { type: { name: { contains: query, mode: 'insensitive' } } },
+    ];
+  }
   // Exclude soft-deleted records
   where.deleted_at = null;
   
@@ -450,7 +465,7 @@ export async function updateComplaintStatus(
  * Get statistics (filtered by village_id for multi-tenancy)
  */
 export async function getComplaintStatistics(villageId?: string) {
-  const where = villageId ? { village_id: villageId } : {};
+  const where = villageId ? { village_id: villageId, deleted_at: null } : { deleted_at: null };
   const [
     totalByStatus,
     totalByKategori,

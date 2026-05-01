@@ -61,6 +61,17 @@ interface ModelRow {
 
 const laneOptions = ["llm", "embed", "rewrite", "rerank"]
 
+const endpointOptionsByLane: Record<string, string[]> = {
+  llm: ["/chat/completions", "/responses"],
+  embed: ["/embeddings"],
+  rewrite: ["/chat/completions", "/responses"],
+  rerank: ["/rerank", "/v1/rerank", "/chat/completions"],
+}
+
+function defaultEndpointForLane(lane: string) {
+  return endpointOptionsByLane[lane]?.[0] ?? ""
+}
+
 type ConfirmAction = {
   title: string
   description: string
@@ -200,6 +211,14 @@ export default function SuperadminAIModelsPage() {
     rows: models.filter((model) => model.lane_type === lane),
   })), [models])
 
+  const endpointOptions = endpointOptionsByLane[laneType] ?? []
+  const endpointSelectValue = endpointOptions.includes(endpointPath) ? endpointPath : "__manual__"
+
+  const handleLaneChange = (nextLane: string) => {
+    setLaneType(nextLane)
+    setEndpointPath(defaultEndpointForLane(nextLane))
+  }
+
   const getFormSnapshot = (nextProviderId = providerId): ModelFormSnapshot => ({
     provider_id: nextProviderId,
     lane_type: laneType,
@@ -219,11 +238,13 @@ export default function SuperadminAIModelsPage() {
 
   const resetForm = () => {
     const nextProviderId = providers.find((provider) => !provider.is_read_only)?.id || ""
+    const nextLane = "llm"
+    const nextEndpointPath = defaultEndpointForLane(nextLane)
     setEditingModelId(null)
-    setLaneType("llm")
+    setLaneType(nextLane)
     setDisplayName("")
     setUpstreamModelName("")
-    setEndpointPath("")
+    setEndpointPath(nextEndpointPath)
     setActualInput("")
     setActualOutput("")
     setAdjustedInput("")
@@ -234,10 +255,10 @@ export default function SuperadminAIModelsPage() {
     setProviderId(nextProviderId)
     setFormInitial({
       provider_id: nextProviderId,
-      lane_type: "llm",
+      lane_type: nextLane,
       display_name: "",
       upstream_model_name: "",
-      endpoint_path: "",
+      endpoint_path: nextEndpointPath,
       actual_input: "",
       actual_output: "",
       adjusted_input: "",
@@ -509,7 +530,7 @@ export default function SuperadminAIModelsPage() {
             </div>
             <div className="space-y-2">
               <Label>Lane</Label>
-              <Select value={laneType} onValueChange={setLaneType}>
+              <Select value={laneType} onValueChange={handleLaneChange}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {laneOptions.map((lane) => <SelectItem key={lane} value={lane}>{lane.toUpperCase()}</SelectItem>)}
@@ -518,7 +539,25 @@ export default function SuperadminAIModelsPage() {
             </div>
             <div className="space-y-2"><Label>Display Name</Label><Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Claude Sonnet 4.7" /></div>
             <div className="space-y-2"><Label>Upstream Model Name</Label><Input value={upstreamModelName} onChange={(e) => setUpstreamModelName(e.target.value)} placeholder="anthropic/claude-sonnet-4.7" /></div>
-            <div className="space-y-2"><Label>Endpoint Path</Label><Input value={endpointPath} onChange={(e) => setEndpointPath(e.target.value)} placeholder="/chat/completions" /></div>
+            <div className="space-y-2">
+              <Label>Endpoint Path</Label>
+              <div className="grid gap-2 md:grid-cols-[220px_1fr]">
+                <Select
+                  value={endpointSelectValue}
+                  onValueChange={(value) => {
+                    if (value !== "__manual__") setEndpointPath(value)
+                  }}
+                >
+                  <SelectTrigger><SelectValue placeholder="Pilih endpoint" /></SelectTrigger>
+                  <SelectContent>
+                    {endpointOptions.map((path) => <SelectItem key={path} value={path}>{path}</SelectItem>)}
+                    <SelectItem value="__manual__">Manual / custom</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input value={endpointPath} onChange={(e) => setEndpointPath(e.target.value)} placeholder={defaultEndpointForLane(laneType) || "/chat/completions"} />
+              </div>
+              <p className="text-xs text-muted-foreground">Otomatis mengikuti lane, tapi tetap bisa dipilih dari dropdown atau diketik manual.</p>
+            </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2"><Label>Priority</Label><Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} /></div>
               <div className="space-y-2">

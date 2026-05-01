@@ -152,6 +152,7 @@ export default function KnowledgePage() {
   const [documentsSearch, setDocumentsSearch] = useState('')
   const [documentsStatus, setDocumentsStatus] = useState<string>('all')
   const [documentsCategory, setDocumentsCategory] = useState<string>('all')
+  const [documentsPagination, setDocumentsPagination] = useState({ total: 0, limit: 20, offset: 0 })
   
   // Documents dialogs
   const [isUploadOpen, setIsUploadOpen] = useState(false)
@@ -218,12 +219,22 @@ export default function KnowledgePage() {
   const fetchDocuments = async () => {
     setDocumentsLoading(true)
     try {
-      const params: Record<string, string> = { limit: '100' }
+      const params: Record<string, string> = {
+        limit: String(documentsPagination.limit),
+        offset: String(documentsPagination.offset),
+      }
+      if (documentsSearch.trim()) params.search = documentsSearch.trim()
       if (documentsStatus && documentsStatus !== 'all') params.status = documentsStatus
       if (documentsCategory && documentsCategory !== 'all') params.category_id = documentsCategory
 
       const data = await documentsApi.getAll(params)
       setDocuments(data.data)
+      setDocumentsPagination((current) => ({
+        ...current,
+        total: data.total ?? 0,
+        limit: data.limit ?? current.limit,
+        offset: data.offset ?? current.offset,
+      }))
     } catch (error) {
       toast({ title: "Error", description: "Gagal mengambil dokumen", variant: "destructive" })
     } finally {
@@ -270,8 +281,14 @@ export default function KnowledgePage() {
   }, [knowledgeCategory])
 
   useEffect(() => {
-    if (activeTab === 'documents') fetchDocuments()
-  }, [documentsStatus, documentsCategory])
+    setDocumentsPagination((current) => current.offset === 0 ? current : { ...current, offset: 0 })
+  }, [documentsSearch, documentsStatus, documentsCategory])
+
+  useEffect(() => {
+    if (activeTab !== 'documents') return
+    const timer = setTimeout(fetchDocuments, 300)
+    return () => clearTimeout(timer)
+  }, [activeTab, documentsSearch, documentsStatus, documentsCategory, documentsPagination.limit, documentsPagination.offset])
 
   // Auto-refresh for processing documents
   useEffect(() => {
@@ -549,16 +566,11 @@ export default function KnowledgePage() {
     return <FileText className="h-4 w-4 text-gray-500" />
   }
 
-  // Filter documents by search
-  const filteredDocuments = documents.filter(doc => {
-    if (!documentsSearch) return true
-    const search = documentsSearch.toLowerCase()
-    return (
-      doc.title?.toLowerCase().includes(search) ||
-      doc.original_name.toLowerCase().includes(search) ||
-      doc.description?.toLowerCase().includes(search)
-    )
-  })
+  const filteredDocuments = documents
+  const documentsStart = documentsPagination.offset + (filteredDocuments.length > 0 ? 1 : 0)
+  const documentsEnd = documentsPagination.offset + filteredDocuments.length
+  const hasPreviousDocuments = documentsPagination.offset > 0
+  const hasNextDocuments = documentsPagination.offset + documentsPagination.limit < documentsPagination.total
 
   // Stats
   const knowledgeWithEmbedding = knowledge.filter(k => (k.embedding_status || (k.last_embedded_at ? 'completed' : 'pending')) === 'completed').length
@@ -845,7 +857,7 @@ export default function KnowledgePage() {
           {/* Documents Table */}
           <Card>
             <CardHeader>
-              <CardTitle>Dokumen ({filteredDocuments.length})</CardTitle>
+              <CardTitle>Dokumen ({documentsPagination.total})</CardTitle>
             </CardHeader>
             <CardContent>
               {documentsLoading ? (
@@ -925,6 +937,37 @@ export default function KnowledgePage() {
                     })}
                   </TableBody>
                 </Table>
+              )}
+              {!documentsLoading && (
+                <div className="mt-4 flex flex-col gap-3 border-t pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    Menampilkan {documentsStart}-{documentsEnd} dari {documentsPagination.total} dokumen
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!hasPreviousDocuments}
+                      onClick={() => setDocumentsPagination((current) => ({
+                        ...current,
+                        offset: Math.max(current.offset - current.limit, 0),
+                      }))}
+                    >
+                      Sebelumnya
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!hasNextDocuments}
+                      onClick={() => setDocumentsPagination((current) => ({
+                        ...current,
+                        offset: current.offset + current.limit,
+                      }))}
+                    >
+                      Berikutnya
+                    </Button>
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>

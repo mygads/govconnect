@@ -124,6 +124,7 @@ export default function RateLimitPage() {
   const [spamGuard, setSpamGuard] = useState<SpamGuardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [spamGuardWarning, setSpamGuardWarning] = useState<string | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [newBlacklist, setNewBlacklist] = useState({ wa_user_id: '', reason: '', expiresInDays: '' })
   const [submitting, setSubmitting] = useState(false)
@@ -133,7 +134,11 @@ export default function RateLimitPage() {
     try {
       setLoading(true)
       setError(null)
-      
+      setSpamGuardWarning(null)
+      setData(null)
+      setBlacklist(null)
+      setSpamGuard(null)
+
       const token = localStorage.getItem('token')
       const headers = { 'Authorization': `Bearer ${token}` }
 
@@ -143,9 +148,25 @@ export default function RateLimitPage() {
         fetch('/api/spam-guard', { headers }),
       ])
 
-      if (rateLimitRes.ok) setData(await rateLimitRes.json())
-      if (blacklistRes.ok) setBlacklist(await blacklistRes.json())
-      if (spamGuardRes.ok) setSpamGuard(await spamGuardRes.json())
+      const rateLimitPayload = await rateLimitRes.json().catch(() => null)
+      const blacklistPayload = await blacklistRes.json().catch(() => null)
+      const spamGuardPayload = await spamGuardRes.json().catch(() => null)
+
+      if (!rateLimitRes.ok) {
+        throw new Error(rateLimitPayload?.error || `Gagal memuat konfigurasi rate limit (${rateLimitRes.status})`)
+      }
+      if (!blacklistRes.ok) {
+        throw new Error(blacklistPayload?.error || `Gagal memuat blacklist (${blacklistRes.status})`)
+      }
+
+      setData(rateLimitPayload)
+      setBlacklist(blacklistPayload)
+
+      if (spamGuardRes.ok) {
+        setSpamGuard(spamGuardPayload)
+      } else {
+        setSpamGuardWarning(spamGuardPayload?.error || `Spam Guard tidak dapat dimuat (${spamGuardRes.status})`)
+      }
     } catch (err: any) {
       setError(err.message || 'Gagal memuat data')
     } finally {
@@ -356,8 +377,34 @@ export default function RateLimitPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {error && (
+        <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
+          <CardContent className="flex items-start gap-3 pt-6 text-red-700 dark:text-red-300">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-medium">Data rate limit tidak dapat dimuat.</p>
+              <p className="text-sm">{error}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {spamGuardWarning && (
+        <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
+          <CardContent className="flex items-start gap-3 pt-6 text-amber-800 dark:text-amber-200">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-medium">Spam Guard tidak lengkap.</p>
+              <p className="text-sm">{spamGuardWarning}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {data && (
+      <>
       {/* Config Card */}
-      <Card className={data?.config.enabled ? 'border-green-200 dark:border-green-900' : 'border-yellow-200 dark:border-yellow-900'}>
+      <Card className={data.config.enabled ? 'border-green-200 dark:border-green-900' : 'border-yellow-200 dark:border-yellow-900'}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Settings className="h-5 w-5" />
@@ -371,15 +418,15 @@ export default function RateLimitPage() {
           <div className="grid gap-4 md:grid-cols-4">
             <div className="p-4 bg-muted rounded-lg">
               <div className="flex items-center gap-2 mb-2">
-                {data?.config.enabled ? (
+                {data.config.enabled ? (
                   <Shield className="h-4 w-4 text-green-500" />
                 ) : (
                   <ShieldOff className="h-4 w-4 text-yellow-500" />
                 )}
                 <span className="text-sm font-medium">Status</span>
               </div>
-              <Badge variant={data?.config.enabled ? "default" : "secondary"}>
-                {data?.config.enabled ? 'AKTIF' : 'NONAKTIF'}
+              <Badge variant={data.config.enabled ? "default" : "secondary"}>
+                {data.config.enabled ? 'AKTIF' : 'NONAKTIF'}
               </Badge>
             </div>
             
@@ -388,7 +435,7 @@ export default function RateLimitPage() {
                 <AlertTriangle className="h-4 w-4 text-orange-500" />
                 <span className="text-sm font-medium">Max Laporan/Hari</span>
               </div>
-              <p className="text-2xl font-bold">{data?.config.maxReportsPerDay || 5}</p>
+              <p className="text-2xl font-bold">{data.config.maxReportsPerDay}</p>
             </div>
             
             <div className="p-4 bg-muted rounded-lg">
@@ -396,7 +443,7 @@ export default function RateLimitPage() {
                 <Clock className="h-4 w-4 text-blue-500" />
                 <span className="text-sm font-medium">Cooldown</span>
               </div>
-              <p className="text-2xl font-bold">{data?.config.cooldownSeconds || 30}s</p>
+              <p className="text-2xl font-bold">{data.config.cooldownSeconds}s</p>
             </div>
             
             <div className="p-4 bg-muted rounded-lg">
@@ -404,7 +451,7 @@ export default function RateLimitPage() {
                 <Ban className="h-4 w-4 text-red-500" />
                 <span className="text-sm font-medium">Auto Blacklist</span>
               </div>
-              <p className="text-2xl font-bold">{data?.config.autoBlacklistViolations || 10} pelanggaran</p>
+              <p className="text-2xl font-bold">{data.config.autoBlacklistViolations} pelanggaran</p>
             </div>
           </div>
         </CardContent>
@@ -417,7 +464,7 @@ export default function RateLimitPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Diblokir</p>
-                <p className="text-2xl font-bold">{data?.stats.totalBlocked || 0}</p>
+                <p className="text-2xl font-bold">{data.stats.totalBlocked}</p>
               </div>
               <AlertTriangle className="h-8 w-8 text-yellow-500 opacity-80" />
             </div>
@@ -429,7 +476,7 @@ export default function RateLimitPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Nomor Blacklist</p>
-                <p className="text-2xl font-bold">{data?.stats.totalBlacklisted || 0}</p>
+                <p className="text-2xl font-bold">{data.stats.totalBlacklisted}</p>
               </div>
               <UserX className="h-8 w-8 text-red-500 opacity-80" />
             </div>
@@ -441,7 +488,7 @@ export default function RateLimitPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Pengguna Aktif Hari Ini</p>
-                <p className="text-2xl font-bold">{data?.stats.activeUsers || 0}</p>
+                <p className="text-2xl font-bold">{data.stats.activeUsers}</p>
               </div>
               <Shield className="h-8 w-8 text-green-500 opacity-80" />
             </div>
@@ -450,7 +497,7 @@ export default function RateLimitPage() {
       </div>
 
       {/* Top Violators */}
-      {data?.stats.topViolators && data.stats.topViolators.length > 0 && (
+      {data.stats.topViolators && data.stats.topViolators.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -503,7 +550,8 @@ export default function RateLimitPage() {
       )}
 
       {/* Spam Guard Section */}
-      <Card className={spamGuard?.stats.enabled ? 'border-orange-200 dark:border-orange-900' : 'border-gray-200 dark:border-gray-800'}>
+      {spamGuard && (
+      <Card className={spamGuard.stats.enabled ? 'border-orange-200 dark:border-orange-900' : 'border-gray-200 dark:border-gray-800'}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <MessageSquareWarning className="h-5 w-5 text-orange-500" />
@@ -640,8 +688,10 @@ export default function RateLimitPage() {
           })()}
         </CardContent>
       </Card>
+      )}
 
       {/* Blacklist Management */}
+      {blacklist && (
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
@@ -761,6 +811,9 @@ export default function RateLimitPage() {
           )}
         </CardContent>
       </Card>
+      )}
+      </>
+      )}
     </div>
   )
 }

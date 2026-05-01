@@ -15,6 +15,8 @@ import { publishLivechatEvent } from '../services/livechat-events.service';
 import { addMessageToBatch, cancelBatch } from '../services/message-batcher.service';
 import { checkSpamGuard } from '../services/spam-guard.service';
 import { getStoredSession, resolveVillageIdFromInstanceName, updateStoredSessionStatus } from '../services/wa.service';
+import { logWaActivity } from '../services/wa-activity-log.service';
+import { enrichConversationProfile } from '../services/wa-profile.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
 import { getQuery } from '../utils/http';
@@ -45,6 +47,36 @@ function resolvePresenceIdentifier(payload: GenfityWebhookPayload): string | nul
   const event: any = payload.event || {};
   const info: any = event.Info || {};
   return cleanJidPhone(info.Chat || info.SenderAlt || info.Sender || event.Chat || event.From || (payload as any).phone);
+}
+
+function resolveWebhookContactIdentifier(payload: GenfityWebhookPayload): string | null {
+  const event: any = payload.event || {};
+  const info: any = event.Info || {};
+  return cleanJidPhone(
+    info.Chat ||
+    info.SenderAlt ||
+    info.Sender ||
+    event.Chat ||
+    event.JID ||
+    event.Jid ||
+    event.Phone ||
+    event.phone ||
+    (payload as any).phone,
+  );
+}
+
+function resolveWebhookPushName(payload: GenfityWebhookPayload): string | null {
+  const event: any = payload.event || {};
+  const info: any = event.Info || {};
+  const value = info.PushName || event.PushName || event.pushName || event.Name || event.name || (payload as any).pushName;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function resolveWebhookError(payload: GenfityWebhookPayload): string | null {
+  const event: any = payload.event || {};
+  const error = event.Error || event.error || event.Reason || event.reason || (payload as any).error || (payload as any).reason;
+  if (!error) return null;
+  return typeof error === 'string' ? error : JSON.stringify(error).slice(0, 500);
 }
 
 function pickObject(value: any, ...keys: string[]): any {
@@ -141,11 +173,25 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
     const read = type === 'ReadReceipt' || rawState.includes('read');
     const delivered = rawState.includes('deliver') || type === 'Receipt';
     const status: 'sent' | 'delivered' | 'read' | 'failed' = failed ? 'failed' : read ? 'read' : delivered ? 'delivered' : 'sent';
+    const error = failed ? JSON.stringify((payload.event as any)?.Error || (payload as any).error || 'Delivery failed').slice(0, 500) : undefined;
 
     await updateMessageDeliveryStatus(messageId, status, {
       at: eventTimestamp(payload),
-      error: failed ? JSON.stringify((payload.event as any)?.Error || (payload as any).error || 'Delivery failed').slice(0, 500) : undefined,
+      error,
     });
+
+    if (villageId) {
+      await logWaActivity({
+        villageId,
+        type: 'message_delivery',
+        severity: failed ? 'warning' : 'info',
+        status,
+        message: failed ? 'Pengiriman pesan WhatsApp gagal.' : 'Status pengiriman pesan WhatsApp diperbarui.',
+        providerEvent: type,
+        providerMessageId: messageId,
+        metadata: { rawState, error },
+      });
+    }
     return true;
   }
 
@@ -164,8 +210,18 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
     return true;
   }
 
-  if (['Connected', 'Disconnected', 'LoggedOut', 'QR'].includes(type)) {
-    const status = type === 'Connected' ? 'connected' : type === 'QR' ? 'qr' : type === 'LoggedOut' ? 'logged_out' : 'disconnected';
+  if (['Connected', 'Disconnected', 'LoggedOut', 'QR', 'ConnectFailure', 'PairSuccess', 'StreamReplaced'].includes(type)) {
+    const status = type === 'Connected' || type === 'PairSuccess'
+      ? 'connected'
+      : type === 'QR'
+        ? 'qr'
+        : type === 'LoggedOut'
+          ? 'logged_out'
+          : type === 'ConnectFailure'
+            ? 'error'
+            : type === 'StreamReplaced'
+              ? 'replaced'
+              : 'disconnected';
     let previousStatus: string | null | undefined;
 
     if (villageId) {
@@ -185,6 +241,23 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
           logger.warn('Failed to update WA session status from webhook', { villageId, status, error: error.message });
         });
       }
+
+      await logWaActivity({
+        villageId,
+        type: 'session_lifecycle',
+        severity: type === 'ConnectFailure' || type === 'StreamReplaced' ? 'warning' : 'info',
+        status,
+        message: type === 'ConnectFailure'
+          ? 'Provider melaporkan koneksi WhatsApp gagal.'
+          : type === 'StreamReplaced'
+            ? 'Stream WhatsApp digantikan oleh koneksi lain.'
+            : `Provider mengirim event session WhatsApp: ${type}.`,
+        providerEvent: type,
+        metadata: {
+          previousStatus,
+          error: resolveWebhookError(payload),
+        },
+      });
     }
 
     if (previousStatus === status) {
@@ -197,6 +270,72 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
       wa_session_status: status,
       wa_session_event: type,
     });
+    return true;
+  }
+
+  if (['AppStateSyncComplete', 'HistorySync'].includes(type)) {
+    if (villageId) {
+      await logWaActivity({
+        villageId,
+        type: 'session_sync',
+        severity: 'info',
+        status: 'synced',
+        message: type === 'HistorySync' ? 'Sinkronisasi riwayat WhatsApp selesai/berjalan.' : 'Sinkronisasi app state WhatsApp selesai.',
+        providerEvent: type,
+        metadata: { event: payload.event || null },
+      });
+    }
+    return true;
+  }
+
+  if (['CallOffer', 'CallAccept', 'CallTerminate', 'CallOfferNotice'].includes(type)) {
+    const channelIdentifier = resolveWebhookContactIdentifier(payload);
+    if (villageId) {
+      await logWaActivity({
+        villageId,
+        waUserId: channelIdentifier,
+        channelIdentifier,
+        type: 'call_activity',
+        severity: 'info',
+        status: type,
+        message: `Aktivitas panggilan WhatsApp diterima: ${type}.`,
+        providerEvent: type,
+        metadata: { event: payload.event || null },
+      });
+    }
+    return true;
+  }
+
+  if (type === 'PushNameSetting') {
+    const channelIdentifier = resolveWebhookContactIdentifier(payload);
+    const pushName = resolveWebhookPushName(payload);
+
+    if (villageId && channelIdentifier && pushName) {
+      await prisma.conversation.updateMany({
+        where: {
+          village_id: villageId,
+          channel: 'WHATSAPP',
+          channel_identifier: channelIdentifier,
+        },
+        data: {
+          user_name: pushName,
+          profile_name: pushName,
+          profile_synced_at: new Date(),
+        },
+      });
+
+      await logWaActivity({
+        villageId,
+        waUserId: channelIdentifier,
+        channelIdentifier,
+        type: 'profile_sync',
+        severity: 'info',
+        status: 'push_name_updated',
+        message: 'Nama profil WhatsApp diperbarui dari event provider.',
+        providerEvent: type,
+        metadata: { pushName },
+      });
+    }
     return true;
   }
 
@@ -438,8 +577,37 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     const pushName = payload.event?.Info?.PushName?.trim() || undefined;
     await updateConversation(waUserId, message, pushName, true, villageId, 'WHATSAPP');
 
+    if (villageId) {
+      void enrichConversationProfile(villageId, waUserId, pushName).catch((error: any) => {
+        logger.warn('Failed to enrich WA profile after inbound message', {
+          village_id: villageId,
+          wa_user_id: waUserId,
+          error: error.message,
+        });
+      });
+    }
+
     // Wait for media processing to complete
     await mediaPromise;
+
+    if (villageId) {
+      await logWaActivity({
+        villageId,
+        waUserId,
+        channelIdentifier: waUserId,
+        type: 'message_received',
+        severity: 'info',
+        status: 'received',
+        message: 'Pesan WhatsApp masuk diterima.',
+        providerEvent: payload.type,
+        providerMessageId: messageId,
+        metadata: {
+          hasMedia: mediaInfo.hasMedia,
+          messageKind: waMetadata.message_kind,
+          pushName: pushName || null,
+        },
+      });
+    }
 
     if (mediaInfo.hasMedia) {
       await updateMessageMedia(messageId, {

@@ -23,6 +23,10 @@ export interface ProcessMessageInput {
   mediaUrl?: string;
   /** Optional media type */
   mediaType?: string;
+  /** Stable source message identifier for one-turn AI billing. */
+  messageId?: string;
+  /** Source message IDs combined into this reply, when batching is enabled. */
+  batchedMessageIds?: string[];
   /** When true, skip side effects (profile writes, analytics, rate limits, cache writes).
    *  Used by golden-set evaluation to avoid polluting production data. */
   isEvaluation?: boolean;

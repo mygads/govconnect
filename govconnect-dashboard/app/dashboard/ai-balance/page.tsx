@@ -46,7 +46,8 @@ interface LedgerEntry {
 
 function formatUsd(value?: number | null, options?: { preciseSmall?: boolean }) {
   const amount = value ?? 0
-  if (options?.preciseSmall && amount !== 0 && Math.abs(amount) < 0.01) {
+  const roundedCents = Number(amount.toFixed(2))
+  if (options?.preciseSmall && amount !== 0 && Math.abs(amount - roundedCents) >= 0.000001) {
     return `$${amount.toFixed(6)}`
   }
   return `$${amount.toFixed(2)}`
@@ -213,7 +214,7 @@ export default function AIBalancePage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold">{formatUsd(wallet?.balance_usd)}</p>
+            <p className="text-3xl font-bold">{formatUsd(wallet?.balance_usd, { preciseSmall: true })}</p>
             <p className="mt-2 text-xs text-muted-foreground">Status: {statusLabel}</p>
           </CardContent>
         </Card>
@@ -222,7 +223,7 @@ export default function AIBalancePage() {
             <CardTitle className="text-sm text-muted-foreground">Pemakaian AI Hari Ini</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold">{formatUsd(summary?.todayUsageUsd)}</p>
+            <p className="text-3xl font-bold">{formatUsd(summary?.todayUsageUsd, { preciseSmall: true })}</p>
             <p className="mt-2 text-xs text-muted-foreground">Biaya AI yang sudah terdebit hari ini dalam USD.</p>
           </CardContent>
         </Card>
@@ -231,7 +232,7 @@ export default function AIBalancePage() {
             <CardTitle className="text-sm text-muted-foreground">Rata-rata 7 Hari</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold">{formatUsd(summary?.avgDailyUsageUsd)}</p>
+            <p className="text-3xl font-bold">{formatUsd(summary?.avgDailyUsageUsd, { preciseSmall: true })}</p>
             <p className="mt-2 text-xs text-muted-foreground">Estimasi pemakaian USD harian berdasarkan 7 hari terakhir.</p>
           </CardContent>
         </Card>
@@ -265,13 +266,14 @@ export default function AIBalancePage() {
                     <TableHead>Tanggal</TableHead>
                     <TableHead>Tipe</TableHead>
                     <TableHead>Nominal</TableHead>
+                    <TableHead>Saldo Sebelum</TableHead>
                     <TableHead>Saldo Akhir</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {ledger.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground">
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
                         Belum ada riwayat saldo.
                       </TableCell>
                     </TableRow>
@@ -283,7 +285,8 @@ export default function AIBalancePage() {
                         <TableCell className={entry.amount_usd < 0 ? "text-red-600" : "text-emerald-600"}>
                           {formatUsd(entry.amount_usd, { preciseSmall: true })}
                         </TableCell>
-                        <TableCell>{formatUsd(entry.balance_after_usd)}</TableCell>
+                        <TableCell>{formatUsd(entry.balance_before_usd, { preciseSmall: true })}</TableCell>
+                        <TableCell>{formatUsd(entry.balance_after_usd, { preciseSmall: true })}</TableCell>
                       </TableRow>
                     ))
                   )}

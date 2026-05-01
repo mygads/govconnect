@@ -158,13 +158,22 @@ export const caseService = {
   /**
    * Get laporan list
    */
-  async getLaporan(params?: { status?: string; limit?: string; offset?: string; village_id?: string }) {
+  async getLaporan(params?: { status?: string; search?: string; limit?: string; offset?: string; village_id?: string }) {
     const url = new URL(buildUrl(ServicePath.CASE, '/laporan'));
     if (params?.status) url.searchParams.set('status', params.status);
+    if (params?.search) url.searchParams.set('search', params.search);
     if (params?.limit) url.searchParams.set('limit', params.limit);
     if (params?.offset) url.searchParams.set('offset', params.offset);
     if (params?.village_id) url.searchParams.set('village_id', params.village_id);
     
+    return apiFetch(url.toString(), {
+      headers: getHeaders(),
+    });
+  },
+
+  async getRealtimeComplaintSummary(village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, '/laporan/realtime-summary'));
+    if (village_id) url.searchParams.set('village_id', village_id);
     return apiFetch(url.toString(), {
       headers: getHeaders(),
     });
@@ -900,8 +909,12 @@ export const livechat = {
   /**
    * Get conversations
    */
-  async getConversations(status: string = 'all', villageId?: string) {
-    const path = withVillage(`/internal/conversations?status=${status}`, villageId);
+  async getConversations(status: string = 'all', villageId?: string, search?: string, limit?: string, offset?: string) {
+    const params = new URLSearchParams({ status });
+    if (search) params.set('search', search);
+    if (limit) params.set('limit', limit);
+    if (offset) params.set('offset', offset);
+    const path = withVillage(`/internal/conversations?${params.toString()}`, villageId);
     return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       headers: getHeaders(),
     });

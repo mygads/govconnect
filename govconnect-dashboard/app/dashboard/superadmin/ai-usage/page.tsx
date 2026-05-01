@@ -22,6 +22,7 @@ import {
   Trash2,
   ChevronDown,
   Server,
+  AlertTriangle,
 } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -223,18 +224,17 @@ const MODEL_COLORS = [
 
 // ==================== Fetcher ====================
 
-async function fetchData<T>(slug: string, params?: Record<string, string>): Promise<T | null> {
-  try {
-    const qs = params ? "?" + new URLSearchParams(params).toString() : ""
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-    const res = await fetch(`/api/statistics/token-usage/${slug}${qs}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (!res.ok) return null
-    return await res.json()
-  } catch {
-    return null
+async function fetchData<T>(slug: string, params?: Record<string, string>): Promise<T> {
+  const qs = params ? "?" + new URLSearchParams(params).toString() : ""
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
+  const res = await fetch(`/api/statistics/token-usage/${slug}${qs}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  const payload = await res.json().catch(() => null)
+  if (!res.ok) {
+    throw new Error(payload?.error || `Gagal memuat token usage: ${slug} (${res.status})`)
   }
+  return payload as T
 }
 
 const chartOptions = {
@@ -265,6 +265,7 @@ export default function AITokenUsagePage() {
   const [expandedProviderIds, setExpandedProviderIds] = useState<Set<string>>(new Set())
   const [avgPerChat, setAvgPerChat] = useState<AvgPerChat | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
+  const [usageError, setUsageError] = useState<string | null>(null)
 
   // Periode tab data (loaded on demand)
   const [byPeriod, setByPeriod] = useState<PeriodUsage[]>([])
@@ -308,17 +309,27 @@ export default function AITokenUsagePage() {
   // Load summary data on mount
   const loadSummary = useCallback(async () => {
     setSummaryLoading(true)
-    const [s, bm, bp, apc] = await Promise.all([
-      fetchData<TokenSummary>("summary"),
-      fetchData<ModelUsage[]>("by-model"),
-      fetchData<ProviderUsage[]>("by-provider"),
-      fetchData<AvgPerChat>("avg-per-chat"),
-    ])
-    setSummary(s)
-    setByModel(bm || [])
-    setByProvider(bp || [])
-    setAvgPerChat(apc)
-    setSummaryLoading(false)
+    setUsageError(null)
+    try {
+      const [s, bm, bp, apc] = await Promise.all([
+        fetchData<TokenSummary>("summary"),
+        fetchData<ModelUsage[]>("by-model"),
+        fetchData<ProviderUsage[]>("by-provider"),
+        fetchData<AvgPerChat>("avg-per-chat"),
+      ])
+      setSummary(s)
+      setByModel(bm)
+      setByProvider(bp)
+      setAvgPerChat(apc)
+    } catch (error: any) {
+      setSummary(null)
+      setByModel([])
+      setByProvider([])
+      setAvgPerChat(null)
+      setUsageError(error?.message || 'Gagal memuat AI token usage')
+    } finally {
+      setSummaryLoading(false)
+    }
   }, [])
 
   useEffect(() => { loadSummary() }, [loadSummary])
@@ -326,48 +337,76 @@ export default function AITokenUsagePage() {
   // Load periode data on demand
   const loadPeriode = useCallback(async () => {
     setPeriodeLoading(true)
-    const params = { period }
-    const [bp, bpl] = await Promise.all([
-      fetchData<PeriodUsage[]>("by-period", params),
-      fetchData<PeriodLayerUsage[]>("by-period-layer", params),
-    ])
-    setByPeriod(bp || [])
-    setByPeriodLayer(bpl || [])
-    setPeriodeLoading(false)
-    setPeriodeLoaded(true)
+    setUsageError(null)
+    try {
+      const params = { period }
+      const [bp, bpl] = await Promise.all([
+        fetchData<PeriodUsage[]>("by-period", params),
+        fetchData<PeriodLayerUsage[]>("by-period-layer", params),
+      ])
+      setByPeriod(bp)
+      setByPeriodLayer(bpl)
+      setPeriodeLoaded(true)
+    } catch (error: any) {
+      setByPeriod([])
+      setByPeriodLayer([])
+      setUsageError(error?.message || 'Gagal memuat data periode')
+    } finally {
+      setPeriodeLoading(false)
+    }
   }, [period])
 
   // Load village data on demand (4 calls: by-village, responses, ALL model-detail, village names)
   const loadVillage = useCallback(async () => {
     setVillageLoading(true)
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-    const [bv, rbv, md, villagesRes] = await Promise.all([
-      fetchData<VillageUsage[]>("by-village"),
-      fetchData<VillageResponse[]>("responses-by-village"),
-      fetchData<VillageModelDetail[]>("village-model-detail"),
-      fetch("/api/superadmin/villages", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      }).then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] })),
-    ])
-    setByVillage(bv || [])
-    setResponsesByVillage(rbv || [])
-    setAllModelDetail(md || [])
-    // Build village name map — API returns { data: [...] } not plain array
-    const nameMap: Record<string, string> = {}
-    const villageList = Array.isArray(villagesRes) ? villagesRes : (villagesRes?.data || [])
-    villageList.forEach((v: VillageInfo) => { nameMap[v.id] = v.name })
-    setVillageNames(nameMap)
-    setVillageLoading(false)
-    setVillageLoaded(true)
+    setUsageError(null)
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
+      const [bv, rbv, md, villagesRes] = await Promise.all([
+        fetchData<VillageUsage[]>("by-village"),
+        fetchData<VillageResponse[]>("responses-by-village"),
+        fetchData<VillageModelDetail[]>("village-model-detail"),
+        fetch("/api/superadmin/villages", {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }).then(async (r) => {
+          const payload = await r.json().catch(() => null)
+          if (!r.ok) throw new Error(payload?.error || `Gagal memuat daftar desa (${r.status})`)
+          return payload
+        }),
+      ])
+      setByVillage(bv)
+      setResponsesByVillage(rbv)
+      setAllModelDetail(md)
+      const nameMap: Record<string, string> = {}
+      const villageList = Array.isArray(villagesRes) ? villagesRes : (villagesRes?.data || [])
+      villageList.forEach((v: VillageInfo) => { nameMap[v.id] = v.name })
+      setVillageNames(nameMap)
+      setVillageLoaded(true)
+    } catch (error: any) {
+      setByVillage([])
+      setResponsesByVillage([])
+      setAllModelDetail([])
+      setVillageNames({})
+      setUsageError(error?.message || 'Gagal memuat data per desa')
+    } finally {
+      setVillageLoading(false)
+    }
   }, [])
 
   // Load layer data on demand
   const loadLayer = useCallback(async () => {
     setLayerLoading(true)
-    const lb = await fetchData<LayerBreakdown[]>("layer-breakdown")
-    setLayerBreakdown(lb || [])
-    setLayerLoading(false)
-    setLayerLoaded(true)
+    setUsageError(null)
+    try {
+      const lb = await fetchData<LayerBreakdown[]>("layer-breakdown")
+      setLayerBreakdown(lb)
+      setLayerLoaded(true)
+    } catch (error: any) {
+      setLayerBreakdown([])
+      setUsageError(error?.message || 'Gagal memuat layer detail')
+    } finally {
+      setLayerLoading(false)
+    }
   }, [])
 
   // Helper: resolve village name
@@ -492,6 +531,18 @@ export default function AITokenUsagePage() {
           </button>
         </div>
       </div>
+
+      {usageError && (
+        <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
+          <CardContent className="flex items-start gap-3 pt-6 text-red-700 dark:text-red-300">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-medium">Data AI usage tidak dapat dimuat.</p>
+              <p className="text-sm">{usageError}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Reset Confirmation Dialog */}
       {showResetConfirm && (

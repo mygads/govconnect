@@ -58,22 +58,18 @@ export async function GET(
       queryObj[key] = value
     })
 
-    try {
-      const method = ai[methodName] as (params?: Record<string, string>) => Promise<Response>
-      const response = await method(Object.keys(queryObj).length > 0 ? queryObj : undefined)
+    const method = ai[methodName] as (params?: Record<string, string>) => Promise<Response>
+    const response = await method(Object.keys(queryObj).length > 0 ? queryObj : undefined)
+    const data = await response.json().catch(() => null)
 
-      if (response.ok) {
-        const data = await response.json()
-        return NextResponse.json(data)
-      }
-
-      console.error(`Token usage ${slug} error:`, await response.text())
-    } catch (error) {
-      console.log(`AI service not available for token-usage/${slug}:`, error)
+    if (!response.ok) {
+      return NextResponse.json(
+        data || { error: `Failed to fetch token usage: ${slug}`, code: 'UPSTREAM_UNAVAILABLE' },
+        { status: response.status },
+      )
     }
 
-    // Return empty data if AI service not available
-    return NextResponse.json([])
+    return NextResponse.json(data)
   } catch (error) {
     console.error('Error fetching token usage:', error)
     return NextResponse.json(

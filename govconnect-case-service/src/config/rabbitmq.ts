@@ -6,6 +6,10 @@ export const RABBITMQ_CONFIG = {
     SERVICE_REQUESTED: 'govconnect.service.requested',
     STATUS_UPDATED: 'govconnect.status.updated',
     URGENT_ALERT: 'govconnect.urgent.alert',
+    COMPLAINT_ARCHIVED: 'govconnect.complaint.archived',
+    COMPLAINT_RESTORED: 'govconnect.complaint.restored',
+    SERVICE_REQUEST_ARCHIVED: 'govconnect.service_request.archived',
+    SERVICE_REQUEST_RESTORED: 'govconnect.service_request.restored',
   },
 };
 

@@ -12,6 +12,7 @@
 import logger from '../../utils/logger';
 import { config } from '../../config/env';
 import { getRuntimeGatewayAttempts } from '../ai-runtime-config.service';
+import { registerUsageWrite } from '../ai-turn-billing.service';
 import { recordTokenUsage } from '../token-usage.service';
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
 import { resolveLearnedToolPolicy } from './tool-policy.service';
@@ -380,7 +381,7 @@ export async function runAgent(
       });
 
       const gatewayAttempt = response.__agentGatewayAttempt as AgentGatewayAttempt | undefined;
-      recordTokenUsage({
+      const usageWrite = recordTokenUsage({
         model,
         input_tokens: response.usage?.prompt_tokens ?? 0,
         output_tokens: response.usage?.completion_tokens ?? 0,
@@ -396,6 +397,7 @@ export async function runAgent(
         model_config_id: gatewayAttempt?.modelId ?? null,
         lane_type: 'llm',
       });
+      registerUsageWrite(usageWrite);
 
       return {
         replyText: preferredReplyText || finalText,

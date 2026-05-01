@@ -12,6 +12,9 @@ import { checkDuplicateComplaint, checkGlobalDuplicate } from '../services/compl
 import logger from '../utils/logger';
 import { getParam, getQuery, getQueryInt } from '../utils/http';
 import prisma from '../config/database';
+import { invalidateStatsCache } from '../services/query-batcher.service';
+import { publishEvent } from '../services/rabbitmq.service';
+import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 
 function resolveChannelFromRequest(req: Request): 'WHATSAPP' | 'WEBCHAT' {
   const raw = (req.body?.channel || getQuery(req, 'channel') || '').toString().toUpperCase();
@@ -136,6 +139,7 @@ export async function handleGetComplaints(req: Request, res: Response) {
       kategori: getQuery(req, 'kategori'),
       category_id: getQuery(req, 'category_id'),
       type_id: getQuery(req, 'type_id'),
+      search: getQuery(req, 'search') || getQuery(req, 'q'),
       rt_rw: getQuery(req, 'rt_rw'),
       wa_user_id: getQuery(req, 'wa_user_id'),
       channel: (getQuery(req, 'channel') || undefined)?.toString().toUpperCase() as any,
@@ -157,6 +161,56 @@ export async function handleGetComplaints(req: Request, res: Response) {
     });
   } catch (error: any) {
     logger.error('Get complaints error', { error: error.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function handleGetRealtimeComplaintSummary(req: Request, res: Response) {
+  try {
+    const village_id = getQuery(req, 'village_id') || undefined;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const lastHour = new Date(Date.now() - 60 * 60 * 1000);
+
+    const whereBase: any = {
+      deleted_at: null,
+      ...(village_id ? { village_id } : {}),
+    };
+    const urgentWhere = {
+      ...whereBase,
+      is_urgent: true,
+      status: { in: ['OPEN', 'PROCESS'] },
+    };
+
+    const [urgentComplaints, urgentCount, recentComplaints, todayCount, lastHourCount] = await Promise.all([
+      prisma.complaint.findMany({
+        where: urgentWhere,
+        orderBy: { created_at: 'asc' },
+        take: 20,
+        include: { category: true, type: true },
+      }),
+      prisma.complaint.count({ where: urgentWhere }),
+      prisma.complaint.findMany({
+        where: whereBase,
+        orderBy: { created_at: 'desc' },
+        take: 10,
+        include: { category: true, type: true },
+      }),
+      prisma.complaint.count({ where: { ...whereBase, created_at: { gte: today } } }),
+      prisma.complaint.count({ where: { ...whereBase, created_at: { gte: lastHour } } }),
+    ]);
+
+    return res.json({
+      data: {
+        urgentComplaints,
+        urgentCount,
+        recentComplaints,
+        todayCount,
+        lastHourCount,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Get realtime complaint summary error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -394,10 +448,20 @@ export async function handleSoftDeleteComplaint(req: Request, res: Response) {
       return res.status(404).json({ error: 'Complaint not found' });
     }
 
+    const archivedAt = new Date();
     await prisma.complaint.update({
       where: { id: complaint.id },
-      data: { deleted_at: new Date() },
+      data: { deleted_at: archivedAt },
     });
+
+    invalidateStatsCache();
+    publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_ARCHIVED, {
+      type: 'complaint_archived',
+      village_id: complaint.village_id,
+      complaint_id: complaint.complaint_id,
+      id: complaint.id,
+      archived_at: archivedAt.toISOString(),
+    }).catch((error: any) => logger.warn('Failed to publish complaint archive event', { error: error.message, id: complaint.id }));
 
     return res.json({ success: true });
   } catch (error: any) {
@@ -429,6 +493,15 @@ export async function handleRestoreComplaint(req: Request, res: Response) {
       where: { id: complaint.id },
       data: { deleted_at: null },
     });
+
+    invalidateStatsCache();
+    publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_RESTORED, {
+      type: 'complaint_restored',
+      village_id: complaint.village_id,
+      complaint_id: complaint.complaint_id,
+      id: complaint.id,
+      restored_at: new Date().toISOString(),
+    }).catch((error: any) => logger.warn('Failed to publish complaint restore event', { error: error.message, id: complaint.id }));
 
     return res.json({ success: true });
   } catch (error: any) {

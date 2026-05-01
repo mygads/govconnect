@@ -7,6 +7,7 @@ import { generateServiceRequestId } from '../utils/id-generator';
 import { publishEvent } from '../services/rabbitmq.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import { getParam, getQuery } from '../utils/http';
+import { invalidateStatsCache } from '../services/query-batcher.service';
 import {
   isValidCitizenWaNumber,
   normalizeCitizenWaForStorage,
@@ -906,10 +907,20 @@ export async function handleSoftDeleteServiceRequest(req: Request, res: Response
       return res.status(404).json({ error: 'Service request not found' });
     }
 
+    const archivedAt = new Date();
     await prisma.serviceRequest.update({
       where: { id: sr.id },
-      data: { deleted_at: new Date() },
+      data: { deleted_at: archivedAt },
     });
+
+    invalidateStatsCache();
+    publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.SERVICE_REQUEST_ARCHIVED, {
+      type: 'service_request_archived',
+      village_id,
+      service_request_id: sr.id,
+      request_number: sr.request_number,
+      archived_at: archivedAt.toISOString(),
+    }).catch((error: any) => logger.warn('Failed to publish service request archive event', { error: error.message, id: sr.id }));
 
     return res.json({ success: true });
   } catch (error: any) {
@@ -942,6 +953,15 @@ export async function handleRestoreServiceRequest(req: Request, res: Response) {
       where: { id: sr.id },
       data: { deleted_at: null },
     });
+
+    invalidateStatsCache();
+    publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.SERVICE_REQUEST_RESTORED, {
+      type: 'service_request_restored',
+      village_id,
+      service_request_id: sr.id,
+      request_number: sr.request_number,
+      restored_at: new Date().toISOString(),
+    }).catch((error: any) => logger.warn('Failed to publish service request restore event', { error: error.message, id: sr.id }));
 
     return res.json({ success: true });
   } catch (error: any) {

@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status')
     const category = searchParams.get('category')
     const categoryId = searchParams.get('category_id')
+    const search = searchParams.get('search')
     const rawLimit = parseInt(searchParams.get('limit') || '50')
     const rawOffset = parseInt(searchParams.get('offset') || '0')
     // Bounds checking to prevent excessive data retrieval
@@ -57,6 +58,15 @@ export async function GET(request: NextRequest) {
       where.category_id = categoryId
     } else if (category) {
       where.category = category
+    }
+    if (search?.trim()) {
+      const query = search.trim()
+      where.OR = [
+        { title: { contains: query, mode: 'insensitive' } },
+        { original_name: { contains: query, mode: 'insensitive' } },
+        { description: { contains: query, mode: 'insensitive' } },
+        { category: { contains: query, mode: 'insensitive' } },
+      ]
     }
 
     const [documents, total] = await Promise.all([

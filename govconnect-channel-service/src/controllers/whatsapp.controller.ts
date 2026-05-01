@@ -16,12 +16,23 @@ import {
 import logger from '../utils/logger';
 import prisma from '../config/database';
 import { getQuery } from '../utils/http';
+import { auditWhatsAppSession, syncWhatsAppWebhook } from '../services/wa-reconciliation.service';
+import { listWaActivities, WaActivitySeverity } from '../services/wa-activity-log.service';
 
 function resolveVillageId(req: Request): string | null {
   const queryVillageId = getQuery(req, 'village_id') || null;
   const bodyVillageId = typeof req.body?.village_id === 'string' ? req.body.village_id : null;
   const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : null;
   return queryVillageId || bodyVillageId || headerVillageId;
+}
+
+function requireVillageId(req: Request, res: Response): string | null {
+  const villageId = resolveVillageId(req);
+  if (!villageId) {
+    res.status(400).json({ error: 'village_id is required' });
+    return null;
+  }
+  return villageId;
 }
 
 async function syncChannelAccountNumber(villageId: string, waNumber?: string | null) {
@@ -517,6 +528,52 @@ export async function checkDuplicateWaNumber(req: Request, res: Response): Promi
  * POST /internal/whatsapp/force-disconnect
  * Disconnects the WA session from another village so current village can use it
  */
+export async function getWebhookAudit(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const audit = await auditWhatsAppSession(villageId);
+    res.json({ success: true, data: audit });
+  } catch (error: any) {
+    logger.error('Webhook audit error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to audit webhook' });
+  }
+}
+
+export async function syncWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const audit = await syncWhatsAppWebhook(villageId);
+    res.json({ success: true, data: audit });
+  } catch (error: any) {
+    logger.error('Webhook sync error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to sync webhook' });
+  }
+}
+
+export async function getWaActivity(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const type = getQuery(req, 'type') || undefined;
+    const rawSeverity = getQuery(req, 'severity') || undefined;
+    const severity = rawSeverity === 'info' || rawSeverity === 'warning' || rawSeverity === 'error'
+      ? rawSeverity as WaActivitySeverity
+      : undefined;
+    const limit = Number(getQuery(req, 'limit') || 20);
+    const activities = await listWaActivities({ villageId, type, severity, limit });
+
+    res.json({ success: true, data: activities });
+  } catch (error: any) {
+    logger.error('WA activity list error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to load WA activity' });
+  }
+}
+
 export async function forceDisconnectOtherVillage(req: Request, res: Response): Promise<void> {
   try {
     const currentVillageId = resolveVillageId(req);

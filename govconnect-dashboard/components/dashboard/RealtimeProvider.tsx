@@ -1,7 +1,7 @@
 "use client"
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
-import { laporan, statistics } from '@/lib/frontend-api'
+import { dashboard, statistics } from '@/lib/frontend-api'
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
   getNotificationSettings,
@@ -101,37 +101,14 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   // Fetch all data
   const fetchData = useCallback(async () => {
     try {
-      // Fetch statistics
-      const statsData = await statistics.getOverview()
-      
-      // Fetch recent complaints (limit to 100 most recent for performance)
-      const complaintsData = await laporan.getAll({ limit: '100' })
-      const allComplaints: Complaint[] = complaintsData.data || []
-      
-      // Filter urgent complaints - is_urgent is set from database via ComplaintType.is_urgent
-      const activeComplaints = allComplaints.filter(c => !c.deleted_at)
-
-      const urgent = activeComplaints.filter(c => {
-        return c.is_urgent === true && (c.status === 'OPEN' || c.status === 'baru')
-      })
-      
-      // Get recent (last 10)
-      const recent = allComplaints
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 10)
-      
-      // Calculate today's count
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      const todayCount = allComplaints.filter(c => 
-        new Date(c.created_at) >= today
-      ).length
-      
-      // Calculate last hour count
-      const lastHour = new Date(Date.now() - 60 * 60 * 1000)
-      const lastHourCount = allComplaints.filter(c => 
-        new Date(c.created_at) >= lastHour
-      ).length
+      const [statsData, realtimeData] = await Promise.all([
+        statistics.getOverview(),
+        dashboard.getRealtimeSummary(),
+      ])
+      const summary = realtimeData.data
+      const urgent: Complaint[] = summary.urgentComplaints || []
+      const recent: Complaint[] = summary.recentComplaints || []
+      const allComplaints = recent
       
       // Check for new complaints (not on initial load)
       if (!isInitialLoadRef.current) {
@@ -204,11 +181,11 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       setStats({
         complaints: {
           ...statsData.complaints,
-          urgent: urgent.length,
+          urgent: summary.urgentCount || 0,
         },
         services: statsData.services,
-        todayCount,
-        lastHourCount,
+        todayCount: summary.todayCount || 0,
+        lastHourCount: summary.lastHourCount || 0,
       })
       
       setUrgentComplaints(urgent)

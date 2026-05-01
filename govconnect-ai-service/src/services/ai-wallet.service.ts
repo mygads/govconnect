@@ -205,9 +205,24 @@ export async function debitVillageWalletForUsage(input: {
   await ensureVillageWallet(input.villageId);
 
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId!} FOR UPDATE`;
+
     const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
       where: { village_id: input.villageId! },
     });
+
+    if (input.referenceType && input.referenceId) {
+      const existingLedgerEntry = await tx.ai_wallet_ledger_entries.findFirst({
+        where: {
+          entry_type: 'usage_debit',
+          reference_type: input.referenceType,
+          reference_id: input.referenceId,
+        },
+      });
+      if (existingLedgerEntry) {
+        return { wallet, ledgerEntry: existingLedgerEntry };
+      }
+    }
 
     const balanceBeforeUsd = wallet.balance_usd;
     const balanceAfterUsd = normalizeAmount(balanceBeforeUsd - input.adjustedCostUsd);
@@ -246,6 +261,25 @@ export async function debitVillageWalletForUsage(input: {
     }
 
     return { wallet: updatedWallet, ledgerEntry };
+  });
+}
+
+export async function debitVillageWalletForMessageBilling(input: {
+  villageId?: string | null;
+  messageBillingId: string;
+  adjustedCostUsd: number;
+  actualCostUsd?: number;
+  marginUsd?: number;
+  metadata?: Prisma.InputJsonValue | null;
+}) {
+  return debitVillageWalletForUsage({
+    villageId: input.villageId,
+    adjustedCostUsd: input.adjustedCostUsd,
+    actualCostUsd: input.actualCostUsd,
+    marginUsd: input.marginUsd,
+    referenceType: 'ai_message_billing',
+    referenceId: input.messageBillingId,
+    metadata: input.metadata,
   });
 }
 

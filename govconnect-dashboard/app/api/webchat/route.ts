@@ -43,15 +43,17 @@ export async function POST(request: NextRequest) {
     });
 
     if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('AI Service error:', errorText);
-      
-      // Fallback response jika AI service tidak tersedia
-      return NextResponse.json({
-        success: true,
-        response: getFallbackResponse(message),
-        isFallback: true,
-      });
+      const errorData = await aiResponse.json().catch(() => null);
+      console.error('AI Service error:', errorData);
+      return NextResponse.json(
+        errorData || {
+          success: false,
+          error: 'AI service unavailable',
+          code: 'UPSTREAM_UNAVAILABLE',
+          fallbackResponse: getFallbackResponse(message),
+        },
+        { status: aiResponse.status },
+      );
     }
 
     const aiData = await aiResponse.json();
@@ -70,13 +72,15 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('Web chat error:', error);
-    
-    // Return fallback response instead of error
-    return NextResponse.json({
-      success: true,
-      response: 'Maaf, sistem sedang dalam pemeliharaan. Silakan hubungi kami via WhatsApp atau coba lagi nanti.',
-      isFallback: true,
-    });
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Webchat service unavailable',
+        code: 'UPSTREAM_UNAVAILABLE',
+        fallbackResponse: 'Maaf, sistem sedang dalam pemeliharaan. Silakan hubungi kami via WhatsApp atau coba lagi nanti.',
+      },
+      { status: 503 },
+    );
   }
 }
 

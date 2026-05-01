@@ -12,6 +12,7 @@ import {
   handleSoftDeleteComplaint,
   handleRestoreComplaint,
   handleGetDeletedComplaints,
+  handleGetRealtimeComplaintSummary,
 } from '../controllers/complaint.controller';
 import { internalAuth } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
@@ -71,6 +72,7 @@ router.post(
 
 router.get('/', internalAuth, handleGetComplaints);
 router.get('/statistics', internalAuth, handleGetComplaintStatistics);
+router.get('/realtime-summary', internalAuth, handleGetRealtimeComplaintSummary);
 router.get('/deleted', internalAuth, handleGetDeletedComplaints);
 router.get('/:id', internalAuth, handleGetComplaintById);
 

@@ -34,26 +34,20 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    const data = await response.json().catch(() => null);
     if (!response.ok) {
-      return NextResponse.json({
-        success: true,
-        data: {
-          isProcessing: false,
-          status: null,
-        },
-      });
+      return NextResponse.json(
+        data || { success: false, error: 'Failed to fetch webchat status', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: response.status },
+      );
     }
 
-    const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
     console.error('Error fetching webchat status:', error);
-    return NextResponse.json({
-      success: true,
-      data: {
-        isProcessing: false,
-        status: null,
-      },
-    });
+    return NextResponse.json(
+      { success: false, error: 'Failed to fetch webchat status', code: 'UPSTREAM_UNAVAILABLE' },
+      { status: 503 },
+    );
   }
 }

@@ -302,7 +302,7 @@ export function RecentComplaintsCard() {
                 key={complaint.id}
                 className={cn(
                   "flex items-start gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors",
-                  complaint.kategori.toLowerCase().includes('bencana') && "bg-red-50 dark:bg-red-950/20"
+                  complaint.is_urgent && "bg-red-50 dark:bg-red-950/20"
                 )}
               >
                 <div className="shrink-0 h-10 w-10 rounded-full bg-muted flex items-center justify-center">

@@ -20,38 +20,24 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden - Superadmin only' }, { status: 403 })
     }
 
-    // Try to forward request to AI service
     try {
       const response = await ai.getModelsStats()
+      const data = await response.json().catch(() => null)
 
-      if (response.ok) {
-        const data = await response.json()
-        return NextResponse.json(data)
+      if (!response.ok) {
+        return NextResponse.json(
+          data || { error: 'AI service unavailable', code: 'UPSTREAM_UNAVAILABLE' },
+          { status: response.status },
+        )
       }
 
-      // If AI service returns error, return the error message
-      const errorData = await response.json().catch(() => ({}))
-      console.log('AI service error:', response.status, errorData)
-      
-      return NextResponse.json({
-        error: 'AI service unavailable',
-        status: response.status,
-        message: errorData.message || 'Failed to fetch AI stats'
-      }, { status: response.status })
+      return NextResponse.json(data)
     } catch (error) {
       console.log('AI service not available:', error)
-      
-      // Return empty stats if AI service not available
-      return NextResponse.json({
-        summary: {
-          totalRequests: 0,
-          lastUpdated: null,
-          totalModels: 0,
-          serviceStatus: 'offline'
-        },
-        models: [],
-        error: 'AI service is currently offline'
-      })
+      return NextResponse.json(
+        { error: 'AI service is currently offline', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: 503 },
+      )
     }
   } catch (error) {
     console.error('Error fetching AI usage stats:', error)

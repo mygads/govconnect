@@ -77,6 +77,7 @@ export default function LaporanListPage() {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [pagination, setPagination] = useState({ total: 0, limit: 20, offset: 0 })
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -89,14 +90,31 @@ export default function LaporanListPage() {
   const { refreshData } = useRealtime()
 
   useEffect(() => {
-    fetchComplaints()
-  }, [])
+    const timer = setTimeout(() => {
+      fetchComplaints()
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [search, statusFilter, pagination.offset])
 
   const fetchComplaints = async () => {
     try {
       setLoading(true)
-      const data = await laporan.getAll({ limit: '100' })
+      const params: { status?: string; search?: string; limit: string; offset: string } = {
+        limit: String(pagination.limit),
+        offset: String(pagination.offset),
+      }
+      if (statusFilter !== "all") params.status = statusFilter
+      if (search.trim()) params.search = search.trim()
+
+      const data = await laporan.getAll(params)
       setComplaints(data.data || [])
+      setPagination(prev => ({
+        ...prev,
+        total: data.pagination?.total ?? 0,
+        limit: data.pagination?.limit ?? prev.limit,
+        offset: data.pagination?.offset ?? prev.offset,
+      }))
+      setSelectedIds(new Set())
       setError(null)
     } catch (err: any) {
       setError(err.message || "Gagal memuat pengaduan")
@@ -105,20 +123,7 @@ export default function LaporanListPage() {
     }
   }
 
-  const filteredComplaints = complaints.filter((complaint) => {
-    const searchLower = search.toLowerCase()
-    const matchSearch =
-      search === "" ||
-      complaint.complaint_id.toLowerCase().includes(searchLower) ||
-      complaint.wa_user_id?.includes(search) ||
-      formatComplaintCategory(complaint).toLowerCase().includes(searchLower) ||
-      (complaint.reporter_name || '').toLowerCase().includes(searchLower) ||
-      (complaint.reporter_phone || '').includes(search)
-
-    const matchStatus = statusFilter === "all" || complaint.status === statusFilter
-
-    return matchSearch && matchStatus
-  })
+  const filteredComplaints = complaints
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -360,7 +365,10 @@ export default function LaporanListPage() {
                 <Input
                   placeholder="Cari nomor pengaduan, nama pelapor, No HP, atau kategori..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => {
+                    setSearch(e.target.value)
+                    setPagination(prev => ({ ...prev, offset: 0 }))
+                  }}
                   className="pl-9"
                 />
               </div>
@@ -369,42 +377,60 @@ export default function LaporanListPage() {
               <Button
                 variant={statusFilter === "all" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("all")}
+                onClick={() => {
+                    setPagination(prev => ({ ...prev, offset: 0 }))
+                    setStatusFilter("all")
+                  }}
               >
                 Semua
               </Button>
               <Button
                 variant={statusFilter === "OPEN" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("OPEN")}
+                onClick={() => {
+                    setPagination(prev => ({ ...prev, offset: 0 }))
+                    setStatusFilter("OPEN")
+                  }}
               >
                 Baru
               </Button>
               <Button
                 variant={statusFilter === "PROCESS" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("PROCESS")}
+                onClick={() => {
+                    setPagination(prev => ({ ...prev, offset: 0 }))
+                    setStatusFilter("PROCESS")
+                  }}
               >
                 Proses
               </Button>
               <Button
                 variant={statusFilter === "DONE" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("DONE")}
+                onClick={() => {
+                    setPagination(prev => ({ ...prev, offset: 0 }))
+                    setStatusFilter("DONE")
+                  }}
               >
                 Selesai
               </Button>
               <Button
                 variant={statusFilter === "CANCELED" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("CANCELED")}
+                onClick={() => {
+                    setPagination(prev => ({ ...prev, offset: 0 }))
+                    setStatusFilter("CANCELED")
+                  }}
               >
                 Dibatalkan
               </Button>
               <Button
                 variant={statusFilter === "REJECT" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setStatusFilter("REJECT")}
+                onClick={() => {
+                    setPagination(prev => ({ ...prev, offset: 0 }))
+                    setStatusFilter("REJECT")
+                  }}
               >
                 Ditolak
               </Button>
@@ -531,8 +557,28 @@ export default function LaporanListPage() {
               </Table>
             </div>
           )}
-          <div className="mt-4 text-sm text-muted-foreground">
-            Menampilkan {filteredComplaints.length} dari {complaints.length} pengaduan
+          <div className="mt-4 flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Menampilkan {pagination.offset + (filteredComplaints.length > 0 ? 1 : 0)}-{pagination.offset + filteredComplaints.length} dari {pagination.total} pengaduan
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pagination.offset === 0 || loading}
+                onClick={() => setPagination(prev => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }))}
+              >
+                Sebelumnya
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pagination.offset + pagination.limit >= pagination.total || loading}
+                onClick={() => setPagination(prev => ({ ...prev, offset: prev.offset + prev.limit }))}
+              >
+                Berikutnya
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

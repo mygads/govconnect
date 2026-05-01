@@ -16,11 +16,13 @@ export async function GET(request: NextRequest) {
     // Get query parameters
     const searchParams = request.nextUrl.searchParams
     const status = searchParams.get('status') || undefined
+    const search = searchParams.get('search') || undefined
     const limit = searchParams.get('limit') || '20'
     const offset = searchParams.get('offset') || '0'
 
     const response = await caseService.getLaporan({
       status,
+      search,
       limit,
       offset,
       village_id: villageId || undefined,

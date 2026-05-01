@@ -32,6 +32,7 @@ import {
 import logger from '../utils/logger';
 import { getParam, getQuery } from '../utils/http';
 import type { MessageKind } from '../types/message.types';
+import { logWaActivity } from '../services/wa-activity-log.service';
 
 function resolveVillageId(req: Request): string | undefined {
   const queryVillageId = getQuery(req, 'village_id');
@@ -44,6 +45,44 @@ function resolveChannel(req: Request, identifier?: string): 'WHATSAPP' | 'WEBCHA
   if (queryChannel && queryChannel.toUpperCase() === 'WEBCHAT') return 'WEBCHAT';
   if (identifier && identifier.startsWith('web_')) return 'WEBCHAT';
   return 'WHATSAPP';
+}
+
+type TypingState = 'composing' | 'paused';
+type TypingActor = 'user' | 'admin' | 'ai';
+
+const TYPING_COMPOSING_INTERVAL_MS = 1800;
+const TYPING_PAUSED_DEDUPE_MS = 5000;
+const typingThrottle = new Map<string, { state: TypingState; sentAt: number }>();
+
+function typingThrottleKey(params: {
+  villageId?: string;
+  channel: 'WHATSAPP' | 'WEBCHAT';
+  channelIdentifier: string;
+  actor: TypingActor;
+}) {
+  return `${params.villageId || 'unknown'}:${params.channel}:${params.channelIdentifier}:${params.actor}`;
+}
+
+function shouldSendTyping(key: string, state: TypingState) {
+  const now = Date.now();
+  const previous = typingThrottle.get(key);
+  if (previous) {
+    const elapsed = now - previous.sentAt;
+    if (state === 'composing' && previous.state === 'composing' && elapsed < TYPING_COMPOSING_INTERVAL_MS) {
+      return false;
+    }
+    if (state === 'paused' && previous.state === 'paused' && elapsed < TYPING_PAUSED_DEDUPE_MS) {
+      return false;
+    }
+  }
+
+  typingThrottle.set(key, { state, sentAt: now });
+  if (typingThrottle.size > 1000) {
+    for (const [entryKey, entry] of typingThrottle.entries()) {
+      if (now - entry.sentAt > 60_000) typingThrottle.delete(entryKey);
+    }
+  }
+  return true;
 }
 
 export function handleLivechatEvents(req: Request, res: Response): void {
@@ -349,15 +388,23 @@ export async function handleGetConversations(req: Request, res: Response): Promi
     const statusRaw = getQuery(req, 'status');
     const status = (statusRaw as 'all' | 'takeover' | 'bot') || 'all';
     const limitRaw = getQuery(req, 'limit');
+    const offsetRaw = getQuery(req, 'offset');
     const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
+    const offset = offsetRaw ? parseInt(offsetRaw, 10) : 0;
+    const search = getQuery(req, 'search') || getQuery(req, 'q') || undefined;
     const villageId = resolveVillageId(req);
 
-    const conversations = await getConversations(status, limit, villageId);
+    const result = await getConversations(status, limit, villageId, search, offset);
 
     res.json({
       success: true,
-      data: conversations,
-      count: conversations.length,
+      data: result.data,
+      count: result.total,
+      pagination: {
+        total: result.total,
+        limit: result.limit,
+        offset: result.offset,
+      },
     });
   } catch (error: any) {
     logger.error('Failed to get conversations', { error: error.message });
@@ -572,6 +619,12 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
                   })
                 : await sendTextMessage(wa_user_id, messageText, villageId, quoteContext);
 
+      const sendResult = result as typeof result & {
+        endpoint?: string;
+        gateway?: string;
+        provider_response?: unknown;
+      };
+
       if (result.success) {
         // Generate message ID if not provided by WA
         const messageId = result.message_id || `admin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -676,6 +729,24 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
           interactive_payload: interactive,
         });
 
+        await logWaActivity({
+          villageId: villageId || 'unknown',
+          waUserId: wa_user_id,
+          channelIdentifier: wa_user_id,
+          type: 'message_send',
+          severity: 'error',
+          status: 'failed',
+          message: `Gagal mengirim pesan ${messageKind} admin ke WhatsApp: ${result.error || 'provider mengembalikan non-success'}`,
+          providerMessageId: messageId,
+          metadata: {
+            messageKind,
+            replyToMessageId,
+            endpoint: sendResult.endpoint,
+            gateway: sendResult.gateway,
+            providerResponse: sendResult.provider_response,
+          },
+        });
+
         res.status(502).json({
           success: false,
           error: result.error || 'Failed to send message',
@@ -694,11 +765,18 @@ export async function handleConversationTyping(req: Request, res: Response): Pro
     const wa_user_id = getParam(req, 'wa_user_id');
     const villageId = resolveVillageId(req);
     const channel = resolveChannel(req, wa_user_id || undefined);
-    const state = req.body?.state === 'paused' ? 'paused' : 'composing';
-    const actor = req.body?.actor === 'ai' ? 'ai' : 'admin';
+    const state: TypingState = req.body?.state === 'paused' ? 'paused' : 'composing';
+    const actor: TypingActor = req.body?.actor === 'ai' ? 'ai' : req.body?.actor === 'user' ? 'user' : 'admin';
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });
+      return;
+    }
+
+    const throttleKey = typingThrottleKey({ villageId, channel, channelIdentifier: wa_user_id, actor });
+    const shouldSend = shouldSendTyping(throttleKey, state);
+    if (!shouldSend) {
+      res.json({ success: true, state, provider_sent: false, throttled: true });
       return;
     }
 
@@ -715,7 +793,7 @@ export async function handleConversationTyping(req: Request, res: Response): Pro
       actor,
     });
 
-    res.json({ success: true, state, provider_sent });
+    res.json({ success: true, state, provider_sent, throttled: false });
   } catch (error: any) {
     logger.error('Failed to send typing indicator', { error: error.message });
     res.status(500).json({ error: 'Failed to send typing indicator' });

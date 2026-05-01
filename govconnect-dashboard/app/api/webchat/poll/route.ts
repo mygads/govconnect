@@ -50,34 +50,26 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    const pollData = await pollResponse.json().catch(() => null);
     if (!pollResponse.ok) {
-      // Return default response if poll fails
-      return NextResponse.json({
-        success: true,
-        is_takeover: false,
-        admin_name: null,
-        messages: [],
-      });
+      return NextResponse.json(
+        pollData || { success: false, error: 'Failed to poll webchat state', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: pollResponse.status },
+      );
     }
-
-    const pollData = await pollResponse.json();
 
     return NextResponse.json({
       success: true,
-      is_takeover: pollData.is_takeover || false,
-      admin_name: pollData.admin_name || null,
-      messages: pollData.messages || [],
+      is_takeover: pollData?.is_takeover || false,
+      admin_name: pollData?.admin_name || null,
+      messages: pollData?.messages || [],
     });
 
   } catch (error: any) {
     console.error('Web chat poll error:', error);
-    
-    // Return default response on error
-    return NextResponse.json({
-      success: true,
-      is_takeover: false,
-      admin_name: null,
-      messages: [],
-    });
+    return NextResponse.json(
+      { success: false, error: 'Failed to poll webchat state', code: 'UPSTREAM_UNAVAILABLE' },
+      { status: 503 },
+    );
   }
 }

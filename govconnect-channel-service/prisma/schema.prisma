@@ -97,8 +97,29 @@ model wa_settings {
   typing_indicator   Boolean  @default(true)
   created_at         DateTime @default(now())
   updated_at         DateTime @default(now()) @updatedAt
-  
+
   @@map("wa_settings")
+}
+
+model WaActivityLog {
+  id                  String   @id @default(cuid())
+  village_id          String
+  session_id          String?
+  wa_user_id          String?
+  channel_identifier  String?
+  type                String
+  severity            String   @default("info")
+  status              String?
+  message             String   @db.Text
+  provider_event      String?
+  provider_message_id String?
+  metadata            Json?
+  created_at          DateTime @default(now())
+
+  @@index([village_id, created_at])
+  @@index([village_id, type, created_at])
+  @@index([severity])
+  @@map("wa_activity_logs")
 }
 
 model wa_sessions {
@@ -168,6 +189,11 @@ model Conversation {
   channel_identifier   String
   user_name            String?  // Collected name or WhatsApp push name
   user_phone           String?  // Collected phone number (for webchat)
+  profile_name         String?
+  profile_avatar_url   String?  @db.Text
+  profile_is_whatsapp  Boolean?
+  profile_raw          Json?
+  profile_synced_at    DateTime?
   last_message         String?  @db.Text
   last_message_at      DateTime @default(now())
   unread_count         Int      @default(0)

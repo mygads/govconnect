@@ -22,32 +22,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Forward request to AI service
-    try {
-      const response = await ai.getRateLimit()
+    const response = await ai.getRateLimit()
+    const data = await response.json().catch(() => null)
 
-      if (response.ok) {
-        const data = await response.json()
-        return NextResponse.json(data)
-      }
-    } catch (error) {
-      console.log('AI service not available:', error)
+    if (!response.ok) {
+      return NextResponse.json(
+        data || { error: 'Failed to fetch rate limit config', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: response.status },
+      )
     }
 
-    return NextResponse.json({
-      config: {
-        enabled: false,
-        maxReportsPerDay: 5,
-        cooldownSeconds: 30,
-        autoBlacklistViolations: 10,
-      },
-      stats: {
-        totalBlocked: 0,
-        totalBlacklisted: 0,
-        activeUsers: 0,
-        topViolators: [],
-      },
-    })
+    return NextResponse.json(data)
   } catch (error) {
     console.error('Error fetching rate limit:', error)
     return NextResponse.json(

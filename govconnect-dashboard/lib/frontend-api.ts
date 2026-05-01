@@ -97,11 +97,26 @@ export const auth = {
   },
 };
 
+export const dashboard = {
+  async getRealtimeSummary() {
+    return fetchApi<{
+      data: {
+        urgentComplaints: any[]
+        urgentCount: number
+        recentComplaints: any[]
+        todayCount: number
+        lastHourCount: number
+      }
+    }>('/api/dashboard/realtime-summary')
+  },
+};
+
 // ==================== LAPORAN ====================
 export const laporan = {
-  async getAll(params?: { status?: string; limit?: string; offset?: string }) {
+  async getAll(params?: { status?: string; search?: string; limit?: string; offset?: string }) {
     const searchParams = new URLSearchParams();
     if (params?.status) searchParams.set('status', params.status);
+    if (params?.search) searchParams.set('search', params.search);
     if (params?.limit) searchParams.set('limit', params.limit);
     if (params?.offset) searchParams.set('offset', params.offset);
     

@@ -71,6 +71,8 @@ async function processWebchatMessage(params: {
   message: string;
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   village_id?: string;
+  messageId?: string;
+  batchedMessageIds?: string[];
 }): Promise<ProcessMessageResult> {
   logger.debug('Processing webchat with UNIFIED processor (same as WhatsApp)', {
     userId: params.userId,
@@ -83,6 +85,8 @@ async function processWebchatMessage(params: {
     channel: 'webchat',
     conversationHistory: params.conversationHistory,
     villageId: params.village_id,
+    messageId: params.messageId,
+    batchedMessageIds: params.batchedMessageIds,
   });
 }
 
@@ -246,6 +250,8 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       limit: 30,
     });
     
+    const sourceMessageId = `webmsg:${session_id}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+
     // Save incoming message to Channel Service (for Live Chat dashboard)
     saveWebchatMessage({
       session_id,
@@ -257,7 +263,7 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
     
     // Use message batching - wait for more messages within 3 seconds
     // This combines multiple rapid messages into one AI request
-    const batchResult = await addWebchatMessageToBatch(session_id, message);
+    const batchResult = await addWebchatMessageToBatch(session_id, message, sourceMessageId);
     
     logger.info('📦 Webchat batch result', {
       session_id,
@@ -302,6 +308,8 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
         content: m.content,
       })),
       village_id,
+      messageId: batchResult.primaryMessageId,
+      batchedMessageIds: batchResult.messageIds,
     });
 
     const timeoutPromise = new Promise<never>((_, reject) =>

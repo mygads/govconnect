@@ -29,6 +29,9 @@ import {
   deleteSession,
   checkDuplicateWaNumber,
   forceDisconnectOtherVillage,
+  getWebhookAudit,
+  syncWebhook,
+  getWaActivity,
 } from '../controllers/whatsapp.controller';
 import {
   handleGetChannelAccount,
@@ -82,6 +85,9 @@ router.post('/whatsapp/session', createSession);
 router.delete('/whatsapp/session', deleteSession);
 router.get('/whatsapp/check-duplicate', checkDuplicateWaNumber);
 router.post('/whatsapp/force-disconnect', forceDisconnectOtherVillage);
+router.get('/whatsapp/webhook-audit', getWebhookAudit);
+router.post('/whatsapp/webhook-sync', syncWebhook);
+router.get('/whatsapp/activity', getWaActivity);
 
 // Live Chat & Takeover Routes
 router.post('/takeover/:wa_user_id', handleStartTakeover);

@@ -286,6 +286,8 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       mediaUrl: media_public_url || media_url,
       mediaType: media_type,
       villageId: village_id,
+      messageId: message_id,
+      batchedMessageIds: spamGuardInfo?.contextMessages?.map(ctx => ctx.messageId).filter(Boolean) ?? [],
       onStageChange,
     });
     

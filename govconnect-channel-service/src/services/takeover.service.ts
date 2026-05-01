@@ -34,6 +34,10 @@ export interface ConversationSummary {
   channel_identifier: string;
   user_name: string | null;
   user_phone: string | null;  // Collected phone number (for webchat)
+  profile_name?: string | null;
+  profile_avatar_url?: string | null;
+  profile_is_whatsapp?: boolean | null;
+  profile_synced_at?: Date | null;
   last_message: string | null;
   last_message_at: Date;
   unread_count: number;
@@ -374,12 +378,14 @@ export async function updateConversationUserProfile(
 export async function getConversations(
   filter: 'all' | 'takeover' | 'bot' = 'all',
   limit: number = 50,
-  village_id?: string
-): Promise<ConversationSummary[]> {
+  village_id?: string,
+  search?: string,
+  offset: number = 0
+): Promise<{ data: ConversationSummary[]; total: number; limit: number; offset: number }> {
   const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
-  const where = filter === 'all' 
-    ? {} 
-    : filter === 'takeover' 
+  const where: any = filter === 'all'
+    ? {}
+    : filter === 'takeover'
       ? { is_takeover: true }
       : { is_takeover: false };
 
@@ -387,13 +393,33 @@ export async function getConversations(
     Object.assign(where, { village_id: resolvedVillageId });
   }
 
-  return prisma.conversation.findMany({
-    where,
-    orderBy: {
-      last_message_at: 'desc',
-    },
-    take: limit,
-  });
+  if (search?.trim()) {
+    const query = search.trim();
+    where.OR = [
+      { channel_identifier: { contains: query, mode: 'insensitive' } },
+      { wa_user_id: { contains: query, mode: 'insensitive' } },
+      { user_name: { contains: query, mode: 'insensitive' } },
+      { profile_name: { contains: query, mode: 'insensitive' } },
+      { user_phone: { contains: query, mode: 'insensitive' } },
+      { last_message: { contains: query, mode: 'insensitive' } },
+    ];
+  }
+
+  const safeLimit = Math.min(Math.max(limit || 50, 1), 100);
+  const safeOffset = Math.max(offset || 0, 0);
+  const [data, total] = await Promise.all([
+    prisma.conversation.findMany({
+      where,
+      orderBy: {
+        last_message_at: 'desc',
+      },
+      take: safeLimit,
+      skip: safeOffset,
+    }),
+    prisma.conversation.count({ where }),
+  ]);
+
+  return { data, total, limit: safeLimit, offset: safeOffset };
 }
 
 /**

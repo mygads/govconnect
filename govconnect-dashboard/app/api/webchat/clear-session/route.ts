@@ -31,15 +31,21 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({ userId: sessionId }),
     });
 
+    const data = await response.json().catch(() => null);
     if (!response.ok) {
-      console.error('Failed to clear AI cache:', await response.text());
-      // Non-blocking — still return success for UX
+      console.error('Failed to clear AI cache:', data);
+      return NextResponse.json(
+        data || { success: false, error: 'Failed to clear webchat session', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: response.status },
+      );
     }
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Clear session error:', error);
-    // Non-blocking — return success regardless so UI flow isn't interrupted
-    return NextResponse.json({ success: true });
+    return NextResponse.json(
+      { success: false, error: 'Failed to clear webchat session', code: 'UPSTREAM_UNAVAILABLE' },
+      { status: 503 },
+    );
   }
 }
