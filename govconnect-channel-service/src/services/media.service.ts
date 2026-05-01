@@ -1,8 +1,6 @@
-import axios from 'axios';
 import logger from '../utils/logger';
-import { config } from '../config/env';
 import { GenfityWebhookPayload, GenfityMediaMessage } from '../types/webhook.types';
-import { getAccessTokenForVillage } from './wa.service';
+import { getAccessTokenForVillage, waGatewayRequest } from './wa.service';
 import { uploadBufferToObjectStorage } from './object-storage.service';
 
 export interface MediaInfo {
@@ -291,8 +289,6 @@ export async function downloadWhatsAppMedia(
       return null;
     }
 
-    const url = `${config.WA_API_URL}${endpoint}`;
-    
     const mimeType = getMediaField(mediaMessage, ['Mimetype', 'mimetype', 'mimeType']) || 'application/octet-stream';
 
     // Build request body for media download
@@ -307,25 +303,19 @@ export async function downloadWhatsAppMedia(
     };
 
     logger.debug('Downloading media from WhatsApp', {
-      url,
+      gatewayEndpoint: endpoint,
       mediaType,
       messageId,
     });
 
-    const response = await axios.post(url, requestBody, {
-      headers: {
-        token: accessToken,
-        'Content-Type': 'application/json',
-      },
-      timeout: 60000, // 60 seconds for media download
-    });
+    const responseData = await waGatewayRequest(accessToken, endpoint, 'POST', requestBody);
 
     // Response contains base64 encoded media
-    const base64Data = response.data.data?.Data || response.data.Data || response.data.data?.Media || response.data.Media || response.data;
-    const responseMimeType = response.data.data?.Mimetype || response.data.Mimetype || mimeType;
+    const base64Data = responseData.data?.Data || responseData.Data || responseData.data?.Media || responseData.Media || responseData;
+    const responseMimeType = responseData.data?.Mimetype || responseData.Mimetype || mimeType;
 
     if (!base64Data || typeof base64Data !== 'string') {
-      logger.warn('No media data in download response', { messageId, response: response.data });
+      logger.warn('No media data in download response', { messageId, response: responseData });
       return null;
     }
 

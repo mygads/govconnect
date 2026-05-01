@@ -104,6 +104,15 @@ interface KnowledgeDocument {
   updated_at: string
 }
 
+interface DocumentStats {
+  total: number
+  completed: number
+  processing: number
+  failed: number
+  pending: number
+  totalChunks: number
+}
+
 // ==================== CONSTANTS ====================
 
 const STATUS_CONFIG = {
@@ -153,6 +162,7 @@ export default function KnowledgePage() {
   const [documentsStatus, setDocumentsStatus] = useState<string>('all')
   const [documentsCategory, setDocumentsCategory] = useState<string>('all')
   const [documentsPagination, setDocumentsPagination] = useState({ total: 0, limit: 20, offset: 0 })
+  const [documentStats, setDocumentStats] = useState<DocumentStats | null>(null)
   
   // Documents dialogs
   const [isUploadOpen, setIsUploadOpen] = useState(false)
@@ -216,6 +226,15 @@ export default function KnowledgePage() {
     }
   }
 
+  const fetchDocumentStats = async () => {
+    try {
+      const data = await documentsApi.getStats()
+      setDocumentStats(data.data)
+    } catch (error) {
+      toast({ title: "Error", description: "Gagal mengambil statistik dokumen", variant: "destructive" })
+    }
+  }
+
   const fetchDocuments = async () => {
     setDocumentsLoading(true)
     try {
@@ -235,6 +254,7 @@ export default function KnowledgePage() {
         limit: data.limit ?? current.limit,
         offset: data.offset ?? current.offset,
       }))
+      fetchDocumentStats()
     } catch (error) {
       toast({ title: "Error", description: "Gagal mengambil dokumen", variant: "destructive" })
     } finally {
@@ -274,6 +294,7 @@ export default function KnowledgePage() {
     fetchCategories()
     fetchKnowledge()
     fetchDocuments()
+    fetchDocumentStats()
   }, [])
 
   useEffect(() => {
@@ -292,12 +313,11 @@ export default function KnowledgePage() {
 
   // Auto-refresh for processing documents
   useEffect(() => {
-    const hasProcessing = documents.some(d => d.status === 'processing')
-    if (hasProcessing) {
+    if ((documentStats?.processing || 0) > 0) {
       const interval = setInterval(fetchDocuments, 5000)
       return () => clearInterval(interval)
     }
-  }, [documents])
+  }, [documentStats?.processing])
 
   // ==================== EMBEDDING HANDLERS ====================
   
@@ -574,7 +594,8 @@ export default function KnowledgePage() {
 
   // Stats
   const knowledgeWithEmbedding = knowledge.filter(k => (k.embedding_status || (k.last_embedded_at ? 'completed' : 'pending')) === 'completed').length
-  const totalChunks = documents.reduce((sum, d) => sum + (d.total_chunks || 0), 0)
+  const totalChunks = documentStats?.totalChunks ?? 0
+  const processingDocuments = documentStats?.processing ?? 0
 
   return (
     <div className="space-y-6">
@@ -610,8 +631,8 @@ export default function KnowledgePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Dokumen</p>
-                <p className="text-2xl font-bold">{documents.length}</p>
-                <p className="text-xs text-muted-foreground">{documents.filter(d => d.status === 'completed').length} selesai diproses</p>
+                <p className="text-2xl font-bold">{documentStats?.total ?? documentsPagination.total}</p>
+                <p className="text-xs text-muted-foreground">{documentStats?.completed ?? 0} selesai diproses</p>
               </div>
               <FileText className="h-8 w-8 text-purple-500" />
             </div>
@@ -635,11 +656,11 @@ export default function KnowledgePage() {
               <div>
                 <p className="text-sm text-muted-foreground">Diproses</p>
                 <p className="text-2xl font-bold text-yellow-600">
-                  {documents.filter(d => d.status === 'processing').length}
+                  {processingDocuments}
                 </p>
                 <p className="text-xs text-muted-foreground">Sedang berjalan</p>
               </div>
-              <Loader2 className={`h-8 w-8 text-yellow-500 ${documents.some(d => d.status === 'processing') ? 'animate-spin' : ''}`} />
+              <Loader2 className={`h-8 w-8 text-yellow-500 ${processingDocuments > 0 ? 'animate-spin' : ''}`} />
             </div>
           </CardContent>
         </Card>

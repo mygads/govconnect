@@ -99,6 +99,7 @@ function rerankRetrievedResults(
   topK: number,
   minScore: number,
   retrievalMode: RetrievalMode,
+  context?: { village_id?: string },
 ): Promise<{ results: VectorSearchResult[]; appliedMode: RetrievalMode }> {
   return (async () => {
     if (results.length <= 1) {
@@ -139,6 +140,7 @@ function rerankRetrievedResults(
       timeoutMs: config.rerankerGateway.timeoutMs,
       layerType: 'rag_rerank',
       callType: 'rerank_documents',
+      context,
     });
 
     if (!rerankResult) {
@@ -545,6 +547,29 @@ function setCachedRetrieval(key: string, value: RAGContext): void {
   }
 }
 
+export function clearRetrievalCache(villageId?: string | null): number {
+  if (!villageId) {
+    const cleared = retrievalCache.size;
+    retrievalCache.clear();
+    return cleared;
+  }
+
+  let cleared = 0;
+  for (const key of Array.from(retrievalCache.keys())) {
+    try {
+      const parsed = JSON.parse(key) as { villageId?: string | null };
+      if (parsed.villageId === villageId) {
+        retrievalCache.delete(key);
+        cleared += 1;
+      }
+    } catch {
+      retrievalCache.delete(key);
+      cleared += 1;
+    }
+  }
+  return cleared;
+}
+
 /**
  * Retrieve relevant context for a user query
  * This is the main entry point for RAG retrieval
@@ -568,6 +593,9 @@ export async function retrieveContext(
     categories,
     sourceTypes = ['knowledge', 'document'],
     villageId,
+    waUserId,
+    sessionId,
+    channel,
     retrievalMode: requestedRetrievalMode,
     useQueryExpansion = true,  // Enable query expansion by default
     useHybridSearch = true,    // Enable hybrid search by default
@@ -595,7 +623,12 @@ export async function retrieveContext(
   }
 
   // Step 0: Check query intent - skip RAG for greetings/simple responses
-  const queryIntentResult = await classifyQueryIntent(query);
+  const queryIntentResult = await classifyQueryIntent(query, {
+    village_id: villageId,
+    wa_user_id: waUserId,
+    session_id: sessionId,
+    channel,
+  });
   const queryIntent = queryIntentResult.intent;
   
   if (queryIntent === 'skip') {
@@ -663,6 +696,7 @@ export async function retrieveContext(
         topK,
         adjustedMinScore,
         retrievalMode,
+        { village_id: villageId },
       );
       filteredResults = rerankOutcome.results;
       retrievalDebug = buildHybridRetrievalDebug(hybridResults, filteredResults, rerankOutcome.appliedMode);
@@ -718,6 +752,7 @@ export async function retrieveContext(
         topK,
         adjustedMinScore,
         retrievalMode,
+        { village_id: villageId },
       );
       filteredResults = rerankOutcome.results;
       retrievalDebug = buildVectorRetrievalDebug(searchResults, filteredResults, rerankOutcome.appliedMode);

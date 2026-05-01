@@ -80,10 +80,15 @@ export async function getAdminSession(request: NextRequest): Promise<AdminSessio
     
     const session = await prisma.admin_sessions.findUnique({
       where: { token },
-      include: { admin: true }
+      include: {
+        admin: {
+          include: { village: true },
+        },
+      }
     })
-    
+
     if (!session || session.expires_at < new Date() || !session.admin.is_active) return null
+    if (session.admin.village_id && !session.admin.village?.is_active) return null
 
     return {
       id: session.id,

@@ -40,8 +40,11 @@ interface LedgerEntry {
   balance_after_usd: number
   adjusted_cost_usd?: number
   created_at: string
-  reference_type?: string | null
-  reference_id?: string | null
+  metadata_json?: {
+    reason?: string
+    status_text?: string
+    adjustment_type?: string
+  } | null
 }
 
 function formatUsd(value?: number | null, options?: { preciseSmall?: boolean }) {
@@ -70,6 +73,11 @@ function formatEntryLabel(type: string) {
     seed: "Seed",
   }
   return map[type] || type
+}
+
+function getEntryNote(entry: LedgerEntry) {
+  if (!entry.metadata_json || typeof entry.metadata_json !== "object") return "-"
+  return entry.metadata_json.reason || entry.metadata_json.status_text || "-"
 }
 
 export default function AIBalancePage() {
@@ -265,6 +273,7 @@ export default function AIBalancePage() {
                   <TableRow>
                     <TableHead>Tanggal</TableHead>
                     <TableHead>Tipe</TableHead>
+                    <TableHead>Keterangan</TableHead>
                     <TableHead>Nominal</TableHead>
                     <TableHead>Saldo Sebelum</TableHead>
                     <TableHead>Saldo Akhir</TableHead>
@@ -273,7 +282,7 @@ export default function AIBalancePage() {
                 <TableBody>
                   {ledger.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center text-muted-foreground">
                         Belum ada riwayat saldo.
                       </TableCell>
                     </TableRow>
@@ -282,6 +291,7 @@ export default function AIBalancePage() {
                       <TableRow key={entry.id}>
                         <TableCell>{new Date(entry.created_at).toLocaleString("id-ID")}</TableCell>
                         <TableCell>{formatEntryLabel(entry.entry_type)}</TableCell>
+                        <TableCell className="max-w-60 truncate text-muted-foreground">{getEntryNote(entry)}</TableCell>
                         <TableCell className={entry.amount_usd < 0 ? "text-red-600" : "text-emerald-600"}>
                           {formatUsd(entry.amount_usd, { preciseSmall: true })}
                         </TableCell>

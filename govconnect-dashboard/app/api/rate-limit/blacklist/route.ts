@@ -1,22 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { ai } from '@/lib/api-client'
+import { AuditActions, logAdminAction } from '@/lib/audit'
 
 // GET - Get blacklist
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getAdminSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload || (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
-    const response = await ai.getBlacklist()
+    const villageId = resolveVillageId(request, session)
+    const response = await ai.getBlacklist(villageId)
     const data = await response.json().catch(() => null)
 
     if (!response.ok) {
@@ -35,22 +31,30 @@ export async function GET(request: NextRequest) {
 // POST - Add to blacklist
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getAdminSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload || (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-
     const body = await request.json()
+    const villageId = session.role === 'superadmin' ? body.village_id : session.villageId
+    if (session.role !== 'superadmin' && !villageId) {
+      return NextResponse.json({ error: 'village_id required' }, { status: 400 })
+    }
+    body.village_id = villageId || undefined
 
     try {
       const response = await ai.addToBlacklist(body)
       const data = await response.json()
+      if (response.ok) {
+        await logAdminAction({
+          adminId: session.adminId,
+          action: AuditActions.BLACKLIST_USER,
+          resource: `rate-limit:blacklist:${body.wa_user_id}`,
+          details: { wa_user_id: body.wa_user_id, reason: body.reason },
+          ipAddress: request.headers.get('x-forwarded-for'),
+        })
+      }
       return NextResponse.json(data, { status: response.ok ? 200 : response.status })
     } catch (error) {
       console.log('AI service not available:', error)
@@ -64,27 +68,31 @@ export async function POST(request: NextRequest) {
 // DELETE - Remove from blacklist
 export async function DELETE(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
+    const session = await getAdminSession(request)
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload || (payload.role !== 'superadmin' && payload.role !== 'village_admin' && payload.role !== 'admin')) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const { searchParams } = new URL(request.url)
     const wa_user_id = searchParams.get('wa_user_id')
+    const villageId = session.role === 'superadmin' ? searchParams.get('village_id') : session.villageId
 
     if (!wa_user_id) {
       return NextResponse.json({ error: 'wa_user_id required' }, { status: 400 })
     }
 
     try {
-      const response = await ai.removeFromBlacklist(wa_user_id)
+      const response = await ai.removeFromBlacklist(wa_user_id, villageId)
       const data = await response.json()
+      if (response.ok) {
+        await logAdminAction({
+          adminId: session.adminId,
+          action: AuditActions.UNBAN_USER,
+          resource: `rate-limit:blacklist:${wa_user_id}`,
+          details: { wa_user_id },
+          ipAddress: request.headers.get('x-forwarded-for'),
+        })
+      }
       return NextResponse.json(data, { status: response.ok ? 200 : response.status })
     } catch (error) {
       console.log('AI service not available:', error)

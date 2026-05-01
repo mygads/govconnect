@@ -92,8 +92,8 @@ export async function buildComplaintCategoriesText(villageId?: string): Promise<
 
 // ==================== COMPLAINT CREATION ====================
 
-function getRateLimitBlockedReply(userId: string): string | null {
-  const rateLimitResult = rateLimiterService.checkRateLimit(userId);
+function getRateLimitBlockedReply(userId: string, villageId?: string | null): string | null {
+  const rateLimitResult = rateLimiterService.checkRateLimit(userId, villageId);
   if (rateLimitResult.allowed) return null;
 
   return rateLimitResult.message || 'Mohon maaf, laporan belum bisa diproses karena batas penggunaan sudah tercapai. Silakan coba lagi nanti.';
@@ -257,7 +257,7 @@ export async function handleComplaintCreation(
   }
 
   // ==================== CREATE COMPLAINT ====================
-  const rateLimitBlockedReply = getRateLimitBlockedReply(userId);
+  const rateLimitBlockedReply = getRateLimitBlockedReply(userId, villageId);
   if (rateLimitBlockedReply) return rateLimitBlockedReply;
 
   const combinedFotoUrl = consumePendingPhotos(userId, mediaUrl);
@@ -281,7 +281,7 @@ export async function handleComplaintCreation(
   });
 
   if (complaintId) {
-    rateLimiterService.recordReport(userId);
+    rateLimiterService.recordReport(userId, villageId);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
     saveDefaultAddress(userId, alamat, rt_rw);
     recordComplaintCreated(userId, kategori);
@@ -514,9 +514,7 @@ export async function handlePendingAddressConfirmation(
   }
 
   if (addrDecision === 'yes') {
-    logger.info('User confirmed vague address, creating complaint', { userId, alamat: pendingConfirm.alamat });
-
-    const rateLimitBlockedReply = getRateLimitBlockedReply(userId);
+    const rateLimitBlockedReply = getRateLimitBlockedReply(userId, pendingConfirm.village_id);
     if (rateLimitBlockedReply) return rateLimitBlockedReply;
 
     clearPendingAddressConfirmation(userId);
@@ -548,7 +546,7 @@ export async function handlePendingAddressConfirmation(
       throw new Error('Failed to create complaint after address confirmation');
     }
 
-    rateLimiterService.recordReport(userId);
+    rateLimiterService.recordReport(userId, pendingConfirm.village_id);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
     saveDefaultAddress(userId, pendingConfirm.alamat, '');
     recordComplaintCreated(userId, pendingConfirm.kategori);
@@ -588,7 +586,7 @@ export async function handlePendingAddressConfirmation(
   if (looksLikeAddress) {
     logger.info('User provided more specific address', { userId, newAlamat: message });
 
-    const rateLimitBlockedReply = getRateLimitBlockedReply(userId);
+    const rateLimitBlockedReply = getRateLimitBlockedReply(userId, pendingConfirm.village_id);
     if (rateLimitBlockedReply) return rateLimitBlockedReply;
 
     clearPendingAddressConfirmation(userId);
@@ -620,7 +618,7 @@ export async function handlePendingAddressConfirmation(
       throw new Error('Failed to create complaint with updated address');
     }
 
-    rateLimiterService.recordReport(userId);
+    rateLimiterService.recordReport(userId, pendingConfirm.village_id);
     aiAnalyticsService.recordSuccess('CREATE_COMPLAINT');
     saveDefaultAddress(userId, message.trim(), '');
     recordComplaintCreated(userId, pendingConfirm.kategori);

@@ -7,18 +7,18 @@ import { waSupportClient } from '../clients/wa-support.client';
 import { getWhatsAppSessionS3Config } from './object-storage.service';
 import { logWaActivity } from './wa-activity-log.service';
 
-// In-memory settings cache (since we're using single session)
-// Both default to true — govconnect always reads and shows typing
-let sessionSettings = {
+const defaultSessionSettings = {
   autoReadMessages: true,
   typingIndicator: true,
 };
+
+let sessionSettings = { ...defaultSessionSettings };
+const villageSettingsCache = new Map<string, SessionSettingsData>();
 
 export const REQUIRED_WEBHOOK_EVENTS = [
   'Message',
   'MessageSent',
   'Receipt',
-  'ReadReceipt',
   'Presence',
   'ChatPresence',
   'Connected',
@@ -28,14 +28,22 @@ export const REQUIRED_WEBHOOK_EVENTS = [
   'ConnectFailure',
   'PairSuccess',
   'StreamReplaced',
+  'PushNameSetting',
+];
+
+export const RECOMMENDED_WEBHOOK_EVENTS = [
+  'ReadReceipt',
+  'AppState',
   'AppStateSyncComplete',
   'HistorySync',
   'CallOffer',
   'CallAccept',
   'CallTerminate',
   'CallOfferNotice',
-  'PushNameSetting',
+  'CallRelayLatency',
 ];
+
+export const GOVCONNECT_WEBHOOK_EVENTS = [...REQUIRED_WEBHOOK_EVENTS, ...RECOMMENDED_WEBHOOK_EVENTS];
 
 function isDryRun(): boolean {
   return (process.env.WA_DRY_RUN || '').toLowerCase() === 'true';
@@ -242,7 +250,7 @@ async function bootstrapDirectSessionGateway(params: {
   if (params.webhook) {
     await callSessionGateway(params.token, '/webhook', 'POST', {
       WebhookURL: params.webhook,
-      Events: REQUIRED_WEBHOOK_EVENTS,
+      Events: GOVCONNECT_WEBHOOK_EVENTS,
     });
   }
 
@@ -328,15 +336,16 @@ async function createSessionViaWaSupport(params: {
   webhookSecret?: string;
 }): Promise<{ token: string; sessionId: string }> {
   const sessionName = params.villageSlug || params.villageId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const settings = await getSessionSettings(params.villageId);
 
   const result = await waSupportClient.createCustomerSession(params.apiKey, {
     session_name: sessionName,
     webhook_url: params.webhook || '',
     webhook_secret: params.webhookSecret || undefined,
-    events: REQUIRED_WEBHOOK_EVENTS.join(','),
+    events: GOVCONNECT_WEBHOOK_EVENTS.join(','),
     auto_connect: true,
-    auto_read_enabled: sessionSettings.autoReadMessages,
-    typing_enabled: sessionSettings.typingIndicator,
+    auto_read_enabled: settings.autoReadMessages,
+    typing_enabled: settings.typingIndicator,
     history: 0,
   });
 
@@ -468,7 +477,7 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
         jid: '',
         qrcode: '',
         name: 'dry-run',
-        events: REQUIRED_WEBHOOK_EVENTS.join(','),
+        events: GOVCONNECT_WEBHOOK_EVENTS.join(','),
         webhook: '',
       };
     }
@@ -765,7 +774,7 @@ export async function deleteSessionForVillage(villageId: string) {
 /**
  * Connect WhatsApp session
  * API: POST {WA_API_URL}/session/connect
- * Body: { Subscribe: REQUIRED_WEBHOOK_EVENTS, Immediate: true }
+ * Body: { Subscribe: GOVCONNECT_WEBHOOK_EVENTS, Immediate: true }
  */
 export async function connectSession(token: string): Promise<{ details: string }> {
   try {
@@ -779,7 +788,7 @@ export async function connectSession(token: string): Promise<{ details: string }
     }
 
     const data = await waGatewayRequest(token, '/session/connect', 'POST', {
-      Subscribe: REQUIRED_WEBHOOK_EVENTS,
+      Subscribe: GOVCONNECT_WEBHOOK_EVENTS,
       Immediate: true,
     });
     logger.info('WhatsApp session connected', { details: data, gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct' });
@@ -913,12 +922,12 @@ export async function pairPhone(token: string, phone: string): Promise<{ Linking
     }
 
     if (isDryRun()) {
-      logger.info('WA_DRY_RUN: pairPhone skipped', { phone });
+      logger.info('WA_DRY_RUN: pairPhone skipped', { phoneLength: phone.length });
       return { LinkingCode: 'DRYRUN-CODE' };
     }
 
     const data = await waGatewayRequest(token, '/session/pairphone', 'POST', { Phone: phone });
-    logger.info('Phone pairing initiated', { phone, gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct' });
+    logger.info('Phone pairing initiated', { phoneLength: phone.length, gateway: waSupportClient.isConfigured() ? 'wa-support' : 'direct' });
     
     return {
       LinkingCode: data.LinkingCode || data.linkingCode || '',
@@ -930,6 +939,102 @@ export async function pairPhone(token: string, phone: string): Promise<{ Linking
     });
     throw new Error(error.response?.data?.message || error.message);
   }
+}
+
+export async function getWhatsAppContacts(villageId: string, sync = false): Promise<unknown[]> {
+  const session = await getSessionByVillageId(villageId);
+  if (!session) throw new Error('Session belum dibuat');
+
+  if (waSupportClient.isConfigured() && session.wa_support_api_key && session.wa_support_session_id) {
+    const result = await waSupportClient.getSessionContacts(session.wa_support_api_key, session.wa_support_session_id, sync);
+    if (!result.success) throw new Error(result.error?.message || 'Failed to get contacts from wa-support');
+    return result.data?.contacts || [];
+  }
+
+  const response = await waGatewayRequest(session.wa_token, '/user/contacts', 'GET');
+  return Array.isArray(response?.contacts) ? response.contacts : Array.isArray(response) ? response : [];
+}
+
+export async function syncWhatsAppContacts(villageId: string): Promise<unknown[]> {
+  const contacts = await getWhatsAppContacts(villageId, true);
+  await logWaActivity({
+    villageId,
+    type: 'contacts_sync',
+    severity: 'info',
+    status: 'synced',
+    message: 'Kontak WhatsApp berhasil disinkronkan dari wa-support/provider.',
+    metadata: { count: contacts.length },
+  });
+  return contacts;
+}
+
+export async function getWhatsAppProxyConfig(villageId: string) {
+  const session = await getSessionByVillageId(villageId);
+  const configured = waSupportClient.isConfigured();
+  return {
+    gateway: configured ? 'wa-support' : 'direct',
+    waSupportConfigured: configured,
+    waApiUrl: configured ? null : config.WA_API_URL,
+    sessionExists: !!session,
+    sessionId: session?.wa_support_session_id || null,
+    instanceName: session?.instance_name || null,
+  };
+}
+
+export async function syncWhatsAppHistory(villageId: string, history = 0) {
+  const session = await getSessionByVillageId(villageId);
+  if (!session) throw new Error('Session belum dibuat');
+  const normalizedHistory = Math.max(0, Math.min(Number.isFinite(history) ? history : 0, 1000));
+  const result = await waGatewayRequest(session.wa_token, '/session/history', 'POST', { history: normalizedHistory });
+  await logWaActivity({
+    villageId,
+    sessionId: session.wa_support_session_id,
+    type: 'history_sync',
+    severity: 'info',
+    status: 'requested',
+    message: normalizedHistory > 0 ? `Sinkron history WhatsApp diminta (${normalizedHistory}).` : 'Sinkron history WhatsApp dinonaktifkan di provider.',
+    metadata: { history: normalizedHistory, result },
+  });
+  return result;
+}
+
+export async function getWhatsAppS3Status(villageId: string) {
+  const session = await getSessionByVillageId(villageId);
+  const localConfig = getWhatsAppSessionS3Config();
+  if (!session) return { sessionExists: false, localConfigured: !!localConfig, provider: null };
+
+  const provider = await waGatewayRequest(session.wa_token, '/session/s3/config', 'GET').catch((error: any) => ({ error: error.message }));
+  return {
+    sessionExists: true,
+    localConfigured: !!localConfig,
+    local: localConfig ? {
+      enabled: localConfig.enabled,
+      endpoint: localConfig.endpoint,
+      region: localConfig.region,
+      bucket: localConfig.bucket,
+      public_url: localConfig.public_url,
+      path_style: localConfig.path_style,
+      media_delivery: localConfig.media_delivery,
+      retention_days: localConfig.retention_days,
+    } : null,
+    provider,
+  };
+}
+
+export async function testWhatsAppS3(villageId: string) {
+  const session = await getSessionByVillageId(villageId);
+  if (!session) throw new Error('Session belum dibuat');
+  const result = await waGatewayRequest(session.wa_token, '/session/s3/test', 'POST');
+  await logWaActivity({ villageId, sessionId: session.wa_support_session_id, type: 's3_test', severity: 'info', status: 'ok', message: 'Provider S3 WhatsApp berhasil dites.', metadata: { result } });
+  return result;
+}
+
+export async function deleteWhatsAppS3Config(villageId: string) {
+  const session = await getSessionByVillageId(villageId);
+  if (!session) throw new Error('Session belum dibuat');
+  const result = await waGatewayRequest(session.wa_token, '/session/s3/config', 'DELETE');
+  await logWaActivity({ villageId, sessionId: session.wa_support_session_id, type: 's3_config', severity: 'warning', status: 'deleted', message: 'Konfigurasi S3 provider WhatsApp dihapus.', metadata: { result } });
+  return result;
 }
 
 // =====================================================
@@ -944,24 +1049,35 @@ interface SessionSettingsData {
 /**
  * Get session settings
  */
-export async function getSessionSettings(): Promise<SessionSettingsData> {
-  // Try to load from database if available
+export async function getSessionSettings(villageId?: string): Promise<SessionSettingsData> {
+  if (villageId) {
+    const cached = villageSettingsCache.get(villageId);
+    if (cached) return cached;
+  }
+
   try {
-    const settings = await prisma.wa_settings.findFirst({
-      where: { id: 'default' },
-    });
-    
+    const settings = villageId
+      ? (await prisma.wa_settings.findUnique({ where: { village_id: villageId } })) ||
+        (await prisma.wa_settings.findUnique({ where: { id: villageId } })) ||
+        (await prisma.wa_settings.findUnique({ where: { id: 'default' } }))
+      : await prisma.wa_settings.findUnique({ where: { id: 'default' } });
+
     if (settings) {
-      sessionSettings = {
+      const resolved = {
         autoReadMessages: settings.auto_read_messages,
         typingIndicator: settings.typing_indicator,
       };
+      if (villageId) villageSettingsCache.set(villageId, resolved);
+      else sessionSettings = resolved;
+      return resolved;
     }
   } catch (error) {
-    // Table might not exist, use in-memory settings
     logger.debug('Using in-memory settings (database table may not exist)');
   }
-  
+
+  if (villageId) {
+    villageSettingsCache.set(villageId, sessionSettings);
+  }
   return sessionSettings;
 }
 
@@ -969,49 +1085,48 @@ export async function getSessionSettings(): Promise<SessionSettingsData> {
  * Update session settings
  */
 export async function updateSessionSettings(
-  updates: Partial<SessionSettingsData>
+  updates: Partial<SessionSettingsData>,
+  villageId?: string
 ): Promise<SessionSettingsData> {
-  // Update in-memory settings
-  if (updates.autoReadMessages !== undefined) {
-    sessionSettings.autoReadMessages = updates.autoReadMessages;
-  }
-  if (updates.typingIndicator !== undefined) {
-    sessionSettings.typingIndicator = updates.typingIndicator;
-  }
-  
-  // Try to persist to database
+  const current = await getSessionSettings(villageId);
+  const nextSettings = {
+    autoReadMessages: updates.autoReadMessages ?? current.autoReadMessages,
+    typingIndicator: updates.typingIndicator ?? current.typingIndicator,
+  };
+
+  if (villageId) villageSettingsCache.set(villageId, nextSettings);
+  else sessionSettings = nextSettings;
+
   try {
     await prisma.wa_settings.upsert({
-      where: { id: 'default' },
+      where: { id: villageId || 'default' },
       update: {
-        auto_read_messages: sessionSettings.autoReadMessages,
-        typing_indicator: sessionSettings.typingIndicator,
+        village_id: villageId || null,
+        auto_read_messages: nextSettings.autoReadMessages,
+        typing_indicator: nextSettings.typingIndicator,
         updated_at: new Date(),
       },
       create: {
-        id: 'default',
-        auto_read_messages: sessionSettings.autoReadMessages,
-        typing_indicator: sessionSettings.typingIndicator,
+        id: villageId || 'default',
+        village_id: villageId || null,
+        auto_read_messages: nextSettings.autoReadMessages,
+        typing_indicator: nextSettings.typingIndicator,
       },
     });
-    logger.info('Session settings saved to database', sessionSettings);
+    logger.info('Session settings saved to database', { village_id: villageId || 'default', settings: nextSettings });
   } catch (error) {
-    // Table might not exist, settings will be in-memory only
     logger.warn('Failed to persist settings to database, using in-memory only');
   }
 
-  if (waSupportClient.isConfigured()) {
+  if (waSupportClient.isConfigured() && villageId) {
     const supportPayload: { auto_read_enabled?: boolean; typing_enabled?: boolean } = {};
-    if (updates.autoReadMessages !== undefined) supportPayload.auto_read_enabled = sessionSettings.autoReadMessages;
-    if (updates.typingIndicator !== undefined) supportPayload.typing_enabled = sessionSettings.typingIndicator;
+    if (updates.autoReadMessages !== undefined) supportPayload.auto_read_enabled = nextSettings.autoReadMessages;
+    if (updates.typingIndicator !== undefined) supportPayload.typing_enabled = nextSettings.typingIndicator;
 
     if (Object.keys(supportPayload).length > 0) {
       try {
-        const sessions = await prisma.wa_sessions.findMany({
-          where: {
-            wa_support_api_key: { not: null },
-            wa_support_session_id: { not: null },
-          },
+        const session = await prisma.wa_sessions.findUnique({
+          where: { village_id: villageId },
           select: {
             village_id: true,
             wa_support_api_key: true,
@@ -1019,16 +1134,16 @@ export async function updateSessionSettings(
           },
         });
 
-        await Promise.all(sessions.map(async (session) => {
+        if (session?.wa_support_api_key && session.wa_support_session_id) {
           const result = await waSupportClient.updateSessionSettings(
-            session.wa_support_api_key!,
-            session.wa_support_session_id!,
+            session.wa_support_api_key,
+            session.wa_support_session_id,
             supportPayload,
           );
 
           if (!result.success) {
             await logWaActivity({
-              villageId: session.village_id,
+              villageId,
               sessionId: session.wa_support_session_id,
               type: 'session_settings',
               severity: 'warning',
@@ -1037,30 +1152,29 @@ export async function updateSessionSettings(
               metadata: { settings: supportPayload, error: result.error },
             });
             logger.warn('Failed to sync WA settings to wa-support session', {
-              village_id: session.village_id,
+              village_id: villageId,
               session_id: session.wa_support_session_id,
               error: result.error,
             });
-            return;
+          } else {
+            await logWaActivity({
+              villageId,
+              sessionId: session.wa_support_session_id,
+              type: 'session_settings',
+              severity: 'info',
+              status: 'synced',
+              message: 'Setting WhatsApp berhasil disinkronkan ke wa-support.',
+              metadata: { settings: supportPayload },
+            });
           }
-
-          await logWaActivity({
-            villageId: session.village_id,
-            sessionId: session.wa_support_session_id,
-            type: 'session_settings',
-            severity: 'info',
-            status: 'synced',
-            message: 'Setting WhatsApp berhasil disinkronkan ke wa-support.',
-            metadata: { settings: supportPayload },
-          });
-        }));
+        }
       } catch (error: any) {
-        logger.warn('Failed to sync WA settings to wa-support sessions', { error: error.message });
+        logger.warn('Failed to sync WA settings to wa-support session', { village_id: villageId, error: error.message });
       }
     }
   }
 
-  return sessionSettings;
+  return nextSettings;
 }
 
 /**
@@ -1080,15 +1194,42 @@ export function isTypingIndicatorEnabled(): boolean {
 /**
  * Send typing indicator (composing state)
  */
+export async function sendUserPresence(
+  villageId: string,
+  state: 'available' | 'unavailable'
+): Promise<boolean> {
+  try {
+    if (isDryRun()) {
+      logger.info('WA_DRY_RUN: Skipping user presence', { village_id: villageId, state });
+      return true;
+    }
+
+    const resolved = await resolveAccessToken(villageId);
+    await waGatewayRequest(resolved.token, '/user/presence', 'POST', { type: state });
+    await logWaActivity({
+      villageId,
+      type: 'presence',
+      severity: 'info',
+      status: state,
+      message: state === 'available' ? 'Presence WhatsApp diset available.' : 'Presence WhatsApp diset unavailable.',
+    });
+    return true;
+  } catch (error: any) {
+    logger.warn('Failed to send user presence', { village_id: villageId, state, error: error.message });
+    return false;
+  }
+}
+
 export async function sendTypingIndicator(
   phone: string,
   state: 'composing' | 'paused' = 'composing',
   villageId?: string
 ): Promise<boolean> {
-  if (!sessionSettings.typingIndicator) {
+  const settings = await getSessionSettings(villageId);
+  if (!settings.typingIndicator) {
     return false;
   }
-  
+
   try {
     if (isDryRun()) {
       logger.info('WA_DRY_RUN: Skipping typing indicator', {
@@ -1131,25 +1272,14 @@ export async function markMessageAsRead(
   senderPhone: string,
   villageId?: string
 ): Promise<boolean> {
-  // Always reload settings from database to get latest value
-  // This ensures setting changes from dashboard are reflected immediately
-  try {
-    const settings = await prisma.wa_settings.findFirst({
-      where: { id: 'default' },
-    });
-    
-    if (settings) {
-      sessionSettings.autoReadMessages = settings.auto_read_messages;
-    }
-  } catch (error) {
-    logger.debug('Could not reload settings, using cached value');
-  }
-  
-  if (!sessionSettings.autoReadMessages) {
-    logger.debug('Auto read is disabled, skipping mark as read', { 
-      chatPhone, 
+  const settings = await getSessionSettings(villageId);
+
+  if (!settings.autoReadMessages) {
+    logger.debug('Auto read is disabled, skipping mark as read', {
+      village_id: villageId,
+      chatPhone,
       messageCount: messageIds.length,
-      autoReadEnabled: sessionSettings.autoReadMessages 
+      autoReadEnabled: settings.autoReadMessages,
     });
     return false;
   }
@@ -1191,7 +1321,7 @@ export async function markMessageAsRead(
 // MESSAGE SENDING FUNCTIONS
 // =====================================================
 
-type WaSendResult = {
+export type WaSendResult = {
   success: boolean;
   message_id?: string;
   error?: string;
@@ -1672,6 +1802,265 @@ export async function sendListMessage(params: SendListMessageParams): Promise<Wa
   }
 }
 
+export interface SendStickerMessageParams extends WaQuoteContext {
+  to: string;
+  sticker: string;
+  mimeType?: string;
+  packId?: string;
+  packName?: string;
+  packPublisher?: string;
+  emojis?: string[];
+  villageId?: string;
+}
+
+export async function sendStickerMessage(params: SendStickerMessageParams): Promise<WaSendResult> {
+  const body: Record<string, unknown> = { Sticker: params.sticker };
+  if (params.mimeType) body.MimeType = params.mimeType;
+  if (params.packId) body.PackId = params.packId;
+  if (params.packName) body.PackName = params.packName;
+  if (params.packPublisher) body.PackPublisher = params.packPublisher;
+  if (params.emojis?.length) body.Emojis = params.emojis;
+  if (params.ContextInfo) body.ContextInfo = params.ContextInfo;
+  if (params.QuotedText) body.QuotedText = params.QuotedText;
+  if (params.QuotedMessage) body.QuotedMessage = params.QuotedMessage;
+
+  return postWaSend({
+    villageId: params.villageId,
+    to: params.to,
+    kind: 'sticker',
+    endpoint: '/chat/send/sticker',
+    body,
+    timeout: 30000,
+  });
+}
+
+export async function sendReactionMessage(params: {
+  to: string;
+  messageId: string;
+  emoji: string;
+  participant?: string;
+  villageId?: string;
+}): Promise<WaSendResult> {
+  const body: Record<string, unknown> = {
+    Body: params.emoji || 'remove',
+    Id: params.messageId,
+  };
+  if (params.participant) body.Participant = params.participant;
+
+  const result = await postWaSend({
+    villageId: params.villageId,
+    to: params.to,
+    kind: 'reaction',
+    endpoint: '/chat/react',
+    body,
+  });
+
+  if (result.success && params.villageId) {
+    await logWaActivity({
+      villageId: params.villageId,
+      waUserId: params.to,
+      channelIdentifier: params.to,
+      type: 'message_action',
+      severity: 'info',
+      status: 'reaction_sent',
+      message: `Reaction WhatsApp dikirim: ${params.emoji || 'remove'}.`,
+      providerMessageId: params.messageId,
+      metadata: { emoji: params.emoji, participant: params.participant, endpoint: result.endpoint, gateway: result.gateway },
+    });
+  }
+
+  return result;
+}
+
+export async function sendEditMessage(params: {
+  to: string;
+  messageId: string;
+  body: string;
+  villageId?: string;
+}): Promise<WaSendResult> {
+  const result = await postWaSend({
+    villageId: params.villageId,
+    to: params.to,
+    kind: 'edit',
+    endpoint: '/chat/send/edit',
+    body: {
+      Id: params.messageId,
+      Body: params.body,
+    },
+  });
+
+  if (result.success && params.villageId) {
+    await prisma.message.updateMany({
+      where: { village_id: params.villageId, message_id: params.messageId, direction: 'OUT' },
+      data: {
+        message_text: params.body,
+        status_error: null,
+      },
+    });
+    await logWaActivity({
+      villageId: params.villageId,
+      waUserId: params.to,
+      channelIdentifier: params.to,
+      type: 'message_action',
+      severity: 'info',
+      status: 'edited',
+      message: 'Pesan WhatsApp terkirim berhasil diedit.',
+      providerMessageId: params.messageId,
+      metadata: { endpoint: result.endpoint, gateway: result.gateway },
+    });
+  }
+
+  return result;
+}
+
+export async function deleteWhatsAppMessage(params: {
+  to: string;
+  messageId: string;
+  villageId?: string;
+}): Promise<WaSendResult> {
+  const result = await postWaSend({
+    villageId: params.villageId,
+    to: params.to,
+    kind: 'delete',
+    endpoint: '/chat/delete',
+    body: { Id: params.messageId },
+  });
+
+  if (result.success && params.villageId) {
+    await prisma.message.updateMany({
+      where: { village_id: params.villageId, message_id: params.messageId, direction: 'OUT' },
+      data: {
+        message_text: '[Pesan dihapus]',
+        delivery_status: 'failed',
+        status_error: 'deleted',
+      },
+    });
+    await logWaActivity({
+      villageId: params.villageId,
+      waUserId: params.to,
+      channelIdentifier: params.to,
+      type: 'message_action',
+      severity: 'info',
+      status: 'deleted',
+      message: 'Pesan WhatsApp terkirim berhasil dihapus/revoke.',
+      providerMessageId: params.messageId,
+      metadata: { endpoint: result.endpoint, gateway: result.gateway },
+    });
+  }
+
+  return result;
+}
+
+export async function rejectWhatsAppCall(params: {
+  callId?: string;
+  to?: string;
+  villageId: string;
+}): Promise<WaSendResult> {
+  if (isDryRun()) {
+    return { success: true, message_id: `dryrun_call_reject_${Date.now()}`, gateway: 'dry-run' };
+  }
+
+  const resolved = await resolveAccessToken(params.villageId);
+  const endpoint = '/call/reject';
+  const gateway = waSupportClient.isConfigured() ? 'wa-support' : 'direct';
+  const body: Record<string, unknown> = {};
+  if (params.callId) body.CallID = params.callId;
+  if (params.to) body.Phone = normalizePhoneNumber(params.to);
+
+  const responseData = await waGatewayRequest(resolved.token, endpoint, 'POST', body);
+  if (!isWaSendSuccess(responseData, responseData)) {
+    return {
+      success: false,
+      error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+      endpoint,
+      gateway,
+      provider_response: responseData,
+    };
+  }
+
+  await logWaActivity({
+    villageId: params.villageId,
+    waUserId: params.to,
+    channelIdentifier: params.to,
+    type: 'call_activity',
+    severity: 'info',
+    status: 'call_rejected',
+    message: 'Panggilan WhatsApp ditolak melalui provider.',
+    metadata: { callId: params.callId, endpoint, gateway },
+  });
+
+  return { success: true, message_id: extractWaMessageId(responseData), endpoint, gateway, provider_response: responseData };
+}
+
+export async function setWhatsAppStatusText(params: {
+  text: string;
+  villageId: string;
+}): Promise<WaSendResult> {
+  if (isDryRun()) {
+    return { success: true, message_id: `dryrun_status_${Date.now()}`, gateway: 'dry-run' };
+  }
+
+  const resolved = await resolveAccessToken(params.villageId);
+  const endpoint = '/status/set/text';
+  const gateway = waSupportClient.isConfigured() ? 'wa-support' : 'direct';
+  const responseData = await waGatewayRequest(resolved.token, endpoint, 'POST', { Text: params.text });
+  if (!isWaSendSuccess(responseData, responseData)) {
+    return {
+      success: false,
+      error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+      endpoint,
+      gateway,
+      provider_response: responseData,
+    };
+  }
+
+  await logWaActivity({
+    villageId: params.villageId,
+    type: 'status_update',
+    severity: 'info',
+    status: 'text_status_set',
+    message: 'Status teks WhatsApp berhasil diperbarui.',
+    metadata: { endpoint, gateway },
+  });
+
+  return { success: true, message_id: extractWaMessageId(responseData), endpoint, gateway, provider_response: responseData };
+}
+
+export async function sendPollMessage(params: {
+  to: string;
+  header: string;
+  options: string[];
+  villageId?: string;
+}): Promise<WaSendResult> {
+  const disabled = await ensureWaSendEnabled(params.villageId, params.to, 'poll');
+  if (disabled) return disabled;
+
+  if (isDryRun()) {
+    return { success: true, message_id: `dryrun_poll_${Date.now()}`, gateway: 'dry-run' };
+  }
+
+  const resolved = await resolveAccessToken(params.villageId);
+  const gateway = waSupportClient.isConfigured() ? 'wa-support' : 'direct';
+  const endpoint = '/chat/send/poll';
+  const responseData = await waGatewayRequest(resolved.token, endpoint, 'POST', {
+    Group: normalizePhoneNumber(params.to),
+    Header: params.header,
+    Options: params.options,
+  });
+
+  if (!isWaSendSuccess(responseData, responseData)) {
+    return {
+      success: false,
+      error: responseData.Message || responseData.message || 'Unknown error from WhatsApp API',
+      endpoint,
+      gateway,
+      provider_response: responseData,
+    };
+  }
+
+  return { success: true, message_id: extractWaMessageId(responseData), endpoint, gateway };
+}
+
 /**
  * Send contact/vCard message via genfity-wa API
  * 
@@ -1690,7 +2079,7 @@ export async function sendContactMessage(
   },
   villageId?: string,
   options: WaQuoteContext = {}
-): Promise<{ success: boolean; message_id?: string; error?: string }> {
+): Promise<WaSendResult> {
   try {
     const account = await getDefaultChannelAccount(villageId);
     if (account && account.enabled_wa === false) {
@@ -1827,23 +2216,20 @@ function buildVCard(contact: {
  * - Ensure starts with country code (62 for Indonesia)
  * - Remove @s.whatsapp.net suffix if present
  */
-function normalizePhoneNumber(phone: string): string {
-  // Remove @s.whatsapp.net suffix
-  let normalized = phone.replace(/@s\.whatsapp\.net$/i, '');
-  
-  // Remove all non-digit characters
-  normalized = normalized.replace(/\D/g, '');
-  
-  // If starts with 0, replace with 62 (Indonesia country code)
+export function normalizePhoneNumber(phone: string): string {
+  let normalized = phone
+    .replace(/@s\.whatsapp\.net$/i, '')
+    .replace(/:\d+$/, '')
+    .replace(/\D/g, '');
+
   if (normalized.startsWith('0')) {
     normalized = '62' + normalized.substring(1);
   }
-  
-  // If doesn't start with country code, add 62
-  if (!normalized.startsWith('62') && !normalized.startsWith('+')) {
+
+  if (normalized && !normalized.startsWith('62')) {
     normalized = '62' + normalized;
   }
-  
+
   return normalized;
 }
 

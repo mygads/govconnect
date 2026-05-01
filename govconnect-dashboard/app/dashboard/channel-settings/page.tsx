@@ -171,6 +171,16 @@ export default function ChannelSettingsPage() {
   const [webhookAudit, setWebhookAudit] = useState<WebhookAudit | null>(null)
   const [waActivities, setWaActivities] = useState<WaActivityItem[]>([])
   const [syncingWebhook, setSyncingWebhook] = useState(false)
+  const [waStatusText, setWaStatusText] = useState("")
+  const [settingWaStatusText, setSettingWaStatusText] = useState(false)
+  const [proxyConfig, setProxyConfig] = useState<any | null>(null)
+  const [s3Status, setS3Status] = useState<any | null>(null)
+  const [historyDepth, setHistoryDepth] = useState("0")
+  const [historyResult, setHistoryResult] = useState<any | null>(null)
+  const [syncingHistory, setSyncingHistory] = useState(false)
+  const [showS3DeleteDialog, setShowS3DeleteDialog] = useState(false)
+  const [testingS3, setTestingS3] = useState(false)
+  const [deletingS3, setDeletingS3] = useState(false)
 
   // QR Dialog states
   const [showQrDialog, setShowQrDialog] = useState(false)
@@ -279,6 +289,31 @@ export default function ChannelSettingsPage() {
     }
   }, [selectedVillageId, withVillage])
 
+  const handleSetWaStatusText = async () => {
+    const text = waStatusText.trim()
+    if (!text) {
+      toast({ title: "Status kosong", description: "Isi teks status WhatsApp terlebih dahulu.", variant: "destructive" })
+      return
+    }
+
+    try {
+      setSettingWaStatusText(true)
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/status/text"), {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.success) throw new Error(data?.error || "Gagal mengubah status WhatsApp")
+      setWaStatusText("")
+      await fetchWaActivities()
+      toast({ title: "Status WhatsApp Diperbarui", description: "Status teks WhatsApp berhasil dikirim ke provider." })
+    } catch (error: any) {
+      toast({ title: "Gagal Update Status", description: error.message || "Gagal mengubah status WhatsApp", variant: "destructive" })
+    } finally {
+      setSettingWaStatusText(false)
+    }
+  }
+
   const handleSyncWebhook = async () => {
     try {
       setSyncingWebhook(true)
@@ -299,6 +334,69 @@ export default function ChannelSettingsPage() {
       })
     } finally {
       setSyncingWebhook(false)
+    }
+  }
+
+  const fetchOperationalDetails = useCallback(async () => {
+    if (!selectedVillageId) return
+    try {
+      const [proxyResponse, s3Response] = await Promise.all([
+        fetchApiRaw(withVillage('/api/whatsapp/proxy-config')),
+        fetchApiRaw(withVillage('/api/whatsapp/s3')),
+      ])
+      const proxyData = await proxyResponse.json().catch(() => null)
+      const s3Data = await s3Response.json().catch(() => null)
+      if (proxyResponse.ok) setProxyConfig(proxyData?.data || null)
+      if (s3Response.ok) setS3Status(s3Data?.data || null)
+    } catch (error) {
+      console.error('Error fetching WA operational details:', error)
+    }
+  }, [selectedVillageId, withVillage])
+
+  const handleSyncHistory = async () => {
+    try {
+      setSyncingHistory(true)
+      const history = Math.max(0, Math.min(Number(historyDepth) || 0, 1000))
+      const response = await fetchApiRaw(withVillage('/api/whatsapp/history-sync'), { method: 'POST', body: JSON.stringify({ history }) })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal sync history')
+      setHistoryResult(data.data || data.result || data)
+      await fetchWaActivities()
+      toast({ title: 'History Sync Dikirim', description: `Provider diminta sync history ${history} pesan.` })
+    } catch (error: any) {
+      toast({ title: 'Gagal Sync History', description: error.message || 'Gagal sync history', variant: 'destructive' })
+    } finally {
+      setSyncingHistory(false)
+    }
+  }
+
+  const handleTestS3 = async () => {
+    try {
+      setTestingS3(true)
+      const response = await fetchApiRaw(withVillage('/api/whatsapp/s3/test'), { method: 'POST' })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal test S3')
+      await fetchOperationalDetails()
+      toast({ title: 'S3 OK', description: 'Provider berhasil mengakses konfigurasi S3.' })
+    } catch (error: any) {
+      toast({ title: 'S3 Bermasalah', description: error.message || 'Gagal test S3', variant: 'destructive' })
+    } finally {
+      setTestingS3(false)
+    }
+  }
+
+  const handleDeleteS3 = async () => {
+    try {
+      setDeletingS3(true)
+      const response = await fetchApiRaw(withVillage('/api/whatsapp/s3'), { method: 'DELETE' })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal hapus S3 provider')
+      await fetchOperationalDetails()
+      toast({ title: 'S3 Provider Dihapus', description: 'Konfigurasi S3 di provider WhatsApp sudah dihapus.' })
+    } catch (error: any) {
+      toast({ title: 'Gagal Hapus S3', description: error.message || 'Gagal hapus S3 provider', variant: 'destructive' })
+    } finally {
+      setDeletingS3(false)
     }
   }
 
@@ -434,9 +532,10 @@ export default function ChannelSettingsPage() {
       
       const data = await response.json()
       if (data?.data?.isDuplicate) {
+        const existingVillageName = villages.find((village) => village.id === data.data.existingVillageId)?.name || data.data.existingVillageName || data.data.existingVillageId
         return {
           existingVillageId: data.data.existingVillageId,
-          existingVillageName: data.data.existingVillageName || data.data.existingVillageId,
+          existingVillageName,
           waNumber,
         }
       }
@@ -445,7 +544,7 @@ export default function ChannelSettingsPage() {
       console.error("Error checking duplicate WA number:", error)
       return null
     }
-  }, [withVillage])
+  }, [villages, withVillage])
 
   // Handle disconnect from current account (delete session)
   const handleDisconnectCurrentAccount = async () => {
@@ -580,7 +679,8 @@ export default function ChannelSettingsPage() {
     fetchSessionStatus()
     fetchWebhookAudit()
     fetchWaActivities()
-  }, [selectedVillageId, withVillage, fetchSessionStatus, fetchWebhookAudit, fetchWaActivities])
+    fetchOperationalDetails()
+  }, [selectedVillageId, withVillage, fetchSessionStatus, fetchWebhookAudit, fetchWaActivities, fetchOperationalDetails])
 
   // Auto-refresh session status every 15 seconds (outside QR dialog)
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -1053,6 +1153,27 @@ export default function ChannelSettingsPage() {
               </div>
             </div>
 
+            {sessionExists === true && sessionStatus?.loggedIn && (
+              <div className="rounded-lg border p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Status Teks WhatsApp</p>
+                  <p className="text-xs text-muted-foreground">Update status teks operasional untuk nomor WhatsApp desa.</p>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    value={waStatusText}
+                    onChange={(event) => setWaStatusText(event.target.value)}
+                    placeholder="Contoh: Layanan desa aktif Senin-Jumat 08.00-15.00"
+                    maxLength={700}
+                  />
+                  <Button type="button" variant="outline" onClick={handleSetWaStatusText} disabled={settingWaStatusText || !waStatusText.trim()}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${settingWaStatusText ? "animate-spin" : ""}`} />
+                    Set Status
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {/* Channel Toggles */}
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
@@ -1142,6 +1263,54 @@ export default function ChannelSettingsPage() {
                 ))}
               </div>
             ) : null}
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="rounded-lg border p-3 text-sm">
+                <p className="font-medium">Proxy Gateway</p>
+                <p className="text-muted-foreground">Mode: {proxyConfig?.gateway || '-'}</p>
+                <p className="text-muted-foreground">Instance: {proxyConfig?.instanceName || '-'}</p>
+                <p className="text-muted-foreground">Session: {proxyConfig?.sessionId || '-'}</p>
+              </div>
+              <div className="rounded-lg border p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="font-medium">History Sync</p>
+                    <p className="text-muted-foreground">Jumlah history yang diminta dari provider (0 = tidak import history lama).</p>
+                    {historyResult && (
+                      <pre className="mt-2 max-h-24 overflow-auto rounded bg-muted p-2 text-[11px] text-muted-foreground">{JSON.stringify(historyResult, null, 2)}</pre>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input className="w-24" type="number" min={0} max={1000} value={historyDepth} onChange={(event) => setHistoryDepth(event.target.value)} />
+                    <Button type="button" variant="outline" size="sm" onClick={handleSyncHistory} disabled={syncingHistory}>
+                      <RefreshCw className={`h-4 w-4 mr-2 ${syncingHistory ? "animate-spin" : ""}`} />
+                      Sync
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border p-3 text-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="font-medium">S3 Provider WhatsApp</p>
+                  <p className="text-muted-foreground">Local: {s3Status?.localConfigured ? 'configured' : 'not configured'} · Provider: {s3Status?.provider?.error ? 'error' : s3Status?.provider ? 'available' : '-'}</p>
+                  <p className="text-muted-foreground">Bucket: {s3Status?.local?.bucket || '-'}</p>
+                  <p className="text-muted-foreground">Endpoint: {s3Status?.local?.endpoint || '-'}</p>
+                  {s3Status?.provider?.error && <p className="text-red-600">{s3Status.provider.error}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={fetchOperationalDetails}>Refresh</Button>
+                  <Button type="button" variant="outline" size="sm" onClick={handleTestS3} disabled={testingS3 || !sessionExists}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${testingS3 ? "animate-spin" : ""}`} />Test
+                  </Button>
+                  <Button type="button" variant="destructive" size="sm" onClick={() => setShowS3DeleteDialog(true)} disabled={deletingS3 || !sessionExists}>
+                    <Trash2 className="h-4 w-4 mr-2" />Delete
+                  </Button>
+                </div>
+              </div>
+            </div>
 
             <div className="rounded-lg border p-3">
               <div className="mb-3 flex items-center justify-between">
@@ -1309,6 +1478,33 @@ export default function ChannelSettingsPage() {
         </DialogContent>
       </Dialog>
 
+      <AlertDialog open={showS3DeleteDialog} onOpenChange={setShowS3DeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              Hapus S3 Provider WhatsApp?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Aksi ini menghapus konfigurasi S3 di provider WhatsApp untuk session aktif. Media/session provider bisa berhenti memakai storage eksternal sampai dikonfigurasi ulang.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingS3}>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                await handleDeleteS3()
+                setShowS3DeleteDialog(false)
+              }}
+              disabled={deletingS3}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingS3 ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+              Hapus S3 Provider
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {/* Duplicate WA Number Alert Dialog */}
       <AlertDialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>
         <AlertDialogContent>

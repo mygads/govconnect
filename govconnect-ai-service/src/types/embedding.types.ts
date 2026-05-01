@@ -115,6 +115,9 @@ export interface VectorSearchOptions {
   categories?: string[];      // Filter by categories
   sourceTypes?: ('knowledge' | 'document')[];  // Filter by source type
   villageId?: string;         // Scope results by village
+  waUserId?: string;
+  sessionId?: string;
+  channel?: string;
   retrievalMode?: RetrievalMode;
 }
 

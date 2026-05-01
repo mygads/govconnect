@@ -47,6 +47,11 @@ import {
   MapPin,
   UserRound,
   ListChecks,
+  Pencil,
+  Smile,
+  BarChart3,
+  Sticker,
+  SmilePlus,
 } from "lucide-react"
 
 interface Conversation {
@@ -88,7 +93,7 @@ type WaSessionStatus = 'connected' | 'qr' | 'logged_out' | 'disconnected'
 
 type LivechatMediaType = 'image' | 'audio' | 'document' | 'video' | 'sticker'
 type DeliveryStatus = 'received' | 'sent' | 'delivered' | 'read' | 'failed'
-type MessageKind = 'text' | 'media' | 'location' | 'contact' | 'buttons' | 'list' | 'system'
+type MessageKind = 'text' | 'media' | 'location' | 'contact' | 'buttons' | 'list' | 'sticker' | 'poll' | 'reaction' | 'edit' | 'delete' | 'system'
 
 interface Message {
   id: string
@@ -158,6 +163,22 @@ interface ImportantContact {
   category?: { name?: string | null }
 }
 
+interface WaProviderContact {
+  id: string
+  name: string
+  phone: string
+  pushName?: string | null
+  source: 'wa'
+}
+
+type SendableContact = ImportantContact | WaProviderContact
+type AdvancedDialog = {
+  type: 'sticker' | 'poll' | 'emoji' | 'reaction' | 'edit' | 'delete' | null
+  targetMessage?: Message | null
+}
+
+const quickEmojis = ['👍', '🙏', '✅', '😊', '📍', '📄', '⏳', '❗', '❤️', '🎉', '📞', '🏢']
+
 export default function LiveChatPage() {
   const { toast } = useToast()
 
@@ -184,16 +205,30 @@ export default function LiveChatPage() {
   const [selectedMedia, setSelectedMedia] = useState<UploadedLivechatMedia | null>(null)
   const [villageProfileLocation, setVillageProfileLocation] = useState<VillageProfileLocation | null>(null)
   const [importantContacts, setImportantContacts] = useState<ImportantContact[]>([])
+  const [waProviderContacts, setWaProviderContacts] = useState<WaProviderContact[]>([])
   const [contactSearchQuery, setContactSearchQuery] = useState("")
   const [showContactDialog, setShowContactDialog] = useState(false)
   const [isSendingLocation, setIsSendingLocation] = useState(false)
   const [isSendingContact, setIsSendingContact] = useState(false)
   const [isSendingMenu, setIsSendingMenu] = useState(false)
+  const [isSendingAdvancedAction, setIsSendingAdvancedAction] = useState(false)
+  const [retryingMediaMessageId, setRetryingMediaMessageId] = useState<string | null>(null)
+  const [retryingFailedMessageId, setRetryingFailedMessageId] = useState<string | null>(null)
+  const [isSyncingWaContacts, setIsSyncingWaContacts] = useState(false)
+  const [isRefreshingProfile, setIsRefreshingProfile] = useState(false)
   const [isTogglingTakeover, setIsTogglingTakeover] = useState(false)
 
   // Dialog states
   const [showTakeoverDialog, setShowTakeoverDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [advancedDialog, setAdvancedDialog] = useState<AdvancedDialog>({ type: null })
+  const [stickerUrl, setStickerUrl] = useState("")
+  const [pollQuestion, setPollQuestion] = useState("")
+  const [pollOptionsText, setPollOptionsText] = useState("Ya\nTidak")
+  const [emojiText, setEmojiText] = useState("")
+  const [selectedEmoji, setSelectedEmoji] = useState("👍")
+  const [editMessageText, setEditMessageText] = useState("")
+  const [reactionEmoji, setReactionEmoji] = useState("👍")
   const [takeoverReason, setTakeoverReason] = useState("")
   const [takeoverReasonTemplate, setTakeoverReasonTemplate] = useState("")
   const [isDeleting, setIsDeleting] = useState(false)
@@ -236,6 +271,7 @@ export default function LiveChatPage() {
   const previousMessagesLengthRef = useRef<number>(0)
   const lastWaSessionStatusRef = useRef<WaSessionStatus | null>(null)
   const lastWaSessionToastAtRef = useRef(0)
+  const lastPresenceStateRef = useRef<'available' | 'unavailable' | null>(null)
   const hasLoadedConversationsRef = useRef(false)
 
   // Smart scroll state
@@ -481,6 +517,31 @@ export default function LiveChatPage() {
     return Number.isFinite(lastMessageAt) && Date.now() - lastMessageAt < 5 * 60 * 1000
   }
 
+  const getNaturalProcessingLabel = (status?: ProcessingStatus | null, compact = false) => {
+    if (!status) return compact ? 'AI memproses...' : 'AI sedang memproses pesan...'
+    const labels: Record<ProcessingStatus['stage'], string> = {
+      receiving: 'AI sedang menerima pesan...',
+      reading: 'AI sedang membaca pesan...',
+      searching: 'AI sedang mencari informasi...',
+      thinking: 'AI sedang memahami kebutuhan warga...',
+      preparing: 'AI sedang menyiapkan jawaban...',
+      sending: 'AI sedang mengirim jawaban...',
+      completed: 'AI selesai menjawab',
+      error: 'AI perlu diproses ulang',
+    }
+    const compactLabels: Record<ProcessingStatus['stage'], string> = {
+      receiving: 'AI membaca...',
+      reading: 'AI membaca...',
+      searching: 'AI mencari...',
+      thinking: 'AI memahami...',
+      preparing: 'AI menyiapkan...',
+      sending: 'AI mengirim...',
+      completed: 'AI selesai',
+      error: 'AI error',
+    }
+    return compact ? compactLabels[status.stage] : labels[status.stage]
+  }
+
   // Fetch processing statuses for all active conversations
   const fetchProcessingStatuses = useCallback(async () => {
     try {
@@ -502,7 +563,7 @@ export default function LiveChatPage() {
         for (const status of data.data.statuses) {
           const normalizedStatus: ProcessingStatus = {
             stage: status.stage,
-            message: status.message,
+            message: getNaturalProcessingLabel(status),
             progress: status.progress,
             elapsedMs: status.elapsedMs,
             lastUpdate: status.lastUpdate,
@@ -713,8 +774,19 @@ export default function LiveChatPage() {
     }
 
     const startPollingFallback = () => {
-      if (pollingRef.current) return
-      pollingRef.current = setInterval(syncLivechat, 3000)
+      if (!pollingRef.current) {
+        pollingRef.current = setInterval(syncLivechat, 3000)
+      }
+      scheduleRealtimeRetry()
+    }
+
+    const scheduleRealtimeRetry = () => {
+      if (reconnectTimeoutRef.current || document.visibilityState !== 'visible') return
+      reconnectTimeoutRef.current = setTimeout(() => {
+        reconnectTimeoutRef.current = null
+        realtimeFailureCountRef.current = 0
+        startRealtime()
+      }, 45000)
     }
 
     const stopRealtime = () => {
@@ -813,6 +885,45 @@ export default function LiveChatPage() {
     if (typingPauseTimeoutRef.current) clearTimeout(typingPauseTimeoutRef.current)
     await fetchMessagesWithLoading(getConversationKey(conv))
   }
+
+  const sendPresenceState = useCallback(async (state: 'available' | 'unavailable', force = false) => {
+    const conversation = selectedConversationRef.current
+    if (!conversation?.is_takeover || isWebchatConversation(conversation)) return
+    if (!force && lastPresenceStateRef.current === state) return
+    lastPresenceStateRef.current = state
+
+    try {
+      await fetch('/api/whatsapp/presence', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ state }),
+      })
+    } catch {
+      return
+    }
+  }, [])
+
+  useEffect(() => {
+    const syncPresence = () => {
+      const conversation = selectedConversationRef.current
+      if (!conversation?.is_takeover || isWebchatConversation(conversation)) return
+      sendPresenceState(document.visibilityState === 'visible' ? 'available' : 'unavailable')
+    }
+
+    syncPresence()
+    document.addEventListener('visibilitychange', syncPresence)
+    window.addEventListener('focus', syncPresence)
+    window.addEventListener('blur', syncPresence)
+    return () => {
+      document.removeEventListener('visibilitychange', syncPresence)
+      window.removeEventListener('focus', syncPresence)
+      window.removeEventListener('blur', syncPresence)
+      sendPresenceState('unavailable', true)
+    }
+  }, [selectedConversation?.id, selectedConversation?.is_takeover, sendPresenceState])
 
   const sendTypingState = useCallback(async (state: 'composing' | 'paused', force = false) => {
     const conversation = selectedConversationRef.current
@@ -922,6 +1033,21 @@ export default function LiveChatPage() {
     }
   }
 
+  const normalizeWaProviderContact = (raw: any, index: number): WaProviderContact | null => {
+    const jid = raw?.jid || raw?.JID || raw?.id || raw?.phone || raw?.Phone || raw?.number || raw?.Number || ''
+    const phone = String(jid).split('@')[0]?.split(':')[0]?.replace(/\D/g, '') || ''
+    if (!phone) return null
+    const name = String(raw?.name || raw?.Name || raw?.notify || raw?.Notify || raw?.pushName || raw?.PushName || raw?.displayName || raw?.DisplayName || phone).trim()
+    const pushName = raw?.pushName || raw?.PushName || raw?.notify || raw?.Notify || null
+    return {
+      id: `wa-${phone}-${index}`,
+      name: name || phone,
+      phone,
+      pushName: typeof pushName === 'string' ? pushName : null,
+      source: 'wa',
+    }
+  }
+
   const filteredImportantContacts = importantContacts.filter((contact) => {
     const query = contactSearchQuery.toLowerCase().trim()
     if (!query) return true
@@ -929,20 +1055,37 @@ export default function LiveChatPage() {
       .some((value) => value.toLowerCase().includes(query))
   })
 
-  const buildContactVCard = (contact: ImportantContact) => {
+  const filteredWaProviderContacts = waProviderContacts.filter((contact) => {
+    const query = contactSearchQuery.toLowerCase().trim()
+    if (!query) return true
+    return [contact.name, contact.phone, contact.pushName || '']
+      .some((value) => value.toLowerCase().includes(query))
+  })
+
+  const buildContactVCard = (contact: SendableContact) => {
+    const categoryName = 'category' in contact ? contact.category?.name : undefined
+    const description = 'source' in contact ? contact.pushName : contact.description
     return [
       'BEGIN:VCARD',
       'VERSION:3.0',
       `FN:${contact.name}`,
       `TEL;type=CELL;type=pref:${contact.phone}`,
-      contact.category?.name ? `ORG:${contact.category.name};` : null,
-      contact.description ? `TITLE:${contact.description}` : null,
+      categoryName ? `ORG:${categoryName};` : null,
+      description ? `TITLE:${description}` : null,
       'END:VCARD',
     ].filter(Boolean).join('\n')
   }
 
   const handleSendVillageLocation = async () => {
-    if (!selectedConversation || villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null) return
+    if (!selectedConversation) return
+    if (villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null) {
+      toast({
+        title: 'Lokasi belum lengkap',
+        description: villageProfileError || 'Isi koordinat kantor di Profil Desa terlebih dahulu.',
+        variant: 'destructive',
+      })
+      return
+    }
     setIsSendingLocation(true)
     const replyToSend = replyingToMessage
     try {
@@ -967,6 +1110,170 @@ export default function LiveChatPage() {
       toast({ title: 'Error', description: error.message || 'Gagal mengirim lokasi', variant: 'destructive' })
     } finally {
       setIsSendingLocation(false)
+    }
+  }
+
+  const openAdvancedDialog = (type: AdvancedDialog['type'], targetMessage?: Message | null) => {
+    if (type === 'sticker') setStickerUrl('')
+    if (type === 'poll') {
+      setPollQuestion('')
+      setPollOptionsText('Ya\nTidak')
+    }
+    if (type === 'emoji') {
+      setSelectedEmoji('👍')
+      setEmojiText('')
+    }
+    if (type === 'reaction') setReactionEmoji('👍')
+    if (type === 'edit') setEditMessageText(targetMessage?.message_text || '')
+    setAdvancedDialog({ type, targetMessage })
+  }
+
+  const closeAdvancedDialog = () => setAdvancedDialog({ type: null })
+
+  const submitMessageAction = async (type: 'reaction' | 'edit' | 'delete', msg: Message, extra: Record<string, unknown> = {}) => {
+    if (!selectedConversation || !msg.message_id) return
+    setIsSendingAdvancedAction(true)
+    try {
+      const data = await sendLivechatPayload({ action: { type, message_id: msg.message_id, ...extra } })
+      if (!data?.success) throw new Error(data?.error || 'Aksi pesan gagal')
+      closeAdvancedDialog()
+      await fetchMessagesSilent(getConversationKey(selectedConversation))
+      toast({ title: 'Aksi Terkirim', description: 'Aksi pesan berhasil dikirim ke WhatsApp.' })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Aksi pesan gagal', variant: 'destructive' })
+    } finally {
+      setIsSendingAdvancedAction(false)
+    }
+  }
+
+  const submitSticker = async () => {
+    if (!selectedConversation || !stickerUrl.trim()) return
+    setIsSendingAdvancedAction(true)
+    const replyToSend = replyingToMessage
+    try {
+      const payload: Record<string, unknown> = { sticker: { url: stickerUrl.trim(), mime_type: 'image/webp' } }
+      if (replyToSend?.message_id) payload.reply_to_message_id = replyToSend.message_id
+      setReplyingToMessage(null)
+      const data = await sendLivechatPayload(payload)
+      if (!data?.success) {
+        setReplyingToMessage(replyToSend)
+        throw new Error(data?.error || 'Gagal mengirim sticker')
+      }
+      closeAdvancedDialog()
+      await fetchMessagesSilent(getConversationKey(selectedConversation))
+      toast({ title: 'Sticker Terkirim', description: 'Sticker berhasil dikirim ke WhatsApp.' })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Gagal mengirim sticker', variant: 'destructive' })
+    } finally {
+      setIsSendingAdvancedAction(false)
+    }
+  }
+
+  const submitPoll = async () => {
+    if (!selectedConversation) return
+    const header = pollQuestion.trim()
+    const options = pollOptionsText.split('\n').map((option) => option.trim()).filter(Boolean)
+    if (!header || options.length < 2) {
+      toast({ title: 'Poll tidak valid', description: 'Isi pertanyaan dan minimal 2 pilihan.', variant: 'destructive' })
+      return
+    }
+    setIsSendingAdvancedAction(true)
+    try {
+      const data = await sendLivechatPayload({ poll: { header, options } })
+      if (!data?.success) throw new Error(data?.error || 'Gagal mengirim poll')
+      closeAdvancedDialog()
+      await fetchMessagesSilent(getConversationKey(selectedConversation))
+      toast({ title: 'Poll Terkirim', description: 'Poll berhasil dikirim ke WhatsApp.' })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Gagal mengirim poll', variant: 'destructive' })
+    } finally {
+      setIsSendingAdvancedAction(false)
+    }
+  }
+
+  const submitEmojiMessage = async () => {
+    const text = `${selectedEmoji}${emojiText.trim() ? ` ${emojiText.trim()}` : ''}`
+    if (!text.trim()) return
+    setMessageInput(text)
+    closeAdvancedDialog()
+  }
+
+  const handleSendSticker = async () => openAdvancedDialog('sticker')
+
+  const handleSendPoll = async () => openAdvancedDialog('poll')
+
+  const handleMessageAction = async (msg: Message, type: 'reaction' | 'edit' | 'delete') => {
+    if (!selectedConversation || !msg.message_id) return
+    openAdvancedDialog(type, msg)
+  }
+
+  const handleRetryMediaDownload = async (msg: Message) => {
+    if (!selectedConversation || !msg.message_id) return
+    setRetryingMediaMessageId(msg.message_id)
+    try {
+      const response = await fetch(`/api/whatsapp/media/${encodeURIComponent(msg.message_id)}/retry`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal download ulang media')
+      setFailedMedia({})
+      await fetchMessagesSilent(getConversationKey(selectedConversation))
+      toast({ title: 'Media Diperbarui', description: 'Media WhatsApp berhasil didownload ulang.' })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Gagal download ulang media', variant: 'destructive' })
+    } finally {
+      setRetryingMediaMessageId(null)
+    }
+  }
+
+  const loadWaProviderContacts = async (sync = false) => {
+    const response = await fetch(sync ? '/api/whatsapp/contacts/sync' : '/api/whatsapp/contacts', {
+      method: sync ? 'POST' : 'GET',
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+    })
+    const data = await response.json().catch(() => null)
+    if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal memuat kontak WhatsApp')
+    const rawContacts = Array.isArray(data.data?.contacts) ? data.data.contacts : []
+    const contacts = rawContacts
+      .map((contact: any, index: number) => normalizeWaProviderContact(contact, index))
+      .filter(Boolean) as WaProviderContact[]
+    setWaProviderContacts(contacts)
+    return { count: data.data?.count || contacts.length, contacts }
+  }
+
+  const handleSyncWaContacts = async () => {
+    setIsSyncingWaContacts(true)
+    try {
+      const result = await loadWaProviderContacts(true)
+      toast({ title: 'Kontak Disinkronkan', description: `${result.count} kontak WhatsApp terbaca dari provider.` })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Gagal sinkron kontak WhatsApp', variant: 'destructive' })
+    } finally {
+      setIsSyncingWaContacts(false)
+    }
+  }
+
+  const handleRefreshWaProfile = async () => {
+    if (!selectedConversation || isWebchatConversation(selectedConversation)) return
+    setIsRefreshingProfile(true)
+    try {
+      const response = await fetch('/api/whatsapp/profile-refresh', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ phone: getConversationKey(selectedConversation) }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal refresh profil WhatsApp')
+      await fetchConversationsSilent()
+      toast({ title: 'Profil Diperbarui', description: 'Profil WhatsApp dicoba disinkronkan ulang.' })
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message || 'Gagal refresh profil WhatsApp', variant: 'destructive' })
+    } finally {
+      setIsRefreshingProfile(false)
     }
   }
 
@@ -1007,9 +1314,12 @@ export default function LiveChatPage() {
   const handleOpenContactDialog = async () => {
     setShowContactDialog(true)
     if (importantContacts.length === 0) await loadImportantContacts()
+    if (waProviderContacts.length === 0 && selectedConversation && !isWebchatConversation(selectedConversation)) {
+      await loadWaProviderContacts().catch(() => undefined)
+    }
   }
 
-  const handleSendImportantContact = async (contact: ImportantContact) => {
+  const handleSendImportantContact = async (contact: SendableContact) => {
     if (!selectedConversation) return
     setIsSendingContact(true)
     const replyToSend = replyingToMessage
@@ -1018,8 +1328,8 @@ export default function LiveChatPage() {
         contact: {
           name: contact.name,
           phone: contact.phone,
-          organization: contact.category?.name || undefined,
-          title: contact.description || undefined,
+          organization: 'category' in contact ? contact.category?.name || undefined : undefined,
+          title: 'source' in contact ? contact.pushName || undefined : contact.description || undefined,
           vcard: buildContactVCard(contact),
         },
       }
@@ -1126,6 +1436,7 @@ export default function LiveChatPage() {
 
         // Refresh conversations
         fetchConversationsSilent()
+        sendPresenceState('available', true)
 
         toast({
           title: "Ambil Alih Aktif",
@@ -1170,6 +1481,7 @@ export default function LiveChatPage() {
 
         // Refresh conversations
         fetchConversationsSilent()
+        sendPresenceState('unavailable', true)
 
         toast({
           title: "Ambil Alih Selesai",
@@ -1516,6 +1828,69 @@ export default function LiveChatPage() {
     )
   }
 
+  const getMessageReactions = (msg: Message): Array<{ emoji: string; from?: string }> => {
+    const reactions = msg.interactive_payload?.reactions
+    return Array.isArray(reactions)
+      ? reactions.filter((reaction) => typeof reaction?.emoji === 'string' && reaction.emoji.trim())
+      : []
+  }
+
+  const renderMessageReactions = (msg: Message) => {
+    const reactions = getMessageReactions(msg)
+    if (reactions.length === 0) return null
+    return (
+      <div className={`mt-1 flex gap-1 ${msg.direction === 'OUT' ? 'justify-end' : 'justify-start'}`}>
+        {reactions.map((reaction, index) => (
+          <span key={`${reaction.from || 'reaction'}-${index}`} className="rounded-full border bg-background px-2 py-0.5 text-sm text-foreground shadow-sm">
+            {reaction.emoji}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  const buildRetryPayload = (msg: Message): Record<string, unknown> => {
+    if (msg.message_kind === 'location' && msg.location_latitude != null && msg.location_longitude != null) {
+      return { location: { latitude: msg.location_latitude, longitude: msg.location_longitude, name: msg.location_name || undefined, address: msg.location_address || undefined } }
+    }
+    if (msg.message_kind === 'contact' && (msg.contact_name || msg.contact_phone)) {
+      return { contact: { name: msg.contact_name || msg.contact_phone || 'Kontak', phone: msg.contact_phone || '', vcard: msg.contact_vcard || undefined } }
+    }
+    if ((msg.message_kind === 'buttons' || msg.message_kind === 'list') && msg.interactive_payload) {
+      return { interactive: msg.interactive_payload }
+    }
+    if (msg.media_type && (msg.media_public_url || msg.media_url)) {
+      return {
+        message: isMediaPlaceholder(msg.message_text) ? '' : msg.message_text,
+        media: {
+          type: msg.media_type === 'sticker' ? 'image' : msg.media_type,
+          url: msg.media_public_url || msg.media_url,
+          internal_url: msg.media_url || undefined,
+          mime_type: msg.mime_type || undefined,
+          file_name: msg.file_name || undefined,
+          size: msg.file_size || undefined,
+          storage_key: msg.storage_key || undefined,
+        },
+      }
+    }
+    return { message: msg.message_text || '' }
+  }
+
+  const handleRetryFailedMessage = async (msg: Message) => {
+    if (!selectedConversation) return
+    setRetryingFailedMessageId(msg.id)
+    try {
+      const data = await sendLivechatPayload({ ...buildRetryPayload(msg), retry_message_id: msg.id })
+      if (!data?.success) throw new Error(data?.error || 'Retry gagal')
+      await fetchMessagesSilent(getConversationKey(selectedConversation))
+      toast({ title: 'Retry Terkirim', description: 'Pesan berhasil dikirim ulang.' })
+    } catch (error: any) {
+      toast({ title: 'Retry Gagal', description: error.message || 'Pesan gagal dikirim ulang', variant: 'destructive' })
+    } finally {
+      setRetryingFailedMessageId(null)
+    }
+  }
+
   // Render message content (handle structured media and legacy URL messages)
   const renderMessageContent = (msg: Message) => {
     const locationCard = renderLocationCard(msg)
@@ -1548,6 +1923,11 @@ export default function LiveChatPage() {
               <div className="flex items-center gap-2 rounded-lg bg-gray-100 p-3 text-gray-700 dark:bg-gray-700 dark:text-gray-100">
                 <ImageIcon className="h-4 w-4" />
                 <span className="text-sm">Gambar tidak dapat dimuat</span>
+                {msg.message_id && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => handleRetryMediaDownload(msg)} disabled={retryingMediaMessageId === msg.message_id}>
+                    {retryingMediaMessageId === msg.message_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                  </Button>
+                )}
               </div>
             ) : (
               <div className="relative max-w-[280px] overflow-hidden rounded-lg">
@@ -1598,6 +1978,11 @@ export default function LiveChatPage() {
             <div className="flex items-center gap-2 rounded-lg bg-gray-100 p-3 dark:bg-gray-700">
               <ImageIcon className="h-4 w-4" />
               <span className="text-sm">Gambar tidak dapat dimuat</span>
+              {msg.message_id && (
+                <Button type="button" variant="outline" size="sm" onClick={() => handleRetryMediaDownload(msg)} disabled={retryingMediaMessageId === msg.message_id}>
+                  {retryingMediaMessageId === msg.message_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                </Button>
+              )}
             </div>
           ) : (
             <div className="relative max-w-[280px] overflow-hidden rounded-lg">
@@ -1614,6 +1999,21 @@ export default function LiveChatPage() {
             </div>
           )}
           {caption && renderFormattedText(caption, msg.direction)}
+        </div>
+      )
+    }
+
+    if (msg.media_type && !structuredMediaUrl) {
+      return (
+        <div className="flex items-center gap-2">
+          <ImageIcon className="h-4 w-4" />
+          {renderFormattedText(msg.message_text, msg.direction)}
+          {msg.message_id && (
+            <Button type="button" variant="outline" size="sm" onClick={() => handleRetryMediaDownload(msg)} disabled={retryingMediaMessageId === msg.message_id}>
+              {retryingMediaMessageId === msg.message_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              <span className="ml-1 text-xs">Download ulang</span>
+            </Button>
+          )}
         </div>
       )
     }
@@ -1759,7 +2159,7 @@ export default function LiveChatPage() {
                           ) : hasFreshConversationProcessing(conv) ? (
                             <Badge variant="outline" className="text-blue-600 border-blue-300 text-xs py-0 animate-pulse">
                               <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                              AI Memproses...
+                              AI sedang membaca...
                             </Badge>
                           ) : conv.ai_status === 'error' || processingStatuses[getConversationKey(conv)]?.stage === 'error' ? (
                             <div className="flex items-center gap-1">
@@ -1875,6 +2275,33 @@ export default function LiveChatPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  {!isWebchatConversation(selectedConversation) && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleSyncWaContacts}
+                        disabled={isSyncingWaContacts}
+                        className="hidden h-8 px-2 text-xs sm:inline-flex"
+                        title="Sinkron kontak WhatsApp"
+                      >
+                        {isSyncingWaContacts ? <RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> : <UserRound className="mr-1 h-3.5 w-3.5" />}
+                        Kontak
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleRefreshWaProfile}
+                        disabled={isRefreshingProfile}
+                        className="hidden h-8 px-2 text-xs sm:inline-flex"
+                        title="Refresh profil WhatsApp"
+                      >
+                        {isRefreshingProfile ? <RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}
+                        Profil
+                      </Button>
+                    </>
+                  )}
+
                   {/* Delete History Button */}
                   <Button
                     variant="ghost"
@@ -1955,21 +2382,43 @@ export default function LiveChatPage() {
                             <div className="group relative">
                               {renderMessageContent(msg)}
                               {selectedConversation.is_takeover && (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className={`absolute -top-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100 ${msg.direction === 'OUT' ? '-left-9 text-white hover:bg-green-600' : '-right-9'}`}
-                                  onClick={() => setReplyingToMessage(msg)}
-                                  title="Balas pesan ini"
-                                >
-                                  <Reply className="h-4 w-4" />
-                                </Button>
+                                <div className={`absolute -top-3 z-20 flex gap-1 rounded-full border bg-background/95 p-1 shadow-lg opacity-0 transition-opacity group-hover:opacity-100 ${msg.direction === 'OUT' ? '-left-36' : '-right-36'}`}>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-foreground hover:bg-muted"
+                                    onClick={() => setReplyingToMessage(msg)}
+                                    title="Balas"
+                                  >
+                                    <Reply className="h-4 w-4" />
+                                  </Button>
+                                  {!isWebchatConversation(selectedConversation) && msg.message_id && (
+                                    <>
+                                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" onClick={() => handleMessageAction(msg, 'reaction')} disabled={isSendingAdvancedAction} title="Reaction"><Smile className="h-4 w-4" /></Button>
+                                      {msg.direction === 'OUT' && <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" onClick={() => handleMessageAction(msg, 'edit')} disabled={isSendingAdvancedAction} title="Edit"><Pencil className="h-4 w-4" /></Button>}
+                                      {msg.direction === 'OUT' && <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-foreground hover:bg-muted" onClick={() => handleMessageAction(msg, 'delete')} disabled={isSendingAdvancedAction} title="Delete"><Trash2 className="h-4 w-4" /></Button>}
+                                    </>
+                                  )}
+                                </div>
                               )}
                             </div>
+                            {renderMessageReactions(msg)}
                             {msg.delivery_status === 'failed' && msg.status_error && (
-                              <div className="mt-2 rounded bg-red-600/20 px-2 py-1 text-xs text-red-50">
-                                {msg.status_error}
+                              <div className="mt-2 flex items-center gap-2 rounded bg-red-600/20 px-2 py-1 text-xs text-red-50">
+                                <span className="min-w-0 flex-1">{msg.status_error}</span>
+                                {msg.direction === 'OUT' && selectedConversation.is_takeover && (
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={() => handleRetryFailedMessage(msg)}
+                                    disabled={retryingFailedMessageId === msg.id || isSendingMessage}
+                                  >
+                                    {retryingFailedMessageId === msg.id ? <RefreshCw className="h-3 w-3 animate-spin" /> : 'Retry'}
+                                  </Button>
+                                )}
                               </div>
                             )}
                             <div className={`flex items-center gap-1 mt-1.5 text-xs ${msg.direction === "OUT" ? "text-green-100" : "text-muted-foreground"
@@ -2097,9 +2546,9 @@ export default function LiveChatPage() {
                         variant="outline"
                         size="icon"
                         onClick={handleSendVillageLocation}
-                        disabled={isSendingMessage || isSendingLocation || isWebchatConversation(selectedConversation) || villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null}
+                        disabled={isSendingMessage || isSendingLocation || isWebchatConversation(selectedConversation)}
                         className="h-10 w-10"
-                        title={villageProfileError || (villageProfileLocation?.latitude == null || villageProfileLocation?.longitude == null ? "Isi koordinat kantor di Profil Desa untuk mengirim lokasi" : "Kirim lokasi kantor desa")}
+                        title={isWebchatConversation(selectedConversation) ? "Lokasi native hanya didukung untuk WhatsApp" : "Kirim lokasi kantor desa"}
                       >
                         {isSendingLocation ? <RefreshCw className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
                       </Button>
@@ -2125,6 +2574,39 @@ export default function LiveChatPage() {
                       >
                         {isSendingMenu ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ListChecks className="h-4 w-4" />}
                       </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={handleSendSticker}
+                        disabled={isSendingMessage || isSendingAdvancedAction || isWebchatConversation(selectedConversation)}
+                        className="h-10 w-10"
+                        title={isWebchatConversation(selectedConversation) ? "Sticker hanya didukung untuk WhatsApp" : "Kirim sticker dari URL"}
+                      >
+                        <Sticker className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={handleSendPoll}
+                        disabled={isSendingMessage || isSendingAdvancedAction || isWebchatConversation(selectedConversation)}
+                        className="h-10 w-10"
+                        title={isWebchatConversation(selectedConversation) ? "Poll hanya didukung untuk WhatsApp" : "Kirim poll"}
+                      >
+                        <BarChart3 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => openAdvancedDialog('emoji')}
+                        disabled={isSendingMessage || isSendingAdvancedAction}
+                        className="h-10 w-10"
+                        title="Pilih emoji/icon"
+                      >
+                        <SmilePlus className="h-4 w-4" />
+                      </Button>
                       <Input
                         placeholder={selectedMedia ? "Tambahkan caption..." : "Ketik pesan..."}
                         value={messageInput}
@@ -2140,7 +2622,7 @@ export default function LiveChatPage() {
                       />
                       <Button
                         onClick={handleSendMessage}
-                        disabled={isSendingMessage || isUploadingMedia || (!messageInput.trim() && !selectedMedia)}
+                        disabled={isSendingMessage || isUploadingMedia || isSendingAdvancedAction || (!messageInput.trim() && !selectedMedia)}
                         className="h-10 px-4"
                       >
                         {isSendingMessage ? (
@@ -2174,6 +2656,72 @@ export default function LiveChatPage() {
         </div>
       </div>
 
+      <Dialog open={!!advancedDialog.type} onOpenChange={(open) => !open && closeAdvancedDialog()}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {advancedDialog.type === 'sticker' && 'Kirim Sticker'}
+              {advancedDialog.type === 'poll' && 'Kirim Polling'}
+              {advancedDialog.type === 'emoji' && 'Kirim Icon / Emoji'}
+              {advancedDialog.type === 'reaction' && 'Reaction Pesan'}
+              {advancedDialog.type === 'edit' && 'Edit Pesan'}
+              {advancedDialog.type === 'delete' && 'Hapus Pesan'}
+            </DialogTitle>
+            <DialogDescription>Preview sebelum dikirim ke WhatsApp.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {advancedDialog.type === 'sticker' && (
+              <>
+                <Input value={stickerUrl} onChange={(event) => setStickerUrl(event.target.value)} placeholder="https://.../sticker.webp" />
+                <div className="flex min-h-36 items-center justify-center rounded-lg border bg-muted/40 p-3">
+                  {stickerUrl.trim() ? <img src={stickerUrl.trim()} alt="Preview sticker" className="max-h-32 rounded" /> : <span className="text-sm text-muted-foreground">Preview sticker muncul setelah URL diisi.</span>}
+                </div>
+              </>
+            )}
+            {advancedDialog.type === 'poll' && (
+              <>
+                <Input value={pollQuestion} onChange={(event) => setPollQuestion(event.target.value)} placeholder="Pertanyaan polling" />
+                <textarea className="min-h-28 w-full rounded-md border bg-background px-3 py-2 text-sm" value={pollOptionsText} onChange={(event) => setPollOptionsText(event.target.value)} placeholder="Satu pilihan per baris" />
+                <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                  <div className="font-medium">{pollQuestion || 'Pertanyaan polling'}</div>
+                  <div className="mt-2 space-y-1">
+                    {pollOptionsText.split('\n').filter(Boolean).map((option, index) => <div key={`${option}-${index}`} className="rounded border bg-background px-2 py-1">{option}</div>)}
+                  </div>
+                </div>
+              </>
+            )}
+            {advancedDialog.type === 'emoji' && (
+              <>
+                <div className="grid grid-cols-6 gap-2">
+                  {quickEmojis.map((emoji) => <button key={emoji} type="button" onClick={() => setSelectedEmoji(emoji)} className={`rounded-lg border p-2 text-2xl hover:bg-muted ${selectedEmoji === emoji ? 'border-primary bg-primary/10' : ''}`}>{emoji}</button>)}
+                </div>
+                <Input value={emojiText} onChange={(event) => setEmojiText(event.target.value)} placeholder="Tambahkan teks opsional" />
+                <div className="rounded-lg border bg-green-500 p-3 text-white">{selectedEmoji}{emojiText.trim() ? ` ${emojiText.trim()}` : ''}</div>
+              </>
+            )}
+            {advancedDialog.type === 'reaction' && (
+              <>
+                <div className="grid grid-cols-6 gap-2">
+                  {quickEmojis.slice(0, 8).map((emoji) => <button key={emoji} type="button" onClick={() => setReactionEmoji(emoji)} className={`rounded-lg border p-2 text-2xl hover:bg-muted ${reactionEmoji === emoji ? 'border-primary bg-primary/10' : ''}`}>{emoji}</button>)}
+                </div>
+                <Input value={reactionEmoji} onChange={(event) => setReactionEmoji(event.target.value)} placeholder="Emoji atau remove" />
+              </>
+            )}
+            {advancedDialog.type === 'edit' && <Input value={editMessageText} onChange={(event) => setEditMessageText(event.target.value)} placeholder="Teks pengganti" />}
+            {advancedDialog.type === 'delete' && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">Pesan akan direvoke/dihapus dari WhatsApp jika provider mengizinkan.</div>}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeAdvancedDialog}>Batal</Button>
+            {advancedDialog.type === 'sticker' && <Button type="button" onClick={submitSticker} disabled={isSendingAdvancedAction || !stickerUrl.trim()}>Kirim</Button>}
+            {advancedDialog.type === 'poll' && <Button type="button" onClick={submitPoll} disabled={isSendingAdvancedAction || !pollQuestion.trim()}>Kirim</Button>}
+            {advancedDialog.type === 'emoji' && <Button type="button" onClick={submitEmojiMessage}>Pakai</Button>}
+            {advancedDialog.type === 'reaction' && advancedDialog.targetMessage && <Button type="button" onClick={() => submitMessageAction('reaction', advancedDialog.targetMessage!, { emoji: reactionEmoji.trim() })} disabled={isSendingAdvancedAction || !reactionEmoji.trim()}>Kirim</Button>}
+            {advancedDialog.type === 'edit' && advancedDialog.targetMessage && <Button type="button" onClick={() => submitMessageAction('edit', advancedDialog.targetMessage!, { body: editMessageText.trim() })} disabled={isSendingAdvancedAction || !editMessageText.trim()}>Simpan</Button>}
+            {advancedDialog.type === 'delete' && advancedDialog.targetMessage && <Button type="button" variant="destructive" onClick={() => submitMessageAction('delete', advancedDialog.targetMessage!)} disabled={isSendingAdvancedAction}>Hapus</Button>}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showContactDialog} onOpenChange={setShowContactDialog}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -2181,42 +2729,77 @@ export default function LiveChatPage() {
             <DialogDescription>Pilih kontak desa untuk dikirim sebagai kartu kontak WhatsApp.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <Input
-              placeholder="Cari nama, telepon, kategori..."
-              value={contactSearchQuery}
-              onChange={(event) => setContactSearchQuery(event.target.value)}
-            />
+            <div className="flex gap-2">
+              <Input
+                placeholder="Cari nama, telepon, kategori, kontak WhatsApp..."
+                value={contactSearchQuery}
+                onChange={(event) => setContactSearchQuery(event.target.value)}
+              />
+              <Button type="button" variant="outline" onClick={handleSyncWaContacts} disabled={isSyncingWaContacts}>
+                {isSyncingWaContacts ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              </Button>
+            </div>
             {importantContactsError && (
               <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
                 {importantContactsError}
               </div>
             )}
-            <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-              {filteredImportantContacts.length === 0 ? (
+            <div className="max-h-80 space-y-4 overflow-y-auto pr-1">
+              {filteredImportantContacts.length === 0 && filteredWaProviderContacts.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
                   Tidak ada kontak yang cocok.
                 </div>
               ) : (
-                filteredImportantContacts.map((contact) => (
-                  <button
-                    key={contact.id}
-                    type="button"
-                    className="flex w-full items-start justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted"
-                    onClick={() => handleSendImportantContact(contact)}
-                    disabled={isSendingContact}
-                  >
-                    <div className="min-w-0">
-                      <div className="font-medium">{contact.name}</div>
-                      <div className="text-sm text-muted-foreground">{contact.phone}</div>
-                      {(contact.category?.name || contact.description) && (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {[contact.category?.name, contact.description].filter(Boolean).join(' • ')}
-                        </div>
-                      )}
+                <>
+                  {filteredImportantContacts.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Kontak Penting Desa</div>
+                      {filteredImportantContacts.map((contact) => (
+                        <button
+                          key={contact.id}
+                          type="button"
+                          className="flex w-full items-start justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted"
+                          onClick={() => handleSendImportantContact(contact)}
+                          disabled={isSendingContact}
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium">{contact.name}</div>
+                            <div className="text-sm text-muted-foreground">{contact.phone}</div>
+                            {(contact.category?.name || contact.description) && (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {[contact.category?.name, contact.description].filter(Boolean).join(' • ')}
+                              </div>
+                            )}
+                          </div>
+                          <UserRound className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+                        </button>
+                      ))}
                     </div>
-                    <UserRound className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
-                  </button>
-                ))
+                  )}
+                  {filteredWaProviderContacts.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Kontak WhatsApp Provider</div>
+                      {filteredWaProviderContacts.slice(0, 80).map((contact) => (
+                        <button
+                          key={contact.id}
+                          type="button"
+                          className="flex w-full items-start justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted"
+                          onClick={() => handleSendImportantContact(contact)}
+                          disabled={isSendingContact}
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium">{contact.name}</div>
+                            <div className="text-sm text-muted-foreground">{contact.phone}</div>
+                            {contact.pushName && contact.pushName !== contact.name && (
+                              <div className="mt-1 text-xs text-muted-foreground">Push name: {contact.pushName}</div>
+                            )}
+                          </div>
+                          <UserRound className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

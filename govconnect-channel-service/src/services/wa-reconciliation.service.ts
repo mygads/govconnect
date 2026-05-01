@@ -2,6 +2,8 @@ import prisma from '../config/database';
 import logger from '../utils/logger';
 import {
   REQUIRED_WEBHOOK_EVENTS,
+  RECOMMENDED_WEBHOOK_EVENTS,
+  GOVCONNECT_WEBHOOK_EVENTS,
   getPublicWhatsAppWebhookUrl,
   getSessionStatus,
   getStoredSession,
@@ -26,8 +28,10 @@ export interface WhatsAppSessionAudit {
   sessionId: string | null;
   providerActiveEvents: string[];
   requiredEvents: string[];
+  recommendedEvents: string[];
   subscribedEvents: string[];
   missingEvents: string[];
+  missingRecommendedEvents: string[];
   extraEvents: string[];
   webhookUrl: string;
   expectedWebhookUrl: string;
@@ -74,8 +78,10 @@ export async function auditWhatsAppSession(villageId: string): Promise<WhatsAppS
       sessionId: null,
       providerActiveEvents: [],
       requiredEvents: REQUIRED_WEBHOOK_EVENTS,
+      recommendedEvents: RECOMMENDED_WEBHOOK_EVENTS,
       subscribedEvents: [],
       missingEvents: REQUIRED_WEBHOOK_EVENTS,
+      missingRecommendedEvents: RECOMMENDED_WEBHOOK_EVENTS,
       extraEvents: [],
       webhookUrl: '',
       expectedWebhookUrl,
@@ -98,7 +104,9 @@ export async function auditWhatsAppSession(villageId: string): Promise<WhatsAppS
 
   const subscribedEvents = normalizeEventList(webhookConfig.subscribe);
   const missingEvents = REQUIRED_WEBHOOK_EVENTS.filter(event => !subscribedEvents.includes(event));
-  const extraEvents = subscribedEvents.filter(event => !REQUIRED_WEBHOOK_EVENTS.includes(event));
+  const missingRecommendedEvents = RECOMMENDED_WEBHOOK_EVENTS.filter(event => !subscribedEvents.includes(event));
+  const expectedEvents = GOVCONNECT_WEBHOOK_EVENTS;
+  const extraEvents = subscribedEvents.filter(event => !expectedEvents.includes(event) && event !== 'All');
   const webhookUrl = webhookConfig.webhook || '';
   const webhookMatches = !!expectedWebhookUrl && normalizeWebhookUrl(webhookUrl) === normalizeWebhookUrl(expectedWebhookUrl);
   const waNumber = extractWaNumber(providerStatus.jid) || session.wa_number || null;
@@ -106,7 +114,9 @@ export async function auditWhatsAppSession(villageId: string): Promise<WhatsAppS
   if (!expectedWebhookUrl) issues.push({ severity: 'error', code: 'public_webhook_missing', message: 'PUBLIC_CHANNEL_BASE_URL/PUBLIC_BASE_URL belum dikonfigurasi.' });
   if (!webhookUrl) issues.push({ severity: 'error', code: 'webhook_missing', message: 'Webhook belum terpasang di provider WhatsApp.' });
   if (webhookUrl && !webhookMatches) issues.push({ severity: 'warning', code: 'webhook_mismatch', message: 'Webhook provider tidak sama dengan URL publik GovConnect.' });
-  if (missingEvents.length > 0) issues.push({ severity: 'warning', code: 'missing_events', message: `Event webhook belum lengkap: ${missingEvents.join(', ')}` });
+  if (missingEvents.length > 0) issues.push({ severity: 'error', code: 'missing_required_events', message: `Event webhook wajib belum lengkap: ${missingEvents.join(', ')}` });
+  if (missingRecommendedEvents.length > 0) issues.push({ severity: 'warning', code: 'missing_recommended_events', message: `Event webhook rekomendasi belum lengkap: ${missingRecommendedEvents.join(', ')}` });
+  if (subscribedEvents.includes('All')) issues.push({ severity: 'warning', code: 'all_event_enabled', message: 'Event All aktif dan bisa membuat volume webhook terlalu noisy di produksi.' });
   if (!session.webhook_secret) issues.push({ severity: 'warning', code: 'hmac_missing', message: 'Webhook secret belum tersimpan di GovConnect.' });
   if (!providerStatus.connected) issues.push({ severity: 'warning', code: 'provider_disconnected', message: 'Provider melaporkan session belum connected.' });
   if (providerStatus.connected && !providerStatus.loggedIn) issues.push({ severity: 'warning', code: 'provider_not_logged_in', message: 'Provider connected tetapi WhatsApp belum login.' });
@@ -117,8 +127,10 @@ export async function auditWhatsAppSession(villageId: string): Promise<WhatsAppS
     sessionId: session.wa_support_session_id,
     providerActiveEvents,
     requiredEvents: REQUIRED_WEBHOOK_EVENTS,
+    recommendedEvents: RECOMMENDED_WEBHOOK_EVENTS,
     subscribedEvents,
     missingEvents,
+    missingRecommendedEvents,
     extraEvents,
     webhookUrl,
     expectedWebhookUrl,
@@ -170,13 +182,14 @@ export async function syncWhatsAppWebhook(villageId: string): Promise<WhatsAppSe
   if (!expectedWebhookUrl) throw new Error('PUBLIC_CHANNEL_BASE_URL/PUBLIC_BASE_URL not configured');
 
   const before = await auditWhatsAppSession(villageId);
-  const needsWebhookRepair = !before.webhookMatches || before.missingEvents.length > 0;
+  const hasAllEvent = before.subscribedEvents.includes('All');
+  const needsWebhookRepair = !before.webhookMatches || before.missingEvents.length > 0 || before.missingRecommendedEvents.length > 0 || hasAllEvent;
 
   if (needsWebhookRepair) {
     await waGatewayRequest(session.wa_token, '/webhook', 'PUT', {
-      webhook: expectedWebhookUrl,
-      events: REQUIRED_WEBHOOK_EVENTS,
-      active: true,
+      WebhookURL: expectedWebhookUrl,
+      Events: GOVCONNECT_WEBHOOK_EVENTS,
+      Active: true,
     });
     await logWaActivity({
       villageId,
@@ -189,6 +202,8 @@ export async function syncWhatsAppWebhook(villageId: string): Promise<WhatsAppSe
         expectedWebhookUrl,
         previousWebhookUrl: before.webhookUrl,
         missingEvents: before.missingEvents,
+        missingRecommendedEvents: before.missingRecommendedEvents,
+        removedAllEvent: hasAllEvent,
       },
     });
   }
@@ -220,7 +235,7 @@ export async function syncWhatsAppWebhook(villageId: string): Promise<WhatsAppSe
     severity: after.issues.some(issue => issue.severity === 'error') ? 'error' : after.issues.some(issue => issue.severity === 'warning') ? 'warning' : 'info',
     status: after.issues.length === 0 ? 'ok' : 'issues_found',
     message: after.issues.length === 0 ? 'Audit webhook/session WhatsApp tidak menemukan masalah.' : `Audit webhook/session menemukan ${after.issues.length} issue.`,
-    metadata: { issues: after.issues, missingEvents: after.missingEvents },
+    metadata: { issues: after.issues, missingEvents: after.missingEvents, missingRecommendedEvents: after.missingRecommendedEvents },
   });
 
   return after;

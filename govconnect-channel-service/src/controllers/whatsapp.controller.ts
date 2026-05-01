@@ -12,12 +12,26 @@ import {
   deleteSessionForVillage,
   getStoredSession,
   updateStoredSessionStatus,
+  normalizePhoneNumber,
+  getWhatsAppContacts,
+  syncWhatsAppContacts,
+  sendUserPresence,
+  rejectWhatsAppCall,
+  setWhatsAppStatusText,
+  getWhatsAppProxyConfig,
+  syncWhatsAppHistory,
+  getWhatsAppS3Status,
+  testWhatsAppS3,
+  deleteWhatsAppS3Config,
 } from '../services/wa.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
 import { getQuery } from '../utils/http';
 import { auditWhatsAppSession, syncWhatsAppWebhook } from '../services/wa-reconciliation.service';
-import { listWaActivities, WaActivitySeverity } from '../services/wa-activity-log.service';
+import { listWaActivities, logWaActivity, WaActivitySeverity } from '../services/wa-activity-log.service';
+import { enrichConversationProfile } from '../services/wa-profile.service';
+import { downloadWhatsAppMedia } from '../services/media.service';
+import { updateMessageMedia } from '../services/message.service';
 
 function resolveVillageId(req: Request): string | null {
   const queryVillageId = getQuery(req, 'village_id') || null;
@@ -33,6 +47,21 @@ function requireVillageId(req: Request, res: Response): string | null {
     return null;
   }
   return villageId;
+}
+
+function getStoredMediaMessage(rawMessage: any, mediaType: string | null | undefined): any | null {
+  if (!rawMessage || typeof rawMessage !== 'object' || !mediaType) return null;
+  const map: Record<string, string[]> = {
+    image: ['imageMessage', 'ImageMessage'],
+    video: ['videoMessage', 'VideoMessage'],
+    audio: ['audioMessage', 'AudioMessage'],
+    document: ['documentMessage', 'DocumentMessage'],
+    sticker: ['stickerMessage', 'StickerMessage'],
+  };
+  for (const key of map[mediaType] || []) {
+    if (rawMessage[key] && typeof rawMessage[key] === 'object') return rawMessage[key];
+  }
+  return null;
 }
 
 async function syncChannelAccountNumber(villageId: string, waNumber?: string | null) {
@@ -388,7 +417,10 @@ export async function pair(req: Request, res: Response): Promise<void> {
  */
 export async function getSettings(_req: Request, res: Response): Promise<void> {
   try {
-    const settings = await getSessionSettings();
+    const villageId = requireVillageId(_req, res);
+    if (!villageId) return;
+
+    const settings = await getSessionSettings(villageId);
     res.json({
       success: true,
       data: settings,
@@ -408,13 +440,16 @@ export async function getSettings(_req: Request, res: Response): Promise<void> {
  */
 export async function updateSettings(req: Request, res: Response): Promise<void> {
   try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
     const { autoReadMessages, typingIndicator } = req.body;
-    
+
     const result = await updateSessionSettings({
       autoReadMessages,
       typingIndicator,
-    });
-    
+    }, villageId);
+
     res.json({
       success: true,
       data: result,
@@ -473,14 +508,17 @@ export async function checkDuplicateWaNumber(req: Request, res: Response): Promi
       return;
     }
 
-    // Find any other village that has this WA number connected (excluding current village)
-    const existingSession = await prisma.wa_sessions.findFirst({
+    const normalizedWaNumber = normalizePhoneNumber(waNumber);
+    const connectedSessions = await prisma.wa_sessions.findMany({
       where: {
-        wa_number: waNumber,
         village_id: { not: villageId },
         status: 'connected',
+        wa_number: { not: null },
       },
     });
+    const existingSession = connectedSessions.find(session =>
+      session.wa_number && normalizePhoneNumber(session.wa_number) === normalizedWaNumber
+    ) || null;
 
     if (existingSession) {
       // Try to get village name from govconnect database
@@ -501,6 +539,7 @@ export async function checkDuplicateWaNumber(req: Request, res: Response): Promi
         success: true,
         data: {
           isDuplicate: true,
+          waNumber: normalizedWaNumber,
           existingVillageId: existingSession.village_id,
           existingVillageName: villageName,
         },
@@ -512,6 +551,7 @@ export async function checkDuplicateWaNumber(req: Request, res: Response): Promi
       success: true,
       data: {
         isDuplicate: false,
+        waNumber: normalizedWaNumber,
       },
     });
   } catch (error: any) {
@@ -571,6 +611,250 @@ export async function getWaActivity(req: Request, res: Response): Promise<void> 
   } catch (error: any) {
     logger.error('WA activity list error', { error: error.message });
     res.status(500).json({ success: false, error: error.message || 'Failed to load WA activity' });
+  }
+}
+
+export async function getWaContacts(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const sync = getQuery(req, 'sync') === 'true';
+    const contacts = await getWhatsAppContacts(villageId, sync);
+    res.json({ success: true, data: { contacts, count: contacts.length } });
+  } catch (error: any) {
+    logger.error('WA contacts list error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to load WA contacts' });
+  }
+}
+
+export async function syncWaContacts(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const contacts = await syncWhatsAppContacts(villageId);
+    res.json({ success: true, data: { contacts, count: contacts.length } });
+  } catch (error: any) {
+    logger.error('WA contacts sync error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to sync WA contacts' });
+  }
+}
+
+export async function setWaPresence(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const state = req.body?.state === 'unavailable' ? 'unavailable' : req.body?.state === 'available' ? 'available' : null;
+    if (!state) {
+      res.status(400).json({ success: false, error: 'state must be available or unavailable' });
+      return;
+    }
+
+    const sent = await sendUserPresence(villageId, state);
+    res.json({ success: true, data: { state, provider_sent: sent } });
+  } catch (error: any) {
+    logger.error('WA presence error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to set WA presence' });
+  }
+}
+
+export async function rejectWaCall(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const callId = typeof req.body?.call_id === 'string' ? req.body.call_id.trim() : undefined;
+    const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : undefined;
+    if (!callId && !phone) {
+      res.status(400).json({ success: false, error: 'call_id or phone is required' });
+      return;
+    }
+
+    const result = await rejectWhatsAppCall({ villageId, callId, to: phone });
+    res.status(result.success ? 200 : 502).json({ success: result.success, data: result, error: result.error });
+  } catch (error: any) {
+    logger.error('WA call reject error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to reject WA call' });
+  }
+}
+
+export async function setWaStatusText(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text) {
+      res.status(400).json({ success: false, error: 'text is required' });
+      return;
+    }
+    if (text.length > 700) {
+      res.status(400).json({ success: false, error: 'text is too long' });
+      return;
+    }
+
+    const result = await setWhatsAppStatusText({ villageId, text });
+    res.status(result.success ? 200 : 502).json({ success: result.success, data: result, error: result.error });
+  } catch (error: any) {
+    logger.error('WA status text error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to set WA status text' });
+  }
+}
+
+export async function retryWaMediaDownload(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const messageId = req.params.message_id || req.body?.message_id;
+    if (!messageId || typeof messageId !== 'string') {
+      res.status(400).json({ success: false, error: 'message_id is required' });
+      return;
+    }
+
+    const message = await prisma.message.findFirst({
+      where: {
+        village_id: villageId,
+        message_id: messageId,
+        channel: 'WHATSAPP',
+      },
+    });
+
+    if (!message) {
+      res.status(404).json({ success: false, error: 'Message not found' });
+      return;
+    }
+
+    const mediaType = message.media_type as 'image' | 'video' | 'audio' | 'document' | 'sticker' | null;
+    const rawMediaMessage = getStoredMediaMessage(message.wa_raw_message, mediaType);
+    if (!mediaType || !rawMediaMessage) {
+      res.status(400).json({ success: false, error: 'Stored message does not contain downloadable media metadata' });
+      return;
+    }
+
+    const waUserId = message.wa_user_id || message.channel_identifier;
+    const downloaded = await downloadWhatsAppMedia(rawMediaMessage, mediaType, waUserId, messageId, villageId);
+    if (!downloaded) {
+      await logWaActivity({
+        villageId,
+        waUserId,
+        channelIdentifier: message.channel_identifier,
+        type: 'media_download',
+        severity: 'warning',
+        status: 'retry_failed',
+        message: 'Download ulang media WhatsApp gagal.',
+        providerMessageId: messageId,
+      });
+      res.status(502).json({ success: false, error: 'Failed to download media from provider' });
+      return;
+    }
+
+    await updateMessageMedia(messageId, {
+      media_type: mediaType,
+      media_url: downloaded.internalUrl,
+      media_public_url: downloaded.publicUrl,
+      mime_type: message.mime_type,
+      file_name: message.file_name,
+      file_size: message.file_size,
+      storage_key: downloaded.storageKey,
+    });
+
+    await logWaActivity({
+      villageId,
+      waUserId,
+      channelIdentifier: message.channel_identifier,
+      type: 'media_download',
+      severity: 'info',
+      status: 'retry_success',
+      message: 'Download ulang media WhatsApp berhasil.',
+      providerMessageId: messageId,
+      metadata: { storageKey: downloaded.storageKey },
+    });
+
+    res.json({ success: true, data: downloaded });
+  } catch (error: any) {
+    logger.error('WA media retry error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to retry media download' });
+  }
+}
+
+export async function getWaProxyConfig(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+    res.json({ success: true, data: await getWhatsAppProxyConfig(villageId) });
+  } catch (error: any) {
+    logger.error('WA proxy config error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to load WA proxy config' });
+  }
+}
+
+export async function syncWaHistory(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+    const history = Number(req.body?.history ?? getQuery(req, 'history') ?? 0);
+    res.json({ success: true, data: await syncWhatsAppHistory(villageId, history) });
+  } catch (error: any) {
+    logger.error('WA history sync error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to sync WA history' });
+  }
+}
+
+export async function getWaS3Status(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+    res.json({ success: true, data: await getWhatsAppS3Status(villageId) });
+  } catch (error: any) {
+    logger.error('WA S3 status error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to load WA S3 status' });
+  }
+}
+
+export async function testWaS3(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+    res.json({ success: true, data: await testWhatsAppS3(villageId) });
+  } catch (error: any) {
+    logger.error('WA S3 test error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to test WA S3' });
+  }
+}
+
+export async function deleteWaS3(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+    res.json({ success: true, data: await deleteWhatsAppS3Config(villageId) });
+  } catch (error: any) {
+    logger.error('WA S3 delete error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete WA S3 config' });
+  }
+}
+
+export async function refreshWaProfile(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+
+    const phone = typeof req.body?.phone === 'string'
+      ? req.body.phone.trim()
+      : getQuery(req, 'phone') || getQuery(req, 'wa_user_id') || '';
+    const pushName = typeof req.body?.push_name === 'string' ? req.body.push_name.trim() : undefined;
+    if (!phone) {
+      res.status(400).json({ success: false, error: 'phone is required' });
+      return;
+    }
+
+    const profile = await enrichConversationProfile(villageId, phone, pushName);
+    res.json({ success: true, data: profile });
+  } catch (error: any) {
+    logger.error('WA profile refresh error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to refresh WA profile' });
   }
 }
 

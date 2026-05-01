@@ -202,6 +202,47 @@ export async function saveOutgoingMessage(
   return message;
 }
 
+export async function replaceFailedOutgoingMessage(
+  id: string,
+  data: MessageData & { source: 'AI' | 'SYSTEM' | 'ADMIN' }
+): Promise<any> {
+  const villageId = resolveVillageId(data.village_id);
+  const channel = data.channel || 'WHATSAPP';
+  const message = await prisma.message.update({
+    where: { id },
+    data: {
+      village_id: villageId,
+      wa_user_id: data.wa_user_id || null,
+      channel,
+      channel_identifier: data.channel_identifier,
+      message_id: data.message_id,
+      message_text: data.message_text,
+      ...mediaFields(data),
+      ...richFields(data),
+      direction: 'OUT',
+      source: data.source,
+      delivery_status: data.delivery_status || 'sent',
+      sent_at: null,
+      delivered_at: null,
+      read_at: null,
+      failed_at: null,
+      ...statusTimestampFields(data.delivery_status || 'sent', data.timestamp || new Date()),
+      status_error: data.status_error || null,
+      timestamp: data.timestamp || new Date(),
+    },
+  });
+
+  publishLivechatEvent({
+    type: 'message',
+    village_id: message.village_id,
+    channel: message.channel,
+    channel_identifier: message.channel_identifier,
+  });
+
+  logger.info('Failed outgoing message replaced', { id: message.id });
+  return message;
+}
+
 /**
  * Maintain maximum 30 messages per user (FIFO)
  * Optimized: only runs every 5th message per conversation to reduce DB load,
@@ -279,7 +320,64 @@ export async function getMessageHistory(
     count: messages.length,
   });
 
-  return messages.reverse(); // oldest first
+  return normalizeHistoryMessages(messages.reverse()); // oldest first
+}
+
+function attachLegacyReactionActivities(messages: any[]): any[] {
+  const byMessageId = new Map(messages.map((message) => [message.message_id, message]));
+  const hidden = new Set<string>();
+
+  for (const message of messages) {
+    const payload = message.interactive_payload as any;
+    if (message.source !== 'SYSTEM' || payload?.status !== 'reaction_received') continue;
+
+    const targetMessageId = payload?.metadata?.targetMessageId;
+    const emoji = payload?.metadata?.action?.emoji;
+    const target = targetMessageId ? byMessageId.get(targetMessageId) : null;
+    if (!target || typeof emoji !== 'string' || !emoji.trim()) continue;
+
+    const currentPayload = target.interactive_payload && typeof target.interactive_payload === 'object' && !Array.isArray(target.interactive_payload)
+      ? target.interactive_payload
+      : {};
+    const currentReactions = Array.isArray(currentPayload.reactions) ? currentPayload.reactions : [];
+    target.interactive_payload = {
+      ...currentPayload,
+      reactions: [
+        ...currentReactions.filter((reaction: any) => reaction?.message_id !== message.message_id),
+        {
+          emoji,
+          from: message.channel_identifier,
+          message_id: message.message_id,
+          timestamp: message.timestamp,
+        },
+      ],
+    };
+    hidden.add(message.id);
+  }
+
+  return messages.filter((message) => !hidden.has(message.id));
+}
+
+function hideSupersededFailedRetries(messages: any[]): any[] {
+  const hidden = new Set<string>();
+
+  for (const message of messages) {
+    if (message.direction !== 'OUT' || message.source !== 'ADMIN' || message.delivery_status !== 'failed') continue;
+    const hasLaterSentSamePayload = messages.some((candidate) => (
+      candidate.direction === 'OUT' &&
+      candidate.source === 'ADMIN' &&
+      candidate.delivery_status !== 'failed' &&
+      candidate.message_text === message.message_text &&
+      new Date(candidate.createdAt || candidate.timestamp).getTime() > new Date(message.createdAt || message.timestamp).getTime()
+    ));
+    if (hasLaterSentSamePayload) hidden.add(message.id);
+  }
+
+  return messages.filter((message) => !hidden.has(message.id));
+}
+
+function normalizeHistoryMessages(messages: any[]): any[] {
+  return hideSupersededFailedRetries(attachLegacyReactionActivities(messages));
 }
 
 /**
@@ -291,6 +389,63 @@ export async function checkDuplicateMessage(message_id: string): Promise<boolean
   });
 
   return existing !== null;
+}
+
+export async function applyMessageReaction(params: {
+  village_id?: string;
+  channel?: 'WHATSAPP' | 'WEBCHAT';
+  channel_identifier: string;
+  target_message_id: string;
+  reaction_message_id: string;
+  emoji: string;
+  from?: string | null;
+  timestamp?: Date;
+}): Promise<boolean> {
+  const villageId = resolveVillageId(params.village_id);
+  const channel = params.channel || 'WHATSAPP';
+  const existing = await prisma.message.findFirst({
+    where: {
+      village_id: villageId,
+      channel,
+      channel_identifier: params.channel_identifier,
+      message_id: params.target_message_id,
+    },
+  });
+  if (!existing) return false;
+
+  const currentPayload = existing.interactive_payload && typeof existing.interactive_payload === 'object' && !Array.isArray(existing.interactive_payload)
+    ? existing.interactive_payload as Record<string, any>
+    : {};
+  const currentReactions = Array.isArray(currentPayload.reactions) ? currentPayload.reactions : [];
+  const nextReactions = params.emoji === 'hapus reaction' || params.emoji === 'remove' || params.emoji === ''
+    ? currentReactions.filter((reaction: any) => reaction?.from !== params.from)
+    : [
+        ...currentReactions.filter((reaction: any) => reaction?.from !== params.from),
+        {
+          emoji: params.emoji,
+          from: params.from || params.channel_identifier,
+          message_id: params.reaction_message_id,
+          timestamp: (params.timestamp || new Date()).toISOString(),
+        },
+      ];
+
+  const message = await prisma.message.update({
+    where: { id: existing.id },
+    data: {
+      interactive_payload: {
+        ...currentPayload,
+        reactions: nextReactions,
+      },
+    },
+  });
+
+  publishLivechatEvent({
+    type: 'message',
+    village_id: message.village_id,
+    channel: message.channel,
+    channel_identifier: message.channel_identifier,
+  });
+  return true;
 }
 
 export async function updateMessageMedia(message_id: string, media: MessageMediaFields): Promise<void> {

@@ -9,6 +9,7 @@ import { DashboardNavbar } from "@/components/dashboard/DashboardNavbar"
 import { RealtimeProvider } from "@/components/dashboard/RealtimeProvider"
 import { UrgentAlertBanner } from "@/components/dashboard/NotificationCenter"
 import { AIWalletExhaustedBanner } from "@/components/dashboard/AIWalletStatus"
+import { ServiceHealthBanner } from "@/components/dashboard/ServiceHealthBanner"
 // LiveChatWidget removed — only shown on landing page and form pages
 import { useAuth } from "@/components/auth/AuthContext"
 import { isRouteAllowed, isSuperadmin, type AdminRole } from "@/lib/rbac"
@@ -44,6 +45,7 @@ export default function DashboardLayoutClient({ children }: DashboardLayoutClien
     <SidebarProvider>
       <GovConnectSidebar />
       <SidebarInset>
+        <ServiceHealthBanner />
         {!userIsSuperadmin && <UrgentAlertBanner />}
         {!userIsSuperadmin && <AIWalletExhaustedBanner />}
         <DashboardNavbar />

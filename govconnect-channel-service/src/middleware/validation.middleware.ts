@@ -52,6 +52,19 @@ export function verifyWebhookOrigin(
   next();
 }
 
+function verifySignature(rawBody: Buffer, signature: string, secret: string): boolean {
+  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+  const provided = signature.startsWith('sha256=') ? signature.slice(7) : signature;
+
+  try {
+    const a = Buffer.from(expected, 'hex');
+    const b = Buffer.from(provided, 'hex');
+    return a.length === b.length && timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
 export async function verifyWebhookHmac(
   req: Request,
   res: Response,
@@ -61,72 +74,64 @@ export async function verifyWebhookHmac(
   const signature = (req.headers['x-hmac-signature'] as string | undefined)?.trim();
   const candidate = webhookCandidateFromBody(req.body || {});
 
-  if (!candidate) {
-    logger.warn('Webhook rejected: cannot determine session for HMAC verification');
-    res.status(400).json({ error: 'Missing instanceName/userID for signature verification' });
-    return;
-  }
-
-  let secret: string | null = null;
-  try {
-    const session = await prisma.wa_sessions.findFirst({
-      where: {
-        OR: [
-          { instance_name: candidate },
-          { village_id: candidate },
-          { wa_support_session_id: candidate },
-        ],
-      },
-      select: { webhook_secret: true },
-    });
-    secret = session?.webhook_secret || null;
-  } catch (err: any) {
-    logger.error('Webhook HMAC: session lookup failed', { error: err?.message });
-    res.status(500).json({ error: 'HMAC verification failed' });
-    return;
-  }
-
-  if (!secret) {
-    if (required || signature) {
-      logger.warn('Webhook rejected: no webhook_secret stored for session', { candidate });
-      res.status(401).json({ error: 'Unknown signing key' });
+  if (!signature) {
+    if (required) {
+      logger.warn('Webhook rejected: x-hmac-signature header missing', { candidate: candidate || 'unknown' });
+      res.status(401).json({ error: 'Missing webhook signature' });
       return;
     }
     return next();
   }
 
-  if (!signature) {
-    logger.warn('Webhook rejected: x-hmac-signature header missing', { candidate });
-    res.status(401).json({ error: 'Missing webhook signature' });
-    return;
-  }
-
   const rawBody: Buffer | undefined = (req as any).rawBody;
   if (!rawBody || rawBody.length === 0) {
-    logger.warn('Webhook signature present but raw body unavailable', { candidate });
+    logger.warn('Webhook signature present but raw body unavailable', { candidate: candidate || 'unknown' });
     res.status(400).json({ error: 'Cannot verify signature: empty body' });
     return;
   }
 
-  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-  const provided = signature.startsWith('sha256=') ? signature.slice(7) : signature;
-
-  let ok = false;
   try {
-    const a = Buffer.from(expected, 'hex');
-    const b = Buffer.from(provided, 'hex');
-    ok = a.length === b.length && timingSafeEqual(a, b);
-  } catch {
-    ok = false;
-  }
+    if (candidate) {
+      const session = await prisma.wa_sessions.findFirst({
+        where: {
+          OR: [
+            { instance_name: candidate },
+            { village_id: candidate },
+            { wa_support_session_id: candidate },
+            { wa_number: candidate.replace(/@s\.whatsapp\.net$/i, '').replace(/:\d+$/, '').replace(/\D/g, '') },
+          ],
+        },
+        select: { id: true, webhook_secret: true },
+      });
 
-  if (!ok) {
-    logger.warn('Webhook rejected: HMAC signature mismatch', { candidate });
-    res.status(401).json({ error: 'Invalid webhook signature' });
-    return;
-  }
+      if (session?.webhook_secret && verifySignature(rawBody, signature, session.webhook_secret)) {
+        return next();
+      }
 
-  next();
+      if (session?.webhook_secret) {
+        logger.warn('Webhook rejected: HMAC signature mismatch', { candidate });
+        res.status(401).json({ error: 'Invalid webhook signature' });
+        return;
+      }
+    }
+
+    const signedSessions = await prisma.wa_sessions.findMany({
+      where: { webhook_secret: { not: null } },
+      select: { id: true, village_id: true, webhook_secret: true },
+    });
+    const matches = signedSessions.filter(session => session.webhook_secret && verifySignature(rawBody, signature, session.webhook_secret));
+
+    if (matches.length === 1) return next();
+
+    logger.warn('Webhook rejected: could not match HMAC signature to exactly one session', {
+      candidate: candidate || 'unknown',
+      matchedSessions: matches.length,
+    });
+    res.status(401).json({ error: 'Unknown signing key' });
+  } catch (err: any) {
+    logger.error('Webhook HMAC: session lookup failed', { error: err?.message });
+    res.status(500).json({ error: 'HMAC verification failed' });
+  }
 }
 export function handleValidationErrors(
   req: Request,

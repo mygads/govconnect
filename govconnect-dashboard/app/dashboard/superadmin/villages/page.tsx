@@ -7,8 +7,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useAuth } from "@/components/auth/AuthContext"
-import { Eye } from "lucide-react"
+import { Eye, Loader2, Power, PowerOff } from "lucide-react"
 import Link from "next/link"
 
 interface AdminUser {
@@ -39,6 +40,8 @@ export default function SuperadminVillagesPage() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
   const [villages, setVillages] = useState<VillageItem[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [updatingVillageId, setUpdatingVillageId] = useState<string | null>(null)
 
   useEffect(() => {
     if (user && user.role !== "superadmin") {
@@ -46,33 +49,63 @@ export default function SuperadminVillagesPage() {
     }
   }, [user])
 
-  useEffect(() => {
-    const fetchVillages = async () => {
-      try {
-        setLoading(true)
-        const response = await fetch("/api/superadmin/villages", {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-        })
+  const fetchVillages = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const response = await fetch("/api/superadmin/villages", {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      })
 
-        if (!response.ok) {
-          throw new Error("Gagal memuat data desa")
-        }
-
-        const result = await response.json()
-        setVillages(result.data || [])
-      } catch (error) {
-        console.error("Failed to load villages:", error)
-      } finally {
-        setLoading(false)
+      if (!response.ok) {
+        throw new Error("Gagal memuat data desa")
       }
-    }
 
+      const result = await response.json()
+      setVillages(result.data || [])
+    } catch (err: any) {
+      setError(err?.message || "Gagal memuat data desa")
+      console.error("Failed to load villages:", err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
     if (user?.role === "superadmin") {
       fetchVillages()
     }
   }, [user])
+
+  const updateVillageStatus = async (village: VillageItem, isActive: boolean) => {
+    if (!isActive && !confirm(`Nonaktifkan ${village.name}? Admin desa tidak bisa login sampai desa diaktifkan lagi.`)) return
+
+    try {
+      setUpdatingVillageId(village.id)
+      const response = await fetch(`/api/superadmin/villages/${encodeURIComponent(village.id)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ is_active: isActive }),
+      })
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload?.error || "Gagal memperbarui status desa")
+      }
+
+      await fetchVillages()
+    } catch (err: any) {
+      setError(err?.message || "Gagal memperbarui status desa")
+      console.error("Failed to update village status:", err)
+    } finally {
+      setUpdatingVillageId(null)
+    }
+  }
 
   if (user?.role !== "superadmin") {
     return null
@@ -86,6 +119,13 @@ export default function SuperadminVillagesPage() {
           Pantau seluruh desa/kelurahan yang terdaftar beserta admin aktifnya.
         </p>
       </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>Terjadi kesalahan</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>
@@ -145,11 +185,28 @@ export default function SuperadminVillagesPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Link href={`/dashboard/superadmin/villages/${village.id}`}>
-                          <Button variant="ghost" size="sm">
-                            <Eye className="h-4 w-4 mr-1" /> Detail
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant={village.is_active ? "outline" : "default"}
+                            size="sm"
+                            disabled={updatingVillageId === village.id}
+                            onClick={() => updateVillageStatus(village, !village.is_active)}
+                          >
+                            {updatingVillageId === village.id ? (
+                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            ) : village.is_active ? (
+                              <PowerOff className="h-4 w-4 mr-1" />
+                            ) : (
+                              <Power className="h-4 w-4 mr-1" />
+                            )}
+                            {village.is_active ? "Nonaktifkan" : "Aktifkan"}
                           </Button>
-                        </Link>
+                          <Link href={`/dashboard/superadmin/villages/${village.id}`}>
+                            <Button variant="ghost" size="sm">
+                              <Eye className="h-4 w-4 mr-1" /> Detail
+                            </Button>
+                          </Link>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

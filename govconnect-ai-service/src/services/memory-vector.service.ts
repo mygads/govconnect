@@ -106,10 +106,10 @@ export async function searchUserMemoryVectors(
   } = options;
 
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
-  const sqlMinScore = Math.min(minScore, 0.35);
+  const sqlMinScore = minScore;
   const villageFilter = villageId
-    ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)`
-    : Prisma.empty;
+    ? Prisma.sql`AND village_id = ${villageId}`
+    : Prisma.sql`AND village_id IS NULL`;
   const typeFilter = memoryTypes && memoryTypes.length > 0
     ? Prisma.sql`AND memory_type IN (${Prisma.join(memoryTypes)})`
     : Prisma.empty;

@@ -318,10 +318,9 @@ export async function searchUserMemories(input: {
       prisma.user_memory_entries.findMany({
         where: {
           wa_user_id: input.wa_user_id,
-          OR: [
-            { village_id: input.village_id ?? null },
-            { village_id: null },
-          ],
+          ...(input.village_id
+            ? { village_id: input.village_id }
+            : { village_id: null }),
           ...(memoryTypeFilter ? { memory_type: { in: memoryTypeFilter } } : {}),
         },
         orderBy: { created_at: 'desc' },

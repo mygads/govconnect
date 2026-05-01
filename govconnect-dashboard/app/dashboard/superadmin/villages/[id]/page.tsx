@@ -12,8 +12,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useAuth } from "@/components/auth/AuthContext"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
 import {
-  ArrowLeft, FileText, Settings2, Brain, BarChart3,
-  Users, MapPin, AlertCircle, BookOpen, Globe, MessageSquare
+  ArrowLeft, FileText, Settings2, Brain,
+  Users, AlertCircle, BookOpen, Loader2, Power, PowerOff
 } from "lucide-react"
 
 interface VillageDetail {
@@ -54,28 +54,57 @@ export default function SuperadminVillageDetailPage() {
   const [data, setData] = useState<VillageDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [updatingStatus, setUpdatingStatus] = useState(false)
 
   useEffect(() => {
     if (user && user.role !== "superadmin") redirect("/dashboard")
   }, [user])
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        const res = await fetch(`/api/superadmin/villages/${params.id}/detail`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        })
-        if (!res.ok) throw new Error("Gagal memuat data desa")
-        setData(await res.json())
-      } catch (err: any) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
+  const fetchData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const res = await fetch(`/api/superadmin/villages/${params.id}/detail`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      })
+      if (!res.ok) throw new Error("Gagal memuat data desa")
+      setData(await res.json())
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
     }
+  }
+
+  useEffect(() => {
     if (params.id) fetchData()
   }, [params.id])
+
+  const updateVillageStatus = async (isActive: boolean) => {
+    if (!data) return
+    if (!isActive && !confirm(`Nonaktifkan ${data.village.name}? Admin desa tidak bisa login sampai desa diaktifkan lagi.`)) return
+
+    try {
+      setUpdatingStatus(true)
+      const res = await fetch(`/api/superadmin/villages/${params.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ is_active: isActive }),
+      })
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}))
+        throw new Error(payload?.error || "Gagal memperbarui status desa")
+      }
+      await fetchData()
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setUpdatingStatus(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -131,6 +160,21 @@ export default function SuperadminVillageDetailPage() {
             {village.profile?.address || village.slug} · {village.admins.length} admin terdaftar
           </p>
         </div>
+        <Button
+          variant={village.is_active ? "outline" : "default"}
+          size="sm"
+          disabled={updatingStatus}
+          onClick={() => updateVillageStatus(!village.is_active)}
+        >
+          {updatingStatus ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : village.is_active ? (
+            <PowerOff className="h-4 w-4 mr-2" />
+          ) : (
+            <Power className="h-4 w-4 mr-2" />
+          )}
+          {village.is_active ? "Nonaktifkan Desa" : "Aktifkan Desa"}
+        </Button>
       </div>
 
       {/* Stats Grid */}

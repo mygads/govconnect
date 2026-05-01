@@ -106,9 +106,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
         dashboard.getRealtimeSummary(),
       ])
       const summary = realtimeData.data
-      const urgent: Complaint[] = summary.urgentComplaints || []
+      const urgent: Complaint[] = (summary.urgentComplaints || []).filter((complaint: Complaint) => ['OPEN', 'baru'].includes(complaint.status))
       const recent: Complaint[] = summary.recentComplaints || []
-      const allComplaints = recent
+      const allComplaints = Array.from(new Map([...recent, ...urgent].map((complaint) => [complaint.id, complaint])).values())
       
       // Check for new complaints (not on initial load)
       if (!isInitialLoadRef.current) {
@@ -181,7 +181,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       setStats({
         complaints: {
           ...statsData.complaints,
-          urgent: summary.urgentCount || 0,
+          urgent: urgent.length,
         },
         services: statsData.services,
         todayCount: summary.todayCount || 0,

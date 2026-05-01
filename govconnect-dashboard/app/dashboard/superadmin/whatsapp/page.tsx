@@ -216,8 +216,10 @@ export default function WaSupportPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((item) => (
-                  <TableRow key={item.id}>
+                {items.map((item, index) => {
+                  const rowKey = item.id || item.local_session?.village_id || item.local_session?.wa_support_session_id || `${item.village_slug || "wa-user"}-${index}`
+                  return (
+                  <TableRow key={rowKey}>
                     <TableCell>
                       <div className="flex flex-col">
                         <span className="font-medium">
@@ -283,7 +285,8 @@ export default function WaSupportPage() {
                       }
                     </TableCell>
                   </TableRow>
-                ))}
+                  )
+                })}
               </TableBody>
             </Table>
           )}

@@ -4,9 +4,9 @@
   "description": "GovConnect Channel Service - WhatsApp webhook handler & message storage",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "prisma migrate deploy && tsx watch src/server.ts",
     "build": "prisma generate && tsc",
-    "start": "node dist/server.js",
+    "start": "prisma migrate deploy && node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",

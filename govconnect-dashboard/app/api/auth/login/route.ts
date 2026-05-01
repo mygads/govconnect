@@ -101,6 +101,20 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (admin.village_id) {
+      const village = await prisma.villages.findUnique({
+        where: { id: admin.village_id },
+        select: { is_active: true },
+      })
+
+      if (!village?.is_active) {
+        return NextResponse.json(
+          { error: 'Desa sedang nonaktif. Silakan hubungi superadmin.' },
+          { status: 403 }
+        )
+      }
+    }
+
     // Generate JWT token
     const token = await generateToken({
       adminId: admin.id,

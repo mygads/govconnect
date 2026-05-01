@@ -362,19 +362,23 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
     });
     
   } catch (error: any) {
-    // Stop typing indicator on error
-    await stopTyping(wa_user_id, village_id);
-    
+    try {
+      await stopTyping(wa_user_id, village_id);
+    } catch (typingError: any) {
+      logger.warn('Failed to stop typing indicator after WhatsApp processing error', {
+        wa_user_id,
+        message_id,
+        error: typingError?.message || String(typingError),
+      });
+    }
+
     logger.error('❌ Failed to process WhatsApp message', {
       wa_user_id,
       message_id,
       error: error.message,
     });
-    
-    // Clean up spam guard state
+
     completeProcessing(village_id, wa_user_id, message_id);
-    
-    // Add to AI retry queue
     addToAIRetryQueue(event, error.message || 'Unknown error');
   }
 }

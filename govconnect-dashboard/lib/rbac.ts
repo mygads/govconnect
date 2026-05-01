@@ -36,6 +36,7 @@ const VILLAGE_ONLY_ROUTES: string[] = [
   '/dashboard/important-contacts',
   '/dashboard/knowledge-analytics',
   '/dashboard/ai-balance',
+  '/dashboard/settings/rate-limit',
 ]
 
 const matchPath = (pathname: string, path: string) =>

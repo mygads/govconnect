@@ -8,6 +8,16 @@ import { publishEvent } from '../services/rabbitmq.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import { getParam, getQuery } from '../utils/http';
 import { invalidateStatsCache } from '../services/query-batcher.service';
+import { recordAuditLog } from '../services/audit-log.service';
+
+function getAuditMetadata(req: Request) {
+  return {
+    admin_id: (req.headers['x-admin-id'] as string) || null,
+    admin_role: (req.headers['x-admin-role'] as string) || null,
+    admin_name: (req.headers['x-admin-name'] as string) || null,
+    reason: (req.body?.reason || req.body?.admin_notes || req.body?.note) as string | undefined,
+  };
+}
 import {
   isValidCitizenWaNumber,
   normalizeCitizenWaForStorage,
@@ -914,6 +924,19 @@ export async function handleSoftDeleteServiceRequest(req: Request, res: Response
     });
 
     invalidateStatsCache();
+    const audit = getAuditMetadata(req);
+    recordAuditLog({
+      village_id,
+      admin_id: audit.admin_id,
+      admin_role: audit.admin_role,
+      admin_name: audit.admin_name,
+      reason: audit.reason,
+      action: 'archive',
+      entity_type: 'service_request',
+      entity_id: sr.id,
+      entity_label: sr.request_number,
+      metadata: { request_number: sr.request_number, archived_at: archivedAt.toISOString() },
+    }).catch((error: any) => logger.warn('Failed to record service request archive audit log', { error: error.message, id: sr.id }));
     publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.SERVICE_REQUEST_ARCHIVED, {
       type: 'service_request_archived',
       village_id,
@@ -954,13 +977,27 @@ export async function handleRestoreServiceRequest(req: Request, res: Response) {
       data: { deleted_at: null },
     });
 
+    const restoredAt = new Date();
     invalidateStatsCache();
+    const audit = getAuditMetadata(req);
+    recordAuditLog({
+      village_id,
+      admin_id: audit.admin_id,
+      admin_role: audit.admin_role,
+      admin_name: audit.admin_name,
+      reason: audit.reason,
+      action: 'restore',
+      entity_type: 'service_request',
+      entity_id: sr.id,
+      entity_label: sr.request_number,
+      metadata: { request_number: sr.request_number, restored_at: restoredAt.toISOString() },
+    }).catch((error: any) => logger.warn('Failed to record service request restore audit log', { error: error.message, id: sr.id }));
     publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.SERVICE_REQUEST_RESTORED, {
       type: 'service_request_restored',
       village_id,
       service_request_id: sr.id,
       request_number: sr.request_number,
-      restored_at: new Date().toISOString(),
+      restored_at: restoredAt.toISOString(),
     }).catch((error: any) => logger.warn('Failed to publish service request restore event', { error: error.message, id: sr.id }));
 
     return res.json({ success: true });

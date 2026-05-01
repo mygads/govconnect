@@ -32,6 +32,18 @@ import {
   getWebhookAudit,
   syncWebhook,
   getWaActivity,
+  getWaContacts,
+  syncWaContacts,
+  refreshWaProfile,
+  setWaPresence,
+  rejectWaCall,
+  setWaStatusText,
+  getWaProxyConfig,
+  syncWaHistory,
+  getWaS3Status,
+  testWaS3,
+  deleteWaS3,
+  retryWaMediaDownload,
 } from '../controllers/whatsapp.controller';
 import {
   handleGetChannelAccount,
@@ -88,6 +100,18 @@ router.post('/whatsapp/force-disconnect', forceDisconnectOtherVillage);
 router.get('/whatsapp/webhook-audit', getWebhookAudit);
 router.post('/whatsapp/webhook-sync', syncWebhook);
 router.get('/whatsapp/activity', getWaActivity);
+router.get('/whatsapp/contacts', getWaContacts);
+router.post('/whatsapp/contacts/sync', syncWaContacts);
+router.post('/whatsapp/profile-refresh', refreshWaProfile);
+router.post('/whatsapp/presence', setWaPresence);
+router.post('/whatsapp/call/reject', rejectWaCall);
+router.post('/whatsapp/status/text', setWaStatusText);
+router.get('/whatsapp/proxy-config', getWaProxyConfig);
+router.post('/whatsapp/history-sync', syncWaHistory);
+router.get('/whatsapp/s3', getWaS3Status);
+router.post('/whatsapp/s3/test', testWaS3);
+router.delete('/whatsapp/s3', deleteWaS3);
+router.post('/whatsapp/media/:message_id/retry', retryWaMediaDownload);
 
 // Live Chat & Takeover Routes
 router.post('/takeover/:wa_user_id', handleStartTakeover);

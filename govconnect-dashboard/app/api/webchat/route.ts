@@ -46,12 +46,18 @@ export async function POST(request: NextRequest) {
       const errorData = await aiResponse.json().catch(() => null);
       console.error('AI Service error:', errorData);
       return NextResponse.json(
-        errorData || {
-          success: false,
-          error: 'AI service unavailable',
-          code: 'UPSTREAM_UNAVAILABLE',
-          fallbackResponse: getFallbackResponse(message),
-        },
+        errorData
+          ? {
+              ...errorData,
+              success: false,
+              fallbackResponse: errorData.fallbackResponse || errorData.response || getFallbackResponse(message),
+            }
+          : {
+              success: false,
+              error: 'AI service unavailable',
+              code: 'UPSTREAM_UNAVAILABLE',
+              fallbackResponse: getFallbackResponse(message),
+            },
         { status: aiResponse.status },
       );
     }

@@ -37,6 +37,7 @@ import axios from 'axios';
 import { z } from 'zod';
 import { config } from './config/env';
 import prisma from './lib/prisma';
+import { finalizeAiBillingTurn } from './services/ai-turn-billing.service';
 import { getParam, getQuery } from './utils/http';
 import { runGoldenSetEvaluation, getGoldenSetSummary } from './services/golden-set-eval.service';
 import {
@@ -64,6 +65,7 @@ import { matchComplaintType } from './services/micro-llm-matcher.service';
 import { requireInternalApiKey } from './utils/internal-auth';
 import { errorResponse, successResponse } from './shared/error-response';
 import {
+  adjustVillageWallet,
   canProcessVillageAI,
   createTopupVoucher,
   getWalletLedger,
@@ -1002,7 +1004,8 @@ app.post('/stats/golden-set/run', async (req: Request, res: Response) => {
 // Rate Limiter Endpoints
 app.get('/rate-limit', (req: Request, res: Response) => {
   try {
-    const stats = rateLimiterService.getStats();
+    const villageId = typeof req.query.village_id === 'string' ? req.query.village_id : undefined;
+    const stats = rateLimiterService.getStats(villageId);
     res.json({
       config: {
         enabled: config.rateLimitEnabled,
@@ -1022,14 +1025,15 @@ app.get('/rate-limit', (req: Request, res: Response) => {
 app.get('/rate-limit/check/:wa_user_id', (req: Request, res: Response) => {
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
+    const villageId = typeof req.query.village_id === 'string' ? req.query.village_id : undefined;
     if (!wa_user_id) {
       res.status(400).json({
         error: 'wa_user_id is required',
       });
       return;
     }
-    const result = rateLimiterService.checkRateLimit(wa_user_id);
-    const userInfo = rateLimiterService.getUserInfo(wa_user_id);
+    const result = rateLimiterService.checkRateLimit(wa_user_id, villageId);
+    const userInfo = rateLimiterService.getUserInfo(wa_user_id, villageId);
 
     res.json({
       ...result,
@@ -1044,7 +1048,8 @@ app.get('/rate-limit/check/:wa_user_id', (req: Request, res: Response) => {
 
 app.get('/rate-limit/blacklist', (req: Request, res: Response) => {
   try {
-    const blacklist = rateLimiterService.getBlacklist();
+    const villageId = typeof req.query.village_id === 'string' ? req.query.village_id : undefined;
+    const blacklist = rateLimiterService.getBlacklist(villageId);
     res.json({
       total: blacklist.length,
       entries: blacklist,
@@ -1058,7 +1063,7 @@ app.get('/rate-limit/blacklist', (req: Request, res: Response) => {
 
 app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
   try {
-    const { wa_user_id, reason, expiresInDays } = req.body;
+    const { wa_user_id, reason, expiresInDays, village_id } = req.body;
 
     if (!wa_user_id || !reason) {
       res.status(400).json({
@@ -1067,7 +1072,7 @@ app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
       return;
     }
 
-    rateLimiterService.addToBlacklist(wa_user_id, reason, 'admin', expiresInDays);
+    rateLimiterService.addToBlacklist(wa_user_id, reason, 'admin', expiresInDays, undefined, village_id);
 
     res.json({
       success: true,
@@ -1083,13 +1088,14 @@ app.post('/rate-limit/blacklist', (req: Request, res: Response) => {
 app.delete('/rate-limit/blacklist/:wa_user_id', (req: Request, res: Response) => {
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
+    const villageId = typeof req.query.village_id === 'string' ? req.query.village_id : undefined;
     if (!wa_user_id) {
       res.status(400).json({
         error: 'wa_user_id is required',
       });
       return;
     }
-    const removed = rateLimiterService.removeFromBlacklist(wa_user_id);
+    const removed = rateLimiterService.removeFromBlacklist(wa_user_id, villageId);
 
     if (removed) {
       res.json({
@@ -1129,7 +1135,8 @@ app.post('/rate-limit/reset/:wa_user_id', (req: Request, res: Response) => {
       });
       return;
     }
-    const reset = rateLimiterService.resetUserViolations(wa_user_id);
+    const villageId = typeof req.query.village_id === 'string' ? req.query.village_id : undefined;
+    const reset = rateLimiterService.resetUserViolations(wa_user_id, villageId);
 
     if (reset) {
       res.json({
@@ -1286,6 +1293,136 @@ app.delete('/admin/reset-token-usage', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) => {
+  try {
+    const villageId = getQuery(req, 'village_id') || undefined;
+    const from = getQuery(req, 'from');
+    const to = getQuery(req, 'to');
+    const dateFilter: any = {};
+    if (from) dateFilter.gte = new Date(from);
+    if (to) dateFilter.lte = new Date(to);
+    const hasDateFilter = Object.keys(dateFilter).length > 0;
+
+    const billingWhere = {
+      ...(villageId ? { village_id: villageId } : {}),
+      ...(hasDateFilter ? { created_at: dateFilter } : {}),
+    };
+    const ledgerWhere = {
+      ...(villageId ? { village_id: villageId } : {}),
+      entry_type: 'usage_debit',
+      reference_type: 'ai_message_billing',
+      ...(hasDateFilter ? { created_at: dateFilter } : {}),
+    };
+    const usageWhere = {
+      ...(villageId ? { village_id: villageId } : {}),
+      billing_group_id: { not: null },
+      success: true,
+      ...(hasDateFilter ? { created_at: dateFilter } : {}),
+    };
+
+    const [billings, tokenUsage, ledger, unbilledUsage, failedBillings, billedWithoutLedger, billingIds] = await Promise.all([
+      prisma.ai_message_billings.aggregate({
+        where: billingWhere,
+        _sum: { adjusted_cost_usd: true, actual_cost_usd: true, margin_usd: true },
+        _count: { _all: true },
+      }),
+      prisma.ai_token_usage.aggregate({
+        where: usageWhere,
+        _sum: { adjusted_cost_usd: true, actual_cost_usd: true, margin_usd: true },
+        _count: { _all: true },
+      }),
+      prisma.ai_wallet_ledger_entries.aggregate({
+        where: ledgerWhere,
+        _sum: { amount_usd: true, adjusted_cost_usd: true, actual_cost_usd: true, margin_usd: true },
+        _count: { _all: true },
+      }),
+      prisma.ai_token_usage.count({ where: { ...usageWhere, billing_status: 'unbilled' } }),
+      prisma.ai_message_billings.count({ where: { ...billingWhere, status: { in: ['failed', 'failed_insufficient_balance'] } } }),
+      prisma.ai_message_billings.count({ where: { ...billingWhere, status: 'billed', ledger_entry_id: null } }),
+      prisma.ai_message_billings.findMany({ where: billingWhere, select: { id: true } }),
+    ]);
+
+    const billingIdList = billingIds.map(row => row.id);
+    const [ledgerWithoutBilling, recentBillings] = await Promise.all([
+      prisma.ai_wallet_ledger_entries.count({
+        where: {
+          ...ledgerWhere,
+          OR: [
+            { reference_id: null },
+            ...(billingIdList.length > 0 ? [{ reference_id: { notIn: billingIdList } }] : []),
+          ],
+        },
+      }),
+      prisma.ai_message_billings.findMany({
+        where: billingWhere,
+        orderBy: { created_at: 'desc' },
+        take: 25,
+        select: {
+          id: true,
+          village_id: true,
+          message_id: true,
+          trace_id: true,
+          billing_group_id: true,
+          status: true,
+          ledger_entry_id: true,
+          call_count: true,
+          adjusted_cost_usd: true,
+          actual_cost_usd: true,
+          margin_usd: true,
+          error_message: true,
+          created_at: true,
+          billed_at: true,
+        },
+      }),
+    ]);
+
+
+    const tokenAdjusted = Number((tokenUsage._sum.adjusted_cost_usd ?? 0).toFixed(8));
+    const billingAdjusted = Number((billings._sum.adjusted_cost_usd ?? 0).toFixed(8));
+    const ledgerAdjusted = Number((ledger._sum.adjusted_cost_usd ?? 0).toFixed(8));
+    const ledgerDebitAmount = Number((-(ledger._sum.amount_usd ?? 0)).toFixed(8));
+    const mismatches = {
+      token_vs_billing_usd: Number((tokenAdjusted - billingAdjusted).toFixed(8)),
+      billing_vs_ledger_adjusted_usd: Number((billingAdjusted - ledgerAdjusted).toFixed(8)),
+      billing_vs_ledger_amount_usd: Number((billingAdjusted - ledgerDebitAmount).toFixed(8)),
+    };
+
+    res.json(successResponse({
+      filters: { village_id: villageId ?? null, from: from ?? null, to: to ?? null },
+      counts: {
+        token_usage_rows: tokenUsage._count._all,
+        message_billings: billings._count._all,
+        ledger_usage_debits: ledger._count._all,
+        unbilled_usage: unbilledUsage,
+        failed_billings: failedBillings,
+        billed_without_ledger: billedWithoutLedger,
+        ledger_without_billing: ledgerWithoutBilling,
+      },
+      totals: {
+        token_usage_adjusted_usd: tokenAdjusted,
+        token_usage_actual_usd: Number((tokenUsage._sum.actual_cost_usd ?? 0).toFixed(8)),
+        token_usage_margin_usd: Number((tokenUsage._sum.margin_usd ?? 0).toFixed(8)),
+        message_billing_adjusted_usd: billingAdjusted,
+        message_billing_actual_usd: Number((billings._sum.actual_cost_usd ?? 0).toFixed(8)),
+        message_billing_margin_usd: Number((billings._sum.margin_usd ?? 0).toFixed(8)),
+        ledger_adjusted_usd: ledgerAdjusted,
+        ledger_debit_amount_usd: ledgerDebitAmount,
+      },
+      mismatches,
+      recent_billings: recentBillings,
+      healthy: unbilledUsage === 0
+        && failedBillings === 0
+        && billedWithoutLedger === 0
+        && ledgerWithoutBilling === 0
+        && Object.values(mismatches).every(value => Math.abs(value) < 0.000001),
+    }));
+  } catch (error: any) {
+    logger.error('Failed to reconcile AI billing', { error: error.message });
+    res.status(500).json(errorResponse(error.message || 'Failed to reconcile AI billing'));
+  }
+});
+
+
 app.get('/admin/ai-wallet/:villageId', async (req: Request, res: Response) => {
   try {
     const villageId = getParam(req, 'villageId');
@@ -1368,6 +1505,33 @@ app.post('/admin/ai-wallet/:villageId/topup', async (req: Request, res: Response
   } catch (error: any) {
     logger.error('Failed to topup AI wallet', { error: error.message });
     res.status(400).json({ error: error.message || 'Failed to topup AI wallet' });
+  }
+});
+
+app.post('/admin/ai-wallet/:villageId/adjust', async (req: Request, res: Response) => {
+  try {
+    const villageId = getParam(req, 'villageId');
+    const { amount_usd, direction, reason, status_text, reference_type, reference_id, metadata, created_by_admin_id } = req.body || {};
+    if (!villageId) {
+      res.status(400).json({ error: 'villageId is required' });
+      return;
+    }
+
+    const result = await adjustVillageWallet({
+      villageId,
+      amountUsd: Number(amount_usd),
+      direction,
+      reason: reason || status_text || null,
+      referenceType: reference_type,
+      referenceId: reference_id,
+      metadata,
+      createdByAdminId: created_by_admin_id,
+    });
+
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    logger.error('Failed to adjust AI wallet', { error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to adjust AI wallet' });
   }
 });
 
@@ -1633,7 +1797,39 @@ app.post('/admin/ai-wallet/:villageId/retry-pending', async (req: Request, res: 
       return;
     }
 
-    res.json({ success: true, data: { village_id: villageId, action: 'manual_retry_pending_not_implemented_yet' } });
+    const pendingBillings = await prisma.ai_message_billings.findMany({
+      where: {
+        village_id: villageId,
+        status: { in: ['pending', 'failed', 'failed_insufficient_balance'] },
+      },
+      orderBy: { created_at: 'asc' },
+      take: Math.min(Math.max(Number(req.body?.limit) || 50, 1), 200),
+    });
+
+    const results = [];
+    for (const billing of pendingBillings) {
+      try {
+        const updated = await finalizeAiBillingTurn({
+          village_id: billing.village_id,
+          message_id: billing.message_id,
+          trace_id: billing.trace_id,
+          billing_group_id: billing.billing_group_id,
+          batched_message_ids: billing.batched_message_ids,
+          wa_user_id: billing.wa_user_id,
+          session_id: billing.session_id,
+          channel: billing.channel,
+        });
+        results.push({ id: billing.id, status: updated?.status ?? billing.status });
+      } catch (error: any) {
+        results.push({ id: billing.id, status: 'failed', error: error?.message || 'Retry failed' });
+      }
+    }
+
+    res.json(successResponse({
+      village_id: villageId,
+      attempted: pendingBillings.length,
+      results,
+    }));
   } catch (error: any) {
     logger.error('Failed to trigger AI pending retry', { error: error.message });
     res.status(400).json({ error: error.message || 'Failed to trigger AI pending retry' });

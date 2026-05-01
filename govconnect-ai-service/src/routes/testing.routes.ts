@@ -78,57 +78,64 @@ async function postProviderJson(provider: any, endpointPath: string, apiKey: str
   }
 }
 
-async function testModelById(modelId: string) {
-  const model = await prisma.ai_models.findUnique({
-    where: { id: modelId },
-    include: { provider: true },
-  });
-  if (!model?.provider) throw new Error('Model not found');
-  if (!model.is_active || !model.provider.is_active) throw new Error('Model or provider is inactive');
-  if (!model.provider.api_key_encrypted) throw new Error('Provider API key is missing');
+async function testModelConfig(input: {
+  provider: any;
+  lane_type: string;
+  display_name?: string | null;
+  upstream_model_name: string;
+  endpoint_path?: string | null;
+}) {
+  const provider = input.provider;
+  if (!provider?.is_active) throw new Error('Provider is inactive');
+  if (!provider.api_key_encrypted) throw new Error('Provider API key is missing');
 
-  const lane = model.lane_type as ModelTestLane;
-  const apiKey = decryptSecret(model.provider.api_key_encrypted);
+  const lane = input.lane_type as ModelTestLane;
+  if (!['llm', 'embed', 'rewrite', 'rerank'].includes(lane)) throw new Error('Invalid lane_type');
+
+  const endpointPath = input.endpoint_path?.trim() || null;
+  if (endpointPath && /^https?:\/\//i.test(endpointPath)) throw new Error('endpoint_path must be a path, not a full URL');
+
+  const apiKey = decryptSecret(provider.api_key_encrypted);
   const startTime = Date.now();
   let details: Record<string, unknown> = {};
 
   if (lane === 'embed') {
     const payload = await postProviderJson(
-      model.provider,
-      model.endpoint_path || config.embeddingGateway.embeddingsPath,
+      provider,
+      endpointPath || config.embeddingGateway.embeddingsPath,
       apiKey,
       {
-        model: model.upstream_model_name,
+        model: input.upstream_model_name,
         input: 'ping embedding healthcheck',
         encoding_format: config.embeddingGateway.encodingFormat,
         dimensions: config.embeddingGateway.dimensions,
       },
       config.embeddingGateway.timeoutMs,
     );
-    details = { dimensions: payload?.data?.[0]?.embedding?.length || 0 };
+    details = { mode: 'native_endpoint', dimensions: payload?.data?.[0]?.embedding?.length || 0 };
   } else if (lane === 'rerank') {
     try {
       const payload = await postProviderJson(
-        model.provider,
-        model.endpoint_path || config.rerankerGateway.rerankPath,
+        provider,
+        endpointPath || config.rerankerGateway.rerankPath,
         apiKey,
         {
-          model: model.upstream_model_name,
+          model: input.upstream_model_name,
           query: 'cara bikin ktp baru',
           documents: ['Panduan pembuatan KTP baru.', 'Jadwal posyandu desa.', 'Syarat penggantian KK.'],
           top_n: 2,
         },
         config.rerankerGateway.timeoutMs,
       );
-      details = { mode: 'native_rerank', resultCount: payload?.results?.length || 0, topScore: payload?.results?.[0]?.relevance_score };
+      details = { mode: 'native_endpoint', resultCount: payload?.results?.length || 0, topScore: payload?.results?.[0]?.relevance_score };
     } catch (error: any) {
       if (!/Input required: specify "prompt" or "messages"|messages|prompt/i.test(error.message || '')) throw error;
       const payload = await postProviderJson(
-        model.provider,
-        model.endpoint_path || config.ragGateway.chatCompletionsPath || config.llmGateway.chatCompletionsPath,
+        provider,
+        endpointPath || config.ragGateway.chatCompletionsPath || config.llmGateway.chatCompletionsPath,
         apiKey,
         {
-          model: model.upstream_model_name,
+          model: input.upstream_model_name,
           messages: [{ role: 'user', content: 'Rank these documents for the query "cara bikin ktp baru" and reply with OK only.' }],
           temperature: 0,
           max_tokens: 8,
@@ -136,38 +143,71 @@ async function testModelById(modelId: string) {
         config.rerankerGateway.timeoutMs,
       );
       details = {
-        mode: 'prompt_fallback',
+        mode: 'chat_fallback',
         response: payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || '',
       };
     }
   } else {
     const timeoutMs = lane === 'rewrite' ? config.ragGateway.timeoutMs : config.llmGateway.timeoutMs;
-    const endpointPath = model.endpoint_path || (lane === 'rewrite' ? config.ragGateway.chatCompletionsPath : config.llmGateway.chatCompletionsPath);
+    const fallbackPath = lane === 'rewrite' ? config.ragGateway.chatCompletionsPath : config.llmGateway.chatCompletionsPath;
     const payload = await postProviderJson(
-      model.provider,
-      endpointPath,
+      provider,
+      endpointPath || fallbackPath,
       apiKey,
       {
-        model: model.upstream_model_name,
+        model: input.upstream_model_name,
         messages: [{ role: 'user', content: lane === 'rewrite' ? 'Rewrite: cara bikin ktp baru' : 'Reply with OK only.' }],
         temperature: 0,
         max_tokens: 8,
       },
       timeoutMs,
     );
-    details = { response: payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || '' };
+    details = { mode: 'native_endpoint', response: payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || '' };
   }
 
   return {
     success: true,
     lane,
-    provider: model.provider.name,
-    provider_slug: model.provider.slug,
-    model: model.display_name,
-    upstream_model: model.upstream_model_name,
+    provider: provider.name,
+    provider_slug: provider.slug,
+    model: input.display_name || input.upstream_model_name,
+    upstream_model: input.upstream_model_name,
+    endpoint_path: endpointPath,
     responseTime: Date.now() - startTime,
     details,
   };
+}
+
+async function testModelById(modelId: string) {
+  const model = await prisma.ai_models.findUnique({
+    where: { id: modelId },
+    include: { provider: true },
+  });
+  if (!model?.provider) throw new Error('Model not found');
+  if (!model.is_active) throw new Error('Model is inactive');
+
+  return testModelConfig({
+    provider: model.provider,
+    lane_type: model.lane_type,
+    display_name: model.display_name,
+    upstream_model_name: model.upstream_model_name,
+    endpoint_path: model.endpoint_path,
+  });
+}
+
+async function testModelDraft(input: any) {
+  if (!input?.provider_id || typeof input.provider_id !== 'string') throw new Error('provider_id is required');
+  if (!input?.upstream_model_name || typeof input.upstream_model_name !== 'string') throw new Error('upstream_model_name is required');
+  const provider = await prisma.ai_providers.findUnique({ where: { id: input.provider_id } });
+  if (!provider) throw new Error('Provider not found');
+
+  return testModelConfig({
+    provider,
+    lane_type: String(input.lane_type || ''),
+    display_name: typeof input.display_name === 'string' ? input.display_name : null,
+    upstream_model_name: input.upstream_model_name.trim(),
+    endpoint_path: typeof input.endpoint_path === 'string' ? input.endpoint_path : null,
+  });
 }
 
 function verifyInternalKey(req: Request, res: Response, next: Function) {
@@ -366,14 +406,15 @@ router.post('/ping', verifyInternalKey, async (_req: Request, res: Response) => 
 
 router.post('/model', verifyInternalKey, async (req: Request, res: Response) => {
   try {
-    const { model_id } = req.body || {};
-    if (!model_id || typeof model_id !== 'string') {
-      return res.status(400).json({ success: false, error: 'model_id is required' });
+    const { model_id, draft } = req.body || {};
+    if ((!model_id || typeof model_id !== 'string') && !draft) {
+      return res.status(400).json({ success: false, error: 'model_id or draft is required' });
     }
 
-    const result = await testModelById(model_id);
+    const result = draft ? await testModelDraft(draft) : await testModelById(model_id);
     logger.info('Targeted AI model test completed', {
-      modelId: model_id,
+      modelId: model_id || null,
+      draft: Boolean(draft),
       lane: result.lane,
       provider: result.provider_slug,
       responseTime: result.responseTime,

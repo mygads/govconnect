@@ -17,7 +17,11 @@ export async function PATCH(
     const villageId = resolveVillageId(request, session)
     const { id } = await params
 
-    const response = await caseService.softDeleteLaporan(id, villageId || undefined)
+    const response = await caseService.softDeleteLaporan(id, villageId || undefined, {
+      'x-admin-id': session.adminId,
+      'x-admin-role': session.role,
+      'x-admin-name': session.name,
+    })
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Failed' }))
       return NextResponse.json(error, { status: response.status })

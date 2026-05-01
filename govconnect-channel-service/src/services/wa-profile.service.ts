@@ -22,6 +22,28 @@ export interface WaUserProfile {
   raw: Record<string, unknown>;
 }
 
+function firstPayloadItem(value: any): any {
+  if (!value) return null;
+  if (Array.isArray(value)) return value[0] || null;
+  if (Array.isArray(value.data)) return value.data[0] || null;
+  if (Array.isArray(value.Data)) return value.Data[0] || null;
+  if (Array.isArray(value.results)) return value.results[0] || null;
+  if (Array.isArray(value.Results)) return value.Results[0] || null;
+  if (value.data && typeof value.data === 'object') return firstPayloadItem(value.data) || value.data;
+  if (value.Data && typeof value.Data === 'object') return firstPayloadItem(value.Data) || value.Data;
+  return value;
+}
+
+function firstString(...values: any[]): string | null {
+  const found = values.find(value => typeof value === 'string' && value.trim());
+  return found ? found.trim() : null;
+}
+
+function firstBoolean(...values: any[]): boolean | null {
+  const found = values.find(value => typeof value === 'boolean');
+  return typeof found === 'boolean' ? found : null;
+}
+
 export async function getWaUserProfile(villageId: string, phone: string): Promise<WaUserProfile> {
   const session = await getStoredSession(villageId);
   if (!session) throw new Error('WhatsApp session not found');
@@ -35,17 +57,46 @@ export async function getWaUserProfile(villageId: string, phone: string): Promis
     waGatewayRequest(session.wa_token, '/user/avatar', 'POST', { Phone: jid, Preview: true }).catch(() => null),
   ]);
 
-  const infoItem = Array.isArray(infoResult?.data) ? infoResult.data[0] : Array.isArray(infoResult) ? infoResult[0] : infoResult;
-  const checkItem = Array.isArray(checkResult?.data) ? checkResult.data[0] : Array.isArray(checkResult) ? checkResult[0] : checkResult;
-  const avatarUrl = avatarResult?.url || avatarResult?.URL || avatarResult?.data?.url || avatarResult?.data?.URL || null;
-  const profileName = infoItem?.PushName || infoItem?.pushName || infoItem?.Name || infoItem?.name || checkItem?.name || null;
-  const isWhatsApp = typeof checkItem?.exists === 'boolean'
-    ? checkItem.exists
-    : typeof checkItem?.Exists === 'boolean'
-      ? checkItem.Exists
-      : typeof checkItem?.is_whatsapp === 'boolean'
-        ? checkItem.is_whatsapp
-        : null;
+  const infoItem = firstPayloadItem(infoResult);
+  const checkItem = firstPayloadItem(checkResult);
+  const avatarItem = firstPayloadItem(avatarResult);
+  const avatarUrl = firstString(
+    avatarResult?.url,
+    avatarResult?.URL,
+    avatarResult?.picture,
+    avatarResult?.Picture,
+    avatarResult?.avatar,
+    avatarResult?.Avatar,
+    avatarItem?.url,
+    avatarItem?.URL,
+    avatarItem?.picture,
+    avatarItem?.Picture,
+    avatarItem?.avatar,
+    avatarItem?.Avatar,
+  );
+  const profileName = firstString(
+    infoItem?.PushName,
+    infoItem?.pushName,
+    infoItem?.Name,
+    infoItem?.name,
+    infoItem?.VerifiedName,
+    infoItem?.verifiedName,
+    infoItem?.Notify,
+    infoItem?.notify,
+    checkItem?.PushName,
+    checkItem?.pushName,
+    checkItem?.Name,
+    checkItem?.name,
+  );
+  const isWhatsApp = firstBoolean(
+    checkItem?.exists,
+    checkItem?.Exists,
+    checkItem?.IsInWhatsapp,
+    checkItem?.isInWhatsapp,
+    checkItem?.IsWhatsApp,
+    checkItem?.isWhatsApp,
+    checkItem?.is_whatsapp,
+  );
 
   return {
     profileName,

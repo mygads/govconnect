@@ -1,5 +1,5 @@
 export type MessageDeliveryStatus = 'received' | 'sent' | 'delivered' | 'read' | 'failed';
-export type MessageKind = 'text' | 'media' | 'location' | 'contact' | 'buttons' | 'list' | 'system';
+export type MessageKind = 'text' | 'media' | 'location' | 'contact' | 'buttons' | 'list' | 'sticker' | 'poll' | 'reaction' | 'edit' | 'delete' | 'system';
 
 export interface MessageData {
   village_id?: string;

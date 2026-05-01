@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { redirect } from "next/navigation"
-import { Brain, Database, Edit2, Loader2, Play, Plus, Save, Search, Trash2, Waypoints, X } from "lucide-react"
+import { AlertTriangle, Brain, Database, Edit2, Loader2, Play, Plus, Save, Search, Trash2, Waypoints, X } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -62,14 +63,59 @@ interface ModelRow {
 const laneOptions = ["llm", "embed", "rewrite", "rerank"]
 
 const endpointOptionsByLane: Record<string, string[]> = {
-  llm: ["/chat/completions", "/responses"],
+  llm: ["/chat/completions"],
   embed: ["/embeddings"],
-  rewrite: ["/chat/completions", "/responses"],
+  rewrite: ["/chat/completions"],
   rerank: ["/rerank", "/v1/rerank", "/chat/completions"],
 }
 
-function defaultEndpointForLane(lane: string) {
-  return endpointOptionsByLane[lane]?.[0] ?? ""
+function endpointPresetKey(provider?: ProviderRow | null) {
+  return `${provider?.slug || ""} ${provider?.name || ""}`.toLowerCase()
+}
+
+function endpointOptionsForProvider(provider: ProviderRow | undefined, lane: string) {
+  const key = endpointPresetKey(provider)
+  const providerOptions: Record<string, string[]> = {}
+
+  if (/cohere/.test(key)) {
+    providerOptions.embed = ["/v2/embed", "/embed", "/embeddings"]
+    providerOptions.rerank = ["/v2/rerank", "/rerank"]
+  } else if (/jina/.test(key)) {
+    providerOptions.embed = ["/v1/embeddings", "/embeddings"]
+    providerOptions.rerank = ["/v1/rerank", "/rerank"]
+  } else if (/openrouter|genfity|openai|vercel/.test(key)) {
+    providerOptions.llm = ["/chat/completions"]
+    providerOptions.rewrite = ["/chat/completions"]
+    providerOptions.embed = ["/embeddings"]
+    providerOptions.rerank = ["/chat/completions", "/rerank", "/v1/rerank"]
+  }
+
+  return Array.from(new Set([...(providerOptions[lane] ?? []), ...(endpointOptionsByLane[lane] ?? [])]))
+}
+
+function defaultEndpointForLane(lane: string, provider?: ProviderRow) {
+  return endpointOptionsForProvider(provider, lane)[0] ?? ""
+}
+
+function endpointMode(lane: string, endpointPath: string) {
+  const normalized = endpointPath.trim().toLowerCase()
+  const isChatPath = normalized.includes("chat/completions") || normalized.includes("responses")
+  if (lane === "rerank" && isChatPath) return { label: "Chat fallback", variant: "secondary" as const }
+  if (lane === "rerank") return { label: "Native endpoint", variant: "default" as const }
+  if (lane === "embed" && normalized.includes("embeddings")) return { label: "Native endpoint", variant: "default" as const }
+  if (lane === "llm" || lane === "rewrite") return { label: "Native endpoint", variant: "default" as const }
+  return { label: "Custom endpoint", variant: "outline" as const }
+}
+
+function endpointWarning(lane: string, endpointPath: string) {
+  const normalized = endpointPath.trim().toLowerCase()
+  if (lane === "embed" && normalized && normalized !== "/embeddings") {
+    return "Lane embed biasanya memakai /embeddings. Custom tetap boleh jika provider memang butuh path berbeda."
+  }
+  if (lane === "rerank" && normalized.includes("chat/completions")) {
+    return "Rerank memakai chat fallback. Ini valid untuk model LLM, tapi bukan native rerank endpoint."
+  }
+  return null
 }
 
 type ConfirmAction = {
@@ -134,7 +180,9 @@ export default function SuperadminAIModelsPage() {
   const [testingModelIds, setTestingModelIds] = useState<Set<string>>(new Set())
   const [savingPriorityId, setSavingPriorityId] = useState<string | null>(null)
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null)
+  const [testingDraft, setTestingDraft] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, any>>({})
+  const [draftTestResult, setDraftTestResult] = useState<any>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({})
@@ -211,12 +259,23 @@ export default function SuperadminAIModelsPage() {
     rows: models.filter((model) => model.lane_type === lane),
   })), [models])
 
-  const endpointOptions = endpointOptionsByLane[laneType] ?? []
+  const selectedProvider = providers.find((provider) => provider.id === providerId)
+  const endpointOptions = endpointOptionsForProvider(selectedProvider, laneType)
   const endpointSelectValue = endpointOptions.includes(endpointPath) ? endpointPath : "__manual__"
+  const currentEndpointMode = endpointMode(laneType, endpointPath)
+  const currentEndpointWarning = endpointWarning(laneType, endpointPath)
+
+  const handleProviderChange = (nextProviderId: string) => {
+    const nextProvider = providers.find((provider) => provider.id === nextProviderId)
+    setProviderId(nextProviderId)
+    setEndpointPath(defaultEndpointForLane(laneType, nextProvider))
+    setDraftTestResult(null)
+  }
 
   const handleLaneChange = (nextLane: string) => {
     setLaneType(nextLane)
-    setEndpointPath(defaultEndpointForLane(nextLane))
+    setEndpointPath(defaultEndpointForLane(nextLane, selectedProvider))
+    setDraftTestResult(null)
   }
 
   const getFormSnapshot = (nextProviderId = providerId): ModelFormSnapshot => ({
@@ -237,9 +296,10 @@ export default function SuperadminAIModelsPage() {
   const isFormDirty = JSON.stringify(getFormSnapshot()) !== JSON.stringify(formInitial)
 
   const resetForm = () => {
-    const nextProviderId = providers.find((provider) => !provider.is_read_only)?.id || ""
+    const nextProvider = providers.find((provider) => !provider.is_read_only)
+    const nextProviderId = nextProvider?.id || ""
     const nextLane = "llm"
-    const nextEndpointPath = defaultEndpointForLane(nextLane)
+    const nextEndpointPath = defaultEndpointForLane(nextLane, nextProvider)
     setEditingModelId(null)
     setLaneType(nextLane)
     setDisplayName("")
@@ -252,6 +312,7 @@ export default function SuperadminAIModelsPage() {
     setPriority("100")
     setIsActive("true")
     setNotes("")
+    setDraftTestResult(null)
     setProviderId(nextProviderId)
     setFormInitial({
       provider_id: nextProviderId,
@@ -304,6 +365,7 @@ export default function SuperadminAIModelsPage() {
     setIsActive(snapshot.is_active)
     setNotes(snapshot.notes)
     setFormInitial(snapshot)
+    setDraftTestResult(null)
     setError(null)
     setFormOpen(true)
   }
@@ -339,6 +401,42 @@ export default function SuperadminAIModelsPage() {
     rows.filter((model) => model.is_active && !testingModelIds.has(model.id)).forEach((model) => {
       void handleTest(model.id)
     })
+  }
+
+  const handleTestDraft = async () => {
+    if (!providerId || !laneType || !upstreamModelName.trim()) {
+      toast({ title: "Gagal", description: "Provider, lane, dan upstream model wajib diisi sebelum test", variant: "destructive" })
+      return
+    }
+
+    try {
+      setTestingDraft(true)
+      setDraftTestResult(null)
+      const token = localStorage.getItem("token")
+      const response = await fetch("/api/superadmin/ai-models/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          draft: {
+            provider_id: providerId,
+            lane_type: laneType,
+            display_name: displayName.trim() || upstreamModelName.trim(),
+            upstream_model_name: upstreamModelName.trim(),
+            endpoint_path: endpointPath.trim() || null,
+          },
+        }),
+      })
+      const payload = await response.json()
+      setDraftTestResult(payload)
+      if (!response.ok || payload?.success === false) throw new Error(payload?.error || "Endpoint test gagal")
+    } catch (err: any) {
+      setDraftTestResult({ success: false, error: err?.message || "Endpoint test gagal" })
+    } finally {
+      setTestingDraft(false)
+    }
   }
 
   const requestPrioritySave = (model: ModelRow) => {
@@ -521,7 +619,7 @@ export default function SuperadminAIModelsPage() {
           <div className="grid gap-4 xl:grid-cols-2">
             <div className="space-y-2">
               <Label>Provider</Label>
-              <Select value={providerId} onValueChange={setProviderId}>
+              <Select value={providerId} onValueChange={handleProviderChange}>
                 <SelectTrigger><SelectValue placeholder="Pilih provider" /></SelectTrigger>
                 <SelectContent>
                   {providers.filter((provider) => !provider.is_read_only).map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.name}</SelectItem>)}
@@ -540,12 +638,18 @@ export default function SuperadminAIModelsPage() {
             <div className="space-y-2"><Label>Display Name</Label><Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Claude Sonnet 4.7" /></div>
             <div className="space-y-2"><Label>Upstream Model Name</Label><Input value={upstreamModelName} onChange={(e) => setUpstreamModelName(e.target.value)} placeholder="anthropic/claude-sonnet-4.7" /></div>
             <div className="space-y-2">
-              <Label>Endpoint Path</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Label>Endpoint Path</Label>
+                <Badge variant={currentEndpointMode.variant}>{currentEndpointMode.label}</Badge>
+              </div>
               <div className="grid gap-2 md:grid-cols-[220px_1fr]">
                 <Select
                   value={endpointSelectValue}
                   onValueChange={(value) => {
-                    if (value !== "__manual__") setEndpointPath(value)
+                    if (value !== "__manual__") {
+                      setEndpointPath(value)
+                      setDraftTestResult(null)
+                    }
                   }}
                 >
                   <SelectTrigger><SelectValue placeholder="Pilih endpoint" /></SelectTrigger>
@@ -554,9 +658,26 @@ export default function SuperadminAIModelsPage() {
                     <SelectItem value="__manual__">Manual / custom</SelectItem>
                   </SelectContent>
                 </Select>
-                <Input value={endpointPath} onChange={(e) => setEndpointPath(e.target.value)} placeholder={defaultEndpointForLane(laneType) || "/chat/completions"} />
+                <Input value={endpointPath} onChange={(e) => { setEndpointPath(e.target.value); setDraftTestResult(null) }} placeholder={defaultEndpointForLane(laneType, selectedProvider) || "/chat/completions"} />
               </div>
-              <p className="text-xs text-muted-foreground">Otomatis mengikuti lane, tapi tetap bisa dipilih dari dropdown atau diketik manual.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={handleTestDraft} disabled={testingDraft || !providerId || !upstreamModelName.trim()}>
+                  {testingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                  Test Endpoint Ini
+                </Button>
+                {draftTestResult && (
+                  <div className={`rounded border px-2 py-1 text-xs ${draftTestResult?.success ? "border-emerald-200 bg-emerald-500/10 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300" : "border-red-200 bg-red-500/10 text-red-700 dark:border-red-900 dark:text-red-300"}`}>
+                    {draftTestResult?.success ? `Connected · ${draftTestResult?.responseTime ?? 0}ms · ${draftTestResult?.details?.mode || currentEndpointMode.label}` : draftTestResult?.error || "Error"}
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">Preset mengikuti provider dan lane, tapi tetap bisa dipilih dari dropdown atau diketik manual.</p>
+              {currentEndpointWarning && (
+                <p className="flex items-start gap-1 text-xs text-amber-600 dark:text-amber-300">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{currentEndpointWarning}</span>
+                </p>
+              )}
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2"><Label>Priority</Label><Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} /></div>

@@ -308,7 +308,7 @@ export function useLiveChat() {
 
       if (!response.ok) {
         updateMessageStatus(userMessage.id, 'error');
-        const fallback = data?.fallbackResponse || data?.error || 'Maaf, sistem sedang bermasalah. Silakan coba lagi nanti.';
+        const fallback = data?.fallbackResponse || data?.response || data?.error || 'Maaf, sistem sedang bermasalah. Silakan coba lagi nanti.';
         setServiceError(data?.error || fallback);
         addMessage({
           content: fallback,

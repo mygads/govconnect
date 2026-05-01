@@ -15,6 +15,16 @@ import prisma from '../config/database';
 import { invalidateStatsCache } from '../services/query-batcher.service';
 import { publishEvent } from '../services/rabbitmq.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
+import { recordAuditLog } from '../services/audit-log.service';
+
+function getAuditMetadata(req: Request) {
+  return {
+    admin_id: (req.headers['x-admin-id'] as string) || null,
+    admin_role: (req.headers['x-admin-role'] as string) || null,
+    admin_name: (req.headers['x-admin-name'] as string) || null,
+    reason: (req.body?.reason || req.body?.admin_notes || req.body?.note) as string | undefined,
+  };
+}
 
 function resolveChannelFromRequest(req: Request): 'WHATSAPP' | 'WEBCHAT' {
   const raw = (req.body?.channel || getQuery(req, 'channel') || '').toString().toUpperCase();
@@ -179,7 +189,7 @@ export async function handleGetRealtimeComplaintSummary(req: Request, res: Respo
     const urgentWhere = {
       ...whereBase,
       is_urgent: true,
-      status: { in: ['OPEN', 'PROCESS'] },
+      status: 'OPEN',
     };
 
     const [urgentComplaints, urgentCount, recentComplaints, todayCount, lastHourCount] = await Promise.all([
@@ -455,6 +465,19 @@ export async function handleSoftDeleteComplaint(req: Request, res: Response) {
     });
 
     invalidateStatsCache();
+    const audit = getAuditMetadata(req);
+    recordAuditLog({
+      village_id: complaint.village_id,
+      admin_id: audit.admin_id,
+      admin_role: audit.admin_role,
+      admin_name: audit.admin_name,
+      reason: audit.reason,
+      action: 'archive',
+      entity_type: 'complaint',
+      entity_id: complaint.id,
+      entity_label: complaint.complaint_id,
+      metadata: { complaint_id: complaint.complaint_id, archived_at: archivedAt.toISOString() },
+    }).catch((error: any) => logger.warn('Failed to record complaint archive audit log', { error: error.message, id: complaint.id }));
     publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_ARCHIVED, {
       type: 'complaint_archived',
       village_id: complaint.village_id,
@@ -494,13 +517,27 @@ export async function handleRestoreComplaint(req: Request, res: Response) {
       data: { deleted_at: null },
     });
 
+    const restoredAt = new Date();
     invalidateStatsCache();
+    const audit = getAuditMetadata(req);
+    recordAuditLog({
+      village_id: complaint.village_id,
+      admin_id: audit.admin_id,
+      admin_role: audit.admin_role,
+      admin_name: audit.admin_name,
+      reason: audit.reason,
+      action: 'restore',
+      entity_type: 'complaint',
+      entity_id: complaint.id,
+      entity_label: complaint.complaint_id,
+      metadata: { complaint_id: complaint.complaint_id, restored_at: restoredAt.toISOString() },
+    }).catch((error: any) => logger.warn('Failed to record complaint restore audit log', { error: error.message, id: complaint.id }));
     publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_RESTORED, {
       type: 'complaint_restored',
       village_id: complaint.village_id,
       complaint_id: complaint.complaint_id,
       id: complaint.id,
-      restored_at: new Date().toISOString(),
+      restored_at: restoredAt.toISOString(),
     }).catch((error: any) => logger.warn('Failed to publish complaint restore event', { error: error.message, id: complaint.id }));
 
     return res.json({ success: true });

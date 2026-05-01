@@ -171,9 +171,11 @@ export async function getWaSupportSummary(_req: Request, res: Response): Promise
     // Map local sessions by user_id for quick lookup
     const localMap = new Map(localSessions.map((s) => [s.wa_support_user_id, s]));
 
+    const userIdOf = (user: any) => user.user_id || user.id;
     const items = (usersResult.data?.items || []).map((user: any) => ({
       ...user,
-      local_session: localMap.get(user.id) || null,
+      id: userIdOf(user),
+      local_session: localMap.get(userIdOf(user)) || null,
     }));
 
     res.json({

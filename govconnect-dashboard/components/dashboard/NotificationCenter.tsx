@@ -170,7 +170,7 @@ export function UrgentAlertBanner() {
   // Filter: only show complaints that are still "baru" and not dismissed
   // urgentComplaints from RealtimeProvider already filters by status === 'baru'
   const activeUrgent = urgentComplaints
-    .filter(c => !dismissed.has(c.id))
+    .filter(c => !dismissed.has(c.id) && ['OPEN', 'baru'].includes(c.status))
     // Sort by created_at ascending (oldest first - FIFO)
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
   

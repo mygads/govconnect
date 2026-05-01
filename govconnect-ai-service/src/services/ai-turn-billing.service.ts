@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'async_hooks';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
-import { debitVillageWalletForMessageBilling } from './ai-wallet.service';
+import { debitVillageWalletForMessageBilling, InsufficientAIWalletBalanceError } from './ai-wallet.service';
 
 export interface AiBillingTurnContext {
   village_id?: string | null;
@@ -219,10 +219,13 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
     await markUsageRowsFinalized(context.billing_group_id, 'billed', usageRows.map(row => row.id), billedAt);
     return updatedBilling;
   } catch (error: any) {
+    const status = error instanceof InsufficientAIWalletBalanceError
+      ? 'failed_insufficient_balance'
+      : 'failed';
     await prisma.ai_message_billings.update({
       where: { id: billing.id },
       data: {
-        status: 'failed',
+        status,
         error_message: error?.message || 'Message billing debit failed',
       },
     });

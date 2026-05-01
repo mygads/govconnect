@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import {
   saveIncomingMessage,
+  saveOutgoingMessage,
   checkDuplicateMessage,
+  applyMessageReaction,
   updateMessageMedia,
   updateMessageDeliveryStatus,
   publishTypingEvent,
@@ -79,6 +81,50 @@ function resolveWebhookError(payload: GenfityWebhookPayload): string | null {
   return typeof error === 'string' ? error : JSON.stringify(error).slice(0, 500);
 }
 
+function resolveProviderEventPayload(payload: GenfityWebhookPayload): any {
+  const event: any = payload.event || {};
+  return event.Message || event.message || event.Data || event.data || event;
+}
+
+async function saveLivechatSystemActivity(params: {
+  villageId: string;
+  channelIdentifier: string;
+  messageId: string;
+  messageText: string;
+  timestamp: Date;
+  status: string;
+  providerEvent: string;
+  metadata?: unknown;
+}): Promise<void> {
+  if (await checkDuplicateMessage(params.messageId)) return;
+
+  await saveOutgoingMessage({
+    village_id: params.villageId,
+    wa_user_id: params.channelIdentifier,
+    channel: 'WHATSAPP',
+    channel_identifier: params.channelIdentifier,
+    message_id: params.messageId,
+    message_text: params.messageText,
+    source: 'SYSTEM',
+    delivery_status: 'received',
+    message_kind: 'system',
+    interactive_payload: {
+      type: 'system_activity',
+      status: params.status,
+      providerEvent: params.providerEvent,
+      metadata: params.metadata || null,
+    },
+    timestamp: params.timestamp,
+  }).catch((error: any) => {
+    logger.warn('Failed to save livechat system activity', {
+      village_id: params.villageId,
+      channel_identifier: params.channelIdentifier,
+      message_id: params.messageId,
+      error: error.message,
+    });
+  });
+}
+
 function pickObject(value: any, ...keys: string[]): any {
   if (!value || typeof value !== 'object') return null;
   for (const key of keys) {
@@ -95,6 +141,47 @@ function pickValue(value: any, ...keys: string[]): any {
   return undefined;
 }
 
+function firstString(...values: any[]): string | null {
+  const found = values.find(value => typeof value === 'string' && value.trim());
+  return found ? found.trim() : null;
+}
+
+function extractInteractiveResponseText(response: any): string | null {
+  const direct = pickValue(
+    response,
+    'selectedDisplayText',
+    'SelectedDisplayText',
+    'selectedButtonID',
+    'selectedButtonId',
+    'SelectedButtonID',
+    'SelectedButtonId',
+    'selectedRowID',
+    'selectedRowId',
+    'SelectedRowID',
+    'SelectedRowId',
+    'title',
+    'Title',
+    'displayText',
+    'DisplayText',
+  );
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+  const nested = pickObject(response, 'Response', 'response', 'singleSelectReply', 'SingleSelectReply', 'nativeFlowResponseMessage', 'NativeFlowResponseMessage');
+  if (nested && nested !== response) return extractInteractiveResponseText(nested);
+
+  const params = pickValue(response, 'paramsJson', 'ParamsJson', 'buttonParamsJSON', 'ButtonParamsJSON');
+  if (typeof params === 'string') {
+    try {
+      const parsed = JSON.parse(params);
+      return firstString(parsed.display_text, parsed.displayText, parsed.title, parsed.id);
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 function extractTextFromMessageObject(message: any): string | null {
   if (!message || typeof message !== 'object') return null;
   return (
@@ -103,12 +190,18 @@ function extractTextFromMessageObject(message: any): string | null {
     pickValue(pickObject(message, 'imageMessage', 'ImageMessage'), 'caption', 'Caption') ||
     pickValue(pickObject(message, 'videoMessage', 'VideoMessage'), 'caption', 'Caption') ||
     pickValue(pickObject(message, 'documentMessage', 'DocumentMessage'), 'caption', 'Caption') ||
+    extractInteractiveResponseText(pickObject(message, 'buttonsResponseMessage', 'ButtonsResponseMessage', 'templateButtonReplyMessage', 'TemplateButtonReplyMessage')) ||
+    extractInteractiveResponseText(pickObject(message, 'listResponseMessage', 'ListResponseMessage')) ||
+    extractInteractiveResponseText(pickObject(message, 'interactiveResponseMessage', 'InteractiveResponseMessage')) ||
     null
   );
 }
 
 function normalizeMessageKind(message: any, info: any): MessageKind {
   const type = String(info?.Type || info?.MessageType || '').toLowerCase();
+  if (pickObject(message, 'reactionMessage', 'ReactionMessage')) return 'reaction';
+  if (pickObject(message, 'editedMessage', 'EditedMessage') || pickObject(pickObject(message, 'protocolMessage', 'ProtocolMessage'), 'editedMessage', 'EditedMessage')) return 'edit';
+  if (pickObject(message, 'protocolMessage', 'ProtocolMessage') && type.includes('revok')) return 'delete';
   if (pickObject(message, 'locationMessage', 'LocationMessage') || type.includes('location')) return 'location';
   if (pickObject(message, 'contactMessage', 'ContactMessage') || type.includes('contact')) return 'contact';
   if (pickObject(message, 'buttonsResponseMessage', 'ButtonsResponseMessage', 'buttonsMessage', 'ButtonsMessage')) return 'buttons';
@@ -162,6 +255,69 @@ function normalizeWaMetadata(payload: GenfityWebhookPayload) {
   };
 }
 
+function resolveMessageActionActivity(payload: GenfityWebhookPayload): {
+  kind: MessageKind;
+  status: string;
+  text: string;
+  targetMessageId?: string | null;
+  metadata: unknown;
+} | null {
+  const message = resolveProviderEventPayload(payload);
+  const reaction = pickObject(message, 'reactionMessage', 'ReactionMessage');
+  if (reaction) {
+    const emoji = pickValue(reaction, 'text', 'Text') || 'hapus reaction';
+    const key = pickValue(reaction, 'key', 'Key') || {};
+    return {
+      kind: 'reaction',
+      status: 'reaction_received',
+      text: `Reaction WhatsApp diterima: ${emoji}.`,
+      targetMessageId: pickValue(key, 'id', 'ID', 'Id') || null,
+      metadata: { emoji, key },
+    };
+  }
+
+  const protocol = pickObject(message, 'protocolMessage', 'ProtocolMessage');
+  if (protocol) {
+    const editedMessage = pickObject(protocol, 'editedMessage', 'EditedMessage');
+    if (editedMessage) {
+      const editedText = extractTextFromMessageObject(editedMessage);
+      const key = pickValue(protocol, 'key', 'Key') || {};
+      return {
+        kind: 'edit',
+        status: 'message_edited',
+        text: editedText ? `Pesan WhatsApp diedit: ${editedText}` : 'Pesan WhatsApp diedit.',
+        targetMessageId: pickValue(key, 'id', 'ID', 'Id') || pickValue(protocol, 'stanzaId', 'StanzaId', 'StanzaID') || null,
+        metadata: { editedText, protocol },
+      };
+    }
+
+    const protocolType = String(pickValue(protocol, 'type', 'Type') || '').toLowerCase();
+    if (protocolType.includes('revok') || protocolType === '0') {
+      const key = pickValue(protocol, 'key', 'Key') || {};
+      return {
+        kind: 'delete',
+        status: 'message_deleted',
+        text: 'Pesan WhatsApp dihapus/revoke.',
+        targetMessageId: pickValue(key, 'id', 'ID', 'Id') || pickValue(protocol, 'stanzaId', 'StanzaId', 'StanzaID') || null,
+        metadata: { protocol },
+      };
+    }
+  }
+
+  const edited = pickObject(message, 'editedMessage', 'EditedMessage');
+  if (edited) {
+    return {
+      kind: 'edit',
+      status: 'message_edited',
+      text: 'Pesan WhatsApp diedit.',
+      targetMessageId: resolveWebhookMessageId(payload),
+      metadata: { edited },
+    };
+  }
+
+  return null;
+}
+
 async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId?: string): Promise<boolean> {
   const type = payload.type;
   if (['MessageSent', 'Receipt', 'ReadReceipt'].includes(type)) {
@@ -191,6 +347,20 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
         providerMessageId: messageId,
         metadata: { rawState, error },
       });
+
+      const channelIdentifier = resolveWebhookContactIdentifier(payload);
+      if (channelIdentifier && (read || failed)) {
+        await saveLivechatSystemActivity({
+          villageId,
+          channelIdentifier,
+          messageId: `system-delivery-${status}-${messageId}`,
+          messageText: failed ? 'Status pengiriman WhatsApp gagal.' : 'Pesan WhatsApp sudah dibaca.',
+          timestamp: eventTimestamp(payload),
+          status: failed ? 'delivery_failed' : 'message_read',
+          providerEvent: type,
+          metadata: { providerMessageId: messageId, rawState, error },
+        });
+      }
     }
     return true;
   }
@@ -273,14 +443,18 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
     return true;
   }
 
-  if (['AppStateSyncComplete', 'HistorySync'].includes(type)) {
+  if (['AppState', 'AppStateSyncComplete', 'HistorySync'].includes(type)) {
     if (villageId) {
       await logWaActivity({
         villageId,
         type: 'session_sync',
         severity: 'info',
         status: 'synced',
-        message: type === 'HistorySync' ? 'Sinkronisasi riwayat WhatsApp selesai/berjalan.' : 'Sinkronisasi app state WhatsApp selesai.',
+        message: type === 'HistorySync'
+          ? 'Sinkronisasi riwayat WhatsApp selesai/berjalan.'
+          : type === 'AppState'
+            ? 'Provider mengirim update app state WhatsApp.'
+            : 'Sinkronisasi app state WhatsApp selesai.',
         providerEvent: type,
         metadata: { event: payload.event || null },
       });
@@ -288,7 +462,7 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
     return true;
   }
 
-  if (['CallOffer', 'CallAccept', 'CallTerminate', 'CallOfferNotice'].includes(type)) {
+  if (['CallOffer', 'CallAccept', 'CallTerminate', 'CallOfferNotice', 'CallRelayLatency'].includes(type)) {
     const channelIdentifier = resolveWebhookContactIdentifier(payload);
     if (villageId) {
       await logWaActivity({
@@ -302,6 +476,20 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
         providerEvent: type,
         metadata: { event: payload.event || null },
       });
+
+      if (channelIdentifier) {
+        const providerMessageId = resolveWebhookMessageId(payload);
+        await saveLivechatSystemActivity({
+          villageId,
+          channelIdentifier,
+          messageId: `system-call-${type}-${providerMessageId || eventTimestamp(payload).getTime()}`,
+          messageText: `Aktivitas panggilan WhatsApp: ${type}.`,
+          timestamp: eventTimestamp(payload),
+          status: 'call_activity',
+          providerEvent: type,
+          metadata: { providerMessageId, event: payload.event || null },
+        });
+      }
     }
     return true;
   }
@@ -383,29 +571,29 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
       ? await resolveVillageIdFromInstanceName(instanceName)
       : undefined;
 
-    // Debug: Log full payload structure
-    logger.debug('Webhook received', { 
-      type: payload.type, 
+    logger.debug('Webhook received', {
+      type: payload.type,
       hasEvent: !!payload.event,
       instanceName,
       villageId,
       eventKeys: payload.event ? Object.keys(payload.event) : [],
-      fullPayload: JSON.stringify(payload).substring(0, 2000) // First 2000 chars
+      infoKeys: payload.event?.Info ? Object.keys(payload.event.Info) : [],
+      messageKeys: payload.event?.Message ? Object.keys(payload.event.Message) : [],
     });
-    
-    // Extra detailed debug
-    if (payload.event) {
-      logger.debug('Event details', {
-        hasInfo: !!payload.event.Info,
-        hasMessage: !!payload.event.Message,
-        infoKeys: payload.event.Info ? Object.keys(payload.event.Info) : [],
-        messageKeys: payload.event.Message ? Object.keys(payload.event.Message) : [],
-        messageContent: payload.event.Message ? JSON.stringify(payload.event.Message).substring(0, 500) : 'null'
-      });
-    }
 
     if (payload.type !== 'Message') {
       const handled = await handleNonMessageWebhook(payload, villageId);
+      if (!handled && villageId) {
+        await logWaActivity({
+          villageId,
+          type: 'webhook_unknown_event',
+          severity: 'warning',
+          status: 'ignored',
+          message: `Provider mengirim event webhook yang belum ditangani: ${payload.type}.`,
+          providerEvent: payload.type,
+          metadata: { event: payload.event || null },
+        });
+      }
       logger.debug('Non-message webhook received', { type: payload.type, handled });
       res.json({ status: 'ok', message: handled ? `Processed event type: ${payload.type}` : `Ignored event type: ${payload.type}` });
       return;
@@ -462,7 +650,76 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     const { message, from, messageId, timestamp } = parseGenfityPayload(payload);
     const waMetadata = normalizeWaMetadata(payload);
 
-    logger.debug('Parsed payload result', { message, from, messageId, timestamp, messageKind: waMetadata.message_kind });
+    logger.debug('Parsed payload result', {
+      from,
+      messageId,
+      timestamp,
+      messageKind: waMetadata.message_kind,
+      hasMessageText: !!message,
+      messageLength: message?.length || 0,
+    });
+
+    if (from && messageId && payload.event?.Info.IsFromMe) {
+      logger.info('Skipping own message', { message_id: messageId });
+      res.json({ status: 'ok', message: 'Own message skipped' });
+      return;
+    }
+
+    const messageAction = resolveMessageActionActivity(payload);
+    if (messageAction && from && messageId) {
+      const waUserId = extractPhoneFromJID(from);
+      if (/^[\d]+$/.test(waUserId)) {
+        const isDuplicate = await checkDuplicateMessage(messageId);
+        if (!isDuplicate && villageId) {
+          let attached = false;
+          if (messageAction.kind === 'reaction' && messageAction.targetMessageId) {
+            const metadata = messageAction.metadata as any;
+            attached = await applyMessageReaction({
+              village_id: villageId,
+              channel: 'WHATSAPP',
+              channel_identifier: waUserId,
+              target_message_id: messageAction.targetMessageId,
+              reaction_message_id: messageId,
+              emoji: String(metadata?.emoji || ''),
+              from: waUserId,
+              timestamp,
+            });
+          }
+
+          if (!attached) {
+            await saveLivechatSystemActivity({
+              villageId,
+              channelIdentifier: waUserId,
+              messageId,
+              messageText: messageAction.text,
+              timestamp,
+              status: messageAction.status,
+              providerEvent: payload.type,
+              metadata: {
+                kind: messageAction.kind,
+                targetMessageId: messageAction.targetMessageId || null,
+                action: messageAction.metadata,
+              },
+            });
+          }
+
+          await logWaActivity({
+            villageId,
+            waUserId,
+            channelIdentifier: waUserId,
+            type: 'message_action',
+            severity: 'info',
+            status: messageAction.status,
+            message: messageAction.text,
+            providerEvent: payload.type,
+            providerMessageId: messageId,
+            metadata: { targetMessageId: messageAction.targetMessageId || null, action: messageAction.metadata },
+          });
+        }
+        res.json({ status: 'ok', message_id: messageId, mode: 'message_action' });
+        return;
+      }
+    }
 
     if (!message || !from || !messageId) {
       logger.warn('No valid message in webhook payload', {
@@ -471,13 +728,6 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
         hasMessageId: !!messageId,
       });
       res.json({ status: 'ok', message: 'No message to process' });
-      return;
-    }
-
-    // Check if message is from the bot itself (IsFromMe)
-    if (payload.event?.Info.IsFromMe) {
-      logger.info('Skipping own message', { message_id: messageId });
-      res.json({ status: 'ok', message: 'Own message skipped' });
       return;
     }
 
@@ -889,14 +1139,13 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
         else if (msgObj.ContactMessage) {
           messageText = `👤 Contact: ${msgObj.ContactMessage.DisplayName}`;
         }
-        else if (msgObj.buttonsResponseMessage || msgObj.ButtonsResponseMessage) {
-          const response = msgObj.buttonsResponseMessage || msgObj.ButtonsResponseMessage;
-          messageText = pickValue(response, 'selectedDisplayText', 'SelectedDisplayText', 'selectedButtonId', 'SelectedButtonId') || '[Button response]';
+        else if (msgObj.buttonsResponseMessage || msgObj.ButtonsResponseMessage || msgObj.templateButtonReplyMessage || msgObj.TemplateButtonReplyMessage || msgObj.interactiveResponseMessage || msgObj.InteractiveResponseMessage) {
+          const response = msgObj.buttonsResponseMessage || msgObj.ButtonsResponseMessage || msgObj.templateButtonReplyMessage || msgObj.TemplateButtonReplyMessage || msgObj.interactiveResponseMessage || msgObj.InteractiveResponseMessage;
+          messageText = extractInteractiveResponseText(response) || '[Button response]';
         }
         else if (msgObj.listResponseMessage || msgObj.ListResponseMessage) {
           const response = msgObj.listResponseMessage || msgObj.ListResponseMessage;
-          const row = pickObject(response, 'singleSelectReply', 'SingleSelectReply');
-          messageText = pickValue(row, 'selectedRowId', 'SelectedRowId') || pickValue(response, 'title', 'Title', 'description', 'Description') || '[List response]';
+          messageText = extractInteractiveResponseText(response) || '[List response]';
         }
       }
     }
@@ -904,7 +1153,8 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
     logger.debug('Parsed message details', {
       from,
       messageId,
-      messageText: messageText?.substring(0, 50),
+      hasMessageText: !!messageText,
+      messageLength: messageText?.length || 0,
       timestamp: timestamp.toISOString(),
       senderPhone,
       chatPhone,
@@ -978,6 +1228,6 @@ export function verifyWebhook(req: Request, res: Response): void {
     return;
   }
 
-  logger.warn('Webhook verification failed', { mode, token });
+  logger.warn('Webhook verification failed', { mode, hasToken: !!token });
   res.sendStatus(403);
 }

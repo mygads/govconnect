@@ -29,6 +29,8 @@ export function webhookCandidateFromBody(body: any): string {
   const event = (payload as any).event;
   const data = (payload as any).data;
 
+  const info = event?.Info || event?.info;
+
   return firstString(
     payload.instanceName,
     payload.userID,
@@ -38,8 +40,24 @@ export function webhookCandidateFromBody(body: any): string {
     event?.instanceName,
     event?.userID,
     event?.userId,
+    event?.session_id,
+    event?.sessionId,
+    event?.JID,
+    event?.Jid,
+    event?.jid,
+    info?.InstanceName,
+    info?.instanceName,
+    info?.UserID,
+    info?.userID,
+    info?.Sender,
+    info?.SenderAlt,
+    info?.Chat,
     data?.instanceName,
     data?.userID,
-    data?.userId
+    data?.userId,
+    data?.session_id,
+    data?.sessionId,
+    data?.jid,
+    data?.JID
   );
 }

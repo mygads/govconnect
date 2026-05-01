@@ -399,7 +399,9 @@ model conversation_sessions {
 
 model rate_limit_blacklist {
   id              String   @id @default(cuid())
-  wa_user_id      String   @unique
+  wa_user_id      String
+  village_id      String?
+  scope_key       String   @unique
   reason          String
   blocked_at      DateTime @default(now())
   expires_at      DateTime? // null = permanent
@@ -408,6 +410,7 @@ model rate_limit_blacklist {
   updated_at      DateTime @updatedAt
 
   @@index([wa_user_id])
+  @@index([village_id])
   @@index([expires_at])
 }
 

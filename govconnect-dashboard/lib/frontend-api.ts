@@ -368,6 +368,10 @@ export const documents = {
     return fetchApi<any>(`/api/documents/${id}`);
   },
 
+  async getStats() {
+    return fetchApi<any>('/api/documents/stats');
+  },
+
   async upload(formData: FormData) {
     const response = await fetch('/api/documents', {
       method: 'POST',
@@ -419,7 +423,7 @@ export const rateLimit = {
   },
 
   async removeFromBlacklist(waUserId: string) {
-    return fetchApi<any>(`/api/rate-limit/blacklist/${encodeURIComponent(waUserId)}`, {
+    return fetchApi<any>(`/api/rate-limit/blacklist?wa_user_id=${encodeURIComponent(waUserId)}`, {
       method: 'DELETE',
     });
   },

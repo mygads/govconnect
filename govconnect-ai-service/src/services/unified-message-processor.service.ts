@@ -798,10 +798,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       const t0 = Date.now();
       try {
         const remaining = MICRO_NLU_BUDGET_MS - microNluElapsedMs;
-        return await Promise.race([
-          fn(),
-          new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Micro-NLU budget timeout')), remaining)),
-        ]);
+        let timeout: NodeJS.Timeout | undefined;
+        try {
+          return await Promise.race([
+            fn(),
+            new Promise<T>((_, reject) => {
+              timeout = setTimeout(() => reject(new Error('Micro-NLU budget timeout')), remaining);
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
       } finally {
         microNluElapsedMs += Date.now() - t0;
       }

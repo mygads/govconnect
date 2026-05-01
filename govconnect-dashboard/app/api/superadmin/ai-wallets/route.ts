@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
   try {
     const response = await ai.listAIWallets()
     const payload = await response.json()
-    return NextResponse.json(payload)
+    return NextResponse.json(payload, { status: response.status })
   } catch (error) {
     console.error('Superadmin AI wallets proxy error:', error)
     return NextResponse.json({ error: 'Failed to fetch AI wallets' }, { status: 500 })

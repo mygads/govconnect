@@ -28,6 +28,7 @@ import {
 } from '../services/vector-db.service';
 import { firstHeader, getParam } from '../utils/http';
 import { internalApiKeyMatches } from '../utils/internal-auth';
+import { clearRetrievalCache } from '../services/rag.service';
 
 const router = Router();
 
@@ -101,6 +102,7 @@ router.post('/', async (req: Request, res: Response) => {
             chunksCount: smartChunks.length,
             titles: smartChunks.map(c => c.title),
           });
+          clearRetrievalCache(resolvedVillageId);
 
           return res.status(201).json({
             status: 'success',
@@ -136,6 +138,7 @@ router.post('/', async (req: Request, res: Response) => {
             embeddingModel: embeddingResult.model,
             qualityScore: qualityScore || 1.0,
           });
+          clearRetrievalCache(resolvedVillageId);
 
           return res.status(201).json({
             status: 'success',
@@ -176,6 +179,8 @@ router.post('/', async (req: Request, res: Response) => {
       embeddingModel: embeddingResult.model,
       qualityScore: qualityScore || 1.0,
     });
+
+    clearRetrievalCache(resolvedVillageId);
 
     res.status(201).json({
       status: 'success',
@@ -250,6 +255,8 @@ router.put('/:id', async (req: Request, res: Response) => {
             });
           }
 
+          clearRetrievalCache(resolvedVillageId);
+
           return res.json({
             status: 'success',
             data: { id, chunksCount: smartChunks.length, embeddingModel: batchResult.embeddings[0].model },
@@ -274,6 +281,8 @@ router.put('/:id', async (req: Request, res: Response) => {
             embeddingModel: embeddingResult.model,
             qualityScore: qualityScore || 1.0,
           });
+
+          clearRetrievalCache(resolvedVillageId);
 
           return res.json({
             status: 'success',
@@ -302,6 +311,8 @@ router.put('/:id', async (req: Request, res: Response) => {
       embeddingModel: embeddingResult.model,
       qualityScore: qualityScore || 1.0,
     });
+
+    clearRetrievalCache(resolvedVillageId);
 
     res.json({
       status: 'success',
@@ -345,6 +356,8 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     // Cleanup question variants
     deleteVariants(id).catch(() => {});
+
+    clearRetrievalCache();
 
     res.json({ status: 'success', deleted: true });
   } catch (error: any) {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { redirect } from "next/navigation"
-import { CheckCircle2, Loader2, Plus, Search, Ticket, Wallet } from "lucide-react"
+import { CheckCircle2, Loader2, Minus, Plus, Search, Ticket, Wallet } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
@@ -85,6 +85,11 @@ export default function SuperadminAIWalletsPage() {
   const [topupVillageOpen, setTopupVillageOpen] = useState(false)
   const [walletSearch, setWalletSearch] = useState("")
   const [topupAmount, setTopupAmount] = useState("")
+  const [topupReason, setTopupReason] = useState("")
+  const [reduceOpen, setReduceOpen] = useState(false)
+  const [reduceWallet, setReduceWallet] = useState<WalletRow | null>(null)
+  const [reduceAmount, setReduceAmount] = useState("")
+  const [reduceReason, setReduceReason] = useState("")
   const [voucherCode, setVoucherCode] = useState("")
   const [voucherAmount, setVoucherAmount] = useState("")
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
@@ -139,11 +144,15 @@ export default function SuperadminAIWalletsPage() {
   }, [villages])
 
   const selectedVillage = topupVillageId ? villageMap.get(topupVillageId) : undefined
+  const reduceVillage = reduceWallet ? villageMap.get(reduceWallet.village_id) : undefined
   const topupAmountNumber = Number(topupAmount)
+  const reduceAmountNumber = Number(reduceAmount)
   const voucherAmountNumber = Number(voucherAmount)
-  const isTopupDirty = !!topupVillageId || topupAmount.trim() !== ""
+  const isTopupDirty = !!topupVillageId || topupAmount.trim() !== "" || topupReason.trim() !== ""
+  const isReduceDirty = !!reduceWallet || reduceAmount.trim() !== "" || reduceReason.trim() !== ""
   const isVoucherDirty = voucherCode.trim() !== "" || voucherAmount.trim() !== ""
   const isTopupAmountValid = Number.isFinite(topupAmountNumber) && topupAmountNumber > 0
+  const isReduceAmountValid = Number.isFinite(reduceAmountNumber) && reduceAmountNumber > 0
   const isVoucherAmountValid = Number.isFinite(voucherAmountNumber) && voucherAmountNumber > 0
 
   const filteredVillages = useMemo(() => {
@@ -166,9 +175,16 @@ export default function SuperadminAIWalletsPage() {
 
   const resetTopupForm = () => {
     setTopupAmount("")
+    setTopupReason("")
     setTopupVillageId("")
     setTopupVillageSearch("")
     setTopupVillageOpen(false)
+  }
+
+  const resetReduceForm = () => {
+    setReduceWallet(null)
+    setReduceAmount("")
+    setReduceReason("")
   }
 
   const resetVoucherForm = () => {
@@ -189,9 +205,32 @@ export default function SuperadminAIWalletsPage() {
 
     setPendingConfirm({
       title: "Simpan topup manual?",
-      description: `Saldo ${villageLabel(selectedVillage)} akan ditambah ${formatUsd(topupAmountNumber)}.`,
+      description: `Saldo ${villageLabel(selectedVillage)} akan ditambah ${formatUsd(topupAmountNumber)}.${topupReason.trim() ? ` Keterangan: ${topupReason.trim()}` : ""}`,
       actionLabel: "Simpan Topup",
       onConfirm: handleTopup,
+    })
+  }
+
+  const requestReduce = () => {
+    if (!reduceWallet) {
+      toast({ title: "Gagal", description: "Wallet desa wajib dipilih", variant: "destructive" })
+      return
+    }
+    if (!isReduceAmountValid) {
+      toast({ title: "Gagal", description: "Amount harus lebih dari 0", variant: "destructive" })
+      return
+    }
+    if (reduceAmountNumber > reduceWallet.balance_usd) {
+      toast({ title: "Gagal", description: "Pengurangan tidak boleh melebihi saldo saat ini", variant: "destructive" })
+      return
+    }
+    if (!isReduceDirty) return
+
+    setPendingConfirm({
+      title: "Kurangi saldo AI?",
+      description: `Saldo ${villageLabel(reduceVillage)} akan dikurangi ${formatUsd(reduceAmountNumber)}.${reduceReason.trim() ? ` Keterangan: ${reduceReason.trim()}` : ""}`,
+      actionLabel: "Kurangi Saldo",
+      onConfirm: handleReduce,
     })
   }
 
@@ -224,13 +263,18 @@ export default function SuperadminAIWalletsPage() {
       setSubmitting(true)
       setError(null)
       const token = localStorage.getItem("token")
-      const response = await fetch(`/api/superadmin/ai-wallets/${encodeURIComponent(topupVillageId.trim())}/topup`, {
+      const response = await fetch(`/api/superadmin/ai-wallets/${encodeURIComponent(topupVillageId.trim())}/adjust`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ amount_usd: topupAmountNumber, entry_type: "manual_adjustment" }),
+        body: JSON.stringify({
+          amount_usd: topupAmountNumber,
+          direction: "credit",
+          reason: topupReason.trim() || undefined,
+          metadata: topupReason.trim() ? { reason: topupReason.trim() } : undefined,
+        }),
       })
       const payload = await response.json()
       if (!response.ok) {
@@ -248,6 +292,44 @@ export default function SuperadminAIWalletsPage() {
     }
   }
 
+  const handleReduce = async () => {
+    if (!reduceWallet || !isReduceAmountValid) {
+      toast({ title: "Gagal", description: "Wallet dan amount valid wajib diisi", variant: "destructive" })
+      return
+    }
+
+    try {
+      setSubmitting(true)
+      setError(null)
+      const token = localStorage.getItem("token")
+      const response = await fetch(`/api/superadmin/ai-wallets/${encodeURIComponent(reduceWallet.village_id)}/adjust`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          amount_usd: reduceAmountNumber,
+          direction: "debit",
+          reason: reduceReason.trim() || undefined,
+          metadata: reduceReason.trim() ? { reason: reduceReason.trim() } : undefined,
+        }),
+      })
+      const payload = await response.json()
+      if (!response.ok) {
+        throw new Error(payload?.error || "Gagal mengurangi saldo")
+      }
+
+      toast({ title: "Berhasil", description: `Saldo ${villageLabel(reduceVillage)} berhasil dikurangi.` })
+      resetReduceForm()
+      setReduceOpen(false)
+      await loadData()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err?.message || "Gagal mengurangi saldo", variant: "destructive" })
+    } finally {
+      setSubmitting(false)
+    }
+  }
   const handleCreateVoucher = async () => {
     if (!voucherCode.trim() || !isVoucherAmountValid) {
       toast({ title: "Gagal", description: "Kode voucher dan nominal valid wajib diisi", variant: "destructive" })
@@ -368,12 +450,46 @@ export default function SuperadminAIWalletsPage() {
               <Label htmlFor="topup-amount">Amount (USD)</Label>
               <Input id="topup-amount" type="number" min="0" step="0.01" value={topupAmount} onChange={(e) => setTopupAmount(e.target.value)} placeholder="50" />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="topup-reason">Status/Keterangan</Label>
+              <Input id="topup-reason" value={topupReason} onChange={(e) => setTopupReason(e.target.value)} placeholder="Contoh: kompensasi error sistem" />
+            </div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setTopupOpen(false)} disabled={submitting}>Batal</Button>
             <Button onClick={requestTopup} disabled={submitting || !isTopupDirty}>
               {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
               Simpan Topup
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reduceOpen} onOpenChange={(open) => { setReduceOpen(open); if (!open) resetReduceForm() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Minus className="h-5 w-5" /> Kurangi Saldo AI</DialogTitle>
+            <DialogDescription>Pengurangan saldo masuk ke transaksi dan bisa dilihat admin desa.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border p-3 text-sm">
+              <div className="font-medium">{reduceWallet ? villageLabel(reduceVillage) : "Wallet belum dipilih"}</div>
+              <div className="text-muted-foreground">Saldo saat ini: {formatUsd(reduceWallet?.balance_usd)}</div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reduce-amount">Amount (USD)</Label>
+              <Input id="reduce-amount" type="number" min="0" step="0.01" value={reduceAmount} onChange={(e) => setReduceAmount(e.target.value)} placeholder="10" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reduce-reason">Status/Keterangan</Label>
+              <Input id="reduce-reason" value={reduceReason} onChange={(e) => setReduceReason(e.target.value)} placeholder="Contoh: koreksi saldo karena error" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setReduceOpen(false)} disabled={submitting}>Batal</Button>
+            <Button onClick={requestReduce} disabled={submitting || !isReduceDirty} variant="destructive">
+              {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Minus className="mr-2 h-4 w-4" />}
+              Kurangi Saldo
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -443,12 +559,13 @@ export default function SuperadminAIWalletsPage() {
                 <TableHead>Status</TableHead>
                 <TableHead>Saldo</TableHead>
                 <TableHead>Updated</TableHead>
+                <TableHead className="text-right">Aksi</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredWallets.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">Belum ada wallet desa.</TableCell>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground">Belum ada wallet desa.</TableCell>
                 </TableRow>
               ) : filteredWallets.map((wallet) => {
                 const village = villageMap.get(wallet.village_id)
@@ -461,6 +578,19 @@ export default function SuperadminAIWalletsPage() {
                     <TableCell>{wallet.status}</TableCell>
                     <TableCell>{formatUsd(wallet.balance_usd)}</TableCell>
                     <TableCell>{new Date(wallet.updated_at).toLocaleString("id-ID")}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={wallet.balance_usd <= 0}
+                        onClick={() => {
+                          setReduceWallet(wallet)
+                          setReduceOpen(true)
+                        }}
+                      >
+                        <Minus className="mr-1 h-3 w-3" /> Kurangi
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 )
               })}

@@ -210,24 +210,24 @@ export const caseService = {
   /**
    * Soft delete laporan
    */
-  async softDeleteLaporan(id: string, village_id?: string) {
+  async softDeleteLaporan(id: string, village_id?: string, auditHeaders?: Record<string, string>) {
     const url = new URL(buildUrl(ServicePath.CASE, `/laporan/${id}/soft-delete`));
     if (village_id) url.searchParams.set('village_id', village_id);
     return apiFetch(url.toString(), {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getHeaders(auditHeaders),
     });
   },
 
   /**
    * Restore soft-deleted laporan
    */
-  async restoreLaporan(id: string, village_id?: string) {
+  async restoreLaporan(id: string, village_id?: string, auditHeaders?: Record<string, string>) {
     const url = new URL(buildUrl(ServicePath.CASE, `/laporan/${id}/restore`));
     if (village_id) url.searchParams.set('village_id', village_id);
     return apiFetch(url.toString(), {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getHeaders(auditHeaders),
     });
   },
 
@@ -245,24 +245,24 @@ export const caseService = {
   /**
    * Soft delete service request
    */
-  async softDeleteServiceRequest(id: string, village_id?: string) {
+  async softDeleteServiceRequest(id: string, village_id?: string, auditHeaders?: Record<string, string>) {
     const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}/soft-delete`));
     if (village_id) url.searchParams.set('village_id', village_id);
     return apiFetch(url.toString(), {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getHeaders(auditHeaders),
     });
   },
 
   /**
    * Restore soft-deleted service request
    */
-  async restoreServiceRequest(id: string, village_id?: string) {
+  async restoreServiceRequest(id: string, village_id?: string, auditHeaders?: Record<string, string>) {
     const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}/restore`));
     if (village_id) url.searchParams.set('village_id', village_id);
     return apiFetch(url.toString(), {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getHeaders(auditHeaders),
     });
   },
 
@@ -670,6 +670,16 @@ export const ai = {
   },
 
   /**
+   * Get token usage by provider
+   */
+  async getTokenUsageByProvider(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/token-usage/by-provider${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  /**
    * Get token usage breakdown by recorded gateway lane / source
    */
   async getTokenUsageBySource(params?: Record<string, string>) {
@@ -692,6 +702,21 @@ export const ai = {
     });
   },
 
+  async getAIBillingReconciliation(params?: Record<string, string>) {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-billing/reconciliation${qs}`), {
+      headers: getHeaders(),
+    });
+  },
+
+  async retryPendingAIBilling(villageId: string, data: Record<string, any> = {}) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}/retry-pending`), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
   async listAIWallets() {
     return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-wallets'), {
       headers: getHeaders(),
@@ -700,6 +725,14 @@ export const ai = {
 
   async topupAIWallet(villageId: string, data: Record<string, any>) {
     return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}/topup`), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+  },
+
+  async adjustAIWallet(villageId: string, data: Record<string, any>) {
+    return apiFetch(buildUrl(ServicePath.AI, `/admin/ai-wallet/${encodeURIComponent(villageId)}/adjust`), {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -786,11 +819,11 @@ export const ai = {
     });
   },
 
-  async testAIModel(modelId: string) {
+  async testAIModel(payload: string | { draft: Record<string, any> }) {
     return apiFetch(buildUrl(ServicePath.AI, '/api/testing/model'), {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ model_id: modelId }),
+      body: JSON.stringify(typeof payload === 'string' ? { model_id: payload } : payload),
       timeout: 20000,
     });
   },
@@ -832,8 +865,9 @@ export const ai = {
   /**
    * Get rate limit config
    */
-  async getRateLimit() {
-    return apiFetch(buildUrl(ServicePath.AI, '/rate-limit'), {
+  async getRateLimit(villageId?: string | null) {
+    const qs = villageId ? `?village_id=${encodeURIComponent(villageId)}` : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/rate-limit${qs}`), {
       headers: getHeaders(),
     });
   },
@@ -841,8 +875,9 @@ export const ai = {
   /**
    * Get blacklist
    */
-  async getBlacklist() {
-    return apiFetch(buildUrl(ServicePath.AI, '/rate-limit/blacklist'), {
+  async getBlacklist(villageId?: string | null) {
+    const qs = villageId ? `?village_id=${encodeURIComponent(villageId)}` : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/rate-limit/blacklist${qs}`), {
       headers: getHeaders(),
     });
   },
@@ -850,7 +885,7 @@ export const ai = {
   /**
    * Add to blacklist
    */
-  async addToBlacklist(data: { wa_user_id: string; reason: string }) {
+  async addToBlacklist(data: { wa_user_id: string; reason: string; village_id?: string | null }) {
     return apiFetch(buildUrl(ServicePath.AI, '/rate-limit/blacklist'), {
       method: 'POST',
       headers: getHeaders(),
@@ -861,8 +896,9 @@ export const ai = {
   /**
    * Remove from blacklist
    */
-  async removeFromBlacklist(waUserId: string) {
-    return apiFetch(buildUrl(ServicePath.AI, `/rate-limit/blacklist/${waUserId}`), {
+  async removeFromBlacklist(waUserId: string, villageId?: string | null) {
+    const qs = villageId ? `?village_id=${encodeURIComponent(villageId)}` : '';
+    return apiFetch(buildUrl(ServicePath.AI, `/rate-limit/blacklist/${waUserId}${qs}`), {
       method: 'DELETE',
       headers: getHeaders(),
     });

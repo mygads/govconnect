@@ -25,6 +25,7 @@ import { config } from '../config/env';
 import { firstHeader, getParam } from '../utils/http';
 import { deleteObjectByUrl, uploadBufferToObjectStorage } from '../services/object-storage.service';
 import { internalApiKeyMatches } from '../utils/internal-auth';
+import { clearRetrievalCache } from '../services/rag.service';
 
 const router = Router();
 
@@ -375,6 +376,8 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       aiChunking: usedAiChunking,
     });
     
+    clearRetrievalCache(resolvedVillageId);
+
     return res.json({
       success: true,
       documentId,
@@ -447,6 +450,7 @@ router.delete('/document/:documentId', verifyInternalKey, async (req: Request, r
     }
 
     await deleteDocumentVectors(documentId);
+    clearRetrievalCache();
     
     logger.info('Document vectors deleted', { documentId, deletedFile });
     

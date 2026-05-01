@@ -22,7 +22,7 @@ export async function POST(
       created_by_admin_id: session.adminId,
     })
     const payload = await response.json()
-    return NextResponse.json(payload)
+    return NextResponse.json(payload, { status: response.status })
   } catch (error: any) {
     console.error('Superadmin AI wallet topup proxy error:', error)
     return NextResponse.json({ error: error?.message || 'Failed to topup AI wallet' }, { status: 500 })

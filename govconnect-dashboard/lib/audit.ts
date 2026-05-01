@@ -62,6 +62,6 @@ export const AuditActions = {
   UPLOAD_DOCUMENT: 'upload_document',
   DELETE_DOCUMENT: 'delete_document',
   UPDATE_SETTINGS: 'update_settings',
-  VIEW_COMPLAINT: 'view_complaint',
-  VIEW_DASHBOARD: 'view_dashboard',
+  BLACKLIST_USER: 'blacklist_user',
+  UNBAN_USER: 'unban_user',
 } as const

@@ -14,6 +14,8 @@ import prisma from '../lib/prisma';
 
 interface UserRateData {
   wa_user_id: string;
+  village_id?: string;
+  scopeKey: string;
   dailyReports: number;
   lastReportTime: number; // Unix timestamp
   date: string; // YYYY-MM-DD
@@ -22,6 +24,8 @@ interface UserRateData {
 
 interface BlacklistEntry {
   wa_user_id: string;
+  village_id?: string;
+  scopeKey: string;
   reason: string;
   addedAt: string;
   addedBy: string; // 'system' or admin username
@@ -72,23 +76,38 @@ class RateLimiterService {
     });
   }
 
+  private getScopeKey(wa_user_id: string, village_id?: string | null): string {
+    return `${village_id || '__global__'}:${wa_user_id}`;
+  }
+
+  private getScopeLabel(village_id?: string | null): string {
+    return village_id || 'global';
+  }
+
   /**
    * Load blacklist from PostgreSQL on startup (Temuan 8)
    */
   private async loadBlacklistFromDB(): Promise<void> {
     try {
-      const rows = await prisma.rate_limit_blacklist.findMany({
-        where: {
-          OR: [
-            { expires_at: null },
-            { expires_at: { gt: new Date() } },
-          ],
-        },
-      });
+      const rows = await prisma.$queryRaw<Array<{
+        wa_user_id: string;
+        village_id: string | null;
+        scope_key: string | null;
+        reason: string;
+        blocked_at: Date;
+        expires_at: Date | null;
+      }>>`
+        SELECT wa_user_id, village_id, scope_key, reason, blocked_at, expires_at
+        FROM rate_limit_blacklist
+        WHERE expires_at IS NULL OR expires_at > NOW()
+      `;
 
       for (const row of rows) {
-        this.data.blacklist[row.wa_user_id] = {
+        const scopeKey = row.scope_key || this.getScopeKey(row.wa_user_id, row.village_id);
+        this.data.blacklist[scopeKey] = {
           wa_user_id: row.wa_user_id,
+          village_id: row.village_id || undefined,
+          scopeKey,
           reason: row.reason,
           addedAt: row.blocked_at.toISOString(),
           addedBy: 'system',
@@ -109,27 +128,25 @@ class RateLimiterService {
   /**
    * Persist blacklist entry to DB (fire-and-forget, Temuan 8)
    */
-  private persistBlacklistEntry(wa_user_id: string, entry: BlacklistEntry): void {
-    prisma.rate_limit_blacklist
-      .upsert({
-        where: { wa_user_id },
-        update: {
-          reason: entry.reason,
-          expires_at: entry.expiresAt ? new Date(entry.expiresAt) : null,
-          violation_count: this.data.users[wa_user_id]?.violations || 0,
-        },
-        create: {
-          wa_user_id,
-          reason: entry.reason,
-          blocked_at: new Date(entry.addedAt),
-          expires_at: entry.expiresAt ? new Date(entry.expiresAt) : null,
-          violation_count: this.data.users[wa_user_id]?.violations || 0,
-        },
-      })
-      .catch((err) => {
+  private persistBlacklistEntry(scopeKey: string, entry: BlacklistEntry): void {
+    const expiresAt = entry.expiresAt ? new Date(entry.expiresAt) : null;
+    const violations = this.data.users[scopeKey]?.violations || 0;
+
+    prisma.$executeRaw`
+      INSERT INTO rate_limit_blacklist (id, wa_user_id, village_id, scope_key, reason, blocked_at, expires_at, violation_count, created_at, updated_at)
+      VALUES (${scopeKey}, ${entry.wa_user_id}, ${entry.village_id || null}, ${scopeKey}, ${entry.reason}, ${new Date(entry.addedAt)}, ${expiresAt}, ${violations}, NOW(), NOW())
+      ON CONFLICT (scope_key) DO UPDATE SET
+        wa_user_id = EXCLUDED.wa_user_id,
+        village_id = EXCLUDED.village_id,
+        reason = EXCLUDED.reason,
+        expires_at = EXCLUDED.expires_at,
+        violation_count = EXCLUDED.violation_count,
+        updated_at = NOW()
+    `
+      .catch((err: Error) => {
         logger.warn('Failed to persist blacklist entry', {
-          wa_user_id,
-          error: (err as Error).message,
+          scopeKey,
+          error: err.message,
         });
       });
   }
@@ -137,10 +154,10 @@ class RateLimiterService {
   /**
    * Remove blacklist entry from DB (fire-and-forget, Temuan 8)
    */
-  private removeBlacklistFromDB(wa_user_id: string): void {
-    prisma.rate_limit_blacklist
-      .delete({ where: { wa_user_id } })
-      .catch(() => {}); // Ignore if not found
+  private removeBlacklistFromDB(scopeKey: string): void {
+    prisma.$executeRaw`
+      DELETE FROM rate_limit_blacklist WHERE scope_key = ${scopeKey}
+    `.catch(() => {}); // Ignore if not found
   }
 
   /**
@@ -180,32 +197,35 @@ class RateLimiterService {
   /**
    * Get or create user rate data
    */
-  private getUserData(wa_user_id: string): UserRateData {
+  private getUserData(wa_user_id: string, village_id?: string | null): UserRateData {
     const today = this.getTodayString();
-    
-    if (!this.data.users[wa_user_id]) {
-      this.data.users[wa_user_id] = {
+    const scopeKey = this.getScopeKey(wa_user_id, village_id);
+
+    if (!this.data.users[scopeKey]) {
+      this.data.users[scopeKey] = {
         wa_user_id,
+        village_id: village_id || undefined,
+        scopeKey,
         dailyReports: 0,
         lastReportTime: 0,
         date: today,
         violations: 0,
       };
     }
-    
+
     // Reset if new day
-    if (this.data.users[wa_user_id].date !== today) {
-      this.data.users[wa_user_id].dailyReports = 0;
-      this.data.users[wa_user_id].date = today;
+    if (this.data.users[scopeKey].date !== today) {
+      this.data.users[scopeKey].dailyReports = 0;
+      this.data.users[scopeKey].date = today;
     }
-    
-    return this.data.users[wa_user_id];
+
+    return this.data.users[scopeKey];
   }
 
   /**
    * Check if user is rate limited
    */
-  checkRateLimit(wa_user_id: string): RateLimitResult {
+  checkRateLimit(wa_user_id: string, village_id?: string | null): RateLimitResult {
     // Check if rate limiting is disabled
     if (!config.rateLimitEnabled) {
       return { allowed: true, reason: 'disabled' };
@@ -213,12 +233,16 @@ class RateLimiterService {
 
     const autoBlacklistViolations = Math.max(1, config.autoBlacklistViolations || 1);
 
+    const scopeKey = this.getScopeKey(wa_user_id, village_id);
+    const scope = this.getScopeLabel(village_id);
+
     // Check blacklist first
-    if (this.isBlacklisted(wa_user_id)) {
-      const entry = this.data.blacklist[wa_user_id];
+    if (this.isBlacklisted(wa_user_id, village_id)) {
+      const entry = this.data.blacklist[scopeKey];
       this.blockedCount++;
       logger.warn('🚫 Blocked blacklisted user', {
         wa_user_id,
+        scope,
         reason: entry.reason,
       });
       return {
@@ -228,7 +252,7 @@ class RateLimiterService {
       };
     }
 
-    const userData = this.getUserData(wa_user_id);
+    const userData = this.getUserData(wa_user_id, village_id);
     const now = Date.now();
 
     // Check cooldown (minimum time between reports)
@@ -247,7 +271,7 @@ class RateLimiterService {
         
         // Auto-blacklist if too many violations
         if (userData.violations >= autoBlacklistViolations) {
-          this.addToBlacklist(wa_user_id, 'Terlalu banyak pelanggaran rate limit', 'system');
+          this.addToBlacklist(wa_user_id, 'Terlalu banyak pelanggaran rate limit', 'system', undefined, undefined, village_id);
         }
         
         return {
@@ -273,7 +297,7 @@ class RateLimiterService {
       
       // Auto-blacklist if too many violations
       if (userData.violations >= autoBlacklistViolations) {
-        this.addToBlacklist(wa_user_id, 'Terlalu banyak pelanggaran rate limit', 'system');
+        this.addToBlacklist(wa_user_id, 'Terlalu banyak pelanggaran rate limit', 'system', undefined, undefined, village_id);
       }
       
       return {
@@ -294,15 +318,16 @@ class RateLimiterService {
   /**
    * Record a report submission (call after successful report creation)
    */
-  recordReport(wa_user_id: string): void {
+  recordReport(wa_user_id: string, village_id?: string | null): void {
     if (!config.rateLimitEnabled) return;
-    
-    const userData = this.getUserData(wa_user_id);
+
+    const userData = this.getUserData(wa_user_id, village_id);
     userData.dailyReports++;
     userData.lastReportTime = Date.now();
-    
+
     logger.info('📝 Report recorded for rate limit', {
       wa_user_id,
+      scope: this.getScopeLabel(village_id),
       dailyReports: userData.dailyReports,
       maxReportsPerDay: config.maxReportsPerDay,
     });
@@ -311,20 +336,21 @@ class RateLimiterService {
   /**
    * Check if user is blacklisted
    */
-  isBlacklisted(wa_user_id: string): boolean {
-    const entry = this.data.blacklist[wa_user_id];
+  isBlacklisted(wa_user_id: string, village_id?: string | null): boolean {
+    const scopeKey = this.getScopeKey(wa_user_id, village_id);
+    const entry = this.data.blacklist[scopeKey];
     if (!entry) return false;
-    
+
     // Check if expired
     if (entry.expiresAt) {
       const expiresAt = new Date(entry.expiresAt);
       if (expiresAt < new Date()) {
-        // Expired, remove from blacklist
-        delete this.data.blacklist[wa_user_id];
+        delete this.data.blacklist[scopeKey];
+        this.removeBlacklistFromDB(scopeKey);
         return false;
       }
     }
-    
+
     return true;
   }
 
@@ -332,22 +358,26 @@ class RateLimiterService {
    * Add user to blacklist
    */
   addToBlacklist(
-    wa_user_id: string, 
-    reason: string, 
+    wa_user_id: string,
+    reason: string,
     addedBy: string = 'admin',
     expiresInDays?: number,
     expiresInMs?: number,
+    village_id?: string | null,
   ): void {
     let expiresAt: string | undefined;
-    
+    const scopeKey = this.getScopeKey(wa_user_id, village_id);
+
     if (expiresInMs) {
       expiresAt = new Date(Date.now() + expiresInMs).toISOString();
     } else if (expiresInDays) {
       expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString();
     }
-    
-    this.data.blacklist[wa_user_id] = {
+
+    this.data.blacklist[scopeKey] = {
       wa_user_id,
+      village_id: village_id || undefined,
+      scopeKey,
       reason,
       addedAt: new Date().toISOString(),
       addedBy,
@@ -355,10 +385,11 @@ class RateLimiterService {
     };
 
     // Persist to DB (Temuan 8)
-    this.persistBlacklistEntry(wa_user_id, this.data.blacklist[wa_user_id]);
-    
+    this.persistBlacklistEntry(scopeKey, this.data.blacklist[scopeKey]);
+
     logger.warn('🚫 User added to blacklist', {
       wa_user_id,
+      scope: this.getScopeLabel(village_id),
       reason,
       addedBy,
       expiresAt,
@@ -368,12 +399,13 @@ class RateLimiterService {
   /**
    * Remove user from blacklist
    */
-  removeFromBlacklist(wa_user_id: string): boolean {
-    if (this.data.blacklist[wa_user_id]) {
-      delete this.data.blacklist[wa_user_id];
-      this.removeBlacklistFromDB(wa_user_id); // Temuan 8
-      this.resetUserViolations(wa_user_id);
-      logger.info('✅ User removed from blacklist', { wa_user_id });
+  removeFromBlacklist(wa_user_id: string, village_id?: string | null): boolean {
+    const scopeKey = this.getScopeKey(wa_user_id, village_id);
+    if (this.data.blacklist[scopeKey]) {
+      delete this.data.blacklist[scopeKey];
+      this.removeBlacklistFromDB(scopeKey); // Temuan 8
+      this.resetUserViolations(wa_user_id, village_id);
+      logger.info('✅ User removed from blacklist', { wa_user_id, scope: this.getScopeLabel(village_id) });
       return true;
     }
     return false;
@@ -382,8 +414,10 @@ class RateLimiterService {
   /**
    * Get blacklist entries
    */
-  getBlacklist(): BlacklistEntry[] {
-    return Object.values(this.data.blacklist);
+  getBlacklist(village_id?: string | null): BlacklistEntry[] {
+    const entries = Object.values(this.data.blacklist);
+    if (village_id === undefined) return entries;
+    return entries.filter(entry => (entry.village_id || null) === (village_id || null));
   }
 
   /**
@@ -408,9 +442,11 @@ class RateLimiterService {
   /**
    * Get rate limit statistics
    */
-  getStats(): RateLimitStats {
-    const users = Object.values(this.data.users);
-    
+  getStats(village_id?: string | null): RateLimitStats {
+    const users = Object.values(this.data.users)
+      .filter(user => village_id === undefined || (user.village_id || null) === (village_id || null));
+    const blacklist = this.getBlacklist(village_id);
+
     // Sort by violations desc
     const topViolators = users
       .filter(u => u.violations > 0)
@@ -421,10 +457,10 @@ class RateLimiterService {
         violations: u.violations,
         dailyReports: u.dailyReports,
       }));
-    
+
     return {
       totalBlocked: this.blockedCount,
-      totalBlacklisted: Object.keys(this.data.blacklist).length,
+      totalBlacklisted: blacklist.length,
       activeUsers: users.filter(u => u.dailyReports > 0).length,
       topViolators,
     };
@@ -433,16 +469,17 @@ class RateLimiterService {
   /**
    * Get user rate limit info
    */
-  getUserInfo(wa_user_id: string): UserRateData | null {
-    return this.data.users[wa_user_id] || null;
+  getUserInfo(wa_user_id: string, village_id?: string | null): UserRateData | null {
+    return this.data.users[this.getScopeKey(wa_user_id, village_id)] || null;
   }
 
   /**
    * Reset user violations (for admin)
    */
-  resetUserViolations(wa_user_id: string): boolean {
-    if (this.data.users[wa_user_id]) {
-      this.data.users[wa_user_id].violations = 0;
+  resetUserViolations(wa_user_id: string, village_id?: string | null): boolean {
+    const scopeKey = this.getScopeKey(wa_user_id, village_id);
+    if (this.data.users[scopeKey]) {
+      this.data.users[scopeKey].violations = 0;
       return true;
     }
     return false;

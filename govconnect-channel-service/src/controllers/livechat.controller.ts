@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import prisma from '../config/database';
 import {
   startTakeover,
   endTakeover,
@@ -15,16 +16,22 @@ import {
   markConversationMessagesAdminRead,
   publishTypingEvent,
   saveOutgoingMessage,
+  replaceFailedOutgoingMessage,
 } from '../services/message.service';
 import { subscribeLivechatEvents } from '../services/livechat-events.service';
 import {
   buildQuotedContextInfo,
+  deleteWhatsAppMessage,
   markMessageAsRead,
   sendButtonsMessage,
   sendContactMessage,
+  sendEditMessage,
   sendListMessage,
   sendLocationMessage,
   sendMediaMessage,
+  sendPollMessage,
+  sendReactionMessage,
+  sendStickerMessage,
   sendTextMessage,
   sendTypingIndicator,
   WhatsAppMediaType,
@@ -172,6 +179,56 @@ function normalizeContactPayload(value: any) {
     title: typeof value.title === 'string' ? value.title.trim() : undefined,
     vcard: typeof value.vcard === 'string' ? value.vcard : undefined,
   };
+}
+
+function normalizeStickerPayload(value: any) {
+  if (!value || typeof value !== 'object') return null;
+  const sticker = typeof value.sticker === 'string'
+    ? value.sticker.trim()
+    : typeof value.url === 'string'
+      ? value.url.trim()
+      : '';
+  if (!sticker) return null;
+  return {
+    sticker,
+    mimeType: typeof value.mime_type === 'string' ? value.mime_type.trim() : typeof value.mimeType === 'string' ? value.mimeType.trim() : undefined,
+    packId: typeof value.pack_id === 'string' ? value.pack_id.trim() : typeof value.packId === 'string' ? value.packId.trim() : undefined,
+    packName: typeof value.pack_name === 'string' ? value.pack_name.trim() : typeof value.packName === 'string' ? value.packName.trim() : undefined,
+    packPublisher: typeof value.pack_publisher === 'string' ? value.pack_publisher.trim() : typeof value.packPublisher === 'string' ? value.packPublisher.trim() : undefined,
+    emojis: Array.isArray(value.emojis) ? value.emojis.filter((emoji: unknown) => typeof emoji === 'string' && emoji.trim()).map((emoji: string) => emoji.trim()) : undefined,
+  };
+}
+
+function normalizePollPayload(value: any) {
+  if (!value || typeof value !== 'object') return null;
+  const header = typeof value.header === 'string' ? value.header.trim() : typeof value.question === 'string' ? value.question.trim() : '';
+  const options = Array.isArray(value.options)
+    ? value.options.filter((option: unknown) => typeof option === 'string' && option.trim()).map((option: string) => option.trim())
+    : [];
+  if (!header || options.length < 2) return null;
+  return { header, options };
+}
+
+function normalizeMessageActionPayload(value: any) {
+  if (!value || typeof value !== 'object') return null;
+  const type = value.type === 'reaction' || value.type === 'edit' || value.type === 'delete' ? value.type : null;
+  const messageId = typeof value.message_id === 'string' ? value.message_id.trim() : typeof value.messageId === 'string' ? value.messageId.trim() : '';
+  if (!type || !messageId) return null;
+  if (type === 'reaction') {
+    const emoji = typeof value.emoji === 'string' ? value.emoji.trim() : typeof value.body === 'string' ? value.body.trim() : '';
+    return {
+      type,
+      messageId,
+      emoji: emoji || 'remove',
+      participant: typeof value.participant === 'string' ? value.participant.trim() : undefined,
+    };
+  }
+  if (type === 'edit') {
+    const body = typeof value.body === 'string' ? value.body.trim() : typeof value.message === 'string' ? value.message.trim() : '';
+    if (!body) return null;
+    return { type, messageId, body };
+  }
+  return { type, messageId };
 }
 
 function normalizeInteractivePayload(value: any) {
@@ -467,7 +524,11 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     const location = normalizeLocationPayload(req.body?.location);
     const contact = normalizeContactPayload(req.body?.contact);
     const interactive = normalizeInteractivePayload(req.body?.interactive);
+    const sticker = normalizeStickerPayload(req.body?.sticker);
+    const poll = normalizePollPayload(req.body?.poll);
+    const action = normalizeMessageActionPayload(req.body?.action);
     const replyToMessageId = typeof req.body?.reply_to_message_id === 'string' ? req.body.reply_to_message_id.trim() : undefined;
+    const retryMessageId = typeof req.body?.retry_message_id === 'string' ? req.body.retry_message_id.trim() : undefined;
     const messageText = typeof message === 'string' ? message.trim() : '';
     const villageId = resolveVillageId(req);
     const channel = resolveChannel(req, wa_user_id || undefined);
@@ -477,10 +538,10 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       return;
     }
 
-    const hasTextOnlyPayload = !!messageText && !media && !location && !contact && !interactive;
-    const primaryPayloadCount = [hasTextOnlyPayload, media, location, contact, interactive].filter(Boolean).length;
+    const hasTextOnlyPayload = !!messageText && !media && !location && !contact && !interactive && !sticker && !poll && !action;
+    const primaryPayloadCount = [hasTextOnlyPayload, media, location, contact, interactive, sticker, poll, action].filter(Boolean).length;
     if (primaryPayloadCount !== 1) {
-      res.status(400).json({ error: 'send exactly one of message, media, location, contact, or interactive' });
+      res.status(400).json({ error: 'send exactly one of message, media, location, contact, interactive, sticker, poll, or action' });
       return;
     }
 
@@ -500,6 +561,37 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       res.status(400).json({ error: 'invalid interactive payload' });
       return;
     }
+    if (req.body?.sticker && !sticker) {
+      res.status(400).json({ error: 'invalid sticker payload' });
+      return;
+    }
+    if (req.body?.poll && !poll) {
+      res.status(400).json({ error: 'invalid poll payload' });
+      return;
+    }
+    if (req.body?.action && !action) {
+      res.status(400).json({ error: 'invalid action payload' });
+      return;
+    }
+
+    let retryMessage: Awaited<ReturnType<typeof prisma.message.findFirst>> = null;
+    if (retryMessageId) {
+      retryMessage = await prisma.message.findFirst({
+        where: {
+          id: retryMessageId,
+          village_id: villageId || 'unknown',
+          channel,
+          channel_identifier: wa_user_id,
+          direction: 'OUT',
+          source: 'ADMIN',
+          delivery_status: 'failed',
+        },
+      });
+      if (!retryMessage) {
+        res.status(404).json({ error: 'Failed message not found for retry' });
+        return;
+      }
+    }
 
     const activeTakeover = await getActiveTakeover(wa_user_id, villageId, channel);
     const isTakeover = !!activeTakeover;
@@ -509,16 +601,21 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     }
 
     const isWebchatUser = channel === 'WEBCHAT';
-    const messageKind: MessageKind = media ? 'media' : location ? 'location' : contact ? 'contact' : interactive?.type === 'buttons' ? 'buttons' : interactive?.type === 'list' ? 'list' : 'text';
+    const messageKind: MessageKind = media ? 'media' : location ? 'location' : contact ? 'contact' : interactive?.type === 'buttons' ? 'buttons' : interactive?.type === 'list' ? 'list' : sticker ? 'sticker' : poll ? 'poll' : action?.type === 'reaction' ? 'reaction' : action?.type === 'edit' ? 'edit' : action?.type === 'delete' ? 'delete' : 'text';
     const persistedText = messageText ||
       (media ? mediaLabel(media) : '') ||
       (location ? `Location: ${location.name || location.address || `${location.latitude}, ${location.longitude}`}` : '') ||
       (contact ? `Contact: ${contact.name}` : '') ||
       (interactive?.type === 'buttons' ? interactive.body : '') ||
-      (interactive?.type === 'list' ? interactive.body : '');
+      (interactive?.type === 'list' ? interactive.body : '') ||
+      (sticker ? '[Sticker]' : '') ||
+      (poll ? `Poll: ${poll.header}` : '') ||
+      (action?.type === 'reaction' ? `Reaction: ${action.emoji}` : '') ||
+      (action?.type === 'edit' ? `Edit: ${action.body}` : '') ||
+      (action?.type === 'delete' ? 'Delete message' : '');
 
     if (isWebchatUser) {
-      if (media || location || contact || interactive) {
+      if (media || location || contact || interactive || sticker || poll || action) {
         res.status(400).json({ error: 'WhatsApp native payloads are only supported for WhatsApp conversations' });
         return;
       }
@@ -617,7 +714,47 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
                     villageId,
                     ...quoteContext,
                   })
-                : await sendTextMessage(wa_user_id, messageText, villageId, quoteContext);
+                : sticker
+                  ? await sendStickerMessage({
+                      to: wa_user_id,
+                      sticker: sticker.sticker,
+                      mimeType: sticker.mimeType,
+                      packId: sticker.packId,
+                      packName: sticker.packName,
+                      packPublisher: sticker.packPublisher,
+                      emojis: sticker.emojis,
+                      villageId,
+                      ...quoteContext,
+                    })
+                  : poll
+                    ? await sendPollMessage({
+                        to: wa_user_id,
+                        header: poll.header,
+                        options: poll.options,
+                        villageId,
+                      })
+                    : action?.type === 'reaction'
+                      ? await sendReactionMessage({
+                          to: wa_user_id,
+                          messageId: action.messageId,
+                          emoji: action.emoji,
+                          participant: action.participant,
+                          villageId,
+                        })
+                      : action?.type === 'edit'
+                        ? await sendEditMessage({
+                            to: wa_user_id,
+                            messageId: action.messageId,
+                            body: action.body,
+                            villageId,
+                          })
+                        : action?.type === 'delete'
+                          ? await deleteWhatsAppMessage({
+                              to: wa_user_id,
+                              messageId: action.messageId,
+                              villageId,
+                            })
+                          : await sendTextMessage(wa_user_id, messageText, villageId, quoteContext);
 
       const sendResult = result as typeof result & {
         endpoint?: string;
@@ -631,8 +768,40 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
 
         let stored = true;
         try {
-          // Save message to database so it appears in chat history
-          await saveOutgoingMessage({
+          if (retryMessage) {
+            await replaceFailedOutgoingMessage(retryMessage.id, {
+              village_id: villageId,
+              wa_user_id,
+              channel,
+              channel_identifier: wa_user_id,
+              message_id: messageId,
+              message_text: persistedText,
+              media_type: media?.type,
+              media_url: media?.internal_url || media?.url,
+              media_public_url: media?.url,
+              mime_type: media?.mime_type,
+              file_name: media?.file_name,
+              file_size: media?.size,
+              storage_key: media?.storage_key,
+              source: 'ADMIN',
+              delivery_status: 'sent',
+              message_kind: messageKind,
+              quoted_message_id: replyToMessageId,
+              quoted_stanza_id: quotedStanzaId,
+              quoted_participant: quotedParticipant,
+              quoted_text: quoteContext.QuotedText,
+              quoted_message_json: quoteContext.QuotedMessage,
+              location_latitude: location?.latitude,
+              location_longitude: location?.longitude,
+              location_name: location?.name,
+              location_address: location?.address,
+              contact_name: contact?.name,
+              contact_phone: contact?.phone,
+              contact_vcard: contact?.vcard,
+              interactive_payload: interactive || (sticker ? { type: 'sticker', ...sticker } : undefined) || (poll ? { type: 'poll', ...poll } : undefined) || action,
+            });
+          } else {
+            await saveOutgoingMessage({
             village_id: villageId,
             wa_user_id,
             channel,
@@ -661,8 +830,9 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
             contact_name: contact?.name,
             contact_phone: contact?.phone,
             contact_vcard: contact?.vcard,
-            interactive_payload: interactive,
+            interactive_payload: interactive || (sticker ? { type: 'sticker', ...sticker } : undefined) || (poll ? { type: 'poll', ...poll } : undefined) || action,
           });
+          }
 
           // Update conversation summary and reset unread count (admin has responded)
           await updateConversation(wa_user_id, persistedText, undefined, 'reset', villageId, channel);
@@ -674,6 +844,25 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
             error: storeError.message,
           });
         }
+
+        await sendTypingIndicator(wa_user_id, 'paused', villageId).catch(() => false);
+        await logWaActivity({
+          villageId: villageId || 'unknown',
+          waUserId: wa_user_id,
+          channelIdentifier: wa_user_id,
+          type: 'message_send',
+          severity: 'info',
+          status: 'sent',
+          message: `Pesan ${messageKind} admin berhasil dikirim ke WhatsApp.`,
+          providerMessageId: messageId,
+          metadata: {
+            messageKind,
+            replyToMessageId,
+            retryMessageId,
+            endpoint: sendResult.endpoint,
+            gateway: sendResult.gateway,
+          },
+        });
 
         logger.info('Admin sent WhatsApp message', {
           wa_user_id,
@@ -692,7 +881,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
           is_takeover: isTakeover,
           channel: 'whatsapp',
           stored,
-          warning: stored ? undefined : 'Pesan sudah terkirim ke WhatsApp, tetapi gagal dicatat di livechat lokal.',
+          retry_message_id: retryMessage?.id,
         });
       } else {
         const messageId = `admin-failed-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -726,7 +915,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
           contact_name: contact?.name,
           contact_phone: contact?.phone,
           contact_vcard: contact?.vcard,
-          interactive_payload: interactive,
+          interactive_payload: interactive || (sticker ? { type: 'sticker', ...sticker } : undefined) || (poll ? { type: 'poll', ...poll } : undefined) || action,
         });
 
         await logWaActivity({

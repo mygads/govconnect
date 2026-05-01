@@ -2,6 +2,13 @@ import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 
+export class InsufficientAIWalletBalanceError extends Error {
+  constructor(public readonly balanceUsd: number, public readonly requiredUsd: number) {
+    super('Insufficient AI wallet balance');
+    this.name = 'InsufficientAIWalletBalanceError';
+  }
+}
+
 type LedgerEntryType = 'topup' | 'usage_debit' | 'voucher_redeem' | 'manual_adjustment' | 'refund' | 'seed';
 
 type WalletStatus = 'active' | 'warning' | 'exhausted';
@@ -14,6 +21,21 @@ function resolveWalletStatus(balanceUsd: number, warningThresholdUsd: number): W
 
 function normalizeAmount(amountUsd: number): number {
   return Number(amountUsd.toFixed(8));
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+async function findUsageDebitReference(referenceType?: string | null, referenceId?: string | null) {
+  if (!referenceType || !referenceId) return null;
+  return prisma.ai_wallet_ledger_entries.findFirst({
+    where: {
+      entry_type: 'usage_debit',
+      reference_type: referenceType,
+      reference_id: referenceId,
+    },
+  });
 }
 
 export async function ensureVillageWallet(villageId: string) {
@@ -155,6 +177,8 @@ export async function topupVillageWallet(input: {
   await ensureVillageWallet(input.villageId);
 
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
+
     const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
       where: { village_id: input.villageId },
     });
@@ -189,6 +213,74 @@ export async function topupVillageWallet(input: {
   });
 }
 
+export async function adjustVillageWallet(input: {
+  villageId: string;
+  amountUsd: number;
+  direction: 'credit' | 'debit';
+  reason?: string | null;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  metadata?: Prisma.InputJsonValue | null;
+  createdByAdminId?: string | null;
+}) {
+  if (!Number.isFinite(input.amountUsd) || input.amountUsd <= 0) {
+    throw new Error('Adjustment amount must be greater than 0');
+  }
+  if (input.direction !== 'credit' && input.direction !== 'debit') {
+    throw new Error('Adjustment direction must be credit or debit');
+  }
+
+  await ensureVillageWallet(input.villageId);
+
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
+
+    const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
+      where: { village_id: input.villageId },
+    });
+
+    const adjustmentAmount = normalizeAmount(input.amountUsd);
+    const signedAmount = input.direction === 'credit' ? adjustmentAmount : -adjustmentAmount;
+    const balanceBeforeUsd = wallet.balance_usd;
+    const balanceAfterUsd = normalizeAmount(balanceBeforeUsd + signedAmount);
+    if (balanceAfterUsd < 0) {
+      throw new InsufficientAIWalletBalanceError(balanceBeforeUsd, adjustmentAmount);
+    }
+
+    const status = resolveWalletStatus(balanceAfterUsd, wallet.warning_threshold_usd);
+    const updatedWallet = await tx.ai_village_wallets.update({
+      where: { id: wallet.id },
+      data: {
+        balance_usd: balanceAfterUsd,
+        status,
+        last_topup_at: input.direction === 'credit' ? new Date() : wallet.last_topup_at,
+        last_exhausted_at: status === 'exhausted' ? new Date() : wallet.last_exhausted_at,
+      },
+    });
+
+    const metadata = {
+      ...((input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)) ? input.metadata : {}),
+      adjustment_type: input.direction,
+      ...(input.reason ? { reason: input.reason } : {}),
+    } as Prisma.InputJsonValue;
+
+    const ledgerEntry = await createLedgerEntry(tx, {
+      villageId: input.villageId,
+      walletId: wallet.id,
+      entryType: 'manual_adjustment',
+      amountUsd: signedAmount,
+      balanceBeforeUsd,
+      balanceAfterUsd,
+      referenceType: input.referenceType,
+      referenceId: input.referenceId,
+      metadata,
+      createdByAdminId: input.createdByAdminId,
+    });
+
+    return { wallet: updatedWallet, ledgerEntry };
+  });
+}
+
 export async function debitVillageWalletForUsage(input: {
   villageId?: string | null;
   adjustedCostUsd: number;
@@ -204,64 +296,77 @@ export async function debitVillageWalletForUsage(input: {
 
   await ensureVillageWallet(input.villageId);
 
-  return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId!} FOR UPDATE`;
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId!} FOR UPDATE`;
 
-    const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
-      where: { village_id: input.villageId! },
-    });
+      const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
+        where: { village_id: input.villageId! },
+      });
 
-    if (input.referenceType && input.referenceId) {
-      const existingLedgerEntry = await tx.ai_wallet_ledger_entries.findFirst({
-        where: {
-          entry_type: 'usage_debit',
-          reference_type: input.referenceType,
-          reference_id: input.referenceId,
+      if (input.referenceType && input.referenceId) {
+        const existingLedgerEntry = await tx.ai_wallet_ledger_entries.findFirst({
+          where: {
+            entry_type: 'usage_debit',
+            reference_type: input.referenceType,
+            reference_id: input.referenceId,
+          },
+        });
+        if (existingLedgerEntry) {
+          return { wallet, ledgerEntry: existingLedgerEntry };
+        }
+      }
+
+      const balanceBeforeUsd = wallet.balance_usd;
+      const adjustedCostUsd = normalizeAmount(input.adjustedCostUsd);
+      if (balanceBeforeUsd < adjustedCostUsd) {
+        throw new InsufficientAIWalletBalanceError(balanceBeforeUsd, adjustedCostUsd);
+      }
+      const balanceAfterUsd = normalizeAmount(balanceBeforeUsd - adjustedCostUsd);
+      const status = resolveWalletStatus(balanceAfterUsd, wallet.warning_threshold_usd);
+
+      const updatedWallet = await tx.ai_village_wallets.update({
+        where: { id: wallet.id },
+        data: {
+          balance_usd: balanceAfterUsd,
+          status,
+          last_exhausted_at: status === 'exhausted' ? new Date() : wallet.last_exhausted_at,
         },
       });
-      if (existingLedgerEntry) {
-        return { wallet, ledgerEntry: existingLedgerEntry };
-      }
-    }
 
-    const balanceBeforeUsd = wallet.balance_usd;
-    const balanceAfterUsd = normalizeAmount(balanceBeforeUsd - input.adjustedCostUsd);
-    const status = resolveWalletStatus(balanceAfterUsd, wallet.warning_threshold_usd);
-
-    const updatedWallet = await tx.ai_village_wallets.update({
-      where: { id: wallet.id },
-      data: {
-        balance_usd: balanceAfterUsd,
-        status,
-        last_exhausted_at: status === 'exhausted' ? new Date() : wallet.last_exhausted_at,
-      },
-    });
-
-    const ledgerEntry = await createLedgerEntry(tx, {
-      villageId: input.villageId!,
-      walletId: wallet.id,
-      entryType: 'usage_debit',
-      amountUsd: -input.adjustedCostUsd,
-      balanceBeforeUsd,
-      balanceAfterUsd,
-      actualCostUsd: input.actualCostUsd,
-      adjustedCostUsd: input.adjustedCostUsd,
-      marginUsd: input.marginUsd,
-      referenceType: input.referenceType,
-      referenceId: input.referenceId,
-      metadata: input.metadata,
-    });
-
-    if (status === 'exhausted') {
-      logger.warn('Village AI wallet exhausted after usage debit', {
-        villageId: input.villageId,
+      const ledgerEntry = await createLedgerEntry(tx, {
+        villageId: input.villageId!,
+        walletId: wallet.id,
+        entryType: 'usage_debit',
+        amountUsd: -adjustedCostUsd,
         balanceBeforeUsd,
         balanceAfterUsd,
+        actualCostUsd: input.actualCostUsd,
+        adjustedCostUsd: adjustedCostUsd,
+        marginUsd: input.marginUsd,
+        referenceType: input.referenceType,
+        referenceId: input.referenceId,
+        metadata: input.metadata,
       });
-    }
 
-    return { wallet: updatedWallet, ledgerEntry };
-  });
+      if (status === 'exhausted') {
+        logger.warn('Village AI wallet exhausted after usage debit', {
+          villageId: input.villageId,
+          balanceBeforeUsd,
+          balanceAfterUsd,
+        });
+      }
+
+      return { wallet: updatedWallet, ledgerEntry };
+    });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+    const existingLedgerEntry = await findUsageDebitReference(input.referenceType, input.referenceId);
+    if (!existingLedgerEntry) throw error;
+    const wallet = await prisma.ai_village_wallets.findUniqueOrThrow({ where: { village_id: input.villageId } });
+    return { wallet, ledgerEntry: existingLedgerEntry };
+  }
+
 }
 
 export async function debitVillageWalletForMessageBilling(input: {
@@ -329,27 +434,30 @@ export async function redeemTopupVoucher(input: {
     where: { code: normalizedCode },
   });
 
-  if (!voucher || voucher.status !== 'active') {
+  if (!voucher) {
     throw new Error('Voucher is not active');
-  }
-
-  if (voucher.expires_at && voucher.expires_at.getTime() < Date.now()) {
-    await prisma.ai_topup_vouchers.update({
-      where: { id: voucher.id },
-      data: { status: 'expired' },
-    });
-    throw new Error('Voucher has expired');
   }
 
   await ensureVillageWallet(input.villageId);
 
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "ai_topup_vouchers" WHERE "id" = ${voucher.id} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
+
     const activeVoucher = await tx.ai_topup_vouchers.findUniqueOrThrow({
       where: { id: voucher.id },
     });
 
     if (activeVoucher.status !== 'active') {
       throw new Error('Voucher is not active');
+    }
+
+    if (activeVoucher.expires_at && activeVoucher.expires_at.getTime() < Date.now()) {
+      await tx.ai_topup_vouchers.update({
+        where: { id: activeVoucher.id },
+        data: { status: 'expired' },
+      });
+      throw new Error('Voucher has expired');
     }
 
     const wallet = await tx.ai_village_wallets.findUniqueOrThrow({

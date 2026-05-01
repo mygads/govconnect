@@ -319,31 +319,60 @@ export async function runAgent(
         tool_calls: assistantMsg.tool_calls,
       });
 
-      const toolResults = await Promise.all(
-        assistantMsg.tool_calls.map(async (tc: ToolCall) => {
-          const toolName = tc.function.name as AgentToolName;
-          let args: Record<string, unknown> = {};
+      const toolResults: Array<{
+        toolName: AgentToolName;
+        result: ToolCallResult;
+        role: 'tool';
+        tool_call_id: string;
+        name: AgentToolName;
+        content: string;
+      }> = [];
 
-          try {
-            args = JSON.parse(tc.function.arguments || '{}');
-          } catch {
-            logger.warn('Failed to parse tool arguments', { toolName, raw: tc.function.arguments });
-          }
+      for (const tc of assistantMsg.tool_calls as ToolCall[]) {
+        const toolName = tc.function.name as AgentToolName;
+        let args: Record<string, unknown>;
 
-          toolsUsed.push(toolName);
-          const result = await executeToolCall(toolName, args, { ...toolCtx, userMessage });
-          toolTrace.push(result.trace);
-
-          return {
+        try {
+          args = JSON.parse(tc.function.arguments || '{}');
+        } catch {
+          logger.warn('Failed to parse tool arguments', { toolName, raw: tc.function.arguments });
+          const result: ToolCallResult = {
+            success: false,
+            error: 'Invalid JSON arguments for tool call',
+            meta: { trustLevel: 'action_result', sourceKind: 'tool_argument_error' },
+          };
+          toolTrace.push({
+            tool: toolName,
+            success: false,
+            durationMs: 0,
+            trustLevel: 'action_result',
+            sourceKind: 'tool_argument_error',
+          });
+          toolResults.push({
             toolName,
-            result: result.result,
-            role: 'tool' as const,
+            result,
+            role: 'tool',
             tool_call_id: tc.id,
             name: toolName,
-            content: result.content,
-          };
-        }),
-      );
+            content: JSON.stringify(result),
+          });
+          continue;
+        }
+
+        toolsUsed.push(toolName);
+        const result = await executeToolCall(toolName, args, { ...toolCtx, userMessage });
+        toolTrace.push(result.trace);
+
+        toolResults.push({
+          toolName,
+          result: result.result,
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: toolName,
+          content: result.content,
+        });
+      }
+
 
       for (const tr of toolResults) {
         const preferredFromTool = derivePreferredToolReply([{ toolName: tr.toolName, result: tr.result }]);
@@ -553,9 +582,10 @@ async function callLLMWithTools(
       model: attempt.model,
     };
 
+    let timeout: NodeJS.Timeout | undefined;
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), AGENT_TIMEOUT_MS);
+      timeout = setTimeout(() => controller.abort(), AGENT_TIMEOUT_MS);
 
       const response = await fetch(normalizeGatewayUrl(attempt.baseUrl, attempt.chatCompletionsPath), {
         method: 'POST',
@@ -567,8 +597,6 @@ async function callLLMWithTools(
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-
-      clearTimeout(timeout);
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -591,6 +619,8 @@ async function callLLMWithTools(
       return { ...data, __agentGatewayAttempt: attempt };
     } catch (error: any) {
       logger.error('Agent LLM call exception', { error: error.message, model: attempt.model, providerId: attempt.providerId });
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
   }
 

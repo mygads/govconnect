@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
   try {
     const response = await ai.listAIVouchers()
     const payload = await response.json()
-    return NextResponse.json(payload)
+    return NextResponse.json(payload, { status: response.status })
   } catch (error) {
     console.error('Superadmin vouchers proxy error:', error)
     return NextResponse.json({ error: 'Failed to fetch AI vouchers' }, { status: 500 })
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
       created_by_admin_id: session.adminId,
     })
     const payload = await response.json()
-    return NextResponse.json(payload)
+    return NextResponse.json(payload, { status: response.status })
   } catch (error: any) {
     console.error('Superadmin voucher create proxy error:', error)
     return NextResponse.json({ error: error?.message || 'Failed to create AI voucher' }, { status: 500 })

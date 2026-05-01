@@ -9,11 +9,12 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}))
     const modelId = typeof body?.model_id === 'string' ? body.model_id : ''
-    if (!modelId) {
-      return NextResponse.json({ success: false, error: 'model_id is required' }, { status: 400 })
+    const draft = body?.draft && typeof body.draft === 'object' ? body.draft : null
+    if (!modelId && !draft) {
+      return NextResponse.json({ success: false, error: 'model_id or draft is required' }, { status: 400 })
     }
 
-    const response = await ai.testAIModel(modelId)
+    const response = await ai.testAIModel(draft ? { draft } : modelId)
     const payload = await response.json()
     return NextResponse.json(payload, { status: response.status })
   } catch (error: any) {
