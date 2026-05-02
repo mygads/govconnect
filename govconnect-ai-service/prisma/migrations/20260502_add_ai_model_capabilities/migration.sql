@@ -1,0 +1,3 @@
+ALTER TABLE "ai"."ai_models"
+  ADD COLUMN IF NOT EXISTS "supports_vision" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS "supports_audio" BOOLEAN NOT NULL DEFAULT false;

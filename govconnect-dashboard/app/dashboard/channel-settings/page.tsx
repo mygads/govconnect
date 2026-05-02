@@ -969,6 +969,35 @@ export default function ChannelSettingsPage() {
     return date.toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
   }
 
+  const humanizeCode = (value?: string | null) => {
+    if (!value) return "-"
+    return value
+      .split("_")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ")
+  }
+
+  const formatS3Mode = (value?: string | null) => {
+    if (value === "s3") return "S3/R2"
+    if (value === "both") return "S3/R2 + Base64"
+    if (value === "base64") return "Base64"
+    return "-"
+  }
+
+  const formatProviderAvailability = () => {
+    if (s3Status?.provider?.error) return "bermasalah"
+    if (s3Status?.provider) return "tersedia"
+    return "belum ada"
+  }
+
+  const formatActivityMeta = (activity: WaActivityItem) => {
+    const parts = [humanizeCode(activity.type)]
+    if (activity.status) parts.push(humanizeCode(activity.status))
+    if (activity.provider_event) parts.push(humanizeCode(activity.provider_event))
+    return parts.join(" · ")
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
@@ -1314,13 +1343,13 @@ export default function ChannelSettingsPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-medium">S3 Provider WhatsApp</p>
                     <Badge className={s3Status?.local?.media_delivery === 's3' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}>
-                      Local: {s3Status?.local?.media_delivery || '-'}
+                      Lokal: {formatS3Mode(s3Status?.local?.media_delivery)}
                     </Badge>
                     <Badge className={s3Status?.provider?.media_delivery === 's3' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}>
-                      Provider: {s3Status?.provider?.media_delivery || '-'}
+                      Provider: {formatS3Mode(s3Status?.provider?.media_delivery)}
                     </Badge>
                   </div>
-                  <p className="text-muted-foreground">Local: {s3Status?.localConfigured ? 'configured' : 'not configured'} · Provider: {s3Status?.provider?.error ? 'error' : s3Status?.provider ? 'available' : '-'}</p>
+                  <p className="text-muted-foreground">Konfigurasi lokal: {s3Status?.localConfigured ? 'siap' : 'belum siap'} · Provider: {formatProviderAvailability()}</p>
                   <p className="text-muted-foreground">Bucket: {s3Status?.local?.bucket || '-'}</p>
                   <p className="text-muted-foreground">Endpoint: {s3Status?.local?.endpoint || '-'}</p>
                   {(s3Status?.local?.media_delivery && s3Status.local.media_delivery !== 's3') || (s3Status?.provider?.media_delivery && s3Status.provider.media_delivery !== 's3') ? (
@@ -1359,7 +1388,7 @@ export default function ChannelSettingsPage() {
                     <div key={activity.id} className="flex items-start justify-between gap-3 text-sm">
                       <div>
                         <p className="font-medium">{activity.message}</p>
-                        <p className="text-xs text-muted-foreground">{activity.type}{activity.status ? ` · ${activity.status}` : ""}{activity.provider_event ? ` · ${activity.provider_event}` : ""}</p>
+                        <p className="text-xs text-muted-foreground">{formatActivityMeta(activity)}</p>
                       </div>
                       <span className="shrink-0 text-xs text-muted-foreground">{formatActivityTime(activity.created_at)}</span>
                     </div>
