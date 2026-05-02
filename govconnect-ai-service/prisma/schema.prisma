@@ -19,27 +19,27 @@ datasource db {
 // Source of truth for vector search on knowledge
 
 model knowledge_vectors {
-  id                String   @id // Same ID as dashboard.knowledge_base
-  village_id         String?
-  title             String
-  content           String   @db.Text
-  category          String
-  keywords          String[]
-  
+  id         String   @id // Same ID as dashboard.knowledge_base
+  village_id String?
+  title      String
+  content    String   @db.Text
+  category   String
+  keywords   String[]
+
   // Vector embedding
-  embedding         Unsupported("vector(768)")
-  embedding_model   String   @default("openai/text-embedding-3-small")
-  
+  embedding       Unsupported("vector(768)")
+  embedding_model String                     @default("openai/text-embedding-3-small")
+
   // Quality metrics (synced from dashboard or computed here)
-  quality_score     Float    @default(1.0)
-  usage_count       Int      @default(0)
-  retrieval_count   Int      @default(0)
-  last_retrieved    DateTime?
-  
+  quality_score   Float     @default(1.0)
+  usage_count     Int       @default(0)
+  retrieval_count Int       @default(0)
+  last_retrieved  DateTime?
+
   // Timestamps
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
-  
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
   @@index([category])
   @@index([village_id])
   @@index([quality_score])
@@ -50,25 +50,25 @@ model knowledge_vectors {
 // Each document can have multiple chunks
 
 model document_vectors {
-  id                String   @id @default(cuid())
-  document_id       String   // Reference to dashboard.knowledge_documents
-  village_id         String?
-  chunk_index       Int
-  content           String   @db.Text
-  
+  id          String  @id @default(cuid())
+  document_id String // Reference to dashboard.knowledge_documents
+  village_id  String?
+  chunk_index Int
+  content     String  @db.Text
+
   // Document metadata (denormalized for search)
-  document_title    String?
-  category          String?
-  page_number       Int?
-  section_title     String?
-  
+  document_title String?
+  category       String?
+  page_number    Int?
+  section_title  String?
+
   // Vector embedding
-  embedding         Unsupported("vector(768)")
-  embedding_model   String   @default("openai/text-embedding-3-small")
-  
+  embedding       Unsupported("vector(768)")
+  embedding_model String                     @default("openai/text-embedding-3-small")
+
   // Timestamps
-  created_at        DateTime @default(now())
-  
+  created_at DateTime @default(now())
+
   @@unique([document_id, chunk_index])
   @@index([document_id])
   @@index([village_id])
@@ -79,18 +79,18 @@ model document_vectors {
 // Track embedding generation jobs for async processing
 
 model embedding_jobs {
-  id            String   @id @default(cuid())
-  type          String   // "knowledge" | "document"
-  target_id     String   // ID of knowledge/document
-  status        String   @default("pending") // pending, processing, completed, failed
-  error_message String?  @db.Text
-  retry_count   Int      @default(0)
-  priority      Int      @default(0)
-  
-  created_at    DateTime @default(now())
-  started_at    DateTime?
-  completed_at  DateTime?
-  
+  id            String  @id @default(cuid())
+  type          String // "knowledge" | "document"
+  target_id     String // ID of knowledge/document
+  status        String  @default("pending") // pending, processing, completed, failed
+  error_message String? @db.Text
+  retry_count   Int     @default(0)
+  priority      Int     @default(0)
+
+  created_at   DateTime  @default(now())
+  started_at   DateTime?
+  completed_at DateTime?
+
   @@index([status])
   @@index([priority])
 }
@@ -100,18 +100,18 @@ model embedding_jobs {
 // Stored as additional vectors to improve recall for diverse phrasings
 
 model question_variants {
-  id                String   @id @default(cuid())
-  source_id         String   // ID of parent knowledge_vectors entry
-  source_type       String   @default("knowledge") // "knowledge" | "document_chunk"
-  village_id        String?
-  variant_text      String   @db.Text
-  
+  id           String  @id @default(cuid())
+  source_id    String // ID of parent knowledge_vectors entry
+  source_type  String  @default("knowledge") // "knowledge" | "document_chunk"
+  village_id   String?
+  variant_text String  @db.Text
+
   // Vector embedding of the variant question
-  embedding         Unsupported("vector(768)")
-  embedding_model   String   @default("openai/text-embedding-3-small")
-  
-  created_at        DateTime @default(now())
-  
+  embedding       Unsupported("vector(768)")
+  embedding_model String                     @default("openai/text-embedding-3-small")
+
+  created_at DateTime @default(now())
+
   @@index([source_id])
   @@index([village_id])
 }
@@ -121,63 +121,63 @@ model question_variants {
 // Stored per-call for granular analytics
 
 model ai_token_usage {
-  id              String   @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Model info
-  model           String   // e.g. "openai/gpt-4o-mini", "google/gemini-2.5-flash-lite"
-  
+  model String // e.g. "openai/gpt-4o-mini", "google/gemini-2.5-flash-lite"
+
   // Token counts (normalized into a common OpenAI-compatible shape)
-  input_tokens    Int
-  output_tokens   Int
-  total_tokens    Int
-  
+  input_tokens  Int
+  output_tokens Int
+  total_tokens  Int
+
   // Cost in USD (calculated from pricing table)
-  cost_usd        Float    @default(0)
-  
+  cost_usd Float @default(0)
+
   // Call classification
-  layer_type      String   // "full_nlu" | "micro_nlu" | "embedding" | "rag_expand"
-  call_type       String   // "main_chat" | "anti_hallucination_retry" | "complaint_type_match" | "service_slug_match" | "rag_query_expand" | "confirmation_classify" | "farewell_classify" | "greeting_classify" | "embedding_single" | "embedding_batch"
-  
+  layer_type String // "full_nlu" | "micro_nlu" | "embedding" | "rag_expand"
+  call_type  String // "main_chat" | "anti_hallucination_retry" | "complaint_type_match" | "service_slug_match" | "rag_query_expand" | "confirmation_classify" | "farewell_classify" | "greeting_classify" | "embedding_single" | "embedding_batch"
+
   // Tenant & user context
-  village_id      String?
-  wa_user_id      String?
-  session_id      String?  // webchat session or WA user id
-  channel         String?  // "whatsapp" | "webchat"
-  message_id      String?
-  trace_id        String?
+  village_id       String?
+  wa_user_id       String?
+  session_id       String? // webchat session or WA user id
+  channel          String? // "whatsapp" | "webchat"
+  message_id       String?
+  trace_id         String?
   billing_group_id String?
-  billing_status  String   @default("unbilled")
-  billed_at       DateTime?
+  billing_status   String    @default("unbilled")
+  billed_at        DateTime?
 
   // LLM response context
-  intent          String?  // The detected intent (for main_chat calls)
-  success         Boolean  @default(true)
-  duration_ms     Int?     // How long the LLM call took
-  
+  intent      String? // The detected intent (for main_chat calls)
+  success     Boolean @default(true)
+  duration_ms Int? // How long the LLM call took
+
   // API Key source tracking
-  key_source       String?  // "gateway_<lane>" or legacy older values
-  key_id           String?  // gateway key label or legacy identifier
-  key_tier         String?  // gateway provider or legacy tier label
+  key_source String? // "gateway_<lane>" or legacy older values
+  key_id     String? // gateway key label or legacy identifier
+  key_tier   String? // gateway provider or legacy tier label
 
   // DB-backed provider/model and billing metadata
-  provider_id      String?
-  model_config_id  String?
-  lane_type        String?
-  actual_cost_usd  Float    @default(0)
-  adjusted_cost_usd Float   @default(0)
-  margin_usd       Float    @default(0)
-  pricing_source   String?
-  actual_pricing_type String?
-  actual_fixed_price_usd Float?
-  actual_input_price_per_million_usd Float?
-  actual_output_price_per_million_usd Float?
-  adjusted_pricing_type String?
-  adjusted_fixed_price_usd Float?
-  adjusted_input_price_per_million_usd Float?
+  provider_id                           String?
+  model_config_id                       String?
+  lane_type                             String?
+  actual_cost_usd                       Float   @default(0)
+  adjusted_cost_usd                     Float   @default(0)
+  margin_usd                            Float   @default(0)
+  pricing_source                        String?
+  actual_pricing_type                   String?
+  actual_fixed_price_usd                Float?
+  actual_input_price_per_million_usd    Float?
+  actual_output_price_per_million_usd   Float?
+  adjusted_pricing_type                 String?
+  adjusted_fixed_price_usd              Float?
+  adjusted_input_price_per_million_usd  Float?
   adjusted_output_price_per_million_usd Float?
-  pricing_snapshot_json Json?
+  pricing_snapshot_json                 Json?
 
-  created_at      DateTime @default(now())
+  created_at DateTime @default(now())
 
   @@index([model])
   @@index([village_id])
@@ -209,31 +209,31 @@ model ai_village_wallets {
   created_at            DateTime  @default(now())
   updated_at            DateTime  @updatedAt
 
-  ledger_entries        ai_wallet_ledger_entries[]
+  ledger_entries ai_wallet_ledger_entries[]
 
   @@index([status])
   @@index([updated_at])
 }
 
 model ai_wallet_ledger_entries {
-  id                 String   @id @default(cuid())
-  village_id         String
-  wallet_id          String
-  entry_type         String
-  amount_usd         Float
-  balance_before_usd Float
-  balance_after_usd  Float
-  actual_cost_usd    Float    @default(0)
-  adjusted_cost_usd  Float    @default(0)
-  margin_usd         Float    @default(0)
-  reference_type     String?
-  reference_id       String?
-  metadata_json      Json?
+  id                  String   @id @default(cuid())
+  village_id          String
+  wallet_id           String
+  entry_type          String
+  amount_usd          Float
+  balance_before_usd  Float
+  balance_after_usd   Float
+  actual_cost_usd     Float    @default(0)
+  adjusted_cost_usd   Float    @default(0)
+  margin_usd          Float    @default(0)
+  reference_type      String?
+  reference_id        String?
+  metadata_json       Json?
   created_by_admin_id String?
-  created_at         DateTime @default(now())
+  created_at          DateTime @default(now())
 
-  wallet             ai_village_wallets @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
-  message_billing    ai_message_billings?
+  wallet          ai_village_wallets   @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
+  message_billing ai_message_billings?
 
   @@index([village_id, created_at])
   @@index([wallet_id, created_at])
@@ -265,7 +265,7 @@ model ai_message_billings {
   created_at          DateTime  @default(now())
   billed_at           DateTime?
 
-  ledger_entry        ai_wallet_ledger_entries? @relation(fields: [ledger_entry_id], references: [id], onDelete: SetNull)
+  ledger_entry ai_wallet_ledger_entries? @relation(fields: [ledger_entry_id], references: [id], onDelete: SetNull)
 
   @@index([village_id, created_at])
   @@index([trace_id])
@@ -274,39 +274,39 @@ model ai_message_billings {
 }
 
 model ai_generation_logs {
-  id                  String   @id @default(cuid())
-  token_usage_id      String?
-  village_id          String?
-  wa_user_id          String?
-  session_id          String?
-  channel             String?
-  message_id          String?
-  trace_id            String?
-  billing_group_id    String?
-  lane_type           String?
-  layer_type          String?
-  call_type           String?
-  provider_id         String?
-  model_config_id     String?
-  provider            String?
-  model               String
-  gateway_source      String?
-  response_id         String?
-  finish_reason       String?
-  streaming           Boolean  @default(false)
-  input_tokens        Int      @default(0)
-  output_tokens       Int      @default(0)
-  total_tokens        Int      @default(0)
-  actual_cost_usd     Float    @default(0)
-  adjusted_cost_usd   Float    @default(0)
-  duration_ms         Int?
-  status              String   @default("success")
-  error_message       String?  @db.Text
-  request_json        Json?
-  response_json       Json?
-  prompt_preview      String?  @db.Text
-  completion_preview  String?  @db.Text
-  created_at          DateTime @default(now())
+  id                 String   @id @default(cuid())
+  token_usage_id     String?
+  village_id         String?
+  wa_user_id         String?
+  session_id         String?
+  channel            String?
+  message_id         String?
+  trace_id           String?
+  billing_group_id   String?
+  lane_type          String?
+  layer_type         String?
+  call_type          String?
+  provider_id        String?
+  model_config_id    String?
+  provider           String?
+  model              String
+  gateway_source     String?
+  response_id        String?
+  finish_reason      String?
+  streaming          Boolean  @default(false)
+  input_tokens       Int      @default(0)
+  output_tokens      Int      @default(0)
+  total_tokens       Int      @default(0)
+  actual_cost_usd    Float    @default(0)
+  adjusted_cost_usd  Float    @default(0)
+  duration_ms        Int?
+  status             String   @default("success")
+  error_message      String?  @db.Text
+  request_json       Json?
+  response_json      Json?
+  prompt_preview     String?  @db.Text
+  completion_preview String?  @db.Text
+  created_at         DateTime @default(now())
 
   @@index([token_usage_id])
   @@index([village_id, created_at])
@@ -321,18 +321,18 @@ model ai_generation_logs {
 }
 
 model ai_topup_vouchers {
-  id                      String    @id @default(cuid())
-  code                    String    @unique
-  amount_usd              Float
-  status                  String    @default("active")
-  expires_at              DateTime?
-  redeemed_by_village_id  String?
-  redeemed_by_admin_id    String?
-  redeemed_at             DateTime?
-  metadata_json           Json?
-  created_by_admin_id     String?
-  created_at              DateTime  @default(now())
-  updated_at              DateTime  @updatedAt
+  id                     String    @id @default(cuid())
+  code                   String    @unique
+  amount_usd             Float
+  status                 String    @default("active")
+  expires_at             DateTime?
+  redeemed_by_village_id String?
+  redeemed_by_admin_id   String?
+  redeemed_at            DateTime?
+  metadata_json          Json?
+  created_by_admin_id    String?
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @updatedAt
 
   @@index([status])
   @@index([redeemed_by_village_id])
@@ -352,7 +352,7 @@ model ai_providers {
   created_at           DateTime @default(now())
   updated_at           DateTime @updatedAt
 
-  models               ai_models[]
+  models ai_models[]
 
   @@index([is_active])
 }
@@ -381,14 +381,14 @@ model ai_models {
   created_at                            DateTime @default(now())
   updated_at                            DateTime @updatedAt
 
-  provider                              ai_providers @relation(fields: [provider_id], references: [id], onDelete: Cascade)
-  primary_assignments                   ai_lane_assignments[] @relation("PrimaryModel")
-  fallback_assignments                  ai_lane_assignments[] @relation("FallbackModel")
+  provider             ai_providers          @relation(fields: [provider_id], references: [id], onDelete: Cascade)
+  primary_assignments  ai_lane_assignments[] @relation("PrimaryModel")
+  fallback_assignments ai_lane_assignments[] @relation("FallbackModel")
 
+  @@unique([provider_id, lane_type, upstream_model_name])
   @@index([provider_id])
   @@index([lane_type])
   @@index([is_active])
-  @@unique([provider_id, lane_type, upstream_model_name])
 }
 
 model ai_lane_assignments {
@@ -402,27 +402,27 @@ model ai_lane_assignments {
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
-  primary_model     ai_models @relation("PrimaryModel", fields: [primary_model_id], references: [id], onDelete: Restrict)
-  fallback_model    ai_models? @relation("FallbackModel", fields: [fallback_model_id], references: [id], onDelete: SetNull)
+  primary_model  ai_models  @relation("PrimaryModel", fields: [primary_model_id], references: [id], onDelete: Restrict)
+  fallback_model ai_models? @relation("FallbackModel", fields: [fallback_model_id], references: [id], onDelete: SetNull)
 
+  @@unique([lane_type, village_id, is_global_default])
   @@index([lane_type])
   @@index([village_id])
   @@index([is_global_default])
   @@index([is_active])
-  @@unique([lane_type, village_id, is_global_default])
 }
 
 // Smart routing health: 3 consecutive failures → demote provider for 1 hour.
 model ai_provider_health {
-  provider_id          String
-  lane_type            String
-  consecutive_failures Int       @default(0)
-  demoted_until        DateTime?
-  last_success_at      DateTime?
-  last_failure_at      DateTime?
+  provider_id           String
+  lane_type             String
+  consecutive_failures  Int       @default(0)
+  demoted_until         DateTime?
+  last_success_at       DateTime?
+  last_failure_at       DateTime?
   probe_in_flight_until DateTime?
-  created_at           DateTime  @default(now())
-  updated_at           DateTime  @updatedAt
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
 
   @@id([provider_id, lane_type])
   @@index([demoted_until])
@@ -434,13 +434,13 @@ model ai_provider_health {
 // Fire-and-forget writes — stale data is acceptable, lost data is not
 
 model conversation_sessions {
-  id              String   @id @default(cuid())
-  wa_user_id      String
-  session_key     String   // e.g. "pendingComplaintData", "pendingAddressConfirmation"
-  state_json      String   @db.Text // JSON-serialized state
-  expires_at      DateTime // Auto-cleanup expired sessions
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  id          String   @id @default(cuid())
+  wa_user_id  String
+  session_key String // e.g. "pendingComplaintData", "pendingAddressConfirmation"
+  state_json  String   @db.Text // JSON-serialized state
+  expires_at  DateTime // Auto-cleanup expired sessions
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
 
   @@unique([wa_user_id, session_key])
   @@index([wa_user_id])
@@ -451,16 +451,16 @@ model conversation_sessions {
 // Persists rate limiter blacklist entries so they survive service restarts
 
 model rate_limit_blacklist {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   wa_user_id      String
   village_id      String?
-  scope_key       String   @unique
+  scope_key       String    @unique
   reason          String
-  blocked_at      DateTime @default(now())
+  blocked_at      DateTime  @default(now())
   expires_at      DateTime? // null = permanent
-  violation_count Int      @default(0)
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  violation_count Int       @default(0)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
 
   @@index([wa_user_id])
   @@index([village_id])
@@ -471,29 +471,29 @@ model rate_limit_blacklist {
 // Long-term structured memory for reusable user facts/preferences.
 
 model durable_user_profiles {
-  wa_user_id              String   @id
-  preferred_language      String   @default("auto")
-  communication_style     String   @default("auto")
-  response_detail         String   @default("auto")
-  data_consent            Boolean  @default(false)
-  data_consent_at         DateTime?
-  data_consent_version    String?
-  default_address         String?  @db.Text
-  default_rt_rw           String?
-  default_kelurahan       String?
-  nama_lengkap            String?
-  nik                     String?  @db.Text
-  no_hp                   String?  @db.Text
-  frequent_services       String[]
-  total_complaints        Int      @default(0)
-  total_service_requests  Int      @default(0)
-  first_interaction       DateTime @default(now())
-  last_interaction        DateTime @default(now())
-  total_messages          Int      @default(0)
-  avg_sentiment_score     Float    @default(0)
-  frustration_count       Int      @default(0)
-  created_at              DateTime @default(now())
-  updated_at              DateTime @updatedAt
+  wa_user_id             String    @id
+  preferred_language     String    @default("auto")
+  communication_style    String    @default("auto")
+  response_detail        String    @default("auto")
+  data_consent           Boolean   @default(false)
+  data_consent_at        DateTime?
+  data_consent_version   String?
+  default_address        String?   @db.Text
+  default_rt_rw          String?
+  default_kelurahan      String?
+  nama_lengkap           String?
+  nik                    String?   @db.Text
+  no_hp                  String?   @db.Text
+  frequent_services      String[]
+  total_complaints       Int       @default(0)
+  total_service_requests Int       @default(0)
+  first_interaction      DateTime  @default(now())
+  last_interaction       DateTime  @default(now())
+  total_messages         Int       @default(0)
+  avg_sentiment_score    Float     @default(0)
+  frustration_count      Int       @default(0)
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @updatedAt
 
   @@index([last_interaction])
   @@index([updated_at])
@@ -503,19 +503,19 @@ model durable_user_profiles {
 // Query-relevant action memory used as the long-term layer in hybrid memory.
 
 model user_memory_entries {
-  id                String   @id @default(cuid())
-  wa_user_id        String
-  village_id        String?
-  memory_type       String
-  memory_key        String?
-  content           String   @db.Text
-  metadata_json     Json?
-  importance        Float    @default(0.5)
-  last_accessed_at  DateTime?
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  id               String    @id @default(cuid())
+  wa_user_id       String
+  village_id       String?
+  memory_type      String
+  memory_key       String?
+  content          String    @db.Text
+  metadata_json    Json?
+  importance       Float     @default(0.5)
+  last_accessed_at DateTime?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
-  vector            user_memory_vectors?
+  vector user_memory_vectors?
 
   @@index([wa_user_id])
   @@index([wa_user_id, created_at])
@@ -527,19 +527,19 @@ model user_memory_entries {
 // Semantic retrieval layer for long-term user memory.
 
 model user_memory_vectors {
-  id                String   @id @default(cuid())
-  memory_entry_id   String   @unique
-  wa_user_id        String
-  village_id        String?
-  memory_type       String
-  content           String   @db.Text
-  importance        Float    @default(0.5)
-  embedding         Unsupported("vector(768)")
-  embedding_model   String   @default("openai/text-embedding-3-small")
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  id              String                     @id @default(cuid())
+  memory_entry_id String                     @unique
+  wa_user_id      String
+  village_id      String?
+  memory_type     String
+  content         String                     @db.Text
+  importance      Float                      @default(0.5)
+  embedding       Unsupported("vector(768)")
+  embedding_model String                     @default("openai/text-embedding-3-small")
+  created_at      DateTime                   @default(now())
+  updated_at      DateTime                   @updatedAt
 
-  memory_entry      user_memory_entries @relation(fields: [memory_entry_id], references: [id], onDelete: Cascade)
+  memory_entry user_memory_entries @relation(fields: [memory_entry_id], references: [id], onDelete: Cascade)
 
   @@index([wa_user_id])
   @@index([wa_user_id, memory_type])
@@ -606,19 +606,19 @@ model ai_retrieval_traces {
 // Stores memory retrieval traces for summary-builder and explicit user memory lookups.
 
 model ai_memory_traces {
-  id                    String   @id @default(cuid())
-  trace_id              String?
-  wa_user_id            String
-  village_id            String?
-  channel               String?
-  source                String
-  query                 String   @db.Text
-  result_count          Int      @default(0)
-  top_score             Float?
-  avg_score             Float?
+  id                     String   @id @default(cuid())
+  trace_id               String?
+  wa_user_id             String
+  village_id             String?
+  channel                String?
+  source                 String
+  query                  String   @db.Text
+  result_count           Int      @default(0)
+  top_score              Float?
+  avg_score              Float?
   selected_memories_json Json?
-  summary_text          String?  @db.Text
-  created_at            DateTime @default(now())
+  summary_text           String?  @db.Text
+  created_at             DateTime @default(now())
 
   @@index([wa_user_id, created_at])
   @@index([village_id, created_at])
@@ -630,18 +630,18 @@ model ai_memory_traces {
 // Makes deterministic outer guards observable for admin dashboards and exports.
 
 model ai_guardrail_events {
-  id                String   @id @default(cuid())
-  trace_id          String?
-  wa_user_id        String?
-  village_id        String?
-  channel           String?
-  guard_stage       String
-  guard_type        String
-  action            String
-  reason            String?
-  message_preview   String?  @db.Text
-  metadata_json     Json?
-  created_at        DateTime @default(now())
+  id              String   @id @default(cuid())
+  trace_id        String?
+  wa_user_id      String?
+  village_id      String?
+  channel         String?
+  guard_stage     String
+  guard_type      String
+  action          String
+  reason          String?
+  message_preview String?  @db.Text
+  metadata_json   Json?
+  created_at      DateTime @default(now())
 
   @@index([guard_type, created_at])
   @@index([guard_stage, created_at])
@@ -653,17 +653,17 @@ model ai_guardrail_events {
 // Stores eval-driven/runtime-derived allowlist policies and their runtime events.
 
 model ai_tool_allowlist_policies {
-  id                String   @id @default(cuid())
-  policy_key        String   @unique
-  source            String
-  match_terms_json  Json
+  id                 String   @id @default(cuid())
+  policy_key         String   @unique
+  source             String
+  match_terms_json   Json
   allowed_tools_json Json
-  confidence        Float    @default(0.5)
-  evaluation_count  Int      @default(0)
-  success_count     Int      @default(0)
-  last_seen_at      DateTime @default(now())
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  confidence         Float    @default(0.5)
+  evaluation_count   Int      @default(0)
+  success_count      Int      @default(0)
+  last_seen_at       DateTime @default(now())
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
   @@index([source, updated_at])
   @@index([confidence, updated_at])

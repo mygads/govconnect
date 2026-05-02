@@ -1,6 +1,6 @@
 # GovConnect AI Service
 
-AI Orchestrator stateless untuk GovConnect. Service ini menerima pesan warga, menjalankan NLU/RAG, berkoordinasi dengan service lain, lalu mengembalikan jawaban ke channel.
+AI Orchestrator untuk GovConnect. Service ini menerima pesan warga, menjalankan NLU/RAG/agent tools, menyimpan vector/observability/billing di database AI, berkoordinasi dengan service lain, lalu mengembalikan jawaban ke channel.
 
 ## Arsitektur AI Gateway
 
@@ -13,14 +13,7 @@ Lane yang tersedia:
 3. `RAG` untuk query rewrite sebelum retrieval.
 4. `RERANK` untuk reranking hasil retrieval.
 
-Setiap lane punya konfigurasi sendiri:
-
-- `*_PROVIDER`
-- `*_API_KEY`
-- `*_BASE_URL`
-- `*_MODEL`
-
-Jika satu lane tidak lengkap, lane tersebut dianggap nonaktif.
+Konfigurasi runtime provider/model disimpan di database (`ai_providers`, `ai_models`, `ai_lane_assignments`) dan dikelola dari dashboard superadmin. Variabel `*_PROVIDER`, `*_API_KEY`, `*_BASE_URL`, dan `*_MODEL` tetap dipakai sebagai bootstrap/fallback untuk lingkungan baru atau recovery.
 
 Provider yang didukung adapter:
 
@@ -88,13 +81,11 @@ Catatan:
 
 | Variable | Kegunaan |
 |---|---|
-| `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | Lane chat completions utama |
-| `EMBED_PROVIDER` / `EMBED_API_KEY` / `EMBED_BASE_URL` / `EMBED_MODEL` | Lane embedding |
-| `RAG_PROVIDER` / `RAG_API_KEY` / `RAG_BASE_URL` / `RAG_REWRITE_MODEL` | Lane rewrite query |
-| `RERANK_PROVIDER` / `RERANK_API_KEY` / `RERANK_BASE_URL` / `RERANK_MODEL` / `RERANK_ENABLED` | Lane rerank |
+| `*_PROVIDER` / `*_API_KEY` / `*_BASE_URL` / `*_MODEL` | Bootstrap/fallback lane AI jika DB runtime config belum tersedia |
+| `DATABASE_URL` | Database AI untuk vector, runtime config, observability, wallet, dan billing |
 | `OPENROUTER_SITE_URL` / `OPENROUTER_APP_NAME` | Header observability OpenRouter |
 | `RAG_ENABLE_RETRIEVAL_CACHE` | Aktifkan cache retrieval RAG |
-| `AI_MODEL_PRICING_OVERRIDES` | Override pricing model untuk cost tracking |
+| `OPENROUTER_PROVIDER_ORDER` / `OPENROUTER_ALLOW_FALLBACKS` / `OPENROUTER_ZDR_ONLY` | Kontrol routing/retensi OpenRouter |
 
 ## Endpoint Operasional
 
@@ -129,7 +120,12 @@ Contoh payload health:
 - Embedding metadata yang disimpan ke vector store mengikuti `EMBED_MODEL`.
 - Dashboard superadmin sekarang menampilkan status per lane, bukan satu ping LLM tunggal.
 
-## Monitoring yang Disarankan
+## Billing dan Usage
+
+- `ai_token_usage` dan generation logs adalah audit per panggilan provider/model.
+- `ai_message_billings` adalah agregat per pesan/turn dan menjadi dasar debit wallet desa.
+- Wallet desa didebit memakai `adjusted_cost_usd`; `actual_cost_usd` dipakai untuk laporan margin/subsidi superadmin.
+- Historical usage tidak direprice dari harga model saat ini; biaya dan snapshot harga disimpan di row usage/billing.
 
 - Pantau `GET /health` dan `POST /api/testing/ping`.
 - Pantau `stats/models` dan `stats/token-usage/*`.

@@ -24,6 +24,8 @@ import {
   syncWhatsAppS3Config,
   testWhatsAppS3,
   deleteWhatsAppS3Config,
+  ensureWhatsAppLifecycleSync,
+  repairAllWhatsAppSessions,
 } from '../services/wa.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
@@ -823,6 +825,28 @@ export async function syncWaS3(req: Request, res: Response): Promise<void> {
   } catch (error: any) {
     logger.error('WA S3 sync error', { error: error.message });
     res.status(500).json({ success: false, error: error.message || 'Failed to sync WA S3 config' });
+  }
+}
+
+export async function syncLifecycle(req: Request, res: Response): Promise<void> {
+  try {
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
+    const data = await ensureWhatsAppLifecycleSync(villageId);
+    res.json({ success: data.success, warning: data.warning, data });
+  } catch (error: any) {
+    logger.error('WA lifecycle sync error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to sync WA lifecycle' });
+  }
+}
+
+export async function repairAllWaSessions(_req: Request, res: Response): Promise<void> {
+  try {
+    const data = await repairAllWhatsAppSessions();
+    res.json({ success: data.success, warning: data.warningCount > 0, data });
+  } catch (error: any) {
+    logger.error('WA bulk lifecycle repair error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message || 'Failed to repair WA sessions' });
   }
 }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { buildUrl, INTERNAL_API_KEY, ServicePath } from '@/lib/api-client';
+import { buildUrl, getInternalApiKey, ServicePath } from '@/lib/api-client';
 
 type ChannelAccountListItem = {
   village_id: string;
@@ -9,17 +9,29 @@ type ChannelAccountListItem = {
 
 export async function GET() {
   try {
+    if (!process.env['CHANNEL_SERVICE_URL']?.trim() && !process.env['API_BASE_URL']?.trim()) {
+      return NextResponse.json(
+        { success: false, error: 'CHANNEL_SERVICE_URL is not configured', code: 'SERVICE_URL_MISSING' },
+        { status: 503 },
+      );
+    }
+
     const channelUrl = buildUrl(ServicePath.CHANNEL, '/internal/channel-accounts?enabled_webchat=true');
     const channelResp = await fetch(channelUrl, {
       headers: {
-        'x-internal-api-key': INTERNAL_API_KEY,
+        'x-internal-api-key': getInternalApiKey(),
       },
       cache: 'no-store',
     });
 
     if (!channelResp.ok) {
+      const upstream = await channelResp.json().catch(() => null);
       return NextResponse.json(
-        { success: false, error: 'Failed to fetch webchat villages', code: 'UPSTREAM_UNAVAILABLE' },
+        {
+          success: false,
+          error: upstream?.error || 'Failed to fetch webchat villages',
+          code: 'UPSTREAM_UNAVAILABLE',
+        },
         { status: channelResp.status },
       );
     }

@@ -1101,6 +1101,8 @@ app.get('/admin/ai-usage/village/:villageId/messages', async (req: Request, res:
     ]);
 
     res.json({
+      metric_scope: 'message_billing',
+      metric_description: 'One row per finalized user message/turn. Wallet debits use adjusted_cost_usd from these rows.',
       total,
       limit,
       offset,
@@ -1300,7 +1302,14 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
       })),
     ].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(offset, offset + limit);
 
-    res.json({ total: generationTotal + fallbackRows.length, limit, offset, data: rows });
+    res.json({
+      metric_scope: 'provider_call_audit',
+      metric_description: 'One row per model/provider call. Use message billing endpoints for wallet debit totals.',
+      total: generationTotal + fallbackRows.length,
+      limit,
+      offset,
+      data: rows,
+    });
   } catch (error: any) {
     logger.error('Failed to get AI generation logs', { error: error.message });
     res.status(500).json(errorResponse(error.message || 'Failed to get AI generation logs'));

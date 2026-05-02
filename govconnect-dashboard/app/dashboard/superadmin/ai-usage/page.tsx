@@ -504,7 +504,7 @@ export default function AITokenUsagePage() {
             AI Token Usage
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Monitoring penggunaan token AI gateway per model. Kurs estimasi: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")}
+            Audit pemakaian AI per panggilan provider/model. Debit wallet desa dihitung terpisah per message billing. Kurs estimasi: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -591,7 +591,7 @@ export default function AITokenUsagePage() {
         />
         <SummaryCard
           icon={<DollarSign className="h-5 w-5 text-emerald-600" />}
-          label="Total Biaya"
+          label="Biaya Audit Call"
           value={summaryLoading ? null : formatIDR(summary?.total_cost_usd || 0)}
           sub={summaryLoading ? null : formatUSD(summary?.total_cost_usd || 0)}
           loading={summaryLoading}

@@ -182,6 +182,10 @@ export default function ChannelSettingsPage() {
   const [testingS3, setTestingS3] = useState(false)
   const [deletingS3, setDeletingS3] = useState(false)
   const [syncingS3, setSyncingS3] = useState(false)
+  const [showMaintenanceDialog, setShowMaintenanceDialog] = useState(false)
+  const [repairingLifecycle, setRepairingLifecycle] = useState(false)
+  const [repairingAllSessions, setRepairingAllSessions] = useState(false)
+  const [repairResult, setRepairResult] = useState<any | null>(null)
 
   // QR Dialog states
   const [showQrDialog, setShowQrDialog] = useState(false)
@@ -384,6 +388,46 @@ export default function ChannelSettingsPage() {
       toast({ title: 'Gagal Sync S3', description: error.message || 'Gagal sync S3 provider', variant: 'destructive' })
     } finally {
       setSyncingS3(false)
+    }
+  }
+
+  const handleLifecycleRepair = async () => {
+    try {
+      setRepairingLifecycle(true)
+      const response = await fetchApiRaw(withVillage('/api/whatsapp/lifecycle-sync'), { method: 'POST' })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.error || 'Gagal repair session')
+      setRepairResult(data.data)
+      await Promise.all([fetchSessionStatus(), fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
+      if (data?.warning || data?.success === false) {
+        toast({ title: 'Repair Session Selesai dengan Peringatan', description: 'Sebagian sinkronisasi gagal. Cek detail hasil maintenance.' })
+      } else {
+        toast({ title: 'Repair Session Selesai', description: 'Webhook, HMAC, status, dan S3 sudah disinkronkan.' })
+      }
+    } catch (error: any) {
+      toast({ title: 'Gagal Repair Session', description: error.message || 'Gagal repair session', variant: 'destructive' })
+    } finally {
+      setRepairingLifecycle(false)
+    }
+  }
+
+  const handleRepairAllSessions = async () => {
+    try {
+      setRepairingAllSessions(true)
+      const response = await fetchApiRaw('/api/whatsapp/repair-all', { method: 'POST' })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.error || 'Gagal repair semua session')
+      setRepairResult(data.data)
+      await Promise.all([fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
+      if (data?.warning || data?.success === false) {
+        toast({ title: 'Repair Semua Session Selesai dengan Peringatan', description: `${data.data?.count || 0} session diproses, ${data.data?.warningCount || 0} perlu dicek.` })
+      } else {
+        toast({ title: 'Repair Semua Session Selesai', description: `${data.data?.count || 0} session diproses.` })
+      }
+    } catch (error: any) {
+      toast({ title: 'Gagal Repair Semua Session', description: error.message || 'Gagal repair semua session', variant: 'destructive' })
+    } finally {
+      setRepairingAllSessions(false)
     }
   }
 
@@ -1045,6 +1089,8 @@ export default function ChannelSettingsPage() {
     )
   }
 
+  const isSuperadmin = auth?.role === "superadmin"
+
   return (
     <div className="space-y-6">
       <div>
@@ -1052,7 +1098,7 @@ export default function ChannelSettingsPage() {
         <p className="text-muted-foreground mt-2">Buat session WhatsApp, scan QR, dan kelola status koneksi.</p>
       </div>
 
-      {auth?.role === "superadmin" && (
+      {isSuperadmin && (
         <Card>
           <CardHeader>
             <CardTitle>Pilih Desa</CardTitle>
@@ -1079,127 +1125,76 @@ export default function ChannelSettingsPage() {
       <form onSubmit={handleSave} className="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Wifi className="h-5 w-5" />
-              Status Session
-            </CardTitle>
-            <CardDescription>Session disimpan otomatis di server dan tidak memerlukan input token manual.</CardDescription>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Wifi className="h-5 w-5" />
+                  Status Session
+                </CardTitle>
+                <CardDescription>Session disimpan otomatis di server dan tidak memerlukan input token manual.</CardDescription>
+              </div>
+              <Button type="button" variant="ghost" size="icon" onClick={() => fetchSessionStatus()} disabled={sessionLoading} title="Refresh status" aria-label="Refresh status">
+                <RefreshCw className={`h-4 w-4 ${sessionLoading ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Connection Status Overview */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-lg border p-4 space-y-2">
-                <Label className="text-sm font-medium">Status Koneksi</Label>
-                <div className="flex items-center gap-2">
-                  {sessionStatus?.connected ? (
-                    <Badge variant="default" className="bg-green-100 text-green-800">
-                      <CheckCircle className="w-3 h-3 mr-1" />
-                      Tersambung
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="bg-red-100 text-red-800">
-                      <XCircle className="w-3 h-3 mr-1" />
-                      Tidak Tersambung
-                    </Badge>
-                  )}
+            <div className="rounded-lg border p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span className={`flex h-10 w-10 items-center justify-center rounded-full ${sessionStatus?.loggedIn ? "bg-green-100 text-green-700" : sessionExists ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+                    {sessionStatus?.loggedIn ? <CheckCircle className="h-5 w-5" /> : sessionExists ? <QrCode className="h-5 w-5" /> : <Wifi className="h-5 w-5" />}
+                  </span>
+                  <div>
+                    <p className="text-sm font-medium">
+                      {sessionStatus?.loggedIn ? "WhatsApp aktif" : sessionExists ? "Menunggu scan QR" : "WhatsApp belum terhubung"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {sessionStatus?.loggedIn && sessionStatus?.jid
+                        ? `+${getPhoneNumber(sessionStatus.jid)}`
+                        : sessionExists
+                          ? "Scan QR untuk mulai menerima pesan."
+                          : "Buat session untuk menghubungkan nomor WhatsApp."}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              
-              <div className="rounded-lg border p-4 space-y-2">
-                <Label className="text-sm font-medium">Status Login</Label>
-                <div className="flex items-center gap-2">
-                  {sessionStatus?.loggedIn ? (
-                    <Badge variant="default" className="bg-green-100 text-green-800">
-                      <CheckCircle className="w-3 h-3 mr-1" />
-                      Sudah Login
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-                      <QrCode className="w-3 h-3 mr-1" />
-                      Perlu Scan QR
-                    </Badge>
-                  )}
-                </div>
+                <Badge variant="secondary" className={sessionStatus?.loggedIn ? "bg-green-100 text-green-800" : sessionExists ? "bg-blue-100 text-blue-800" : ""}>
+                  {sessionStatus?.loggedIn ? "Terhubung" : sessionExists ? "Perlu QR" : "Belum Aktif"}
+                </Badge>
               </div>
             </div>
 
-            {/* WhatsApp Number */}
-            {sessionStatus?.loggedIn && sessionStatus?.jid && (
-              <div className="rounded-lg border p-4 bg-green-50">
-                <div className="flex items-center gap-2 text-green-800">
-                  <Smartphone className="w-4 h-4" />
-                  <span className="font-medium">Nomor WhatsApp Terhubung</span>
-                </div>
-                <p className="text-lg font-mono mt-1 text-green-900">
-                  +{getPhoneNumber(sessionStatus.jid)}
-                </p>
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="rounded-lg border p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium">Kelola Session</p>
-                  <p className="text-xs text-muted-foreground">
-                    {sessionLoading && (setupStage === "checking_object_storage" || setupStage === "creating_session") && getSetupMessage()}
-                    {!sessionLoading && sessionExists === false && "Session belum dibuat"}
-                    {!sessionLoading && sessionExists === true && !sessionStatus?.loggedIn && "Session siap, perlu scan QR"}
-                    {!sessionLoading && sessionExists === true && sessionStatus?.loggedIn && "Session aktif dan terhubung"}
-                  </p>
-                </div>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => fetchSessionStatus()} 
-                  disabled={sessionLoading}
-                >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${sessionLoading ? 'animate-spin' : ''}`} />
-                  Refresh
+            <div className="flex flex-wrap gap-2">
+              {(sessionExists === null || sessionExists === false) && (
+                <Button type="button" onClick={handleCreateSession} disabled={sessionLoading}>
+                  {sessionLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
+                  {sessionLoading ? getSetupMessage() : "Hubungkan WhatsApp"}
                 </Button>
-              </div>
-              
-              <div className="flex flex-wrap gap-2">
-                {/* Session belum dibuat */}
-                {(sessionExists === null || sessionExists === false) && (
-                  <Button type="button" onClick={handleCreateSession} disabled={sessionLoading} className="min-w-[220px] justify-start">
-                    {sessionLoading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Wifi className="h-4 w-4 mr-2" />}
-                    {sessionLoading ? getSetupMessage() : "Buat Session"}
-                  </Button>
-                )}
-
-                {/* Session ada tapi belum login */}
-                {sessionExists === true && !sessionStatus?.loggedIn && (
-                  <>
-                    <Button type="button" onClick={handleViewQR} disabled={sessionLoading}>
-                      <QrCode className="h-4 w-4 mr-2" />
-                      Lihat QR Code
-                    </Button>
-                    <Button type="button" variant="destructive" onClick={handleDeleteSession} disabled={sessionLoading}>
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Hapus Session
-                    </Button>
-                  </>
-                )}
-
-                {/* Session ada dan sudah login */}
-                {sessionExists === true && sessionStatus?.loggedIn && (
-                  <>
-                    <Button type="button" variant="outline" onClick={handleDisconnectSession} disabled={sessionLoading}>
-                      <Wifi className="h-4 w-4 mr-2" />
-                      Disconnect
-                    </Button>
-                    <Button type="button" variant="destructive" onClick={handleDeleteSession} disabled={sessionLoading}>
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Hapus Session
-                    </Button>
-                  </>
-                )}
-              </div>
+              )}
+              {sessionExists === true && !sessionStatus?.loggedIn && (
+                <Button type="button" onClick={handleViewQR} disabled={sessionLoading}>
+                  <QrCode className="h-4 w-4 mr-2" />
+                  Scan QR
+                </Button>
+              )}
+              {isSuperadmin && sessionExists === true && sessionStatus?.loggedIn && (
+                <Button type="button" variant="outline" onClick={handleDisconnectSession} disabled={sessionLoading}>
+                  <Wifi className="h-4 w-4 mr-2" />
+                  Disconnect
+                </Button>
+              )}
+              {isSuperadmin && sessionExists === true && (
+                <Button type="button" variant="destructive" size="icon" onClick={handleDeleteSession} disabled={sessionLoading} title="Hapus session" aria-label="Hapus session">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+              <Button type="button" variant="outline" onClick={() => setShowMaintenanceDialog(true)} disabled={!sessionExists}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Maintenance
+              </Button>
             </div>
 
-            {sessionExists === true && sessionStatus?.loggedIn && (
+            {isSuperadmin && sessionExists === true && sessionStatus?.loggedIn && (
               <div className="rounded-lg border p-4 space-y-3">
                 <div>
                   <p className="text-sm font-medium">Status Teks WhatsApp</p>
@@ -1244,14 +1239,15 @@ export default function ChannelSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <RefreshCw className="h-5 w-5" />
-              Webhook & Session Sync
-            </CardTitle>
-            <CardDescription>Audit konfigurasi provider, event webhook, dan HMAC session WhatsApp.</CardDescription>
-          </CardHeader>
+        {isSuperadmin && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <RefreshCw className="h-5 w-5" />
+                Webhook & Session Sync
+              </CardTitle>
+              <CardDescription>Audit konfigurasi provider, event webhook, dan HMAC session WhatsApp.</CardDescription>
+            </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-2">
@@ -1398,6 +1394,7 @@ export default function ChannelSettingsPage() {
             </div>
           </CardContent>
         </Card>
+        )}
 
         <div className="flex justify-end">
           <Button type="submit" disabled={saving} className="min-w-[200px]">
@@ -1406,6 +1403,75 @@ export default function ChannelSettingsPage() {
           </Button>
         </div>
       </form>
+
+      <Dialog open={showMaintenanceDialog} onOpenChange={setShowMaintenanceDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <RefreshCw className="h-5 w-5" />
+              Maintenance WhatsApp
+            </DialogTitle>
+            <DialogDescription>
+              Repair aman untuk menyinkronkan webhook, event wajib, HMAC, status session, dan S3. History tidak dijalankan otomatis.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-lg border p-3 text-sm">
+              <p className="font-medium">Repair session desa ini</p>
+              <p className="text-muted-foreground">Aman dijalankan berulang. Tidak menarik history lama agar tidak duplikasi pesan.</p>
+              <Button type="button" className="mt-3" onClick={handleLifecycleRepair} disabled={repairingLifecycle || !sessionExists}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${repairingLifecycle ? "animate-spin" : ""}`} />
+                Repair Sekarang
+              </Button>
+            </div>
+
+            {isSuperadmin && (
+              <div className="space-y-3 rounded-lg border p-3 text-sm">
+                <p className="font-medium">Tools superadmin</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" onClick={handleSyncWebhook} disabled={syncingWebhook}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${syncingWebhook ? "animate-spin" : ""}`} />
+                    Sync Webhook Desa Ini
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleSyncS3} disabled={syncingS3 || !sessionExists || !s3Status?.localConfigured}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${syncingS3 ? "animate-spin" : ""}`} />
+                    Sync S3
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleTestS3} disabled={testingS3 || !sessionExists}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${testingS3 ? "animate-spin" : ""}`} />
+                    Test S3
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleRepairAllSessions} disabled={repairingAllSessions}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${repairingAllSessions ? "animate-spin" : ""}`} />
+                    Repair Semua Session Aktif
+                  </Button>
+                </div>
+
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                  <p className="font-medium">History Sync manual</p>
+                  <p className="text-xs">Gunakan hanya untuk recovery/migrasi. Default 0 agar provider tidak mengimpor history lama.</p>
+                  <div className="mt-2 flex gap-2">
+                    <Input className="w-24" type="number" min={0} max={1000} value={historyDepth} onChange={(event) => setHistoryDepth(event.target.value)} />
+                    <Button type="button" variant="outline" size="sm" onClick={handleSyncHistory} disabled={syncingHistory}>
+                      <RefreshCw className={`h-4 w-4 mr-2 ${syncingHistory ? "animate-spin" : ""}`} />
+                      Sync History
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {repairResult && (
+              <pre className="max-h-64 overflow-auto rounded bg-muted p-3 text-xs text-muted-foreground">{JSON.stringify(repairResult, null, 2)}</pre>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowMaintenanceDialog(false)}>Tutup</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* QR Code Dialog */}
       <Dialog open={showQrDialog} onOpenChange={handleCloseQrDialog}>

@@ -327,8 +327,11 @@ export function LiveChatWidget({ isDark }: { isDark?: boolean }) {
 
     fetch('/api/public/webchat/villages')
       .then(async (res) => {
-        if (!res.ok) return { success: false, data: [] };
-        return res.json();
+        const json = await res.json().catch(() => null);
+        if (!res.ok || json?.success === false) {
+          throw new Error(json?.error || 'Gagal memuat daftar desa');
+        }
+        return json;
       })
       .then((json) => {
         const data = Array.isArray(json?.data) ? json.data : [];

@@ -781,6 +781,120 @@ export async function deleteSessionForVillage(villageId: string) {
   return { deleted: true };
 }
 
+type LifecycleSyncResult = {
+  success: boolean;
+  warning: boolean;
+  results: Record<string, unknown>;
+};
+
+export async function ensureWhatsAppLifecycleSync(villageId: string, options: { syncS3?: boolean; syncWebhook?: boolean } = {}): Promise<LifecycleSyncResult> {
+  const session = await getSessionByVillageId(villageId);
+  if (!session) throw new Error('Session belum dibuat');
+
+  const results: Record<string, unknown> = {};
+  const webhook = getPublicWhatsAppWebhookUrl();
+
+  if (options.syncWebhook !== false && webhook) {
+    try {
+      await waGatewayRequest(session.wa_token, '/webhook', 'PUT', {
+        WebhookURL: webhook,
+        Events: GOVCONNECT_WEBHOOK_EVENTS,
+        Active: true,
+      });
+      results.webhook = { success: true };
+    } catch (error: any) {
+      results.webhook = { success: false, error: error.message };
+    }
+  }
+
+  if (session.webhook_secret) {
+    try {
+      await waGatewayRequest(session.wa_token, '/session/hmac/config', 'POST', {
+        hmac_key: session.webhook_secret,
+      });
+      results.hmac = { success: true };
+    } catch (error: any) {
+      results.hmac = { success: false, error: error.message };
+    }
+  } else {
+    results.hmac = { success: false, error: 'Webhook secret belum tersedia' };
+  }
+
+  const status = await getSessionStatus(session.wa_token);
+  const waNumber = status.jid
+    ? status.jid.replace(/@s\.whatsapp\.net$/i, '').replace(/:\d+$/, '')
+    : (session.wa_number ? session.wa_number.replace(/:\d+$/, '') : session.wa_number);
+  await updateStoredSessionStatus({
+    villageId,
+    status: status.connected ? 'connected' : 'disconnected',
+    waNumber: waNumber || null,
+  });
+  results.session = { connected: status.connected, loggedIn: status.loggedIn, waNumber: waNumber || null };
+
+  if (options.syncS3 !== false && getWhatsAppSessionS3Config()) {
+    try {
+      results.s3 = await syncWhatsAppS3Config(villageId);
+    } catch (error: any) {
+      results.s3 = { success: false, error: error.message };
+    }
+  }
+
+  const warning = Object.values(results).some((result: any) => result?.success === false || result?.error);
+
+  await logWaActivity({
+    villageId,
+    sessionId: session.wa_support_session_id,
+    type: 'lifecycle_repair',
+    severity: warning ? 'warning' : 'info',
+    status: warning ? 'completed_with_warnings' : 'completed',
+    message: warning
+      ? 'Repair lifecycle WhatsApp selesai dengan peringatan.'
+      : 'Repair lifecycle WhatsApp selesai dijalankan.',
+    metadata: results,
+  });
+
+  return { success: !warning, warning, results };
+}
+
+export async function repairAllWhatsAppSessions() {
+  const sessions = await prisma.wa_sessions.findMany({
+    select: {
+      village_id: true,
+      instance_name: true,
+      wa_number: true,
+    },
+    orderBy: { created_at: 'asc' },
+  });
+
+  const results = [];
+  for (const session of sessions) {
+    try {
+      const result = await ensureWhatsAppLifecycleSync(session.village_id);
+      results.push({
+        village_id: session.village_id,
+        instance_name: session.instance_name,
+        wa_number: session.wa_number,
+        success: result.success,
+        warning: result.warning,
+        result,
+      });
+    } catch (error: any) {
+      results.push({
+        village_id: session.village_id,
+        instance_name: session.instance_name,
+        wa_number: session.wa_number,
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+
+  const warningCount = results.filter((result: any) => result.warning).length;
+  const failedCount = results.filter((result: any) => result.success === false && !result.warning).length;
+
+  return { count: sessions.length, warningCount, failedCount, success: failedCount === 0 && warningCount === 0, results };
+}
+
 /**
  * Connect WhatsApp session
  * API: POST {WA_API_URL}/session/connect

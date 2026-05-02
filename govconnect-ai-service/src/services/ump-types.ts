@@ -96,6 +96,8 @@ export interface ProcessMessageResult {
     };
     /** Unique trace ID for correlating logs across NLU → RAG → LLM → response */
     traceId?: string;
+    walletStatus?: string;
+    walletBalanceUsd?: number;
   };
   /** Error message if failed */
   error?: string;

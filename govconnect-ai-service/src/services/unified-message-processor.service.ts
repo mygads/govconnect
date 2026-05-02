@@ -710,6 +710,32 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   });
   
   try {
+    const walletGate = await canProcessVillageAI(villageId);
+    if (!walletGate.allowed) {
+      logger.warn('AI processing blocked by wallet gate', {
+        traceId,
+        userId,
+        villageId,
+        balanceUsd: walletGate.balanceUsd,
+        status: walletGate.status,
+        reason: walletGate.reason,
+      });
+
+      return finish({
+        success: false,
+        response: 'Maaf, saldo AI desa sedang habis. Silakan hubungi admin desa untuk mengisi saldo agar layanan AI bisa digunakan kembali.',
+        intent: 'WALLET_EXHAUSTED',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: false,
+          traceId,
+          walletStatus: walletGate.status,
+          walletBalanceUsd: walletGate.balanceUsd,
+        },
+        error: walletGate.reason,
+      });
+    }
+
     // Update status: reading message
     tracker.reading();
     notifyStage('reading', 20);
