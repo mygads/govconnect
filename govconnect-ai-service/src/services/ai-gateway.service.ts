@@ -44,6 +44,10 @@ interface GatewayUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    cache_write_tokens?: number;
+  };
 }
 
 interface GatewayChoice {
@@ -94,8 +98,23 @@ interface GatewayRerankItem {
 interface GatewayRerankUsage {
   total_tokens?: number;
   search_units?: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    cache_write_tokens?: number;
+  };
 }
 
+interface GatewayCacheMetadata {
+  status?: string | null;
+  ageSeconds?: number | null;
+  ttlSeconds?: number | null;
+  generationId?: string | null;
+}
+
+interface GatewayResponseEnvelope<T> {
+  data: T;
+  cache: GatewayCacheMetadata;
+}
 interface GatewayRerankResponse {
   id?: string;
   model?: string;
@@ -511,7 +530,7 @@ function getGatewayUrl(kind: GatewayLaneKind, gateway: AnyGatewayConfig = getGat
   return `${baseUrl}${path}`;
 }
 
-function buildHeaders(gateway: AnyGatewayConfig, apiKey: string): Record<string, string> {
+function buildHeaders(gateway: AnyGatewayConfig, apiKey: string, cacheEligible = false): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'Content-Type': 'application/json',
@@ -525,6 +544,10 @@ function buildHeaders(gateway: AnyGatewayConfig, apiKey: string): Record<string,
     if (gateway.openRouterAppName) {
       headers['X-Title'] = gateway.openRouterAppName;
       headers['X-OpenRouter-Title'] = gateway.openRouterAppName;
+    }
+    if (cacheEligible && gateway.openRouterCacheEnabled && !gateway.openRouterZDROnly) {
+      headers['X-OpenRouter-Cache'] = 'true';
+      headers['X-OpenRouter-Cache-TTL'] = String(gateway.openRouterCacheTtlSeconds);
     }
   }
 
@@ -635,16 +658,37 @@ async function reportBrokenAttemptIfNeeded(lane: GatewayLaneKind, attempt: Runti
   await reportAttemptResult(lane, attempt, false);
 }
 
+function parseHeaderNumber(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readOpenRouterCacheMetadata(gateway: AnyGatewayConfig, response: Response): GatewayCacheMetadata {
+  if (gateway.provider !== 'openrouter') {
+    return {};
+  }
+
+  return {
+    status: response.headers.get('x-openrouter-cache-status'),
+    ageSeconds: parseHeaderNumber(response.headers.get('x-openrouter-cache-age')),
+    ttlSeconds: parseHeaderNumber(response.headers.get('x-openrouter-cache-ttl')),
+    generationId: response.headers.get('x-generation-id'),
+  };
+}
+
+
 async function executeGatewayRequest<T>(
   kind: GatewayLaneKind,
   gateway: AnyGatewayConfig,
   apiKey: GatewayApiKey,
   body: Record<string, unknown>,
   timeoutMs: number,
-): Promise<T> {
+  cacheEligible = false,
+): Promise<GatewayResponseEnvelope<T>> {
   const breakerKey = `${kind}:${gateway.provider}:${gateway.baseUrl}`;
   const breaker = getGatewayBreaker(breakerKey, doExecuteGatewayRequest);
-  return breaker.fire(kind, gateway, apiKey, body, timeoutMs) as Promise<T>;
+  return breaker.fire(kind, gateway, apiKey, body, timeoutMs, cacheEligible) as Promise<GatewayResponseEnvelope<T>>;
 }
 
 async function doExecuteGatewayRequest<T>(
@@ -653,14 +697,16 @@ async function doExecuteGatewayRequest<T>(
   apiKey: GatewayApiKey,
   body: Record<string, unknown>,
   timeoutMs: number,
-): Promise<T> {
+  cacheEligible = false,
+): Promise<GatewayResponseEnvelope<T>> {
   const response = await fetch(getGatewayUrl(kind, gateway), {
     method: 'POST',
-    headers: buildHeaders(gateway, apiKey.value),
+    headers: buildHeaders(gateway, apiKey.value, cacheEligible),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
 
+  const cache = readOpenRouterCacheMetadata(gateway, response);
   const responseText = await response.text();
   let parsed: unknown = null;
 
@@ -681,8 +727,9 @@ async function doExecuteGatewayRequest<T>(
     throw new Error(`${kind} gateway returned an empty response`);
   }
 
-  return parsed as T;
+  return { data: parsed as T, cache };
 }
+
 
 function shouldRetryWithoutJsonMode(message: string): boolean {
   return /response_format|json_object|json schema|json_schema|structured output|unsupported/i.test(message);
@@ -747,6 +794,21 @@ function buildMetrics(
   };
 }
 
+function estimateCacheReadRatio(provider: string, model: string): number {
+  const value = `${provider}/${model}`.toLowerCase();
+  if (value.includes('anthropic') || value.includes('claude') || value.includes('deepseek')) return 0.1;
+  if (value.includes('openai') || value.includes('gpt')) return 0.5;
+  if (value.includes('gemini') || value.includes('google') || value.includes('grok') || value.includes('moonshot')) return 0.25;
+  if (value.includes('groq')) return 0.5;
+  return 1;
+}
+
+function estimateCacheWriteMultiplier(provider: string, model: string): number {
+  const value = `${provider}/${model}`.toLowerCase();
+  if (value.includes('anthropic') || value.includes('claude')) return 1.25;
+  if (value.includes('deepseek')) return 1;
+  return 1;
+}
 function recordGatewayUsage(
   metrics: LLMMetrics,
   options: { layerType?: LayerType; callType?: CallType; context?: TokenContext },
@@ -765,6 +827,17 @@ function recordGatewayUsage(
   if (!options.layerType || !options.callType) {
     return;
   }
+
+  const cachedTokens = typeof (generation?.responseJson as any)?.usage?.prompt_tokens_details?.cached_tokens === 'number'
+    ? (generation?.responseJson as any).usage.prompt_tokens_details.cached_tokens
+    : 0;
+  const cacheWriteTokens = typeof (generation?.responseJson as any)?.usage?.prompt_tokens_details?.cache_write_tokens === 'number'
+    ? (generation?.responseJson as any).usage.prompt_tokens_details.cache_write_tokens
+    : 0;
+  const cacheStatus = typeof (generation?.responseJson as any)?.openrouter_cache?.status === 'string'
+    ? (generation?.responseJson as any).openrouter_cache.status
+    : null;
+  const cacheProvider = generation?.provider ?? metrics.keyTier ?? null;
 
   const usageWrite = recordTokenUsage({
     model: metrics.model,
@@ -786,6 +859,12 @@ function recordGatewayUsage(
     provider_id: metrics.providerId ?? null,
     model_config_id: metrics.modelConfigId ?? null,
     lane_type: metrics.laneType ?? null,
+    cached_input_tokens: cachedTokens,
+    cache_write_input_tokens: cacheWriteTokens,
+    cache_read_discount_ratio: estimateCacheReadRatio(cacheProvider || '', metrics.model),
+    cache_write_multiplier: estimateCacheWriteMultiplier(cacheProvider || '', metrics.model),
+    cache_status: cacheStatus,
+    cache_provider: cacheProvider,
   }).then((tokenUsageId) => recordGenerationLog({
     token_usage_id: tokenUsageId,
     village_id: options.context?.village_id ?? null,
@@ -850,13 +929,26 @@ function buildPromptBody(
   return body;
 }
 
+function isResponseCacheEligible(
+  gateway: AnyGatewayConfig,
+  kind: GatewayLaneKind,
+  options?: { layerType?: LayerType; callType?: CallType },
+): boolean {
+  if (gateway.provider !== 'openrouter') return false;
+  if (!gateway.openRouterCacheEnabled || gateway.openRouterZDROnly) return false;
+  if (kind === 'rerank') return false;
+  if (!options?.layerType || !options?.callType) return false;
+  return ['embedding', 'rag_expand', 'rag_rerank', 'micro_nlu'].includes(options.layerType);
+}
+
 async function executePromptRequestWithJsonFallback(
   lane: GatewayLaneKind,
   gateway: AnyGatewayConfig,
   apiKey: GatewayApiKey,
   model: string,
   options: GatewayPromptOptions,
-): Promise<GatewayChatCompletionResponse> {
+): Promise<GatewayResponseEnvelope<GatewayChatCompletionResponse>> {
+  const cacheEligible = isResponseCacheEligible(gateway, lane, options);
   try {
     return await executeGatewayRequest<GatewayChatCompletionResponse>(
       lane,
@@ -864,6 +956,7 @@ async function executePromptRequestWithJsonFallback(
       apiKey,
       buildPromptBody(gateway, model, options, !!options.jsonMode),
       options.timeoutMs || getGatewayTimeoutFromConfig(gateway),
+      cacheEligible,
     );
   } catch (error: any) {
     if (options.jsonMode && shouldRetryWithoutJsonMode(error.message || '')) {
@@ -880,6 +973,7 @@ async function executePromptRequestWithJsonFallback(
         apiKey,
         buildPromptBody(gateway, model, options, false),
         options.timeoutMs || getGatewayTimeoutFromConfig(gateway),
+        cacheEligible,
       );
     }
 
@@ -942,7 +1036,9 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
         const startTime = Date.now();
 
         try {
-          const result = await executePromptRequestWithJsonFallback(lane, gateway, apiKey, model, options);
+          const envelope = await executePromptRequestWithJsonFallback(lane, gateway, apiKey, model, options);
+          const result = envelope.data;
+          const cacheMetadata = envelope.cache;
           const durationMs = Date.now() - startTime;
           const choice = result.choices?.[0];
           const text = extractTextContent(choice?.message?.content).trim();
@@ -972,7 +1068,10 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
             responseId: result.id ?? null,
             finishReason: choice?.finish_reason ?? null,
             requestJson: buildPromptBody(gateway, model, options, !!options.jsonMode),
-            responseJson: result,
+            responseJson: {
+              ...result,
+              openrouter_cache: cacheMetadata,
+            },
             promptPreview: promptPreview(options.messages),
             completionPreview: text,
           });
@@ -991,6 +1090,9 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
             totalTokens,
             source: resolved.meta?.source,
             fallbackUsed: Boolean(attempt.modelId && resolved.meta?.fallbackModelId === attempt.modelId),
+            cacheStatus: cacheMetadata.status,
+            cachedTokens: result.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+            cacheWriteTokens: result.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
           });
 
           return {
@@ -1083,13 +1185,16 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
       const startTime = Date.now();
 
       try {
-        const result = await executeGatewayRequest<GatewayEmbeddingResponse>(
+        const envelope = await executeGatewayRequest<GatewayEmbeddingResponse>(
           lane,
           gateway,
           apiKey,
           body,
           options.timeoutMs || gateway.timeoutMs,
+          isResponseCacheEligible(gateway, lane, options),
         );
+        const result = envelope.data;
+        const cacheMetadata = envelope.cache;
         const durationMs = Date.now() - startTime;
         const embeddings = (result.data || [])
           .map(item => item.embedding)
@@ -1118,7 +1223,11 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
           provider: result.provider || gateway.provider,
           responseId: result.id ?? null,
           requestJson: body,
-          responseJson: { ...result, data: Array.isArray(result.data) ? result.data.map((item) => ({ index: item.index, embedding_length: item.embedding?.length ?? 0 })) : [] },
+          responseJson: {
+            ...result,
+            data: Array.isArray(result.data) ? result.data.map((item) => ({ index: item.index, embedding_length: item.embedding?.length ?? 0 })) : [],
+            openrouter_cache: cacheMetadata,
+          },
           promptPreview: Array.isArray(options.input) ? `${options.input.length} embedding inputs` : options.input,
           completionPreview: `${embeddings.length} embedding vectors`,
         });
@@ -1135,6 +1244,9 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
           dimensions: embeddings[0]?.length,
           source: resolved.meta?.source,
           fallbackUsed: Boolean(attempt.modelId && resolved.meta?.fallbackModelId === attempt.modelId),
+          cacheStatus: cacheMetadata.status,
+          cachedTokens: result.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+          cacheWriteTokens: result.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
         });
 
         return {
@@ -1223,13 +1335,16 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
       const startTime = Date.now();
 
       try {
-        const result = await executeGatewayRequest<GatewayRerankResponse>(
+        const envelope = await executeGatewayRequest<GatewayRerankResponse>(
           lane,
           gateway,
           apiKey,
           body,
           options.timeoutMs || gateway.timeoutMs,
+          isResponseCacheEligible(gateway, lane, options),
         );
+        const result = envelope.data;
+        const cacheMetadata = envelope.cache;
         const durationMs = Date.now() - startTime;
         const items = (result.results || []).map(item => ({
           index: item.index,
@@ -1260,7 +1375,10 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
           provider: result.provider || gateway.provider,
           responseId: result.id ?? null,
           requestJson: body,
-          responseJson: result,
+          responseJson: {
+            ...result,
+            openrouter_cache: cacheMetadata,
+          },
           promptPreview: `${options.query}\n\nDocuments: ${options.documents.length}`,
           completionPreview: JSON.stringify(items.slice(0, 10)),
         });
@@ -1303,13 +1421,15 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
               callType: options.callType,
               context: options.context,
             };
-            const promptResponse = await executePromptRequestWithJsonFallback(
+            const promptEnvelope = await executePromptRequestWithJsonFallback(
               lane,
               gateway,
               apiKey,
               model,
               promptOptions,
             );
+            const promptResponse = promptEnvelope.data;
+            const promptCacheMetadata = promptEnvelope.cache;
             const text = extractTextContent(promptResponse.choices?.[0]?.message?.content);
             if (text) {
               const items = parsePromptRerankResults(text, options.documents, options.topN || gateway.topN);
@@ -1335,7 +1455,10 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
                   responseId: promptResponse.id ?? null,
                   finishReason: promptResponse.choices?.[0]?.finish_reason ?? null,
                   requestJson: buildPromptBody(gateway, model, promptOptions, true),
-                  responseJson: promptResponse,
+                  responseJson: {
+                    ...promptResponse,
+                    openrouter_cache: promptCacheMetadata,
+                  },
                   promptPreview: promptPreview(promptOptions.messages),
                   completionPreview: text,
                 });

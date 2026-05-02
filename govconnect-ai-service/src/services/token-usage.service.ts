@@ -128,6 +128,12 @@ export interface TokenUsageRecord {
   message_id?: string | null;
   trace_id?: string | null;
   billing_group_id?: string | null;
+  cached_input_tokens?: number;
+  cache_write_input_tokens?: number;
+  cache_read_discount_ratio?: number;
+  cache_write_multiplier?: number;
+  cache_status?: string | null;
+  cache_provider?: string | null;
   actual_cost_usd?: number | null;
   adjusted_cost_usd?: number | null;
   margin_usd?: number | null;
@@ -153,19 +159,38 @@ interface PricingResolution {
   pricing_snapshot_json: Prisma.InputJsonValue;
 }
 
-function calculatePricingByMode(
+function calculateCostWithCache(
   pricingType: string | null | undefined,
   fixedPriceUsd: number | null | undefined,
   inputPricePerMillionUsd: number | null | undefined,
   outputPricePerMillionUsd: number | null | undefined,
   inputTokens: number,
   outputTokens: number,
+  cache?: {
+    cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    cacheReadDiscountRatio?: number;
+    cacheWriteMultiplier?: number;
+  },
 ): number {
   if (pricingType === 'fixed_per_call') {
     return fixedPriceUsd ?? 0;
   }
 
-  return ((inputTokens * (inputPricePerMillionUsd ?? 0)) + (outputTokens * (outputPricePerMillionUsd ?? 0))) / 1_000_000;
+  const inputPrice = inputPricePerMillionUsd ?? 0;
+  const outputCost = (outputTokens * (outputPricePerMillionUsd ?? 0)) / 1_000_000;
+  const cachedInputTokens = Math.max(0, Math.min(inputTokens, cache?.cachedInputTokens ?? 0));
+  const cacheWriteInputTokens = Math.max(0, Math.min(inputTokens - cachedInputTokens, cache?.cacheWriteInputTokens ?? 0));
+  const regularInputTokens = Math.max(0, inputTokens - cachedInputTokens - cacheWriteInputTokens);
+  const cacheReadRatio = cache?.cacheReadDiscountRatio ?? 1;
+  const cacheWriteMultiplier = cache?.cacheWriteMultiplier ?? 1;
+  const inputCost = (
+    (regularInputTokens * inputPrice)
+    + (cachedInputTokens * inputPrice * cacheReadRatio)
+    + (cacheWriteInputTokens * inputPrice * cacheWriteMultiplier)
+  ) / 1_000_000;
+
+  return inputCost + outputCost;
 }
 
 async function resolvePricing(record: TokenUsageRecord): Promise<PricingResolution> {
@@ -212,25 +237,34 @@ async function resolvePricing(record: TokenUsageRecord): Promise<PricingResoluti
         },
       });
 
+  const cachePricing = {
+    cachedInputTokens: record.cached_input_tokens,
+    cacheWriteInputTokens: record.cache_write_input_tokens,
+    cacheReadDiscountRatio: record.cache_read_discount_ratio,
+    cacheWriteMultiplier: record.cache_write_multiplier,
+  };
+
   const actual_cost_usd = record.actual_cost_usd ?? (modelConfig
-    ? calculatePricingByMode(
+    ? calculateCostWithCache(
         modelConfig.actual_pricing_type,
         modelConfig.actual_fixed_price_usd,
         modelConfig.actual_input_price_per_million_usd,
         modelConfig.actual_output_price_per_million_usd,
         record.input_tokens,
         record.output_tokens,
+        cachePricing,
       )
     : legacy_cost_usd);
 
   const adjusted_cost_usd = record.adjusted_cost_usd ?? (modelConfig
-    ? calculatePricingByMode(
+    ? calculateCostWithCache(
         modelConfig.adjusted_pricing_type,
         modelConfig.adjusted_fixed_price_usd,
         modelConfig.adjusted_input_price_per_million_usd,
         modelConfig.adjusted_output_price_per_million_usd,
         record.input_tokens,
         record.output_tokens,
+        cachePricing,
       )
     : legacy_cost_usd);
 
@@ -264,6 +298,14 @@ async function resolvePricing(record: TokenUsageRecord): Promise<PricingResoluti
       fixed_price_usd: adjusted_fixed_price_usd,
       input_price_per_million_usd: adjusted_input_price_per_million_usd,
       output_price_per_million_usd: adjusted_output_price_per_million_usd,
+    },
+    cache: {
+      provider: record.cache_provider ?? null,
+      status: record.cache_status ?? null,
+      cached_input_tokens: record.cached_input_tokens ?? 0,
+      cache_write_input_tokens: record.cache_write_input_tokens ?? 0,
+      cache_read_discount_ratio: record.cache_read_discount_ratio ?? null,
+      cache_write_multiplier: record.cache_write_multiplier ?? null,
     },
   } as Prisma.InputJsonValue;
 

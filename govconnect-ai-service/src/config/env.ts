@@ -28,6 +28,8 @@ interface GatewayBaseLaneConfig {
   openRouterAllowFallbacks: boolean;
   openRouterRequireParameters: boolean;
   openRouterZDROnly: boolean;
+  openRouterCacheEnabled: boolean;
+  openRouterCacheTtlSeconds: number;
 }
 
 export interface ChatGatewayLaneConfig extends GatewayBaseLaneConfig {
@@ -242,6 +244,8 @@ function buildBaseLaneConfig(
     openRouterAllowFallbacks: process.env.OPENROUTER_ALLOW_FALLBACKS !== 'false',
     openRouterRequireParameters: process.env.OPENROUTER_REQUIRE_PARAMETERS === 'true',
     openRouterZDROnly: process.env.OPENROUTER_ZDR_ONLY === 'true',
+    openRouterCacheEnabled: process.env.OPENROUTER_RESPONSE_CACHE_ENABLED === 'true',
+    openRouterCacheTtlSeconds: Math.max(1, Math.min(86400, parseInt(process.env.OPENROUTER_RESPONSE_CACHE_TTL_SECONDS || '300', 10) || 300)),
   };
 }
 

@@ -9,6 +9,32 @@ import {
 import { RAGContext } from '../types/embedding.types';
 import { classifyProfileQuery } from './micro-llm-matcher.service';
 
+interface SearchContext {
+  villageId?: string;
+  waUserId?: string;
+  sessionId?: string;
+  channel?: string;
+}
+
+function normalizeSearchContext(
+  villageOrContext?: string | SearchContext,
+  channel: string = 'system',
+): Required<Pick<SearchContext, 'channel'>> & Omit<SearchContext, 'channel'> {
+  if (typeof villageOrContext === 'object' && villageOrContext !== null) {
+    return {
+      villageId: villageOrContext.villageId,
+      waUserId: villageOrContext.waUserId,
+      sessionId: villageOrContext.sessionId,
+      channel: villageOrContext.channel || channel,
+    };
+  }
+
+  return {
+    villageId: villageOrContext,
+    channel,
+  };
+}
+
 interface KnowledgeItem {
   id: string;
   title: string;
@@ -65,9 +91,11 @@ async function isRAGSearchEnabled(villageId?: string): Promise<boolean> {
 export async function searchKnowledge(
   query: string,
   categories?: string[],
-  villageId?: string,
+  villageOrContext?: string | SearchContext,
   channel: string = 'system',
 ): Promise<KnowledgeSearchResult> {
+  const searchContext = normalizeSearchContext(villageOrContext, channel);
+  const { villageId } = searchContext;
   try {
     const ragSearchEnabled = await isRAGSearchEnabled(villageId);
 
@@ -81,7 +109,7 @@ export async function searchKnowledge(
     // Try RAG-based semantic search first
     if (ragSearchEnabled) {
       try {
-        const ragResult = await searchKnowledgeWithRAG(query, categories, villageId);
+        const ragResult = await searchKnowledgeWithRAG(query, categories, searchContext);
         if (ragResult.total > 0) {
           // If RAG returns results but misses key terms, augment with keyword search for higher precision.
           // This helps for glossary/command-style queries (e.g., 5W1H, embedding, "cek status").
@@ -89,12 +117,12 @@ export async function searchKnowledge(
             const keywordResult = await searchKnowledgeWithKeywords(query, undefined, villageId);
             if (keywordResult.total > 0) {
               const merged = mergeKnowledgeResults(ragResult, keywordResult);
-              trackKnowledgeSearch(query, villageId, merged, channel);
+              trackKnowledgeSearch(query, villageId, merged, searchContext.channel);
               return merged;
             }
           }
 
-          trackKnowledgeSearch(query, villageId, ragResult, channel);
+          trackKnowledgeSearch(query, villageId, ragResult, searchContext.channel);
           return ragResult;
         }
         // If RAG returns no results, fall back to keyword search
@@ -108,7 +136,7 @@ export async function searchKnowledge(
 
     // Keyword-based search (fallback or when RAG is disabled)
     const keywordResult = await searchKnowledgeWithKeywords(query, categories, villageId);
-    trackKnowledgeSearch(query, villageId, keywordResult, channel);
+    trackKnowledgeSearch(query, villageId, keywordResult, searchContext.channel);
     return keywordResult;
   } catch (error: any) {
     logger.error('Failed to search knowledge base', {
@@ -132,9 +160,11 @@ export async function searchKnowledge(
 export async function searchDocuments(
   query: string,
   categories?: string[],
-  villageId?: string,
+  villageOrContext?: string | SearchContext,
   channel: string = 'system',
 ): Promise<KnowledgeSearchResult> {
+  const searchContext = normalizeSearchContext(villageOrContext, channel);
+  const { villageId } = searchContext;
   try {
     const ragSearchEnabled = await isRAGSearchEnabled(villageId);
     if (!ragSearchEnabled) {
@@ -145,7 +175,7 @@ export async function searchDocuments(
         confidenceLevel: 'none' as const,
         retrievalMode: 'document_rag' as const,
       };
-      trackKnowledgeSearch(query, villageId, empty, channel);
+      trackKnowledgeSearch(query, villageId, empty, searchContext.channel);
       return empty;
     }
 
@@ -153,8 +183,10 @@ export async function searchDocuments(
       topK: 5,
       minScore: 0.55,
       categories: categories && categories.length > 0 ? categories : undefined,
-      sourceTypes: ['document'],
       villageId,
+      waUserId: searchContext.waUserId,
+      sessionId: searchContext.sessionId,
+      channel: searchContext.channel,
     });
 
     if (ragContext.totalResults === 0) {
@@ -166,7 +198,7 @@ export async function searchDocuments(
         retrievalMode: resolveKnowledgeRetrievalMode(ragContext, 'document_rag'),
         searchTimeMs: ragContext.searchTimeMs,
       };
-      trackKnowledgeSearch(query, villageId, empty, channel);
+      trackKnowledgeSearch(query, villageId, empty, searchContext.channel);
       return empty;
     }
 
@@ -191,7 +223,7 @@ export async function searchDocuments(
       sourceTitles: ragContext.relevantChunks.map((chunk) => chunk.source).filter(Boolean).slice(0, 5),
       candidateDebug: ragContext.retrievalDebug?.candidates,
     };
-    trackKnowledgeSearch(query, villageId, result, channel);
+    trackKnowledgeSearch(query, villageId, result, searchContext.channel);
     return result;
   } catch (error: any) {
     logger.warn('Document search failed', {
@@ -323,7 +355,9 @@ function trackKnowledgeSearch(
  * NOTE: minScore tuned to 0.55 for better recall with Indonesian language
  * Higher scores (0.65+) were too strict and missed relevant results
  */
-async function searchKnowledgeWithRAG(query: string, categories?: string[], villageId?: string): Promise<KnowledgeSearchResult> {
+async function searchKnowledgeWithRAG(query: string, categories?: string[], context?: string | SearchContext): Promise<KnowledgeSearchResult> {
+  const searchContext = normalizeSearchContext(context);
+  const { villageId } = searchContext;
   // Let retrieveContext() handle category inference via its internal NLU (classifyQueryIntent).
   // Only pass explicit categories if the caller already knows them (e.g. from a prior NLU call).
   const effectiveCategories = categories && categories.length > 0 ? categories : undefined;
@@ -333,9 +367,12 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
     topK: 5,
     minScore: 0.55, // Lowered from 0.65 for better recall with Indonesian queries
     categories: effectiveCategories,
-      sourceTypes: ['knowledge'],
-      villageId,
-    });
+    sourceTypes: ['knowledge'],
+    villageId,
+    waUserId: searchContext.waUserId,
+    sessionId: searchContext.sessionId,
+    channel: searchContext.channel,
+  });
 
   // Fallback: if NLU category filtering is too strict, retry WITHOUT category filter.
   // This improves recall for generic KB (e.g., glossary/5W1H) that may not match NLU categories.
@@ -348,9 +385,12 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], vill
       topK: 5,
       minScore: 0.55,
       categories: undefined,
-        sourceTypes: ['knowledge'],
-        villageId,
-      });
+      sourceTypes: ['knowledge'],
+      villageId,
+      waUserId: searchContext.waUserId,
+      sessionId: searchContext.sessionId,
+      channel: searchContext.channel,
+    });
   }
 
   if (ragContext.totalResults === 0) {

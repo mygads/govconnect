@@ -42,6 +42,8 @@ describe('AI gateway provider headers', () => {
       openRouterAllowFallbacks: true,
       openRouterRequireParameters: false,
       openRouterZDROnly: false,
+      openRouterCacheEnabled: false,
+      openRouterCacheTtlSeconds: 300,
       model: 'test-model',
       timeoutMs: 1000,
       chatCompletionsPath: '/chat/completions',

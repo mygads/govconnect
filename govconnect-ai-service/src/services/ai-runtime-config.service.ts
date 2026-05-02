@@ -155,6 +155,8 @@ function buildGatewayConfig(
     openRouterAllowFallbacks: true,
     openRouterRequireParameters: false,
     openRouterZDROnly: false,
+    openRouterCacheEnabled: config.llmGateway.openRouterCacheEnabled,
+    openRouterCacheTtlSeconds: config.llmGateway.openRouterCacheTtlSeconds,
   };
 
   if (kind === 'embed') {

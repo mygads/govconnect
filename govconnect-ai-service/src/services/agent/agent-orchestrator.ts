@@ -10,6 +10,7 @@
  */
 
 import logger from '../../utils/logger';
+import { sanitizeProviderDefaultHeaders } from '../../utils/provider-headers';
 import { config } from '../../config/env';
 import { getRuntimeGatewayAttempts } from '../ai-runtime-config.service';
 import { registerUsageWrite } from '../ai-turn-billing.service';
@@ -84,16 +85,19 @@ function derivePreferredToolReply(
   toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
 ): { replyText?: string; guidanceText?: string } {
   for (let index = toolResults.length - 1; index >= 0; index -= 1) {
-    const payload = toolResults[index]?.result?.data;
-    if (!payload || typeof payload !== 'object') continue;
+    const result = toolResults[index]?.result;
+    const payload = result?.data;
+    const data = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+    const resultData = result as unknown as Record<string, unknown>;
 
-    const data = payload as Record<string, unknown>;
     const replyText =
       readStringField(data, 'suggested_response')
+      || readStringField(resultData, 'suggested_response')
       || readStringField(data, 'reply_text')
       || readStringField(data, 'replyText');
     const guidanceText =
       readStringField(data, 'guidance_text')
+      || readStringField(resultData, 'guidance_text')
       || readStringField(data, 'guidanceText');
 
     if (replyText || guidanceText) {
@@ -104,6 +108,26 @@ function derivePreferredToolReply(
   return {};
 }
 
+function validateFinalAgentReply(text: string, toolsUsed: string[]): string {
+  const normalized = text.toLowerCase();
+  if (/\b(ai|bot|llm|tool|prompt|retrieval|basis pengetahuan|dokumen internal)\b/i.test(text)) {
+    return 'Maaf Pak/Bu, saya bantu jawab dari informasi layanan yang tersedia. Bisa sebutkan kebutuhan atau detail yang ingin dicek?';
+  }
+
+  const claimsActionSuccess = /\b(sudah|berhasil|telah)\b.*\b(dibuat|dikirim|dibatalkan|diubah|diperbarui|tercatat)\b/i.test(normalized);
+  const usedActionTool = toolsUsed.some((tool) => [
+    'create_complaint',
+    'create_service_request',
+    'update_complaint',
+    'cancel_request',
+    'get_service_request_edit_link',
+  ].includes(tool));
+  if (claimsActionSuccess && !usedActionTool) {
+    return 'Saya belum bisa memastikan aksi itu sudah tercatat. Kirim detail atau nomor referensinya ya, nanti saya bantu cek langkah berikutnya.';
+  }
+
+  return text;
+}
 function buildAgentFallbackReply(userMessage: string, toolsUsed: string[] = []): string {
   const normalized = (userMessage || '').toLowerCase();
   const looksLikeStatus = /\b(lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
@@ -430,7 +454,7 @@ export async function runAgent(
       registerUsageWrite(usageWrite);
 
       return {
-        replyText: preferredReplyText || finalText,
+        replyText: validateFinalAgentReply(preferredReplyText || finalText, toolsUsed),
         guidanceText: preferredGuidanceText,
         toolsUsed,
         heuristicTools,
@@ -591,7 +615,7 @@ async function callLLMWithTools(
       const response = await fetch(normalizeGatewayUrl(attempt.baseUrl, attempt.chatCompletionsPath), {
         method: 'POST',
         headers: {
-          ...attempt.defaultHeaders,
+          ...sanitizeProviderDefaultHeaders(attempt.defaultHeaders),
           Authorization: `Bearer ${attempt.apiKey}`,
           'Content-Type': 'application/json',
         },
@@ -1111,8 +1135,6 @@ async function selectAllowedTools(userMessage: string): Promise<{
       'get_service_info',
       'search_knowledge',
       'search_documents',
-      'check_status',
-      'get_complaint_categories',
     );
   }
 

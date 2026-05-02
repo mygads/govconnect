@@ -177,6 +177,10 @@ async function persistMemoryVector(entry: {
       taskType: 'RETRIEVAL_DOCUMENT',
       outputDimensionality: 768,
       useCache: true,
+      context: {
+        village_id: entry.village_id,
+        wa_user_id: entry.wa_user_id,
+      },
     });
 
     await upsertUserMemoryVector({
