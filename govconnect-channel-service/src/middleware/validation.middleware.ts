@@ -3,6 +3,7 @@ import { body, query, validationResult } from 'express-validator';
 import { createHmac, timingSafeEqual } from 'crypto';
 import logger from '../utils/logger';
 import prisma from '../config/database';
+import { config } from '../config/env';
 import { webhookCandidateFromBody } from '../utils/webhook-payload';
 
 // ==================== WEBHOOK ORIGIN VERIFICATION (Temuan 10) ====================
@@ -33,8 +34,10 @@ export function verifyWebhookOrigin(
     return next();
   }
 
-  // Extract client IP — support reverse proxy (X-Forwarded-For) and direct connection
-  const forwardedFor = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim();
+  // Extract client IP. Only trust X-Forwarded-For when Express trust proxy is explicitly enabled.
+  const forwardedFor = config.TRUST_PROXY
+    ? (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+    : undefined;
   const clientIp = forwardedFor || req.ip || req.socket?.remoteAddress || '';
 
   // Normalize IPv6-mapped IPv4 (::ffff:1.2.3.4 → 1.2.3.4)
@@ -70,7 +73,7 @@ export async function verifyWebhookHmac(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const required = String(process.env.WEBHOOK_HMAC_REQUIRED || '').toLowerCase() === 'true';
+  const required = config.WEBHOOK_HMAC_REQUIRED;
   const signature = (req.headers['x-hmac-signature'] as string | undefined)?.trim();
   const candidate = webhookCandidateFromBody(req.body || {});
 

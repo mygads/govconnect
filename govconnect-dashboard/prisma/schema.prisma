@@ -124,6 +124,9 @@ model ai_golden_set_items {
   tool_score      Float?
   keyword_match   Boolean?
   keyword_score   Float?
+  retrieval_match Boolean?
+  retrieval_score Float?
+  retrieval_metrics Json?
   score           Float
   trace_score     Float?
   trace_grade     String?
@@ -240,6 +243,7 @@ model knowledge_documents {
   mime_type       String   // application/pdf, text/plain, etc.
   file_size       Int      // File size in bytes
   file_url        String   // Storage URL (local or S3)
+  file_hash       String?
   village_id      String?
   category_id     String?
   
@@ -269,6 +273,7 @@ model knowledge_documents {
   @@index([category])
   @@index([category_id])
   @@index([village_id])
+  @@index([village_id, file_hash])
   @@index([created_at])
 }
 

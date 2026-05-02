@@ -18,6 +18,8 @@ interface EnvConfig {
   NOTIFICATION_SERVICE_URL: string;
   AI_SERVICE_URL: string;
   WEBHOOK_ALLOWED_IPS: string; // Comma-separated IP allowlist for webhook origin verification
+  WEBHOOK_HMAC_REQUIRED: boolean;
+  TRUST_PROXY: boolean;
 }
 
 function validateEnv(): EnvConfig {
@@ -54,6 +56,10 @@ function validateEnv(): EnvConfig {
     NOTIFICATION_SERVICE_URL: process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004',
     AI_SERVICE_URL: process.env.AI_SERVICE_URL || 'http://localhost:3002',
     WEBHOOK_ALLOWED_IPS: process.env.WEBHOOK_ALLOWED_IPS || '',
+    WEBHOOK_HMAC_REQUIRED: process.env.NODE_ENV === 'production'
+      ? process.env.WEBHOOK_HMAC_REQUIRED !== 'false'
+      : String(process.env.WEBHOOK_HMAC_REQUIRED || '').toLowerCase() === 'true',
+    TRUST_PROXY: String(process.env.TRUST_PROXY || '').toLowerCase() === 'true',
   };
 }
 

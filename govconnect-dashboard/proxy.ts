@@ -65,10 +65,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/dashboard/:path*', 
+    '/dashboard/:path*',
     '/login',
-    // Match API routes EXCEPT file upload routes
-    // This prevents "Response body object should not be disturbed or locked" error
-    '/api/((?!documents|upload).*)',
+    '/api/:path*',
   ]
 }

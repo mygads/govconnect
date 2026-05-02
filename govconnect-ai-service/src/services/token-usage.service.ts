@@ -24,6 +24,7 @@
 import prisma from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import logger from '../utils/logger';
+import { config } from '../config/env';
 import { getCurrentBillingContext, registerUsageWrite } from './ai-turn-billing.service';
 
 // ==================== Pricing ====================
@@ -502,6 +503,17 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<string
     const messageId = resolvedRecord.message_id ?? billingContext?.message_id ?? null;
     const traceId = resolvedRecord.trace_id ?? billingContext?.trace_id ?? null;
     const billingGroupId = resolvedRecord.billing_group_id ?? billingContext?.billing_group_id ?? null;
+    const resolvedVillageId = resolvedRecord.village_id ?? billingContext?.village_id ?? null;
+
+    if (config.nodeEnv === 'production' && resolvedVillageId && !billingGroupId && (pricing.adjusted_cost_usd > 0 || pricing.actual_cost_usd > 0)) {
+      logger.error('Billable token usage recorded without billing turn context', {
+        model: resolvedRecord.model,
+        layer_type: resolvedRecord.layer_type,
+        call_type: resolvedRecord.call_type,
+        village_id: resolvedVillageId,
+        adjusted_cost_usd: pricing.adjusted_cost_usd,
+      });
+    }
 
     const created = await prisma.ai_token_usage.create({
       data: {
@@ -512,7 +524,7 @@ export async function recordTokenUsage(record: TokenUsageRecord): Promise<string
         cost_usd: pricing.adjusted_cost_usd,
         layer_type: resolvedRecord.layer_type,
         call_type: resolvedRecord.call_type,
-        village_id: resolvedRecord.village_id ?? billingContext?.village_id ?? null,
+        village_id: resolvedVillageId,
         wa_user_id: resolvedRecord.wa_user_id ?? billingContext?.wa_user_id ?? null,
         session_id: resolvedRecord.session_id ?? billingContext?.session_id ?? null,
         channel: resolvedRecord.channel ?? billingContext?.channel ?? null,

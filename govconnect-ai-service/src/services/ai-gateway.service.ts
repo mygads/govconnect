@@ -18,9 +18,9 @@ import { recordTokenUsage, type CallType, type LayerType } from './token-usage.s
 
 export type PromptLaneKind = 'llm' | 'rag';
 
-export type GatewayMessageRole = 'system' | 'user' | 'assistant';
+export type GatewayMessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
-export type GatewayMessageContent = string | Array<
+export type GatewayMessageContent = string | null | Array<
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }
   | { type: 'input_audio'; input_audio: { data: string; format: string } }
@@ -37,7 +37,10 @@ export class NoCapableGatewayModelError extends Error {
 
 export interface GatewayChatMessage {
   role: GatewayMessageRole;
-  content: GatewayMessageContent;
+  content?: GatewayMessageContent;
+  tool_calls?: unknown;
+  tool_call_id?: string;
+  name?: string;
 }
 
 interface GatewayUsage {
@@ -55,6 +58,7 @@ interface GatewayChoice {
   message?: {
     role?: string;
     content?: unknown;
+    tool_calls?: unknown;
   };
 }
 
@@ -149,6 +153,9 @@ export interface GatewayPromptOptions {
 
 export interface GatewayPromptResult {
   text: string;
+  message?: GatewayChoice['message'];
+  choices?: GatewayChoice[];
+  usage?: GatewayUsage;
   model: string;
   provider: string;
   responseId?: string;
@@ -759,7 +766,9 @@ function promptPreview(messages: GatewayChatMessage[]): string {
   return messages.map((message) => {
     const content = typeof message.content === 'string'
       ? message.content
-      : message.content.map((part) => part.type === 'text' ? part.text : `[${part.type}]`).join(' ');
+      : Array.isArray(message.content)
+        ? message.content.map((part) => part.type === 'text' ? part.text : `[${part.type}]`).join(' ')
+        : '';
     return `${message.role}: ${content}`;
   }).join('\n\n');
 }
@@ -1043,7 +1052,7 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
           const choice = result.choices?.[0];
           const text = extractTextContent(choice?.message?.content).trim();
 
-          if (!text) {
+          if (!text && !choice?.message?.tool_calls) {
             throw new Error('AI gateway returned empty message content');
           }
 
@@ -1097,6 +1106,9 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
 
           return {
             text,
+            message: choice?.message,
+            choices: result.choices,
+            usage: result.usage,
             model: resolvedModel,
             provider: result.provider || gateway.provider,
             responseId: result.id,

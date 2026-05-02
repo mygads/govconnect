@@ -16,6 +16,7 @@ import multer from 'multer';
 import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
+import crypto from 'crypto';
 import logger from '../utils/logger';
 import { processDocumentSemanticChunking } from '../services/document-processor.service';
 import { smartChunkDocument } from '../services/ai-chunking.service';
@@ -223,7 +224,7 @@ async function parseFileContent(filePath: string, mimeType: string): Promise<str
  */
 router.post('/document', verifyInternalKey, upload.single('file'), async (req: Request, res: Response) => {
   const file = req.file;
-  const { documentId, title, category, village_id, villageId } = req.body;
+  const { documentId, title, category, village_id, villageId, fileHash } = req.body;
   const resolvedVillageId: string | null = (typeof village_id === 'string' && village_id.length > 0)
     ? village_id
     : (typeof villageId === 'string' && villageId.length > 0)
@@ -237,14 +238,19 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
   if (!documentId) {
     return res.status(400).json({ error: 'documentId is required' });
   }
-  
+
+  const computedFileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+  if (typeof fileHash === 'string' && fileHash.length > 0 && fileHash !== computedFileHash) {
+    return res.status(400).json({ error: 'fileHash does not match uploaded file' });
+  }
+
   logger.info('Received document upload', {
     documentId,
     filename: file.originalname,
     size: file.size,
     mimeType: file.mimetype,
+    fileHash: computedFileHash,
   });
-  
   let vectorsStored = false;
   let tempFile: { filePath: string; cleanup: () => Promise<void> } | null = null;
 

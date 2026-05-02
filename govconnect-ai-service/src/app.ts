@@ -390,7 +390,7 @@ export function isCacheEnabled(): boolean {
 /**
  * GET /admin/cache/stats — Get all cache statistics
  */
-app.get('/admin/cache/stats', (req: Request, res: Response) => {
+app.get('/admin/cache/stats', internalAuthMiddleware, (req: Request, res: Response) => {
   const umpStats = getUMPCacheStats();
   const responseCacheStats = getCacheStats();
   const villageProfileStats = getVillageProfileCacheStats();
@@ -408,7 +408,7 @@ app.get('/admin/cache/stats', (req: Request, res: Response) => {
 /**
  * POST /admin/cache/clear-all — Clear all in-memory caches
  */
-app.post('/admin/cache/clear-all', (req: Request, res: Response) => {
+app.post('/admin/cache/clear-all', internalAuthMiddleware, (req: Request, res: Response) => {
   const umpResult = clearAllUMPCaches();
   clearResponseCache();
   clearVillageProfileCache();
@@ -433,7 +433,7 @@ app.post('/admin/cache/clear-all', (req: Request, res: Response) => {
  * Body: { userId: string }
  * Used when admin clears a conversation or webchat user resets session.
  */
-app.post('/admin/cache/clear-user', (req: Request, res: Response) => {
+app.post('/admin/cache/clear-user', internalAuthMiddleware, (req: Request, res: Response) => {
   const { userId } = req.body || {};
   if (!userId) {
     return res.status(400).json({ error: 'userId is required' });
@@ -450,14 +450,14 @@ app.post('/admin/cache/clear-user', (req: Request, res: Response) => {
 /**
  * GET /admin/cache/mode — Get current cache mode
  */
-app.get('/admin/cache/mode', (req: Request, res: Response) => {
+app.get('/admin/cache/mode', internalAuthMiddleware, (req: Request, res: Response) => {
   res.json({ cacheEnabled: _cacheEnabled });
 });
 
 /**
  * POST /admin/cache/mode — Toggle cache mode (dev/production)
  */
-app.post('/admin/cache/mode', (req: Request, res: Response) => {
+app.post('/admin/cache/mode', internalAuthMiddleware, (req: Request, res: Response) => {
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') {
     res.status(400).json({ error: 'enabled (boolean) is required' });
@@ -1774,6 +1774,8 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
     const villageId = getQuery(req, 'village_id') || undefined;
     const from = getQuery(req, 'from');
     const to = getQuery(req, 'to');
+    const staleMinutes = Math.max(Number(getQuery(req, 'stale_minutes') || 10), 1);
+    const staleBefore = new Date(Date.now() - staleMinutes * 60_000);
     const dateFilter: any = {};
     if (from) dateFilter.gte = new Date(from);
     if (to) dateFilter.lte = new Date(to);
@@ -1796,7 +1798,7 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
       ...(hasDateFilter ? { created_at: dateFilter } : {}),
     };
 
-    const [billings, tokenUsage, ledger, unbilledUsage, failedBillings, billedWithoutLedger, billingIds] = await Promise.all([
+    const [billings, tokenUsage, ledger, unbilledUsage, staleUnbilledUsage, missingBillingGroupUsage, failedBillings, pendingBillings, billedWithoutLedger, billingIds, duplicateBillingGroups] = await Promise.all([
       prisma.ai_message_billings.aggregate({
         where: billingWhere,
         _sum: { adjusted_cost_usd: true, actual_cost_usd: true, margin_usd: true },
@@ -1813,9 +1815,26 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
         _count: { _all: true },
       }),
       prisma.ai_token_usage.count({ where: { ...usageWhere, billing_status: 'unbilled' } }),
+      prisma.ai_token_usage.count({ where: { ...usageWhere, billing_status: 'unbilled', created_at: { lt: staleBefore } } }),
+      prisma.ai_token_usage.count({
+        where: {
+          ...(villageId ? { village_id: villageId } : {}),
+          success: true,
+          billing_group_id: null,
+          billing_status: { not: 'not_billable' },
+          ...(hasDateFilter ? { created_at: dateFilter } : {}),
+        },
+      }),
       prisma.ai_message_billings.count({ where: { ...billingWhere, status: { in: ['failed', 'failed_insufficient_balance'] } } }),
+      prisma.ai_message_billings.count({ where: { ...billingWhere, status: 'pending' } }),
       prisma.ai_message_billings.count({ where: { ...billingWhere, status: 'billed', ledger_entry_id: null } }),
       prisma.ai_message_billings.findMany({ where: billingWhere, select: { id: true } }),
+      prisma.ai_message_billings.groupBy({
+        by: ['billing_group_id'],
+        where: billingWhere,
+        _count: { _all: true },
+        having: { billing_group_id: { _count: { gt: 1 } } },
+      }),
     ]);
 
     const billingIdList = billingIds.map(row => row.id);
@@ -1864,13 +1883,17 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
     };
 
     res.json(successResponse({
-      filters: { village_id: villageId ?? null, from: from ?? null, to: to ?? null },
+      filters: { village_id: villageId ?? null, from: from ?? null, to: to ?? null, stale_minutes: staleMinutes },
       counts: {
         token_usage_rows: tokenUsage._count._all,
         message_billings: billings._count._all,
         ledger_usage_debits: ledger._count._all,
         unbilled_usage: unbilledUsage,
+        stale_unbilled_usage: staleUnbilledUsage,
+        missing_billing_group_usage: missingBillingGroupUsage,
         failed_billings: failedBillings,
+        pending_billings: pendingBillings,
+        duplicate_billing_groups: duplicateBillingGroups.length,
         billed_without_ledger: billedWithoutLedger,
         ledger_without_billing: ledgerWithoutBilling,
       },
@@ -1886,8 +1909,16 @@ app.get('/admin/ai-billing/reconciliation', async (req: Request, res: Response) 
       },
       mismatches,
       recent_billings: recentBillings,
+      duplicate_billing_groups: duplicateBillingGroups.map(row => ({
+        billing_group_id: row.billing_group_id,
+        count: row._count._all,
+      })),
       healthy: unbilledUsage === 0
+        && staleUnbilledUsage === 0
+        && missingBillingGroupUsage === 0
         && failedBillings === 0
+        && pendingBillings === 0
+        && duplicateBillingGroups.length === 0
         && billedWithoutLedger === 0
         && ledgerWithoutBilling === 0
         && Object.values(mismatches).every(value => Math.abs(value) < 0.000001),

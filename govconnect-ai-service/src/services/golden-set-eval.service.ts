@@ -10,6 +10,8 @@ export type GoldenSetItem = {
   expected_intent?: string;
   expected_tools?: string[];
   expected_keywords?: string[];
+  expected_source_keywords?: string[];
+  retrieval_required?: boolean;
   village_id?: string;
   note?: string;
 };
@@ -27,6 +29,9 @@ export type GoldenSetItemResult = {
   tool_score?: number;
   keyword_match?: boolean;
   keyword_score?: number;
+  retrieval_match?: boolean;
+  retrieval_score?: number;
+  retrieval_metrics?: Record<string, unknown>;
   trace_score?: number;
   trace_grade?: string;
   score: number;
@@ -55,6 +60,7 @@ export type GoldenSetSummary = {
     tool_pass: boolean;
     keyword_pass: boolean;
     regression_detected: boolean;
+    retrieval_accuracy?: number;
     slices?: Record<string, {
       total: number;
       overall_accuracy: number;
@@ -265,6 +271,42 @@ function buildSemanticReplyForScoring(query: string, replyText: string): string 
   return `${replyText}\n${query}\n${inferred.semanticKeywords.join(' ')}`;
 }
 
+function computeRetrievalScore(
+  replyText: string,
+  actualTools: string[],
+  item: GoldenSetItem,
+): { match?: boolean; score?: number; metrics?: Record<string, unknown> } {
+  const expectedSourceKeywords = item.expected_source_keywords || [];
+  const retrievalTools = actualTools.filter(tool => ['search_knowledge', 'search_documents'].includes(normalizeToolName(tool)));
+  const retrievalUsed = retrievalTools.length > 0;
+
+  if (!item.retrieval_required && expectedSourceKeywords.length === 0) {
+    return { metrics: { retrieval_used: retrievalUsed, tools: retrievalTools } };
+  }
+
+  const sourceScore = computeKeywordScore(replyText, expectedSourceKeywords);
+  const scoreParts: number[] = [];
+  if (item.retrieval_required) scoreParts.push(retrievalUsed ? 1 : 0);
+  if (expectedSourceKeywords.length > 0) scoreParts.push(sourceScore.score);
+
+  const score = scoreParts.length > 0
+    ? scoreParts.reduce((acc, cur) => acc + cur, 0) / scoreParts.length
+    : 1;
+
+  return {
+    match: score >= 0.7,
+    score,
+    metrics: {
+      retrieval_required: Boolean(item.retrieval_required),
+      retrieval_used: retrievalUsed,
+      tools: retrievalTools,
+      expected_source_keywords: expectedSourceKeywords,
+      source_keyword_score: sourceScore.score,
+      source_keyword_match: sourceScore.match,
+    },
+  };
+}
+
 function computeToolScore(actualTools: string[], expectedTools?: string[]): { match: boolean; score: number } {
   if (!expectedTools) {
     return { match: true, score: 1 };
@@ -418,11 +460,13 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
 
     const toolScore = computeToolScore(actualTools, item.expected_tools);
     const keywordScore = computeKeywordScore(semanticReplyText, item.expected_keywords);
+    const retrievalScore = computeRetrievalScore(semanticReplyText, actualTools, item);
 
     const scoreParts: number[] = [];
     if (typeof intentMatch === 'boolean') scoreParts.push(intentMatch ? 1 : 0);
     if (Array.isArray(item.expected_tools)) scoreParts.push(toolScore.score);
     if (item.expected_keywords && item.expected_keywords.length > 0) scoreParts.push(keywordScore.score);
+    if (typeof retrievalScore.score === 'number') scoreParts.push(retrievalScore.score);
 
     const score = scoreParts.length > 0
       ? scoreParts.reduce((acc, cur) => acc + cur, 0) / scoreParts.length
@@ -443,6 +487,9 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
       tool_score: Array.isArray(item.expected_tools) ? toolScore.score : undefined,
       keyword_match: item.expected_keywords ? keywordScore.match : undefined,
       keyword_score: item.expected_keywords ? keywordScore.score : undefined,
+      retrieval_match: retrievalScore.match,
+      retrieval_score: retrievalScore.score,
+      retrieval_metrics: retrievalScore.metrics,
       trace_score: traceGrade.traceScore,
       trace_grade: traceGrade.traceGrade,
       score,
@@ -456,6 +503,7 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
   const intentChecks = results.filter(r => typeof r.intent_match === 'boolean');
   const toolChecks = results.filter(r => typeof r.tool_score === 'number');
   const keywordChecks = results.filter(r => typeof r.keyword_score === 'number');
+  const retrievalChecks = results.filter(r => typeof r.retrieval_score === 'number');
 
   const intentAccuracy = intentChecks.length
     ? (intentChecks.filter(r => r.intent_match).length / intentChecks.length)
@@ -466,6 +514,9 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
     : 1;
   const toolAccuracy = toolChecks.length
     ? (toolChecks.reduce((acc, r) => acc + (r.tool_score || 0), 0) / toolChecks.length)
+    : 1;
+  const retrievalAccuracy = retrievalChecks.length
+    ? (retrievalChecks.reduce((acc, r) => acc + (r.retrieval_score || 0), 0) / retrievalChecks.length)
     : 1;
 
   const overallAccuracy = results.reduce((acc, r) => acc + r.score, 0) / total;
@@ -491,6 +542,7 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
       tool_pass: toolAccuracy >= THRESHOLD_TOOL,
       keyword_pass: keywordAccuracy >= THRESHOLD_KEYWORD,
       regression_detected: false,
+      retrieval_accuracy: Number(retrievalAccuracy.toFixed(3)),
       slices,
     },
     started_at: startedAt,

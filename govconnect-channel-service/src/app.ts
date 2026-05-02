@@ -22,7 +22,14 @@ const LEGACY_MEDIA_UPLOADS_PATH = path.join(process.cwd(), 'uploads');
 export function createApp(): Application {
   const app = express();
 
-  // Security middleware
+  if (config.TRUST_PROXY) {
+    app.set('trust proxy', true);
+  }
+
+  if (config.NODE_ENV === 'production' && !config.WEBHOOK_HMAC_REQUIRED) {
+    logger.warn('WEBHOOK_HMAC_REQUIRED=false in production is unsafe; webhook requests may be rejected by policy changes.');
+  }
+
   app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow images to be loaded from other origins
   }));

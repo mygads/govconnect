@@ -10,6 +10,7 @@ import prisma from './config/database';
 import { isConnected } from './services/rabbitmq.service';
 import { swaggerSpec } from './config/swagger';
 import { handleEvent } from './handlers/event.handler';
+import { sendNotification } from './services/notification.service';
 import { errorResponse, successResponse } from './shared/error-response';
 
 // Initialize Prometheus default metrics
@@ -97,6 +98,32 @@ app.use('/api-docs', internalAuthGuard, swaggerUi.serve, swaggerUi.setup(swagger
 app.get('/api-docs.json', internalAuthGuard, (_req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(swaggerSpec);
+});
+
+app.post('/internal/send', async (req: Request, res: Response) => {
+  const apiKey = req.headers['x-internal-api-key'] || req.headers['x-api-key'];
+  if (config.internalApiKey && !internalApiKeyMatches(apiKey)) {
+    return res.status(401).json(errorResponse('Unauthorized'));
+  }
+
+  const { to, message, type, village_id, channel, channel_identifier } = req.body || {};
+  if (!message || (!to && !channel_identifier)) {
+    return res.status(400).json(errorResponse('message and to/channel_identifier are required'));
+  }
+
+  try {
+    await sendNotification({
+      village_id,
+      channel: String(channel || 'WHATSAPP').toUpperCase() === 'WEBCHAT' ? 'WEBCHAT' : 'WHATSAPP',
+      channel_identifier: String(channel_identifier || to),
+      message: String(message),
+      notificationType: String(type || 'direct'),
+    });
+    return res.json(successResponse());
+  } catch (error: any) {
+    logger.error('Internal direct notification failed', { error: error.message });
+    return res.status(500).json(errorResponse('Internal direct notification failed'));
+  }
 });
 
 app.post('/internal/events/:routingKey', async (req: Request, res: Response) => {

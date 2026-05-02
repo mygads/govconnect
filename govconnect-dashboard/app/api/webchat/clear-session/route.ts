@@ -5,19 +5,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { buildUrl, ServicePath, INTERNAL_API_KEY } from '@/lib/api-client';
+import { buildUrl, getInternalApiKey, ServicePath } from '@/lib/api-client';
+
+const WEBCHAT_SESSION_ID_PATTERN = /^(webchat|wc|session)[:_-]?[a-zA-Z0-9._:-]{8,120}$/;
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { sessionId } = body;
 
-    if (!sessionId) {
+    if (typeof sessionId !== 'string' || !WEBCHAT_SESSION_ID_PATTERN.test(sessionId.trim())) {
       return NextResponse.json(
-        { success: false, error: 'sessionId diperlukan' },
+        { success: false, error: 'sessionId tidak valid' },
         { status: 400 }
       );
     }
+
+    const normalizedSessionId = sessionId.trim();
 
     // Call AI Service to clear user caches and profile
     const clearUrl = buildUrl(ServicePath.AI, '/admin/cache/clear-user');
@@ -26,17 +30,16 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-internal-api-key': INTERNAL_API_KEY,
+        'x-internal-api-key': getInternalApiKey(),
       },
-      body: JSON.stringify({ userId: sessionId }),
+      body: JSON.stringify({ userId: normalizedSessionId }),
     });
 
-    const data = await response.json().catch(() => null);
     if (!response.ok) {
-      console.error('Failed to clear AI cache:', data);
+      console.error('Failed to clear AI cache', { status: response.status });
       return NextResponse.json(
-        data || { success: false, error: 'Failed to clear webchat session', code: 'UPSTREAM_UNAVAILABLE' },
-        { status: response.status },
+        { success: false, error: 'Failed to clear webchat session', code: 'UPSTREAM_UNAVAILABLE' },
+        { status: 503 },
       );
     }
 

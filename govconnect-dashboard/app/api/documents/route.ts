@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { ai } from '@/lib/api-client'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { verifyToken } from '@/lib/auth'
 
 // Force Node.js runtime for file uploads
@@ -9,6 +9,11 @@ export const runtime = 'nodejs'
 
 // Disable body parsing - we handle formData manually
 export const dynamic = 'force-dynamic'
+
+const MAX_DOCUMENT_SIZE_BYTES = Number(process.env.KNOWLEDGE_MAX_FILE_BYTES || 10 * 1024 * 1024)
+const MAX_UPLOADS_PER_VILLAGE_PER_DAY = Number(process.env.KNOWLEDGE_MAX_UPLOADS_PER_VILLAGE_PER_DAY || 50)
+const MAX_DOCUMENTS_PER_VILLAGE = Number(process.env.KNOWLEDGE_MAX_DOCUMENTS_PER_VILLAGE || 500)
+const MAX_DOCUMENT_BYTES_PER_VILLAGE = Number(process.env.KNOWLEDGE_MAX_DOCUMENT_BYTES_PER_VILLAGE || 250 * 1024 * 1024)
 
 // Document upload and management API
 // Requires admin authentication
@@ -138,13 +143,62 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validate file size (max 10MB)
-    const maxSize = 10 * 1024 * 1024
-    if (file.size > maxSize) {
+    // Validate file size (max 10MB by default)
+    if (file.size > MAX_DOCUMENT_SIZE_BYTES) {
       return NextResponse.json(
-        { error: 'File too large. Maximum size is 10MB' },
+        { error: `File too large. Maximum size is ${Math.floor(MAX_DOCUMENT_SIZE_BYTES / 1024 / 1024)}MB` },
         { status: 400 }
       )
+    }
+
+    const fileBuffer = Buffer.from(await file.arrayBuffer())
+    const fileHash = createHash('sha256').update(fileBuffer).digest('hex')
+    const villageId = session.admin.village_id || null
+
+    const duplicate = await prisma.knowledge_documents.findFirst({
+      where: {
+        village_id: villageId || undefined,
+        file_hash: fileHash,
+        status: { in: ['processing', 'completed'] },
+      },
+      orderBy: { created_at: 'desc' },
+    })
+
+    if (duplicate) {
+      return NextResponse.json(
+        { success: false, error: 'Dokumen yang sama sudah pernah diunggah.', data: duplicate, code: 'DUPLICATE_DOCUMENT' },
+        { status: 409 }
+      )
+    }
+
+    const dayStart = new Date()
+    dayStart.setHours(0, 0, 0, 0)
+
+    const quotaWhere = {
+      village_id: villageId || undefined,
+      status: { in: ['processing', 'completed'] },
+    }
+
+    const [activeCount, activeBytes, todayUploads] = await Promise.all([
+      prisma.knowledge_documents.count({ where: quotaWhere }),
+      prisma.knowledge_documents.aggregate({ where: quotaWhere, _sum: { file_size: true } }),
+      prisma.knowledge_documents.count({
+        where: {
+          village_id: villageId || undefined,
+          created_at: { gte: dayStart },
+        },
+      }),
+    ])
+
+    const currentBytes = activeBytes._sum.file_size || 0
+    if (activeCount >= MAX_DOCUMENTS_PER_VILLAGE) {
+      return NextResponse.json({ error: 'Kuota jumlah dokumen knowledge base sudah penuh.' }, { status: 429 })
+    }
+    if (currentBytes + file.size > MAX_DOCUMENT_BYTES_PER_VILLAGE) {
+      return NextResponse.json({ error: 'Kuota kapasitas dokumen knowledge base sudah penuh.' }, { status: 429 })
+    }
+    if (todayUploads >= MAX_UPLOADS_PER_VILLAGE_PER_DAY) {
+      return NextResponse.json({ error: 'Batas upload dokumen harian sudah tercapai.' }, { status: 429 })
     }
 
     // Generate document ID
@@ -181,16 +235,18 @@ export async function POST(request: NextRequest) {
         description,
         category: resolvedCategoryName || category,
         category_id: resolvedCategoryId,
-        village_id: session.admin.village_id || undefined,
+        village_id: villageId || undefined,
+        file_hash: fileHash,
         status: 'processing',
       },
     })
 
     // Forward file to AI service for processing
     const aiFormData = new FormData()
-    aiFormData.append('file', file)
+    aiFormData.append('file', new File([fileBuffer], file.name, { type: file.type }))
     aiFormData.append('documentId', documentId)
-    if (session.admin.village_id) aiFormData.append('village_id', session.admin.village_id)
+    aiFormData.append('fileHash', fileHash)
+    if (villageId) aiFormData.append('village_id', villageId)
     if (title) aiFormData.append('title', title)
     if (category) aiFormData.append('category', category)
 
