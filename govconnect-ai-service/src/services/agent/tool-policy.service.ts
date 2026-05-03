@@ -62,7 +62,7 @@ async function loadPolicies(): Promise<PersistedToolPolicy[]> {
       evaluation_count,
       success_count,
       last_seen_at
-    FROM ai_tool_allowlist_policies
+    FROM ai."ai_tool_allowlist_policies"
     ORDER BY confidence DESC, updated_at DESC
     LIMIT 200
   `);
@@ -168,7 +168,7 @@ export async function upsertPoliciesFromGoldenSet(items: Array<{
 
     try {
       await prisma.$executeRaw(Prisma.sql`
-        INSERT INTO ai_tool_allowlist_policies (
+        INSERT INTO ai."ai_tool_allowlist_policies" (
           id,
           policy_key,
           source,
@@ -195,9 +195,9 @@ export async function upsertPoliciesFromGoldenSet(items: Array<{
         )
         ON CONFLICT (policy_key) DO UPDATE SET
           allowed_tools_json = EXCLUDED.allowed_tools_json,
-          confidence = GREATEST(ai_tool_allowlist_policies.confidence, EXCLUDED.confidence),
-          evaluation_count = ai_tool_allowlist_policies.evaluation_count + 1,
-          success_count = ai_tool_allowlist_policies.success_count + 1,
+          confidence = GREATEST(ai."ai_tool_allowlist_policies".confidence, EXCLUDED.confidence),
+          evaluation_count = ai."ai_tool_allowlist_policies".evaluation_count + 1,
+          success_count = ai."ai_tool_allowlist_policies".success_count + 1,
           last_seen_at = NOW(),
           updated_at = NOW()
       `);
@@ -261,7 +261,7 @@ export async function recordToolPolicyEvent(input: {
 
     if (input.policyKey) {
       await prisma.$executeRaw(Prisma.sql`
-        UPDATE ai_tool_allowlist_policies
+        UPDATE ai."ai_tool_allowlist_policies"
         SET
           evaluation_count = evaluation_count + 1,
           success_count = success_count + ${input.success ? 1 : 0},
@@ -337,7 +337,7 @@ export async function getToolPolicyObservabilityDurable(filters?: {
           actual_tools_json,
           success,
           created_at
-        FROM ai_tool_policy_events
+        FROM ai."ai_tool_policy_events"
         WHERE 1 = 1
         ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
         ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}

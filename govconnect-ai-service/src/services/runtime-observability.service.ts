@@ -37,7 +37,7 @@ export async function recordMemoryTrace(input: {
       : null;
 
     await prisma.$executeRaw(Prisma.sql`
-      INSERT INTO ai_memory_traces (
+      INSERT INTO ai."ai_memory_traces" (
         id,
         trace_id,
         wa_user_id,
@@ -135,7 +135,7 @@ export async function getMemoryObservabilityDurable(filters?: {
         summary_text,
         selected_memories_json,
         created_at
-      FROM ai_memory_traces
+      FROM ai."ai_memory_traces"
       WHERE 1 = 1
       ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
       ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
@@ -230,7 +230,7 @@ export async function recordGuardrailEvent(input: {
 }): Promise<void> {
   try {
     await prisma.$executeRaw(Prisma.sql`
-      INSERT INTO ai_guardrail_events (
+      INSERT INTO ai."ai_guardrail_events" (
         id,
         trace_id,
         wa_user_id,
@@ -313,7 +313,7 @@ export async function getGuardrailObservabilityDurable(filters?: {
         reason,
         message_preview,
         created_at
-      FROM ai_guardrail_events
+      FROM ai."ai_guardrail_events"
       WHERE 1 = 1
       ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
       ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}

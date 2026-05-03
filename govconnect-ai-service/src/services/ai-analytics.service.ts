@@ -573,7 +573,7 @@ class AIAnalyticsService {
         created_at: Date;
       }>>(Prisma.sql`
         SELECT analytics_session_id, created_at
-        FROM ai_interaction_events
+        FROM ai."ai_interaction_events"
         WHERE wa_user_id = ${opts.waUserId}
         ${opts.villageId ? Prisma.sql`AND village_id = ${opts.villageId}` : Prisma.empty}
         ${opts.channel ? Prisma.sql`AND channel = ${opts.channel}` : Prisma.empty}
@@ -592,7 +592,7 @@ class AIAnalyticsService {
         : Prisma.sql`NULL`;
 
       await prisma.$executeRaw(Prisma.sql`
-        INSERT INTO ai_interaction_events (
+        INSERT INTO ai."ai_interaction_events" (
           id,
           analytics_session_id,
           wa_user_id,
@@ -661,7 +661,7 @@ class AIAnalyticsService {
         : Prisma.sql`NULL`;
 
       await prisma.$executeRaw(Prisma.sql`
-        INSERT INTO ai_retrieval_traces (
+        INSERT INTO ai."ai_retrieval_traces" (
           id,
           trace_id,
           wa_user_id,
@@ -739,7 +739,7 @@ class AIAnalyticsService {
               FROM ai_token_usage tu
               ${where}
             ), 0)::float AS total_cost_usd
-          FROM ai_interaction_events
+          FROM ai."ai_interaction_events"
           ${where}
         `),
         prisma.$queryRaw<Array<{ intent: string; count: number; success_rate: number | null }>>(Prisma.sql`
@@ -747,7 +747,7 @@ class AIAnalyticsService {
             intent,
             COUNT(*)::int AS count,
             COALESCE(AVG(CASE WHEN success THEN 100.0 ELSE 0.0 END), 0)::float AS success_rate
-          FROM ai_interaction_events
+          FROM ai."ai_interaction_events"
           ${where}
           GROUP BY intent
           ORDER BY count DESC
@@ -761,7 +761,7 @@ class AIAnalyticsService {
             SELECT
               analytics_session_id,
               string_agg(intent, ' -> ' ORDER BY created_at ASC) AS pattern
-            FROM ai_interaction_events
+            FROM ai."ai_interaction_events"
             ${where}
             GROUP BY analytics_session_id
           ) session_patterns
@@ -846,7 +846,7 @@ class AIAnalyticsService {
       const rows = await prisma.$queryRaw<Array<{ intent: string; count: number; percentage: number }>>(Prisma.sql`
         WITH total AS (
           SELECT COUNT(*)::float AS total_count
-          FROM ai_interaction_events
+          FROM ai."ai_interaction_events"
           ${where}
         )
         SELECT
@@ -857,7 +857,7 @@ class AIAnalyticsService {
               THEN ROUND((COUNT(*)::float / (SELECT total_count FROM total)) * 100)
             ELSE 0
           END::float AS percentage
-        FROM ai_interaction_events
+        FROM ai."ai_interaction_events"
         ${where}
         GROUP BY intent
         ORDER BY count DESC
@@ -902,7 +902,7 @@ class AIAnalyticsService {
                 THEN ROUND((COUNT(*)::float / COUNT(DISTINCT analytics_session_id))::numeric, 1)
               ELSE 0
             END::float AS avg_messages_per_session
-          FROM ai_interaction_events
+          FROM ai."ai_interaction_events"
           ${where}
         `),
         prisma.$queryRaw<Array<{ pattern: string; count: number }>>(Prisma.sql`
@@ -913,7 +913,7 @@ class AIAnalyticsService {
             SELECT
               analytics_session_id,
               string_agg(intent, ' -> ' ORDER BY created_at ASC) AS pattern
-            FROM ai_interaction_events
+            FROM ai."ai_interaction_events"
             ${where}
             GROUP BY analytics_session_id
           ) session_patterns
@@ -929,7 +929,7 @@ class AIAnalyticsService {
             SELECT
               analytics_session_id,
               (ARRAY_AGG(intent ORDER BY created_at DESC))[1] AS last_intent
-            FROM ai_interaction_events
+            FROM ai."ai_interaction_events"
             ${where}
             GROUP BY analytics_session_id
           ) session_last_intents
@@ -938,14 +938,14 @@ class AIAnalyticsService {
         `),
         prisma.$queryRaw<Array<{ fallback_count: number }>>(Prisma.sql`
           SELECT COUNT(*)::int AS fallback_count
-          FROM ai_interaction_events
+          FROM ai."ai_interaction_events"
           ${fallbackWhere}
         `),
         prisma.$queryRaw<Array<{ knowledge_hit: number; knowledge_miss: number }>>(Prisma.sql`
           SELECT
             COALESCE(SUM(CASE WHEN has_knowledge THEN 1 ELSE 0 END), 0)::int AS knowledge_hit,
             COALESCE(SUM(CASE WHEN has_knowledge THEN 0 ELSE 1 END), 0)::int AS knowledge_miss
-          FROM ai_retrieval_traces
+          FROM ai."ai_retrieval_traces"
           WHERE 1 = 1
           ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
           ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
@@ -997,7 +997,7 @@ class AIAnalyticsService {
           COALESCE(SUM(CASE WHEN has_knowledge THEN 1 ELSE 0 END), 0)::int AS hits,
           COALESCE(SUM(CASE WHEN has_knowledge THEN 0 ELSE 1 END), 0)::int AS misses,
           COALESCE(SUM(CASE WHEN has_knowledge THEN 0 ELSE 1 END), 0)::int AS no_knowledge
-        FROM ai_retrieval_traces
+        FROM ai."ai_retrieval_traces"
         WHERE 1 = 1
         ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
         ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
@@ -1078,7 +1078,7 @@ class AIAnalyticsService {
           channel,
           village_id,
           created_at
-        FROM ai_retrieval_traces
+        FROM ai."ai_retrieval_traces"
         WHERE 1 = 1
         ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
         ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}

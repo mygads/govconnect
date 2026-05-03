@@ -27,7 +27,7 @@ export async function exportObservabilityData(
   if (kind === 'all' || kind === 'interactions') {
     payload.interactions = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT *
-      FROM ai_interaction_events
+      FROM ai."ai_interaction_events"
       WHERE 1 = 1
       ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
       ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
@@ -39,7 +39,7 @@ export async function exportObservabilityData(
   if (kind === 'all' || kind === 'retrieval') {
     payload.retrieval = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT *
-      FROM ai_retrieval_traces
+      FROM ai."ai_retrieval_traces"
       WHERE 1 = 1
       ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
       ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
@@ -51,7 +51,7 @@ export async function exportObservabilityData(
   if (kind === 'all' || kind === 'memory') {
     payload.memory = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT *
-      FROM ai_memory_traces
+      FROM ai."ai_memory_traces"
       WHERE 1 = 1
       ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
       ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
@@ -63,7 +63,7 @@ export async function exportObservabilityData(
   if (kind === 'all' || kind === 'guardrails') {
     payload.guardrails = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT *
-      FROM ai_guardrail_events
+      FROM ai."ai_guardrail_events"
       WHERE 1 = 1
       ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
       ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
@@ -75,7 +75,7 @@ export async function exportObservabilityData(
   if (kind === 'all' || kind === 'tool_policy_events') {
     payload.tool_policy_events = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT *
-      FROM ai_tool_policy_events
+      FROM ai."ai_tool_policy_events"
       WHERE 1 = 1
       ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
       ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}
@@ -87,7 +87,7 @@ export async function exportObservabilityData(
   if (kind === 'all' || kind === 'tool_policies') {
     payload.tool_policies = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT *
-      FROM ai_tool_allowlist_policies
+      FROM ai."ai_tool_allowlist_policies"
       ORDER BY updated_at DESC
       LIMIT ${limit}
     `);

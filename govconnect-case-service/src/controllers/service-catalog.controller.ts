@@ -93,7 +93,21 @@ export async function handleGetServices(req: Request, res: Response) {
         ...(village_id ? { village_id } : {}),
         ...(category_id ? { category_id } : {}),
       },
-      include: { requirements: true, category: true },
+      select: {
+        id: true,
+        village_id: true,
+        category_id: true,
+        name: true,
+        description: true,
+        slug: true,
+        mode: true,
+        estimated_processing_time: true,
+        is_active: true,
+        created_at: true,
+        updated_at: true,
+        requirements: true,
+        category: true,
+      },
       orderBy: { created_at: 'asc' }
     });
     return res.json({ data });
@@ -138,7 +152,21 @@ export async function handleSearchServices(req: Request, res: Response) {
           { category: { name: { contains: query, mode: 'insensitive' } } },
         ],
       },
-      include: { requirements: true, category: true },
+      select: {
+        id: true,
+        village_id: true,
+        category_id: true,
+        name: true,
+        description: true,
+        slug: true,
+        mode: true,
+        estimated_processing_time: true,
+        is_active: true,
+        created_at: true,
+        updated_at: true,
+        requirements: true,
+        category: true,
+      },
       orderBy: { created_at: 'asc' },
       take: limit,
     });
@@ -158,7 +186,21 @@ export async function handleGetServiceById(req: Request, res: Response) {
     }
     const service = await prisma.serviceItem.findUnique({
       where: { id },
-      include: { requirements: true, category: true }
+      select: {
+        id: true,
+        village_id: true,
+        category_id: true,
+        name: true,
+        description: true,
+        slug: true,
+        mode: true,
+        estimated_processing_time: true,
+        is_active: true,
+        created_at: true,
+        updated_at: true,
+        requirements: true,
+        category: true,
+      },
     });
     if (!service) return res.status(404).json({ error: 'Service not found' });
     return res.json({ data: service });
@@ -192,7 +234,6 @@ export async function handleCreateService(req: Request, res: Response) {
         description,
         slug,
         mode: mode || 'both',
-        estimated_cost: estimated_cost ?? null,
         estimated_processing_time: estimated_processing_time ?? null,
         is_active: is_active ?? true,
       }
@@ -227,7 +268,6 @@ export async function handleUpdateService(req: Request, res: Response) {
         description: description ?? undefined,
         slug: slug ?? undefined,
         mode: mode ?? undefined,
-        estimated_cost: estimated_cost ?? undefined,
         estimated_processing_time: estimated_processing_time ?? undefined,
         is_active: is_active ?? undefined,
         category_id: category_id ?? undefined,
@@ -249,7 +289,21 @@ export async function handleGetServiceBySlug(req: Request, res: Response) {
     }
     const service = await prisma.serviceItem.findFirst({
       where: { village_id, slug },
-      include: { requirements: true, category: true }
+      select: {
+        id: true,
+        village_id: true,
+        category_id: true,
+        name: true,
+        description: true,
+        slug: true,
+        mode: true,
+        estimated_processing_time: true,
+        is_active: true,
+        created_at: true,
+        updated_at: true,
+        requirements: true,
+        category: true,
+      },
     });
     if (!service) return res.status(404).json({ error: 'Service not found' });
     return res.json({ data: service });

@@ -191,13 +191,13 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
     const complaintTrendRaw = village_id
       ? await prisma.$queryRawUnsafe<any[]>(`
           SELECT DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM "complaints" 
+          FROM complaint
           WHERE created_at >= $2 AND village_id = $3 AND deleted_at IS NULL
           GROUP BY 1 ORDER BY 1
         `, truncType, startDate, village_id)
       : await prisma.$queryRawUnsafe<any[]>(`
           SELECT DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM "complaints" 
+          FROM complaint
           WHERE created_at >= $2 AND deleted_at IS NULL
           GROUP BY 1 ORDER BY 1
         `, truncType, startDate);
@@ -223,13 +223,13 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
     const categoryTrendRaw = village_id
       ? await prisma.$queryRawUnsafe<any[]>(`
           SELECT kategori, DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM "complaints"
+          FROM complaint
           WHERE created_at >= $2 AND village_id = $3 AND deleted_at IS NULL
           GROUP BY 1, 2 ORDER BY 2
         `, truncType, startDate, village_id)
       : await prisma.$queryRawUnsafe<any[]>(`
           SELECT kategori, DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM "complaints"
+          FROM complaint
           WHERE created_at >= $2 AND deleted_at IS NULL
           GROUP BY 1, 2 ORDER BY 2
         `, truncType, startDate);
@@ -238,13 +238,13 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
     const hourlyComplaint = village_id
       ? await prisma.$queryRawUnsafe<any[]>(`
           SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*)::int as count
-          FROM "complaints"
+          FROM complaint
           WHERE created_at >= $1 AND village_id = $2 AND deleted_at IS NULL
           GROUP BY 1
         `, startDate, village_id)
       : await prisma.$queryRawUnsafe<any[]>(`
           SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*)::int as count
-          FROM "complaints"
+          FROM complaint
           WHERE created_at >= $1 AND deleted_at IS NULL
           GROUP BY 1
         `, startDate);
@@ -268,13 +268,13 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
     const dailyComplaint = village_id
       ? await prisma.$queryRawUnsafe<any[]>(`
           SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*)::int as count
-          FROM "complaints"
+          FROM complaint
           WHERE created_at >= $1 AND village_id = $2 AND deleted_at IS NULL
           GROUP BY 1
         `, startDate, village_id)
       : await prisma.$queryRawUnsafe<any[]>(`
           SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*)::int as count
-          FROM "complaints"
+          FROM complaint
           WHERE created_at >= $1 AND deleted_at IS NULL
           GROUP BY 1
         `, startDate);
