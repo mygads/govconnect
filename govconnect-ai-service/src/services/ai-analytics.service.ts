@@ -736,7 +736,7 @@ class AIAnalyticsService {
             COALESCE(AVG(processing_time_ms), 0)::float AS avg_processing_time_ms,
             COALESCE((
               SELECT SUM(cost_usd)
-              FROM ai_token_usage tu
+              FROM ai."ai_token_usage" tu
               ${where}
             ), 0)::float AS total_cost_usd
           FROM ai."ai_interaction_events"
@@ -774,7 +774,7 @@ class AIAnalyticsService {
             date_trunc('day', created_at) AS day,
             COALESCE(SUM(total_tokens), 0)::int AS tokens,
             COALESCE(SUM(cost_usd), 0)::float AS cost
-          FROM ai_token_usage
+          FROM ai."ai_token_usage"
           WHERE created_at >= NOW() - INTERVAL '6 days'
           ${filters?.villageId ? Prisma.sql`AND village_id = ${filters.villageId}` : Prisma.empty}
           ${filters?.channel ? Prisma.sql`AND channel = ${filters.channel}` : Prisma.empty}

@@ -66,7 +66,7 @@ async function loadFromDb(providerId: string, lane: LaneKind): Promise<HealthRec
   try {
     const rows = await prisma.$queryRaw<any[]>`
       SELECT provider_id, lane_type, consecutive_failures, demoted_until, last_success_at, last_failure_at, probe_in_flight_until
-      FROM ai_provider_health
+      FROM ai."ai_provider_health"
       WHERE provider_id = ${providerId} AND lane_type = ${lane}
       LIMIT 1
     `;
@@ -95,7 +95,7 @@ async function getRecord(providerId: string, lane: LaneKind): Promise<HealthReco
 async function persistRecord(rec: HealthRecord): Promise<void> {
   try {
     await prisma.$executeRaw`
-      INSERT INTO ai_provider_health
+      INSERT INTO ai."ai_provider_health"
         (provider_id, lane_type, consecutive_failures, demoted_until, last_success_at, last_failure_at, probe_in_flight_until, created_at, updated_at)
       VALUES (${rec.providerId}, ${rec.laneType}, ${rec.consecutiveFailures}, ${rec.demotedUntil}, ${rec.lastSuccessAt}, ${rec.lastFailureAt}, ${rec.probeInFlightUntil}, NOW(), NOW())
       ON CONFLICT (provider_id, lane_type) DO UPDATE SET
@@ -129,7 +129,7 @@ export async function recordFailure(providerId: string, lane: LaneKind): Promise
 
   try {
     const rows = await prisma.$queryRaw<any[]>`
-      INSERT INTO ai_provider_health
+      INSERT INTO ai."ai_provider_health"
         (provider_id, lane_type, consecutive_failures, demoted_until, last_success_at, last_failure_at, probe_in_flight_until, created_at, updated_at)
       VALUES (${providerId}, ${lane}, 1, NULL, NULL, NOW(), NULL, NOW(), NOW())
       ON CONFLICT (provider_id, lane_type) DO UPDATE SET
@@ -181,7 +181,7 @@ export async function shouldProbe(providerId: string, lane: LaneKind): Promise<b
     const claimed = await prisma.$transaction(async (tx: any) => {
       const rows = (await tx.$queryRaw`
         SELECT provider_id, lane_type, consecutive_failures, demoted_until, last_success_at, last_failure_at, probe_in_flight_until
-        FROM ai_provider_health
+        FROM ai."ai_provider_health"
         WHERE provider_id = ${providerId}
           AND lane_type = ${lane}
           AND demoted_until IS NOT NULL
@@ -193,7 +193,7 @@ export async function shouldProbe(providerId: string, lane: LaneKind): Promise<b
       if (!rows?.[0]) return null;
 
       await tx.$executeRaw`
-        UPDATE ai_provider_health
+        UPDATE ai."ai_provider_health"
         SET probe_in_flight_until = ${probeUntil}, updated_at = NOW()
         WHERE provider_id = ${providerId} AND lane_type = ${lane}
       `;

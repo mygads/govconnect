@@ -566,24 +566,92 @@ jobs:
             
             CHANNEL_NEEDS_BASELINE=$(sudo -u postgres psql -d govconnect -Atc "select case when exists (select 1 from information_schema.tables where table_schema = 'channel' and table_name = 'wa_sessions') and not exists (select 1 from information_schema.tables where table_schema = 'channel' and table_name = '_prisma_migrations') then 'true' else 'false' end")
 
-            # Run migrations for services that are running and include migration files.
-            for service in dashboard channel-service ai-service case-service notification-service; do
-              if sudo docker compose ps --services --status running | grep -qx "$service"; then
-                if sudo docker compose exec -T "$service" sh -c "test -x ./node_modules/.bin/prisma && test -d prisma/migrations && test -n \"\$(ls -A prisma/migrations 2>/dev/null)\""; then
-                  if [ "$service" = "channel-service" ] && [ "$CHANNEL_NEEDS_BASELINE" = "true" ]; then
-                    echo "📌 Marking existing channel baseline migrations as applied..."
-                    for migration in 20240101000000_channel_baseline 20250101000000_add_wa_support_fields 20260207_add_instance_name 20260424_add_takeover_enrichment_json; do
-                      sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate resolve --applied $migration" || true
-                    done
-                  fi
+            run_migration_with_retry() {
+              service="$1"
+              attempt=1
+              max_attempts=5
+              sleep_seconds=5
+              tmp_log=$(mktemp)
 
-                  echo "📦 Running $service migrations..."
-                  sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate deploy"
-                else
-                  echo "⏭️ $service has no Prisma migrations"
+              while [ "$attempt" -le "$max_attempts" ]; do
+                echo "📦 Running $service migrations (attempt $attempt/$max_attempts)..."
+
+                if sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate deploy" >"$tmp_log" 2>&1; then
+                  cat "$tmp_log"
+                  rm -f "$tmp_log"
+                  return 0
                 fi
+
+                cat "$tmp_log"
+                if grep -Eqi "P1002|advisory lock|pg_advisory_lock|timed out trying to acquire" "$tmp_log"; then
+                  if [ "$attempt" -lt "$max_attempts" ]; then
+                    echo "⏳ Advisory lock timeout on $service, retrying in ${sleep_seconds}s..."
+                    sleep "$sleep_seconds"
+                    attempt=$((attempt + 1))
+                    sleep_seconds=$((sleep_seconds * 2))
+                    continue
+                  fi
+                fi
+
+                rm -f "$tmp_log"
+                return 1
+              done
+
+              rm -f "$tmp_log"
+              return 1
+            }
+
+            migration_failed=0
+            migration_summary=$(mktemp)
+
+            # Run migrations in explicit serial order for shared advisory locks.
+            for service in ai-service case-service notification-service channel-service dashboard; do
+              if ! sudo docker compose ps --services --status running | grep -qx "$service"; then
+                echo "⏭️ $service not running, migration skipped"
+                echo "$service skipped_not_running" >> "$migration_summary"
+                continue
+              fi
+
+              if ! sudo docker compose exec -T "$service" sh -c "test -x ./node_modules/.bin/prisma && test -d prisma/migrations && test -n \"\$(ls -A prisma/migrations 2>/dev/null)\""; then
+                echo "⏭️ $service has no Prisma migrations"
+                echo "$service skipped_no_migrations" >> "$migration_summary"
+                continue
+              fi
+
+              db_url=$(sudo docker compose exec -T "$service" sh -c 'printf "%s" "${DATABASE_URL:-}"')
+              db_name=$(printf '%s' "$db_url" | sed -n 's|.*/\([^?]*\).*|\1|p')
+              db_schema=$(printf '%s' "$db_url" | sed -n 's|.*[?&]schema=\([^&]*\).*|\1|p')
+              [ -n "$db_name" ] || db_name="unknown"
+              [ -n "$db_schema" ] || db_schema="default"
+              echo "🔎 $service target db=$db_name schema=$db_schema"
+
+              if [ "$service" = "channel-service" ] && [ "$CHANNEL_NEEDS_BASELINE" = "true" ]; then
+                echo "📌 Marking existing channel baseline migrations as applied..."
+                for migration in 20240101000000_channel_baseline 20250101000000_add_wa_support_fields 20260207_add_instance_name 20260424_add_takeover_enrichment_json; do
+                  sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate resolve --applied $migration" || true
+                done
+              fi
+
+              if run_migration_with_retry "$service"; then
+                echo "✅ $service migrations succeeded"
+                echo "$service success" >> "$migration_summary"
+              else
+                echo "❌ $service migrations failed"
+                echo "$service failed" >> "$migration_summary"
+                migration_failed=1
               fi
             done
+
+            echo "📋 Migration summary"
+            echo "--------------------"
+            cat "$migration_summary"
+            rm -f "$migration_summary"
+
+            if [ "$migration_failed" -ne 0 ]; then
+              echo "❌ One or more service migrations failed"
+              exit 1
+            fi
+
             
             echo "✅ Database migrations complete!"
           ENDSSH

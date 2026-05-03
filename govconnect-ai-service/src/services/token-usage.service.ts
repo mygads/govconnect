@@ -676,7 +676,7 @@ export async function getUsageByPeriod(
       SUM(total_tokens)::int AS total_tokens,
       SUM(cost_usd)::float AS cost_usd,
       COUNT(*)::int AS call_count
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
     GROUP BY period_start
     ORDER BY period_start ASC
@@ -712,7 +712,7 @@ export async function getUsageByModel(
       SUM(cost_usd)::float AS cost_usd,
       COUNT(*)::int AS call_count,
       AVG(duration_ms)::int AS avg_duration_ms
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
     GROUP BY model
     ORDER BY total_tokens DESC
@@ -746,8 +746,8 @@ export async function getUsageByProvider(
         SUM(u.margin_usd)::float AS margin_usd,
         COUNT(*)::int AS call_count,
         AVG(u.duration_ms)::int AS avg_duration_ms
-      FROM ai_token_usage u
-      LEFT JOIN ai_providers p ON p.id = u.provider_id
+      FROM ai."ai_token_usage" u
+      LEFT JOIN ai."ai_providers" p ON p.id = u.provider_id
       WHERE u.created_at >= ${startDate}
         AND u.created_at <= ${endDate}
         AND (${villageId}::text IS NULL OR u.village_id = ${villageId})
@@ -771,8 +771,8 @@ export async function getUsageByProvider(
         SUM(u.margin_usd)::float AS margin_usd,
         COUNT(*)::int AS call_count,
         AVG(u.duration_ms)::int AS avg_duration_ms
-      FROM ai_token_usage u
-      LEFT JOIN ai_models m ON m.id = u.model_config_id
+      FROM ai."ai_token_usage" u
+      LEFT JOIN ai."ai_models" m ON m.id = u.model_config_id
       WHERE u.created_at >= ${startDate}
         AND u.created_at <= ${endDate}
         AND (${villageId}::text IS NULL OR u.village_id = ${villageId})
@@ -847,7 +847,7 @@ export async function getUsageByVillage(
       SUM(total_tokens)::int AS total_tokens,
       SUM(cost_usd)::float AS cost_usd,
       COUNT(*)::int AS call_count
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
     GROUP BY village_id
     ORDER BY total_tokens DESC
@@ -887,7 +887,7 @@ export async function getUsageByIntentFamily(
       SUM(cost_usd)::float AS cost_usd,
       COUNT(*)::int AS call_count,
       COUNT(DISTINCT COALESCE(session_id, wa_user_id))::int AS unique_conversations
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
     GROUP BY intent_family, COALESCE(intent, 'unknown')
     ORDER BY cost_usd DESC, total_tokens DESC
@@ -926,7 +926,7 @@ export async function getUsageByTenantFlow(
       COUNT(*)::int AS call_count,
       COUNT(DISTINCT COALESCE(session_id, wa_user_id))::int AS unique_conversations,
       COALESCE(SUM(CASE WHEN success = false THEN 1 ELSE 0 END), 0)::int AS failed_calls
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
     GROUP BY COALESCE(village_id, '__unknown__'), flow
     ORDER BY cost_usd DESC, total_tokens DESC
@@ -959,7 +959,7 @@ export async function getLayerBreakdown(
       SUM(cost_usd)::float AS cost_usd,
       COUNT(*)::int AS call_count,
       AVG(duration_ms)::int AS avg_duration_ms
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
     GROUP BY layer_type, call_type, model
     ORDER BY layer_type, call_count DESC
@@ -990,7 +990,7 @@ export async function getAvgTokensPerChat(
       COALESCE(AVG(output_tokens), 0)::int AS avg_output,
       COALESCE(AVG(total_tokens), 0)::int AS avg_total,
       COUNT(*)::int AS total_chats
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
   `);
 
@@ -1013,7 +1013,7 @@ export async function getResponseCountByVillage(
       village_id,
       COUNT(*)::int AS response_count,
       COUNT(DISTINCT wa_user_id)::int AS unique_users
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE created_at >= ${startDate}
       AND created_at <= ${endDate}
       AND call_type = 'main_chat'
@@ -1060,7 +1060,7 @@ export async function getUsageByVillageAndModel(
       SUM(total_tokens)::int AS total_tokens,
       SUM(cost_usd)::float AS cost_usd,
       COUNT(*)::int AS call_count
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
     GROUP BY village_id, model, layer_type
     ORDER BY village_id, total_tokens DESC
@@ -1093,7 +1093,7 @@ export async function getUsageByPeriodAndLayer(
       SUM(total_tokens)::int AS total_tokens,
       SUM(cost_usd)::float AS cost_usd,
       COUNT(*)::int AS call_count
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
     GROUP BY period_start, layer_type
     ORDER BY period_start ASC, layer_type
@@ -1169,7 +1169,7 @@ export async function getTokenUsageSummary(
       COALESCE(SUM(CASE WHEN call_type = 'main_chat' THEN cost_usd ELSE 0 END), 0)::float AS main_chat_cost,
       COALESCE(SUM(CASE WHEN layer_type = 'full_nlu' THEN cost_usd ELSE 0 END), 0)::float AS full_nlu_cost,
       COALESCE(SUM(CASE WHEN layer_type = 'micro_nlu' THEN cost_usd ELSE 0 END), 0)::float AS micro_nlu_cost
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     WHERE ${where}
   `);
 
@@ -1223,7 +1223,7 @@ export async function getTokenUsageBySource(slug?: string) {
       COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
       COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
       COALESCE(SUM(cost_usd), 0)::float AS total_cost_usd
-    FROM ai_token_usage
+    FROM ai."ai_token_usage"
     ${where}
     GROUP BY COALESCE(key_source, 'unknown')
     ORDER BY total_tokens DESC
@@ -1236,7 +1236,7 @@ export async function getTokenUsageBySource(slug?: string) {
  * Returns the number of deleted rows.
  */
 export async function resetAllTokenUsage(): Promise<number> {
-  const result = await prisma.$executeRaw`TRUNCATE TABLE ai_token_usage`;
+  const result = await prisma.$executeRaw`TRUNCATE TABLE ai."ai_token_usage"`;
   logger.info('🗑️ All token usage data has been reset (TRUNCATE)', { affectedRows: result });
   return result;
 }

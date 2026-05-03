@@ -228,7 +228,7 @@ export async function recordToolPolicyEvent(input: {
 }): Promise<void> {
   try {
     await prisma.$executeRaw(Prisma.sql`
-      INSERT INTO ai_tool_policy_events (
+      INSERT INTO ai."ai_tool_policy_events" (
         id,
         trace_id,
         wa_user_id,
