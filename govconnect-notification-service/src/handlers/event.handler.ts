@@ -65,9 +65,29 @@ export async function handleEvent(routingKey: string, data: any): Promise<void> 
       await handleUrgentAlert(data as UrgentAlertEvent);
       break;
 
+    case 'notification.send':
+      await handleDirectNotification(data);
+      break;
+
     default:
       logger.warn('Unknown routing key', { routingKey });
   }
+}
+
+async function handleDirectNotification(event: any): Promise<void> {
+  const { village_id, channel, channel_identifier } = resolveChannel(event);
+  const target = channel_identifier || event.to;
+  if (!event.message || !target) {
+    throw new Error('message and to/channel_identifier are required');
+  }
+
+  await sendNotification({
+    village_id,
+    channel,
+    channel_identifier: String(target),
+    message: String(event.message),
+    notificationType: String(event.type || 'direct'),
+  });
 }
 
 async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<void> {

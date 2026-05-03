@@ -6,22 +6,22 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { buildUrl, getInternalApiKey, ServicePath } from '@/lib/api-client';
-
-const WEBCHAT_SESSION_ID_PATTERN = /^(webchat|wc|session)[:_-]?[a-zA-Z0-9._:-]{8,120}$/;
+import { enforceWebchatRateLimit, validateWebchatSessionId } from '@/lib/webchat-guard';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { sessionId } = body;
+    const normalizedSessionId = validateWebchatSessionId(body?.sessionId);
 
-    if (typeof sessionId !== 'string' || !WEBCHAT_SESSION_ID_PATTERN.test(sessionId.trim())) {
+    if (!normalizedSessionId) {
       return NextResponse.json(
         { success: false, error: 'sessionId tidak valid' },
         { status: 400 }
       );
     }
 
-    const normalizedSessionId = sessionId.trim();
+    const rateLimitError = enforceWebchatRateLimit(request, normalizedSessionId, 'clear-session');
+    if (rateLimitError) return rateLimitError;
 
     // Call AI Service to clear user caches and profile
     const clearUrl = buildUrl(ServicePath.AI, '/admin/cache/clear-user');

@@ -206,6 +206,14 @@ function tableEndpointModeLabel(model: ModelRow) {
   return endpointMode(model.lane_type, model.endpoint_path || "").label
 }
 
+function copiedPriorityForLane(targetLane: "rewrite" | "rerank") {
+  return targetLane === "rewrite" ? "110" : "120"
+}
+
+function copiedEndpointForLane(targetLane: "rewrite" | "rerank", provider?: ProviderRow) {
+  return defaultEndpointForLane(targetLane, provider)
+}
+
 function priceValue(value: number | null | undefined) {
   return value === null || value === undefined ? "" : String(value)
 }
@@ -332,13 +340,22 @@ export default function SuperadminAIModelsPage() {
   const copyableModels = copySource.sourceLane === "rewrite" ? rewriteModels : llmModels
   const filteredCopyableModels = useMemo(() => {
     const query = copySourceQuery.trim().toLowerCase()
-    if (!query) return copyableModels
-    return copyableModels.filter((model) => {
-      const providerName = model.provider?.name || ""
-      return [model.display_name, model.upstream_model_name, providerName]
-        .join(" ")
-        .toLowerCase()
-        .includes(query)
+    const matched = !query
+      ? copyableModels
+      : copyableModels.filter((model) => {
+          const providerName = model.provider?.name || ""
+          return [model.display_name, model.upstream_model_name, providerName]
+            .join(" ")
+            .toLowerCase()
+            .includes(query)
+        })
+
+    return [...matched].sort((a, b) => {
+      const providerCompare = (a.provider?.name || "").localeCompare(b.provider?.name || "")
+      if (providerCompare !== 0) return providerCompare
+      const priorityCompare = (a.priority ?? 100) - (b.priority ?? 100)
+      if (priorityCompare !== 0) return priorityCompare
+      return a.display_name.localeCompare(b.display_name)
     })
   }, [copySourceQuery, copyableModels])
   const usesFixedActualPricing = isFixedPricing(actualPricingType)
@@ -509,7 +526,7 @@ export default function SuperadminAIModelsPage() {
 
   const copyFromModel = (source: ModelRow, targetLane: "rewrite" | "rerank") => {
     const provider = providers.find((row) => row.id === source.provider_id)
-    const nextEndpointPath = defaultEndpointForLane(targetLane, provider)
+    const nextEndpointPath = copiedEndpointForLane(targetLane, provider)
     const nextActualPricingType = targetLane === "rerank"
       ? normalizePricingType(targetLane, nextEndpointPath, source.actual_pricing_type)
       : "per_million_tokens"
@@ -531,7 +548,7 @@ export default function SuperadminAIModelsPage() {
       adjusted_fixed_price: nextAdjustedPricingType === "fixed_per_call" ? priceValue(source.adjusted_fixed_price_usd) : "",
       adjusted_input: priceValue(source.adjusted_input_price_per_million_usd),
       adjusted_output: priceValue(source.adjusted_output_price_per_million_usd),
-      priority: targetLane === "rewrite" ? "110" : "120",
+      priority: copiedPriorityForLane(targetLane),
       is_active: "true",
       supports_vision: "false",
       supports_audio: "false",
@@ -950,10 +967,27 @@ export default function SuperadminAIModelsPage() {
                   <div>
                     <div className="font-medium">{model.display_name}</div>
                     <div className="text-sm text-muted-foreground">{model.provider?.name || model.provider_id} · {model.upstream_model_name}</div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {model.supports_vision && <Badge variant="secondary"><Eye className="mr-1 h-3 w-3" />Image</Badge>}
+                      {model.supports_audio && <Badge variant="secondary"><Mic className="mr-1 h-3 w-3" />Audio</Badge>}
+                      {!model.supports_vision && !model.supports_audio && <Badge variant="outline">Text only</Badge>}
+                    </div>
                   </div>
                   <div className="text-right text-sm">
                     <div>Price actual: {formatPrice(model.actual_pricing_type, model.actual_fixed_price_usd, model.actual_input_price_per_million_usd, model.actual_output_price_per_million_usd)}</div>
                     <div className="text-muted-foreground">Price adjusted: {formatPrice(model.adjusted_pricing_type, model.adjusted_fixed_price_usd, model.adjusted_input_price_per_million_usd, model.adjusted_output_price_per_million_usd)}</div>
+                  </div>
+                </div>
+                <div className="mt-3 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                  <div className="font-medium text-foreground">Preview hasil copy</div>
+                  <div className="mt-1">Lane target: {(copySource.targetLane || "rewrite").toUpperCase()}</div>
+                  <div>Display name: {buildCopiedDisplayName(model.display_name, copySource.targetLane || "rewrite")}</div>
+                  <div>Endpoint: {copiedEndpointForLane(copySource.targetLane || "rewrite", providers.find((row) => row.id === model.provider_id)) || "-"}</div>
+                  <div>Priority: {copiedPriorityForLane(copySource.targetLane || "rewrite")}</div>
+                  <div>
+                    Pricing mode: {(copySource.targetLane === "rerank" && normalizePricingType(copySource.targetLane, copiedEndpointForLane(copySource.targetLane, providers.find((row) => row.id === model.provider_id)), model.actual_pricing_type) === "fixed_per_call")
+                      ? "Per search"
+                      : "Input / Output"}
                   </div>
                 </div>
               </button>

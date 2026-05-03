@@ -29,7 +29,7 @@ export async function sendNotification(data: {
   type: string;
 }) {
   try {
-    const response = await notificationServiceClient.post('/internal/send', data);
+    const response = await notificationServiceClient.post('/internal/events/notification_send', data);
     return response.data;
   } catch (error: any) {
     console.error('[NotificationServiceClient] Failed to send notification:', error.message);
