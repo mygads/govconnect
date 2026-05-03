@@ -98,7 +98,7 @@ class RateLimiterService {
         expires_at: Date | null;
       }>>`
         SELECT wa_user_id, village_id, scope_key, reason, blocked_at, expires_at
-        FROM rate_limit_blacklist
+        FROM ai."rate_limit_blacklist"
         WHERE expires_at IS NULL OR expires_at > NOW()
       `;
 
@@ -133,7 +133,7 @@ class RateLimiterService {
     const violations = this.data.users[scopeKey]?.violations || 0;
 
     prisma.$executeRaw`
-      INSERT INTO rate_limit_blacklist (id, wa_user_id, village_id, scope_key, reason, blocked_at, expires_at, violation_count, created_at, updated_at)
+      INSERT INTO ai."rate_limit_blacklist" (id, wa_user_id, village_id, scope_key, reason, blocked_at, expires_at, violation_count, created_at, updated_at)
       VALUES (${scopeKey}, ${entry.wa_user_id}, ${entry.village_id || null}, ${scopeKey}, ${entry.reason}, ${new Date(entry.addedAt)}, ${expiresAt}, ${violations}, NOW(), NOW())
       ON CONFLICT (scope_key) DO UPDATE SET
         wa_user_id = EXCLUDED.wa_user_id,
@@ -156,7 +156,7 @@ class RateLimiterService {
    */
   private removeBlacklistFromDB(scopeKey: string): void {
     prisma.$executeRaw`
-      DELETE FROM rate_limit_blacklist WHERE scope_key = ${scopeKey}
+      DELETE FROM ai."rate_limit_blacklist" WHERE scope_key = ${scopeKey}
     `.catch(() => {}); // Ignore if not found
   }
 
