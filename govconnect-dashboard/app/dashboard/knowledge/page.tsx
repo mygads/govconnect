@@ -473,7 +473,7 @@ export default function KnowledgePage() {
 
       setUploadProgress(100)
 
-      toast({ title: "Berhasil", description: "Dokumen berhasil diunggah dan mulai diproses" })
+      toast({ title: "Berhasil", description: "Dokumen berhasil diunggah. Lanjutkan embed manual saat diperlukan." })
       setIsUploadOpen(false)
       resetUploadForm()
       fetchDocuments()

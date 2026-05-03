@@ -158,11 +158,11 @@ INSTRUKSI: Jawab berdasarkan knowledge di atas. Informasi sangat relevan dengan 
         break;
       case 'medium':
         confidenceInstruction = `\n[CONFIDENCE: SEDANG - ${confidence.reason}]
-INSTRUKSI: Gunakan knowledge di atas sebagai sumber utama. Boleh tambahkan info umum jika perlu.`;
+INSTRUKSI: Gunakan knowledge di atas sebagai sumber utama. Jika menjawab fakta dari knowledge, cantumkan sumber yang tersedia di konteks.`;
         break;
       case 'low':
         confidenceInstruction = `\n[CONFIDENCE: RENDAH - ${confidence.reason}]
-INSTRUKSI: Knowledge mungkin hanya sebagian relevan. Gunakan dengan hati-hati, boleh jawab dengan pengetahuan umum.`;
+INSTRUKSI: Jangan jawab sebagai fakta pasti. Jika konteks tidak cukup menjawab langsung, reply_text harus: "Maaf, informasi tidak ditemukan pada basis pengetahuan yang tersedia."`;
         break;
       default:
         confidenceInstruction = '';
@@ -217,13 +217,18 @@ ATURAN OUTPUT (WAJIB):
 6) Hindari markdown bergaya artikel seperti heading ##. Gunakan paragraf singkat atau bullet sederhana jika memang perlu.
 7) Jika masih relevan, tutup dengan satu pertanyaan lanjutan singkat yang membantu.
 
+ATURAN CITATION (WAJIB UNTUK JAWABAN KNOWLEDGE):
+- Jika reply_text menjawab fakta dari KNOWLEDGE_CONTEXT, cantumkan sumber dari label yang benar-benar ada di konteks, misalnya "Sumber: <judul>" atau "Sumber: <judul> — <bagian>".
+- DILARANG mengarang sumber, judul dokumen, halaman, bagian, tautan, atau citation yang tidak tertulis di KNOWLEDGE_CONTEXT.
+- Jika tidak ada sumber valid atau evidence tidak cukup, reply_text harus persis: "Maaf, informasi tidak ditemukan pada basis pengetahuan yang tersedia."
+
 ATURAN ANTI-HALUSINASI (KRITIS):
 - Jawab HANYA dari KNOWLEDGE_CONTEXT di bawah.
 - DILARANG mengarang alamat, jam operasional, nomor telepon, tautan, biaya, atau prosedur yang tidak ada di KNOWLEDGE_CONTEXT.
 - DILARANG mengarang NAMA PEJABAT (camat, lurah, kepala desa, sekretaris, dll). Jika nama pejabat tidak secara EKSPLISIT tertulis di KNOWLEDGE_CONTEXT, katakan "belum tersedia di data kami".
 - DILARANG mengarahkan user untuk mengisi form publik / mengirim link layanan, kecuali link tersebut benar-benar ada di KNOWLEDGE_CONTEXT.
-- Jika informasi tidak ada di KNOWLEDGE_CONTEXT, reply_text harus menyatakan data belum tersedia untuk desa/kelurahan ini dan (opsional) menyarankan hubungi kantor pada jam kerja.
-- Jika KNOWLEDGE_CONTEXT berisi informasi terkait tapi TIDAK LENGKAP menjawab pertanyaan user, katakan "informasi lengkap belum tersedia" — JANGAN melengkapi sendiri.
+- Jika informasi tidak ada di KNOWLEDGE_CONTEXT, reply_text harus persis: "Maaf, informasi tidak ditemukan pada basis pengetahuan yang tersedia."
+- Jika KNOWLEDGE_CONTEXT berisi informasi terkait tapi TIDAK LENGKAP menjawab pertanyaan user, reply_text harus menyatakan "informasi lengkap belum tersedia" dan tetap mencantumkan sumber yang valid jika ada — JANGAN melengkapi sendiri.
 
 ATURAN KELENGKAPAN JAWABAN (WAJIB):
 - Tampilkan SEMUA poin, item, persyaratan, langkah, atau prosedur yang tersedia di KNOWLEDGE_CONTEXT — JANGAN diringkas.

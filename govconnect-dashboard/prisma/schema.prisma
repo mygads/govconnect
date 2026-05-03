@@ -248,7 +248,7 @@ model knowledge_documents {
   category_id     String?
   
   // Processing status
-  status          String   @default("pending") // pending, processing, completed, failed
+  status          String   @default("pending") // pending, processing, ocr_pending, retrying, completed, failed, parse_fail, ocr_fail, embed_fail
   error_message   String?  @db.Text
   
   // Metadata

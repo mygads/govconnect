@@ -27,7 +27,7 @@ export async function GET(
     }
 
     if (!document.file_url) {
-      return NextResponse.json({ error: 'File belum siap atau belum diproses' }, { status: 409 })
+      return NextResponse.json({ error: 'File belum tersedia untuk diunduh' }, { status: 409 })
     }
 
     const rawUrl = document.file_url

@@ -9,7 +9,7 @@ export const maxDuration = 60
 const CHANNEL_SERVICE_URL = process.env.CHANNEL_SERVICE_URL || 'http://localhost:3001'
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || ''
 
-const MAX_SIZE = 5 * 1024 * 1024
+const MAX_SIZE = 11 * 1024 * 1024
 const ALLOWED_TYPES = new Set([
   'application/pdf',
   'image/jpeg',
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (file.size > MAX_SIZE) {
-      return NextResponse.json({ error: 'Ukuran file maksimal 5MB' }, { status: 400 })
+      return NextResponse.json({ error: 'Ukuran file maksimal 10MB' }, { status: 400 })
     }
 
     const forward = new FormData()
@@ -62,7 +62,11 @@ export async function POST(request: NextRequest) {
 
     let response: Response
     try {
-      response = await fetch(`${CHANNEL_SERVICE_URL}/internal/media/upload?scope=service-requests`, {
+      const villageId = (formData.get('village_id')?.toString() || '').trim()
+      if (!villageId) {
+        return NextResponse.json({ error: 'village_id wajib diisi' }, { status: 400 })
+      }
+      response = await fetch(`${CHANNEL_SERVICE_URL}/internal/media/upload?scope=service-requests&village_id=${encodeURIComponent(villageId)}`, {
         method: 'POST',
         headers: {
           'x-internal-api-key': INTERNAL_API_KEY,

@@ -203,7 +203,8 @@ export async function saveBase64Media(
   base64Data: string,
   mimeType: string,
   waUserId: string,
-  messageId: string
+  messageId: string,
+  villageId?: string
 ): Promise<SavedMediaResult | null> {
   try {
     const ext = getExtensionFromMime(mimeType);
@@ -213,11 +214,12 @@ export async function saveBase64Media(
     const base64Content = base64Data.replace(/^data:[^;]+;base64,/, '');
     
     const buffer = Buffer.from(base64Content, 'base64');
+    const folderPrefix = villageId ? `villages/${villageId}/` : '';
     const uploaded = await uploadBufferToObjectStorage({
       buffer,
       contentType: mimeType || 'application/octet-stream',
       originalName: filename,
-      folder: `media/whatsapp/${waUserId}`,
+      folder: `${folderPrefix}media/whatsapp/${waUserId}`,
       metadata: {
         source: 'whatsapp-webhook',
         waUserId,
@@ -325,7 +327,8 @@ export async function downloadWhatsAppMedia(
       base64Data,
       responseMimeType,
       waUserId,
-      messageId
+      messageId,
+      villageId
     );
 
     return savedResult;
@@ -390,7 +393,8 @@ export async function processMediaFromWebhook(
       payload.base64,
       payload.mimeType || 'application/octet-stream',
       waUserId,
-      messageId
+      messageId,
+      villageId
     );
     
     if (savedResult) {
@@ -431,7 +435,8 @@ export async function processMediaFromWebhook(
         imgMsg.JPEGThumbnail,
         'image/jpeg',
         waUserId,
-        `${messageId}_thumb`
+        `${messageId}_thumb`,
+        villageId
       );
       
       if (savedResult) {

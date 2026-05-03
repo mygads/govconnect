@@ -7,6 +7,7 @@ import { processMessage } from './services/ai-orchestrator.service';
 import { drainActiveProcessing } from './services/unified-message-processor.service';
 import { clearAllTimers } from './utils/timer-registry';
 import { getAllAIGatewayInfoAsync } from './services/ai-gateway.service';
+import { startDocumentOcrWorker } from './services/document-ingest.service';
 
 // UNIFIED PROCESSOR - same architecture for WhatsApp and Webchat
 // No more pattern matching, full LLM understanding
@@ -33,7 +34,8 @@ async function startServer() {
     });
     
     await startConsuming(processMessage);
-    
+    startDocumentOcrWorker();
+
     // Start Express server (for health checks)
     server = app.listen(config.port, () => {
       logger.info('✅ Server started', {

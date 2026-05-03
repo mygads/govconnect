@@ -16,6 +16,13 @@ function getScope(raw: unknown): string {
 export async function handleUploadMedia(req: Request, res: Response): Promise<void> {
   try {
     const scope = getScope(getQuery(req, 'scope'));
+    const villageIdRaw = getQuery(req, 'village_id') || req.headers['x-village-id'];
+    const villageId = typeof villageIdRaw === 'string' ? villageIdRaw.trim() : '';
+    if (!villageId) {
+      res.status(400).json({ success: false, error: 'village_id wajib diisi' });
+      return;
+    }
+    const folderPrefix = `villages/${villageId}/`;
 
     const file = (req as any).file as Express.Multer.File | undefined;
     if (!file) {
@@ -32,10 +39,11 @@ export async function handleUploadMedia(req: Request, res: Response): Promise<vo
       buffer: file.buffer,
       contentType: file.mimetype || 'application/octet-stream',
       originalName: file.originalname,
-      folder: `media/public/${scope}`,
+      folder: `${folderPrefix}media/public/${scope}`,
       metadata: {
         scope,
         source: 'dashboard-upload',
+        villageId,
       },
     });
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
-import { deleteKnowledgeVector, updateKnowledgeVector } from '@/lib/ai-service'
+import { deleteKnowledgeVector } from '@/lib/ai-service'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -24,7 +24,7 @@ interface Params {
 export async function GET(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params
-    
+
     const session = await getSession(request)
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params
-    
+
     const session = await getSession(request)
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -66,7 +66,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const body = await request.json()
     const { title, content, category, category_id, keywords, is_active, priority } = body
 
-    // Check if knowledge exists
     const existing = await prisma.knowledge_base.findUnique({
       where: { id },
     })
@@ -111,8 +110,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       resolvedCategoryName = categoryRef?.name || resolvedCategoryName
     }
 
-    // Process keywords if provided
-    const processedKeywords = keywords 
+    const processedKeywords = keywords
       ? keywords.map((k: string) => k.toLowerCase().trim()).filter(Boolean)
       : undefined
 
@@ -129,7 +127,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
       resolvedCategoryIdFinal !== existing.category_id ||
       JSON.stringify(resolvedKeywords ?? []) !== JSON.stringify(existing.keywords ?? [])
 
-    // Update knowledge entry
     const knowledge = await prisma.knowledge_base.update({
       where: { id },
       data: {
@@ -140,50 +137,13 @@ export async function PUT(request: NextRequest, { params }: Params) {
         keywords: resolvedKeywords,
         ...(is_active !== undefined && { is_active }),
         ...(priority !== undefined && { priority }),
+        ...(hasEmbeddingChanges && {
+          embedding_status: 'pending',
+          embedding_error: null,
+        }),
         admin_id: session.admin_id,
       },
     })
-
-    if (hasEmbeddingChanges) {
-      prisma.knowledge_base.update({
-        where: { id },
-        data: {
-          embedding_status: 'processing',
-          embedding_error: null,
-        },
-      }).then(() =>
-        updateKnowledgeVector(id, {
-          village_id: knowledge.village_id || undefined,
-          title: knowledge.title,
-          content: knowledge.content,
-          category: knowledge.category || 'Umum',
-          keywords: knowledge.keywords || [],
-          qualityScore: 0.8,
-        })
-      ).then(async (vectorResult) => {
-        if (!vectorResult.success) {
-          throw new Error(vectorResult.error || 'Failed to update knowledge vector')
-        }
-
-        await prisma.knowledge_base.update({
-          where: { id },
-          data: {
-            embedding_status: 'completed',
-            last_embedded_at: new Date(),
-            embedding_error: null,
-          },
-        })
-      }).catch(async (err) => {
-        console.error('Failed to re-sync knowledge embedding in AI Service:', err)
-        await prisma.knowledge_base.update({
-          where: { id },
-          data: {
-            embedding_status: 'failed',
-            embedding_error: String(err?.message || err),
-          },
-        }).catch(() => {})
-      })
-    }
 
     return NextResponse.json({
       status: 'success',
@@ -201,13 +161,12 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params
-    
+
     const session = await getSession(request)
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Check if knowledge exists
     const existing = await prisma.knowledge_base.findUnique({
       where: { id },
     })
@@ -220,12 +179,10 @@ export async function DELETE(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Delete knowledge entry
     await prisma.knowledge_base.delete({
       where: { id },
     })
 
-    // Delete from AI Service vector database
     deleteKnowledgeVector(id).catch(err => {
       console.error('Failed to delete knowledge from AI Service:', err)
     })

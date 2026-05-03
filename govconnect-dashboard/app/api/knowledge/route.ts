@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
-import { addKnowledgeVector } from '@/lib/ai-service'
 import { ai } from '@/lib/api-client'
 
 async function getSession(request: NextRequest) {
@@ -25,7 +24,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get query parameters
     const searchParams = request.nextUrl.searchParams
     const category = searchParams.get('category')
     const categoryId = searchParams.get('category_id')
@@ -33,22 +31,20 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search')
     const rawLimit = parseInt(searchParams.get('limit') || '50')
     const rawOffset = parseInt(searchParams.get('offset') || '0')
-    // Bounds checking to prevent excessive data retrieval
     const limit = Math.min(Math.max(isNaN(rawLimit) ? 50 : rawLimit, 1), 200)
     const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0)
 
-    // Build where clause
     const where: any = {}
     if (session.admin.village_id) {
       where.village_id = session.admin.village_id
     }
-    
+
     if (categoryId) {
       where.category_id = categoryId
     } else if (category) {
       where.category = category
     }
-    
+
     if (isActive !== null) {
       where.is_active = isActive === 'true'
     }
@@ -61,7 +57,6 @@ export async function GET(request: NextRequest) {
       ]
     }
 
-    // Get knowledge entries
     const [knowledge, total] = await Promise.all([
       prisma.knowledge_base.findMany({
         where,
@@ -133,7 +128,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { title, content, category, category_id, keywords, is_active, priority } = body
 
-    // Validate required fields
     if (!title || !content || (!category && !category_id)) {
       return NextResponse.json(
         { error: 'Title, content, dan category wajib diisi' },
@@ -173,12 +167,10 @@ export async function POST(request: NextRequest) {
       resolvedCategoryName = existingCategory?.name || resolvedCategoryName
     }
 
-    // Process keywords - ensure lowercase
-    const processedKeywords = Array.isArray(keywords) 
+    const processedKeywords = Array.isArray(keywords)
       ? keywords.map((k: string) => k.toLowerCase().trim()).filter(Boolean)
       : []
 
-    // Create knowledge entry
     const knowledge = await prisma.knowledge_base.create({
       data: {
         title,
@@ -190,34 +182,9 @@ export async function POST(request: NextRequest) {
         is_active: is_active ?? true,
         priority: priority ?? 0,
         admin_id: session.admin_id,
+        embedding_status: 'pending',
+        embedding_error: null,
       },
-    })
-
-    // Fase 1.6: Observable knowledge ingestion lifecycle
-    // Mark as processing, then update status on completion/failure
-    prisma.knowledge_base.update({
-      where: { id: knowledge.id },
-      data: { embedding_status: 'processing', embedding_error: null },
-    }).then(() =>
-      addKnowledgeVector({
-        id: knowledge.id,
-        village_id: knowledge.village_id || undefined,
-        title: knowledge.title,
-        content: knowledge.content,
-        category: knowledge.category,
-        keywords: knowledge.keywords,
-      })
-    ).then(() =>
-      prisma.knowledge_base.update({
-        where: { id: knowledge.id },
-        data: { embedding_status: 'completed', last_embedded_at: new Date(), embedding_error: null },
-      })
-    ).catch(async (err) => {
-      console.error('Failed to sync knowledge to AI Service:', err)
-      await prisma.knowledge_base.update({
-        where: { id: knowledge.id },
-        data: { embedding_status: 'failed', embedding_error: String(err?.message || err) },
-      }).catch(() => {})
     })
 
     return NextResponse.json({

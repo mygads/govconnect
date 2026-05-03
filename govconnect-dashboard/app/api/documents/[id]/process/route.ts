@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { verifyToken } from '@/lib/auth'
+import { ai } from '@/lib/api-client'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -16,12 +17,6 @@ async function getSession(request: NextRequest) {
   return session
 }
 
-/**
- * POST /api/documents/[id]/process
- * Re-trigger document processing
- * Note: Processing is now done automatically on upload via AI service
- * This endpoint is for re-processing failed documents
- */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -49,11 +44,65 @@ export async function POST(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    if (!document.file_url) {
+      return NextResponse.json({ error: 'File belum tersedia untuk diproses' }, { status: 409 })
+    }
+
+    await prisma.knowledge_documents.update({
+      where: { id },
+      data: { status: 'processing', error_message: null },
+    })
+
+    const response = await ai.processDocument(id)
+    const result = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      await prisma.knowledge_documents.update({
+        where: { id },
+        data: {
+          status: result?.code === 'PARSE_FAIL' ? 'parse_fail' : result?.code === 'EMBED_FAIL' ? 'embed_fail' : 'failed',
+          error_message: result?.details || result?.error || 'Gagal memproses dokumen',
+        },
+      })
+
+      return NextResponse.json(
+        { error: result?.error || 'Gagal memproses dokumen' },
+        { status: response.status || 500 }
+      )
+    }
+
+    if (result?.ocrQueued) {
+      const updated = await prisma.knowledge_documents.update({
+        where: { id },
+        data: {
+          status: 'ocr_pending',
+          error_message: 'Dokumen terdeteksi scan/image-based. OCR sedang dijadwalkan.',
+        },
+      })
+
+      return NextResponse.json({
+        success: true,
+        data: updated,
+        ocrQueued: true,
+        message: 'Dokumen masuk antrean OCR.',
+      })
+    }
+
+    const updated = await prisma.knowledge_documents.update({
+      where: { id },
+      data: {
+        status: 'completed',
+        total_chunks: result?.chunksCount || 0,
+        error_message: null,
+      },
+    })
+
     return NextResponse.json({
-      success: false,
-      error: 'Re-processing not supported. Please delete and re-upload the document.',
-      hint: 'Documents are now processed automatically on upload by AI service.',
-    }, { status: 400 })
+      success: true,
+      data: updated,
+      chunksCount: result?.chunksCount || 0,
+      message: 'Dokumen berhasil diproses manual.',
+    })
   } catch (error: any) {
     console.error('Error processing document:', error)
     return NextResponse.json(

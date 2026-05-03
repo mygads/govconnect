@@ -23,7 +23,7 @@ function isAllowedMimeType(mimeType: string): boolean {
 export const uploadPublicMedia = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 16 * 1024 * 1024,
+    fileSize: 10 * 1024 * 1024,
   },
   fileFilter(_req: Request, file: Express.Multer.File, cb: FileFilterCallback) {
     if (!isAllowedMimeType(file.mimetype)) {

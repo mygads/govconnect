@@ -1,6 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ai, API_BASE_URL } from '@/lib/api-client'
 import prisma from '@/lib/prisma'
+import { verifyToken } from '@/lib/auth'
+
+async function getSession(request: NextRequest) {
+  const token = request.cookies.get('token')?.value ||
+    request.headers.get('authorization')?.replace('Bearer ', '')
+  if (!token) return null
+  const payload = await verifyToken(token)
+  if (!payload) return null
+  const session = await prisma.admin_sessions.findUnique({
+    where: { token },
+    include: { admin: true }
+  })
+  if (!session || session.expires_at < new Date()) return null
+  return session
+}
 
 /**
  * POST /api/knowledge/embed-all
@@ -8,8 +23,18 @@ import prisma from '@/lib/prisma'
  */
 export async function POST(request: NextRequest) {
   try {
+    const session = await getSession(request)
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const villageId = session.admin.village_id
+    if (!villageId) {
+      return NextResponse.json({ error: 'Admin belum terhubung ke desa.' }, { status: 400 })
+    }
+
     const attemptedKnowledge = await prisma.knowledge_base.findMany({
-      where: { is_active: true },
+      where: { is_active: true, village_id: villageId },
       orderBy: [
         { priority: 'desc' },
         { updated_at: 'desc' },
@@ -19,7 +44,7 @@ export async function POST(request: NextRequest) {
     })
     const attemptedIds = attemptedKnowledge.map((item) => item.id)
 
-    const response = await ai.embedAllKnowledge()
+    const response = await ai.embedAllKnowledge(villageId)
 
     if (!response.ok) {
       const error = await response.json()
@@ -35,7 +60,7 @@ export async function POST(request: NextRequest) {
     await Promise.all([
       successfulIds.length > 0
         ? prisma.knowledge_base.updateMany({
-            where: { id: { in: successfulIds } },
+            where: { id: { in: successfulIds }, village_id: villageId },
             data: {
               embedding_status: 'completed',
               last_embedded_at: embeddedAt,
@@ -45,7 +70,7 @@ export async function POST(request: NextRequest) {
         : Promise.resolve(),
       failedIds.length > 0
         ? prisma.knowledge_base.updateMany({
-            where: { id: { in: failedIds } },
+            where: { id: { in: failedIds }, village_id: villageId },
             data: {
               embedding_status: 'failed',
               embedding_error: 'Bulk embedding failed in AI service',

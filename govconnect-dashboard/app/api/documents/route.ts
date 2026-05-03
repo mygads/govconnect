@@ -4,19 +4,13 @@ import { ai } from '@/lib/api-client'
 import { randomUUID, createHash } from 'crypto'
 import { verifyToken } from '@/lib/auth'
 
-// Force Node.js runtime for file uploads
 export const runtime = 'nodejs'
-
-// Disable body parsing - we handle formData manually
 export const dynamic = 'force-dynamic'
 
 const MAX_DOCUMENT_SIZE_BYTES = Number(process.env.KNOWLEDGE_MAX_FILE_BYTES || 10 * 1024 * 1024)
 const MAX_UPLOADS_PER_VILLAGE_PER_DAY = Number(process.env.KNOWLEDGE_MAX_UPLOADS_PER_VILLAGE_PER_DAY || 50)
 const MAX_DOCUMENTS_PER_VILLAGE = Number(process.env.KNOWLEDGE_MAX_DOCUMENTS_PER_VILLAGE || 500)
 const MAX_DOCUMENT_BYTES_PER_VILLAGE = Number(process.env.KNOWLEDGE_MAX_DOCUMENT_BYTES_PER_VILLAGE || 250 * 1024 * 1024)
-
-// Document upload and management API
-// Requires admin authentication
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -32,10 +26,6 @@ async function getSession(request: NextRequest) {
   return session
 }
 
-/**
- * GET /api/documents
- * List all knowledge documents
- */
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession(request)
@@ -50,7 +40,6 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search')
     const rawLimit = parseInt(searchParams.get('limit') || '50')
     const rawOffset = parseInt(searchParams.get('offset') || '0')
-    // Bounds checking to prevent excessive data retrieval
     const limit = Math.min(Math.max(isNaN(rawLimit) ? 50 : rawLimit, 1), 200)
     const offset = Math.max(isNaN(rawOffset) ? 0 : rawOffset, 0)
 
@@ -99,10 +88,6 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/**
- * POST /api/documents
- * Upload a new document - forwards to AI service for processing
- */
 export async function POST(request: NextRequest) {
   try {
     const session = await getSession(request)
@@ -124,7 +109,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validate file type
     const allowedTypes = [
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -143,7 +127,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validate file size (max 10MB by default)
     if (file.size > MAX_DOCUMENT_SIZE_BYTES) {
       return NextResponse.json(
         { error: `File too large. Maximum size is ${Math.floor(MAX_DOCUMENT_SIZE_BYTES / 1024 / 1024)}MB` },
@@ -159,7 +142,7 @@ export async function POST(request: NextRequest) {
       where: {
         village_id: villageId || undefined,
         file_hash: fileHash,
-        status: { in: ['processing', 'completed'] },
+        status: { in: ['pending', 'processing', 'ocr_pending', 'retrying', 'completed'] },
       },
       orderBy: { created_at: 'desc' },
     })
@@ -176,7 +159,7 @@ export async function POST(request: NextRequest) {
 
     const quotaWhere = {
       village_id: villageId || undefined,
-      status: { in: ['processing', 'completed'] },
+      status: { in: ['pending', 'processing', 'completed'] },
     }
 
     const [activeCount, activeBytes, todayUploads] = await Promise.all([
@@ -201,10 +184,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Batas upload dokumen harian sudah tercapai.' }, { status: 429 })
     }
 
-    // Generate document ID
     const documentId = randomUUID()
-    
-    // Create database record first (pending status)
+
     let resolvedCategoryId = categoryId || undefined
     let resolvedCategoryName = category || undefined
 
@@ -230,99 +211,52 @@ export async function POST(request: NextRequest) {
         original_name: file.name,
         mime_type: file.type,
         file_size: file.size,
-        file_url: '', // Will be updated by AI service
+        file_url: '',
         title: title || file.name.replace(/\.[^/.]+$/, ''),
         description,
         category: resolvedCategoryName || category,
         category_id: resolvedCategoryId,
         village_id: villageId || undefined,
         file_hash: fileHash,
-        status: 'processing',
+        status: 'pending',
+        error_message: null,
       },
     })
 
-    // Forward file to AI service for processing
     const aiFormData = new FormData()
     aiFormData.append('file', new File([fileBuffer], file.name, { type: file.type }))
     aiFormData.append('documentId', documentId)
     aiFormData.append('fileHash', fileHash)
+    aiFormData.append('upload_only', 'true')
     if (villageId) aiFormData.append('village_id', villageId)
     if (title) aiFormData.append('title', title)
     if (category) aiFormData.append('category', category)
 
-    try {
-      const aiResponse = await ai.uploadDocument(aiFormData)
-      
-      if (!aiResponse.ok) {
-        const errorData = await aiResponse.json()
-        
-        // Update status to failed
-        await prisma.knowledge_documents.update({
-          where: { id: documentId },
-          data: {
-            status: 'failed',
-            error_message: errorData.error || errorData.details || 'AI processing failed',
-          },
-        })
-        
-        return NextResponse.json({
-          success: false,
-          data: document,
-          error: errorData.error || 'AI processing failed',
-        }, { status: 500 })
-      }
+    const aiResponse = await ai.uploadDocument(aiFormData)
+    const aiData = await aiResponse.json().catch(() => null)
 
-      const result = await aiResponse.json()
-      
-      const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:3002'
-      const fileUrl = result.fileUrl 
-        ? (result.fileUrl.startsWith('http') ? result.fileUrl : `${aiServiceUrl}${result.fileUrl}`)
-        : (result.filename ? `${aiServiceUrl}/uploads/documents/${result.filename}` : '')
-      
-      // Update document with success status
-      const updatedDoc = await prisma.knowledge_documents.update({
-        where: { id: documentId },
-        data: {
-          status: 'completed',
-          total_chunks: result.chunksCount || 0,
-          file_url: fileUrl,
-        },
-      })
-
-      return NextResponse.json({
-        success: true,
-        data: updatedDoc,
-        chunksCount: result.chunksCount,
-        message: 'Document uploaded and processed successfully.',
-      })
-    } catch (aiError: any) {
-      console.error('AI service error:', aiError)
-      
-      const isNetworkError = aiError.message?.includes('fetch failed') || 
-        aiError.code === 'ECONNREFUSED' || 
-        aiError.code === 'EAI_AGAIN' ||
-        aiError.cause?.code === 'ECONNREFUSED' ||
-        aiError.cause?.code === 'EAI_AGAIN'
-      
-      const errorMsg = isNetworkError 
-        ? 'AI service tidak dapat dijangkau. Silakan coba lagi nanti.'
-        : (aiError.message || 'Gagal memproses dokumen')
-      
-      // Update status to failed
-      await prisma.knowledge_documents.update({
-        where: { id: documentId },
-        data: {
-          status: 'failed',
-          error_message: errorMsg,
-        },
-      })
-      
+    if (!aiResponse.ok) {
+      await prisma.knowledge_documents.delete({ where: { id: documentId } }).catch(() => {})
       return NextResponse.json({
         success: false,
-        data: document,
-        error: errorMsg,
-      }, { status: isNetworkError ? 503 : 500 })
+        error: aiData?.error || 'Gagal menyimpan file dokumen',
+      }, { status: aiResponse.status || 500 })
     }
+
+    const updatedDoc = await prisma.knowledge_documents.update({
+      where: { id: documentId },
+      data: {
+        file_url: aiData?.fileUrl || '',
+        status: 'pending',
+        error_message: null,
+      },
+    })
+
+    return NextResponse.json({
+      success: true,
+      data: updatedDoc,
+      message: 'Dokumen berhasil diunggah. Lanjutkan embed manual.',
+    })
   } catch (error: any) {
     console.error('Error uploading document:', error)
     return NextResponse.json(

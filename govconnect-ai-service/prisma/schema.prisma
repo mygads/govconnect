@@ -79,12 +79,16 @@ model document_vectors {
 
 model embedding_jobs {
   id            String  @id @default(cuid())
-  type          String // "knowledge" | "document"
+  type          String // "knowledge" | "document" | "document_ocr"
   target_id     String // ID of knowledge/document
   status        String  @default("pending") // pending, processing, completed, failed
   error_message String? @db.Text
   retry_count   Int     @default(0)
   priority      Int     @default(0)
+  stage         String? // parse | ocr | embed
+  last_error_code String?
+  next_retry_at DateTime?
+  payload_json  Json?
 
   created_at   DateTime  @default(now())
   started_at   DateTime?
@@ -92,6 +96,8 @@ model embedding_jobs {
 
   @@index([status])
   @@index([priority])
+  @@index([stage])
+  @@index([next_retry_at])
 }
 
 // ==================== QUESTION VARIANTS ====================

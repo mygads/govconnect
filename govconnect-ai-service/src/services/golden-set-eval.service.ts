@@ -61,6 +61,9 @@ export type GoldenSetSummary = {
     keyword_pass: boolean;
     regression_detected: boolean;
     retrieval_accuracy?: number;
+    recall_at_k?: number;
+    citation_correctness?: number;
+    no_hit_rate?: number;
     slices?: Record<string, {
       total: number;
       overall_accuracy: number;
@@ -307,6 +310,24 @@ function computeRetrievalScore(
   };
 }
 
+function computeRetrievalAggregateMetrics(results: GoldenSetItemResult[]): {
+  recallAtK: number;
+  citationCorrectness: number;
+  noHitRate: number;
+} {
+  const retrievalItems = results.filter((result) => result.retrieval_metrics?.retrieval_required === true);
+  if (retrievalItems.length === 0) return { recallAtK: 1, citationCorrectness: 1, noHitRate: 0 };
+
+  const recalled = retrievalItems.filter((result) => result.retrieval_metrics?.retrieval_used === true);
+  const cited = recalled.filter((result) => /sumber\s*:/i.test(result.reply_text));
+
+  return {
+    recallAtK: Number((recalled.length / retrievalItems.length).toFixed(3)),
+    citationCorrectness: Number((recalled.length ? cited.length / recalled.length : 0).toFixed(3)),
+    noHitRate: Number(((retrievalItems.length - recalled.length) / retrievalItems.length).toFixed(3)),
+  };
+}
+
 function computeToolScore(actualTools: string[], expectedTools?: string[]): { match: boolean; score: number } {
   if (!expectedTools) {
     return { match: true, score: 1 };
@@ -518,6 +539,7 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
   const retrievalAccuracy = retrievalChecks.length
     ? (retrievalChecks.reduce((acc, r) => acc + (r.retrieval_score || 0), 0) / retrievalChecks.length)
     : 1;
+  const retrievalAggregateMetrics = computeRetrievalAggregateMetrics(results);
 
   const overallAccuracy = results.reduce((acc, r) => acc + r.score, 0) / total;
   const slices = buildSliceSummary(results);
@@ -543,6 +565,9 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
       keyword_pass: keywordAccuracy >= THRESHOLD_KEYWORD,
       regression_detected: false,
       retrieval_accuracy: Number(retrievalAccuracy.toFixed(3)),
+      recall_at_k: retrievalAggregateMetrics.recallAtK,
+      citation_correctness: retrievalAggregateMetrics.citationCorrectness,
+      no_hit_rate: retrievalAggregateMetrics.noHitRate,
       slices,
     },
     started_at: startedAt,

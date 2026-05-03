@@ -37,6 +37,7 @@ interface ServiceItem {
     mode: string;
     estimated_cost?: string | null;
     estimated_processing_time?: string | null;
+    village_id: string;
     requirements: ServiceRequirement[];
     category?: { name: string } | null;
 }
@@ -59,7 +60,7 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
     const { villageSlug, serviceSlug } = use(params);
     const searchParams = useSearchParams();
 
-    const MAX_UPLOAD_SIZE = 5 * 1024 * 1024;
+    const MAX_UPLOAD_SIZE = 10 * 1024 * 1024;
     const ALLOWED_FILE_TYPES = [
         "application/pdf",
         "image/jpeg",
@@ -215,7 +216,7 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
 
         if (file.size > MAX_UPLOAD_SIZE) {
             updateRequirementField(reqId, "");
-            updateFileError(reqId, "Ukuran file maksimal 5MB.");
+            updateFileError(reqId, "Ukuran file maksimal 10MB.");
             return;
         }
 
@@ -223,8 +224,10 @@ export default function ServiceRequestFormPage({ params }: PageProps) {
         updateFileUploading(reqId, true);
 
         try {
+            if (!service?.village_id) throw new Error("village_id tidak tersedia untuk upload file");
             const formData = new FormData();
             formData.append("file", file);
+            formData.append("village_id", service.village_id);
 
             const response = await fetch("/api/public/uploads", {
                 method: "POST",

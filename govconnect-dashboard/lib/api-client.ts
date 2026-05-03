@@ -398,8 +398,10 @@ export const ai = {
   /**
    * Embed all knowledge
    */
-  async embedAllKnowledge() {
-    return apiFetch(buildUrl(ServicePath.AI, '/api/knowledge/embed-all'), {
+  async embedAllKnowledge(villageId?: string) {
+    const url = new URL(buildUrl(ServicePath.AI, '/api/knowledge/embed-all'));
+    if (villageId) url.searchParams.set('village_id', villageId);
+    return apiFetch(url.toString(), {
       method: 'POST',
       headers: getHeaders(),
     });
@@ -427,6 +429,13 @@ export const ai = {
         'x-internal-api-key': INTERNAL_API_KEY,
       },
       body: formData,
+    });
+  },
+
+  async processDocument(documentId: string) {
+    return apiFetch(buildUrl(ServicePath.AI, `/api/upload/document/${documentId}/process`), {
+      method: 'POST',
+      headers: getHeaders(),
     });
   },
 

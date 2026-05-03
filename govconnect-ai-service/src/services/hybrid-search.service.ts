@@ -101,7 +101,7 @@ export async function searchKeywords(
               0
             )
           ) as relevance_score
-        FROM knowledge_vectors
+        FROM ai.knowledge_vectors
         WHERE 
           (${combinedTermCondition}
           OR to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(content, '')) 
@@ -167,7 +167,7 @@ export async function searchKeywords(
               0
             )
           ) as relevance_score
-        FROM document_vectors
+        FROM ai.document_vectors
         WHERE 
           (${combinedDocTermCondition}
           OR to_tsvector('simple', COALESCE(section_title, '') || ' ' || COALESCE(content, '')) 
