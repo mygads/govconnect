@@ -14,7 +14,7 @@ import * as healthService from './ai-provider-health.service';
 import { modelStatsService } from './model-stats.service';
 import { registerUsageWrite } from './ai-turn-billing.service';
 import { recordGenerationLog } from './generation-log.service';
-import { recordTokenUsage, type CallType, type LayerType } from './token-usage.service';
+import { recordTokenUsage, resolveTokenUsagePricing, type CallType, type LayerType } from './token-usage.service';
 
 export type PromptLaneKind = 'llm' | 'rag';
 
@@ -897,7 +897,7 @@ function recordGatewayUsage(
     : null;
   const cacheProvider = generation?.provider ?? metrics.keyTier ?? null;
 
-  const usageWrite = recordTokenUsage({
+  const tokenUsageRecord = {
     model: metrics.model,
     input_tokens: metrics.inputTokens,
     output_tokens: metrics.outputTokens,
@@ -908,6 +908,9 @@ function recordGatewayUsage(
     wa_user_id: options.context?.wa_user_id ?? null,
     session_id: options.context?.session_id ?? null,
     channel: options.context?.channel ?? null,
+    message_id: options.context?.message_id ?? null,
+    trace_id: options.context?.trace_id ?? null,
+    billing_group_id: options.context?.billing_group_id ?? null,
     intent: options.context?.intent ?? null,
     success: generation?.status !== 'failed',
     duration_ms: metrics.durationMs,
@@ -923,7 +926,12 @@ function recordGatewayUsage(
     cache_write_multiplier: estimateCacheWriteMultiplier(cacheProvider || '', metrics.model),
     cache_status: cacheStatus,
     cache_provider: cacheProvider,
-  }).then((tokenUsageId) => recordGenerationLog({
+  };
+
+  const usageWrite = Promise.all([
+    recordTokenUsage(tokenUsageRecord),
+    resolveTokenUsagePricing(tokenUsageRecord),
+  ]).then(([tokenUsageId, pricing]) => recordGenerationLog({
     token_usage_id: tokenUsageId,
     village_id: options.context?.village_id ?? null,
     wa_user_id: options.context?.wa_user_id ?? null,
@@ -946,6 +954,8 @@ function recordGatewayUsage(
     input_tokens: metrics.inputTokens,
     output_tokens: metrics.outputTokens,
     total_tokens: metrics.totalTokens,
+    actual_cost_usd: pricing.actual_cost_usd,
+    adjusted_cost_usd: pricing.adjusted_cost_usd,
     duration_ms: metrics.durationMs,
     status: generation?.status ?? 'success',
     error_message: generation?.errorMessage ?? null,

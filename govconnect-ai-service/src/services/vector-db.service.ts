@@ -301,19 +301,19 @@ export async function searchVectors(
         ? Prisma.sql`
             SELECT 
               id, content, title, category, keywords,
-              1 - (embedding <=> ${embeddingStr}::ai.vector) as similarity,
+              1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'knowledge' as source_type, quality_score
             FROM ai.knowledge_vectors
-            WHERE 1 - (embedding <=> ${embeddingStr}::ai.vector) >= ${sqlMinScore}
+            WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
           `
         : Prisma.sql`
             SELECT 
               id, content, title, category, keywords,
-              1 - (embedding <=> ${embeddingStr}::ai.vector) as similarity,
+              1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'knowledge' as source_type, quality_score
             FROM ai.knowledge_vectors
-            WHERE 1 - (embedding <=> ${embeddingStr}::ai.vector) >= ${sqlMinScore}
+            WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
           `;
 
@@ -357,20 +357,20 @@ export async function searchVectors(
             SELECT 
               id, content, document_title as title, category,
               document_id, chunk_index, page_number, section_title,
-              1 - (embedding <=> ${embeddingStr}::ai.vector) as similarity,
+              1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'document' as source_type
             FROM ai.document_vectors
-            WHERE 1 - (embedding <=> ${embeddingStr}::ai.vector) >= ${sqlMinScore}
+            WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
           `
         : Prisma.sql`
             SELECT 
               id, content, document_title as title, category,
               document_id, chunk_index, page_number, section_title,
-              1 - (embedding <=> ${embeddingStr}::ai.vector) as similarity,
+              1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'document' as source_type
             FROM ai.document_vectors
-            WHERE 1 - (embedding <=> ${embeddingStr}::ai.vector) >= ${sqlMinScore}
+            WHERE 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
               AND ${tenantScopeFilter}
           `;
 
@@ -413,10 +413,10 @@ export async function searchVectors(
               SELECT 
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
-                1 - (qv.embedding <=> ${embeddingStr}::ai.vector) as similarity
+                1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity
               FROM ai.question_variants qv
               JOIN ai.knowledge_vectors kv ON kv.id = qv.source_id
-              WHERE 1 - (qv.embedding <=> ${embeddingStr}::ai.vector) >= ${sqlMinScore}
+              WHERE 1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
                 AND qv.source_type = 'knowledge'
                 AND ((qv.village_id = ${villageId} AND qv.scope = 'village' AND qv.is_global = FALSE) OR (qv.scope = 'global' AND qv.is_global = TRUE))
             `
@@ -424,10 +424,10 @@ export async function searchVectors(
               SELECT 
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
-                1 - (qv.embedding <=> ${embeddingStr}::ai.vector) as similarity
+                1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity
               FROM ai.question_variants qv
               JOIN ai.knowledge_vectors kv ON kv.id = qv.source_id
-              WHERE 1 - (qv.embedding <=> ${embeddingStr}::ai.vector) >= ${sqlMinScore}
+              WHERE 1 - (qv.embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
                 AND qv.source_type = 'knowledge'
                 AND qv.scope = 'global'
                 AND qv.is_global = TRUE

@@ -296,13 +296,6 @@ async function loadLaneConfig(kind: GatewayLaneKind, villageId?: string | null):
       attempts.push(buildRuntimeAttempt(kind, assignment.fallback_model as any, assignment.fallback_model.provider as any));
     }
 
-    const extras = await loadExtraSameLaneAttempts(
-      kind,
-      attempts.map((a) => a.modelId).filter((id): id is string => Boolean(id)),
-      tx,
-    );
-    attempts.push(...extras);
-
     return {
       expiresAt: Date.now() + CACHE_TTL_MS,
       config: attempts[0].config,

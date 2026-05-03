@@ -677,7 +677,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   const billingGroupId = villageId
     ? `msg:${villageId}:${resolvedMessageId}`
     : `${channel}:${userId}:${traceId}`;
-  const billingTurn: AiBillingTurnHandle | null = sideEffectMode === 'knowledge_test' || isEvaluation
+  const billingTurn: AiBillingTurnHandle | null = isEvaluation
     ? null
     : startAiBillingTurn({
         village_id: villageId ?? null,

@@ -123,11 +123,11 @@ export async function searchUserMemoryVectors(
         memory_type,
         content,
         importance,
-        1 - (embedding <=> ${embeddingStr}::ai.vector) AS similarity,
+        1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) AS similarity,
         created_at
       FROM ai.user_memory_vectors
       WHERE wa_user_id = ${waUserId}
-        AND 1 - (embedding <=> ${embeddingStr}::ai.vector) >= ${sqlMinScore}
+        AND 1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) >= ${sqlMinScore}
         ${villageFilter}
         ${typeFilter}
       ORDER BY similarity DESC

@@ -504,7 +504,7 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
       channel: 'webchat',
       villageId: resolvedVillageId,
       conversationHistory: [],
-      isEvaluation: true,
+      isEvaluation: false,
       sideEffectMode: 'knowledge_test',
     });
 
