@@ -129,7 +129,7 @@ export async function generateAndStoreVariants(
         ) VALUES (
           ${`qv_${sourceId}_${stored}`}, ${sourceId}, ${sourceType},
           ${variantScope.villageId}, ${variantScope.scope}, ${variantScope.isGlobal}, ${variantText},
-          ${embeddingStr}::vector, ${config.embeddingGateway.model}, NOW()
+          ${embeddingStr}::ai.vector, ${config.embeddingGateway.model}, NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
           village_id = EXCLUDED.village_id,

@@ -19,7 +19,7 @@ export async function recordAuditLog(input: AuditLogInput) {
   const metadata = input.metadata ? JSON.stringify(input.metadata) : null;
 
   await prisma.$executeRaw`
-    INSERT INTO case_audit_logs (id, village_id, admin_id, admin_role, admin_name, action, entity_type, entity_id, entity_label, reason, metadata)
+    INSERT INTO cases.case_audit_logs (id, village_id, admin_id, admin_role, admin_name, action, entity_type, entity_id, entity_label, reason, metadata)
     VALUES (${id}, ${input.village_id || null}, ${input.admin_id || null}, ${input.admin_role || null}, ${input.admin_name || null}, ${input.action}, ${input.entity_type}, ${input.entity_id}, ${input.entity_label || null}, ${input.reason || null}, ${metadata}::jsonb)
   `;
 }

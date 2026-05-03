@@ -1,5 +1,5 @@
 CREATE SCHEMA IF NOT EXISTS ai;
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA ai;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 DO $$
@@ -31,10 +31,10 @@ CREATE INDEX IF NOT EXISTS idx_document_vectors_section_title_trgm
 
 CREATE INDEX IF NOT EXISTS knowledge_vectors_embedding_hnsw_idx
   ON ai.knowledge_vectors
-  USING hnsw (embedding vector_cosine_ops)
+  USING hnsw (embedding ai.vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);
 
 CREATE INDEX IF NOT EXISTS document_vectors_embedding_hnsw_idx
   ON ai.document_vectors
-  USING hnsw (embedding vector_cosine_ops)
+  USING hnsw (embedding ai.vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);

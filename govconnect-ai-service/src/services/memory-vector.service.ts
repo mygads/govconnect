@@ -49,7 +49,7 @@ export async function upsertUserMemoryVector(input: UserMemoryVectorInput): Prom
 
   try {
     await prisma.$executeRaw`
-      INSERT INTO user_memory_vectors (
+      INSERT INTO ai.user_memory_vectors (
         id,
         memory_entry_id,
         wa_user_id,
@@ -69,7 +69,7 @@ export async function upsertUserMemoryVector(input: UserMemoryVectorInput): Prom
         ${input.memoryType},
         ${input.content},
         ${input.importance},
-        ${embeddingStr}::vector,
+        ${embeddingStr}::ai.vector,
         ${input.embeddingModel || config.embeddingGateway.model},
         NOW(),
         NOW()
@@ -123,11 +123,11 @@ export async function searchUserMemoryVectors(
         memory_type,
         content,
         importance,
-        1 - (embedding <=> ${embeddingStr}::vector) AS similarity,
+        1 - (embedding <=> ${embeddingStr}::ai.vector) AS similarity,
         created_at
-      FROM user_memory_vectors
+      FROM ai.user_memory_vectors
       WHERE wa_user_id = ${waUserId}
-        AND 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
+        AND 1 - (embedding <=> ${embeddingStr}::ai.vector) >= ${sqlMinScore}
         ${villageFilter}
         ${typeFilter}
       ORDER BY similarity DESC
