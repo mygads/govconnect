@@ -237,7 +237,7 @@ export const statistics = {
     return fetchApi<any>('/api/statistics/overview');
   },
 
-  async getTrends(period: string = 'week') {
+  async getTrends(period: string = 'weekly') {
     return fetchApi<any>(`/api/statistics/trends?period=${period}`);
   },
 

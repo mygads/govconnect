@@ -57,6 +57,10 @@ export async function searchKeywords(
   } = options;
 
   const results: VectorSearchResult[] = [];
+  const knowledgeScopeFilter = villageId
+    ? Prisma.sql`((village_id = ${villageId} AND scope = 'village' AND is_global = FALSE) OR (scope = 'global' AND is_global = TRUE))`
+    : Prisma.sql`(scope = 'global' AND is_global = TRUE)`;
+  const documentScopeFilter = knowledgeScopeFilter;
   
   // Prepare search terms
   const searchTerms = prepareSearchTerms(query);
@@ -102,12 +106,12 @@ export async function searchKeywords(
             )
           ) as relevance_score
         FROM ai.knowledge_vectors
-        WHERE 
+        WHERE
           (${combinedTermCondition}
-          OR to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(content, '')) 
+          OR to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(content, ''))
              @@ plainto_tsquery('simple', ${query})
           OR similarity(LOWER(title || ' ' || content), ${query.toLowerCase()}) > 0.1)
-          ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
+          AND ${knowledgeScopeFilter}
         ORDER BY relevance_score DESC
         LIMIT ${topK}
       `;
@@ -168,12 +172,12 @@ export async function searchKeywords(
             )
           ) as relevance_score
         FROM ai.document_vectors
-        WHERE 
+        WHERE
           (${combinedDocTermCondition}
-          OR to_tsvector('simple', COALESCE(section_title, '') || ' ' || COALESCE(content, '')) 
+          OR to_tsvector('simple', COALESCE(section_title, '') || ' ' || COALESCE(content, ''))
              @@ plainto_tsquery('simple', ${query})
           OR similarity(LOWER(COALESCE(section_title, '') || ' ' || content), ${query.toLowerCase()}) > 0.1)
-          ${villageId ? Prisma.sql`AND (village_id = ${villageId} OR village_id IS NULL)` : Prisma.empty}
+          AND ${documentScopeFilter}
         ORDER BY relevance_score DESC
         LIMIT ${topK}
       `;

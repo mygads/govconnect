@@ -119,6 +119,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const resolvedCategory = resolvedCategoryName ?? existing.category
     const resolvedCategoryIdFinal = resolvedCategoryId ?? existing.category_id ?? undefined
     const resolvedKeywords = processedKeywords ?? existing.keywords
+    const resolvedScope = session.admin.role === 'superadmin' && body.scope === 'global' ? 'global' : existing.scope || 'village'
+    const resolvedIsGlobal = resolvedScope === 'global'
+    if (resolvedScope === 'village' && !existing.village_id && !session.admin.village_id) {
+      return NextResponse.json({ error: 'village_id wajib untuk knowledge desa' }, { status: 400 })
+    }
 
     const hasEmbeddingChanges =
       resolvedTitle !== existing.title ||
@@ -134,6 +139,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
         content: resolvedContent,
         category: resolvedCategory,
         category_id: resolvedCategoryIdFinal,
+        village_id: resolvedIsGlobal ? null : existing.village_id || session.admin.village_id,
+        scope: resolvedScope,
+        is_global: resolvedIsGlobal,
         keywords: resolvedKeywords,
         ...(is_active !== undefined && { is_active }),
         ...(priority !== undefined && { priority }),

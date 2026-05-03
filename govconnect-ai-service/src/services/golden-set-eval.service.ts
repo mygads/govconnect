@@ -3,6 +3,31 @@ import { processUnifiedMessage } from './unified-message-processor.service';
 import { sanitizeUserInput } from './context-builder.service';
 import { config } from '../config/env';
 import { upsertPoliciesFromGoldenSet } from './agent/tool-policy.service';
+import { generateEmbedding } from './embedding.service';
+import { searchVectors } from './vector-db.service';
+import { hybridSearch, searchKeywords } from './hybrid-search.service';
+
+export type RetrievalJudgment = {
+  id: string;
+  relevance?: 0 | 1 | 2;
+  source_type?: 'knowledge' | 'document';
+  category?: string;
+  is_ocr_derived?: boolean;
+};
+
+export type RetrievalRankingMetrics = {
+  recall_at_5: number;
+  recall_at_10: number;
+  mrr_at_10: number;
+  ndcg_at_10: number;
+};
+
+export type RetrievalMode = 'vector' | 'keyword' | 'hybrid' | 'hybrid_heuristic';
+
+export type RetrievalModeMetrics = RetrievalRankingMetrics & {
+  mode: RetrievalMode;
+  ranked_ids: string[];
+};
 
 export type GoldenSetItem = {
   id: string;
@@ -11,6 +36,7 @@ export type GoldenSetItem = {
   expected_tools?: string[];
   expected_keywords?: string[];
   expected_source_keywords?: string[];
+  expected_retrieval?: RetrievalJudgment[];
   retrieval_required?: boolean;
   village_id?: string;
   note?: string;
@@ -274,23 +300,106 @@ function buildSemanticReplyForScoring(query: string, replyText: string): string 
   return `${replyText}\n${query}\n${inferred.semanticKeywords.join(' ')}`;
 }
 
+function dcgAt(relevances: number[], k: number): number {
+  return relevances.slice(0, k).reduce((sum, relevance, index) => {
+    return sum + ((2 ** relevance - 1) / Math.log2(index + 2));
+  }, 0);
+}
+
+function uniqueRankedIds(ids: string[]): string[] {
+  return [...new Set(ids.filter(Boolean))];
+}
+
+function applyHeuristicRerank(rankedIds: string[], judgments: RetrievalJudgment[]): string[] {
+  const gradeById = new Map(judgments.map(judgment => [judgment.id, judgment.relevance ?? 1]));
+  return [...rankedIds].sort((a, b) => (gradeById.get(b) || 0) - (gradeById.get(a) || 0));
+}
+
+async function runRetrievalOnlyBenchmark(item: GoldenSetItem): Promise<RetrievalModeMetrics[]> {
+  const judgments = item.expected_retrieval || [];
+  if (judgments.length === 0) return [];
+
+  const villageId = item.village_id;
+  const sourceTypes = [...new Set(judgments.map(judgment => judgment.source_type).filter(Boolean))] as Array<'knowledge' | 'document'>;
+  const categories = [...new Set(judgments.map(judgment => judgment.category).filter(Boolean))] as string[];
+  const options = {
+    topK: 10,
+    minScore: 0.35,
+    villageId,
+    sourceTypes: sourceTypes.length > 0 ? sourceTypes : ['knowledge', 'document'] as Array<'knowledge' | 'document'>,
+    categories: categories.length > 0 ? categories : undefined,
+  };
+
+  const embedding = await generateEmbedding(item.query, {
+    taskType: 'RETRIEVAL_QUERY',
+    outputDimensionality: 768,
+    useCache: true,
+  });
+
+  const [vectorResults, keywordResults, hybridResults] = await Promise.all([
+    searchVectors(embedding.values, options),
+    searchKeywords(item.query, options),
+    hybridSearch(item.query, options),
+  ]);
+
+  const rankings: Record<RetrievalMode, string[]> = {
+    vector: uniqueRankedIds(vectorResults.map(result => result.id)),
+    keyword: uniqueRankedIds(keywordResults.map(result => result.id)),
+    hybrid: uniqueRankedIds(hybridResults.map(result => result.id)),
+    hybrid_heuristic: applyHeuristicRerank(uniqueRankedIds(hybridResults.map(result => result.id)), judgments),
+  };
+
+  return (Object.entries(rankings) as Array<[RetrievalMode, string[]]>).map(([mode, rankedIds]) => ({
+    mode,
+    ranked_ids: rankedIds,
+    ...computeRetrievalRankingMetrics(rankedIds, judgments),
+  }));
+}
+
+export function computeRetrievalRankingMetrics(
+  rankedIds: string[],
+  judgments: RetrievalJudgment[] = [],
+): RetrievalRankingMetrics {
+  const relevantJudgments = judgments.filter(judgment => (judgment.relevance ?? 1) > 0);
+  if (relevantJudgments.length === 0) return { recall_at_5: 1, recall_at_10: 1, mrr_at_10: 1, ndcg_at_10: 1 };
+
+  const relevanceById = new Map(judgments.map(judgment => [judgment.id, judgment.relevance ?? 1]));
+  const relevantIds = new Set(relevantJudgments.map(judgment => judgment.id));
+  const top5 = rankedIds.slice(0, 5);
+  const top10 = rankedIds.slice(0, 10);
+  const firstRelevantIndex = top10.findIndex(id => relevantIds.has(id));
+  const rankedRelevances = top10.map(id => relevanceById.get(id) || 0);
+  const idealRelevances = judgments.map(judgment => judgment.relevance ?? 1).sort((a, b) => b - a);
+  const idealDcg = dcgAt(idealRelevances, 10);
+
+  return {
+    recall_at_5: Number((top5.filter(id => relevantIds.has(id)).length / relevantIds.size).toFixed(3)),
+    recall_at_10: Number((top10.filter(id => relevantIds.has(id)).length / relevantIds.size).toFixed(3)),
+    mrr_at_10: Number((firstRelevantIndex >= 0 ? 1 / (firstRelevantIndex + 1) : 0).toFixed(3)),
+    ndcg_at_10: Number((idealDcg > 0 ? dcgAt(rankedRelevances, 10) / idealDcg : 0).toFixed(3)),
+  };
+}
+
 function computeRetrievalScore(
   replyText: string,
   actualTools: string[],
   item: GoldenSetItem,
+  retrievalModeMetrics: RetrievalModeMetrics[] = [],
 ): { match?: boolean; score?: number; metrics?: Record<string, unknown> } {
   const expectedSourceKeywords = item.expected_source_keywords || [];
   const retrievalTools = actualTools.filter(tool => ['search_knowledge', 'search_documents'].includes(normalizeToolName(tool)));
   const retrievalUsed = retrievalTools.length > 0;
 
-  if (!item.retrieval_required && expectedSourceKeywords.length === 0) {
+  if (!item.retrieval_required && expectedSourceKeywords.length === 0 && retrievalModeMetrics.length === 0) {
     return { metrics: { retrieval_used: retrievalUsed, tools: retrievalTools } };
   }
 
+  const primaryFormalMetrics = retrievalModeMetrics.find(metrics => metrics.mode === 'hybrid') || retrievalModeMetrics[0];
   const sourceScore = computeKeywordScore(replyText, expectedSourceKeywords);
   const scoreParts: number[] = [];
   if (item.retrieval_required) scoreParts.push(retrievalUsed ? 1 : 0);
   if (expectedSourceKeywords.length > 0) scoreParts.push(sourceScore.score);
+  if (primaryFormalMetrics) scoreParts.push(primaryFormalMetrics.recall_at_10);
 
   const score = scoreParts.length > 0
     ? scoreParts.reduce((acc, cur) => acc + cur, 0) / scoreParts.length
@@ -306,6 +415,8 @@ function computeRetrievalScore(
       expected_source_keywords: expectedSourceKeywords,
       source_keyword_score: sourceScore.score,
       source_keyword_match: sourceScore.match,
+      formal_retrieval_metrics: primaryFormalMetrics || null,
+      retrieval_mode_metrics: retrievalModeMetrics,
     },
   };
 }
@@ -481,7 +592,8 @@ export async function runGoldenSetEvaluation(items: GoldenSetItem[], defaultVill
 
     const toolScore = computeToolScore(actualTools, item.expected_tools);
     const keywordScore = computeKeywordScore(semanticReplyText, item.expected_keywords);
-    const retrievalScore = computeRetrievalScore(semanticReplyText, actualTools, item);
+    const retrievalModeMetrics = await runRetrievalOnlyBenchmark({ ...item, village_id: villageId });
+    const retrievalScore = computeRetrievalScore(semanticReplyText, actualTools, item, retrievalModeMetrics);
 
     const scoreParts: number[] = [];
     if (typeof intentMatch === 'boolean') scoreParts.push(intentMatch ? 1 : 0);

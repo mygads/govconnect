@@ -16,6 +16,14 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { generateEmbedding } from './embedding.service';
 
+type VariantScope = 'village' | 'global';
+
+function resolveVariantScope(villageId?: string | null, scope?: VariantScope): { villageId: string | null; scope: VariantScope; isGlobal: boolean } {
+  if (scope === 'global') return { villageId: null, scope: 'global', isGlobal: true };
+  if (!villageId) throw new Error('villageId is required for village-scoped question variants');
+  return { villageId, scope: 'village', isGlobal: false };
+}
+
 const VARIANT_PROMPT = `Kamu adalah generator pertanyaan untuk sistem knowledge base pemerintah desa.
 
 Diberikan judul dan isi knowledge base, buatkan 3-5 variasi pertanyaan yang mungkin diajukan warga terkait informasi ini.
@@ -91,8 +99,10 @@ export async function generateAndStoreVariants(
   content: string,
   villageId?: string | null,
   sourceType: string = 'knowledge',
+  scope: VariantScope = 'village',
 ): Promise<number> {
   const variants = await generateQuestionVariants(title, content);
+  const variantScope = resolveVariantScope(villageId, scope);
 
   if (variants.length === 0) {
     logger.info('No question variants generated', { sourceId });
@@ -113,15 +123,18 @@ export async function generateAndStoreVariants(
       const embeddingStr = `[${embeddingResult.values.join(',')}]`;
 
       await prisma.$executeRaw`
-        INSERT INTO question_variants (
-          id, source_id, source_type, village_id, variant_text,
+        INSERT INTO ai.question_variants (
+          id, source_id, source_type, village_id, scope, is_global, variant_text,
           embedding, embedding_model, created_at
         ) VALUES (
           ${`qv_${sourceId}_${stored}`}, ${sourceId}, ${sourceType},
-          ${villageId || null}, ${variantText},
+          ${variantScope.villageId}, ${variantScope.scope}, ${variantScope.isGlobal}, ${variantText},
           ${embeddingStr}::vector, ${config.embeddingGateway.model}, NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
+          village_id = EXCLUDED.village_id,
+          scope = EXCLUDED.scope,
+          is_global = EXCLUDED.is_global,
           variant_text = EXCLUDED.variant_text,
           embedding = EXCLUDED.embedding,
           embedding_model = EXCLUDED.embedding_model
@@ -147,7 +160,7 @@ export async function generateAndStoreVariants(
 export async function deleteVariants(sourceId: string): Promise<void> {
   try {
     await prisma.$executeRaw`
-      DELETE FROM question_variants WHERE source_id = ${sourceId}
+      DELETE FROM ai.question_variants WHERE source_id = ${sourceId}
     `;
   } catch (error: any) {
     logger.warn('Failed to delete question variants', { sourceId, error: error.message });

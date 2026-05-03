@@ -124,10 +124,13 @@ async function upsertProfileKnowledge(villageId: string, adminId: string | null,
     // Only update embedding if content changed
     if (contentChanged) {
       updateKnowledgeVector(updated.id, {
+        village_id: updated.village_id || undefined,
         title: updated.title,
         content: updated.content,
         category: updated.category,
         keywords: updated.keywords,
+        scope: updated.scope,
+        is_global: updated.is_global,
       }).then(async () => {
         // Update last_embedded_at on success
         await prisma.knowledge_base.update({
@@ -152,6 +155,8 @@ async function upsertProfileKnowledge(villageId: string, adminId: string | null,
         category: category.name,
         category_id: category.id,
         village_id: villageId,
+        scope: 'village',
+        is_global: false,
         keywords,
         is_active: true,
         priority: 10,
@@ -162,10 +167,13 @@ async function upsertProfileKnowledge(villageId: string, adminId: string | null,
 
     addKnowledgeVector({
       id: created.id,
+      village_id: created.village_id || undefined,
       title: created.title,
       content: created.content,
       category: created.category,
       keywords: created.keywords,
+      scope: created.scope,
+      is_global: created.is_global,
     }).then(async () => {
       // Update last_embedded_at on success
       await prisma.knowledge_base.update({

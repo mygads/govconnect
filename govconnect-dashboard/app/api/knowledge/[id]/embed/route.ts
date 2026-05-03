@@ -61,7 +61,9 @@ export async function POST(request: NextRequest, { params }: Params) {
       content: knowledge.content,
       category: knowledge.category || 'Umum',
       keywords: knowledge.keywords || [],
-      qualityScore: 0.8
+      qualityScore: 0.8,
+      scope: knowledge.scope,
+      is_global: knowledge.is_global,
     })
 
     if (!vectorResult.success) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSession } from '@/lib/auth'
 import { buildUrl, getHeaders, ServicePath } from '@/lib/api-client'
 import prisma from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 
 // GET - Get wa-support-v2 summary (users + local session data + village names)
 export async function GET(request: NextRequest) {
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
         item.id,
       ]).filter(Boolean)
 
-      const [villages, dashboardSessions, channelSessions] = await Promise.all([
+      const [villages, dashboardSessions, channelSessionsResult] = await Promise.allSettled([
         prisma.villages.findMany({
           where: { id: { in: candidateIds } },
           select: { id: true, name: true, slug: true },
@@ -38,15 +39,38 @@ export async function GET(request: NextRequest) {
           where: { village_id: { in: candidateIds } },
           select: { village_id: true, session_name: true, status: true, jid: true, connected: true, updated_at: true, created_at: true },
         }),
-        (prisma as any).$queryRaw`
+        prisma.$queryRaw<Array<{
+          village_id: string
+          instance_name: string | null
+          wa_number: string | null
+          status: string | null
+          wa_support_session_id: string | null
+          last_connected_at: Date | null
+          created_at: Date | null
+        }>>(Prisma.sql`
           select village_id, instance_name, wa_number, status, wa_support_session_id, last_connected_at, created_at
           from channel.wa_sessions
           where village_id = any(${candidateIds})
-        `,
+        `),
       ])
 
-      const villageMap = new Map(villages.map((v) => [v.id, v]))
-      const dashboardSessionMap = new Map(dashboardSessions.map((s) => [s.village_id, s]))
+      if (villages.status === 'rejected') {
+        throw villages.reason
+      }
+      if (dashboardSessions.status === 'rejected') {
+        throw dashboardSessions.reason
+      }
+
+      if (channelSessionsResult.status === 'rejected') {
+        console.warn('Channel wa_sessions lookup failed:', channelSessionsResult.reason)
+      }
+
+      const villageRows = villages.value
+      const dashboardSessionRows = dashboardSessions.value
+      const channelSessions = channelSessionsResult.status === 'fulfilled' ? channelSessionsResult.value : []
+
+      const villageMap = new Map(villageRows.map((v) => [v.id, v]))
+      const dashboardSessionMap = new Map(dashboardSessionRows.map((s) => [s.village_id, s]))
       const channelSessionMap = new Map((channelSessions as any[]).map((s) => [s.village_id, s]))
 
       data.data.items = items.map((item: any) => {

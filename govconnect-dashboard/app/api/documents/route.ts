@@ -136,7 +136,12 @@ export async function POST(request: NextRequest) {
 
     const fileBuffer = Buffer.from(await file.arrayBuffer())
     const fileHash = createHash('sha256').update(fileBuffer).digest('hex')
-    const villageId = session.admin.village_id || null
+    const requestedScope = formData.get('scope') === 'global' && session.admin.role === 'superadmin' ? 'global' : 'village'
+    const isGlobal = requestedScope === 'global'
+    const villageId = isGlobal ? null : session.admin.village_id || null
+    if (!isGlobal && !villageId) {
+      return NextResponse.json({ error: 'village_id wajib untuk dokumen desa' }, { status: 400 })
+    }
 
     const duplicate = await prisma.knowledge_documents.findFirst({
       where: {
@@ -217,6 +222,8 @@ export async function POST(request: NextRequest) {
         category: resolvedCategoryName || category,
         category_id: resolvedCategoryId,
         village_id: villageId || undefined,
+        scope: requestedScope,
+        is_global: isGlobal,
         file_hash: fileHash,
         status: 'pending',
         error_message: null,
@@ -229,6 +236,8 @@ export async function POST(request: NextRequest) {
     aiFormData.append('fileHash', fileHash)
     aiFormData.append('upload_only', 'true')
     if (villageId) aiFormData.append('village_id', villageId)
+    aiFormData.append('scope', requestedScope)
+    aiFormData.append('is_global', String(isGlobal))
     if (title) aiFormData.append('title', title)
     if (category) aiFormData.append('category', category)
 

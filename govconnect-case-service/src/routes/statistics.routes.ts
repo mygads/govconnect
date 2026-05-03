@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import prisma from '../config/database'
+import { Prisma } from '@prisma/client'
 import logger from '../utils/logger'
 import { getQuery } from '../utils/http'
 import { internalAuth } from '../middleware/auth.middleware'
@@ -186,113 +187,67 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
 
     // Using raw SQL for optimized aggregation with parameterized queries
     const truncType = period === 'monthly' ? 'month' : 'week';
-    
+    const villageFilter = village_id ? Prisma.sql`AND village_id = ${village_id}` : Prisma.empty;
+    const serviceVillageJoin = village_id ? Prisma.sql`JOIN services_dynamic s ON sr.service_id = s.id` : Prisma.empty;
+    const serviceVillageFilter = village_id ? Prisma.sql`AND s.village_id = ${village_id}` : Prisma.empty;
+
     // 1. Complaint Trends (parameterized to prevent SQL injection)
-    const complaintTrendRaw = village_id
-      ? await prisma.$queryRawUnsafe<any[]>(`
-          SELECT DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM complaints
-          WHERE created_at >= $2 AND village_id = $3 AND deleted_at IS NULL
-          GROUP BY 1 ORDER BY 1
-        `, truncType, startDate, village_id)
-      : await prisma.$queryRawUnsafe<any[]>(`
-          SELECT DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM complaints
-          WHERE created_at >= $2 AND deleted_at IS NULL
-          GROUP BY 1 ORDER BY 1
-        `, truncType, startDate);
+    const complaintTrendRaw = await prisma.$queryRaw<any[]>`
+      SELECT DATE_TRUNC(${truncType}, created_at) as date, COUNT(*)::int as count
+      FROM complaints
+      WHERE created_at >= ${startDate} ${villageFilter} AND deleted_at IS NULL
+      GROUP BY 1 ORDER BY 1
+    `;
 
     // 2. Service Trends
     // ServiceRequest -> Service -> village_id
-    const serviceTrendRaw = village_id
-      ? await prisma.$queryRawUnsafe<any[]>(`
-          SELECT DATE_TRUNC($1, sr.created_at) as date, COUNT(*)::int as count 
-          FROM service_requests sr
-          JOIN services_dynamic s ON sr.service_id = s.id
-          WHERE s.village_id = $3 AND sr.created_at >= $2 AND sr.deleted_at IS NULL
-          GROUP BY 1 ORDER BY 1
-        `, truncType, startDate, village_id)
-      : await prisma.$queryRawUnsafe<any[]>(`
-          SELECT DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM service_requests sr
-          WHERE sr.created_at >= $2 AND sr.deleted_at IS NULL
-          GROUP BY 1 ORDER BY 1
-        `, truncType, startDate);
+    const serviceTrendRaw = await prisma.$queryRaw<any[]>`
+      SELECT DATE_TRUNC(${truncType}, sr.created_at) as date, COUNT(*)::int as count
+      FROM service_requests sr
+      ${serviceVillageJoin}
+      WHERE sr.created_at >= ${startDate} ${serviceVillageFilter} AND sr.deleted_at IS NULL
+      GROUP BY 1 ORDER BY 1
+    `;
 
     // 3. Category Trends (Complaints)
-    const categoryTrendRaw = village_id
-      ? await prisma.$queryRawUnsafe<any[]>(`
-          SELECT kategori, DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM complaints
-          WHERE created_at >= $2 AND village_id = $3 AND deleted_at IS NULL
-          GROUP BY 1, 2 ORDER BY 2
-        `, truncType, startDate, village_id)
-      : await prisma.$queryRawUnsafe<any[]>(`
-          SELECT kategori, DATE_TRUNC($1, created_at) as date, COUNT(*)::int as count 
-          FROM complaints
-          WHERE created_at >= $2 AND deleted_at IS NULL
-          GROUP BY 1, 2 ORDER BY 2
-        `, truncType, startDate);
+    const categoryTrendRaw = await prisma.$queryRaw<any[]>`
+      SELECT kategori, DATE_TRUNC(${truncType}, created_at) as date, COUNT(*)::int as count
+      FROM complaints
+      WHERE created_at >= ${startDate} ${villageFilter} AND deleted_at IS NULL
+      GROUP BY 1, 2 ORDER BY 2
+    `;
 
     // 4. Hourly Distribution (Complaints + Services)
-    const hourlyComplaint = village_id
-      ? await prisma.$queryRawUnsafe<any[]>(`
-          SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*)::int as count
-          FROM complaints
-          WHERE created_at >= $1 AND village_id = $2 AND deleted_at IS NULL
-          GROUP BY 1
-        `, startDate, village_id)
-      : await prisma.$queryRawUnsafe<any[]>(`
-          SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*)::int as count
-          FROM complaints
-          WHERE created_at >= $1 AND deleted_at IS NULL
-          GROUP BY 1
-        `, startDate);
+    const hourlyComplaint = await prisma.$queryRaw<any[]>`
+      SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*)::int as count
+      FROM complaints
+      WHERE created_at >= ${startDate} ${villageFilter} AND deleted_at IS NULL
+      GROUP BY 1
+    `;
 
-    const hourlyService = village_id
-      ? await prisma.$queryRawUnsafe<any[]>(`
-          SELECT EXTRACT(HOUR FROM sr.created_at) as hour, COUNT(*)::int as count
-          FROM service_requests sr
-          JOIN services_dynamic s ON sr.service_id = s.id
-          WHERE s.village_id = $2 AND sr.created_at >= $1 AND sr.deleted_at IS NULL
-          GROUP BY 1
-        `, startDate, village_id)
-      : await prisma.$queryRawUnsafe<any[]>(`
-          SELECT EXTRACT(HOUR FROM sr.created_at) as hour, COUNT(*)::int as count
-          FROM service_requests sr
-          WHERE sr.created_at >= $1 AND sr.deleted_at IS NULL
-          GROUP BY 1
-        `, startDate);
+    const hourlyService = await prisma.$queryRaw<any[]>`
+      SELECT EXTRACT(HOUR FROM sr.created_at) as hour, COUNT(*)::int as count
+      FROM service_requests sr
+      ${serviceVillageJoin}
+      WHERE sr.created_at >= ${startDate} ${serviceVillageFilter} AND sr.deleted_at IS NULL
+      GROUP BY 1
+    `;
 
     // 5. Daily Distribution (Dow)
-    const dailyComplaint = village_id
-      ? await prisma.$queryRawUnsafe<any[]>(`
-          SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*)::int as count
-          FROM complaints
-          WHERE created_at >= $1 AND village_id = $2 AND deleted_at IS NULL
-          GROUP BY 1
-        `, startDate, village_id)
-      : await prisma.$queryRawUnsafe<any[]>(`
-          SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*)::int as count
-          FROM complaints
-          WHERE created_at >= $1 AND deleted_at IS NULL
-          GROUP BY 1
-        `, startDate);
+    const dailyComplaint = await prisma.$queryRaw<any[]>`
+      SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*)::int as count
+      FROM complaints
+      WHERE created_at >= ${startDate} ${villageFilter} AND deleted_at IS NULL
+      GROUP BY 1
+    `;
 
-    const dailyService = village_id
-      ? await prisma.$queryRawUnsafe<any[]>(`
-          SELECT EXTRACT(DOW FROM sr.created_at) as day, COUNT(*)::int as count
-          FROM service_requests sr
-          JOIN services_dynamic s ON sr.service_id = s.id
-          WHERE s.village_id = $2 AND sr.created_at >= $1 AND sr.deleted_at IS NULL
-          GROUP BY 1
-        `, startDate, village_id)
-      : await prisma.$queryRawUnsafe<any[]>(`
-          SELECT EXTRACT(DOW FROM sr.created_at) as day, COUNT(*)::int as count
-          FROM service_requests sr
-          WHERE sr.created_at >= $1 AND sr.deleted_at IS NULL
-          GROUP BY 1
-        `, startDate);
+    const dailyService = await prisma.$queryRaw<any[]>`
+      SELECT EXTRACT(DOW FROM sr.created_at) as day, COUNT(*)::int as count
+      FROM service_requests sr
+      ${serviceVillageJoin}
+      WHERE sr.created_at >= ${startDate} ${serviceVillageFilter} AND sr.deleted_at IS NULL
+      GROUP BY 1
+    `;
     
     // Process Data
     const trendData: { [key: string]: { complaints: number; services: number } } = {}

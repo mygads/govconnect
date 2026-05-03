@@ -20,6 +20,7 @@ export interface ProcessDocumentInput {
   title?: string;
   category?: string;
   villageId?: string | null;
+  isGlobal?: boolean;
   fileHash?: string | null;
   tracePrefix?: 'document' | 'document-reprocess' | 'document-ocr';
 }
@@ -221,7 +222,9 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
   await deleteDocumentVectors(input.documentId);
   await addDocumentChunks(finalChunks.map((chunk, idx) => ({
     documentId: input.documentId,
-    villageId: input.villageId || null,
+    villageId: input.isGlobal ? null : input.villageId || null,
+    scope: input.isGlobal ? 'global' : 'village',
+    isGlobal: Boolean(input.isGlobal),
     chunkIndex: idx,
     content: chunk.content,
     embedding: chunk.embedding,
@@ -281,7 +284,8 @@ export async function enqueueDocumentOcrJob(input: ProcessDocumentInput, reason:
     mimeType: input.mimeType,
     title: input.title || null,
     category: input.category || null,
-    villageId: input.villageId || null,
+    villageId: input.isGlobal ? null : input.villageId || null,
+    isGlobal: Boolean(input.isGlobal),
     fileHash,
     fileBase64: input.fileBuffer.toString('base64'),
   };
@@ -372,7 +376,8 @@ async function processOneOcrJob() {
         originalName: payload.originalName || `document-${documentId}`,
         title: payload.title || undefined,
         category: payload.category || undefined,
-        villageId: payload.villageId || null,
+        villageId: payload.isGlobal ? null : payload.villageId || null,
+        isGlobal: Boolean(payload.isGlobal),
         content: ocrText,
       });
       await updateDashboardDocument(documentId, { status: 'completed', error_message: null, total_chunks: result.chunksCount });

@@ -59,12 +59,15 @@ function documentIngestErrorCode(error: any): 'PARSE_FAIL' | 'EMBED_FAIL' {
 
 router.post('/document', verifyInternalKey, upload.single('file'), async (req: Request, res: Response) => {
   const file = req.file;
-  const { documentId, title, category, village_id, villageId, fileHash, upload_only } = req.body;
-  const resolvedVillageId: string | null = typeof village_id === 'string' && village_id.length > 0
-    ? village_id
-    : typeof villageId === 'string' && villageId.length > 0
-      ? villageId
-      : null;
+  const { documentId, title, category, village_id, villageId, fileHash, upload_only, scope, is_global, isGlobal } = req.body;
+  const isGlobalDocument = scope === 'global' || is_global === 'true' || isGlobal === 'true' || is_global === true || isGlobal === true;
+  const resolvedVillageId: string | null = isGlobalDocument
+    ? null
+    : typeof village_id === 'string' && village_id.length > 0
+      ? village_id
+      : typeof villageId === 'string' && villageId.length > 0
+        ? villageId
+        : null;
 
   if (!file) return res.status(400).json({ error: 'No file provided' });
   if (!documentId) return res.status(400).json({ error: 'documentId is required' });
@@ -110,6 +113,7 @@ router.post('/document', verifyInternalKey, upload.single('file'), async (req: R
       title,
       category,
       villageId: resolvedVillageId,
+      isGlobal: isGlobalDocument,
       fileHash: computedFileHash,
       tracePrefix: 'document',
     });
@@ -147,7 +151,7 @@ router.post('/document/:documentId/process', verifyInternalKey, async (req: Requ
     });
     if (!response.ok) return res.status(404).json({ error: 'Document not found' });
 
-    const payload = await response.json() as { data?: { id: string; title?: string | null; category?: string | null; village_id?: string | null; file_url?: string | null; original_name?: string | null; mime_type?: string | null } };
+    const payload = await response.json() as { data?: { id: string; title?: string | null; category?: string | null; village_id?: string | null; scope?: string | null; is_global?: boolean | null; file_url?: string | null; original_name?: string | null; mime_type?: string | null } };
     const document = payload?.data;
     if (!document?.file_url) return res.status(400).json({ error: 'Document file is not available' });
 
@@ -163,7 +167,8 @@ router.post('/document/:documentId/process', verifyInternalKey, async (req: Requ
       mimeType: document.mime_type || fileRes.headers.get('content-type') || 'application/octet-stream',
       title: document.title || undefined,
       category: document.category || undefined,
-      villageId: document.village_id || null,
+      villageId: document.is_global || document.scope === 'global' ? null : document.village_id || null,
+      isGlobal: Boolean(document.is_global || document.scope === 'global'),
       fileHash: bufferHash,
       tracePrefix: 'document-reprocess',
     });

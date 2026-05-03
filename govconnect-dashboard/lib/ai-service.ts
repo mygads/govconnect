@@ -17,6 +17,8 @@ interface KnowledgeVectorPayload {
   category: string;
   keywords: string[];
   qualityScore?: number;
+  scope?: string;
+  is_global?: boolean;
 }
 
 /**

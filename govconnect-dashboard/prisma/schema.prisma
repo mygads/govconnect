@@ -213,6 +213,8 @@ model knowledge_base {
   category         String    // "informasi_umum" | "layanan" | "prosedur" | "jadwal" | "kontak" | "faq"
   category_id      String?
   village_id       String?
+  scope            String    @default("village") // village | global
+  is_global        Boolean   @default(false)
   keywords         String[]  // Array of keywords for better search
   is_active        Boolean   @default(true)
   priority         Int       @default(0) // Higher priority = shown first
@@ -230,6 +232,8 @@ model knowledge_base {
   @@index([category])
   @@index([category_id])
   @@index([village_id])
+  @@index([scope, is_global])
+  @@index([village_id, scope, is_global])
   @@index([is_active])
   @@index([keywords])
 }
@@ -245,6 +249,8 @@ model knowledge_documents {
   file_url        String   // Storage URL (local or S3)
   file_hash       String?
   village_id      String?
+  scope           String   @default("village") // village | global
+  is_global       Boolean  @default(false)
   category_id     String?
   
   // Processing status
@@ -273,6 +279,8 @@ model knowledge_documents {
   @@index([category])
   @@index([category_id])
   @@index([village_id])
+  @@index([scope, is_global])
+  @@index([village_id, scope, is_global])
   @@index([village_id, file_hash])
   @@index([created_at])
 }

@@ -129,7 +129,7 @@ function DashboardHome() {
 
   useEffect(() => {
     let active = true
-    Promise.allSettled([statistics.getTrends("week"), documents.getStats()]).then(([trendsResult, docsResult]) => {
+    Promise.allSettled([statistics.getTrends("weekly"), documents.getStats()]).then(([trendsResult, docsResult]) => {
       if (!active) return
       if (trendsResult.status === "fulfilled") setTrendPoints(normalizeTrends(trendsResult.value))
       if (docsResult.status === "fulfilled") setDocStats(docsResult.value?.data || docsResult.value)

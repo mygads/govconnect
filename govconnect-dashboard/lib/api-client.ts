@@ -328,7 +328,7 @@ export const caseService = {
   /**
    * Get statistics trends
    */
-  async getTrends(period: string = 'week', village_id?: string) {
+  async getTrends(period: string = 'weekly', village_id?: string) {
     const url = new URL(buildUrl(ServicePath.CASE, '/statistics/trends'));
     url.searchParams.set('period', period);
     if (village_id) url.searchParams.set('village_id', village_id);
@@ -346,11 +346,14 @@ export const ai = {
    */
   async addKnowledge(data: {
     id: string;
+    village_id?: string;
     title: string;
     content: string;
     category: string;
     keywords: string[];
     qualityScore?: number;
+    scope?: string;
+    is_global?: boolean;
   }) {
     return apiFetch(buildUrl(ServicePath.AI, '/api/knowledge'), {
       method: 'POST',
@@ -363,10 +366,14 @@ export const ai = {
    * Update knowledge vector
    */
   async updateKnowledge(id: string, data: {
+    village_id?: string;
     title: string;
     content: string;
     category: string;
     keywords: string[];
+    qualityScore?: number;
+    scope?: string;
+    is_global?: boolean;
   }) {
     return apiFetch(buildUrl(ServicePath.AI, `/api/knowledge/${id}`), {
       method: 'PUT',
@@ -1219,7 +1226,7 @@ export const apiClient = {
     return response.json();
   },
   
-  async getTrends(period: string = 'week') {
+  async getTrends(period: string = 'weekly') {
     const response = await caseService.getTrends(period);
     return response.json();
   },

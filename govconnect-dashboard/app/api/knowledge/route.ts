@@ -170,6 +170,11 @@ export async function POST(request: NextRequest) {
     const processedKeywords = Array.isArray(keywords)
       ? keywords.map((k: string) => k.toLowerCase().trim()).filter(Boolean)
       : []
+    const scope = session.admin.role === 'superadmin' && body.scope === 'global' ? 'global' : 'village'
+    const isGlobal = scope === 'global'
+    if (scope === 'village' && !session.admin.village_id) {
+      return NextResponse.json({ error: 'village_id wajib untuk knowledge desa' }, { status: 400 })
+    }
 
     const knowledge = await prisma.knowledge_base.create({
       data: {
@@ -177,7 +182,9 @@ export async function POST(request: NextRequest) {
         content,
         category: resolvedCategoryName || category,
         category_id: resolvedCategoryId,
-        village_id: session.admin.village_id || undefined,
+        village_id: isGlobal ? undefined : session.admin.village_id || undefined,
+        scope,
+        is_global: isGlobal,
         keywords: processedKeywords,
         is_active: is_active ?? true,
         priority: priority ?? 0,

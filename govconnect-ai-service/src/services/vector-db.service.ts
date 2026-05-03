@@ -22,6 +22,15 @@ import {
 
 // ==================== KNOWLEDGE VECTORS ====================
 
+type VectorScope = 'village' | 'global';
+
+function resolveVectorScope(input: { villageId?: string | null; scope?: VectorScope; isGlobal?: boolean }): { villageId: string | null; scope: VectorScope; isGlobal: boolean } {
+  const isGlobal = input.scope === 'global' || input.isGlobal === true;
+  if (isGlobal) return { villageId: null, scope: 'global', isGlobal: true };
+  if (!input.villageId) throw new Error('villageId is required for village-scoped vectors');
+  return { villageId: input.villageId, scope: 'village', isGlobal: false };
+}
+
 export interface KnowledgeVectorInput {
   id: string;
   villageId?: string | null;
@@ -32,6 +41,8 @@ export interface KnowledgeVectorInput {
   embedding: number[];
   embeddingModel?: string;
   qualityScore?: number;
+  scope?: VectorScope;
+  isGlobal?: boolean;
 }
 
 /**
@@ -50,6 +61,7 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
     embeddingModel = config.embeddingGateway.model,
     qualityScore = 1.0,
   } = input;
+  const vectorScope = resolveVectorScope(input);
 
   try {
     // Convert embedding array to pgvector format
@@ -57,16 +69,18 @@ export async function upsertKnowledgeVector(input: KnowledgeVectorInput): Promis
 
     await prisma.$executeRaw`
       INSERT INTO ai.knowledge_vectors (
-        id, village_id, title, content, category, keywords, 
+        id, village_id, scope, is_global, title, content, category, keywords,
         embedding, embedding_model, quality_score,
         created_at, updated_at
       ) VALUES (
-        ${id}, ${villageId}, ${title}, ${content}, ${category}, ${keywords},
+        ${id}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${title}, ${content}, ${category}, ${keywords},
         ${embeddingStr}::vector, ${embeddingModel}, ${qualityScore},
         NOW(), NOW()
       )
       ON CONFLICT (id) DO UPDATE SET
         village_id = EXCLUDED.village_id,
+        scope = EXCLUDED.scope,
+        is_global = EXCLUDED.is_global,
         title = EXCLUDED.title,
         content = EXCLUDED.content,
         category = EXCLUDED.category,
@@ -159,6 +173,8 @@ export interface DocumentChunkInput {
   pageNumber?: number;
   sectionTitle?: string;
   embeddingModel?: string;
+  scope?: VectorScope;
+  isGlobal?: boolean;
 }
 
 /**
@@ -173,28 +189,32 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
     await prisma.$transaction(async (tx) => {
       for (const chunk of chunks) {
         const embeddingStr = `[${chunk.embedding.join(',')}]`;
-        
+        const vectorScope = resolveVectorScope(chunk);
+
         await tx.$executeRaw`
           INSERT INTO ai.document_vectors (
-            id, document_id, village_id, chunk_index, content,
+            id, document_id, village_id, scope, is_global, chunk_index, content,
             document_title, category, page_number, section_title,
             embedding, embedding_model, created_at
           ) VALUES (
             ${`${chunk.documentId}_${chunk.chunkIndex}`},
-            ${chunk.documentId}, ${chunk.villageId || null}, ${chunk.chunkIndex}, ${chunk.content},
-            ${chunk.documentTitle || null}, ${chunk.category || null}, 
+            ${chunk.documentId}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${chunk.chunkIndex}, ${chunk.content},
+            ${chunk.documentTitle || null}, ${chunk.category || null},
             ${chunk.pageNumber || null}, ${chunk.sectionTitle || null},
             ${embeddingStr}::vector, ${chunk.embeddingModel || config.embeddingGateway.model},
             NOW()
           )
           ON CONFLICT (document_id, chunk_index) DO UPDATE SET
+            village_id = EXCLUDED.village_id,
+            scope = EXCLUDED.scope,
+            is_global = EXCLUDED.is_global,
             content = EXCLUDED.content,
             document_title = EXCLUDED.document_title,
             category = EXCLUDED.category,
             page_number = EXCLUDED.page_number,
             section_title = EXCLUDED.section_title,
             embedding = EXCLUDED.embedding,
-            village_id = EXCLUDED.village_id
+            embedding_model = EXCLUDED.embedding_model
         `;
       }
     });
@@ -264,6 +284,9 @@ export async function searchVectors(
   const startTime = Date.now();
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
   const results: VectorSearchResult[] = [];
+  const tenantScopeFilter = villageId
+    ? Prisma.sql`((village_id = ${villageId} AND scope = 'village' AND is_global = FALSE) OR (scope = 'global' AND is_global = TRUE))`
+    : Prisma.sql`(scope = 'global' AND is_global = TRUE)`;
 
   try {
     // Search knowledge vectors
@@ -282,7 +305,7 @@ export async function searchVectors(
               'knowledge' as source_type, quality_score
             FROM ai.knowledge_vectors
             WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
-              AND (village_id = ${villageId} OR village_id IS NULL)
+              AND ${tenantScopeFilter}
           `
         : Prisma.sql`
             SELECT 
@@ -291,6 +314,7 @@ export async function searchVectors(
               'knowledge' as source_type, quality_score
             FROM ai.knowledge_vectors
             WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
+              AND ${tenantScopeFilter}
           `;
 
       const knowledgeResults = await prisma.$queryRaw<VectorSearchRow[]>`
@@ -337,7 +361,7 @@ export async function searchVectors(
               'document' as source_type
             FROM ai.document_vectors
             WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
-              AND (village_id = ${villageId} OR village_id IS NULL)
+              AND ${tenantScopeFilter}
           `
         : Prisma.sql`
             SELECT 
@@ -347,6 +371,7 @@ export async function searchVectors(
               'document' as source_type
             FROM ai.document_vectors
             WHERE 1 - (embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
+              AND ${tenantScopeFilter}
           `;
 
       const documentResults = await prisma.$queryRaw<VectorSearchRow[]>`
@@ -389,21 +414,23 @@ export async function searchVectors(
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
                 1 - (qv.embedding <=> ${embeddingStr}::vector) as similarity
-              FROM question_variants qv
+              FROM ai.question_variants qv
               JOIN ai.knowledge_vectors kv ON kv.id = qv.source_id
               WHERE 1 - (qv.embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
                 AND qv.source_type = 'knowledge'
-                AND (qv.village_id = ${villageId} OR qv.village_id IS NULL)
+                AND ((qv.village_id = ${villageId} AND qv.scope = 'village' AND qv.is_global = FALSE) OR (qv.scope = 'global' AND qv.is_global = TRUE))
             `
           : Prisma.sql`
               SELECT 
                 qv.source_id, qv.variant_text,
                 kv.content, kv.title, kv.category, kv.keywords, kv.quality_score,
                 1 - (qv.embedding <=> ${embeddingStr}::vector) as similarity
-              FROM question_variants qv
+              FROM ai.question_variants qv
               JOIN ai.knowledge_vectors kv ON kv.id = qv.source_id
               WHERE 1 - (qv.embedding <=> ${embeddingStr}::vector) >= ${sqlMinScore}
                 AND qv.source_type = 'knowledge'
+                AND qv.scope = 'global'
+                AND qv.is_global = TRUE
             `;
 
         const variantResults = await prisma.$queryRaw<any[]>`

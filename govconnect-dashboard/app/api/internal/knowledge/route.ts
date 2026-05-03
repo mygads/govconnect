@@ -74,17 +74,21 @@ export async function GET(request: NextRequest) {
         content: true,
         category: true,
         keywords: true,
+        scope: true,
+        is_global: true,
       },
     })
 
     // Format for AI consumption
-    const formattedKnowledge = knowledge.map((k: { id: string; village_id: string | null; title: string; content: string; category: string; keywords: string[] }) => ({
+    const formattedKnowledge = knowledge.map((k: { id: string; village_id: string | null; title: string; content: string; category: string; keywords: string[]; scope: string; is_global: boolean }) => ({
       id: k.id,
       village_id: k.village_id,
       title: k.title,
       content: k.content,
       category: k.category,
       keywords: k.keywords,
+      scope: k.scope,
+      is_global: k.is_global,
     }))
 
     return NextResponse.json({
@@ -165,6 +169,9 @@ export async function POST(request: NextRequest) {
         content: true,
         category: true,
         keywords: true,
+        village_id: true,
+        scope: true,
+        is_global: true,
       },
     })
 

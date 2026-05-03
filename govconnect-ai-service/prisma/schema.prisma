@@ -20,6 +20,8 @@ datasource db {
 model knowledge_vectors {
   id         String   @id // Same ID as dashboard.knowledge_base
   village_id String?
+  scope      String   @default("village") // village | global
+  is_global  Boolean  @default(false)
   title      String
   content    String   @db.Text
   category   String
@@ -41,6 +43,8 @@ model knowledge_vectors {
 
   @@index([category])
   @@index([village_id])
+  @@index([scope, is_global])
+  @@index([village_id, scope, is_global])
   @@index([quality_score])
 }
 
@@ -52,6 +56,8 @@ model document_vectors {
   id          String  @id @default(cuid())
   document_id String // Reference to dashboard.knowledge_documents
   village_id  String?
+  scope       String  @default("village") // village | global
+  is_global   Boolean @default(false)
   chunk_index Int
   content     String  @db.Text
 
@@ -71,6 +77,8 @@ model document_vectors {
   @@unique([document_id, chunk_index])
   @@index([document_id])
   @@index([village_id])
+  @@index([scope, is_global])
+  @@index([village_id, scope, is_global])
   @@index([category])
 }
 
@@ -109,6 +117,8 @@ model question_variants {
   source_id    String // ID of parent knowledge_vectors entry
   source_type  String  @default("knowledge") // "knowledge" | "document_chunk"
   village_id   String?
+  scope        String  @default("village") // village | global
+  is_global    Boolean @default(false)
   variant_text String  @db.Text
 
   // Vector embedding of the variant question
@@ -119,6 +129,8 @@ model question_variants {
 
   @@index([source_id])
   @@index([village_id])
+  @@index([scope, is_global])
+  @@index([village_id, scope, is_global])
 }
 
 // ==================== AI TOKEN USAGE ====================
