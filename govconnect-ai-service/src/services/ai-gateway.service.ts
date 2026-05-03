@@ -133,6 +133,9 @@ interface TokenContext {
   wa_user_id?: string | null;
   session_id?: string | null;
   channel?: string | null;
+  message_id?: string | null;
+  trace_id?: string | null;
+  billing_group_id?: string | null;
   intent?: string | null;
 }
 
@@ -818,6 +821,52 @@ function estimateCacheWriteMultiplier(provider: string, model: string): number {
   if (value.includes('deepseek')) return 1;
   return 1;
 }
+function recordGatewayFailure(
+  metrics: LLMMetrics,
+  options: { layerType?: LayerType; callType?: CallType; context?: TokenContext },
+  generation: {
+    provider?: string | null;
+    requestJson?: unknown;
+    responseJson?: unknown;
+    promptPreview?: string | null;
+    errorMessage: string;
+  },
+): void {
+  if (!options.layerType || !options.callType) return;
+
+  recordGenerationLog({
+    token_usage_id: null,
+    village_id: options.context?.village_id ?? null,
+    wa_user_id: options.context?.wa_user_id ?? null,
+    session_id: options.context?.session_id ?? null,
+    channel: options.context?.channel ?? null,
+    message_id: options.context?.message_id ?? null,
+    trace_id: options.context?.trace_id ?? null,
+    billing_group_id: options.context?.billing_group_id ?? null,
+    lane_type: metrics.laneType ?? null,
+    layer_type: options.layerType,
+    call_type: options.callType,
+    provider_id: metrics.providerId ?? null,
+    model_config_id: metrics.modelConfigId ?? null,
+    provider: generation.provider ?? metrics.keyTier ?? null,
+    model: metrics.model,
+    gateway_source: metrics.keySource,
+    response_id: null,
+    finish_reason: null,
+    streaming: false,
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    duration_ms: metrics.durationMs,
+    status: 'failed',
+    error_message: generation.errorMessage,
+    request_json: generation.requestJson,
+    response_json: generation.responseJson,
+    prompt_preview: generation.promptPreview ?? null,
+    completion_preview: null,
+  }).catch((err: any) => logger.warn('Failed to record AI generation failure log', { error: err?.message || String(err) }));
+}
+
 function recordGatewayUsage(
   metrics: LLMMetrics,
   options: { layerType?: LayerType; callType?: CallType; context?: TokenContext },
@@ -880,6 +929,9 @@ function recordGatewayUsage(
     wa_user_id: options.context?.wa_user_id ?? null,
     session_id: options.context?.session_id ?? null,
     channel: options.context?.channel ?? null,
+    message_id: options.context?.message_id ?? null,
+    trace_id: options.context?.trace_id ?? null,
+    billing_group_id: options.context?.billing_group_id ?? null,
     lane_type: metrics.laneType ?? null,
     layer_type: options.layerType,
     call_type: options.callType,
@@ -1120,6 +1172,23 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
           lastError = error.message || 'Unknown gateway error';
           modelStatsService.recordFailure(model, lastError, durationMs);
           await reportAttemptResult(lane, attempt, false);
+          const metrics = buildMetrics(
+            lane,
+            model,
+            gateway.provider,
+            apiKey,
+            durationMs,
+            { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            startTime,
+            attempt,
+          );
+          recordGatewayFailure(metrics, options, {
+            provider: gateway.provider,
+            requestJson: buildPromptBody(gateway, model, options, !!options.jsonMode),
+            responseJson: { error: lastError },
+            promptPreview: promptPreview(options.messages),
+            errorMessage: lastError,
+          });
 
           logger.warn('AI gateway call failed', {
             lane,
@@ -1273,6 +1342,23 @@ export async function callAIGatewayEmbeddings(options: GatewayEmbeddingOptions):
         lastError = error.message || 'Unknown embedding gateway error';
         modelStatsService.recordFailure(model, lastError, durationMs);
         await reportAttemptResult(lane, attempt, false);
+        const metrics = buildMetrics(
+          lane,
+          model,
+          gateway.provider,
+          apiKey,
+          durationMs,
+          { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          startTime,
+          attempt,
+        );
+        recordGatewayFailure(metrics, options, {
+          provider: gateway.provider,
+          requestJson: body,
+          responseJson: { error: lastError },
+          promptPreview: Array.isArray(options.input) ? `${options.input.length} embedding inputs` : options.input,
+          errorMessage: lastError,
+        });
 
         logger.warn('Embedding gateway call failed', {
           provider: gateway.provider,
@@ -1503,6 +1589,23 @@ export async function callAIGatewayRerank(options: GatewayRerankOptions): Promis
 
         modelStatsService.recordFailure(model, lastError, durationMs);
         await reportAttemptResult(lane, attempt, false);
+        const metrics = buildMetrics(
+          lane,
+          model,
+          gateway.provider,
+          apiKey,
+          durationMs,
+          { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          startTime,
+          attempt,
+        );
+        recordGatewayFailure(metrics, options, {
+          provider: gateway.provider,
+          requestJson: body,
+          responseJson: { error: lastError },
+          promptPreview: `${options.query}\n\nDocuments: ${options.documents.length}`,
+          errorMessage: lastError,
+        });
 
         logger.warn('Rerank gateway call failed', {
           provider: gateway.provider,
