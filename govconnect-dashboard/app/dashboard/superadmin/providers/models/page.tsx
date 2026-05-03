@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { redirect } from "next/navigation"
 import { AlertTriangle, Brain, Database, Edit2, Eye, Loader2, Mic, Play, Plus, Save, Search, Trash2, Waypoints, X } from "lucide-react"
 
@@ -134,8 +134,12 @@ type ModelFormSnapshot = {
   display_name: string
   upstream_model_name: string
   endpoint_path: string
+  actual_pricing_type: string
+  actual_fixed_price: string
   actual_input: string
   actual_output: string
+  adjusted_pricing_type: string
+  adjusted_fixed_price: string
   adjusted_input: string
   adjusted_output: string
   priority: string
@@ -144,6 +148,15 @@ type ModelFormSnapshot = {
   supports_audio: string
   notes: string
 }
+
+type CopySourceLane = "llm" | "rewrite"
+
+type CopySourceState = {
+  open: boolean
+  sourceLane: CopySourceLane | null
+  targetLane: "rewrite" | "rerank" | null
+}
+
 
 function laneIcon(lane: string) {
   switch (lane) {
@@ -158,15 +171,39 @@ function laneIcon(lane: string) {
   }
 }
 
-function parseRequiredPrice(value: string, label: string) {
+function parseRequiredFixedPrice(value: string, label: string) {
   if (value.trim() === "") throw new Error(`${label} wajib diisi. Isi 0 jika model benar-benar gratis.`)
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} harus angka 0 atau lebih`)
   return parsed
 }
 
-function formatPrice(input: number | null | undefined, output: number | null | undefined) {
-  return `$${input ?? 0} input / $${output ?? 0} output per 1M token`
+function normalizePricingType(lane: string, endpointPath: string, pricingType?: string | null) {
+  if (pricingType === "fixed_per_call" || pricingType === "per_million_tokens") return pricingType
+  const normalized = endpointPath.trim().toLowerCase()
+  if (lane === "rerank" && (normalized === "/rerank" || normalized === "/v1/rerank")) return "fixed_per_call"
+  return "per_million_tokens"
+}
+
+function isFixedPricing(pricingType: string) {
+  return pricingType === "fixed_per_call"
+}
+
+function formatPrice(pricingType: string | null | undefined, fixedPrice: number | null | undefined, input: number | null | undefined, output: number | null | undefined) {
+  if (pricingType === "fixed_per_call") return `$${fixedPrice ?? 0} per search`
+  return `$${input ?? 0} input / $${output ?? 0} output`
+}
+
+function buildCopiedDisplayName(sourceName: string, targetLane: "rewrite" | "rerank") {
+  const trimmed = sourceName.trim()
+  if (!trimmed) return targetLane === "rewrite" ? "Rewrite Model" : "Rerank Model"
+  const suffix = targetLane === "rewrite" ? "Rewrite" : "Rerank"
+  if (new RegExp(`\\b${suffix}\\b`, "i").test(trimmed)) return trimmed
+  return `${trimmed} ${suffix}`
+}
+
+function tableEndpointModeLabel(model: ModelRow) {
+  return endpointMode(model.lane_type, model.endpoint_path || "").label
 }
 
 function priceValue(value: number | null | undefined) {
@@ -188,8 +225,11 @@ export default function SuperadminAIModelsPage() {
   const [testResults, setTestResults] = useState<Record<string, any>>({})
   const [draftTestResult, setDraftTestResult] = useState<any>(null)
   const [formOpen, setFormOpen] = useState(false)
+  const [copySource, setCopySource] = useState<CopySourceState>({ open: false, sourceLane: null, targetLane: null })
+  const [copySourceQuery, setCopySourceQuery] = useState("")
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({})
+  const displayNameInputRef = useRef<HTMLInputElement | null>(null)
 
   const [editingModelId, setEditingModelId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState("")
@@ -197,8 +237,12 @@ export default function SuperadminAIModelsPage() {
   const [displayName, setDisplayName] = useState("")
   const [upstreamModelName, setUpstreamModelName] = useState("")
   const [endpointPath, setEndpointPath] = useState("")
+  const [actualPricingType, setActualPricingType] = useState("per_million_tokens")
+  const [actualFixedPrice, setActualFixedPrice] = useState("")
   const [actualInput, setActualInput] = useState("")
   const [actualOutput, setActualOutput] = useState("")
+  const [adjustedPricingType, setAdjustedPricingType] = useState("per_million_tokens")
+  const [adjustedFixedPrice, setAdjustedFixedPrice] = useState("")
   const [adjustedInput, setAdjustedInput] = useState("")
   const [adjustedOutput, setAdjustedOutput] = useState("")
   const [priority, setPriority] = useState("100")
@@ -212,8 +256,12 @@ export default function SuperadminAIModelsPage() {
     display_name: "",
     upstream_model_name: "",
     endpoint_path: "",
+    actual_pricing_type: "per_million_tokens",
+    actual_fixed_price: "",
     actual_input: "",
     actual_output: "",
+    adjusted_pricing_type: "per_million_tokens",
+    adjusted_fixed_price: "",
     adjusted_input: "",
     adjusted_output: "",
     priority: "100",
@@ -257,12 +305,18 @@ export default function SuperadminAIModelsPage() {
       setLoading(false)
     }
   }, [])
-
   useEffect(() => {
     loadData()
   }, [loadData])
 
+  useEffect(() => {
+    if (!formOpen) return
+    const handle = window.setTimeout(() => displayNameInputRef.current?.focus(), 0)
+    return () => window.clearTimeout(handle)
+  }, [formOpen])
+
   const grouped = useMemo(() => laneOptions.map((lane) => ({
+
     lane,
     rows: models.filter((model) => model.lane_type === lane),
   })), [models])
@@ -270,19 +324,43 @@ export default function SuperadminAIModelsPage() {
   const selectedProvider = providers.find((provider) => provider.id === providerId)
   const endpointOptions = endpointOptionsForProvider(selectedProvider, laneType)
   const endpointSelectValue = endpointOptions.includes(endpointPath) ? endpointPath : "__manual__"
+
   const currentEndpointMode = endpointMode(laneType, endpointPath)
   const currentEndpointWarning = endpointWarning(laneType, endpointPath)
+  const llmModels = useMemo(() => models.filter((model) => model.lane_type === "llm" && !model.is_read_only), [models])
+  const rewriteModels = useMemo(() => models.filter((model) => model.lane_type === "rewrite" && !model.is_read_only), [models])
+  const copyableModels = copySource.sourceLane === "rewrite" ? rewriteModels : llmModels
+  const filteredCopyableModels = useMemo(() => {
+    const query = copySourceQuery.trim().toLowerCase()
+    if (!query) return copyableModels
+    return copyableModels.filter((model) => {
+      const providerName = model.provider?.name || ""
+      return [model.display_name, model.upstream_model_name, providerName]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    })
+  }, [copySourceQuery, copyableModels])
+  const usesFixedActualPricing = isFixedPricing(actualPricingType)
+  const usesFixedAdjustedPricing = isFixedPricing(adjustedPricingType)
+  const isNativeRerankEndpoint = laneType === "rerank" && normalizePricingType(laneType, endpointPath, null) === "fixed_per_call"
 
   const handleProviderChange = (nextProviderId: string) => {
     const nextProvider = providers.find((provider) => provider.id === nextProviderId)
+    const nextEndpointPath = defaultEndpointForLane(laneType, nextProvider)
     setProviderId(nextProviderId)
-    setEndpointPath(defaultEndpointForLane(laneType, nextProvider))
+    setEndpointPath(nextEndpointPath)
+    setActualPricingType(normalizePricingType(laneType, nextEndpointPath, actualPricingType))
+    setAdjustedPricingType(normalizePricingType(laneType, nextEndpointPath, adjustedPricingType))
     setDraftTestResult(null)
   }
 
   const handleLaneChange = (nextLane: string) => {
+    const nextEndpointPath = defaultEndpointForLane(nextLane, selectedProvider)
     setLaneType(nextLane)
-    setEndpointPath(defaultEndpointForLane(nextLane, selectedProvider))
+    setEndpointPath(nextEndpointPath)
+    setActualPricingType(normalizePricingType(nextLane, nextEndpointPath, null))
+    setAdjustedPricingType(normalizePricingType(nextLane, nextEndpointPath, null))
     setDraftTestResult(null)
   }
 
@@ -292,8 +370,12 @@ export default function SuperadminAIModelsPage() {
     display_name: displayName.trim(),
     upstream_model_name: upstreamModelName.trim(),
     endpoint_path: endpointPath.trim(),
+    actual_pricing_type: actualPricingType,
+    actual_fixed_price: actualFixedPrice.trim(),
     actual_input: actualInput.trim(),
     actual_output: actualOutput.trim(),
+    adjusted_pricing_type: adjustedPricingType,
+    adjusted_fixed_price: adjustedFixedPrice.trim(),
     adjusted_input: adjustedInput.trim(),
     adjusted_output: adjustedOutput.trim(),
     priority: priority.trim(),
@@ -305,76 +387,19 @@ export default function SuperadminAIModelsPage() {
 
   const isFormDirty = JSON.stringify(getFormSnapshot()) !== JSON.stringify(formInitial)
 
-  const resetForm = () => {
-    const nextProvider = providers.find((provider) => !provider.is_read_only)
-    const nextProviderId = nextProvider?.id || ""
-    const nextLane = "llm"
-    const nextEndpointPath = defaultEndpointForLane(nextLane, nextProvider)
-    setEditingModelId(null)
-    setLaneType(nextLane)
-    setDisplayName("")
-    setUpstreamModelName("")
-    setEndpointPath(nextEndpointPath)
-    setActualInput("")
-    setActualOutput("")
-    setAdjustedInput("")
-    setAdjustedOutput("")
-    setPriority("100")
-    setIsActive("true")
-    setSupportsVision("false")
-    setSupportsAudio("false")
-    setNotes("")
-    setDraftTestResult(null)
-    setProviderId(nextProviderId)
-    setFormInitial({
-      provider_id: nextProviderId,
-      lane_type: nextLane,
-      display_name: "",
-      upstream_model_name: "",
-      endpoint_path: nextEndpointPath,
-      actual_input: "",
-      actual_output: "",
-      adjusted_input: "",
-      adjusted_output: "",
-      priority: "100",
-      is_active: "true",
-      supports_vision: "false",
-      supports_audio: "false",
-      notes: "",
-    })
-  }
-
-  const startCreate = () => {
-    resetForm()
-    setError(null)
-    setFormOpen(true)
-  }
-
-  const startEdit = (model: ModelRow) => {
-    const snapshot = {
-      provider_id: model.provider_id,
-      lane_type: model.lane_type,
-      display_name: model.display_name.trim(),
-      upstream_model_name: model.upstream_model_name.trim(),
-      endpoint_path: (model.endpoint_path || "").trim(),
-      actual_input: priceValue(model.actual_input_price_per_million_usd),
-      actual_output: priceValue(model.actual_output_price_per_million_usd),
-      adjusted_input: priceValue(model.adjusted_input_price_per_million_usd),
-      adjusted_output: priceValue(model.adjusted_output_price_per_million_usd),
-      priority: String(model.priority ?? 100),
-      is_active: model.is_active ? "true" : "false",
-      supports_vision: model.supports_vision ? "true" : "false",
-      supports_audio: model.supports_audio ? "true" : "false",
-      notes: (model.notes || "").trim(),
-    }
-    setEditingModelId(model.id)
+  const applySnapshot = (snapshot: ModelFormSnapshot, editingId: string | null) => {
+    setEditingModelId(editingId)
     setProviderId(snapshot.provider_id)
     setLaneType(snapshot.lane_type)
     setDisplayName(snapshot.display_name)
     setUpstreamModelName(snapshot.upstream_model_name)
     setEndpointPath(snapshot.endpoint_path)
+    setActualPricingType(snapshot.actual_pricing_type)
+    setActualFixedPrice(snapshot.actual_fixed_price)
     setActualInput(snapshot.actual_input)
     setActualOutput(snapshot.actual_output)
+    setAdjustedPricingType(snapshot.adjusted_pricing_type)
+    setAdjustedFixedPrice(snapshot.adjusted_fixed_price)
     setAdjustedInput(snapshot.adjusted_input)
     setAdjustedOutput(snapshot.adjusted_output)
     setPriority(snapshot.priority)
@@ -384,6 +409,67 @@ export default function SuperadminAIModelsPage() {
     setNotes(snapshot.notes)
     setFormInitial(snapshot)
     setDraftTestResult(null)
+  }
+
+  const resetForm = () => {
+    const nextProvider = providers.find((provider) => !provider.is_read_only)
+    const nextProviderId = nextProvider?.id || ""
+    const nextLane = "llm"
+    const nextEndpointPath = defaultEndpointForLane(nextLane, nextProvider)
+    const nextActualPricingType = normalizePricingType(nextLane, nextEndpointPath, null)
+    const nextAdjustedPricingType = normalizePricingType(nextLane, nextEndpointPath, null)
+
+    applySnapshot({
+      provider_id: nextProviderId,
+      lane_type: nextLane,
+      display_name: "",
+      upstream_model_name: "",
+      endpoint_path: nextEndpointPath,
+      actual_pricing_type: nextActualPricingType,
+      actual_fixed_price: "",
+      actual_input: "",
+      actual_output: "",
+      adjusted_pricing_type: nextAdjustedPricingType,
+      adjusted_fixed_price: "",
+      adjusted_input: "",
+      adjusted_output: "",
+      priority: "100",
+      is_active: "true",
+      supports_vision: "false",
+      supports_audio: "false",
+      notes: "",
+    }, null)
+  }
+
+  const startCreate = () => {
+    resetForm()
+    setError(null)
+    setFormOpen(true)
+  }
+
+  const startEdit = (model: ModelRow) => {
+    const provider = providers.find((row) => row.id === model.provider_id)
+    const resolvedEndpointPath = (model.endpoint_path || defaultEndpointForLane(model.lane_type, provider)).trim()
+    applySnapshot({
+      provider_id: model.provider_id,
+      lane_type: model.lane_type,
+      display_name: model.display_name.trim(),
+      upstream_model_name: model.upstream_model_name.trim(),
+      endpoint_path: resolvedEndpointPath,
+      actual_pricing_type: normalizePricingType(model.lane_type, resolvedEndpointPath, model.actual_pricing_type),
+      actual_fixed_price: priceValue(model.actual_fixed_price_usd),
+      actual_input: priceValue(model.actual_input_price_per_million_usd),
+      actual_output: priceValue(model.actual_output_price_per_million_usd),
+      adjusted_pricing_type: normalizePricingType(model.lane_type, resolvedEndpointPath, model.adjusted_pricing_type),
+      adjusted_fixed_price: priceValue(model.adjusted_fixed_price_usd),
+      adjusted_input: priceValue(model.adjusted_input_price_per_million_usd),
+      adjusted_output: priceValue(model.adjusted_output_price_per_million_usd),
+      priority: String(model.priority ?? 100),
+      is_active: model.is_active ? "true" : "false",
+      supports_vision: model.supports_vision ? "true" : "false",
+      supports_audio: model.supports_audio ? "true" : "false",
+      notes: (model.notes || "").trim(),
+    }, model.id)
     setError(null)
     setFormOpen(true)
   }
@@ -421,6 +507,41 @@ export default function SuperadminAIModelsPage() {
     })
   }
 
+  const copyFromModel = (source: ModelRow, targetLane: "rewrite" | "rerank") => {
+    const provider = providers.find((row) => row.id === source.provider_id)
+    const nextEndpointPath = defaultEndpointForLane(targetLane, provider)
+    const nextActualPricingType = targetLane === "rerank"
+      ? normalizePricingType(targetLane, nextEndpointPath, source.actual_pricing_type)
+      : "per_million_tokens"
+    const nextAdjustedPricingType = targetLane === "rerank"
+      ? normalizePricingType(targetLane, nextEndpointPath, source.adjusted_pricing_type)
+      : "per_million_tokens"
+
+    applySnapshot({
+      provider_id: source.provider_id,
+      lane_type: targetLane,
+      display_name: buildCopiedDisplayName(source.display_name, targetLane),
+      upstream_model_name: source.upstream_model_name.trim(),
+      endpoint_path: nextEndpointPath,
+      actual_pricing_type: nextActualPricingType,
+      actual_fixed_price: nextActualPricingType === "fixed_per_call" ? priceValue(source.actual_fixed_price_usd) : "",
+      actual_input: priceValue(source.actual_input_price_per_million_usd),
+      actual_output: priceValue(source.actual_output_price_per_million_usd),
+      adjusted_pricing_type: nextAdjustedPricingType,
+      adjusted_fixed_price: nextAdjustedPricingType === "fixed_per_call" ? priceValue(source.adjusted_fixed_price_usd) : "",
+      adjusted_input: priceValue(source.adjusted_input_price_per_million_usd),
+      adjusted_output: priceValue(source.adjusted_output_price_per_million_usd),
+      priority: targetLane === "rewrite" ? "110" : "120",
+      is_active: "true",
+      supports_vision: "false",
+      supports_audio: "false",
+      notes: source.notes?.trim() || "",
+    }, null)
+    setCopySourceQuery("")
+    setCopySource({ open: false, sourceLane: null, targetLane: null })
+    setError(null)
+    setFormOpen(true)
+  }
   const handleTestDraft = async () => {
     if (!providerId || !laneType || !upstreamModelName.trim()) {
       toast({ title: "Gagal", description: "Provider, lane, dan upstream model wajib diisi sebelum test", variant: "destructive" })
@@ -444,6 +565,8 @@ export default function SuperadminAIModelsPage() {
             display_name: displayName.trim() || upstreamModelName.trim(),
             upstream_model_name: upstreamModelName.trim(),
             endpoint_path: endpointPath.trim() || null,
+            supports_vision: supportsVision === "true",
+            supports_audio: supportsAudio === "true",
           },
         }),
       })
@@ -503,10 +626,18 @@ export default function SuperadminAIModelsPage() {
       return
     }
     try {
-      parseRequiredPrice(actualInput, "Harga actual input")
-      parseRequiredPrice(actualOutput, "Harga actual output")
-      parseRequiredPrice(adjustedInput, "Harga adjusted input")
-      parseRequiredPrice(adjustedOutput, "Harga adjusted output")
+      if (usesFixedActualPricing) {
+        parseRequiredFixedPrice(actualFixedPrice, "Price actual")
+      } else {
+        parseRequiredFixedPrice(actualInput, "Price actual input")
+        parseRequiredFixedPrice(actualOutput, "Price actual output")
+      }
+      if (usesFixedAdjustedPricing) {
+        parseRequiredFixedPrice(adjustedFixedPrice, "Price adjusted")
+      } else {
+        parseRequiredFixedPrice(adjustedInput, "Price adjusted input")
+        parseRequiredFixedPrice(adjustedOutput, "Price adjusted output")
+      }
       const nextPriority = Number(priority)
       if (!Number.isInteger(nextPriority)) throw new Error("Priority harus angka bulat")
     } catch (err: any) {
@@ -529,10 +660,12 @@ export default function SuperadminAIModelsPage() {
     try {
       setSubmitting(true)
       setError(null)
-        const actualInputPrice = parseRequiredPrice(actualInput, "Harga actual input")
-      const actualOutputPrice = parseRequiredPrice(actualOutput, "Harga actual output")
-      const adjustedInputPrice = parseRequiredPrice(adjustedInput, "Harga adjusted input")
-      const adjustedOutputPrice = parseRequiredPrice(adjustedOutput, "Harga adjusted output")
+      const actualFixed = usesFixedActualPricing ? parseRequiredFixedPrice(actualFixedPrice, "Price actual") : null
+      const actualInputPrice = usesFixedActualPricing ? null : parseRequiredFixedPrice(actualInput, "Price actual input")
+      const actualOutputPrice = usesFixedActualPricing ? null : parseRequiredFixedPrice(actualOutput, "Price actual output")
+      const adjustedFixed = usesFixedAdjustedPricing ? parseRequiredFixedPrice(adjustedFixedPrice, "Price adjusted") : null
+      const adjustedInputPrice = usesFixedAdjustedPricing ? null : parseRequiredFixedPrice(adjustedInput, "Price adjusted input")
+      const adjustedOutputPrice = usesFixedAdjustedPricing ? null : parseRequiredFixedPrice(adjustedOutput, "Price adjusted output")
       const nextPriority = Number(priority)
       if (!Number.isInteger(nextPriority)) throw new Error("Priority harus angka bulat")
 
@@ -543,12 +676,12 @@ export default function SuperadminAIModelsPage() {
         display_name: displayName.trim(),
         upstream_model_name: upstreamModelName.trim(),
         endpoint_path: endpointPath.trim() || null,
-        actual_pricing_type: "per_million_tokens",
-        actual_fixed_price_usd: null,
+        actual_pricing_type: actualPricingType,
+        actual_fixed_price_usd: actualFixed,
         actual_input_price_per_million_usd: actualInputPrice,
         actual_output_price_per_million_usd: actualOutputPrice,
-        adjusted_pricing_type: "per_million_tokens",
-        adjusted_fixed_price_usd: null,
+        adjusted_pricing_type: adjustedPricingType,
+        adjusted_fixed_price_usd: adjustedFixed,
         adjusted_input_price_per_million_usd: adjustedInputPrice,
         adjusted_output_price_per_million_usd: adjustedOutputPrice,
         is_active: isActive === "true",
@@ -655,7 +788,7 @@ export default function SuperadminAIModelsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2"><Label>Display Name</Label><Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Claude Sonnet 4.7" /></div>
+            <div className="space-y-2"><Label>Display Name</Label><Input ref={displayNameInputRef} value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Claude Sonnet 4.7" /></div>
             <div className="space-y-2"><Label>Upstream Model Name</Label><Input value={upstreamModelName} onChange={(e) => setUpstreamModelName(e.target.value)} placeholder="anthropic/claude-sonnet-4.7" /></div>
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -668,6 +801,10 @@ export default function SuperadminAIModelsPage() {
                   onValueChange={(value) => {
                     if (value !== "__manual__") {
                       setEndpointPath(value)
+                      if (laneType === "rerank") {
+                        setActualPricingType(normalizePricingType(laneType, value, null))
+                        setAdjustedPricingType(normalizePricingType(laneType, value, null))
+                      }
                       setDraftTestResult(null)
                     }
                   }}
@@ -678,7 +815,19 @@ export default function SuperadminAIModelsPage() {
                     <SelectItem value="__manual__">Manual / custom</SelectItem>
                   </SelectContent>
                 </Select>
-                <Input value={endpointPath} onChange={(e) => { setEndpointPath(e.target.value); setDraftTestResult(null) }} placeholder={defaultEndpointForLane(laneType, selectedProvider) || "/chat/completions"} />
+                <Input
+                  value={endpointPath}
+                  onChange={(e) => {
+                    const nextValue = e.target.value
+                    setEndpointPath(nextValue)
+                    if (laneType === "rerank") {
+                      setActualPricingType(normalizePricingType(laneType, nextValue, null))
+                      setAdjustedPricingType(normalizePricingType(laneType, nextValue, null))
+                    }
+                    setDraftTestResult(null)
+                  }}
+                  placeholder={defaultEndpointForLane(laneType, selectedProvider) || "/chat/completions"}
+                />
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={handleTestDraft} disabled={testingDraft || !providerId || !upstreamModelName.trim()}>
@@ -726,25 +875,47 @@ export default function SuperadminAIModelsPage() {
 
             <div className="rounded-lg border p-4 space-y-4">
               <div>
-                <div className="font-medium">Harga Actual</div>
-                <p className="text-xs text-muted-foreground">Biaya asli provider per 1 juta token.</p>
+                <div className="font-medium">Price actual</div>
+                <p className="text-xs text-muted-foreground">Biaya asli dari provider untuk model ini.</p>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2"><Label>Input / 1M Token</Label><Input type="number" min="0" step="0.000001" value={actualInput} onChange={(e) => setActualInput(e.target.value)} placeholder="0" /></div>
-                <div className="space-y-2"><Label>Output / 1M Token</Label><Input type="number" min="0" step="0.000001" value={actualOutput} onChange={(e) => setActualOutput(e.target.value)} placeholder="0" /></div>
-              </div>
+              {usesFixedActualPricing ? (
+                <div className="space-y-2">
+                  <Label>Per search</Label>
+                  <Input type="number" min="0" step="0.000001" value={actualFixedPrice} onChange={(e) => setActualFixedPrice(e.target.value)} placeholder="0" />
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2"><Label>Input</Label><Input type="number" min="0" step="0.000001" value={actualInput} onChange={(e) => setActualInput(e.target.value)} placeholder="0" /></div>
+                  <div className="space-y-2"><Label>Output</Label><Input type="number" min="0" step="0.000001" value={actualOutput} onChange={(e) => setActualOutput(e.target.value)} placeholder="0" /></div>
+                </div>
+              )}
             </div>
 
             <div className="rounded-lg border p-4 space-y-4">
               <div>
-                <div className="font-medium">Harga Adjusted</div>
-                <p className="text-xs text-muted-foreground">Biaya yang dibebankan sistem per 1 juta token.</p>
+                <div className="flex items-center gap-2 font-medium">Price adjusted <Badge variant="secondary">Billed to village</Badge></div>
+                <p className="text-xs text-muted-foreground">Harga yang ditagihkan ke desa.</p>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2"><Label>Input / 1M Token</Label><Input type="number" min="0" step="0.000001" value={adjustedInput} onChange={(e) => setAdjustedInput(e.target.value)} placeholder="0" /></div>
-                <div className="space-y-2"><Label>Output / 1M Token</Label><Input type="number" min="0" step="0.000001" value={adjustedOutput} onChange={(e) => setAdjustedOutput(e.target.value)} placeholder="0" /></div>
-              </div>
+              {usesFixedAdjustedPricing ? (
+                <div className="space-y-2">
+                  <Label>Per search</Label>
+                  <Input type="number" min="0" step="0.000001" value={adjustedFixedPrice} onChange={(e) => setAdjustedFixedPrice(e.target.value)} placeholder="0" />
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2"><Label>Input</Label><Input type="number" min="0" step="0.000001" value={adjustedInput} onChange={(e) => setAdjustedInput(e.target.value)} placeholder="0" /></div>
+                  <div className="space-y-2"><Label>Output</Label><Input type="number" min="0" step="0.000001" value={adjustedOutput} onChange={(e) => setAdjustedOutput(e.target.value)} placeholder="0" /></div>
+                </div>
+              )}
             </div>
+
+            {laneType === "rerank" && (
+              <div className="xl:col-span-2 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                {isNativeRerankEndpoint
+                  ? "Native rerank endpoint memakai harga per search."
+                  : "Chat fallback rerank memakai harga input dan output seperti model LLM."}
+              </div>
+            )}
 
             <div className="space-y-2 xl:col-span-2"><Label>Notes</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Catatan internal untuk superadmin" /></div>
           </div>
@@ -752,6 +923,42 @@ export default function SuperadminAIModelsPage() {
             <Button type="button" variant="outline" onClick={() => setFormOpen(false)} disabled={submitting}><X className="mr-2 h-4 w-4" />Batal</Button>
             {isFormDirty && <Button onClick={requestSave} disabled={submitting}>{submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : editingModelId ? <Save className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}{editingModelId ? "Simpan Perubahan" : "Simpan Model"}</Button>}
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={copySource.open} onOpenChange={(open) => {
+        if (!open) setCopySourceQuery("")
+        setCopySource(open ? copySource : { open: false, sourceLane: null, targetLane: null })
+      }}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{copySource.sourceLane === "rewrite" ? "Copy from Rewrite" : "Copy from LLM"}</DialogTitle>
+            <DialogDescription>Pilih model {copySource.sourceLane === "rewrite" ? "rewrite" : "LLM"} sebagai sumber untuk lane {copySource.targetLane || "target"}. Nama display akan otomatis diberi suffix sesuai lane tujuan dan masih bisa diubah sebelum simpan.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+            <Input value={copySourceQuery} onChange={(e) => setCopySourceQuery(e.target.value)} placeholder="Cari provider, display name, atau upstream model" />
+            {filteredCopyableModels.length === 0 ? (
+              <div className="rounded border p-4 text-sm text-muted-foreground">Tidak ada model yang cocok dengan pencarian ini.</div>
+            ) : filteredCopyableModels.map((model) => (
+              <button
+                key={model.id}
+                type="button"
+                className="w-full rounded-lg border p-4 text-left hover:bg-muted/40"
+                onClick={() => copyFromModel(model, copySource.targetLane || "rewrite")}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="font-medium">{model.display_name}</div>
+                    <div className="text-sm text-muted-foreground">{model.provider?.name || model.provider_id} · {model.upstream_model_name}</div>
+                  </div>
+                  <div className="text-right text-sm">
+                    <div>Price actual: {formatPrice(model.actual_pricing_type, model.actual_fixed_price_usd, model.actual_input_price_per_million_usd, model.actual_output_price_per_million_usd)}</div>
+                    <div className="text-muted-foreground">Price adjusted: {formatPrice(model.adjusted_pricing_type, model.adjusted_fixed_price_usd, model.adjusted_input_price_per_million_usd, model.adjusted_output_price_per_million_usd)}</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -787,9 +994,26 @@ export default function SuperadminAIModelsPage() {
                   <CardTitle className="flex items-center gap-2">{laneIcon(group.lane)} {group.lane.toUpperCase()}</CardTitle>
                   <CardDescription>Model aktif dan nonaktif untuk lane {group.lane}.</CardDescription>
                 </div>
-                <Button size="sm" variant="outline" onClick={() => handleTestMany(activeRows)} disabled={activeRows.length === 0 || activeRows.every((model) => testingModelIds.has(model.id))}>
-                  <Play className="mr-2 h-4 w-4" />Test Semua Aktif
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {group.lane === "rewrite" && (
+                    <Button size="sm" variant="outline" onClick={() => { setCopySourceQuery(""); setCopySource({ open: true, sourceLane: "llm", targetLane: "rewrite" }) }} disabled={llmModels.length === 0}>
+                      <Plus className="mr-2 h-4 w-4" />Copy from LLM
+                    </Button>
+                  )}
+                  {group.lane === "rerank" && (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => { setCopySourceQuery(""); setCopySource({ open: true, sourceLane: "llm", targetLane: "rerank" }) }} disabled={llmModels.length === 0}>
+                        <Plus className="mr-2 h-4 w-4" />Copy from LLM
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => { setCopySourceQuery(""); setCopySource({ open: true, sourceLane: "rewrite", targetLane: "rerank" }) }} disabled={rewriteModels.length === 0}>
+                        <Plus className="mr-2 h-4 w-4" />Copy from Rewrite
+                      </Button>
+                    </>
+                  )}
+                  <Button size="sm" variant="outline" onClick={() => handleTestMany(activeRows)} disabled={activeRows.length === 0 || activeRows.every((model) => testingModelIds.has(model.id))}>
+                    <Play className="mr-2 h-4 w-4" />Test Semua Aktif
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -800,7 +1024,8 @@ export default function SuperadminAIModelsPage() {
                     <TableHead>Provider</TableHead>
                     <TableHead>Upstream</TableHead>
                     <TableHead>Priority</TableHead>
-                    <TableHead>Actual</TableHead>
+                    <TableHead>Price actual</TableHead>
+                    <TableHead>Price adjusted</TableHead>
                     <TableHead>Capability</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Aksi</TableHead>
@@ -808,14 +1033,22 @@ export default function SuperadminAIModelsPage() {
                 </TableHeader>
                 <TableBody>
                   {group.rows.length === 0 ? (
-                    <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">Belum ada model di lane ini.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground">Belum ada model di lane ini.</TableCell></TableRow>
                   ) : group.rows.map((model) => {
                     const isTesting = testingModelIds.has(model.id)
                     const priorityDraft = priorityDrafts[model.id] ?? String(model.priority ?? 100)
                     const isPriorityDirty = Number(priorityDraft) !== (model.priority ?? 100)
                     return (
                       <TableRow key={model.id}>
-                        <TableCell className="font-medium">{model.display_name}</TableCell>
+                        <TableCell className="font-medium">
+                          <div className="space-y-1">
+                            <div>{model.display_name}</div>
+                            <div className="flex flex-wrap gap-1">
+                              <Badge variant="outline">{tableEndpointModeLabel(model)}</Badge>
+                              {model.lane_type === "rerank" && normalizePricingType(model.lane_type, model.endpoint_path || "", model.actual_pricing_type) === "fixed_per_call" && <Badge variant="secondary">Per search</Badge>}
+                            </div>
+                          </div>
+                        </TableCell>
                         <TableCell>{model.provider?.name || model.provider_id}</TableCell>
                         <TableCell>{model.upstream_model_name}</TableCell>
                         <TableCell>
@@ -831,7 +1064,8 @@ export default function SuperadminAIModelsPage() {
                             {isPriorityDirty && !model.is_read_only && <Button size="sm" variant="outline" onClick={() => requestPrioritySave(model)} disabled={savingPriorityId === model.id}><Save className="mr-2 h-3 w-3" />Save</Button>}
                           </div>
                         </TableCell>
-                        <TableCell>{formatPrice(model.actual_input_price_per_million_usd, model.actual_output_price_per_million_usd)}</TableCell>
+                        <TableCell>{formatPrice(model.actual_pricing_type, model.actual_fixed_price_usd, model.actual_input_price_per_million_usd, model.actual_output_price_per_million_usd)}</TableCell>
+                        <TableCell>{formatPrice(model.adjusted_pricing_type, model.adjusted_fixed_price_usd, model.adjusted_input_price_per_million_usd, model.adjusted_output_price_per_million_usd)}</TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
                             {model.supports_vision && <Badge variant="secondary"><Eye className="mr-1 h-3 w-3" />Image</Badge>}
