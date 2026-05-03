@@ -237,7 +237,7 @@ export function GovConnectSidebar() {
         },
         {
           title: "Admin Desa",
-          url: "/dashboard/superadmin/admins",
+          url: "/dashboard/superadmin/village-admins",
           icon: Settings2,
           roles: ["superadmin"],
         },

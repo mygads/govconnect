@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useAuth } from "@/components/auth/AuthContext"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
 import {
@@ -26,6 +27,7 @@ interface VillageDetail {
     profile: { short_name?: string; address?: string; google_maps_url?: string } | null
     admins: Array<{ id: string; name: string; username: string; role: string; is_active: boolean }>
   }
+  partial_errors?: Array<{ source: string; message: string; status?: number }>
   complaints: Array<{
     id: string; complaint_id: string; kategori: string; deskripsi: string;
     status: string; channel?: string; reporter_name?: string; created_at: string
@@ -176,6 +178,16 @@ export default function SuperadminVillageDetailPage() {
           {village.is_active ? "Nonaktifkan Desa" : "Aktifkan Desa"}
         </Button>
       </div>
+
+      {Array.isArray(data.partial_errors) && data.partial_errors.length > 0 && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Sebagian data tidak tersedia</AlertTitle>
+          <AlertDescription>
+            {data.partial_errors.map((item) => item.source).join(", ")} sedang bermasalah. Data inti desa tetap ditampilkan.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

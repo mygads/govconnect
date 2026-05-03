@@ -1,5 +1,4 @@
 import { Router, Request, Response } from 'express';
-import path from 'path';
 import logger from '../utils/logger';
 import prisma from '../lib/prisma';
 import { config } from '../config/env';
@@ -40,91 +39,21 @@ type ModelCapabilityFlags = {
   supports_audio?: boolean;
 };
 
-const SAMPLE_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn8nQAAAABJRU5ErkJggg==';
-const SAMPLE_AUDIO_BASE64 = 'UklGRlIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YS4AAACAgYGCgoOCg4OEhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/';
-
 function joinUrl(baseUrl: string, endpointPath: string) {
   return `${baseUrl.replace(/\/+$/, '')}/${(endpointPath || '').replace(/^\/+/, '')}`;
 }
 
-function inferAudioFormat(mimeType?: string | null, fileName?: string | null): string {
-  const normalizedMime = (mimeType || '').toLowerCase();
-  if (normalizedMime.includes('mpeg') || normalizedMime.includes('mp3')) return 'mp3';
-  if (normalizedMime.includes('wav') || normalizedMime.includes('wave')) return 'wav';
-  if (normalizedMime.includes('ogg') || normalizedMime.includes('opus')) return 'ogg';
-  if (normalizedMime.includes('webm')) return 'webm';
-
-  const ext = path.extname(fileName || '').replace('.', '').toLowerCase();
-  if (ext === 'mp3' || ext === 'wav' || ext === 'ogg' || ext === 'webm') return ext;
-  if (ext === 'oga' || ext === 'opus') return 'ogg';
-  return 'wav';
-}
-
-function buildLLMTestMessage(lane: ModelTestLane, capability: ModelCapabilityFlags) {
+function buildLLMTestMessage(lane: ModelTestLane) {
   if (lane === 'rewrite') {
-    if (capability.supports_vision && capability.supports_audio) {
-      return [{
-        role: 'user' as const,
-        content: [
-          { type: 'text' as const, text: 'Rewrite this as one short retrieval query. Image: a pothole on a village road. Audio: warga melaporkan jalan rusak di RT 03.' },
-          { type: 'image_url' as const, image_url: { url: SAMPLE_IMAGE_DATA_URL } },
-          { type: 'input_audio' as const, input_audio: { data: SAMPLE_AUDIO_BASE64, format: 'wav' } },
-        ],
-      }];
-    }
-    if (capability.supports_audio) {
-      return [{
-        role: 'user' as const,
-        content: [
-          { type: 'text' as const, text: 'Rewrite this spoken complaint as one short retrieval query.' },
-          { type: 'input_audio' as const, input_audio: { data: SAMPLE_AUDIO_BASE64, format: 'wav' } },
-        ],
-      }];
-    }
-    if (capability.supports_vision) {
-      return [{
-        role: 'user' as const,
-        content: [
-          { type: 'text' as const, text: 'Rewrite this image-based complaint as one short retrieval query.' },
-          { type: 'image_url' as const, image_url: { url: SAMPLE_IMAGE_DATA_URL } },
-        ],
-      }];
-    }
     return [{ role: 'user' as const, content: 'Rewrite: cara bikin ktp baru' }];
   }
 
-  if (capability.supports_vision && capability.supports_audio) {
-    return [{
-      role: 'user' as const,
-      content: [
-        { type: 'text' as const, text: 'Reply with OK only after confirming you can read this image and this short audio clip.' },
-        { type: 'image_url' as const, image_url: { url: SAMPLE_IMAGE_DATA_URL } },
-        { type: 'input_audio' as const, input_audio: { data: SAMPLE_AUDIO_BASE64, format: 'wav' } },
-      ],
-    }];
-  }
-
-  if (capability.supports_audio) {
-    return [{
-      role: 'user' as const,
-      content: [
-        { type: 'text' as const, text: 'Reply with OK only after checking this short audio clip.' },
-        { type: 'input_audio' as const, input_audio: { data: SAMPLE_AUDIO_BASE64, format: 'wav' } },
-      ],
-    }];
-  }
-
-  if (capability.supports_vision) {
-    return [{
-      role: 'user' as const,
-      content: [
-        { type: 'text' as const, text: 'Reply with OK only after checking this image.' },
-        { type: 'image_url' as const, image_url: { url: SAMPLE_IMAGE_DATA_URL } },
-      ],
-    }];
-  }
-
   return [{ role: 'user' as const, content: 'Reply with OK only.' }];
+}
+
+function isChatEndpointPath(endpointPath: string | null | undefined) {
+  const normalized = (endpointPath || '').trim().toLowerCase();
+  return normalized.includes('/chat/completions') || normalized.includes('/responses');
 }
 
 async function postProviderJson(provider: any, endpointPath: string, apiKey: string, body: Record<string, unknown>, timeoutMs: number) {
@@ -175,7 +104,6 @@ async function testModelConfig(input: {
   endpoint_path?: string | null;
   supports_vision?: boolean;
   supports_audio?: boolean;
-  test_audio_format?: string | null;
 }) {
   const provider = input.provider;
   if (!provider?.is_active) throw new Error('Provider is inactive');
@@ -194,7 +122,6 @@ async function testModelConfig(input: {
     supports_vision: input.supports_vision === true,
     supports_audio: input.supports_audio === true,
   };
-  const audioFormat = inferAudioFormat(input.test_audio_format, null);
 
   if (lane === 'embed') {
     const payload = await postProviderJson(
@@ -211,25 +138,13 @@ async function testModelConfig(input: {
     );
     details = { mode: 'native_endpoint', dimensions: payload?.data?.[0]?.embedding?.length || 0 };
   } else if (lane === 'rerank') {
-    try {
+    const rerankEndpointPath = endpointPath || config.rerankerGateway.rerankPath;
+    const useChatFallback = isChatEndpointPath(rerankEndpointPath);
+
+    if (useChatFallback) {
       const payload = await postProviderJson(
         provider,
-        endpointPath || config.rerankerGateway.rerankPath,
-        apiKey,
-        {
-          model: input.upstream_model_name,
-          query: 'cara bikin ktp baru',
-          documents: ['Panduan pembuatan KTP baru.', 'Jadwal posyandu desa.', 'Syarat penggantian KK.'],
-          top_n: 2,
-        },
-        config.rerankerGateway.timeoutMs,
-      );
-      details = { mode: 'native_endpoint', resultCount: payload?.results?.length || 0, topScore: payload?.results?.[0]?.relevance_score };
-    } catch (error: any) {
-      if (!/Input required: specify "prompt" or "messages"|messages|prompt/i.test(error.message || '')) throw error;
-      const payload = await postProviderJson(
-        provider,
-        endpointPath || config.ragGateway.chatCompletionsPath || config.llmGateway.chatCompletionsPath,
+        rerankEndpointPath,
         apiKey,
         {
           model: input.upstream_model_name,
@@ -243,28 +158,35 @@ async function testModelConfig(input: {
         mode: 'chat_fallback',
         response: payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || '',
       };
+    } else {
+      const payload = await postProviderJson(
+        provider,
+        rerankEndpointPath,
+        apiKey,
+        {
+          model: input.upstream_model_name,
+          query: 'cara bikin ktp baru',
+          documents: [
+            { text: 'Panduan pembuatan KTP baru.' },
+            { text: 'Jadwal posyandu desa.' },
+            { text: 'Syarat penggantian KK.' },
+          ],
+          top_n: 2,
+        },
+        config.rerankerGateway.timeoutMs,
+      );
+      details = { mode: 'native_endpoint', resultCount: payload?.results?.length || 0, topScore: payload?.results?.[0]?.relevance_score };
     }
   } else {
     const timeoutMs = lane === 'rewrite' ? config.ragGateway.timeoutMs : config.llmGateway.timeoutMs;
     const fallbackPath = lane === 'rewrite' ? config.ragGateway.chatCompletionsPath : config.llmGateway.chatCompletionsPath;
-    const messages = buildLLMTestMessage(lane, capability).map((message) => {
-      if (Array.isArray(message.content)) {
-        return {
-          ...message,
-          content: message.content.map((part) => part.type === 'input_audio'
-            ? { ...part, input_audio: { ...part.input_audio, format: audioFormat } }
-            : part),
-        };
-      }
-      return message;
-    });
     const payload = await postProviderJson(
       provider,
       endpointPath || fallbackPath,
       apiKey,
       {
         model: input.upstream_model_name,
-        messages,
+        messages: buildLLMTestMessage(lane),
         temperature: 0,
         max_tokens: 16,
       },
@@ -272,14 +194,15 @@ async function testModelConfig(input: {
     );
     details = {
       mode: capability.supports_vision && capability.supports_audio
-        ? 'multimodal_image_audio'
+        ? 'multimodal_declared'
         : capability.supports_audio
-          ? 'audio'
+          ? 'audio_declared'
           : capability.supports_vision
-            ? 'vision'
+            ? 'vision_declared'
             : 'native_endpoint',
       response: payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || '',
       testedCapabilities: capability,
+      capabilityCheck: 'connectivity_only',
     };
   }
 
@@ -329,7 +252,6 @@ async function testModelDraft(input: any) {
     endpoint_path: typeof input.endpoint_path === 'string' ? input.endpoint_path : null,
     supports_vision: input.supports_vision === true,
     supports_audio: input.supports_audio === true,
-    test_audio_format: typeof input.test_audio_format === 'string' ? input.test_audio_format : null,
   });
 }
 

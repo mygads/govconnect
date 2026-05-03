@@ -177,7 +177,7 @@ export async function topupVillageWallet(input: {
   await ensureVillageWallet(input.villageId);
 
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM ai."ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
 
     const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
       where: { village_id: input.villageId },
@@ -233,7 +233,7 @@ export async function adjustVillageWallet(input: {
   await ensureVillageWallet(input.villageId);
 
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM ai."ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
 
     const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
       where: { village_id: input.villageId },
@@ -298,7 +298,7 @@ export async function debitVillageWalletForUsage(input: {
 
   try {
     return await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId!} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM ai."ai_village_wallets" WHERE "village_id" = ${input.villageId!} FOR UPDATE`;
 
       const wallet = await tx.ai_village_wallets.findUniqueOrThrow({
         where: { village_id: input.villageId! },
@@ -468,8 +468,8 @@ export async function redeemTopupVoucher(input: {
   await ensureVillageWallet(input.villageId);
 
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "ai_topup_vouchers" WHERE "id" = ${voucher.id} FOR UPDATE`;
-    await tx.$queryRaw`SELECT id FROM "ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM ai."ai_topup_vouchers" WHERE "id" = ${voucher.id} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM ai."ai_village_wallets" WHERE "village_id" = ${input.villageId} FOR UPDATE`;
 
     const activeVoucher = await tx.ai_topup_vouchers.findUniqueOrThrow({
       where: { id: voucher.id },

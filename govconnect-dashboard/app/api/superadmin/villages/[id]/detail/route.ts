@@ -31,24 +31,28 @@ export async function GET(
       return NextResponse.json({ error: 'Village not found' }, { status: 404 })
     }
 
-    // Get complaints from case service
+    const partial_errors: Array<{ source: string; message: string; status?: number }> = []
+
+    // Get complaints from case service (fail-open)
     const complaintsRes = await caseService.getLaporan({ village_id: villageId, limit: '50' })
     const complaints = await complaintsRes.json().catch(() => null)
     if (!complaintsRes.ok) {
-      return NextResponse.json(
-        complaints || { error: 'Failed to fetch village complaints from case service', code: 'UPSTREAM_UNAVAILABLE' },
-        { status: complaintsRes.status },
-      )
+      partial_errors.push({
+        source: 'complaints',
+        message: complaints?.error || 'Failed to fetch village complaints from case service',
+        status: complaintsRes.status,
+      })
     }
 
-    // Get service requests from case service
+    // Get service requests from case service (fail-open)
     const serviceRequestsRes = await caseService.getServiceRequests({ village_id: villageId, limit: '50' })
     const serviceRequests = await serviceRequestsRes.json().catch(() => null)
     if (!serviceRequestsRes.ok) {
-      return NextResponse.json(
-        serviceRequests || { error: 'Failed to fetch village service requests from case service', code: 'UPSTREAM_UNAVAILABLE' },
-        { status: serviceRequestsRes.status },
-      )
+      partial_errors.push({
+        source: 'serviceRequests',
+        message: serviceRequests?.error || 'Failed to fetch village service requests from case service',
+        status: serviceRequestsRes.status,
+      })
     }
 
     // Get knowledge base from local DB
@@ -79,11 +83,12 @@ export async function GET(
         profile: village.profiles?.[0] || null,
         admins: village.admins,
       },
-      complaints: complaints.data || [],
-      serviceRequests: serviceRequests.data || [],
+      complaints: complaintsRes.ok ? (complaints?.data || []) : [],
+      serviceRequests: serviceRequestsRes.ok ? (serviceRequests?.data || []) : [],
       knowledgeItems,
       documents,
       statistics,
+      partial_errors,
     })
   } catch (error) {
     console.error('Error fetching village detail:', error)
