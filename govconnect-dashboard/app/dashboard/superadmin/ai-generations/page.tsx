@@ -68,11 +68,17 @@ function formatNumber(value: number) {
 }
 
 function formatUSD(usd: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 4, maximumFractionDigits: 6 }).format(usd || 0)
+  const amount = usd || 0
+  const minimumFractionDigits = amount > 0 && amount < 0.000001 ? 8 : 4
+  const maximumFractionDigits = amount > 0 && amount < 0.000001 ? 8 : 6
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits, maximumFractionDigits }).format(amount)
 }
 
 function formatIDR(usd: number) {
-  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format((usd || 0) * USD_TO_IDR)
+  const amount = (usd || 0) * USD_TO_IDR
+  const minimumFractionDigits = amount > 0 && amount < 0.01 ? 8 : 0
+  const maximumFractionDigits = amount > 0 && amount < 0.01 ? 8 : 2
+  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits, maximumFractionDigits }).format(amount)
 }
 
 function formatCost(usd: number) {

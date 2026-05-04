@@ -93,7 +93,7 @@ interface KnowledgeDocument {
   mime_type: string
   file_size: number
   file_url: string
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'ocr_pending' | 'retrying' | 'parse_fail' | 'ocr_fail' | 'embed_fail'
   error_message: string | null
   title: string | null
   description: string | null
@@ -118,9 +118,18 @@ interface DocumentStats {
 const STATUS_CONFIG = {
   pending: { label: 'Menunggu', icon: Clock, color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' },
   processing: { label: 'Diproses', icon: Loader2, color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
+  ocr_pending: { label: 'OCR', icon: Loader2, color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
+  retrying: { label: 'Retry', icon: Loader2, color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
   completed: { label: 'Selesai', icon: CheckCircle, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' },
   failed: { label: 'Gagal', icon: XCircle, color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
+  parse_fail: { label: 'Parse Gagal', icon: XCircle, color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
+  ocr_fail: { label: 'OCR Gagal', icon: XCircle, color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
+  embed_fail: { label: 'Embed Gagal', icon: XCircle, color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
 }
+
+const OTHER_CATEGORY_VALUE = '__other__'
+const PROCESSING_DOCUMENT_STATUSES = new Set(['pending', 'processing', 'ocr_pending', 'retrying'])
+const PROCESSING_KNOWLEDGE_STATUSES = new Set(['pending', 'processing'])
 
 // ==================== MAIN COMPONENT ====================
 
@@ -153,6 +162,7 @@ export default function KnowledgePage() {
     priority: 0,
   })
   const [knowledgeFormLoading, setKnowledgeFormLoading] = useState(false)
+  const [knowledgeCustomCategory, setKnowledgeCustomCategory] = useState('')
   
   // ==================== DOCUMENTS STATE ====================
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -175,6 +185,7 @@ export default function KnowledgePage() {
   const [uploadTitle, setUploadTitle] = useState('')
   const [uploadDescription, setUploadDescription] = useState('')
   const [uploadCategory, setUploadCategory] = useState('')
+  const [uploadCustomCategory, setUploadCustomCategory] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   
@@ -182,10 +193,13 @@ export default function KnowledgePage() {
   const [editDocTitle, setEditDocTitle] = useState('')
   const [editDocDescription, setEditDocDescription] = useState('')
   const [editDocCategory, setEditDocCategory] = useState('')
+  const [editDocCustomCategory, setEditDocCustomCategory] = useState('')
   const [editDocLoading, setEditDocLoading] = useState(false)
   
   // ==================== EMBEDDING STATE ====================
   const [embeddingLoading, setEmbeddingLoading] = useState(false)
+  const [embedPollingActive, setEmbedPollingActive] = useState(false)
+  const pollingInFlightRef = useRef(false)
 
   // ==================== CATEGORY MANAGEMENT STATE ====================
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false)
@@ -262,7 +276,20 @@ export default function KnowledgePage() {
     }
   }
 
+  const refreshKnowledgeAndDocuments = async () => {
+    await Promise.all([fetchKnowledge(), fetchDocuments()])
+  }
+
+  const startEmbedPolling = () => setEmbedPollingActive(true)
+
+  const hasActiveProcessing = (knowledgeItems = knowledge, documentItems = documents) => {
+    return knowledgeItems.some((item) => PROCESSING_KNOWLEDGE_STATUSES.has(item.embedding_status || (item.last_embedded_at ? 'completed' : 'pending')))
+      || documentItems.some((doc) => PROCESSING_DOCUMENT_STATUSES.has(doc.status))
+  }
+
   // ==================== CATEGORY MANAGEMENT ====================
+
+
   const handleAddCategory = async () => {
     if (!newCategoryName.trim()) {
       toast({ title: "Error", description: "Nama kategori tidak boleh kosong", variant: "destructive" })
@@ -311,6 +338,39 @@ export default function KnowledgePage() {
     return () => clearTimeout(timer)
   }, [activeTab, documentsSearch, documentsStatus, documentsCategory, documentsPagination.limit, documentsPagination.offset])
 
+  useEffect(() => {
+    if (!embedPollingActive) return
+
+    const poll = async () => {
+      if (pollingInFlightRef.current) return
+      pollingInFlightRef.current = true
+      try {
+        const [knowledgeData, documentsData] = await Promise.all([
+          knowledgeApi.getAll({ limit: '100' }),
+          documentsApi.getAll({ limit: String(documentsPagination.limit), offset: String(documentsPagination.offset) }),
+        ])
+        const nextKnowledge = Array.isArray(knowledgeData.data) ? knowledgeData.data : []
+        const nextDocuments = Array.isArray(documentsData.data) ? documentsData.data : []
+        setKnowledge(nextKnowledge)
+        setDocuments(nextDocuments)
+        setDocumentsPagination((current) => ({
+          ...current,
+          total: documentsData.total ?? current.total,
+          limit: documentsData.limit ?? current.limit,
+          offset: documentsData.offset ?? current.offset,
+        }))
+        fetchDocumentStats()
+        if (!hasActiveProcessing(nextKnowledge, nextDocuments)) setEmbedPollingActive(false)
+      } finally {
+        pollingInFlightRef.current = false
+      }
+    }
+
+    poll()
+    const interval = setInterval(poll, 4000)
+    return () => clearInterval(interval)
+  }, [embedPollingActive, documentsPagination.limit, documentsPagination.offset])
+
   // Auto-refresh for processing documents
   useEffect(() => {
     if ((documentStats?.processing || 0) > 0) {
@@ -324,6 +384,8 @@ export default function KnowledgePage() {
   const handleGenerateAllEmbeddings = async () => {
     setEmbeddingLoading(true)
     try {
+      setKnowledge((current) => current.map((item) => ({ ...item, embedding_status: 'processing' })))
+      startEmbedPolling()
       const kbResult = await knowledgeApi.embedAll()
 
       toast({
@@ -333,9 +395,8 @@ export default function KnowledgePage() {
           : "Periksa console untuk detail",
       })
       
-      // Refresh data
-      fetchKnowledge()
-      fetchDocuments()
+      await refreshKnowledgeAndDocuments()
+      startEmbedPolling()
     } catch (error: any) {
       toast({ title: "Error", description: error.message || "Gagal membuat embedding", variant: "destructive" })
     } finally {
@@ -343,11 +404,36 @@ export default function KnowledgePage() {
     }
   }
 
+  const handleEmbedKnowledge = async (item: Knowledge) => {
+    setKnowledge((current) => current.map((entry) => entry.id === item.id ? { ...entry, embedding_status: 'processing', embedding_error: null } : entry))
+    startEmbedPolling()
+    try {
+      toast({ title: "Diproses", description: "Memulai embed basis pengetahuan..." })
+      await knowledgeApi.embed(item.id)
+      await fetchKnowledge()
+      startEmbedPolling()
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Gagal melakukan embed", variant: "destructive" })
+      await fetchKnowledge()
+    }
+  }
+
   // ==================== KNOWLEDGE BASE HANDLERS ====================
-  
+
   const handleKnowledgeSearch = (e: React.FormEvent) => {
     e.preventDefault()
     fetchKnowledge()
+  }
+
+  const buildKnowledgePayload = () => {
+    const keywords = knowledgeForm.keywords.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0)
+    if (knowledgeForm.category_id === OTHER_CATEGORY_VALUE) {
+      const category = knowledgeCustomCategory.trim()
+      if (!category) throw new Error('Nama kategori wajib diisi')
+      return { ...knowledgeForm, category_id: null, category, keywords }
+    }
+    if (!knowledgeForm.category_id) throw new Error('Category wajib dipilih')
+    return { ...knowledgeForm, keywords }
   }
 
   const handleAddKnowledge = async (e: React.FormEvent) => {
@@ -355,18 +441,14 @@ export default function KnowledgePage() {
     setKnowledgeFormLoading(true)
 
     try {
-      if (!knowledgeForm.category_id) {
-        toast({ title: "Error", description: "Category wajib dipilih", variant: "destructive" })
-        return
-      }
+      const payload = buildKnowledgePayload()
 
-      const keywords = knowledgeForm.keywords.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0)
-
-      await knowledgeApi.create({ ...knowledgeForm, keywords })
+      await knowledgeApi.create(payload)
 
       toast({ title: "Berhasil", description: "Entri pengetahuan berhasil dibuat" })
       setIsAddKnowledgeOpen(false)
       resetKnowledgeForm()
+      await fetchCategories()
       fetchKnowledge()
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" })
@@ -381,18 +463,14 @@ export default function KnowledgePage() {
     setKnowledgeFormLoading(true)
 
     try {
-      if (!knowledgeForm.category_id) {
-        toast({ title: "Error", description: "Category wajib dipilih", variant: "destructive" })
-        return
-      }
+      const payload = buildKnowledgePayload()
 
-      const keywords = knowledgeForm.keywords.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0)
-
-      await knowledgeApi.update(selectedKnowledge.id, { ...knowledgeForm, keywords })
+      await knowledgeApi.update(selectedKnowledge.id, payload)
 
       toast({ title: "Berhasil", description: "Entri pengetahuan berhasil diperbarui" })
       setIsEditKnowledgeOpen(false)
       resetKnowledgeForm()
+      await fetchCategories()
       fetchKnowledge()
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" })
@@ -422,9 +500,10 @@ export default function KnowledgePage() {
   const openEditKnowledge = (item: Knowledge) => {
     const resolvedCategoryId = item.category_id
       || categories.find(c => c.name === item.category)?.id
-      || ''
+      || (item.category ? OTHER_CATEGORY_VALUE : '')
 
     setSelectedKnowledge(item)
+    setKnowledgeCustomCategory(resolvedCategoryId === OTHER_CATEGORY_VALUE ? item.category || '' : '')
     setKnowledgeForm({
       title: item.title,
       content: item.content,
@@ -438,6 +517,7 @@ export default function KnowledgePage() {
 
   const resetKnowledgeForm = () => {
     setKnowledgeForm({ title: '', content: '', category_id: '', keywords: '', is_active: true, priority: 0 })
+    setKnowledgeCustomCategory('')
     setSelectedKnowledge(null)
   }
 
@@ -465,7 +545,16 @@ export default function KnowledgePage() {
       formData.append('file', uploadFile)
       if (uploadTitle) formData.append('title', uploadTitle)
       if (uploadDescription) formData.append('description', uploadDescription)
-      if (uploadCategory) formData.append('category_id', uploadCategory)
+      if (uploadCategory === OTHER_CATEGORY_VALUE) {
+        const category = uploadCustomCategory.trim()
+        if (!category) {
+          toast({ title: "Error", description: "Nama kategori wajib diisi", variant: "destructive" })
+          return
+        }
+        formData.append('category', category)
+      } else if (uploadCategory) {
+        formData.append('category_id', uploadCategory)
+      }
 
       setUploadProgress(30)
 
@@ -476,6 +565,7 @@ export default function KnowledgePage() {
       toast({ title: "Berhasil", description: "Dokumen berhasil diunggah. Lanjutkan embed manual saat diperlukan." })
       setIsUploadOpen(false)
       resetUploadForm()
+      await fetchCategories()
       fetchDocuments()
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" })
@@ -489,14 +579,17 @@ export default function KnowledgePage() {
     try {
       toast({ title: "Diproses", description: "Memulai pemrosesan dokumen..." })
       
+      setDocuments((current) => current.map((doc) => doc.id === documentId ? { ...doc, status: 'processing', error_message: null } : doc))
+      startEmbedPolling()
       const result = await documentsApi.process(documentId)
       
-      toast({ 
-        title: "Berhasil", 
-        description: `Dokumen diproses: ${result.chunksCount || 0} chunk dibuat` 
+      toast({
+        title: "Berhasil",
+        description: `Dokumen diproses: ${result.chunksCount || 0} chunk dibuat`
       })
-      
+
       fetchDocuments()
+      startEmbedPolling()
     } catch (error: any) {
       console.error('Processing failed:', error)
       toast({ 
@@ -512,14 +605,24 @@ export default function KnowledgePage() {
     setEditDocLoading(true)
 
     try {
+      const docCategoryPayload = editDocCategory === OTHER_CATEGORY_VALUE
+        ? { category_id: null, category: editDocCustomCategory.trim() }
+        : { category_id: editDocCategory || null }
+
+      if (editDocCategory === OTHER_CATEGORY_VALUE && !editDocCustomCategory.trim()) {
+        toast({ title: "Error", description: "Nama kategori wajib diisi", variant: "destructive" })
+        return
+      }
+
       await documentsApi.update(selectedDocument.id, {
         title: editDocTitle,
         description: editDocDescription,
-        category_id: editDocCategory || null,
+        ...docCategoryPayload,
       })
 
       toast({ title: "Berhasil", description: "Dokumen berhasil diperbarui" })
       setIsEditDocOpen(false)
+      await fetchCategories()
       fetchDocuments()
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" })
@@ -547,9 +650,9 @@ export default function KnowledgePage() {
     setSelectedDocument(doc)
     setEditDocTitle(doc.title || '')
     setEditDocDescription(doc.description || '')
-    setEditDocCategory(
-      doc.category_id || categories.find(c => c.name === doc.category)?.id || ''
-    )
+    const resolvedCategoryId = doc.category_id || categories.find(c => c.name === doc.category)?.id || (doc.category ? OTHER_CATEGORY_VALUE : '')
+    setEditDocCategory(resolvedCategoryId)
+    setEditDocCustomCategory(resolvedCategoryId === OTHER_CATEGORY_VALUE ? doc.category || '' : '')
     setIsEditDocOpen(true)
   }
 
@@ -558,6 +661,7 @@ export default function KnowledgePage() {
     setUploadTitle('')
     setUploadDescription('')
     setUploadCategory('')
+    setUploadCustomCategory('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -812,6 +916,11 @@ export default function KnowledgePage() {
                           })()}
                         </TableCell>
                         <TableCell className="text-right">
+                          <Button variant="ghost" size="sm" onClick={() => handleEmbedKnowledge(item)} title="Embed" disabled={(item.embedding_status || (item.last_embedded_at ? 'completed' : 'pending')) === 'processing'}>
+                            {(item.embedding_status || (item.last_embedded_at ? 'completed' : 'pending')) === 'processing'
+                              ? <Loader2 className="h-4 w-4 animate-spin text-purple-500" />
+                              : <Sparkles className="h-4 w-4 text-purple-500" />}
+                          </Button>
                           <Button variant="ghost" size="sm" onClick={() => openEditKnowledge(item)}>
                             <Edit className="h-4 w-4" />
                           </Button>

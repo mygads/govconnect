@@ -345,6 +345,12 @@ export const knowledge = {
     });
   },
 
+  async embed(id: string) {
+    return fetchApi<any>(`/api/knowledge/${id}/embed`, {
+      method: 'POST',
+    });
+  },
+
   async getCategories() {
     return fetchApi<any>('/api/knowledge/categories');
   },
