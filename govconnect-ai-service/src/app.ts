@@ -1249,6 +1249,7 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
     ]);
 
     const loggedTokenIds = new Set(generationRows.map((row: any) => row.token_usage_id).filter(Boolean));
+    const usageMap = new Map(usageRows.map((row) => [row.id, row]));
     const providerIds = Array.from(new Set([...generationRows, ...usageRows].map((row: any) => row.provider_id).filter(Boolean))) as string[];
     const modelIds = Array.from(new Set([...generationRows, ...usageRows].map((row: any) => row.model_config_id).filter(Boolean))) as string[];
     const [providers, models] = await Promise.all([
@@ -1260,12 +1261,39 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
 
     const fallbackRows = usageRows.filter((row) => !loggedTokenIds.has(row.id));
     const rows = [
-      ...generationRows.map((row: any) => ({
-        ...row,
-        has_raw_payload: Boolean(row.request_json || row.response_json || row.prompt_preview || row.completion_preview),
-        provider_info: row.provider_id ? providerMap.get(row.provider_id) ?? null : null,
-        model_info: row.model_config_id ? modelMap.get(row.model_config_id) ?? null : null,
-      })),
+      ...generationRows.map((row: any) => {
+        const usage = row.token_usage_id ? usageMap.get(row.token_usage_id) : null;
+        const providerId = usage?.provider_id ?? row.provider_id;
+        const modelConfigId = usage?.model_config_id ?? row.model_config_id;
+        return {
+          ...row,
+          village_id: usage?.village_id ?? row.village_id,
+          wa_user_id: usage?.wa_user_id ?? row.wa_user_id,
+          session_id: usage?.session_id ?? row.session_id,
+          channel: usage?.channel ?? row.channel,
+          message_id: usage?.message_id ?? row.message_id,
+          trace_id: usage?.trace_id ?? row.trace_id,
+          billing_group_id: usage?.billing_group_id ?? row.billing_group_id,
+          lane_type: usage?.lane_type ?? row.lane_type,
+          layer_type: usage?.layer_type ?? row.layer_type,
+          call_type: usage?.call_type ?? row.call_type,
+          provider_id: providerId,
+          model_config_id: modelConfigId,
+          provider: usage?.key_tier ?? row.provider,
+          model: usage?.model ?? row.model,
+          gateway_source: usage?.key_source ?? row.gateway_source,
+          input_tokens: usage?.input_tokens ?? row.input_tokens,
+          output_tokens: usage?.output_tokens ?? row.output_tokens,
+          total_tokens: usage?.total_tokens ?? row.total_tokens,
+          actual_cost_usd: usage?.actual_cost_usd ?? row.actual_cost_usd,
+          adjusted_cost_usd: usage?.adjusted_cost_usd ?? row.adjusted_cost_usd,
+          duration_ms: usage?.duration_ms ?? row.duration_ms,
+          status: usage ? (usage.success ? 'success' : 'failed') : row.status,
+          has_raw_payload: Boolean(row.request_json || row.response_json || row.prompt_preview || row.completion_preview),
+          provider_info: providerId ? providerMap.get(providerId) ?? null : null,
+          model_info: modelConfigId ? modelMap.get(modelConfigId) ?? null : null,
+        };
+      }),
       ...fallbackRows.map((row) => ({
         id: `usage_${row.id}`,
         token_usage_id: row.id,
