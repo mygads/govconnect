@@ -8,17 +8,17 @@ export async function GET(request: NextRequest) {
 
   const villageId = new URL(request.url).searchParams.get('village_id')?.trim() || null
 
-  if (!villageId) {
-    return NextResponse.json({ error: 'village_id is required' }, { status: 400 })
-  }
+  const where = villageId ? { village_id: villageId } : {}
 
-  const village = await prisma.villages.findUnique({ where: { id: villageId }, select: { id: true } })
-  if (!village) {
-    return NextResponse.json({ error: 'Village not found' }, { status: 404 })
+  if (villageId) {
+    const village = await prisma.villages.findUnique({ where: { id: villageId }, select: { id: true } })
+    if (!village) {
+      return NextResponse.json({ error: 'Village not found' }, { status: 404 })
+    }
   }
 
   const admins = await prisma.admin_users.findMany({
-    where: { village_id: villageId },
+    where,
     orderBy: [{ created_at: 'desc' }],
     select: {
       id: true,

@@ -51,6 +51,17 @@ const PRICING: Record<string, { input: number; output: number }> = {
 };
 
 const unknownPricingModels = new Set<string>();
+const MIN_BILLABLE_COST_USD = 0.00000001;
+
+function applyMinimumBillableCost(record: TokenUsageRecord, actualCostUsd: number, adjustedCostUsd: number) {
+  if (!record.success || record.total_tokens <= 0) {
+    return { actualCostUsd, adjustedCostUsd };
+  }
+
+  const billableActualCostUsd = actualCostUsd > 0 ? actualCostUsd : MIN_BILLABLE_COST_USD;
+  const billableAdjustedCostUsd = adjustedCostUsd > 0 ? adjustedCostUsd : Math.max(billableActualCostUsd, MIN_BILLABLE_COST_USD);
+  return { actualCostUsd: billableActualCostUsd, adjustedCostUsd: billableAdjustedCostUsd };
+}
 
 /** Find legacy pricing for a model name. */
 export function findPricing(model: string): { input: number; output: number } {
@@ -198,22 +209,24 @@ async function resolvePricing(record: TokenUsageRecord): Promise<PricingResoluti
   const legacyPricing = findPricing(record.model);
   const legacy_cost_usd = (record.input_tokens * legacyPricing.input + record.output_tokens * legacyPricing.output) / 1_000_000;
 
+  const modelSelect = {
+    id: true,
+    provider_id: true,
+    lane_type: true,
+    actual_pricing_type: true,
+    actual_fixed_price_usd: true,
+    actual_input_price_per_million_usd: true,
+    actual_output_price_per_million_usd: true,
+    adjusted_pricing_type: true,
+    adjusted_fixed_price_usd: true,
+    adjusted_input_price_per_million_usd: true,
+    adjusted_output_price_per_million_usd: true,
+  };
+
   const modelConfig = record.model_config_id
     ? await prisma.ai_models.findUnique({
         where: { id: record.model_config_id },
-        select: {
-          id: true,
-          provider_id: true,
-          lane_type: true,
-          actual_pricing_type: true,
-          actual_fixed_price_usd: true,
-          actual_input_price_per_million_usd: true,
-          actual_output_price_per_million_usd: true,
-          adjusted_pricing_type: true,
-          adjusted_fixed_price_usd: true,
-          adjusted_input_price_per_million_usd: true,
-          adjusted_output_price_per_million_usd: true,
-        },
+        select: modelSelect,
       })
     : await prisma.ai_models.findFirst({
         where: {
@@ -223,19 +236,21 @@ async function resolvePricing(record: TokenUsageRecord): Promise<PricingResoluti
           ...(record.provider_id ? { provider_id: record.provider_id } : {}),
         },
         orderBy: { updated_at: 'desc' },
-        select: {
-          id: true,
-          provider_id: true,
-          lane_type: true,
-          actual_pricing_type: true,
-          actual_fixed_price_usd: true,
-          actual_input_price_per_million_usd: true,
-          actual_output_price_per_million_usd: true,
-          adjusted_pricing_type: true,
-          adjusted_fixed_price_usd: true,
-          adjusted_input_price_per_million_usd: true,
-          adjusted_output_price_per_million_usd: true,
+        select: modelSelect,
+      }) ?? await prisma.ai_models.findFirst({
+        where: {
+          is_active: true,
+          ...(record.lane_type ? { lane_type: record.lane_type } : {}),
+          ...(record.provider_id ? { provider_id: record.provider_id } : {}),
+          OR: [
+            { upstream_model_name: { endsWith: record.model } },
+            { display_name: { endsWith: record.model } },
+            { upstream_model_name: { endsWith: record.model.replace(/^private\/openrouter\//, '') } },
+            { display_name: { endsWith: record.model.replace(/^private\/openrouter\//, '') } },
+          ],
         },
+        orderBy: { updated_at: 'desc' },
+        select: modelSelect,
       });
 
   const cachePricing = {
@@ -269,7 +284,10 @@ async function resolvePricing(record: TokenUsageRecord): Promise<PricingResoluti
       )
     : legacy_cost_usd);
 
-  const margin_usd = record.margin_usd ?? (adjusted_cost_usd - actual_cost_usd);
+  const billableCosts = applyMinimumBillableCost(record, actual_cost_usd, adjusted_cost_usd);
+  const billable_actual_cost_usd = billableCosts.actualCostUsd;
+  const billable_adjusted_cost_usd = billableCosts.adjustedCostUsd;
+  const margin_usd = record.margin_usd ?? (billable_adjusted_cost_usd - billable_actual_cost_usd);
   const pricing_source: PricingResolution['pricing_source'] = record.actual_cost_usd != null || record.adjusted_cost_usd != null
     ? 'override'
     : modelConfig
@@ -314,8 +332,8 @@ async function resolvePricing(record: TokenUsageRecord): Promise<PricingResoluti
     provider_id: record.provider_id ?? modelConfig?.provider_id ?? null,
     model_config_id: record.model_config_id ?? modelConfig?.id ?? null,
     lane_type: record.lane_type ?? modelConfig?.lane_type ?? null,
-    actual_cost_usd,
-    adjusted_cost_usd,
+    actual_cost_usd: billable_actual_cost_usd,
+    adjusted_cost_usd: billable_adjusted_cost_usd,
     margin_usd,
     legacy_cost_usd,
     pricing_source,

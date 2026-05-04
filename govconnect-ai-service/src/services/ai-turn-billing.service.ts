@@ -22,6 +22,19 @@ interface AiBillingTurnStore {
 
 export type AiBillingTurnHandle = AiBillingTurnStore;
 
+const MIN_BILLABLE_COST_USD = 0.00000001;
+
+function billableRowCosts(row: { total_tokens: number; actual_cost_usd: number; adjusted_cost_usd: number }) {
+  if (row.total_tokens <= 0) {
+    return { actualCostUsd: row.actual_cost_usd, adjustedCostUsd: row.adjusted_cost_usd };
+  }
+  const actualCostUsd = row.actual_cost_usd > 0 ? row.actual_cost_usd : MIN_BILLABLE_COST_USD;
+  return {
+    actualCostUsd,
+    adjustedCostUsd: row.adjusted_cost_usd > 0 ? row.adjusted_cost_usd : Math.max(actualCostUsd, MIN_BILLABLE_COST_USD),
+  };
+}
+
 const billingTurnStorage = new AsyncLocalStorage<AiBillingTurnStore>();
 
 export function getCurrentBillingContext(): AiBillingTurnContext | null {
@@ -97,14 +110,14 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
     where: { billing_group_id: context.billing_group_id },
   });
 
-  if (existingBilling?.status === 'billed' || existingBilling?.status === 'skipped_zero_cost' || existingBilling?.status === 'skipped_no_village') {
+  if (existingBilling?.status === 'billed' || existingBilling?.status === 'skipped_no_village') {
     return existingBilling;
   }
 
   const usageRows = await prisma.ai_token_usage.findMany({
     where: {
       billing_group_id: context.billing_group_id,
-      billing_status: 'unbilled',
+      billing_status: { in: ['unbilled', 'skipped_zero_cost'] } as any,
       success: true,
     },
     orderBy: { created_at: 'asc' },
@@ -115,12 +128,13 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
   }
 
   const totals = usageRows.reduce((acc, row) => {
+    const costs = billableRowCosts(row);
     acc.input_tokens += row.input_tokens;
     acc.output_tokens += row.output_tokens;
     acc.total_tokens += row.total_tokens;
-    acc.actual_cost_usd += row.actual_cost_usd;
-    acc.adjusted_cost_usd += row.adjusted_cost_usd;
-    acc.margin_usd += row.margin_usd;
+    acc.actual_cost_usd += costs.actualCostUsd;
+    acc.adjusted_cost_usd += costs.adjustedCostUsd;
+    acc.margin_usd += costs.adjustedCostUsd - costs.actualCostUsd;
     return acc;
   }, {
     input_tokens: 0,
@@ -131,11 +145,7 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
     margin_usd: 0,
   });
 
-  const status = !context.village_id
-    ? 'skipped_no_village'
-    : totals.adjusted_cost_usd > 0
-      ? 'pending'
-      : 'skipped_zero_cost';
+  const status = !context.village_id ? 'skipped_no_village' : 'pending';
 
   const billing = await prisma.ai_message_billings.upsert({
     where: { billing_group_id: context.billing_group_id },

@@ -84,13 +84,16 @@ function formatNumber(n: number) {
 
 function formatIDR(usd: number) {
   const idr = (usd || 0) * USD_TO_IDR
+  if (idr > 0 && idr < 0.01) return `Rp ${idr.toFixed(8)}`
   if (idr >= 1_000_000) return `Rp ${(idr / 1_000_000).toFixed(2)} jt`
   if (idr >= 1_000) return `Rp ${(idr / 1_000).toFixed(1)} rb`
   return `Rp ${idr.toFixed(idr >= 1 ? 0 : 2)}`
 }
 
 function formatUSD(usd: number) {
-  return `$${(usd || 0).toFixed(6)}`
+  const amount = usd || 0
+  if (amount > 0 && amount < 0.000001) return `$${amount.toFixed(8)}`
+  return `$${amount.toFixed(6)}`
 }
 
 function userLabel(user: UsageUser) {

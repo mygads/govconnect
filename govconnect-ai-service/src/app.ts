@@ -2311,7 +2311,7 @@ app.post('/admin/ai-wallet/:villageId/retry-pending', async (req: Request, res: 
     const pendingBillings = await prisma.ai_message_billings.findMany({
       where: {
         village_id: villageId,
-        status: { in: ['pending', 'failed', 'failed_insufficient_balance'] },
+        status: { in: ['pending', 'failed', 'failed_insufficient_balance', 'skipped_zero_cost'] },
       },
       orderBy: { created_at: 'asc' },
       take: Math.min(Math.max(Number(req.body?.limit) || 50, 1), 200),

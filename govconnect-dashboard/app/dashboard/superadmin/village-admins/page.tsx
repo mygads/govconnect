@@ -88,7 +88,6 @@ export default function SuperadminVillageAdminsPage() {
       if (!response.ok) throw new Error(payload?.error || "Gagal memuat desa")
       const rows = Array.isArray(payload?.data) ? payload.data : []
       setVillages(rows)
-      setSelectedVillageId((current) => current || rows[0]?.id || "")
     } catch (error: any) {
       toast({ title: "Gagal", description: error?.message || "Gagal memuat desa", variant: "destructive" })
     } finally {
@@ -96,14 +95,11 @@ export default function SuperadminVillageAdminsPage() {
     }
   }
 
-  const loadAdmins = async (villageId: string) => {
-    if (!villageId) {
-      setAdmins([])
-      return
-    }
+  const loadAdmins = async (villageId?: string) => {
     try {
       setLoadingAdmins(true)
-      const response = await fetch(`/api/superadmin/village-admins?village_id=${encodeURIComponent(villageId)}`, {
+      const params = villageId ? `?village_id=${encodeURIComponent(villageId)}` : ""
+      const response = await fetch(`/api/superadmin/village-admins${params}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
       const payload = await response.json().catch(() => ({}))
@@ -121,7 +117,7 @@ export default function SuperadminVillageAdminsPage() {
   }, [user])
 
   useEffect(() => {
-    if (selectedVillageId) void loadAdmins(selectedVillageId)
+    void loadAdmins(selectedVillageId || undefined)
   }, [selectedVillageId])
 
   const filteredAdmins = useMemo(() => {
@@ -180,7 +176,7 @@ export default function SuperadminVillageAdminsPage() {
       setFormOpen(false)
       setEditingAdmin(null)
       setForm(emptyForm)
-      await loadAdmins(selectedVillageId)
+      await loadAdmins(selectedVillageId || undefined)
     } catch (error: any) {
       toast({ title: "Gagal", description: error?.message || "Gagal menyimpan admin", variant: "destructive" })
     } finally {
@@ -203,7 +199,7 @@ export default function SuperadminVillageAdminsPage() {
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload?.error || "Gagal memperbarui status admin")
       toast({ title: "Berhasil", description: pendingToggle.nextValue ? "Admin diaktifkan." : "Admin dinonaktifkan." })
-      await loadAdmins(selectedVillageId)
+      await loadAdmins(selectedVillageId || undefined)
     } catch (error: any) {
       toast({ title: "Gagal", description: error?.message || "Gagal memperbarui status admin", variant: "destructive" })
     } finally {
@@ -223,7 +219,7 @@ export default function SuperadminVillageAdminsPage() {
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload?.error || "Gagal menghapus admin")
       toast({ title: "Berhasil", description: "Admin berhasil dihapus." })
-      await loadAdmins(selectedVillageId)
+      await loadAdmins(selectedVillageId || undefined)
     } catch (error: any) {
       toast({ title: "Gagal", description: error?.message || "Gagal menghapus admin", variant: "destructive" })
     } finally {
@@ -270,21 +266,22 @@ export default function SuperadminVillageAdminsPage() {
           <h1 className="text-3xl font-bold text-foreground">Admin Desa</h1>
           <p className="mt-2 text-muted-foreground">Kelola user admin per desa, termasuk create, update, reset sandi, dan nonaktif.</p>
         </div>
-        <Button onClick={openCreate} disabled={!selectedVillageId}><Plus className="mr-2 h-4 w-4" />Tambah Admin</Button>
+        <Button onClick={openCreate} disabled={villages.length === 0}><Plus className="mr-2 h-4 w-4" />Tambah Admin</Button>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>Filter</CardTitle>
-          <CardDescription>Pilih desa lalu kelola user admin yang terdaftar di desa tersebut.</CardDescription>
+          <CardDescription>Default menampilkan semua admin desa. Pilih desa untuk memfilter daftar.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <Label>Desa</Label>
             {loadingVillages ? <Skeleton className="h-10 w-full" /> : (
-              <Select value={selectedVillageId} onValueChange={setSelectedVillageId}>
-                <SelectTrigger><SelectValue placeholder="Pilih desa" /></SelectTrigger>
+              <Select value={selectedVillageId || "all"} onValueChange={(value) => setSelectedVillageId(value === "all" ? "" : value)}>
+                <SelectTrigger><SelectValue placeholder="Semua desa" /></SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="all">Semua desa</SelectItem>
                   {villages.map((village) => <SelectItem key={village.id} value={village.id}>{village.name}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -300,7 +297,7 @@ export default function SuperadminVillageAdminsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Daftar Admin Desa</CardTitle>
-          <CardDescription>{selectedVillageId ? `${filteredAdmins.length} admin ditemukan.` : "Pilih desa terlebih dahulu."}</CardDescription>
+          <CardDescription>{filteredAdmins.length} admin ditemukan{selectedVillageId ? " untuk desa terpilih" : " dari semua desa"}.</CardDescription>
         </CardHeader>
         <CardContent>
           {loadingAdmins ? (
@@ -315,6 +312,7 @@ export default function SuperadminVillageAdminsPage() {
                 <TableRow>
                   <TableHead>Nama</TableHead>
                   <TableHead>Username</TableHead>
+                  <TableHead>Desa</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Aksi</TableHead>
@@ -323,12 +321,13 @@ export default function SuperadminVillageAdminsPage() {
               <TableBody>
                 {filteredAdmins.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">Belum ada admin desa.</TableCell>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">Belum ada admin desa.</TableCell>
                   </TableRow>
                 ) : filteredAdmins.map((admin) => (
                   <TableRow key={admin.id}>
                     <TableCell className="font-medium">{admin.name}</TableCell>
                     <TableCell>{admin.username}</TableCell>
+                    <TableCell>{admin.village?.name || "-"}</TableCell>
                     <TableCell>
                       <Badge variant="secondary">{admin.role === "admin" ? "Admin" : "Village Admin"}</Badge>
                     </TableCell>
