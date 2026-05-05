@@ -602,14 +602,14 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
  * Get available webhook events
  * API: GET {WA_API_URL}/webhook/events?active=true
  */
-export async function getWebhookEvents(villageId?: string): Promise<string[]> {
+export async function getWebhookEvents(villageId?: string, sessionToken?: string): Promise<string[]> {
   try {
-    const resolved = await resolveAccessToken(villageId).catch(() => null);
-    if (!resolved) {
+    const token = sessionToken || (await resolveAccessToken(villageId).catch(() => null))?.token;
+    if (!token) {
       return ['Message'];
     }
 
-    const data = await waGatewayRequest(resolved.token, '/webhook/events?active=true', 'GET');
+    const data = await waGatewayRequest(token, '/webhook/events?active=true', 'GET');
     return data.events || ['Message'];
   } catch (error: any) {
     logger.warn('Failed to get webhook events, using default', { error: error.message });
@@ -621,14 +621,14 @@ export async function getWebhookEvents(villageId?: string): Promise<string[]> {
  * Get current webhook configuration
  * API: GET {WA_API_URL}/webhook
  */
-export async function getWebhookConfig(villageId?: string): Promise<{ subscribe: string[]; webhook: string }> {
+export async function getWebhookConfig(villageId?: string, sessionToken?: string): Promise<{ subscribe: string[]; webhook: string }> {
   try {
-    const resolved = await resolveAccessToken(villageId).catch(() => null);
-    if (!resolved) {
+    const token = sessionToken || (await resolveAccessToken(villageId).catch(() => null))?.token;
+    if (!token) {
       return { subscribe: ['Message'], webhook: '' };
     }
 
-    const data = await waGatewayRequest(resolved.token, '/webhook', 'GET');
+    const data = await waGatewayRequest(token, '/webhook', 'GET');
     return {
       subscribe: data.subscribe || data.events || ['Message'],
       webhook: data.webhook || data.WebhookURL || '',

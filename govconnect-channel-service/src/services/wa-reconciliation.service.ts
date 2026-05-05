@@ -98,8 +98,8 @@ export async function auditWhatsAppSession(villageId: string): Promise<WhatsAppS
   }
 
   const [providerActiveEvents, webhookConfig, providerStatus] = await Promise.all([
-    getWebhookEvents(villageId),
-    getWebhookConfig(villageId),
+    getWebhookEvents(villageId, session.wa_token),
+    getWebhookConfig(villageId, session.wa_token),
     getSessionStatus(session.wa_token),
   ]);
 
