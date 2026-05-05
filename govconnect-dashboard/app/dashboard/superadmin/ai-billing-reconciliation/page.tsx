@@ -219,7 +219,7 @@ function formatNumber(value?: number | null) {
 }
 
 function formatDateTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : "-"
+  return value ? new Date(value).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }) : "-"
 }
 
 function shortId(value?: string | null) {

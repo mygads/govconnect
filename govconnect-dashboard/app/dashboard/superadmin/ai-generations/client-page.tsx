@@ -191,7 +191,7 @@ export default function AIGenerationLogsPageContent() {
             <Zap className="h-6 w-6 text-primary" />
             <h1 className="text-3xl font-bold">AI Generation Logs</h1>
           </div>
-          <p className="text-muted-foreground">Log real dari gateway/provider AI GovConnect. Zona waktu tampilan: GMT+7.</p>
+          <p className="text-muted-foreground">Log real dari gateway/provider AI GovConnect. Biaya di halaman ini memakai actual cost per call dalam USD. Zona waktu tampilan: GMT+7.</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={exportCsv} disabled={!rows.length}><Download className="mr-2 h-4 w-4" /> Export</Button>
@@ -237,7 +237,7 @@ export default function AIGenerationLogsPageContent() {
       <Card>
         <CardHeader>
           <CardTitle>Generations</CardTitle>
-          <CardDescription>{formatNumber(total)} total row · {formatNumber(rows.length)} ditampilkan · export mengikuti row yang sedang dimuat</CardDescription>
+          <CardDescription>{formatNumber(total)} total row · {formatNumber(rows.length)} ditampilkan · export hanya mengikuti row yang sedang dimuat (maks 100 per fetch)</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>

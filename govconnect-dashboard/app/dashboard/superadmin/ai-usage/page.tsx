@@ -168,7 +168,7 @@ interface VillageInfo {
 
 // ==================== Helpers ====================
 
-const USD_TO_IDR = 17_000
+const USD_TO_IDR = 18_000
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M"
@@ -186,14 +186,16 @@ function formatIDR(usd: number): string {
 }
 
 function formatUSD(usd: number): string {
-  return "$" + usd.toFixed(4)
+  const amount = usd || 0
+  if (amount > 0 && amount < 0.000001) return "$" + amount.toFixed(8)
+  return "$" + amount.toFixed(6)
 }
 
 function formatDate(iso: string, period: string): string {
   const d = new Date(iso)
-  if (period === "month") return d.toLocaleDateString("id-ID", { month: "short", year: "numeric" })
-  if (period === "week") return d.toLocaleDateString("id-ID", { day: "numeric", month: "short" })
-  return d.toLocaleDateString("id-ID", { day: "numeric", month: "short" })
+  if (period === "month") return d.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", month: "short", year: "numeric" })
+  if (period === "week") return d.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short" })
+  return d.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short" })
 }
 
 function sumCostUsd<T extends { cost_usd: number }>(rows: T[]): number {
@@ -996,7 +998,7 @@ export default function AITokenUsagePage() {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <DollarSign className="h-4 w-4" /> Rincian Biaya per Model
               </CardTitle>
-              <CardDescription>Biaya memakai `cost_usd` yang direkam backend, jadi selalu mengikuti provider/model gateway aktif dalam USD.</CardDescription>
+              <CardDescription>Biaya memakai `cost_usd` yang direkam backend sebagai biaya per call model/provider dalam USD. Nilai ini tidak selalu sama dengan billed wallet desa.</CardDescription>
             </CardHeader>
             <CardContent>
               {summaryLoading ? <Skeleton className="h-48" /> : (
@@ -1089,7 +1091,7 @@ export default function AITokenUsagePage() {
                         legend: { position: "bottom" },
                         tooltip: {
                           callbacks: {
-                            label: (ctx: any) => `${ctx.label}: ${formatUSD(ctx.raw)} (${formatUSD(ctx.raw)})`,
+                            label: (ctx: any) => `${ctx.label}: ${formatUSD(ctx.raw)}`,
                           },
                         },
                       },

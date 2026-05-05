@@ -183,6 +183,7 @@ function userLabel(user: UsageUser) {
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-"
   return new Date(value).toLocaleString("id-ID", {
+    timeZone: "Asia/Jakarta",
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -425,8 +426,9 @@ export default function VillageAIUsagePage() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2"><CardHeader><CardTitle>Tren Biaya & Call</CardTitle></CardHeader><CardContent className="h-80">{charts ? <charts.Line data={lineData} options={{ responsive: true, maintainAspectRatio: false, interaction: { mode: "index" }, scales: { y: { beginAtZero: true }, y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false } } } }} /> : <Skeleton className="h-full" />}</CardContent></Card>
-            <Card><CardHeader><CardTitle>Komposisi Layer</CardTitle></CardHeader><CardContent className="h-80">{charts && layerTotals.length ? <charts.Doughnut data={doughnutData} options={{ responsive: true, maintainAspectRatio: false }} /> : <EmptyChart />}</CardContent></Card>
+            <Card className="lg:col-span-2"><CardHeader><CardTitle>Tren Biaya & Call</CardTitle><CardDescription>Biaya grafik ini memakai cost per call (`cost_usd`) dalam USD, bukan billed wallet per pesan.</CardDescription></CardHeader><CardContent className="h-80">{charts ? <charts.Line data={lineData} options={{ responsive: true, maintainAspectRatio: false, interaction: { mode: "index" }, scales: { y: { beginAtZero: true }, y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false } } } }} /> : <Skeleton className="h-full" />}</CardContent></Card>
+            <Card>
+              <CardHeader><CardTitle>Komposisi Layer</CardTitle><CardDescription>Lapisan ini menampilkan biaya per call AI (USD), sedangkan tabel billing di bawah menampilkan biaya billed per pesan.</CardDescription></CardHeader><CardContent className="h-80">{charts && layerTotals.length ? <charts.Doughnut data={doughnutData} options={{ responsive: true, maintainAspectRatio: false }} /> : <EmptyChart />}</CardContent></Card>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
