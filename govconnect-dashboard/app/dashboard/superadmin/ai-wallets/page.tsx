@@ -73,6 +73,18 @@ type ConfirmAction = {
   onConfirm: () => Promise<void> | void
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return "-"
+  return new Date(value).toLocaleString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 function formatUsd(value?: number | null) {
   return `$${(value ?? 0).toFixed(2)}`
 }
@@ -591,7 +603,7 @@ export default function SuperadminAIWalletsPage() {
                     </TableCell>
                     <TableCell>{wallet.status}</TableCell>
                     <TableCell>{formatUsd(wallet.balance_usd)}</TableCell>
-                    <TableCell>{new Date(wallet.updated_at).toLocaleString("id-ID")}</TableCell>
+                    <TableCell>{formatDateTime(wallet.updated_at)}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         size="sm"
@@ -639,14 +651,14 @@ export default function SuperadminAIWalletsPage() {
                 <TableRow key={voucher.id}>
                   <TableCell>
                     <div className="font-medium">{voucher.code}</div>
-                    <div className="text-xs text-muted-foreground">Dibuat: {new Date(voucher.created_at).toLocaleString("id-ID")}</div>
+                    <div className="text-xs text-muted-foreground">Dibuat: {formatDateTime(voucher.created_at)}</div>
                   </TableCell>
                   <TableCell>{voucher.status}</TableCell>
                   <TableCell>{formatUsd(voucher.amount_usd)}</TableCell>
                   <TableCell>
                     {voucher.redeemed_at ? (
                       <div className="text-xs">
-                        <div>{new Date(voucher.redeemed_at).toLocaleString("id-ID")}</div>
+                        <div>{formatDateTime(voucher.redeemed_at)}</div>
                         <div className="text-muted-foreground">{villageLabel(villageMap.get(voucher.redeemed_by_village_id || ""))}</div>
                         <div className="font-mono text-muted-foreground">{voucher.redeemed_by_admin_id || "-"}</div>
                       </div>
