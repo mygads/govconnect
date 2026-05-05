@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { redirect, useRouter } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,9 +43,9 @@ export default function SuperadminRegisterPage() {
 
   useEffect(() => {
     if (user && user.role !== "superadmin") {
-      redirect("/dashboard")
+      router.replace("/dashboard")
     }
-  }, [user])
+  }, [user, router])
 
   useEffect(() => {
     if (!slugEdited) {

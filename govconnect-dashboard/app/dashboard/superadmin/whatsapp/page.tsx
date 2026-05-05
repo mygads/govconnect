@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -52,15 +52,17 @@ interface HealthData {
 }
 
 export default function WaSupportPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+
+    const router = useRouter()
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [health, setHealth] = useState<HealthData | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const fetchData = useCallback(async () => {
     try {
@@ -96,11 +98,20 @@ export default function WaSupportPage() {
       case "connected":
         return <Badge className="bg-green-100 text-green-800 border-green-200"><CheckCircle2 className="w-3 h-3 mr-1" />Connected</Badge>
       case "disconnected":
-        return <Badge className="bg-red-100 text-red-800 border-red-200"><XCircle className="w-3 h-3 mr-1" />Disconnected</Badge>
+        return <Badge className="bg-amber-100 text-amber-800 border-amber-200"><WifiOff className="w-3 h-3 mr-1" />Offline</Badge>
+      case "qr":
+      case "qr_waiting":
+        return <Badge className="bg-blue-100 text-blue-800 border-blue-200">Perlu QR</Badge>
+      case "logged_out":
+        return <Badge className="bg-red-100 text-red-800 border-red-200"><XCircle className="w-3 h-3 mr-1" />Logged Out</Badge>
+      case "error":
+        return <Badge className="bg-red-100 text-red-800 border-red-200"><AlertTriangle className="w-3 h-3 mr-1" />Error</Badge>
+      case "replaced":
+        return <Badge className="bg-red-100 text-red-800 border-red-200"><AlertTriangle className="w-3 h-3 mr-1" />Replaced</Badge>
       case "created":
         return <Badge className="bg-blue-100 text-blue-800 border-blue-200">Created</Badge>
-      case "qr_waiting":
-        return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Waiting QR</Badge>
+      case "creating":
+        return <Badge className="bg-slate-100 text-slate-800 border-slate-200">Creating</Badge>
       default:
         return <Badge variant="secondary">{status || "No Session"}</Badge>
     }
@@ -127,6 +138,8 @@ export default function WaSupportPage() {
 
   const items = summary?.items || []
   const connectedCount = items.filter(u => u.local_session?.status === "connected").length
+  const offlineCount = items.filter(u => u.local_session?.status === "disconnected" || u.local_session?.status === "qr" || u.local_session?.status === "qr_waiting").length
+  const problematicCount = items.filter(u => ["logged_out", "error", "replaced"].includes(u.local_session?.status || "")).length
   const totalSessions = items.reduce((acc, u) => acc + u.session_count, 0)
 
   return (
@@ -146,6 +159,12 @@ export default function WaSupportPage() {
           </Button>
         </div>
       </div>
+
+      {problematicCount > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          Ada {problematicCount} session WhatsApp bermasalah (logged out, error, atau replaced). Periksa desa terkait untuk recovery manual.
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-3">
@@ -173,12 +192,12 @@ export default function WaSupportPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Session</CardTitle>
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Offline / QR</CardTitle>
+            <WifiOff className="h-4 w-4 text-amber-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{totalSessions}</div>
-            <p className="text-xs text-muted-foreground mt-1">Session WA di semua desa</p>
+            <div className="text-3xl font-bold text-amber-600">{offlineCount}</div>
+            <p className="text-xs text-muted-foreground mt-1">session butuh reconnect atau QR</p>
           </CardContent>
         </Card>
       </div>

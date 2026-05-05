@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -372,7 +372,8 @@ function confidenceBadgeClass(confidence: string): string {
 }
 
 export default function KnowledgeAnalyticsPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [selectedTraceIndex, setSelectedTraceIndex] = useState(0)
   const [selectedMemoryTraceIndex, setSelectedMemoryTraceIndex] = useState(0)
@@ -386,8 +387,8 @@ export default function KnowledgeAnalyticsPage() {
 
   // Only village admin can access this page
   useEffect(() => {
-    if (user && user.role === "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role === "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const getAuthHeaders = useCallback(() => {
     const token = localStorage.getItem("token")

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Gift, Loader2, Wallet } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
@@ -81,7 +81,9 @@ function getEntryNote(entry: LedgerEntry) {
 }
 
 export default function AIBalancePageContent() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+
+    const router = useRouter()
   const [summary, setSummary] = useState<WalletSummaryPayload["data"] | null>(null)
   const [ledger, setLedger] = useState<LedgerEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -92,8 +94,8 @@ export default function AIBalancePageContent() {
   const [ledgerError, setLedgerError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (user && isSuperadmin(user.role)) redirect("/dashboard")
-  }, [user])
+    if (user && isSuperadmin(user.role)) router.replace("/dashboard")
+  }, [user, router])
 
   const fetchData = useCallback(async () => {
     try {

@@ -1,7 +1,7 @@
 "use client"
 
 import { ComponentType, useCallback, useEffect, useMemo, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Activity, BarChart3, Bot, CalendarDays, Coins, Eye, Loader2, MessageSquare, RefreshCw, Users, Wallet, Zap } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -115,7 +115,9 @@ async function fetchJson<T>(path: string, params?: Record<string, string>) {
 
 
 export default function VillageAIUsagePage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+
+    const router = useRouter()
   const [charts, setCharts] = useState<{ Line: ChartComponent; Bar: ChartComponent; Doughnut: ChartComponent } | null>(null)
   const [start, setStart] = useState(defaultStart())
   const [end, setEnd] = useState(today())
@@ -133,8 +135,8 @@ export default function VillageAIUsagePage() {
   const [detail, setDetail] = useState<MessageDetail | null>(null)
 
   useEffect(() => {
-    if (user && user.role === "superadmin") redirect("/dashboard/superadmin/ai-usage")
-  }, [user])
+    if (user && user.role === "superadmin") router.replace("/dashboard/superadmin/ai-usage")
+  }, [user, router])
 
   useEffect(() => {
     Promise.all([import("chart.js"), import("react-chartjs-2")]).then(([chartjs, reactChart]) => {

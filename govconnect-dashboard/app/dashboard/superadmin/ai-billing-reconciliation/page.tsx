@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { AlertTriangle, CheckCircle2, Eye, Loader2, RefreshCw, RotateCcw } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
@@ -168,7 +168,8 @@ function formatUsd(value?: number | null) {
 }
 
 export default function AIBillingReconciliationPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const [data, setData] = useState<ReconciliationData | null>(null)
   const [loading, setLoading] = useState(true)
   const [retryVillageId, setRetryVillageId] = useState("")
@@ -265,7 +266,7 @@ export default function AIBillingReconciliationPage() {
   }, [loadData])
 
   if (!user) return null
-  if (user.role !== "superadmin") redirect("/dashboard")
+  if (user.role !== "superadmin") router.replace("/dashboard")
 
   const mismatchRows = Object.entries(data?.mismatches || {})
   const countRows = Object.entries(data?.counts || {})

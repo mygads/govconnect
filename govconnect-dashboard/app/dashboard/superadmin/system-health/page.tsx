@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -58,14 +58,15 @@ const checkLabels: Record<string, string> = {
 }
 
 export default function SystemHealthPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const [data, setData] = useState<HealthData | null>(null)
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const fetchHealth = useCallback(async () => {
     try {

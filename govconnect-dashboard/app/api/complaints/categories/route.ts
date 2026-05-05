@@ -24,22 +24,38 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const villageId = session.admin.village_id || undefined
     const url = new URL(buildUrl(ServicePath.CASE, '/complaints/categories'))
-    if (session.admin.village_id) {
-      url.searchParams.set('village_id', session.admin.village_id)
+    if (villageId) {
+      url.searchParams.set('village_id', villageId)
     }
 
-    const response = await apiFetch(url.toString(), {
-      headers: getHeaders(),
-    })
+    try {
+      const response = await apiFetch(url.toString(), {
+        headers: getHeaders(),
+      })
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to fetch categories' }))
-      return NextResponse.json({ error: error.error || 'Failed to fetch categories' }, { status: response.status })
+      if (response.ok) {
+        const data = await response.json()
+        const rows = Array.isArray(data?.data) ? data.data : []
+        if (rows.length > 0 || !villageId) {
+          return NextResponse.json(data)
+        }
+      }
+    } catch {
+      // Fallback to direct DB read below
     }
 
-    const data = await response.json()
-    return NextResponse.json(data)
+    const rows = villageId
+      ? await prisma.$queryRaw<Array<{ id: string; name: string; description: string | null; village_id: string; is_active: boolean; created_at: Date; updated_at: Date }>>`
+          SELECT id, name, description, village_id, is_active, created_at, updated_at
+          FROM cases.complaint_categories
+          WHERE village_id = ${villageId}
+          ORDER BY created_at ASC
+        `
+      : []
+
+    return NextResponse.json({ data: rows })
   } catch (error) {
     console.error('Error fetching complaint categories:', error)
     return NextResponse.json({ error: 'Failed to fetch categories' }, { status: 500 })

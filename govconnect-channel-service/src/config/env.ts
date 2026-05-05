@@ -20,6 +20,9 @@ interface EnvConfig {
   WEBHOOK_ALLOWED_IPS: string; // Comma-separated IP allowlist for webhook origin verification
   WEBHOOK_HMAC_REQUIRED: boolean;
   TRUST_PROXY: boolean;
+  WA_RECONCILIATION_ENABLED: boolean;
+  WA_RECONCILIATION_INTERVAL_MS: number;
+  WA_RECONCILIATION_BATCH_SIZE: number;
 }
 
 function validateEnv(): EnvConfig {
@@ -60,6 +63,9 @@ function validateEnv(): EnvConfig {
       ? process.env.WEBHOOK_HMAC_REQUIRED !== 'false'
       : String(process.env.WEBHOOK_HMAC_REQUIRED || '').toLowerCase() === 'true',
     TRUST_PROXY: String(process.env.TRUST_PROXY || '').toLowerCase() === 'true',
+    WA_RECONCILIATION_ENABLED: String(process.env.WA_RECONCILIATION_ENABLED || 'true').toLowerCase() !== 'false',
+    WA_RECONCILIATION_INTERVAL_MS: Math.max(60000, parseInt(process.env.WA_RECONCILIATION_INTERVAL_MS || '900000', 10)),
+    WA_RECONCILIATION_BATCH_SIZE: Math.max(1, parseInt(process.env.WA_RECONCILIATION_BATCH_SIZE || '10', 10)),
   };
 }
 

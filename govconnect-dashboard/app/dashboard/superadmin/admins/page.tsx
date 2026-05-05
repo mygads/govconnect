@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -35,7 +35,9 @@ interface AdminItem {
 }
 
 export default function SuperadminAdminsPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+
+    const router = useRouter()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [admins, setAdmins] = useState<AdminItem[]>([])
@@ -44,9 +46,9 @@ export default function SuperadminAdminsPage() {
 
   useEffect(() => {
     if (user && user.role !== "superadmin") {
-      redirect("/dashboard")
+      router.replace("/dashboard")
     }
-  }, [user])
+  }, [user, router])
 
   const fetchAdmins = async () => {
     try {
@@ -79,7 +81,7 @@ export default function SuperadminAdminsPage() {
     if (user?.role === "superadmin") {
       fetchAdmins()
     }
-  }, [user])
+  }, [user, router])
 
   const requestToggle = (admin: AdminItem, nextValue: boolean) => {
     setPendingToggle({ admin, nextValue })

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { AlertTriangle, Brain, Database, Edit2, Eye, Loader2, Mic, Play, Plus, Save, Search, Trash2, Waypoints, X } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
@@ -219,7 +219,8 @@ function priceValue(value: number | null | undefined) {
 }
 
 export default function SuperadminAIModelsPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const { toast } = useToast()
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [models, setModels] = useState<ModelRow[]>([])
@@ -280,8 +281,8 @@ export default function SuperadminAIModelsPage() {
   })
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const loadData = useCallback(async () => {
     try {

@@ -26,6 +26,7 @@ import {
   deleteWhatsAppS3Config,
   ensureWhatsAppLifecycleSync,
   repairAllWhatsAppSessions,
+  deriveWhatsAppLifecycleState,
 } from '../services/wa.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
@@ -103,6 +104,12 @@ async function syncSessionState(villageId: string): Promise<{
   connected: boolean;
   loggedIn: boolean;
   wa_number: string | null;
+  status?: string | null;
+  lifecycle_status?: string;
+  reconnectable?: boolean;
+  requires_qr?: boolean;
+  problematic?: boolean;
+  status_fetch_ok?: boolean;
 }> {
   const session = await getStoredSession(villageId);
   if (!session) {
@@ -114,12 +121,17 @@ async function syncSessionState(villageId: string): Promise<{
   const waNumber = status.jid
     ? status.jid.replace(/@s\.whatsapp\.net$/i, '').replace(/:\d+$/, '')
     : (session.wa_number ? session.wa_number.replace(/:\d+$/, '') : session.wa_number);
+  const lifecycle = deriveWhatsAppLifecycleState({ dbStatus: session.status, providerStatus: status });
 
-  await updateStoredSessionStatus({
-    villageId,
-    status: status.connected ? 'connected' : 'disconnected',
-    waNumber: waNumber || null,
-  });
+  if (lifecycle.status_fetch_ok && lifecycle.status) {
+    await updateStoredSessionStatus({
+      villageId,
+      status: lifecycle.status,
+      waNumber: waNumber || null,
+    });
+  } else if (waNumber) {
+    await updateStoredSessionStatus({ villageId, waNumber });
+  }
 
   await syncChannelAccountNumber(villageId, waNumber || null);
 
@@ -127,6 +139,7 @@ async function syncSessionState(villageId: string): Promise<{
     connected: status.connected,
     loggedIn: status.loggedIn,
     wa_number: waNumber || null,
+    ...lifecycle,
   };
 }
 
@@ -151,6 +164,12 @@ export async function getStatus(_req: Request, res: Response): Promise<void> {
           connected: false,
           loggedIn: false,
           wa_number: null,
+          status: null,
+          lifecycle_status: 'unknown',
+          reconnectable: false,
+          requires_qr: false,
+          problematic: false,
+          status_fetch_ok: true,
         },
       });
       return;
@@ -162,20 +181,32 @@ export async function getStatus(_req: Request, res: Response): Promise<void> {
     const waNumber = status.jid
       ? status.jid.replace(/@s\.whatsapp\.net$/i, '').replace(/:\d+$/, '')
       : (session.wa_number ? session.wa_number.replace(/:\d+$/, '') : session.wa_number);
+    const lifecycle = deriveWhatsAppLifecycleState({ dbStatus: session.status, providerStatus: status });
 
-    await updateStoredSessionStatus({
-      villageId,
-      status: status.connected ? 'connected' : 'disconnected',
-      waNumber: waNumber || null,
-    });
+    if (lifecycle.status_fetch_ok && lifecycle.status) {
+      await updateStoredSessionStatus({
+        villageId,
+        status: lifecycle.status,
+        waNumber: waNumber || null,
+      });
+    } else if (waNumber) {
+      await updateStoredSessionStatus({ villageId, waNumber: waNumber || null });
+    }
 
     await syncChannelAccountNumber(villageId, waNumber || null);
 
     res.json({
       success: true,
       data: {
+        exists: true,
         ...status,
         wa_number: waNumber || null,
+        status: lifecycle.status,
+        lifecycle_status: lifecycle.lifecycle_status,
+        reconnectable: lifecycle.reconnectable,
+        requires_qr: lifecycle.requires_qr,
+        problematic: lifecycle.problematic,
+        status_fetch_ok: lifecycle.status_fetch_ok,
       },
     });
   } catch (error: any) {
@@ -321,11 +352,11 @@ export async function logout(_req: Request, res: Response): Promise<void> {
 
     const result = await logoutSession(session.wa_token);
 
-    // Sync status after logout
+    await updateStoredSessionStatus({ villageId, status: 'logged_out' });
     try {
-      await syncSessionState(villageId);
-    } catch (e: any) {
-      logger.debug('Post-logout session sync failed', { error: e?.message, village_id: villageId });
+      await syncChannelAccountNumber(villageId, null);
+    } catch {
+      // no-op
     }
     res.json({
       success: true,

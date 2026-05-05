@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Brain, Database, Loader2, Save, Search, Waypoints } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
@@ -71,7 +71,8 @@ function laneIcon(lane: string) {
 }
 
 export default function SuperadminLaneAssignmentsPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const { toast } = useToast()
   const [models, setModels] = useState<ModelRow[]>([])
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
@@ -82,8 +83,8 @@ export default function SuperadminLaneAssignmentsPage() {
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const loadData = useCallback(async () => {
     try {

@@ -1,7 +1,7 @@
 "use client"
 
 import { ComponentType, Fragment, useCallback, useEffect, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import {
   BarChart3,
   Activity,
@@ -254,7 +254,9 @@ const stackedOptions = {
 // ==================== Component ====================
 
 export default function AITokenUsagePage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+
+    const router = useRouter()
   const [activeTab, setActiveTab] = useState("ringkasan")
   const [period, setPeriod] = useState<"day" | "week" | "month">("day")
 
@@ -305,8 +307,8 @@ export default function AITokenUsagePage() {
   }, [])
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   // Load summary data on mount
   const loadSummary = useCallback(async () => {

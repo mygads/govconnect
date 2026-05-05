@@ -31,12 +31,13 @@ function buildOperatingHoursText(operatingHours: Record<string, { open?: string;
     .join('\n')
 }
 
-function buildProfileKnowledgeContent(profile: { name?: string; address?: string; gmaps_url?: string | null; latitude?: number | null; longitude?: number | null; short_name?: string; operating_hours?: Record<string, { open?: string; close?: string }> | null }) {
+function buildProfileKnowledgeContent(profile: { name?: string; slug?: string; address?: string; gmaps_url?: string | null; latitude?: number | null; longitude?: number | null; short_name?: string; operating_hours?: Record<string, { open?: string; close?: string }> | null }) {
   const hoursText = buildOperatingHoursText(profile.operating_hours)
 
   const lines = [
     `Nama Desa/Kelurahan: ${profile.name || '-'}`,
-    `Nama Singkat (Slug Form): ${profile.short_name || '-'}`,
+    `Slug Form/Webchat: ${profile.slug || '-'}`,
+    `Nama Singkat/Alias: ${profile.short_name || '-'}`,
   ]
   lines.push(
     `Alamat Kantor: ${profile.address || '-'}`,
@@ -49,7 +50,7 @@ function buildProfileKnowledgeContent(profile: { name?: string; address?: string
   return lines.join('\n')
 }
 
-function buildProfileKeywords(profile: { name?: string; short_name?: string; address?: string }) {
+function buildProfileKeywords(profile: { name?: string; slug?: string; short_name?: string; address?: string }) {
   const rawKeywords = [
     'profil desa',
     'profil kelurahan',
@@ -61,6 +62,7 @@ function buildProfileKeywords(profile: { name?: string; short_name?: string; add
     'hari libur',
     'libur',
     profile.name || '',
+    profile.slug || '',
     profile.short_name || '',
     profile.address || '',
   ]
@@ -70,6 +72,7 @@ function buildProfileKeywords(profile: { name?: string; short_name?: string; add
 
 async function upsertProfileKnowledge(villageId: string, adminId: string | null, profile: {
   name?: string
+  slug?: string
   address?: string
   gmaps_url?: string | null
   short_name?: string
@@ -188,6 +191,13 @@ async function upsertProfileKnowledge(villageId: string, adminId: string | null,
   }
 }
 
+async function getVillageIdentity(villageId: string) {
+  return prisma.villages.findUnique({
+    where: { id: villageId },
+    select: { id: true, name: true, slug: true },
+  })
+}
+
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
     request.headers.get('authorization')?.replace('Bearer ', '')
@@ -210,6 +220,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ data: null })
   }
 
+  const village = await getVillageIdentity(session.admin.village_id)
   const profile = await prisma.village_profiles.findFirst({
     where: { village_id: session.admin.village_id }
   })
@@ -249,7 +260,21 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ data: profile, embedding_status: embeddingStatus })
+  return NextResponse.json({ data: profile ? {
+    ...profile,
+    name: village?.name || profile.name,
+    slug: village?.slug || '',
+  } : village ? {
+    village_id: village.id,
+    name: village.name,
+    slug: village.slug,
+    address: '',
+    gmaps_url: null,
+    latitude: null,
+    longitude: null,
+    short_name: '',
+    operating_hours: {},
+  } : null, embedding_status: embeddingStatus })
 }
 
 export async function PUT(request: NextRequest) {
@@ -261,7 +286,7 @@ export async function PUT(request: NextRequest) {
   }
 
   const body = await request.json()
-  const { name, address, gmaps_url, short_name, operating_hours } = body
+  const { address, gmaps_url, short_name, operating_hours } = body
   const latitude = body.latitude === '' || body.latitude === null || body.latitude === undefined ? null : Number(body.latitude)
   const longitude = body.longitude === '' || body.longitude === null || body.longitude === undefined ? null : Number(body.longitude)
 
@@ -277,11 +302,11 @@ export async function PUT(request: NextRequest) {
     where: { village_id: session.admin.village_id }
   })
 
+  const village = await getVillageIdentity(session.admin.village_id)
   const profile = existing
     ? await (prisma.village_profiles as any).update({
         where: { id: existing.id },
         data: {
-          name: name ?? undefined,
           address: address ?? undefined,
           gmaps_url: gmaps_url ?? undefined,
           latitude,
@@ -293,7 +318,7 @@ export async function PUT(request: NextRequest) {
     : await (prisma.village_profiles as any).create({
         data: {
           village_id: session.admin.village_id,
-          name: name || '',
+          name: village?.name || '',
           address: address || '',
           gmaps_url: gmaps_url || null,
           latitude,
@@ -304,7 +329,8 @@ export async function PUT(request: NextRequest) {
       })
 
   await upsertProfileKnowledge(session.admin.village_id, session.admin_id, {
-    name: profile.name,
+    name: village?.name || profile.name,
+    slug: village?.slug || '',
     address: profile.address,
     gmaps_url: profile.gmaps_url,
     latitude: (profile as any).latitude,
@@ -313,5 +339,9 @@ export async function PUT(request: NextRequest) {
     operating_hours: profile.operating_hours as Record<string, { open?: string; close?: string }> | null,
   })
 
-  return NextResponse.json({ data: profile })
+  return NextResponse.json({ data: {
+    ...profile,
+    name: village?.name || profile.name,
+    slug: village?.slug || '',
+  } })
 }

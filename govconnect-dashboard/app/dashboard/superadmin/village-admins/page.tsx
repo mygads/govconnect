@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Edit2, KeyRound, Loader2, Plus, Trash2 } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
@@ -56,7 +56,8 @@ const emptyForm = {
 }
 
 export default function SuperadminVillageAdminsPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const { toast } = useToast()
   const [villages, setVillages] = useState<VillageItem[]>([])
   const [selectedVillageId, setSelectedVillageId] = useState("")
@@ -75,8 +76,8 @@ export default function SuperadminVillageAdminsPage() {
   const [newPassword, setNewPassword] = useState("")
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const loadVillages = async () => {
     try {
@@ -114,7 +115,7 @@ export default function SuperadminVillageAdminsPage() {
 
   useEffect(() => {
     if (user?.role === "superadmin") void loadVillages()
-  }, [user])
+  }, [user, router])
 
   useEffect(() => {
     void loadAdmins(selectedVillageId || undefined)

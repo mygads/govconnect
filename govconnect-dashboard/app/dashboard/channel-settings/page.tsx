@@ -71,6 +71,12 @@ interface SessionStatus {
   jid?: string
   wa_number?: string
   qrcode?: string
+  status?: string | null
+  lifecycle_status?: "active" | "offline" | "qr_needed" | "logged_out" | "error" | "replaced" | "unknown" | "creating" | "created"
+  reconnectable?: boolean
+  requires_qr?: boolean
+  problematic?: boolean
+  status_fetch_ok?: boolean
 }
 
 interface WebhookAuditIssue {
@@ -511,6 +517,12 @@ export default function ChannelSettingsPage() {
         jid: data.data?.jid,
         wa_number: data.data?.wa_number || "",
         qrcode: data.data?.qrcode || "",
+        status: data.data?.status || null,
+        lifecycle_status: data.data?.lifecycle_status,
+        reconnectable: Boolean(data.data?.reconnectable),
+        requires_qr: Boolean(data.data?.requires_qr),
+        problematic: Boolean(data.data?.problematic),
+        status_fetch_ok: data.data?.status_fetch_ok !== false,
       }
       
       setSessionStatus(status)
@@ -845,6 +857,41 @@ export default function ChannelSettingsPage() {
     }
   }
 
+  const handleLogoutSession = async () => {
+    try {
+      setSessionLoading(true)
+      stopPolling()
+      setShowQrDialog(false)
+      const response = await fetchApiRaw(withVillage("/api/whatsapp/logout"), {
+        method: "POST",
+      })
+
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || "Gagal logout session")
+      }
+
+      setQrCode("")
+      toast({
+        title: "Logout berhasil",
+        description: "Session WhatsApp logout. QR perlu discan ulang untuk login.",
+      })
+      await fetchSessionStatus()
+    } catch (error: any) {
+      toast({
+        title: "Gagal",
+        description: error.message || "Gagal logout session",
+        variant: "destructive",
+      })
+    } finally {
+      setSessionLoading(false)
+    }
+  }
   // Handle View QR - Opens modal and starts polling
   const handleViewQR = async () => {
     setShowQrDialog(true)
@@ -864,11 +911,11 @@ export default function ChannelSettingsPage() {
       } catch {
         connectData = null
       }
-      
+
       // Handle "already connected" as success - session is connected, just need to get QR
-      const alreadyConnected = connectData?.error === "already connected" || 
+      const alreadyConnected = connectData?.error === "already connected" ||
                                connectData?.error?.includes?.("already connected")
-      
+
       if (!connectResponse.ok && !alreadyConnected) {
         throw new Error(connectData?.error || connectData?.message || "Gagal menghubungkan session")
       }
@@ -892,7 +939,7 @@ export default function ChannelSettingsPage() {
       // Fetch initial QR code
       updateSetupStage("fetching_qr")
       await fetchQRCode()
-      
+
       // Start polling
       startQrPolling()
 
@@ -951,6 +998,87 @@ export default function ChannelSettingsPage() {
   const getPhoneNumber = (jid?: string) => {
     if (!jid) return null
     return jid.split('@')[0].split(':')[0]
+  }
+
+  const getLifecycleStatus = () => {
+    if (!sessionExists) return "none"
+    if (sessionStatus?.lifecycle_status) return sessionStatus.lifecycle_status
+    if (sessionStatus?.loggedIn && sessionStatus?.connected) return "active"
+    if (sessionStatus?.loggedIn && !sessionStatus?.connected) return "offline"
+    if (sessionStatus?.qrcode || sessionStatus?.requires_qr) return "qr_needed"
+    return "unknown"
+  }
+
+  const getSessionDisplay = () => {
+    const lifecycle = getLifecycleStatus()
+    if (lifecycle === "active") {
+      return {
+        title: "WhatsApp aktif",
+        description: sessionStatus?.jid ? `+${getPhoneNumber(sessionStatus.jid)}` : "Session WhatsApp aktif.",
+        badge: "Terhubung",
+        iconClass: "bg-green-100 text-green-700",
+        badgeClass: "bg-green-100 text-green-800",
+        icon: <CheckCircle className="h-5 w-5" />,
+      }
+    }
+    if (lifecycle === "offline") {
+      return {
+        title: "Session tersimpan, sedang offline",
+        description: "Auth WhatsApp masih ada. Klik Reconnect untuk menyambungkan tanpa QR.",
+        badge: "Offline",
+        iconClass: "bg-amber-100 text-amber-700",
+        badgeClass: "bg-amber-100 text-amber-800",
+        icon: <Wifi className="h-5 w-5" />,
+      }
+    }
+    if (lifecycle === "qr_needed") {
+      return {
+        title: "Menunggu scan QR",
+        description: "Scan QR untuk login ulang WhatsApp.",
+        badge: "Perlu QR",
+        iconClass: "bg-blue-100 text-blue-700",
+        badgeClass: "bg-blue-100 text-blue-800",
+        icon: <QrCode className="h-5 w-5" />,
+      }
+    }
+    if (lifecycle === "logged_out") {
+      return {
+        title: "WhatsApp logout",
+        description: "Akun sudah logout. Perlu scan QR ulang.",
+        badge: "Logout",
+        iconClass: "bg-red-100 text-red-700",
+        badgeClass: "bg-red-100 text-red-800",
+        icon: <Wifi className="h-5 w-5" />,
+      }
+    }
+    if (lifecycle === "error" || lifecycle === "replaced") {
+      return {
+        title: lifecycle === "replaced" ? "Session digantikan" : "Session bermasalah",
+        description: lifecycle === "replaced" ? "Stream WhatsApp digantikan koneksi lain." : "Provider melaporkan error session WhatsApp.",
+        badge: lifecycle === "replaced" ? "Replaced" : "Error",
+        iconClass: "bg-red-100 text-red-700",
+        badgeClass: "bg-red-100 text-red-800",
+        icon: <Wifi className="h-5 w-5" />,
+      }
+    }
+    if (sessionExists) {
+      return {
+        title: "Status belum bisa dipastikan",
+        description: "Provider belum bisa dicek. Jangan logout atau hapus session jika belum yakin.",
+        badge: "Unknown",
+        iconClass: "bg-muted text-muted-foreground",
+        badgeClass: "",
+        icon: <Wifi className="h-5 w-5" />,
+      }
+    }
+    return {
+      title: "WhatsApp belum terhubung",
+      description: "Buat session untuk menghubungkan nomor WhatsApp.",
+      badge: "Belum Aktif",
+      iconClass: "bg-muted text-muted-foreground",
+      badgeClass: "",
+      icon: <Wifi className="h-5 w-5" />,
+    }
   }
 
   const getObjectStorageSetupText = () => {
@@ -1090,6 +1218,8 @@ export default function ChannelSettingsPage() {
   }
 
   const isSuperadmin = auth?.role === "superadmin"
+  const sessionDisplay = getSessionDisplay()
+  const lifecycleStatus = getLifecycleStatus()
 
   return (
     <div className="space-y-6">
@@ -1142,27 +1272,29 @@ export default function ChannelSettingsPage() {
             <div className="rounded-lg border p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
-                  <span className={`flex h-10 w-10 items-center justify-center rounded-full ${sessionStatus?.loggedIn ? "bg-green-100 text-green-700" : sessionExists ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
-                    {sessionStatus?.loggedIn ? <CheckCircle className="h-5 w-5" /> : sessionExists ? <QrCode className="h-5 w-5" /> : <Wifi className="h-5 w-5" />}
+                  <span className={`flex h-10 w-10 items-center justify-center rounded-full ${sessionDisplay.iconClass}`}>
+                    {sessionDisplay.icon}
                   </span>
                   <div>
-                    <p className="text-sm font-medium">
-                      {sessionStatus?.loggedIn ? "WhatsApp aktif" : sessionExists ? "Menunggu scan QR" : "WhatsApp belum terhubung"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {sessionStatus?.loggedIn && sessionStatus?.jid
-                        ? `+${getPhoneNumber(sessionStatus.jid)}`
-                        : sessionExists
-                          ? "Scan QR untuk mulai menerima pesan."
-                          : "Buat session untuk menghubungkan nomor WhatsApp."}
-                    </p>
+                    <p className="text-sm font-medium">{sessionDisplay.title}</p>
+                    <p className="text-xs text-muted-foreground">{sessionDisplay.description}</p>
                   </div>
                 </div>
-                <Badge variant="secondary" className={sessionStatus?.loggedIn ? "bg-green-100 text-green-800" : sessionExists ? "bg-blue-100 text-blue-800" : ""}>
-                  {sessionStatus?.loggedIn ? "Terhubung" : sessionExists ? "Perlu QR" : "Belum Aktif"}
+                <Badge variant="secondary" className={sessionDisplay.badgeClass}>
+                  {sessionDisplay.badge}
                 </Badge>
               </div>
             </div>
+
+            {sessionExists === true && (lifecycleStatus === "offline" || lifecycleStatus === "logged_out" || lifecycleStatus === "error" || lifecycleStatus === "replaced" || lifecycleStatus === "unknown") && (
+              <div className={`rounded-lg border p-3 text-sm ${lifecycleStatus === "offline" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-red-200 bg-red-50 text-red-900"}`}>
+                {lifecycleStatus === "offline" && "Session auth masih tersimpan, tetapi koneksi ke WhatsApp sedang offline. Gunakan Reconnect agar tersambung lagi tanpa scan QR."}
+                {lifecycleStatus === "logged_out" && "Session sudah logout dari WhatsApp. Anda perlu scan QR ulang untuk login kembali."}
+                {lifecycleStatus === "error" && "Provider melaporkan error pada session WhatsApp. Periksa audit atau lakukan reconnect manual."}
+                {lifecycleStatus === "replaced" && "Session WhatsApp digantikan oleh koneksi lain. Pastikan hanya ada satu koneksi aktif untuk nomor ini."}
+                {lifecycleStatus === "unknown" && "Status provider belum dapat dipastikan. Hindari menghapus session sebelum memastikan kondisi provider."}
+              </div>
+            )}
 
             <div className="flex flex-wrap gap-2">
               {(sessionExists === null || sessionExists === false) && (
@@ -1171,21 +1303,34 @@ export default function ChannelSettingsPage() {
                   {sessionLoading ? getSetupMessage() : "Hubungkan WhatsApp"}
                 </Button>
               )}
-              {sessionExists === true && !sessionStatus?.loggedIn && (
+              {sessionExists === true && (lifecycleStatus === "offline" || lifecycleStatus === "active" || lifecycleStatus === "unknown" || lifecycleStatus === "error" || lifecycleStatus === "replaced") && (
+                <Button type="button" onClick={handleViewQR} disabled={sessionLoading}>
+                  <Wifi className="h-4 w-4 mr-2" />
+                  {lifecycleStatus === "offline" ? "Reconnect" : "Connect"}
+                </Button>
+              )}
+              {sessionExists === true && (lifecycleStatus === "qr_needed" || lifecycleStatus === "logged_out") && (
                 <Button type="button" onClick={handleViewQR} disabled={sessionLoading}>
                   <QrCode className="h-4 w-4 mr-2" />
                   Scan QR
                 </Button>
               )}
-              {isSuperadmin && sessionExists === true && sessionStatus?.loggedIn && (
+              {sessionExists === true && (lifecycleStatus === "active" || lifecycleStatus === "offline") && (
                 <Button type="button" variant="outline" onClick={handleDisconnectSession} disabled={sessionLoading}>
                   <Wifi className="h-4 w-4 mr-2" />
-                  Disconnect
+                  Disconnect sementara
                 </Button>
               )}
-              {isSuperadmin && sessionExists === true && (
-                <Button type="button" variant="destructive" size="icon" onClick={handleDeleteSession} disabled={sessionLoading} title="Hapus session" aria-label="Hapus session">
-                  <Trash2 className="h-4 w-4" />
+              {sessionExists === true && (
+                <Button type="button" variant="outline" onClick={handleLogoutSession} disabled={sessionLoading}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Logout & reset
+                </Button>
+              )}
+              {sessionExists === true && (
+                <Button type="button" variant="destructive" onClick={handleDeleteSession} disabled={sessionLoading}>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Hapus session
                 </Button>
               )}
               <Button type="button" variant="outline" onClick={() => setShowMaintenanceDialog(true)} disabled={!sessionExists}>

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { CheckCircle2, Loader2, Minus, Plus, Search, Ticket, Wallet } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
@@ -83,7 +83,8 @@ function villageLabel(village?: VillageRow) {
 }
 
 export default function SuperadminAIWalletsPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const { toast } = useToast()
   const [wallets, setWallets] = useState<WalletRow[]>([])
   const [vouchers, setVouchers] = useState<VoucherRow[]>([])
@@ -108,8 +109,8 @@ export default function SuperadminAIWalletsPage() {
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const loadData = useCallback(async () => {
     try {

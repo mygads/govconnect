@@ -24,7 +24,7 @@ import {
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 
 interface CacheEntry {
   name: string
@@ -62,7 +62,9 @@ interface CacheStats {
 }
 
 export default function CacheManagementPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+
+    const router = useRouter()
   const { toast } = useToast()
   const [stats, setStats] = useState<CacheStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -71,7 +73,7 @@ export default function CacheManagementPage() {
 
   // Only super admin can access
   if (user && user.role !== 'superadmin' && user.role !== 'SUPERADMIN' && user.role !== 'super_admin') {
-    redirect('/dashboard')
+    router.replace('/dashboard')
   }
 
   const fetchStats = useCallback(async () => {

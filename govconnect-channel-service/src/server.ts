@@ -4,6 +4,7 @@ import { connectRabbitMQ, disconnectRabbitMQ, startConsumingAIReply, startConsum
 import { loadSettingsFromDatabase } from './services/wa.service';
 import { cleanupOldMessages } from './services/pending-message.service';
 import { flushAllBatches } from './services/message-batcher.service';
+import { reconcileWhatsAppSessionsBatch } from './services/wa-reconciliation.service';
 import logger from './utils/logger';
 import prisma from './config/database';
 
@@ -23,6 +24,33 @@ async function startServer() {
         // Ignore cleanup errors
       }
     }, 60 * 60 * 1000); // Every hour
+
+    let waReconciliationRunning = false;
+    const runWaReconciliation = async () => {
+      if (waReconciliationRunning) return;
+      waReconciliationRunning = true;
+      try {
+        const result = await reconcileWhatsAppSessionsBatch(config.WA_RECONCILIATION_BATCH_SIZE);
+        if (result.checked > 0) {
+          logger.info('WhatsApp reconciliation batch completed', {
+            checked: result.checked,
+            failed: result.failed,
+          });
+        }
+      } catch (error: any) {
+        logger.warn('WhatsApp reconciliation batch failed', { error: error.message });
+      } finally {
+        waReconciliationRunning = false;
+      }
+    };
+
+    let waReconciliationInterval: NodeJS.Timeout | null = null;
+    if (config.WA_RECONCILIATION_ENABLED) {
+      void runWaReconciliation();
+      waReconciliationInterval = setInterval(() => {
+        void runWaReconciliation();
+      }, config.WA_RECONCILIATION_INTERVAL_MS);
+    }
 
     // Create Express app
     const app = createApp();
@@ -63,6 +91,7 @@ async function startServer() {
         logger.info('HTTP server closed');
 
         clearInterval(rabbitRetryInterval);
+        if (waReconciliationInterval) clearInterval(waReconciliationInterval);
 
         // Flush all pending message batches before shutdown
         await flushAllBatches();

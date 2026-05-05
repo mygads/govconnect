@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -37,7 +37,9 @@ interface VillageItem {
 }
 
 export default function SuperadminVillagesPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+
+    const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [villages, setVillages] = useState<VillageItem[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -45,9 +47,9 @@ export default function SuperadminVillagesPage() {
 
   useEffect(() => {
     if (user && user.role !== "superadmin") {
-      redirect("/dashboard")
+      router.replace("/dashboard")
     }
-  }, [user])
+  }, [user, router])
 
   const fetchVillages = async () => {
     try {
@@ -77,7 +79,7 @@ export default function SuperadminVillagesPage() {
     if (user?.role === "superadmin") {
       fetchVillages()
     }
-  }, [user])
+  }, [user, router])
 
   const updateVillageStatus = async (village: VillageItem, isActive: boolean) => {
     if (!isActive && !confirm(`Nonaktifkan ${village.name}? Admin desa tidak bisa login sampai desa diaktifkan lagi.`)) return
@@ -146,7 +148,7 @@ export default function SuperadminVillagesPage() {
                   <TableHead>Nama Desa</TableHead>
                   <TableHead>Slug</TableHead>
                   <TableHead>Admin</TableHead>
-                  <TableHead>Profil Singkat</TableHead>
+                  <TableHead>Alias</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Aksi</TableHead>
                 </TableRow>
@@ -173,7 +175,7 @@ export default function SuperadminVillagesPage() {
                       </TableCell>
                       <TableCell>
                         <div className="text-sm">
-                          {village.profile?.short_name || "-"}
+                          {village.profile?.short_name ? `Alias: ${village.profile.short_name}` : "Tanpa alias"}
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {village.profile?.address || "Alamat belum diisi"}

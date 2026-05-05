@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -92,7 +92,8 @@ function modelLabel(model: ModelRow) {
 }
 
 export default function LLMCheckPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [adminModels, setAdminModels] = useState<ModelRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -105,8 +106,8 @@ export default function LLMCheckPage() {
   const [errorLogs, setErrorLogs] = useState<ErrorLogEntry[]>([])
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const appendErrorLog = useCallback((label: string, message: string) => {
     setErrorLogs((current) => [

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { redirect } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Edit2, Loader2, Plus, Save, Server, Trash2, X } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
@@ -77,7 +77,8 @@ const providerKindOptions = [
 ]
 
 export default function SuperadminProvidersPage() {
-  const { user } = useAuth()
+    const { user } = useAuth()
+    const router = useRouter()
   const { toast } = useToast()
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -102,8 +103,8 @@ export default function SuperadminProvidersPage() {
   })
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") redirect("/dashboard")
-  }, [user])
+    if (user && user.role !== "superadmin") router.replace("/dashboard")
+  }, [user, router])
 
   const loadData = useCallback(async () => {
     try {

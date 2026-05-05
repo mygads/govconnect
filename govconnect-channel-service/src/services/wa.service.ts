@@ -458,7 +458,9 @@ export async function loadSettingsFromDatabase(): Promise<void> {
 // SESSION MANAGEMENT FUNCTIONS
 // =====================================================
 
-interface SessionStatus {
+export type WhatsAppLifecycleStatus = 'active' | 'offline' | 'qr_needed' | 'logged_out' | 'error' | 'replaced' | 'unknown' | 'creating' | 'created';
+
+export interface SessionStatus {
   connected: boolean;
   loggedIn: boolean;
   jid?: string;
@@ -466,6 +468,83 @@ interface SessionStatus {
   name?: string;
   events?: string;
   webhook?: string;
+  statusFetchOk?: boolean;
+  providerError?: string;
+}
+
+export interface WhatsAppLifecycleState {
+  status: string | null;
+  lifecycle_status: WhatsAppLifecycleStatus;
+  reconnectable: boolean;
+  requires_qr: boolean;
+  problematic: boolean;
+  status_fetch_ok: boolean;
+}
+
+export function deriveWhatsAppLifecycleState(params: {
+  dbStatus?: string | null;
+  providerStatus?: SessionStatus | null;
+}): WhatsAppLifecycleState {
+  const dbStatus = params.dbStatus || null;
+  const providerStatus = params.providerStatus || null;
+  const statusFetchOk = providerStatus?.statusFetchOk !== false;
+  const preserved = ['logged_out', 'error', 'replaced', 'creating', 'created'].includes(dbStatus || '') ? dbStatus : null;
+
+  if (!statusFetchOk) {
+    return {
+      status: dbStatus,
+      lifecycle_status: preserved === 'logged_out' || preserved === 'error' || preserved === 'replaced' || preserved === 'creating' || preserved === 'created'
+        ? preserved as WhatsAppLifecycleStatus
+        : 'unknown',
+      reconnectable: false,
+      requires_qr: dbStatus === 'logged_out' || dbStatus === 'qr',
+      problematic: ['logged_out', 'error', 'replaced'].includes(dbStatus || ''),
+      status_fetch_ok: false,
+    };
+  }
+
+  if (dbStatus === 'error' || dbStatus === 'replaced' || dbStatus === 'logged_out') {
+    return {
+      status: dbStatus,
+      lifecycle_status: dbStatus as WhatsAppLifecycleStatus,
+      reconnectable: false,
+      requires_qr: dbStatus === 'logged_out',
+      problematic: true,
+      status_fetch_ok: true,
+    };
+  }
+
+  if (dbStatus === 'creating' || dbStatus === 'created') {
+    return {
+      status: dbStatus,
+      lifecycle_status: dbStatus,
+      reconnectable: false,
+      requires_qr: false,
+      problematic: false,
+      status_fetch_ok: true,
+    };
+  }
+
+  if (providerStatus?.connected && providerStatus?.loggedIn) {
+    return { status: 'connected', lifecycle_status: 'active', reconnectable: false, requires_qr: false, problematic: false, status_fetch_ok: true };
+  }
+
+  if (!providerStatus?.connected && providerStatus?.loggedIn) {
+    return { status: 'disconnected', lifecycle_status: 'offline', reconnectable: true, requires_qr: false, problematic: false, status_fetch_ok: true };
+  }
+
+  if (providerStatus?.qrcode || dbStatus === 'qr') {
+    return { status: 'qr', lifecycle_status: 'qr_needed', reconnectable: false, requires_qr: true, problematic: false, status_fetch_ok: true };
+  }
+
+  return {
+    status: dbStatus === 'disconnected' ? 'disconnected' : dbStatus,
+    lifecycle_status: 'unknown',
+    reconnectable: false,
+    requires_qr: false,
+    problematic: false,
+    status_fetch_ok: true,
+  };
 }
 
 /**
@@ -477,7 +556,7 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
   try {
     if (!token) {
       logger.warn('WhatsApp token not configured');
-      return { connected: false, loggedIn: false };
+      return { connected: false, loggedIn: false, statusFetchOk: false, providerError: 'WhatsApp token not configured' };
     }
 
     if (isDryRun()) {
@@ -489,6 +568,7 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
         name: 'dry-run',
         events: GOVCONNECT_WEBHOOK_EVENTS.join(','),
         webhook: '',
+        statusFetchOk: true,
       };
     }
 
@@ -502,13 +582,19 @@ export async function getSessionStatus(token: string): Promise<SessionStatus> {
       name: data.name || '',
       events: data.events || '',
       webhook: data.webhook || '',
+      statusFetchOk: true,
     };
   } catch (error: any) {
     logger.error('Failed to get session status', {
       error: error.message,
       response: error.response?.data,
     });
-    return { connected: false, loggedIn: false };
+    return {
+      connected: false,
+      loggedIn: false,
+      statusFetchOk: false,
+      providerError: error.message,
+    };
   }
 }
 
@@ -824,12 +910,17 @@ export async function ensureWhatsAppLifecycleSync(villageId: string, options: { 
   const waNumber = status.jid
     ? status.jid.replace(/@s\.whatsapp\.net$/i, '').replace(/:\d+$/, '')
     : (session.wa_number ? session.wa_number.replace(/:\d+$/, '') : session.wa_number);
-  await updateStoredSessionStatus({
-    villageId,
-    status: status.connected ? 'connected' : 'disconnected',
-    waNumber: waNumber || null,
-  });
-  results.session = { connected: status.connected, loggedIn: status.loggedIn, waNumber: waNumber || null };
+  const lifecycle = deriveWhatsAppLifecycleState({ dbStatus: session.status, providerStatus: status });
+  if (lifecycle.status_fetch_ok && lifecycle.status) {
+    await updateStoredSessionStatus({
+      villageId,
+      status: lifecycle.status,
+      waNumber: waNumber || null,
+    });
+  } else if (waNumber) {
+    await updateStoredSessionStatus({ villageId, waNumber });
+  }
+  results.session = { ...status, waNumber: waNumber || null, ...lifecycle };
 
   if (options.syncS3 !== false && getWhatsAppSessionS3Config()) {
     try {

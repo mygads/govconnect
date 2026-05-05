@@ -27,23 +27,75 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const categoryId = searchParams.get('category_id') || undefined
     const isUrgent = searchParams.get('is_urgent') || undefined
+    const villageId = session.admin.village_id || undefined
 
     const url = new URL(buildUrl(ServicePath.CASE, '/complaints/types'))
     if (categoryId) url.searchParams.set('category_id', categoryId)
     if (isUrgent) url.searchParams.set('is_urgent', isUrgent)
-    if (session.admin.village_id) url.searchParams.set('village_id', session.admin.village_id)
+    if (villageId) url.searchParams.set('village_id', villageId)
 
-    const response = await apiFetch(url.toString(), {
-      headers: getHeaders(),
-    })
+    try {
+      const response = await apiFetch(url.toString(), {
+        headers: getHeaders(),
+      })
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to fetch types' }))
-      return NextResponse.json({ error: error.error || 'Failed to fetch types' }, { status: response.status })
+      if (response.ok) {
+        const data = await response.json()
+        const rows = Array.isArray(data?.data) ? data.data : []
+        if (rows.length > 0 || !villageId) {
+          return NextResponse.json(data)
+        }
+      }
+    } catch {
+      // Fallback to direct DB read below
     }
 
-    const data = await response.json()
-    return NextResponse.json(data)
+    const rows = villageId
+      ? await prisma.$queryRaw<Array<{
+          id: string
+          category_id: string
+          name: string
+          description: string | null
+          is_urgent: boolean
+          require_address: boolean
+          send_important_contacts: boolean
+          important_contact_category: string | null
+          created_at: Date
+          updated_at: Date
+          category: { id: string; name: string; description: string | null; village_id: string; is_active: boolean }
+        }>>`
+          SELECT
+            t.id,
+            t.category_id,
+            t.name,
+            t.description,
+            t.is_urgent,
+            t.require_address,
+            t.send_important_contacts,
+            t.important_contact_category,
+            t.created_at,
+            t.updated_at,
+            json_build_object(
+              'id', c.id,
+              'name', c.name,
+              'description', c.description,
+              'village_id', c.village_id,
+              'is_active', c.is_active
+            ) AS category
+          FROM cases.complaint_types t
+          JOIN cases.complaint_categories c ON c.id = t.category_id
+          WHERE c.village_id = ${villageId}
+            AND (${categoryId || null}::text IS NULL OR t.category_id = ${categoryId || null})
+            AND (
+              ${isUrgent || null}::text IS NULL
+              OR (${isUrgent || null} = 'true' AND t.is_urgent = true)
+              OR (${isUrgent || null} = 'false' AND t.is_urgent = false)
+            )
+          ORDER BY t.created_at ASC
+        `
+      : []
+
+    return NextResponse.json({ data: rows })
   } catch (error) {
     console.error('Error fetching complaint types:', error)
     return NextResponse.json({ error: 'Failed to fetch types' }, { status: 500 })

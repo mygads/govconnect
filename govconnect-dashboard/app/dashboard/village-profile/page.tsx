@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { MapPin, Save, Building2, Clock, AlertTriangle, RefreshCw, CheckCircle, AlertCircle, Loader2 } from "lucide-react"
+import { MapPin, Save, Building2, Clock, AlertCircle, RefreshCw, Info, Loader2 } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 const DAYS = [
   { key: "senin", label: "Senin" },
@@ -34,6 +35,20 @@ interface EmbeddingStatus {
   needs_reembed: boolean
 }
 
+interface ProfileResponse {
+  data: {
+    name?: string
+    slug?: string
+    address?: string
+    gmaps_url?: string | null
+    latitude?: number | null
+    longitude?: number | null
+    short_name?: string
+    operating_hours?: OperatingHours | null
+  } | null
+  embedding_status?: EmbeddingStatus | null
+}
+
 export default function VillageProfilePage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
@@ -43,6 +58,7 @@ export default function VillageProfilePage() {
 
   const [form, setForm] = useState({
     name: "",
+    slug: "",
     address: "",
     gmaps_url: "",
     latitude: "",
@@ -62,11 +78,12 @@ export default function VillageProfilePage() {
           },
         })
         if (response.ok) {
-          const data = await response.json()
+          const data: ProfileResponse = await response.json()
           const profile = data?.data
           if (profile) {
             setForm({
               name: profile.name || "",
+              slug: profile.slug || "",
               address: profile.address || "",
               gmaps_url: profile.gmaps_url || "",
               latitude: profile.latitude != null ? String(profile.latitude) : "",
@@ -110,7 +127,11 @@ export default function VillageProfilePage() {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
         body: JSON.stringify({
-          ...form,
+          address: form.address,
+          gmaps_url: form.gmaps_url,
+          latitude: form.latitude,
+          longitude: form.longitude,
+          short_name: form.short_name,
           operating_hours: operatingHours,
         }),
       })
@@ -133,7 +154,7 @@ export default function VillageProfilePage() {
 
       toast({
         title: "Profil Desa Tersimpan",
-        description: "Informasi profil desa berhasil diperbarui. Data akan di-embed otomatis ke knowledge base.",
+        description: "Informasi profil desa berhasil diperbarui.",
       })
     } catch (error: any) {
       toast({
@@ -258,22 +279,50 @@ export default function VillageProfilePage() {
           <CardContent className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="name">Nama Desa/Kelurahan</Label>
-              <Input
-                id="name"
-                value={form.name}
-                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="Kelurahan Melati"
-                required
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  id="name"
+                  value={form.name}
+                  disabled
+                  className="bg-muted"
+                  placeholder="Kelurahan Melati"
+                />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Nama desa hanya bisa diubah oleh admin GovConnect.</TooltipContent>
+                </Tooltip>
+              </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="short_name">Nama Singkat (Slug Form)</Label>
+              <Label htmlFor="slug">Slug Form/Webchat</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="slug"
+                  value={form.slug}
+                  disabled
+                  className="bg-muted"
+                />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Slug form dan webchat mengikuti slug desa dari admin GovConnect.</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="short_name">Nama Singkat/Alias (Opsional)</Label>
               <Input
                 id="short_name"
                 value={form.short_name}
                 onChange={(e) => setForm((prev) => ({ ...prev, short_name: e.target.value }))}
-                placeholder="melati"
-                required
+                placeholder="Nama populer/alias desa"
               />
             </div>
             <div className="space-y-2 md:col-span-2">

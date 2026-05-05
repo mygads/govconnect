@@ -90,7 +90,7 @@ interface ProcessingStatus {
   lastUpdate?: number
 }
 
-type WaSessionStatus = 'connected' | 'qr' | 'logged_out' | 'disconnected'
+type WaSessionStatus = 'connected' | 'qr' | 'logged_out' | 'disconnected' | 'error' | 'replaced'
 
 type LivechatMediaType = 'image' | 'audio' | 'document' | 'video' | 'sticker'
 type DeliveryStatus = 'received' | 'sent' | 'delivered' | 'read' | 'failed'
@@ -196,6 +196,7 @@ export default function LiveChatPage() {
   const [messageError, setMessageError] = useState<string | null>(null)
   const [villageProfileError, setVillageProfileError] = useState<string | null>(null)
   const [importantContactsError, setImportantContactsError] = useState<string | null>(null)
+  const [waSessionAlert, setWaSessionAlert] = useState<{ status: WaSessionStatus; message: string } | null>(null)
   const [conversationPagination, setConversationPagination] = useState({ total: 0, limit: 50, offset: 0 })
 
   // Loading states - only for initial load
@@ -370,16 +371,45 @@ export default function LiveChatPage() {
       lastWaSessionStatusRef.current = status
       syncLivechat()
 
-      if (status === previousStatus || status !== 'logged_out') return
+      const alertMessages: Record<Exclude<WaSessionStatus, 'connected' | 'qr'>, string> = {
+        disconnected: 'Koneksi WhatsApp sedang offline. Pesan baru bisa tertunda sampai session di-reconnect.',
+        logged_out: 'Sesi WhatsApp logout. Hubungkan ulang dari pengaturan channel.',
+        error: 'Provider WhatsApp melaporkan error pada session. Periksa channel settings untuk recovery.',
+        replaced: 'Session WhatsApp digantikan oleh koneksi lain. Pastikan hanya satu koneksi aktif.',
+      }
+
+      if (status === 'connected') {
+        setWaSessionAlert(null)
+        return
+      }
+
+      if (status === 'qr') {
+        setWaSessionAlert({ status, message: 'Session WhatsApp menunggu scan QR untuk melanjutkan login.' })
+        return
+      }
+
+      const message = alertMessages[status as keyof typeof alertMessages]
+      if (!message) return
+
+      setWaSessionAlert({ status, message })
+
+      if (status === previousStatus) return
 
       const now = Date.now()
       if (now - lastWaSessionToastAtRef.current < 120_000) return
       lastWaSessionToastAtRef.current = now
 
       toast({
-        title: 'WhatsApp Logout',
-        description: 'Sesi WhatsApp logout. Hubungkan ulang dari pengaturan channel.',
-        variant: 'destructive',
+        title:
+          status === 'logged_out'
+            ? 'WhatsApp Logout'
+            : status === 'disconnected'
+              ? 'WhatsApp Offline'
+              : status === 'replaced'
+                ? 'Session Digantikan'
+                : 'WhatsApp Bermasalah',
+        description: message,
+        variant: status === 'disconnected' ? 'default' : 'destructive',
       })
     } catch {
       return
@@ -2154,7 +2184,12 @@ export default function LiveChatPage() {
             </div>
           )}
 
-          {/* Conversation List */}
+          {waSessionAlert && (
+            <div className={`border-b p-3 text-xs ${waSessionAlert.status === 'disconnected' || waSessionAlert.status === 'qr' ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200' : 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'}`}>
+              {waSessionAlert.message}
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto">
             {filteredConversations.length === 0 ? (
               <div className="p-4 text-center text-muted-foreground">
