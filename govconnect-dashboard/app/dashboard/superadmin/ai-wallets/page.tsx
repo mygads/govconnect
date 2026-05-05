@@ -85,6 +85,16 @@ function formatDateTime(value?: string | null) {
   })
 }
 
+function formatDate(value?: string | null) {
+  if (!value) return "-"
+  return new Date(value).toLocaleDateString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  })
+}
+
 function formatUsd(value?: number | null) {
   return `$${(value ?? 0).toFixed(2)}`
 }
@@ -672,7 +682,7 @@ export default function SuperadminAIWalletsPage() {
                       </div>
                     ) : "-"}
                   </TableCell>
-                  <TableCell>{voucher.expires_at ? new Date(voucher.expires_at).toLocaleDateString("id-ID") : "-"}</TableCell>
+                  <TableCell>{formatDate(voucher.expires_at)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
