@@ -1158,7 +1158,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       });
     }
 
-    const cachedKnowledge = !isEvaluation
+    const cachedKnowledge = !isEvaluation && sideEffectMode !== 'knowledge_test'
       ? getCachedResponse(sanitizedMessage, 'KNOWLEDGE_QUERY', resolvedVillageId)
       : null;
     if (cachedKnowledge) {
@@ -1235,7 +1235,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       };
     }
 
-    if (!isEvaluation && agentResult.success && isCacheableAgentResult(agentResult)) {
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test' && agentResult.success && isCacheableAgentResult(agentResult)) {
       setCachedResponse(
         sanitizedMessage,
         agentResult.response,
