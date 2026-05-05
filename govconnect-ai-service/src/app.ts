@@ -1140,7 +1140,7 @@ app.get('/admin/ai-usage/village/:villageId/messages/:billingId', async (req: Re
       return;
     }
 
-    const [ledgerEntry, tokenUsageRows] = await Promise.all([
+    const [ledgerEntry, tokenUsageRows, toolTraceRows] = await Promise.all([
       billing.ledger_entry_id
         ? prisma.ai_wallet_ledger_entries.findUnique({ where: { id: billing.ledger_entry_id } })
         : Promise.resolve(null),
@@ -1164,9 +1164,30 @@ app.get('/admin/ai-usage/village/:villageId/messages/:billingId', async (req: Re
           created_at: true,
         },
       }),
+      prisma.ai_tool_execution_traces.findMany({
+        where: {
+          village_id: villageId,
+          OR: [
+            { billing_group_id: billing.billing_group_id },
+            { trace_id: billing.trace_id },
+          ],
+        },
+        orderBy: [{ sequence: 'asc' }, { created_at: 'asc' }],
+        select: {
+          id: true,
+          tool_name: true,
+          sequence: true,
+          success: true,
+          duration_ms: true,
+          trust_level: true,
+          source_kind: true,
+          error_message: true,
+          created_at: true,
+        },
+      }),
     ]);
 
-    res.json({ billing, ledger_entry: ledgerEntry, token_usage: tokenUsageRows });
+    res.json({ billing, ledger_entry: ledgerEntry, token_usage: tokenUsageRows, tool_traces: toolTraceRows });
   } catch (error: any) {
     logger.error('Failed to get village AI usage message detail', { error: error.message });
     res.status(500).json({ error: 'Failed to get village AI usage message detail' });
@@ -1751,15 +1772,15 @@ app.post('/admin/record-token-usage', async (req: Request, res: Response) => {
 
 /**
  * DELETE /admin/reset-token-usage
- * Truncates the ai_token_usage table. Used by superadmin to clear all AI usage data.
+ * Deletes AI usage, billing, generation logs, ledger entries, and observability data while preserving wallet balances.
  */
 app.delete('/admin/reset-token-usage', async (req: Request, res: Response) => {
   try {
     await resetAllTokenUsage();
-    res.json({ ok: true, message: 'All token usage data has been reset' });
+    res.json({ ok: true, message: 'All AI usage data has been reset while preserving wallet balances' });
   } catch (error: any) {
-    logger.error('Failed to reset token usage', { error: error.message });
-    res.status(500).json({ error: 'Failed to reset token usage data' });
+    logger.error('Failed to reset AI usage data', { error: error.message });
+    res.status(500).json({ error: 'Failed to reset AI usage data' });
   }
 });
 

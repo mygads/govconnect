@@ -527,7 +527,7 @@ export default function AITokenUsagePage() {
             AI Token Usage
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Audit pemakaian AI per panggilan provider/model. Debit wallet desa dihitung terpisah per message billing. Kurs estimasi: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")}
+            Audit pemakaian AI per panggilan provider/model. Debit wallet desa dihitung terpisah per message billing. Nilai tabel memakai USD.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -654,13 +654,13 @@ export default function AITokenUsagePage() {
         <SummaryCard
           icon={<MessageSquare className="h-5 w-5 text-blue-600" />}
           label="Respons Chat"          value={summaryLoading ? null : formatNumber(summary?.main_chat_calls || 0)}
-          sub={summaryLoading ? null : `${formatNumber(summary?.main_chat_tokens || 0)} tokens · ${formatIDR(summary?.main_chat_cost || 0)}`}
+          sub={summaryLoading ? null : `${formatNumber(summary?.main_chat_tokens || 0)} tokens · ${formatUSD(summary?.main_chat_cost || 0)}`}
           loading={summaryLoading}
         />
         <SummaryCard
           icon={<Layers className="h-5 w-5 text-purple-600" />}
           label="Embedding"          value={summaryLoading ? null : formatNumber(summary?.embedding_tokens || 0)}
-          sub={summaryLoading ? null : `${formatNumber(summary?.embedding_calls || 0)} calls · ${formatIDR(summary?.embedding_cost || 0)}`}
+          sub={summaryLoading ? null : `${formatNumber(summary?.embedding_calls || 0)} calls · ${formatUSD(summary?.embedding_cost || 0)}`}
           loading={summaryLoading}
         />
       </div>
@@ -684,7 +684,7 @@ export default function AITokenUsagePage() {
                 <span className="text-xs text-muted-foreground font-medium">Agent Orchestrator</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.agent_tokens || 0)}</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(summary?.agent_calls || 0)} calls · {formatIDR(summary?.agent_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.agent_calls || 0)} calls · {formatUSD(summary?.agent_cost || 0)}</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -692,7 +692,7 @@ export default function AITokenUsagePage() {
                 <span className="text-xs text-muted-foreground font-medium">Classifier / Utility LLM</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.micro_nlu_tokens || 0)}</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(summary?.micro_nlu_calls || 0)} calls · {formatIDR(summary?.micro_nlu_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.micro_nlu_calls || 0)} calls · {formatUSD(summary?.micro_nlu_cost || 0)}</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -700,7 +700,7 @@ export default function AITokenUsagePage() {
                 <span className="text-xs text-muted-foreground font-medium">Embedding</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.embedding_tokens || 0)}</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(summary?.embedding_calls || 0)} calls · {formatIDR(summary?.embedding_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.embedding_calls || 0)} calls · {formatUSD(summary?.embedding_cost || 0)}</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -708,7 +708,7 @@ export default function AITokenUsagePage() {
                 <span className="text-xs text-muted-foreground font-medium">RAG Rewrite</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.rag_expand_tokens || 0)}</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_expand_calls || 0)} calls · {formatIDR(summary?.rag_expand_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_expand_calls || 0)} calls · {formatUSD(summary?.rag_expand_cost || 0)}</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -716,7 +716,7 @@ export default function AITokenUsagePage() {
                 <span className="text-xs text-muted-foreground font-medium">RAG Rerank</span>
               </div>
               <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.rag_rerank_tokens || 0)}</p>
-              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_rerank_calls || 0)} calls · {formatIDR(summary?.rag_rerank_cost || 0)}</p>
+              <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_rerank_calls || 0)} calls · {formatUSD(summary?.rag_rerank_cost || 0)}</p>
             </div>
             {showLegacyFullNlu && (
               <div className="rounded-xl border bg-card p-4">
@@ -725,7 +725,7 @@ export default function AITokenUsagePage() {
                   <span className="text-xs text-muted-foreground font-medium">Legacy Full NLU</span>
                 </div>
                 <p className="text-lg font-bold">{summaryLoading ? "..." : formatNumber(summary?.full_nlu_tokens || 0)}</p>
-                <p className="text-xs text-muted-foreground">{formatNumber(summary?.full_nlu_calls || 0)} calls · {formatIDR(summary?.full_nlu_cost || 0)}</p>
+                <p className="text-xs text-muted-foreground">{formatNumber(summary?.full_nlu_calls || 0)} calls · {formatUSD(summary?.full_nlu_cost || 0)}</p>
               </div>
             )}
           </div>
@@ -873,7 +873,7 @@ export default function AITokenUsagePage() {
                 <div className="rounded-lg bg-indigo-100 dark:bg-indigo-950 p-2"><Cpu className="h-4 w-4 text-indigo-600" /></div>
                 <span className="text-xs text-muted-foreground font-medium">Biaya Agent</span>
               </div>
-              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.agent_cost || 0)}</p>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatUSD(summary?.agent_cost || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.agent_calls || 0)} calls</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
@@ -881,7 +881,7 @@ export default function AITokenUsagePage() {
                 <div className="rounded-lg bg-amber-100 dark:bg-amber-950 p-2"><Zap className="h-4 w-4 text-amber-600" /></div>
                 <span className="text-xs text-muted-foreground font-medium">Biaya Classifier</span>
               </div>
-              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.micro_nlu_cost || 0)}</p>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatUSD(summary?.micro_nlu_cost || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.micro_nlu_calls || 0)} calls</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
@@ -889,7 +889,7 @@ export default function AITokenUsagePage() {
                 <div className="rounded-lg bg-purple-100 dark:bg-purple-950 p-2"><Layers className="h-4 w-4 text-purple-600" /></div>
                 <span className="text-xs text-muted-foreground font-medium">Biaya Embedding</span>
               </div>
-              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.embedding_cost || 0)}</p>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatUSD(summary?.embedding_cost || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.embedding_calls || 0)} calls</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
@@ -897,7 +897,7 @@ export default function AITokenUsagePage() {
                 <div className="rounded-lg bg-teal-100 dark:bg-teal-950 p-2"><Layers className="h-4 w-4 text-teal-600" /></div>
                 <span className="text-xs text-muted-foreground font-medium">Biaya RAG Rewrite</span>
               </div>
-              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.rag_expand_cost || 0)}</p>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatUSD(summary?.rag_expand_cost || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_expand_calls || 0)} calls</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
@@ -905,7 +905,7 @@ export default function AITokenUsagePage() {
                 <div className="rounded-lg bg-cyan-100 dark:bg-cyan-950 p-2"><Layers className="h-4 w-4 text-cyan-700" /></div>
                 <span className="text-xs text-muted-foreground font-medium">Biaya Rerank</span>
               </div>
-              <p className="text-lg font-bold">{summaryLoading ? "..." : formatIDR(summary?.rag_rerank_cost || 0)}</p>
+              <p className="text-lg font-bold">{summaryLoading ? "..." : formatUSD(summary?.rag_rerank_cost || 0)}</p>
               <p className="text-xs text-muted-foreground">{formatNumber(summary?.rag_rerank_calls || 0)} calls</p>
             </div>
           </div>
@@ -948,9 +948,9 @@ export default function AITokenUsagePage() {
                               <td className="py-2 pr-3 text-right">{formatNumber(provider.call_count)}</td>
                               <td className="py-2 pr-3 text-right">{formatNumber(provider.input_tokens)}</td>
                               <td className="py-2 pr-3 text-right">{formatNumber(provider.output_tokens)}</td>
-                              <td className="py-2 pr-3 text-right text-muted-foreground">{formatIDR(provider.actual_cost_usd || provider.cost_usd)}</td>
-                              <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(provider.adjusted_cost_usd || provider.cost_usd)}</td>
-                              <td className="py-2 text-right text-muted-foreground">{formatIDR(provider.margin_usd || 0)}</td>
+                              <td className="py-2 pr-3 text-right text-muted-foreground">{formatUSD(provider.actual_cost_usd || provider.cost_usd)}</td>
+                              <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatUSD(provider.adjusted_cost_usd || provider.cost_usd)}</td>
+                              <td className="py-2 text-right text-muted-foreground">{formatUSD(provider.margin_usd || 0)}</td>
                             </tr>
                             {expanded && provider.models?.map((model) => (
                               <tr key={`${provider.provider_id}-${model.model_config_id}-${model.model}`} className="border-b bg-muted/20 text-xs">
@@ -961,9 +961,9 @@ export default function AITokenUsagePage() {
                                 <td className="py-2 pr-3 text-right">{formatNumber(model.call_count)}</td>
                                 <td className="py-2 pr-3 text-right">{formatNumber(model.input_tokens)}</td>
                                 <td className="py-2 pr-3 text-right">{formatNumber(model.output_tokens)}</td>
-                                <td className="py-2 pr-3 text-right text-muted-foreground">{formatIDR(model.actual_cost_usd || model.cost_usd)}</td>
-                                <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(model.adjusted_cost_usd || model.cost_usd)}</td>
-                                <td className="py-2 text-right text-muted-foreground">{formatIDR(model.margin_usd || 0)}</td>
+                                <td className="py-2 pr-3 text-right text-muted-foreground">{formatUSD(model.actual_cost_usd || model.cost_usd)}</td>
+                                <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatUSD(model.adjusted_cost_usd || model.cost_usd)}</td>
+                                <td className="py-2 text-right text-muted-foreground">{formatUSD(model.margin_usd || 0)}</td>
                               </tr>
                             ))}
                           </Fragment>
@@ -975,9 +975,9 @@ export default function AITokenUsagePage() {
                           <td className="py-2 pr-3 text-right">{formatNumber(byProvider.reduce((s, p) => s + p.call_count, 0))}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(byProvider.reduce((s, p) => s + p.input_tokens, 0))}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(byProvider.reduce((s, p) => s + p.output_tokens, 0))}</td>
-                          <td className="py-2 pr-3 text-right text-muted-foreground">{formatIDR(byProvider.reduce((s, p) => s + (p.actual_cost_usd || p.cost_usd), 0))}</td>
-                          <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(byProvider.reduce((s, p) => s + (p.adjusted_cost_usd || p.cost_usd), 0))}</td>
-                          <td className="py-2 text-right text-muted-foreground">{formatIDR(byProvider.reduce((s, p) => s + (p.margin_usd || 0), 0))}</td>
+                          <td className="py-2 pr-3 text-right text-muted-foreground">{formatUSD(byProvider.reduce((s, p) => s + (p.actual_cost_usd || p.cost_usd), 0))}</td>
+                          <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatUSD(byProvider.reduce((s, p) => s + (p.adjusted_cost_usd || p.cost_usd), 0))}</td>
+                          <td className="py-2 text-right text-muted-foreground">{formatUSD(byProvider.reduce((s, p) => s + (p.margin_usd || 0), 0))}</td>
                         </tr>
                       )}
                       {byProvider.length === 0 && (
@@ -996,7 +996,7 @@ export default function AITokenUsagePage() {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <DollarSign className="h-4 w-4" /> Rincian Biaya per Model
               </CardTitle>
-              <CardDescription>Biaya memakai `cost_usd` yang direkam backend, jadi selalu mengikuti provider/model gateway aktif. Kurs: $1 = Rp {USD_TO_IDR.toLocaleString("id-ID")}</CardDescription>
+              <CardDescription>Biaya memakai `cost_usd` yang direkam backend, jadi selalu mengikuti provider/model gateway aktif dalam USD.</CardDescription>
             </CardHeader>
             <CardContent>
               {summaryLoading ? <Skeleton className="h-48" /> : (
@@ -1009,7 +1009,7 @@ export default function AITokenUsagePage() {
                         <th className="pb-2 pr-3 text-right">Output Tokens</th>
                         <th className="pb-2 pr-3 text-right">Total Tokens</th>
                         <th className="pb-2 pr-3 text-right">API Calls</th>
-                        <th className="pb-2 pr-3 text-right">Total Biaya (IDR)</th>
+                        <th className="pb-2 pr-3 text-right">Total Biaya (USD)</th>
                         <th className="pb-2 text-right">Biaya (USD)</th>
                       </tr>
                     </thead>
@@ -1023,7 +1023,7 @@ export default function AITokenUsagePage() {
                           <td className="py-2 pr-3 text-right">{formatNumber(m.output_tokens)}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(m.total_tokens)}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(m.call_count)}</td>
-                          <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(m.cost_usd)}</td>
+                          <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatUSD(m.cost_usd)}</td>
                           <td className="py-2 text-right text-muted-foreground">{formatUSD(m.cost_usd)}</td>
                         </tr>
                       ))}
@@ -1034,7 +1034,7 @@ export default function AITokenUsagePage() {
                           <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.output_tokens, 0))}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.total_tokens, 0))}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.call_count, 0))}</td>
-                          <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(sumCostUsd(byModel))}</td>
+                          <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatUSD(sumCostUsd(byModel))}</td>
                           <td className="py-2 text-right text-muted-foreground">{formatUSD(sumCostUsd(byModel))}</td>
                         </tr>
                       )}
@@ -1089,7 +1089,7 @@ export default function AITokenUsagePage() {
                         legend: { position: "bottom" },
                         tooltip: {
                           callbacks: {
-                            label: (ctx: any) => `${ctx.label}: ${formatIDR(ctx.raw)} (${formatUSD(ctx.raw)})`,
+                            label: (ctx: any) => `${ctx.label}: ${formatUSD(ctx.raw)} (${formatUSD(ctx.raw)})`,
                           },
                         },
                       },
@@ -1122,15 +1122,15 @@ export default function AITokenUsagePage() {
                   </div>
                   <div className="rounded-lg bg-muted p-3 text-center">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Biaya Main Chat</div>
-                    <div className="text-xl font-bold text-emerald-600">{formatIDR(summary?.main_chat_cost || 0)}</div>
+                    <div className="text-xl font-bold text-emerald-600">{formatUSD(summary?.main_chat_cost || 0)}</div>
                     <div className="text-xs text-muted-foreground">{formatUSD(summary?.main_chat_cost || 0)}</div>
                   </div>
                   <div className="rounded-lg bg-muted p-3 text-center">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Avg Biaya / Chat</div>
                     <div className="text-xl font-bold text-emerald-600">
                       {(summary?.main_chat_calls || 0) > 0
-                        ? formatIDR((summary?.main_chat_cost || 0) / (summary?.main_chat_calls || 1))
-                        : "Rp 0"}
+                        ? formatUSD((summary?.main_chat_cost || 0) / (summary?.main_chat_calls || 1))
+                        : "$0.0000"}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {(summary?.main_chat_calls || 0) > 0
@@ -1211,7 +1211,7 @@ export default function AITokenUsagePage() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                      <DollarSign className="h-4 w-4" /> Biaya per Periode (IDR)
+                      <DollarSign className="h-4 w-4" /> Biaya per Periode (USD)
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="h-64">
@@ -1219,8 +1219,8 @@ export default function AITokenUsagePage() {
                       data={{
                         labels: byPeriod.map((r) => formatDate(r.period_start, period)),
                         datasets: [{
-                          label: "Biaya (IDR)",
-                          data: byPeriod.map((r) => r.cost_usd * USD_TO_IDR),
+                          label: "Biaya (USD)",
+                          data: byPeriod.map((r) => r.cost_usd),
                           backgroundColor: "rgba(16, 185, 129, 0.7)",
                           borderRadius: 4,
                         }],
@@ -1305,7 +1305,7 @@ export default function AITokenUsagePage() {
                         <span className="text-xs text-muted-foreground font-medium">Semua Desa ({byVillage.length})</span>
                       </div>
                       <p className="text-lg font-bold">{formatNumber(villageTotalTokens)} <span className="text-xs font-normal text-muted-foreground">tokens</span></p>
-                      <p className="text-xs text-muted-foreground">{formatNumber(villageTotalInput)} in · {formatNumber(villageTotalOutput)} out · {formatIDR(allVillageCost)}</p>
+                      <p className="text-xs text-muted-foreground">{formatNumber(villageTotalInput)} in · {formatNumber(villageTotalOutput)} out · {formatUSD(allVillageCost)}</p>
                     </div>
                     <div className="rounded-xl border bg-card p-4">
                       <div className="flex items-center gap-2 mb-2">
@@ -1314,7 +1314,7 @@ export default function AITokenUsagePage() {
                       </div>
                       <p className="text-lg font-bold">{byVillage.length > 0 ? formatNumber(Math.round(villageTotalTokens / byVillage.length)) : "0"} <span className="text-xs font-normal text-muted-foreground">tokens</span></p>
                       <p className="text-xs text-muted-foreground">
-                        {byVillage.length > 0 ? formatNumber(Math.round(villageTotalInput / byVillage.length)) : "0"} in · {byVillage.length > 0 ? formatNumber(Math.round(villageTotalOutput / byVillage.length)) : "0"} out · {byVillage.length > 0 ? formatIDR(allVillageCost / byVillage.length) : "Rp 0"}
+                        {byVillage.length > 0 ? formatNumber(Math.round(villageTotalInput / byVillage.length)) : "0"} in · {byVillage.length > 0 ? formatNumber(Math.round(villageTotalOutput / byVillage.length)) : "0"} out · {byVillage.length > 0 ? formatUSD(allVillageCost / byVillage.length) : "$0.0000"}
                       </p>
                     </div>
                     <div className="rounded-xl border bg-card p-4">
@@ -1324,7 +1324,7 @@ export default function AITokenUsagePage() {
                       </div>
                       <p className="text-lg font-bold">{totalUsers > 0 ? formatNumber(Math.round(villageTotalTokens / totalUsers)) : "0"} <span className="text-xs font-normal text-muted-foreground">tokens</span></p>
                       <p className="text-xs text-muted-foreground">
-                        {totalUsers > 0 ? formatNumber(Math.round(villageTotalInput / totalUsers)) : "0"} in · {totalUsers > 0 ? formatNumber(Math.round(villageTotalOutput / totalUsers)) : "0"} out · {totalUsers > 0 ? formatIDR(allVillageCost / totalUsers) : "Rp 0"} · {totalUsers} users
+                        {totalUsers > 0 ? formatNumber(Math.round(villageTotalInput / totalUsers)) : "0"} in · {totalUsers > 0 ? formatNumber(Math.round(villageTotalOutput / totalUsers)) : "0"} out · {totalUsers > 0 ? formatUSD(allVillageCost / totalUsers) : "$0.0000"} · {totalUsers} users
                       </p>
                     </div>
                   </div>
@@ -1421,7 +1421,7 @@ export default function AITokenUsagePage() {
                               <td className="py-2 pr-3 text-right font-semibold">{formatNumber(v.total_tokens)}</td>
                               <td className="py-2 pr-3 text-right">{formatNumber(v.call_count)}</td>
                               <td className="py-2 pr-3 text-right">{resp?.unique_users ?? "-"}</td>
-                              <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(v.cost_usd)}</td>
+                              <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatUSD(v.cost_usd)}</td>
                               <td className="py-2 text-center">
                                 <Button variant="ghost" size="sm" onClick={() => setDetailVillageId(v.village_id)} className="h-7 px-2 text-xs">
                                   <Eye className="h-3 w-3 mr-1" /> Detail
@@ -1445,7 +1445,7 @@ export default function AITokenUsagePage() {
                               <td className="py-2 pr-3 text-right">{formatNumber(totTok)}</td>
                               <td className="py-2 pr-3 text-right">{formatNumber(totCall)}</td>
                               <td className="py-2 pr-3 text-right">{totUsers}</td>
-                              <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(totalVillageCost)}</td>
+                              <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatUSD(totalVillageCost)}</td>
                               <td className="py-2"></td>
                             </tr>
                           )
@@ -1496,8 +1496,8 @@ export default function AITokenUsagePage() {
                                 <td className="py-2 pr-3 text-right font-semibold">{formatNumber(Math.round((vu?.total_tokens || 0) / users))}</td>
                                 <td className="py-2 pr-3 text-right">{formatNumber(Math.round((vu?.input_tokens || 0) / users))}</td>
                                 <td className="py-2 pr-3 text-right">{formatNumber(Math.round((vu?.output_tokens || 0) / users))}</td>
-                                <td className="py-2 pr-3 text-right text-emerald-600">{formatIDR(totalCost)}</td>
-                                <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(totalCost / users)}</td>
+                                <td className="py-2 pr-3 text-right text-emerald-600">{formatUSD(totalCost)}</td>
+                                <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatUSD(totalCost / users)}</td>
                               </tr>
                             )
                           })}
@@ -1575,13 +1575,13 @@ export default function AITokenUsagePage() {
                           </div>
                           <div className="rounded-lg bg-muted p-3 text-center">
                             <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Total Biaya</div>
-                            <div className="text-lg font-bold text-emerald-600">{formatIDR(totalCost)}</div>
+                            <div className="text-lg font-bold text-emerald-600">{formatUSD(totalCost)}</div>
                             <div className="text-xs text-muted-foreground">{formatUSD(totalCost)}</div>
                           </div>
                           <div className="rounded-lg bg-muted p-3 text-center">
                             <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Calls / Users</div>
                             <div className="text-lg font-bold">{totalCalls}</div>
-                            <div className="text-xs text-muted-foreground">{users > 0 ? `${users} users · ${formatIDR(totalCost / users)}/user` : "—"}</div>
+                            <div className="text-xs text-muted-foreground">{users > 0 ? `${users} users · ${formatUSD(totalCost / users)}/user` : "—"}</div>
                           </div>
                         </div>
 
@@ -1608,7 +1608,7 @@ export default function AITokenUsagePage() {
                                     <td className="py-1.5 pr-3 text-right">{formatNumber(data.input)}</td>
                                     <td className="py-1.5 pr-3 text-right">{formatNumber(data.output)}</td>
                                     <td className="py-1.5 pr-3 text-right">{data.calls}</td>
-                                    <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(data.cost)}</td>
+                                    <td className="py-1.5 text-right font-semibold text-emerald-600">{formatUSD(data.cost)}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -1642,7 +1642,7 @@ export default function AITokenUsagePage() {
                                       <td className="py-1.5 pr-3 text-right">{formatNumber(data.input)}</td>
                                       <td className="py-1.5 pr-3 text-right">{formatNumber(data.output)}</td>
                                       <td className="py-1.5 pr-3 text-right">{data.calls}</td>
-                                      <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(data.cost)}</td>
+                                      <td className="py-1.5 text-right font-semibold text-emerald-600">{formatUSD(data.cost)}</td>
                                     </tr>
                                   )
                                 })}
@@ -1678,7 +1678,7 @@ export default function AITokenUsagePage() {
                                     <td className="py-1.5 pr-3 text-right">{formatNumber(d.input_tokens)}</td>
                                     <td className="py-1.5 pr-3 text-right">{formatNumber(d.output_tokens)}</td>
                                     <td className="py-1.5 pr-3 text-right">{d.call_count}</td>
-                                    <td className="py-1.5 text-right font-semibold text-emerald-600">{formatIDR(d.cost_usd)}</td>
+                                    <td className="py-1.5 text-right font-semibold text-emerald-600">{formatUSD(d.cost_usd)}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -1694,7 +1694,7 @@ export default function AITokenUsagePage() {
                               <div><span className="text-muted-foreground">Avg Input/User</span><div className="font-bold">{formatNumber(Math.round(totalInput / users))}</div></div>
                               <div><span className="text-muted-foreground">Avg Output/User</span><div className="font-bold">{formatNumber(Math.round(totalOutput / users))}</div></div>
                               <div><span className="text-muted-foreground">Avg Token/User</span><div className="font-bold">{formatNumber(Math.round((totalInput + totalOutput) / users))}</div></div>
-                              <div><span className="text-muted-foreground">Avg Biaya/User</span><div className="font-bold text-emerald-600">{formatIDR(totalCost / users)}</div></div>
+                              <div><span className="text-muted-foreground">Avg Biaya/User</span><div className="font-bold text-emerald-600">{formatUSD(totalCost / users)}</div></div>
                             </div>
                           </div>
                         )}
@@ -1748,7 +1748,7 @@ export default function AITokenUsagePage() {
                           <td className="py-2 pr-3 text-right">{formatNumber(r.output_tokens)}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(r.call_count)}</td>
                           <td className="py-2 pr-3 text-right">{r.avg_duration_ms ? r.avg_duration_ms + "ms" : "-"}</td>
-                          <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatIDR(r.cost_usd)}</td>
+                          <td className="py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatUSD(r.cost_usd)}</td>
                         </tr>
                       ))}
                       {layerBreakdown.length > 0 && (() => {
@@ -1759,7 +1759,7 @@ export default function AITokenUsagePage() {
                             <td className="py-2 pr-3 text-right">{formatNumber(layerBreakdown.reduce((s, r) => s + r.output_tokens, 0))}</td>
                             <td className="py-2 pr-3 text-right">{formatNumber(layerBreakdown.reduce((s, r) => s + r.call_count, 0))}</td>
                             <td className="py-2 pr-3 text-right">-</td>
-                            <td className="py-2 text-right text-emerald-600 dark:text-emerald-400">{formatIDR(sumCostUsd(layerBreakdown))}</td>
+                            <td className="py-2 text-right text-emerald-600 dark:text-emerald-400">{formatUSD(sumCostUsd(layerBreakdown))}</td>
                           </tr>
                         )
                       })()}

@@ -53,10 +53,8 @@ interface DetailResponse {
   }
 }
 
-const USD_TO_IDR = 18_000
 const defaultStart = () => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
 const defaultEnd = () => new Date().toISOString().slice(0, 16)
-
 function formatDate(value: string) {
   return new Date(value).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" })
 }
@@ -72,15 +70,8 @@ function formatUSD(usd: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits, maximumFractionDigits }).format(amount)
 }
 
-function formatIDR(usd: number) {
-  const amount = (usd || 0) * USD_TO_IDR
-  const minimumFractionDigits = amount > 0 && amount < 0.01 ? 8 : 0
-  const maximumFractionDigits = amount > 0 && amount < 0.01 ? 8 : 2
-  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits, maximumFractionDigits }).format(amount)
-}
-
 function formatCost(usd: number) {
-  return `${formatUSD(usd)} / ${formatIDR(usd)}`
+  return formatUSD(usd)
 }
 
 function gatewayLabel(value?: string | null) {

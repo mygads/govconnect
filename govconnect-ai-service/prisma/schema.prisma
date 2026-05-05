@@ -593,6 +593,32 @@ model ai_interaction_events {
   @@index([channel, created_at])
 }
 
+model ai_tool_execution_traces {
+  id               String   @id @default(cuid())
+  trace_id         String?
+  billing_group_id String?
+  message_id       String?
+  wa_user_id       String?
+  session_id       String?
+  village_id       String?
+  channel          String?
+  tool_name        String
+  sequence         Int
+  success          Boolean  @default(true)
+  duration_ms      Int?
+  trust_level      String?
+  source_kind      String?
+  error_message    String?  @db.Text
+  metadata_json    Json?
+  created_at       DateTime @default(now())
+
+  @@index([trace_id])
+  @@index([billing_group_id])
+  @@index([village_id, created_at])
+  @@index([tool_name])
+  @@index([success, created_at])
+}
+
 // ==================== DURABLE RETRIEVAL OBSERVABILITY ====================
 // Stores retrieval traces and candidate-level debug for hybrid search.
 

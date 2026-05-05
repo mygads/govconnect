@@ -1249,12 +1249,26 @@ export async function getTokenUsageBySource(slug?: string) {
 }
 
 /**
- * Reset (delete) all token usage data.
+ * Reset (delete) all AI usage/billing/observability data while keeping wallet balances.
  * Used by superadmin to clear testing/development data.
- * Returns the number of deleted rows.
  */
-export async function resetAllTokenUsage(): Promise<number> {
-  const result = await prisma.$executeRaw`TRUNCATE TABLE ai."ai_token_usage"`;
-  logger.info('🗑️ All token usage data has been reset (TRUNCATE)', { affectedRows: result });
-  return result;
+export async function resetAllTokenUsage(): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`
+      TRUNCATE TABLE
+        ai."ai_generation_logs",
+        ai."ai_token_usage",
+        ai."ai_message_billings",
+        ai."ai_wallet_ledger_entries",
+        ai."ai_interaction_events",
+        ai."ai_retrieval_traces",
+        ai."ai_memory_traces",
+        ai."ai_guardrail_events",
+        ai."ai_tool_policy_events",
+        ai."ai_tool_execution_traces"
+    `);
+  });
+
+  logger.info('🗑️ All AI usage/billing data has been reset while preserving wallet balances');
 }
+

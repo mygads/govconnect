@@ -35,6 +35,7 @@ import { getCachedResponse, setCachedResponse } from './response-cache.service';
 import { buildHybridMemorySummary } from './hybrid-memory.service';
 import { recordGuardrailEvent } from './runtime-observability.service';
 import { recordToolPolicyEvent } from './agent/tool-policy.service';
+import { recordToolExecutionTraces } from './tool-execution-trace.service';
 import {
   analyzeSentimentWithLLM,
   getSentimentContext,
@@ -1301,6 +1302,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       });
 
       if (analyticsResult.metadata.agentMode === 'single_orchestrator') {
+        await recordToolExecutionTraces({
+          traceId: analyticsResult.metadata.traceId,
+          billingGroupId,
+          messageId: resolvedMessageId,
+          waUserId: userId,
+          sessionId: channel === 'webchat' ? userId : undefined,
+          villageId,
+          channel,
+          toolTrace: analyticsResult.metadata.toolTrace as any,
+        });
+
         await recordToolPolicyEvent({
           traceId: analyticsResult.metadata.traceId,
           waUserId: userId,
