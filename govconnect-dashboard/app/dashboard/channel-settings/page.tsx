@@ -98,6 +98,17 @@ interface WebhookAudit {
   issues: WebhookAuditIssue[]
 }
 
+const emptyChannelSettings: ChannelSettings = {
+  wa_number: "",
+  webhook_url: "",
+  enabled_wa: false,
+  enabled_webchat: false,
+}
+
+function extractQrCode(data: any): string {
+  return data?.data?.qrcode || data?.data?.QRCode || ""
+}
+
 interface WaActivityItem {
   id: string
   type: string
@@ -163,12 +174,8 @@ export default function ChannelSettingsPage() {
   const [auth, setAuth] = useState<AuthMeResponse["user"] | null>(null)
   const [villages, setVillages] = useState<VillageItem[]>([])
   const [selectedVillageId, setSelectedVillageId] = useState<string | null>(null)
-  const [settings, setSettings] = useState<ChannelSettings>({
-    wa_number: "",
-    webhook_url: "",
-    enabled_wa: false,
-    enabled_webchat: false,
-  })
+  const [settings, setSettings] = useState<ChannelSettings>(emptyChannelSettings)
+
   const [objectStorage, setObjectStorage] = useState<ObjectStorageStatus | null>(null)
   const [setupStage, setSetupStage] = useState<WhatsAppSetupStage>("idle")
   const [setupError, setSetupError] = useState("")
@@ -277,8 +284,12 @@ export default function ChannelSettingsPage() {
         setWebhookAudit(null)
         return null
       }
-      setWebhookAudit(data?.data || null)
-      return data?.data || null
+      const audit = data?.data
+      setWebhookAudit(audit ? {
+        ...audit,
+        issues: Array.isArray(audit.issues) ? audit.issues : [],
+      } : null)
+      return audit || null
     } catch (error) {
       console.error("Error fetching webhook audit:", error)
       setWebhookAudit(null)
@@ -294,9 +305,14 @@ export default function ChannelSettingsPage() {
     try {
       const response = await fetchApiRaw(withVillage("/api/whatsapp/activity?limit=8"))
       const data = await response.json().catch(() => null)
-      if (response.ok) setWaActivities(data?.data || [])
+      if (response.ok) {
+        setWaActivities(Array.isArray(data?.data) ? data.data : [])
+        return
+      }
+      setWaActivities([])
     } catch (error) {
       console.error("Error fetching WA activities:", error)
+      setWaActivities([])
     }
   }, [selectedVillageId, withVillage])
 
@@ -349,7 +365,11 @@ export default function ChannelSettingsPage() {
   }
 
   const fetchOperationalDetails = useCallback(async () => {
-    if (!selectedVillageId) return
+    if (!selectedVillageId) {
+      setProxyConfig(null)
+      setS3Status(null)
+      return
+    }
     try {
       const [proxyResponse, s3Response] = await Promise.all([
         fetchApiRaw(withVillage('/api/whatsapp/proxy-config')),
@@ -357,10 +377,12 @@ export default function ChannelSettingsPage() {
       ])
       const proxyData = await proxyResponse.json().catch(() => null)
       const s3Data = await s3Response.json().catch(() => null)
-      if (proxyResponse.ok) setProxyConfig(proxyData?.data || null)
-      if (s3Response.ok) setS3Status(s3Data?.data || null)
+      setProxyConfig(proxyResponse.ok ? (proxyData?.data || null) : null)
+      setS3Status(s3Response.ok ? (s3Data?.data || null) : null)
     } catch (error) {
       console.error('Error fetching WA operational details:', error)
+      setProxyConfig(null)
+      setS3Status(null)
     }
   }, [selectedVillageId, withVillage])
 
@@ -476,15 +498,17 @@ export default function ChannelSettingsPage() {
         setQrCode("")
         return null
       }
-      
+
       const response = await fetchApiRaw(withVillage("/api/whatsapp/status"))
-      
+
       let data: any = null
       try {
         data = await response.json()
       } catch {
         data = null
       }
+
+      const nextQrCode = extractQrCode(data)
 
       // Session belum dibuat
       if (response.status === 404 || data?.error === 'Session belum dibuat') {
@@ -510,13 +534,13 @@ export default function ChannelSettingsPage() {
       }
 
       setSessionExists(true)
-      
+
       const status: SessionStatus = {
         connected: Boolean(data.data?.connected),
         loggedIn: Boolean(data.data?.loggedIn),
         jid: data.data?.jid,
         wa_number: data.data?.wa_number || "",
-        qrcode: data.data?.qrcode || "",
+        qrcode: nextQrCode,
         status: data.data?.status || null,
         lifecycle_status: data.data?.lifecycle_status,
         reconnectable: Boolean(data.data?.reconnectable),
@@ -524,7 +548,7 @@ export default function ChannelSettingsPage() {
         problematic: Boolean(data.data?.problematic),
         status_fetch_ok: data.data?.status_fetch_ok !== false,
       }
-      
+
       setSessionStatus(status)
       if (showQrDialog) {
         if (status.loggedIn) {
@@ -536,12 +560,11 @@ export default function ChannelSettingsPage() {
         }
       }
 
-      // Update QR code if available
-      if (data.data?.qrcode) {
-        setQrCode(data.data.qrcode)
+      if (nextQrCode) {
+        setQrCode(nextQrCode)
         if (showQrDialog && !status.loggedIn) updateSetupStage("waiting_scan")
       }
-      
+
       // Update wa_number in settings if available
       if (data.data?.wa_number) {
         setSettings((prev) => ({ ...prev, wa_number: data.data.wa_number }))
@@ -563,22 +586,28 @@ export default function ChannelSettingsPage() {
       setQrLoading(true)
       if (!sessionStatus?.loggedIn && !qrCode) updateSetupStage("fetching_qr")
       const response = await fetchApiRaw(withVillage("/api/whatsapp/qr"))
-      
+
       let data: any = null
       try {
         data = await response.json()
       } catch {
         data = null
       }
-      
-      if (response.ok && data?.data?.QRCode) {
-        setQrCode(data.data.QRCode)
+
+      const nextQrCode = extractQrCode(data)
+
+      if (response.ok && nextQrCode) {
+        setQrCode(nextQrCode)
         updateSetupStage("waiting_scan")
-      } else if (!sessionStatus?.loggedIn) {
-        updateSetupStage("waiting_whatsapp_server")
+      } else {
+        setQrCode("")
+        if (!sessionStatus?.loggedIn) {
+          updateSetupStage(response.ok ? "waiting_whatsapp_server" : "fetching_qr")
+        }
       }
     } catch (error) {
       console.error("Error fetching QR code:", error)
+      setQrCode("")
     } finally {
       setQrLoading(false)
     }
@@ -1130,8 +1159,9 @@ export default function ChannelSettingsPage() {
 
   const getAuditSeverity = () => {
     if (!webhookAudit) return "unknown"
-    if (webhookAudit.issues.some((issue) => issue.severity === "error")) return "error"
-    if (webhookAudit.issues.some((issue) => issue.severity === "warning")) return "warning"
+    const issues = Array.isArray(webhookAudit.issues) ? webhookAudit.issues : []
+    if (issues.some((issue) => issue.severity === "error")) return "error"
+    if (issues.some((issue) => issue.severity === "warning")) return "warning"
     return "ok"
   }
 

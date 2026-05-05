@@ -618,7 +618,7 @@ export const channelSettings = {
   async update(data: any, villageParam?: string) {
     const base = villageParam ? `/api/channel-settings?${villageParam}` : '/api/channel-settings';
     return fetchApi<any>(base, {
-      method: 'PATCH',
+      method: 'PUT',
       body: JSON.stringify(data),
     });
   },
