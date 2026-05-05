@@ -342,7 +342,7 @@ export default function AIBalancePageContent() {
           <Card>
             <CardHeader>
               <CardTitle>Riwayat Ledger</CardTitle>
-              <CardDescription>Topup, redeem voucher, dan debit pemakaian AI terbaru.</CardDescription>
+              <CardDescription>Topup, redeem voucher, dan debit pemakaian AI terbaru. Menampilkan riwayat yang sedang dimuat saja (maks 50 row).</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>

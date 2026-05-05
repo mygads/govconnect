@@ -441,7 +441,7 @@ export default function VillageAIUsagePage() {
           </div>
 
           <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><Coins className="h-5 w-5" /> Detail Billing per Pesan</CardTitle><CardDescription>Klik detail untuk melihat breakdown biaya billed dari setiap call AI dalam satu pesan.</CardDescription></CardHeader>
+            <CardHeader><CardTitle className="flex items-center gap-2"><Coins className="h-5 w-5" /> Detail Billing per Pesan</CardTitle><CardDescription>Menampilkan row billing yang sedang dimuat saja (maks 50 per fetch). Klik detail untuk melihat breakdown biaya billed dari setiap call AI dalam satu pesan.</CardDescription></CardHeader>
             <CardContent>
               <Table>
                 <TableHeader><TableRow><TableHead>Pesan / Trace</TableHead><TableHead>User</TableHead><TableHead>Waktu</TableHead><TableHead>Call</TableHead><TableHead>Token</TableHead><TableHead>Billed</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead></TableRow></TableHeader>
