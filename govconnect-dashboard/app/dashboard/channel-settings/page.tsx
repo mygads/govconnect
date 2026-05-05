@@ -629,9 +629,9 @@ export default function ChannelSettingsPage() {
   const checkDuplicateWaNumber = useCallback(async (waNumber: string): Promise<DuplicateInfo | null> => {
     try {
       const response = await fetchApiRaw(withVillage(`/api/whatsapp/check-duplicate?wa_number=${encodeURIComponent(waNumber)}`))
-      
+
       if (!response.ok) return null
-      
+
       const data = await response.json()
       if (data?.data?.isDuplicate) {
         const existingVillageName = villages.find((village) => village.id === data.data.existingVillageId)?.name || data.data.existingVillageName || data.data.existingVillageId
@@ -647,6 +647,13 @@ export default function ChannelSettingsPage() {
       return null
     }
   }, [villages, withVillage])
+
+  const resetChannelSettingsState = useCallback(() => {
+    setSettings(emptyChannelSettings)
+    setObjectStorage(null)
+    setDuplicateInfo(null)
+    setShowDuplicateDialog(false)
+  }, [])
 
   // Handle disconnect from current account (delete session)
   const handleDisconnectCurrentAccount = async () => {
@@ -696,7 +703,7 @@ export default function ChannelSettingsPage() {
       setDuplicateInfo(null)
       toast({
         title: "Berhasil",
-        description: "Session WhatsApp dari akun lain berhasil diputuskan. Nomor ini sekarang terhubung ke akun Anda.",
+        description: "Session WhatsApp dari akun lain berhasil diputuskan. Lanjutkan proses koneksi di akun ini bila masih diperlukan.",
       })
       
       // Refresh status
@@ -755,6 +762,17 @@ export default function ChannelSettingsPage() {
   }, [stopPolling, fetchSessionStatus, setupStage, updateSetupStage])
 
   useEffect(() => {
+    resetChannelSettingsState()
+    setWaActivities([])
+    setWebhookAudit(null)
+    setProxyConfig(null)
+    setS3Status(null)
+    setSessionStatus(null)
+    setSessionExists(null)
+    setQrCode("")
+  }, [selectedVillageId, resetChannelSettingsState])
+
+  useEffect(() => {
     const fetchSettings = async () => {
       if (!selectedVillageId) return
       try {
@@ -769,9 +787,12 @@ export default function ChannelSettingsPage() {
             enabled_webchat: Boolean(data.data?.enabled_webchat ?? false),
           })
           setObjectStorage(data.data?.object_storage || null)
+          return
         }
+        resetChannelSettingsState()
       } catch (error) {
         console.error("Failed to load channel settings:", error)
+        resetChannelSettingsState()
       } finally {
         setLoading(false)
       }
@@ -782,7 +803,7 @@ export default function ChannelSettingsPage() {
     fetchWebhookAudit()
     fetchWaActivities()
     fetchOperationalDetails()
-  }, [selectedVillageId, withVillage, fetchSessionStatus, fetchWebhookAudit, fetchWaActivities, fetchOperationalDetails])
+  }, [selectedVillageId, withVillage, fetchSessionStatus, fetchWebhookAudit, fetchWaActivities, fetchOperationalDetails, resetChannelSettingsState])
 
   // Auto-refresh session status every 15 seconds (outside QR dialog)
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
