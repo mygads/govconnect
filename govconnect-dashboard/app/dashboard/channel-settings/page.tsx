@@ -1550,10 +1550,10 @@ export default function ChannelSettingsPage() {
       </form>
 
       <Dialog open={showMaintenanceDialog} onOpenChange={setShowMaintenanceDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <RefreshCw className="h-5 w-5" />
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto overflow-x-hidden">
+          <DialogHeader className="min-w-0">
+            <DialogTitle className="flex min-w-0 items-center gap-2">
+              <RefreshCw className="h-5 w-5 shrink-0" />
               Maintenance WhatsApp
             </DialogTitle>
             <DialogDescription>
@@ -1561,7 +1561,7 @@ export default function ChannelSettingsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div className="min-w-0 space-y-4 py-2">
             <div className="rounded-lg border p-3 text-sm">
               <p className="font-medium">Repair session desa ini</p>
               <p className="text-muted-foreground">Aman dijalankan berulang. Tidak menarik history lama agar tidak duplikasi pesan.</p>
@@ -1608,7 +1608,7 @@ export default function ChannelSettingsPage() {
             )}
 
             {repairResult && (
-              <pre className="max-h-64 overflow-auto rounded bg-muted p-3 text-xs text-muted-foreground">{JSON.stringify(repairResult, null, 2)}</pre>
+              <pre className="max-h-64 max-w-full overflow-auto rounded bg-muted p-3 text-xs text-muted-foreground">{JSON.stringify(repairResult, null, 2)}</pre>
             )}
           </div>
 

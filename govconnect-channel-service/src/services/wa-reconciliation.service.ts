@@ -231,7 +231,7 @@ export async function syncWhatsAppWebhook(villageId: string): Promise<WhatsAppSe
   const needsWebhookRepair = !before.webhookMatches || before.missingEvents.length > 0 || before.missingRecommendedEvents.length > 0 || hasAllEvent;
 
   if (needsWebhookRepair) {
-    await waGatewayRequest(session.wa_token, '/webhook', 'PUT', {
+    await waGatewayRequest(session.wa_token, '/webhook', 'POST', {
       WebhookURL: expectedWebhookUrl,
       Events: GOVCONNECT_WEBHOOK_EVENTS,
       Active: true,

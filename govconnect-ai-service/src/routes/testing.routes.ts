@@ -476,7 +476,7 @@ router.post('/model', verifyInternalKey, async (req: Request, res: Response) => 
 
 router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
   try {
-    const { message, village_id, villageId, user_id } = req.body || {};
+    const { message, village_id, villageId, user_id, conversationHistory } = req.body || {};
     const resolvedVillageId: string | undefined = typeof village_id === 'string' && village_id.length > 0
       ? village_id
       : typeof villageId === 'string' && villageId.length > 0
@@ -498,12 +498,19 @@ router.post('/chat', verifyInternalKey, async (req: Request, res: Response) => {
       processor: 'UNIFIED',
     });
 
+    const safeConversationHistory = Array.isArray(conversationHistory)
+      ? conversationHistory
+          .filter((item: any) => (item?.role === 'user' || item?.role === 'assistant') && typeof item?.content === 'string')
+          .slice(-30)
+          .map((item: any) => ({ role: item.role, content: item.content }))
+      : [];
+
     const result = await processUnifiedMessage({
       userId,
       message,
       channel: 'webchat',
       villageId: resolvedVillageId,
-      conversationHistory: [],
+      conversationHistory: safeConversationHistory,
       isEvaluation: false,
       sideEffectMode: 'knowledge_test',
     });

@@ -1301,12 +1301,12 @@ export default function KnowledgePage() {
 
       {/* Upload Document Dialog */}
       <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
+        <DialogContent className="!w-[calc(100vw-2rem)] !max-w-[calc(100vw-2rem)] max-h-[92vh] overflow-hidden p-0 sm:!w-[min(900px,calc(100vw-2rem))] sm:!max-w-[900px]">
+          <DialogHeader className="px-6 pt-6">
             <DialogTitle>Unggah Dokumen</DialogTitle>
             <DialogDescription>Unggah banyak dokumen sekaligus. Setiap file bisa punya judul, deskripsi, dan kategori sendiri. Didukung: PDF, DOC/DOCX, PPT/PPTX, TXT, MD, CSV, XLS/XLSX, gambar (PNG/JPG/WEBP/TIFF/BMP)</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="max-h-[calc(92vh-140px)] space-y-4 overflow-y-auto px-6 py-4">
             <div className="space-y-2">
               <Label htmlFor="file">File *</Label>
               <Input
@@ -1321,28 +1321,29 @@ export default function KnowledgePage() {
             </div>
 
             {uploadItems.length > 0 && (
-              <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+              <div className="space-y-3">
                 {uploadItems.map((item, index) => (
-                  <Card key={item.id}>
+                  <Card key={item.id} className="overflow-hidden">
                     <CardContent className="space-y-4 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{index + 1}. {item.file.name}</p>
+                          <p className="truncate text-sm font-medium" title={item.file.name}>{index + 1}. {item.file.name}</p>
                           <p className="text-xs text-muted-foreground">{formatFileSize(item.file.size)}</p>
                         </div>
                         <Button
                           type="button"
                           variant="ghost"
-                          size="sm"
+                          size="icon"
                           onClick={() => removeUploadItem(item.id)}
                           disabled={uploading}
+                          className="h-8 w-8 shrink-0"
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
 
                       <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
+                        <div className="min-w-0 space-y-2">
                           <Label>Judul</Label>
                           <Input
                             value={item.title}
@@ -1351,7 +1352,7 @@ export default function KnowledgePage() {
                             disabled={uploading}
                           />
                         </div>
-                        <div className="space-y-2">
+                        <div className="min-w-0 space-y-2">
                           <Label>Kategori</Label>
                           <Select
                             value={item.category_id}
@@ -1413,7 +1414,7 @@ export default function KnowledgePage() {
               </div>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="border-t bg-background px-6 py-4">
             <Button variant="outline" onClick={() => setIsUploadOpen(false)} disabled={uploading}>Batal</Button>
             <Button onClick={handleUpload} disabled={uploading || uploadItems.length === 0}>
               {uploading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Mengunggah...</> : <><Upload className="h-4 w-4 mr-2" />Unggah Semua</>}

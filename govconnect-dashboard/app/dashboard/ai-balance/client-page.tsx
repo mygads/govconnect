@@ -44,16 +44,21 @@ interface LedgerEntry {
     reason?: string
     status_text?: string
     adjustment_type?: string
+    billing_group_id?: string | null
+    message_id?: string | null
+    trace_id?: string | null
+    call_count?: number | null
   } | null
 }
 
-function formatUsd(value?: number | null, options?: { preciseSmall?: boolean }) {
+function formatUsd(value?: number | null, options?: { preciseSmall?: boolean; signed?: boolean }) {
   const amount = value ?? 0
+  const sign = options?.signed && amount > 0 ? "+" : ""
   const roundedCents = Number(amount.toFixed(2))
   if (options?.preciseSmall && amount !== 0 && Math.abs(amount - roundedCents) >= 0.000001) {
-    return `$${amount.toFixed(6)}`
+    return `${sign}$${amount.toFixed(8)}`
   }
-  return `$${amount.toFixed(2)}`
+  return `${sign}$${amount.toFixed(2)}`
 }
 
 function formatRunway(days?: number | null) {
@@ -63,19 +68,71 @@ function formatRunway(days?: number | null) {
   return `${days.toFixed(1)} hari`
 }
 
-function formatEntryLabel(type: string) {
+function formatTinyDelta(value?: number | null) {
+  const amount = Math.abs(value ?? 0)
+  if (amount === 0) return "Tidak ada perubahan saldo"
+  if (amount < 0.000001) return "Perubahan sangat kecil (< $0.000001)"
+  return `Perubahan saldo ${formatUsd(value, { preciseSmall: true })}`
+}
+
+function getEntryTone(entry: LedgerEntry) {
+  if (entry.amount_usd < 0) return "text-red-600"
+  if (entry.amount_usd > 0) return "text-emerald-600"
+  return "text-muted-foreground"
+}
+
+function formatEntryLabel(entry: LedgerEntry) {
+  const traceId = entry.metadata_json?.trace_id || ""
+  const messageId = entry.metadata_json?.message_id || ""
+  const billingGroupId = entry.metadata_json?.billing_group_id || ""
+  const note = `${entry.metadata_json?.reason || ""} ${entry.metadata_json?.status_text || ""}`.toLowerCase()
+
+  if (entry.entry_type === "usage_debit") {
+    if (traceId.startsWith("document-reprocess-") || messageId.startsWith("ingest:") || billingGroupId.startsWith("ingest:")) {
+      return "Embedding Dokumen"
+    }
+    if (messageId.startsWith("webchat:") || billingGroupId.startsWith("webchat:")) {
+      return "AI Webchat"
+    }
+    if (messageId.startsWith("wa:") || billingGroupId.startsWith("wa:")) {
+      return "AI WhatsApp"
+    }
+    if (note.includes("knowledge") || note.includes("dokumen")) {
+      return "Embedding Knowledge"
+    }
+    return "Pemakaian AI"
+  }
+
   const map: Record<string, string> = {
     topup: "Topup",
-    usage_debit: "Pemakaian AI",
     voucher_redeem: "Redeem Voucher",
     manual_adjustment: "Penyesuaian Manual",
     refund: "Refund",
     seed: "Seed",
   }
-  return map[type] || type
+  return map[entry.entry_type] || entry.entry_type
 }
 
 function getEntryNote(entry: LedgerEntry) {
+  if (entry.entry_type === "usage_debit") {
+    const traceId = entry.metadata_json?.trace_id || ""
+    const messageId = entry.metadata_json?.message_id || ""
+    const callCount = entry.metadata_json?.call_count
+
+    if (traceId.startsWith("document-reprocess-") || messageId.startsWith("ingest:")) {
+      return `${callCount || 0} call embedding untuk proses dokumen/knowledge base.`
+    }
+    if (messageId.startsWith("webchat:")) {
+      return `${callCount || 0} call AI dari percakapan webchat warga.`
+    }
+    if (messageId.startsWith("wa:")) {
+      return `${callCount || 0} call AI dari percakapan WhatsApp warga.`
+    }
+    if (traceId) {
+      return `${callCount || 0} call AI yang sudah ditagihkan ke wallet desa.`
+    }
+  }
+
   if (!entry.metadata_json || typeof entry.metadata_json !== "object") return "-"
   return entry.metadata_json.reason || entry.metadata_json.status_text || "-"
 }
@@ -292,10 +349,11 @@ export default function AIBalancePageContent() {
                     ledger.map((entry) => (
                       <TableRow key={entry.id}>
                         <TableCell>{new Date(entry.created_at).toLocaleString("id-ID")}</TableCell>
-                        <TableCell>{formatEntryLabel(entry.entry_type)}</TableCell>
-                        <TableCell className="max-w-60 truncate text-muted-foreground">{getEntryNote(entry)}</TableCell>
-                        <TableCell className={entry.amount_usd < 0 ? "text-red-600" : "text-emerald-600"}>
-                          {formatUsd(entry.amount_usd, { preciseSmall: true })}
+                        <TableCell>{formatEntryLabel(entry)}</TableCell>
+                        <TableCell className="max-w-60 truncate text-muted-foreground" title={getEntryNote(entry)}>{getEntryNote(entry)}</TableCell>
+                        <TableCell className={getEntryTone(entry)}>
+                          <div>{formatUsd(entry.amount_usd, { preciseSmall: true, signed: entry.amount_usd > 0 })}</div>
+                          <div className="text-xs text-muted-foreground">{formatTinyDelta(entry.amount_usd)}</div>
                         </TableCell>
                         <TableCell>{formatUsd(entry.balance_before_usd, { preciseSmall: true })}</TableCell>
                         <TableCell>{formatUsd(entry.balance_after_usd, { preciseSmall: true })}</TableCell>

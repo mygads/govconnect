@@ -103,8 +103,29 @@ function derivePreferredToolReply(
   return {};
 }
 
+function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { toolName: AgentToolName; args: Record<string, unknown> } | null {
+  const functionMatch = text.match(/<function=([a-z_]+)>/i);
+  if (!functionMatch) return null;
+
+  const toolName = functionMatch[1] as AgentToolName;
+  if (!allowedToolNames.includes(toolName)) return null;
+
+  const args: Record<string, unknown> = {};
+  const parameterPattern = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/gi;
+  let parameterMatch: RegExpExecArray | null;
+  while ((parameterMatch = parameterPattern.exec(text)) !== null) {
+    args[parameterMatch[1]] = parameterMatch[2].trim();
+  }
+
+  return { toolName, args };
+}
+
 function validateFinalAgentReply(text: string, toolsUsed: string[]): string {
   const normalized = text.toLowerCase();
+  if (/<tool_call>|<function=|<parameter=/i.test(text)) {
+    return buildAgentFallbackReply('', toolsUsed);
+  }
+
   if (/\b(ai|bot|llm|tool|prompt|retrieval|basis pengetahuan|dokumen internal)\b/i.test(text)) {
     return 'Maaf Pak/Bu, saya bantu jawab dari informasi layanan yang tersedia. Bisa sebutkan kebutuhan atau detail yang ingin dicek?';
   }
@@ -409,6 +430,30 @@ export async function runAgent(
     }
 
     const finalText = extractText(assistantMsg?.content);
+    const textToolCall = finalText ? parseTextToolCall(finalText, allowedToolNames) : null;
+    if (textToolCall) {
+      toolsUsed.push(textToolCall.toolName);
+      const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage });
+      toolTrace.push(result.trace);
+
+      const preferredFromTool = derivePreferredToolReply([{ toolName: textToolCall.toolName, result: result.result }]);
+      if (preferredFromTool.replyText) {
+        preferredReplyText = preferredFromTool.replyText;
+      }
+      if (preferredFromTool.guidanceText) {
+        preferredGuidanceText = preferredFromTool.guidanceText;
+      }
+
+      messages.push({ role: 'assistant', content: finalText });
+      messages.push({
+        role: 'tool',
+        tool_call_id: `text_tool_${i}`,
+        name: textToolCall.toolName,
+        content: result.content,
+      });
+      continue;
+    }
+
     if (finalText) {
       const durationMs = Date.now() - startTime;
 
