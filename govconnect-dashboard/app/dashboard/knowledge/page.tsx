@@ -104,6 +104,18 @@ interface KnowledgeDocument {
   updated_at: string
 }
 
+interface UploadItem {
+  id: string
+  file: File
+  title: string
+  description: string
+  category_id: string
+  customCategory: string
+  progress: number
+  status: 'idle' | 'uploading' | 'storing' | 'success' | 'error'
+  error?: string
+}
+
 interface DocumentStats {
   total: number
   completed: number
@@ -181,13 +193,9 @@ export default function KnowledgePage() {
   const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocument | null>(null)
   
   // Upload form
-  const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const [uploadTitle, setUploadTitle] = useState('')
-  const [uploadDescription, setUploadDescription] = useState('')
-  const [uploadCategory, setUploadCategory] = useState('')
-  const [uploadCustomCategory, setUploadCustomCategory] = useState('')
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([])
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
+  const [documentBulkEmbeddingLoading, setDocumentBulkEmbeddingLoading] = useState(false)
   
   // Edit doc form
   const [editDocTitle, setEditDocTitle] = useState('')
@@ -524,54 +532,86 @@ export default function KnowledgePage() {
   // ==================== DOCUMENTS HANDLERS ====================
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setUploadFile(file)
-      if (!uploadTitle) setUploadTitle(file.name.replace(/\.[^/.]+$/, ''))
-    }
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+
+    setUploadItems((current) => [
+      ...current,
+      ...files.map((file) => ({
+        id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+        file,
+        title: file.name.replace(/\.[^/.]+$/, ''),
+        description: '',
+        category_id: categories[0]?.id || '',
+        customCategory: '',
+        progress: 0,
+        status: 'idle' as const,
+      })),
+    ])
+
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const updateUploadItem = (id: string, patch: Partial<UploadItem>) => {
+    setUploadItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item))
+  }
+
+  const removeUploadItem = (id: string) => {
+    setUploadItems((current) => current.filter((item) => item.id !== id))
   }
 
   const handleUpload = async () => {
-    if (!uploadFile) {
+    if (uploadItems.length === 0) {
       toast({ title: "Error", description: "Silakan pilih file", variant: "destructive" })
       return
     }
 
+    const invalidItem = uploadItems.find((item) => item.category_id === OTHER_CATEGORY_VALUE && !item.customCategory.trim())
+    if (invalidItem) {
+      toast({ title: "Error", description: `Kategori custom wajib diisi untuk ${invalidItem.file.name}`, variant: "destructive" })
+      return
+    }
+
     setUploading(true)
-    setUploadProgress(10)
+    let successCount = 0
+    let failedCount = 0
 
-    try {
-      const formData = new FormData()
-      formData.append('file', uploadFile)
-      if (uploadTitle) formData.append('title', uploadTitle)
-      if (uploadDescription) formData.append('description', uploadDescription)
-      if (uploadCategory === OTHER_CATEGORY_VALUE) {
-        const category = uploadCustomCategory.trim()
-        if (!category) {
-          toast({ title: "Error", description: "Nama kategori wajib diisi", variant: "destructive" })
-          return
+    for (const item of uploadItems) {
+      updateUploadItem(item.id, { status: 'uploading', progress: 0, error: undefined })
+
+      try {
+        const formData = new FormData()
+        formData.append('file', item.file)
+        if (item.title) formData.append('title', item.title)
+        if (item.description) formData.append('description', item.description)
+        if (item.category_id === OTHER_CATEGORY_VALUE) {
+          formData.append('category', item.customCategory.trim())
+        } else if (item.category_id) {
+          formData.append('category_id', item.category_id)
         }
-        formData.append('category', category)
-      } else if (uploadCategory) {
-        formData.append('category_id', uploadCategory)
+
+        await documentsApi.upload(formData, (progress) => {
+          updateUploadItem(item.id, { progress, status: progress >= 95 ? 'storing' : 'uploading' })
+        })
+
+        successCount += 1
+        updateUploadItem(item.id, { status: 'success', progress: 100 })
+      } catch (error: any) {
+        failedCount += 1
+        updateUploadItem(item.id, { status: 'error', error: error.message || 'Upload gagal' })
       }
+    }
 
-      setUploadProgress(30)
+    setUploading(false)
+    await fetchCategories()
+    fetchDocuments()
 
-      await documentsApi.upload(formData)
-
-      setUploadProgress(100)
-
-      toast({ title: "Berhasil", description: "Dokumen berhasil diunggah. Lanjutkan embed manual saat diperlukan." })
+    if (failedCount === 0) {
+      toast({ title: "Berhasil", description: `${successCount} dokumen berhasil diunggah. Lanjutkan embed manual saat diperlukan.` })
       setIsUploadOpen(false)
       resetUploadForm()
-      await fetchCategories()
-      fetchDocuments()
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" })
-    } finally {
-      setUploading(false)
-      setUploadProgress(0)
+    } else {
+      toast({ title: "Sebagian upload gagal", description: `${successCount} berhasil, ${failedCount} gagal.`, variant: "destructive" })
     }
   }
 
@@ -599,6 +639,31 @@ export default function KnowledgePage() {
       })
     }
   }
+
+  const handleGenerateAllDocumentEmbeddings = async () => {
+    setDocumentBulkEmbeddingLoading(true)
+    try {
+      setDocuments((current) => current.map((doc) =>
+        doc.status === 'pending' || doc.status === 'failed' || doc.status === 'parse_fail' || doc.status === 'embed_fail'
+          ? { ...doc, status: 'processing', error_message: null }
+          : doc
+      ))
+      startEmbedPolling()
+      const result = await documentsApi.embedAll()
+      toast({
+        title: "Embedding dokumen dimulai",
+        description: `Dokumen: ${result.processed || 0}/${result.total || 0} diproses`,
+      })
+      await refreshKnowledgeAndDocuments()
+      startEmbedPolling()
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Gagal memproses semua dokumen", variant: "destructive" })
+    } finally {
+      setDocumentBulkEmbeddingLoading(false)
+    }
+  }
+
+
 
   const handleEditDoc = async () => {
     if (!selectedDocument) return
@@ -657,11 +722,7 @@ export default function KnowledgePage() {
   }
 
   const resetUploadForm = () => {
-    setUploadFile(null)
-    setUploadTitle('')
-    setUploadDescription('')
-    setUploadCategory('')
-    setUploadCustomCategory('')
+    setUploadItems([])
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -976,6 +1037,14 @@ export default function KnowledgePage() {
                 <Button variant="outline" onClick={fetchDocuments}>
                   <RefreshCw className="h-4 w-4" />
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleGenerateAllDocumentEmbeddings}
+                  disabled={documentBulkEmbeddingLoading}
+                >
+                  {documentBulkEmbeddingLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                  Generate Semua Embedding Dokumen
+                </Button>
                 <Button onClick={() => { resetUploadForm(); setIsUploadOpen(true) }}>
                   <Upload className="h-4 w-4 mr-2" />
                   Unggah
@@ -1232,47 +1301,122 @@ export default function KnowledgePage() {
 
       {/* Upload Document Dialog */}
       <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Unggah Dokumen</DialogTitle>
-            <DialogDescription>Unggah dokumen untuk menambah basis pengetahuan AI. Didukung: PDF, DOC/DOCX, PPT/PPTX, TXT, MD, CSV, XLS/XLSX, gambar (PNG/JPG/WEBP/TIFF/BMP)</DialogDescription>
+            <DialogDescription>Unggah banyak dokumen sekaligus. Setiap file bisa punya judul, deskripsi, dan kategori sendiri. Didukung: PDF, DOC/DOCX, PPT/PPTX, TXT, MD, CSV, XLS/XLSX, gambar (PNG/JPG/WEBP/TIFF/BMP)</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="file">File *</Label>
-              <Input id="file" type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.docx,.doc,.ppt,.pptx,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp" />
-              {uploadFile && <p className="text-sm text-muted-foreground">Dipilih: {uploadFile.name} ({formatFileSize(uploadFile.size)})</p>}
+              <Input
+                id="file"
+                type="file"
+                multiple
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept=".pdf,.docx,.doc,.ppt,.pptx,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp"
+              />
+              <p className="text-xs text-muted-foreground">Anda bisa memilih beberapa file sekaligus.</p>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="upload-title">Judul</Label>
-              <Input id="upload-title" value={uploadTitle} onChange={(e) => setUploadTitle(e.target.value)} placeholder="Judul dokumen" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="upload-category">Kategori</Label>
-              <Select value={uploadCategory} onValueChange={setUploadCategory} disabled={categoriesLoading}>
-                <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
-                <SelectContent>
-                  {categories.map(cat => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="upload-description">Deskripsi</Label>
-              <Textarea id="upload-description" value={uploadDescription} onChange={(e) => setUploadDescription(e.target.value)} placeholder="Deskripsi singkat" rows={3} />
-            </div>
-            {uploading && (
-              <div className="space-y-2">
-                <Progress value={uploadProgress} />
-                <p className="text-sm text-center text-muted-foreground">
-                  {uploadProgress < 30 ? 'Menyiapkan...' : uploadProgress < 70 ? 'Mengunggah...' : uploadProgress < 100 ? 'Memproses...' : 'Selesai!'}
-                </p>
+
+            {uploadItems.length > 0 && (
+              <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+                {uploadItems.map((item, index) => (
+                  <Card key={item.id}>
+                    <CardContent className="space-y-4 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">{index + 1}. {item.file.name}</p>
+                          <p className="text-xs text-muted-foreground">{formatFileSize(item.file.size)}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeUploadItem(item.id)}
+                          disabled={uploading}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Judul</Label>
+                          <Input
+                            value={item.title}
+                            onChange={(e) => updateUploadItem(item.id, { title: e.target.value })}
+                            placeholder="Judul dokumen"
+                            disabled={uploading}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Kategori</Label>
+                          <Select
+                            value={item.category_id}
+                            onValueChange={(value) => updateUploadItem(item.id, { category_id: value })}
+                            disabled={categoriesLoading || uploading}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Pilih kategori" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {categories.map(cat => <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>)}
+                              <SelectItem value={OTHER_CATEGORY_VALUE}>Kategori lain</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {item.category_id === OTHER_CATEGORY_VALUE && (
+                        <div className="space-y-2">
+                          <Label>Kategori Custom</Label>
+                          <Input
+                            value={item.customCategory}
+                            onChange={(e) => updateUploadItem(item.id, { customCategory: e.target.value })}
+                            placeholder="Tulis nama kategori"
+                            disabled={uploading}
+                          />
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        <Label>Deskripsi</Label>
+                        <Textarea
+                          value={item.description}
+                          onChange={(e) => updateUploadItem(item.id, { description: e.target.value })}
+                          placeholder="Deskripsi singkat"
+                          rows={3}
+                          disabled={uploading}
+                        />
+                      </div>
+
+                      {(uploading || item.status !== 'idle') && (
+                        <div className="space-y-2">
+                          <Progress value={item.progress} />
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>
+                              {item.status === 'uploading' && 'Mengunggah...'}
+                              {item.status === 'storing' && 'Menyimpan ke storage...'}
+                              {item.status === 'success' && 'Berhasil'}
+                              {item.status === 'error' && (item.error || 'Upload gagal')}
+                              {item.status === 'idle' && 'Menunggu'}
+                            </span>
+                            <span>{item.progress}%</span>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsUploadOpen(false)} disabled={uploading}>Batal</Button>
-            <Button onClick={handleUpload} disabled={uploading || !uploadFile}>
-              {uploading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Mengunggah...</> : <><Upload className="h-4 w-4 mr-2" />Unggah</>}
+            <Button onClick={handleUpload} disabled={uploading || uploadItems.length === 0}>
+              {uploading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Mengunggah...</> : <><Upload className="h-4 w-4 mr-2" />Unggah Semua</>}
             </Button>
           </DialogFooter>
         </DialogContent>

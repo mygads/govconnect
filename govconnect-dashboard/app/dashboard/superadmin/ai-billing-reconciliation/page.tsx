@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation"
 import { AlertTriangle, CheckCircle2, Eye, Loader2, RefreshCw, RotateCcw } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -159,12 +161,148 @@ function buildTraceStages(trace: AITraceData): AITraceStage[] {
   ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 }
 
+const COUNT_LABELS: Record<string, string> = {
+  token_usage_rows: "Usage token",
+  message_billings: "Billing pesan",
+  ledger_usage_debits: "Debit ledger",
+  unbilled_usage: "Usage belum tertagih",
+  stale_unbilled_usage: "Usage lama belum tertagih",
+  missing_billing_group_usage: "Usage tanpa grup billing",
+  failed_billings: "Billing gagal",
+  pending_billings: "Billing pending",
+  duplicate_billing_groups: "Grup billing duplikat",
+  billed_without_ledger: "Billing tanpa ledger",
+  ledger_without_billing: "Ledger tanpa billing",
+}
+
+const TOTAL_LABELS: Record<string, string> = {
+  token_usage_adjusted_usd: "Token usage adjusted",
+  token_usage_actual_usd: "Token usage actual",
+  token_usage_margin_usd: "Margin token usage",
+  message_billing_adjusted_usd: "Message billing adjusted",
+  message_billing_actual_usd: "Message billing actual",
+  message_billing_margin_usd: "Margin message billing",
+  ledger_adjusted_usd: "Ledger adjusted",
+  ledger_debit_amount_usd: "Debit ledger",
+}
+
+const MISMATCH_LABELS: Record<string, string> = {
+  token_vs_billing_usd: "Token usage vs message billing",
+  billing_vs_ledger_adjusted_usd: "Billing vs ledger adjusted",
+  billing_vs_ledger_amount_usd: "Billing vs debit ledger",
+}
+
+const METRIC_DESCRIPTIONS: Record<string, string> = {
+  unbilled_usage: "Panggilan AI yang belum masuk message billing.",
+  stale_unbilled_usage: "Unbilled usage yang sudah terlalu lama tertahan.",
+  failed_billings: "Billing yang gagal dibuat atau gagal debit wallet.",
+  pending_billings: "Billing yang masih menunggu proses debit.",
+  billed_without_ledger: "Message billing sukses tapi tidak punya ledger debit.",
+  ledger_without_billing: "Ada ledger debit yang tidak ketemu billing asalnya.",
+  duplicate_billing_groups: "Satu billing group muncul lebih dari sekali.",
+  token_vs_billing_usd: "Selisih biaya dari token usage ke message billing.",
+  billing_vs_ledger_adjusted_usd: "Selisih adjusted billing dengan ledger.",
+  billing_vs_ledger_amount_usd: "Selisih nominal debit ledger dengan billing.",
+}
+
+function metricLabel(key: string, group?: "count" | "total" | "mismatch") {
+  const source = group === "count" ? COUNT_LABELS : group === "total" ? TOTAL_LABELS : group === "mismatch" ? MISMATCH_LABELS : {}
+  return source[key] || key.replace(/_/g, " ")
+}
+
+function metricDescription(key: string) {
+  return METRIC_DESCRIPTIONS[key] || "Metrik teknis untuk audit rekonsiliasi."
+}
+
+function formatNumber(value?: number | null) {
+  return (value ?? 0).toLocaleString("id-ID")
+}
+
+function formatDateTime(value?: string | null) {
+  return value ? new Date(value).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : "-"
+}
+
+function shortId(value?: string | null) {
+  if (!value) return "-"
+  return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value
+}
+
+function statusLabel(status?: string | null) {
+  const labels: Record<string, string> = {
+    billed: "Billed",
+    success: "Berhasil",
+    completed: "Selesai",
+    pending: "Pending",
+    failed: "Gagal",
+    failed_insufficient_balance: "Saldo kurang",
+  }
+  return status ? labels[status] || status.replace(/_/g, " ") : "-"
+}
+
+function statusBadgeVariant(status?: string | null): "default" | "secondary" | "destructive" | "outline" {
+  if (["billed", "success", "completed"].includes(status || "")) return "default"
+  if (["failed", "failed_insufficient_balance"].includes(status || "")) return "destructive"
+  if (status === "pending") return "secondary"
+  return "outline"
+}
+
+function anomalyCount(data: ReconciliationData | null) {
+  if (!data) return 0
+  return [
+    "unbilled_usage",
+    "stale_unbilled_usage",
+    "missing_billing_group_usage",
+    "failed_billings",
+    "pending_billings",
+    "duplicate_billing_groups",
+    "billed_without_ledger",
+    "ledger_without_billing",
+  ].reduce((sum, key) => sum + (data.counts[key] || 0), 0)
+}
+
+function totalMismatchUsd(data: ReconciliationData | null) {
+  if (!data) return 0
+  return Object.values(data.mismatches || {}).reduce((sum, value) => sum + Math.abs(value || 0), 0)
+}
+
 function DebugJson({ value }: { value: unknown }) {
   return <pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 text-xs">{JSON.stringify(value, null, 2)}</pre>
 }
 
 function formatUsd(value?: number | null) {
   return `$${(value ?? 0).toFixed(8)}`
+}
+
+function SummaryMetricCard({ title, value, description, tone = "default" }: { title: string; value: string; description: string; tone?: "default" | "success" | "warning" | "danger" }) {
+  const toneClass = tone === "success" ? "text-emerald-600" : tone === "warning" ? "text-amber-600" : tone === "danger" ? "text-destructive" : "text-foreground"
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className={`text-2xl font-bold ${toneClass}`}>{value}</div>
+        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function TechnicalMetricTable({ rows, group, currency = false }: { rows: [string, number][]; group: "count" | "total" | "mismatch"; currency?: boolean }) {
+  return (
+    <Table>
+      <TableHeader><TableRow><TableHead>Metrik</TableHead><TableHead>Keterangan</TableHead><TableHead className="text-right">Nilai</TableHead></TableRow></TableHeader>
+      <TableBody>
+        {rows.map(([key, value]) => (
+          <TableRow key={key}>
+            <TableCell className="font-medium">{metricLabel(key, group)}</TableCell>
+            <TableCell className="text-xs text-muted-foreground">{metricDescription(key)}</TableCell>
+            <TableCell className="text-right font-mono text-xs">{currency ? formatUsd(value) : formatNumber(value)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
 }
 
 export default function AIBillingReconciliationPage() {
@@ -316,6 +454,44 @@ export default function AIBillingReconciliationPage() {
         </Alert>
       )}
 
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <SummaryMetricCard
+          title="Status Rekonsiliasi"
+          value={data?.healthy ? "Sehat" : "Perlu dicek"}
+          description={data?.healthy ? "Tidak ada anomali penting pada billing, usage, dan ledger." : `${formatNumber(anomalyCount(data))} anomali perlu ditinjau.`}
+          tone={data?.healthy ? "success" : "danger"}
+        />
+        <SummaryMetricCard
+          title="Usage Belum Tertagih"
+          value={formatNumber((data?.counts.unbilled_usage || 0) + (data?.counts.stale_unbilled_usage || 0))}
+          description={`${formatNumber(data?.counts.unbilled_usage || 0)} baru · ${formatNumber(data?.counts.stale_unbilled_usage || 0)} lama`}
+          tone={(data?.counts.unbilled_usage || 0) + (data?.counts.stale_unbilled_usage || 0) > 0 ? "warning" : "success"}
+        />
+        <SummaryMetricCard
+          title="Billing Bermasalah"
+          value={formatNumber((data?.counts.failed_billings || 0) + (data?.counts.pending_billings || 0))}
+          description={`${formatNumber(data?.counts.failed_billings || 0)} gagal · ${formatNumber(data?.counts.pending_billings || 0)} pending`}
+          tone={(data?.counts.failed_billings || 0) > 0 ? "danger" : (data?.counts.pending_billings || 0) > 0 ? "warning" : "success"}
+        />
+        <SummaryMetricCard
+          title="Relasi Billing vs Ledger"
+          value={formatNumber((data?.counts.billed_without_ledger || 0) + (data?.counts.ledger_without_billing || 0))}
+          description={`${formatNumber(data?.counts.billed_without_ledger || 0)} tanpa ledger · ${formatNumber(data?.counts.ledger_without_billing || 0)} tanpa billing`}
+          tone={(data?.counts.billed_without_ledger || 0) + (data?.counts.ledger_without_billing || 0) > 0 ? "warning" : "success"}
+        />
+        <SummaryMetricCard
+          title="Total Billed Adjusted"
+          value={formatUsd(data?.totals.message_billing_adjusted_usd || 0)}
+          description="Total biaya billed yang tercatat di message billing."
+        />
+        <SummaryMetricCard
+          title="Total Mismatch"
+          value={formatUsd(totalMismatchUsd(data))}
+          description="Akumulasi absolut selisih nominal antar sumber data."
+          tone={totalMismatchUsd(data) > 0 ? "danger" : "success"}
+        />
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Retry Failed/Pending Billing</CardTitle>
@@ -330,51 +506,10 @@ export default function AIBillingReconciliationPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle>Counts</CardTitle>
-            <CardDescription>Jumlah row penting.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader><TableRow><TableHead>Metric</TableHead><TableHead className="text-right">Value</TableHead></TableRow></TableHeader>
-              <TableBody>{countRows.map(([key, value]) => <TableRow key={key}><TableCell>{key}</TableCell><TableCell className="text-right">{value}</TableCell></TableRow>)}</TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Totals</CardTitle>
-            <CardDescription>Total biaya historical.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader><TableRow><TableHead>Metric</TableHead><TableHead className="text-right">USD</TableHead></TableRow></TableHeader>
-              <TableBody>{totalRows.map(([key, value]) => <TableRow key={key}><TableCell>{key}</TableCell><TableCell className="text-right">{formatUsd(value)}</TableCell></TableRow>)}</TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Mismatches</CardTitle>
-            <CardDescription>Selisih antar sumber truth.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader><TableRow><TableHead>Metric</TableHead><TableHead className="text-right">USD</TableHead></TableRow></TableHeader>
-              <TableBody>{mismatchRows.map(([key, value]) => <TableRow key={key}><TableCell>{key}</TableCell><TableCell className="text-right">{formatUsd(value)}</TableCell></TableRow>)}</TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
-
       <Card>
         <CardHeader>
-          <CardTitle>Recent Message Billings</CardTitle>
-          <CardDescription>Drilldown ringkas billing terbaru: status, ledger, call count, dan biaya.</CardDescription>
+          <CardTitle>Billing Terbaru</CardTitle>
+          <CardDescription>Baris billing yang paling relevan untuk dicek cepat dan ditelusuri detailnya.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -383,28 +518,29 @@ export default function AIBillingReconciliationPage() {
                 <TableHead>Billing</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Ledger</TableHead>
-                <TableHead className="text-right">Calls</TableHead>
-                <TableHead className="text-right">Adjusted</TableHead>
+                <TableHead className="text-right">Jumlah Call</TableHead>
+                <TableHead className="text-right">Biaya</TableHead>
                 <TableHead>Error</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead className="text-right">Aksi</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {billingRows.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">Tidak ada billing.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">Belum ada billing yang perlu ditampilkan.</TableCell></TableRow>
               ) : billingRows.map((row) => (
                 <TableRow key={row.id} className="cursor-pointer" onClick={() => loadBillingDetail(row.id)}>
                   <TableCell>
-                    <div className="font-mono text-xs">{row.id}</div>
-                    <div className="text-xs text-muted-foreground">{row.message_id || row.village_id || "-"}</div>
+                    <div className="font-mono text-xs" title={row.id}>{shortId(row.id)}</div>
+                    <div className="text-xs text-muted-foreground" title={row.message_id || row.village_id || "-"}>{shortId(row.message_id || row.village_id || "-")}</div>
                   </TableCell>
-                  <TableCell>{row.status}</TableCell>
-                  <TableCell className="font-mono text-xs">{row.ledger_entry_id || "-"}</TableCell>
-                  <TableCell className="text-right">{row.call_count}</TableCell>
+                  <TableCell><Badge variant={statusBadgeVariant(row.status)}>{statusLabel(row.status)}</Badge></TableCell>
+                  <TableCell className="font-mono text-xs" title={row.ledger_entry_id || "-"}>{shortId(row.ledger_entry_id)}</TableCell>
+                  <TableCell className="text-right">{formatNumber(row.call_count)}</TableCell>
                   <TableCell className="text-right">{formatUsd(row.adjusted_cost_usd)}</TableCell>
-                  <TableCell className="max-w-[260px] truncate text-xs text-muted-foreground">{row.error_message || "-"}</TableCell>
+                  <TableCell className="max-w-[260px] truncate text-xs text-muted-foreground" title={row.error_message || "-"}>{row.error_message || "-"}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); loadBillingDetail(row.id) }}>Detail</Button>
                       <Button
                         size="sm"
                         variant="outline"
@@ -441,41 +577,44 @@ export default function AIBillingReconciliationPage() {
       {(selectedBillingId || detailLoading) && (
         <Card>
           <CardHeader>
-            <CardTitle>Billing Drilldown</CardTitle>
-            <CardDescription>Ledger wallet dan token usage per call untuk billing yang dipilih.</CardDescription>
+            <CardTitle>Detail Billing Terpilih</CardTitle>
+            <CardDescription>Ringkasan billing, ledger wallet, dan token usage per call.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {detailLoading ? (
               <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Memuat detail billing...</div>
             ) : billingDetail ? (
               <>
-                <div className="grid gap-3 text-sm md:grid-cols-2 lg:grid-cols-5">
-                  <div><div className="text-muted-foreground">Billing</div><div className="font-mono text-xs">{billingDetail.billing.id}</div></div>
-                  <div><div className="text-muted-foreground">Group</div><div className="font-mono text-xs">{billingDetail.billing.billing_group_id || "-"}</div></div>
-                  <div><div className="text-muted-foreground">Status</div><div>{billingDetail.billing.status}</div></div>
-                  <div><div className="text-muted-foreground">Adjusted</div><div>{formatUsd(billingDetail.billing.adjusted_cost_usd)}</div></div>
-                  <div className="flex items-end"><Button size="sm" variant="outline" disabled={!billingDetail.billing.trace_id || traceLoading} onClick={() => loadAITrace(billingDetail.billing.trace_id)}>{traceLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}Trace</Button></div>
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+                  <SummaryMetricCard title="Billing ID" value={shortId(billingDetail.billing.id)} description={billingDetail.billing.id} />
+                  <SummaryMetricCard title="Billing Group" value={shortId(billingDetail.billing.billing_group_id)} description={billingDetail.billing.billing_group_id || "-"} />
+                  <SummaryMetricCard title="Status" value={statusLabel(billingDetail.billing.status)} description={formatDateTime(billingDetail.billing.created_at)} tone={statusBadgeVariant(billingDetail.billing.status) === "destructive" ? "danger" : statusBadgeVariant(billingDetail.billing.status) === "secondary" ? "warning" : "success"} />
+                  <SummaryMetricCard title="Biaya Adjusted" value={formatUsd(billingDetail.billing.adjusted_cost_usd)} description={`Actual ${formatUsd(billingDetail.billing.actual_cost_usd)}`} />
+                  <Card>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Trace AI</CardTitle></CardHeader>
+                    <CardContent><Button size="sm" variant="outline" disabled={!billingDetail.billing.trace_id || traceLoading} onClick={() => loadAITrace(billingDetail.billing.trace_id)}>{traceLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}Trace</Button></CardContent>
+                  </Card>
                 </div>
 
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Ledger</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                      <TableHead className="text-right">Before</TableHead>
-                      <TableHead className="text-right">After</TableHead>
+                      <TableHead className="text-right">Debit</TableHead>
+                      <TableHead className="text-right">Saldo Sebelum</TableHead>
+                      <TableHead className="text-right">Saldo Sesudah</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {billingDetail.ledger_entry ? (
                       <TableRow>
-                        <TableCell className="font-mono text-xs">{billingDetail.ledger_entry.id}</TableCell>
+                        <TableCell className="font-mono text-xs" title={billingDetail.ledger_entry.id}>{shortId(billingDetail.ledger_entry.id)}</TableCell>
                         <TableCell className="text-right">{formatUsd(billingDetail.ledger_entry.amount_usd)}</TableCell>
                         <TableCell className="text-right">{formatUsd(billingDetail.ledger_entry.balance_before_usd)}</TableCell>
                         <TableCell className="text-right">{formatUsd(billingDetail.ledger_entry.balance_after_usd)}</TableCell>
                       </TableRow>
                     ) : (
-                      <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">Tidak ada ledger entry.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">Belum ada ledger entry untuk billing ini.</TableCell></TableRow>
                     )}
                   </TableBody>
                 </Table>
@@ -483,7 +622,7 @@ export default function AIBillingReconciliationPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Call</TableHead>
+                      <TableHead>Call AI</TableHead>
                       <TableHead>Model</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Tokens</TableHead>
@@ -493,13 +632,13 @@ export default function AIBillingReconciliationPage() {
                   </TableHeader>
                   <TableBody>
                     {billingDetail.token_usage.length === 0 ? (
-                      <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">Tidak ada token usage.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">Tidak ada token usage pada billing ini.</TableCell></TableRow>
                     ) : billingDetail.token_usage.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell><div className="font-mono text-xs">{row.layer_type}</div><div className="text-xs text-muted-foreground">{row.call_type}</div></TableCell>
                         <TableCell className="max-w-[220px] truncate text-xs">{row.model}</TableCell>
-                        <TableCell>{row.billing_status}{row.success ? "" : " / failed"}</TableCell>
-                        <TableCell className="text-right">{row.total_tokens}</TableCell>
+                        <TableCell><Badge variant={statusBadgeVariant(row.success ? row.billing_status : "failed")}>{row.success ? statusLabel(row.billing_status) : "Call gagal"}</Badge></TableCell>
+                        <TableCell className="text-right">{formatNumber(row.total_tokens)}</TableCell>
                         <TableCell className="text-right">{formatUsd(row.adjusted_cost_usd)}</TableCell>
                         <TableCell className="text-right">{row.duration_ms ?? "-"} ms</TableCell>
                       </TableRow>
@@ -508,7 +647,7 @@ export default function AIBillingReconciliationPage() {
                 </Table>
               </>
             ) : (
-              <div className="text-sm text-muted-foreground">Pilih billing row untuk melihat detail.</div>
+              <div className="text-sm text-muted-foreground">Pilih billing untuk melihat detailnya.</div>
             )}
           </CardContent>
         </Card>
@@ -516,29 +655,29 @@ export default function AIBillingReconciliationPage() {
       {aiTrace && (
         <Card>
           <CardHeader>
-            <CardTitle>AI Pipeline Trace</CardTitle>
+            <CardTitle>Diagnostik Trace AI</CardTitle>
             <CardDescription>Trace {aiTrace.trace_id}: billing, token usage, RAG, memory, guardrail, dan tool policy.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 text-sm md:grid-cols-3 lg:grid-cols-6">
-              <div><div className="text-muted-foreground">Billing</div><div>{aiTrace.billings.length}</div></div>
-              <div><div className="text-muted-foreground">Calls</div><div>{aiTrace.token_usage.length}</div></div>
-              <div><div className="text-muted-foreground">RAG</div><div>{aiTrace.retrieval.length}</div></div>
-              <div><div className="text-muted-foreground">Memory</div><div>{aiTrace.memory.length}</div></div>
-              <div><div className="text-muted-foreground">Guardrails</div><div>{aiTrace.guardrails.length}</div></div>
-              <div><div className="text-muted-foreground">Tools</div><div>{aiTrace.tool_policy.length}</div></div>
+              <div><div className="text-muted-foreground">Billing</div><div>{formatNumber(aiTrace.billings.length)}</div></div>
+              <div><div className="text-muted-foreground">Calls</div><div>{formatNumber(aiTrace.token_usage.length)}</div></div>
+              <div><div className="text-muted-foreground">RAG</div><div>{formatNumber(aiTrace.retrieval.length)}</div></div>
+              <div><div className="text-muted-foreground">Memory</div><div>{formatNumber(aiTrace.memory.length)}</div></div>
+              <div><div className="text-muted-foreground">Guardrails</div><div>{formatNumber(aiTrace.guardrails.length)}</div></div>
+              <div><div className="text-muted-foreground">Tools</div><div>{formatNumber(aiTrace.tool_policy.length)}</div></div>
             </div>
 
             <div className="space-y-2">
-              <h3 className="font-medium">Stage Timeline</h3>
+              <h3 className="font-medium">Timeline Tahapan</h3>
               <Table>
-                <TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Stage</TableHead><TableHead>Detail</TableHead><TableHead className="text-right">Adjusted</TableHead><TableHead className="text-right">Actual</TableHead><TableHead className="text-right">Margin</TableHead><TableHead className="text-right">Latency</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Waktu</TableHead><TableHead>Tahap</TableHead><TableHead>Detail</TableHead><TableHead className="text-right">Adjusted</TableHead><TableHead className="text-right">Actual</TableHead><TableHead className="text-right">Margin</TableHead><TableHead className="text-right">Latency</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {traceStages.length === 0 ? (
                     <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">Tidak ada event trace.</TableCell></TableRow>
                   ) : traceStages.map((stage) => (
                     <TableRow key={`${stage.stage}-${stage.id}`}>
-                      <TableCell className="text-xs text-muted-foreground">{new Date(stage.created_at).toLocaleString("id-ID")}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{formatDateTime(stage.created_at)}</TableCell>
                       <TableCell><div className="font-medium">{stage.stage}</div><div className="text-xs text-muted-foreground">{stage.title}</div></TableCell>
                       <TableCell className="max-w-[520px] truncate text-xs">{stage.detail}</TableCell>
                       <TableCell className="text-right">{stage.adjusted_cost_usd == null ? "-" : formatUsd(stage.adjusted_cost_usd)}</TableCell>
@@ -551,15 +690,50 @@ export default function AIBillingReconciliationPage() {
               </Table>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-2"><h3 className="font-medium">RAG Debug</h3>{aiTrace.retrieval.length ? aiTrace.retrieval.map((row) => <DebugJson key={row.id} value={row} />) : <div className="text-sm text-muted-foreground">Tidak ada retrieval trace.</div>}</div>
-              <div className="space-y-2"><h3 className="font-medium">Memory Debug</h3>{aiTrace.memory.length ? aiTrace.memory.map((row) => <DebugJson key={row.id} value={row} />) : <div className="text-sm text-muted-foreground">Tidak ada memory trace.</div>}</div>
-              <div className="space-y-2"><h3 className="font-medium">Guardrail Events</h3>{aiTrace.guardrails.length ? aiTrace.guardrails.map((row) => <DebugJson key={row.id} value={row} />) : <div className="text-sm text-muted-foreground">Tidak ada guardrail event.</div>}</div>
-              <div className="space-y-2"><h3 className="font-medium">Tool Policy Trace</h3>{aiTrace.tool_policy.length ? aiTrace.tool_policy.map((row) => <DebugJson key={row.id} value={row} />) : <div className="text-sm text-muted-foreground">Tidak ada tool trace.</div>}</div>
-            </div>
+            <Accordion type="multiple" className="w-full">
+              <AccordionItem value="trace-rag">
+                <AccordionTrigger>RAG Debug</AccordionTrigger>
+                <AccordionContent>{aiTrace.retrieval.length ? aiTrace.retrieval.map((row) => <DebugJson key={row.id} value={row} />) : <div className="text-sm text-muted-foreground">Tidak ada retrieval trace.</div>}</AccordionContent>
+              </AccordionItem>
+              <AccordionItem value="trace-memory">
+                <AccordionTrigger>Memory Debug</AccordionTrigger>
+                <AccordionContent>{aiTrace.memory.length ? aiTrace.memory.map((row) => <DebugJson key={row.id} value={row} />) : <div className="text-sm text-muted-foreground">Tidak ada memory trace.</div>}</AccordionContent>
+              </AccordionItem>
+              <AccordionItem value="trace-guardrail">
+                <AccordionTrigger>Guardrail Events</AccordionTrigger>
+                <AccordionContent>{aiTrace.guardrails.length ? aiTrace.guardrails.map((row) => <DebugJson key={row.id} value={row} />) : <div className="text-sm text-muted-foreground">Tidak ada guardrail event.</div>}</AccordionContent>
+              </AccordionItem>
+              <AccordionItem value="trace-tools">
+                <AccordionTrigger>Tool Policy Trace</AccordionTrigger>
+                <AccordionContent>{aiTrace.tool_policy.length ? aiTrace.tool_policy.map((row) => <DebugJson key={row.id} value={row} />) : <div className="text-sm text-muted-foreground">Tidak ada tool trace.</div>}</AccordionContent>
+              </AccordionItem>
+            </Accordion>
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Detail Metrik Teknis</CardTitle>
+          <CardDescription>Semua angka teknis tetap tersedia untuk audit, tetapi disembunyikan agar tampilan utama lebih ringkas.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Accordion type="multiple" className="w-full">
+            <AccordionItem value="metrics-counts">
+              <AccordionTrigger>Counts</AccordionTrigger>
+              <AccordionContent><TechnicalMetricTable rows={countRows} group="count" /></AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="metrics-totals">
+              <AccordionTrigger>Totals</AccordionTrigger>
+              <AccordionContent><TechnicalMetricTable rows={totalRows} group="total" currency /></AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="metrics-mismatches">
+              <AccordionTrigger>Mismatches</AccordionTrigger>
+              <AccordionContent><TechnicalMetricTable rows={mismatchRows} group="mismatch" currency /></AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </CardContent>
+      </Card>
     </div>
   )
 }

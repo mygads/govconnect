@@ -378,17 +378,41 @@ export const documents = {
     return fetchApi<any>('/api/documents/stats');
   },
 
-  async upload(formData: FormData) {
-    const response = await fetch('/api/documents', {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData,
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
-      throw new Error(error.error || 'Upload failed');
+  async upload(formData: FormData, onUploadProgress?: (progress: number) => void) {
+    if (!onUploadProgress) {
+      const response = await fetch('/api/documents', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: formData,
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+        throw new Error(error.error || 'Upload failed');
+      }
+      return response.json();
     }
-    return response.json();
+
+    return new Promise<any>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/documents');
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          onUploadProgress(Math.min(95, Math.round((event.loaded / event.total) * 95)));
+        }
+      };
+      xhr.onload = () => {
+        const payload = JSON.parse(xhr.responseText || '{}');
+        if (xhr.status >= 200 && xhr.status < 300) {
+          onUploadProgress(100);
+          resolve(payload);
+        } else {
+          reject(new Error(payload?.error || 'Upload failed'));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Upload failed'));
+      xhr.send(formData);
+    });
   },
 
   async delete(id: string) {
@@ -406,6 +430,12 @@ export const documents = {
 
   async process(id: string) {
     return fetchApi<any>(`/api/documents/${id}/process`, {
+      method: 'POST',
+    });
+  },
+
+  async embedAll() {
+    return fetchApi<any>('/api/documents/embed-all', {
       method: 'POST',
     });
   },
