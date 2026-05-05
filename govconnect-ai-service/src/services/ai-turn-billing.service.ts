@@ -212,6 +212,9 @@ export async function finalizeAiBillingTurn(context: AiBillingTurnContext) {
         message_id: context.message_id ?? null,
         trace_id: context.trace_id,
         call_count: usageRows.length,
+        channel: context.channel ?? null,
+        session_id: context.session_id ?? null,
+        wa_user_id: context.wa_user_id ?? null,
       } as Prisma.InputJsonValue,
     });
 

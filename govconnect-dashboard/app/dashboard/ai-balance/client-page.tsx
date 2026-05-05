@@ -48,7 +48,21 @@ interface LedgerEntry {
     message_id?: string | null
     trace_id?: string | null
     call_count?: number | null
+    channel?: string | null
+    session_id?: string | null
+    wa_user_id?: string | null
   } | null
+}
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
 }
 
 function formatUsd(value?: number | null, options?: { preciseSmall?: boolean; signed?: boolean }) {
@@ -85,16 +99,17 @@ function formatEntryLabel(entry: LedgerEntry) {
   const traceId = entry.metadata_json?.trace_id || ""
   const messageId = entry.metadata_json?.message_id || ""
   const billingGroupId = entry.metadata_json?.billing_group_id || ""
+  const channel = entry.metadata_json?.channel || ""
   const note = `${entry.metadata_json?.reason || ""} ${entry.metadata_json?.status_text || ""}`.toLowerCase()
 
   if (entry.entry_type === "usage_debit") {
     if (traceId.startsWith("document-reprocess-") || messageId.startsWith("ingest:") || billingGroupId.startsWith("ingest:")) {
       return "Embedding Dokumen"
     }
-    if (messageId.startsWith("webchat:") || billingGroupId.startsWith("webchat:")) {
+    if (messageId.startsWith("webchat:") || billingGroupId.startsWith("webchat:") || channel === "webchat") {
       return "AI Webchat"
     }
-    if (messageId.startsWith("wa:") || billingGroupId.startsWith("wa:")) {
+    if (messageId.startsWith("wa:") || billingGroupId.startsWith("wa:") || channel === "whatsapp") {
       return "AI WhatsApp"
     }
     if (note.includes("knowledge") || note.includes("dokumen")) {
@@ -117,16 +132,19 @@ function getEntryNote(entry: LedgerEntry) {
   if (entry.entry_type === "usage_debit") {
     const traceId = entry.metadata_json?.trace_id || ""
     const messageId = entry.metadata_json?.message_id || ""
+    const channel = entry.metadata_json?.channel || ""
+    const sessionId = entry.metadata_json?.session_id || ""
+    const waUserId = entry.metadata_json?.wa_user_id || ""
     const callCount = entry.metadata_json?.call_count
 
     if (traceId.startsWith("document-reprocess-") || messageId.startsWith("ingest:")) {
       return `${callCount || 0} call embedding untuk proses dokumen/knowledge base.`
     }
-    if (messageId.startsWith("webchat:")) {
-      return `${callCount || 0} call AI dari percakapan webchat warga.`
+    if (messageId.startsWith("webchat:") || channel === "webchat") {
+      return `${callCount || 0} call AI dari percakapan webchat${sessionId ? ` (${sessionId})` : ""}.`
     }
-    if (messageId.startsWith("wa:")) {
-      return `${callCount || 0} call AI dari percakapan WhatsApp warga.`
+    if (messageId.startsWith("wa:") || channel === "whatsapp") {
+      return `${callCount || 0} call AI dari percakapan WhatsApp${waUserId ? ` (${waUserId})` : ""}.`
     }
     if (traceId) {
       return `${callCount || 0} call AI yang sudah ditagihkan ke wallet desa.`
@@ -348,7 +366,7 @@ export default function AIBalancePageContent() {
                   ) : (
                     ledger.map((entry) => (
                       <TableRow key={entry.id}>
-                        <TableCell>{new Date(entry.created_at).toLocaleString("id-ID")}</TableCell>
+                        <TableCell>{formatDateTime(entry.created_at)}</TableCell>
                         <TableCell>{formatEntryLabel(entry)}</TableCell>
                         <TableCell className="max-w-60 truncate text-muted-foreground" title={getEntryNote(entry)}>{getEntryNote(entry)}</TableCell>
                         <TableCell className={getEntryTone(entry)}>
