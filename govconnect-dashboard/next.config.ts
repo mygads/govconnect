@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
     root: process.cwd(),
   },
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
-  reactCompiler: true,
+  reactCompiler: false,
   images: {
     remotePatterns: [
       {

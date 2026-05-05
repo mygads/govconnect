@@ -44,7 +44,7 @@ interface MessageResponse { total: number; totals: { messages: number; actual_co
 interface TokenUsageRow { id: string; layer_type: string; call_type: string; input_tokens: number; output_tokens: number; total_tokens: number; actual_cost_usd: number; adjusted_cost_usd: number; margin_usd: number; duration_ms: number | null; success: boolean; billing_status: string; created_at: string }
 interface MessageDetail { billing: MessageBilling; ledger_entry: any | null; token_usage: TokenUsageRow[] }
 
-const USD_TO_IDR = 17_000
+const USD_TO_IDR = 18_000
 const LAYER_COLORS: Record<string, string> = { agent: "#6366f1", micro_nlu: "#f59e0b", rag_expand: "#10b981", rag_rerank: "#0f766e", embedding: "#ef4444", full_nlu: "#64748b" }
 const LAYER_LABELS: Record<string, string> = { agent: "LLM / Agent", micro_nlu: "Classifier", rag_expand: "Rewrite", rag_rerank: "Rerank", embedding: "Embed", full_nlu: "LLM" }
 const CALL_TYPE_LABELS: Record<string, string> = {
@@ -100,6 +100,10 @@ function userLabel(user: UsageUser) {
   return user.wa_user_id || user.session_id || "Unknown user"
 }
 
+function endOfDay(value: string) {
+  return `${value}T23:59:59.999`
+}
+
 async function fetchJson<T>(path: string, params?: Record<string, string>) {
   const qs = params ? `?${new URLSearchParams(params).toString()}` : ""
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
@@ -108,6 +112,7 @@ async function fetchJson<T>(path: string, params?: Record<string, string>) {
   if (!res.ok) throw new Error(payload?.error || "Gagal memuat statistik AI")
   return payload as T
 }
+
 
 export default function VillageAIUsagePage() {
   const { user } = useAuth()
@@ -148,7 +153,7 @@ export default function VillageAIUsagePage() {
     }
   }, [selectedUser])
 
-  const params = useMemo(() => ({ start, end, ...selectedUserParams }), [start, end, selectedUserParams])
+  const params = useMemo(() => ({ start, end: endOfDay(end), ...selectedUserParams }), [start, end, selectedUserParams])
 
   const loadData = useCallback(async () => {
     try {

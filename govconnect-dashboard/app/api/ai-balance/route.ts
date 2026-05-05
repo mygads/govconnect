@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
   const [session, authError] = await requireAuth(request)
   if (authError) return authError
 
-  const villageId = session.villageId || request.nextUrl.searchParams.get('village_id')
+  const villageId = session.villageId || (session.role === 'superadmin' ? request.nextUrl.searchParams.get('village_id') : null)
   if (!villageId) {
     return NextResponse.json({ error: 'village_id is required' }, { status: 400 })
   }

@@ -994,8 +994,8 @@ class AIAnalyticsService {
     try {
       const rows = await prisma.$queryRaw<Array<{ hits: number; misses: number; no_knowledge: number }>>(Prisma.sql`
         SELECT
-          COALESCE(SUM(CASE WHEN has_knowledge THEN 1 ELSE 0 END), 0)::int AS hits,
-          COALESCE(SUM(CASE WHEN has_knowledge THEN 0 ELSE 1 END), 0)::int AS misses,
+          COALESCE(SUM(CASE WHEN confidence IN ('high', 'medium') THEN 1 ELSE 0 END), 0)::int AS hits,
+          COALESCE(SUM(CASE WHEN confidence IN ('low', 'none') THEN 1 ELSE 0 END), 0)::int AS misses,
           COALESCE(SUM(CASE WHEN has_knowledge THEN 0 ELSE 1 END), 0)::int AS no_knowledge
         FROM ai."ai_retrieval_traces"
         WHERE 1 = 1

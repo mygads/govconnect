@@ -291,6 +291,8 @@ export default function AITokenUsagePage() {
 
   // Reset database
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [resetPassword, setResetPassword] = useState("")
+  const [resetError, setResetError] = useState<string | null>(null)
   const [resetting, setResetting] = useState(false)
   const [charts, setCharts] = useState<{ Bar: ChartComponent; Line: ChartComponent; Doughnut: ChartComponent } | null>(null)
 
@@ -438,37 +440,56 @@ export default function AITokenUsagePage() {
 
   // Reset all token usage data
   const handleResetDatabase = async () => {
+    if (!resetPassword.trim()) {
+      setResetError("Password superadmin wajib diisi")
+      return
+    }
+
     try {
       setResetting(true)
+      setResetError(null)
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
       const res = await fetch("/api/superadmin/reset-token-usage", {
         method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ password: resetPassword }),
       })
-      if (res.ok) {
-        // Clear all local state and reload
-        setSummary(null)
-        setByModel([])
-        setByProvider([])
-        setExpandedProviderIds(new Set())
-        setAvgPerChat(null)
-        setByPeriod([])
-        setByPeriodLayer([])
-        setByVillage([])
-        setResponsesByVillage([])
-        setAllModelDetail([])
-        setLayerBreakdown([])
-        setPeriodeLoaded(false)
-        setVillageLoaded(false)
-        setLayerLoaded(false)
-        // Reload summary
-        loadSummary()
+
+      const payload = await res.json().catch(() => null)
+      if (!res.ok) {
+        setResetError(payload?.error || "Gagal menghapus data AI usage")
+        return
       }
+
+      setSummary(null)
+      setByModel([])
+      setByProvider([])
+      setExpandedProviderIds(new Set())
+      setAvgPerChat(null)
+      setByPeriod([])
+      setByPeriodLayer([])
+      setByVillage([])
+      setResponsesByVillage([])
+      setAllModelDetail([])
+      setLayerBreakdown([])
+      setPeriodeLoaded(false)
+      setVillageLoaded(false)
+      setLayerLoaded(false)
+      setResetPassword("")
+      setShowResetConfirm(false)
+
+      await loadSummary()
+      if (activeTab === "periode") await loadPeriode()
+      if (activeTab === "village") await loadVillage()
+      if (activeTab === "layer") await loadLayer()
     } catch (e) {
       console.error("Reset failed:", e)
+      setResetError("Terjadi kesalahan saat menghapus data AI usage")
     } finally {
       setResetting(false)
-      setShowResetConfirm(false)
     }
   }
 
@@ -509,12 +530,15 @@ export default function AITokenUsagePage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowResetConfirm(true)}
+            onClick={() => {
+              setShowResetConfirm(true)
+              setResetError(null)
+            }}
             disabled={resetting || summaryLoading}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950 transition-colors disabled:opacity-50"
           >
             <Trash2 className="h-4 w-4" />
-            Reset Data
+            Flush Data AI
           </button>
           <button
             onClick={() => {
@@ -553,16 +577,38 @@ export default function AITokenUsagePage() {
                 <Trash2 className="h-5 w-5 text-red-600 dark:text-red-400" />
               </div>
               <div>
-                <h3 className="font-semibold text-lg">Reset Semua Data AI Usage?</h3>
+                <h3 className="font-semibold text-lg">Flush Semua Data AI Usage?</h3>
                 <p className="text-sm text-muted-foreground">Tindakan ini tidak dapat dibatalkan</p>
               </div>
             </div>
             <p className="text-sm text-muted-foreground">
-              Semua data penggunaan token AI (termasuk statistik per desa, model, dan periode) akan dihapus secara permanen.
+              Semua data penggunaan AI akan dihapus permanen untuk superadmin dan seluruh admin desa, termasuk token usage, billing/message usage, generation logs, statistik model, statistik periode, dan ringkasan per desa.
             </p>
+            <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+              Saldo wallet desa tidak akan direset.
+            </p>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Masukkan password superadmin</label>
+              <input
+                type="password"
+                value={resetPassword}
+                onChange={(e) => {
+                  setResetPassword(e.target.value)
+                  if (resetError) setResetError(null)
+                }}
+                placeholder="Password superadmin"
+                disabled={resetting}
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
+              />
+              {resetError && <p className="text-sm text-red-600 dark:text-red-400">{resetError}</p>}
+            </div>
             <div className="flex justify-end gap-2 pt-2">
               <button
-                onClick={() => setShowResetConfirm(false)}
+                onClick={() => {
+                  setShowResetConfirm(false)
+                  setResetPassword("")
+                  setResetError(null)
+                }}
                 disabled={resetting}
                 className="px-4 py-2 text-sm font-medium rounded-lg border hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
               >
@@ -570,10 +616,10 @@ export default function AITokenUsagePage() {
               </button>
               <button
                 onClick={handleResetDatabase}
-                disabled={resetting}
+                disabled={resetting || !resetPassword.trim()}
                 className="px-4 py-2 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
               >
-                {resetting ? "Menghapus..." : "Ya, Reset Semua"}
+                {resetting ? "Menghapus..." : "Ya, Flush Semua"}
               </button>
             </div>
           </div>

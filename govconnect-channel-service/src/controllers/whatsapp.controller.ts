@@ -283,7 +283,6 @@ export async function disconnect(_req: Request, res: Response): Promise<void> {
 
     const result = await disconnectSession(session.wa_token);
 
-    // Sync status after disconnect
     try {
       await syncSessionState(villageId);
     } catch (e: any) {

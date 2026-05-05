@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import cors from 'cors';
 import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
@@ -1208,50 +1209,108 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
       delete usageWhereBase.status;
     }
     const usageWhere = usageWhereBase;
-    const [generationTotal, generationRows, usageRows] = await Promise.all([
+    const rawFilters = Prisma.sql`
+      ${getQuery(req, 'village_id') ? Prisma.sql`AND u.village_id = ${getQuery(req, 'village_id')}` : Prisma.empty}
+      ${getQuery(req, 'provider_id') ? Prisma.sql`AND u.provider_id = ${getQuery(req, 'provider_id')}` : Prisma.empty}
+      ${getQuery(req, 'lane_type') ? Prisma.sql`AND u.lane_type = ${getQuery(req, 'lane_type')}` : Prisma.empty}
+      ${getQuery(req, 'layer_type') ? Prisma.sql`AND u.layer_type = ${getQuery(req, 'layer_type')}` : Prisma.empty}
+      ${getQuery(req, 'call_type') ? Prisma.sql`AND u.call_type = ${getQuery(req, 'call_type')}` : Prisma.empty}
+      ${getQuery(req, 'status') ? Prisma.sql`AND u.success = ${getQuery(req, 'status') === 'success'}` : Prisma.empty}
+      ${start ? Prisma.sql`AND u.created_at >= ${new Date(start)}` : Prisma.empty}
+      ${end ? Prisma.sql`AND u.created_at <= ${new Date(end)}` : Prisma.empty}
+      ${search ? Prisma.sql`AND (u.trace_id ILIKE ${`%${search}%`} OR u.message_id ILIKE ${`%${search}%`} OR u.wa_user_id ILIKE ${`%${search}%`} OR u.session_id ILIKE ${`%${search}%`})` : Prisma.empty}
+    `;
+    const [generationTotal, fallbackUsageTotalRows, generationRows, fallbackRows] = await Promise.all([
       (prisma as any).ai_generation_logs.count({ where: generationWhere }),
+      prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+        SELECT COUNT(*)::bigint AS count
+        FROM ai."ai_token_usage" u
+        WHERE NOT EXISTS (
+          SELECT 1 FROM ai."ai_generation_logs" g WHERE g.token_usage_id = u.id
+        )
+        ${rawFilters}
+      `),
       (prisma as any).ai_generation_logs.findMany({
         where: generationWhere,
         orderBy: { created_at: 'desc' },
         take: limit + offset,
       }),
-      prisma.ai_token_usage.findMany({
-        where: usageWhere,
-        orderBy: { created_at: 'desc' },
-        take: limit + offset,
-        select: {
-          id: true,
-          village_id: true,
-          wa_user_id: true,
-          session_id: true,
-          channel: true,
-          message_id: true,
-          trace_id: true,
-          billing_group_id: true,
-          lane_type: true,
-          layer_type: true,
-          call_type: true,
-          provider_id: true,
-          model_config_id: true,
-          key_source: true,
-          key_tier: true,
-          model: true,
-          input_tokens: true,
-          output_tokens: true,
-          total_tokens: true,
-          actual_cost_usd: true,
-          adjusted_cost_usd: true,
-          duration_ms: true,
-          success: true,
-          created_at: true,
-        },
-      }),
+      prisma.$queryRaw<Array<{
+        id: string;
+        village_id: string | null;
+        wa_user_id: string | null;
+        session_id: string | null;
+        channel: string | null;
+        message_id: string | null;
+        trace_id: string | null;
+        billing_group_id: string | null;
+        lane_type: string | null;
+        layer_type: string;
+        call_type: string;
+        provider_id: string | null;
+        model_config_id: string | null;
+        key_source: string | null;
+        key_tier: string | null;
+        model: string;
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+        actual_cost_usd: number;
+        adjusted_cost_usd: number;
+        duration_ms: number | null;
+        success: boolean;
+        created_at: Date;
+      }>>(Prisma.sql`
+        SELECT u.id, u.village_id, u.wa_user_id, u.session_id, u.channel, u.message_id, u.trace_id,
+          u.billing_group_id, u.lane_type, u.layer_type, u.call_type, u.provider_id, u.model_config_id,
+          u.key_source, u.key_tier, u.model, u.input_tokens, u.output_tokens, u.total_tokens,
+          u.actual_cost_usd, u.adjusted_cost_usd, u.duration_ms, u.success, u.created_at
+        FROM ai."ai_token_usage" u
+        WHERE NOT EXISTS (
+          SELECT 1 FROM ai."ai_generation_logs" g WHERE g.token_usage_id = u.id
+        )
+        ${rawFilters}
+        ORDER BY u.created_at DESC
+        LIMIT ${limit + offset}
+      `),
     ]);
+    const fallbackUsageTotal = Number(fallbackUsageTotalRows[0]?.count || 0);
+    const generationTokenUsageIds = Array.from(new Set(generationRows.map((row: any) => row.token_usage_id).filter(Boolean))) as string[];
+    const generationUsageRows = generationTokenUsageIds.length
+      ? await prisma.ai_token_usage.findMany({
+          where: { id: { in: generationTokenUsageIds } },
+          select: {
+            id: true,
+            village_id: true,
+            wa_user_id: true,
+            session_id: true,
+            channel: true,
+            message_id: true,
+            trace_id: true,
+            billing_group_id: true,
+            lane_type: true,
+            layer_type: true,
+            call_type: true,
+            provider_id: true,
+            model_config_id: true,
+            key_source: true,
+            key_tier: true,
+            model: true,
+            input_tokens: true,
+            output_tokens: true,
+            total_tokens: true,
+            actual_cost_usd: true,
+            adjusted_cost_usd: true,
+            duration_ms: true,
+            success: true,
+            created_at: true,
+          },
+        })
+      : [];
 
-    const loggedTokenIds = new Set(generationRows.map((row: any) => row.token_usage_id).filter(Boolean));
-    const usageMap = new Map(usageRows.map((row) => [row.id, row]));
-    const providerIds = Array.from(new Set([...generationRows, ...usageRows].map((row: any) => row.provider_id).filter(Boolean))) as string[];
-    const modelIds = Array.from(new Set([...generationRows, ...usageRows].map((row: any) => row.model_config_id).filter(Boolean))) as string[];
+    const usageMap = new Map(generationUsageRows.map((row) => [row.id, row]));
+    const providerIds = Array.from(new Set([...generationRows, ...generationUsageRows, ...fallbackRows].map((row: any) => row.provider_id).filter(Boolean))) as string[];
+    const modelIds = Array.from(new Set([...generationRows, ...generationUsageRows, ...fallbackRows].map((row: any) => row.model_config_id).filter(Boolean))) as string[];
     const [providers, models] = await Promise.all([
       providerIds.length ? prisma.ai_providers.findMany({ where: { id: { in: providerIds } }, select: { id: true, name: true, slug: true, provider_kind: true } }) : Promise.resolve([]),
       modelIds.length ? prisma.ai_models.findMany({ where: { id: { in: modelIds } }, select: { id: true, display_name: true, upstream_model_name: true, lane_type: true } }) : Promise.resolve([]),
@@ -1259,7 +1318,6 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
     const providerMap = new Map(providers.map((provider) => [provider.id, provider]));
     const modelMap = new Map(models.map((model) => [model.id, model]));
 
-    const fallbackRows = usageRows.filter((row) => !loggedTokenIds.has(row.id));
     const rows = [
       ...generationRows.map((row: any) => {
         const usage = row.token_usage_id ? usageMap.get(row.token_usage_id) : null;
@@ -1333,7 +1391,7 @@ app.get('/admin/ai-usage/generations', async (req: Request, res: Response) => {
     res.json({
       metric_scope: 'provider_call_audit',
       metric_description: 'One row per model/provider call. Use message billing endpoints for wallet debit totals.',
-      total: generationTotal + fallbackRows.length,
+      total: generationTotal + fallbackUsageTotal,
       limit,
       offset,
       data: rows,

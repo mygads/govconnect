@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import bcrypt from 'bcryptjs'
+import prisma from '@/lib/prisma'
 import { getAdminSession } from '@/lib/auth'
 import { buildUrl, getHeaders, apiFetch, ServicePath } from '@/lib/api-client'
 
@@ -8,6 +10,26 @@ export async function DELETE(request: NextRequest) {
     const session = await getAdminSession(request)
     if (!session || session.role !== 'superadmin') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const body = await request.json()
+    const { password } = body
+    if (!password) {
+      return NextResponse.json({ error: 'Password is required' }, { status: 400 })
+    }
+
+    const admin = await prisma.admin_users.findUnique({
+      where: { id: session.adminId },
+      select: { password_hash: true, is_active: true },
+    })
+
+    if (!admin?.is_active) {
+      return NextResponse.json({ error: 'Admin not found' }, { status: 404 })
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, admin.password_hash)
+    if (!isPasswordValid) {
+      return NextResponse.json({ error: 'Password superadmin salah' }, { status: 403 })
     }
 
     const res = await apiFetch(buildUrl(ServicePath.AI, '/admin/reset-token-usage'), {

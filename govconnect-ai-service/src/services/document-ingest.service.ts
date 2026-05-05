@@ -261,6 +261,7 @@ export async function processDocumentBufferWithBilling(input: ProcessDocumentInp
         title: input.title,
         category: input.category,
         villageId: input.villageId,
+        isGlobal: Boolean(input.isGlobal),
         content,
       });
     } catch (error: any) {
@@ -303,6 +304,9 @@ export async function enqueueDocumentOcrJob(input: ProcessDocumentInput, reason:
       stage = 'ocr',
       error_message = EXCLUDED.error_message,
       last_error_code = 'ocr_pending',
+      retry_count = 0,
+      started_at = NULL,
+      completed_at = NULL,
       next_retry_at = NOW(),
       payload_json = EXCLUDED.payload_json
   `;
