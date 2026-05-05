@@ -882,7 +882,7 @@ export async function ensureWhatsAppLifecycleSync(villageId: string, options: { 
 
   if (options.syncWebhook !== false && webhook) {
     try {
-      await waGatewayRequest(session.wa_token, '/webhook', 'PUT', {
+      await waGatewayRequest(session.wa_token, '/webhook', 'POST', {
         WebhookURL: webhook,
         Events: GOVCONNECT_WEBHOOK_EVENTS,
         Active: true,

@@ -142,6 +142,7 @@ const STATUS_CONFIG = {
 const OTHER_CATEGORY_VALUE = '__other__'
 const PROCESSING_DOCUMENT_STATUSES = new Set(['pending', 'processing', 'ocr_pending', 'retrying'])
 const PROCESSING_KNOWLEDGE_STATUSES = new Set(['pending', 'processing'])
+const RETRYABLE_DOCUMENT_STATUSES = new Set(['pending', 'failed', 'parse_fail', 'embed_fail'])
 
 // ==================== MAIN COMPONENT ====================
 
@@ -1118,7 +1119,7 @@ export default function KnowledgePage() {
                               <Button variant="ghost" size="sm" onClick={() => window.location.href = `/api/documents/${doc.id}/download`} title="Download">
                                 <Eye className="h-4 w-4" />
                               </Button>
-                              {(doc.status === 'pending' || doc.status === 'failed') && (
+                              {RETRYABLE_DOCUMENT_STATUSES.has(doc.status) && (
                                 <Button variant="ghost" size="sm" onClick={() => triggerProcessing(doc.id)} title="Process">
                                   <Sparkles className="h-4 w-4 text-purple-500" />
                                 </Button>
