@@ -451,8 +451,9 @@ async function maybeTriggerHumanHandoff(input: {
   recentConversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   memorySummary?: string;
   isEvaluation?: boolean;
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
 }): Promise<{ started: boolean; reason?: string; response?: string }> {
-  if (input.isEvaluation) {
+  if (input.isEvaluation || input.sideEffectMode === 'knowledge_test') {
     return { started: false };
   }
 
@@ -1008,7 +1009,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       });
 
       if (explicitHumanHandoffRequest) {
-        const started = !isEvaluation && await startTakeoverForUser(userId, {
+        const started = !isEvaluation && sideEffectMode !== 'knowledge_test' && await startTakeoverForUser(userId, {
           village_id: resolvedVillageId,
           channel: agentChannel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
           admin_id: 'system-auto-handoff',
@@ -1215,6 +1216,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       recentConversationHistory: conversationContext.recentMessages,
       memorySummary,
       isEvaluation,
+      sideEffectMode,
     });
 
     if (handoff.started && handoff.response) {
