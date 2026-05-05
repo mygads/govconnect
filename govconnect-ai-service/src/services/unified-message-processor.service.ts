@@ -702,6 +702,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
   };
   
+  const recordGuardrail = async (input: Parameters<typeof recordGuardrailEvent>[0]) => {
+    if (sideEffectMode !== 'knowledge_test') {
+      await recordGuardrailEvent(input);
+    }
+  };
+
   logger.info('🎯 [UnifiedProcessor] Processing message', {
     traceId,
     userId,
@@ -746,7 +752,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const MAX_INPUT_LENGTH = 4000; // ~1000 tokens, well above any realistic user message
     if (workingMessage.length > MAX_INPUT_LENGTH) {
       logger.warn('🚫 [UnifiedProcessor] Message too long, rejected', { traceId, userId, channel, length: workingMessage.length });
-      await recordGuardrailEvent({
+      await recordGuardrail({
         traceId,
         waUserId: userId,
         villageId,
@@ -782,7 +788,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Step 1: Spam check
     if (isSpamMessage(workingMessage)) {
       logger.warn('🚫 [UnifiedProcessor] Spam detected', { userId, channel });
-      await recordGuardrailEvent({
+      await recordGuardrail({
         traceId,
         waUserId: userId,
         villageId,
@@ -915,7 +921,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       startTime,
     });
     if (protocolGuardResult) {
-      await recordGuardrailEvent({
+      await recordGuardrail({
         traceId,
         waUserId: userId,
         villageId: resolvedVillageId,
@@ -942,7 +948,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           runWithMicroBudget: withMicroNluBudget,
         });
     if (pendingOfferResult) {
-      await recordGuardrailEvent({
+      await recordGuardrail({
         traceId,
         waUserId: userId,
         villageId: resolvedVillageId,
@@ -974,7 +980,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           notifyStage,
         });
     if (latePreAgentResult) {
-      await recordGuardrailEvent({
+      await recordGuardrail({
         traceId,
         waUserId: userId,
         villageId: resolvedVillageId,
@@ -991,7 +997,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const explicitHumanHandoffRequest = isExplicitHumanHandoffRequest(workingMessage);
     const walletAccess = await canProcessVillageAI(resolvedVillageId);
     if (!walletAccess.allowed) {
-      await recordGuardrailEvent({
+      await recordGuardrail({
         traceId,
         waUserId: userId,
         villageId: resolvedVillageId,
