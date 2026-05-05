@@ -11,6 +11,7 @@ import { smartChunkDocument } from './ai-chunking.service';
 import { generateBatchEmbeddings } from './embedding.service';
 import { addDocumentChunks, deleteDocumentVectors } from './vector-db.service';
 import { withAiBillingTurn } from './ai-turn-billing.service';
+import { callAIGatewayPrompt, NoCapableGatewayModelError } from './ai-gateway.service';
 
 export interface ProcessDocumentInput {
   documentId: string;
@@ -25,16 +26,66 @@ export interface ProcessDocumentInput {
   tracePrefix?: 'document' | 'document-reprocess' | 'document-ocr';
 }
 
-class ScannedDocumentError extends Error {
-  constructor(message = 'PDF contains no extractable text. OCR is required.') {
+type SourceKind = 'text' | 'page' | 'sheet' | 'table' | 'image' | 'ocr';
+
+interface ExtractionUnit {
+  content: string;
+  sourceKind: SourceKind;
+  pageNumber?: number;
+  sheetName?: string;
+  tableIndex?: number;
+  rowRange?: [number, number];
+  sectionTitle?: string;
+}
+
+interface ExtractedDocument {
+  units: ExtractionUnit[];
+  extractionMode: 'text' | 'office' | 'spreadsheet' | 'pdf_text' | 'ocr_provider' | 'vision_llm';
+}
+
+class OcrRequiredError extends Error {
+  constructor(message = 'Document contains no extractable text. OCR is required.') {
     super(message);
-    this.name = 'ScannedDocumentError';
+    this.name = 'OcrRequiredError';
   }
 }
 
-function isScannedPdfError(error: any): boolean {
+function isOcrRequiredError(error: any): boolean {
   const message = String(error?.message || '').toLowerCase();
-  return message.includes('no extractable text') || message.includes('scanned') || message.includes('image-based');
+  return error instanceof OcrRequiredError || message.includes('no extractable text') || message.includes('scanned') || message.includes('image-based') || message.includes('ocr is required');
+}
+
+function getExtension(filename?: string): string {
+  return path.extname(filename || '').replace(/^\./, '').toLowerCase();
+}
+
+function normalizedMimeType(mimeType: string, originalName?: string): string {
+  const mime = (mimeType || '').toLowerCase().split(';')[0].trim();
+  if (mime && mime !== 'application/octet-stream') return mime;
+  switch (getExtension(originalName)) {
+    case 'pdf': return 'application/pdf';
+    case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case 'doc': return 'application/msword';
+    case 'pptx': return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    case 'ppt': return 'application/vnd.ms-powerpoint';
+    case 'xlsx': return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    case 'xls': return 'application/vnd.ms-excel';
+    case 'md': return 'text/markdown';
+    case 'csv': return 'text/csv';
+    case 'txt': return 'text/plain';
+    case 'png': return 'image/png';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'webp': return 'image/webp';
+    case 'tif':
+    case 'tiff': return 'image/tiff';
+    case 'bmp': return 'image/bmp';
+    default: return mime || 'application/octet-stream';
+  }
+}
+
+function isImageMime(mimeType: string): boolean {
+  return mimeType.startsWith('image/');
 }
 
 async function createTempUploadFile(input: { buffer: Buffer; originalName?: string }): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
@@ -50,14 +101,14 @@ async function createTempUploadFile(input: { buffer: Buffer; originalName?: stri
   };
 }
 
-function formatDelimitedTableText(text: string): string {
+function formatDelimitedRows(text: string): string[] {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-  if (lines.length < 2) return text;
+  if (lines.length < 2) return [text];
   const delimiter = lines[0].includes('\t') ? '\t' : ',';
   const rows = lines.map(line => line.split(delimiter).map(cell => cell.trim().replace(/^"|"$/g, '')));
   const columnCount = Math.max(...rows.map(row => row.length));
-  if (columnCount < 2) return text;
-  return rows.map((row, idx) => `${idx === 0 ? 'Header' : `Row ${idx}`}: ${row.join(' | ')}`).join('\n');
+  if (columnCount < 2) return [text];
+  return rows.map((row, idx) => `${idx === 0 ? 'Header' : `Row ${idx}`}: ${row.join(' | ')}`);
 }
 
 function extractPdfPageText(page: any, pageNumber: number): string {
@@ -69,11 +120,8 @@ function extractPdfPageText(page: any, pageNumber: number): string {
   const rows: Array<{ y: number; cells: Array<{ text: string; x: number }> }> = [];
   for (const item of items) {
     const row = rows.find(candidate => Math.abs(candidate.y - item.y) <= 2);
-    if (row) {
-      row.cells.push({ text: item.text, x: item.x });
-    } else {
-      rows.push({ y: item.y, cells: [{ text: item.text, x: item.x }] });
-    }
+    if (row) row.cells.push({ text: item.text, x: item.x });
+    else rows.push({ y: item.y, cells: [{ text: item.text, x: item.x }] });
   }
 
   return rows.map((row, idx) => {
@@ -83,29 +131,94 @@ function extractPdfPageText(page: any, pageNumber: number): string {
   }).join('\n');
 }
 
-async function parseFileContent(filePath: string, mimeType: string): Promise<string> {
-  if (mimeType === 'text/plain' || mimeType === 'text/markdown') {
-    return await fs.readFile(filePath, 'utf-8');
+function unitsToText(units: ExtractionUnit[]): string {
+  return units.map(unit => {
+    const labels = [
+      unit.sourceKind === 'page' && unit.pageNumber ? `Halaman ${unit.pageNumber}` : null,
+      unit.sheetName ? `Sheet ${unit.sheetName}` : null,
+      unit.rowRange ? `Row ${unit.rowRange[0]}-${unit.rowRange[1]}` : null,
+      unit.sectionTitle || null,
+    ].filter(Boolean).join(' > ');
+    return `${labels ? `[${labels}]\n` : ''}${unit.content}`;
+  }).join('\n\n');
+}
+
+function findUnitForContent(units: ExtractionUnit[], content: string): ExtractionUnit | undefined {
+  const normalized = content.replace(/^\[\.\.\.\]\s*/, '').slice(0, 160).toLowerCase();
+  return units.find(unit => unit.content.toLowerCase().includes(normalized) || normalized.includes(unit.content.slice(0, 80).toLowerCase()));
+}
+
+async function parseSpreadsheet(filePath: string): Promise<ExtractedDocument> {
+  const xlsx = await import('xlsx');
+  const workbook = xlsx.readFile(filePath, { cellDates: true });
+  const units: ExtractionUnit[] = [];
+  const maxRowsPerSheet = Number(process.env.DOCUMENT_SPREADSHEET_MAX_ROWS_PER_SHEET || 1000);
+
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    const rows = xlsx.utils.sheet_to_json<any[]>(worksheet, { header: 1, raw: false, defval: '' })
+      .map(row => row.map(cell => String(cell || '').trim()))
+      .filter(row => row.some(cell => cell.length > 0));
+    if (rows.length === 0) continue;
+
+    const limitedRows = rows.slice(0, maxRowsPerSheet);
+    const header = limitedRows[0] || [];
+    const body = limitedRows.slice(1);
+    const lines = [`Sheet: ${sheetName}`, `Header: ${header.join(' | ')}`];
+    body.forEach((row, idx) => lines.push(`Row ${idx + 1}: ${row.join(' | ')}`));
+    if (rows.length > limitedRows.length) lines.push(`[TRUNCATED: ${rows.length - limitedRows.length} rows omitted]`);
+
+    units.push({
+      content: lines.join('\n'),
+      sourceKind: 'sheet',
+      sheetName,
+      rowRange: [1, limitedRows.length],
+      sectionTitle: `Sheet ${sheetName}`,
+    });
   }
 
-  if (mimeType === 'text/csv') {
-    return formatDelimitedTableText(await fs.readFile(filePath, 'utf-8'));
+  if (units.length === 0) throw new Error('Spreadsheet contains no extractable text.');
+  return { units, extractionMode: 'spreadsheet' };
+}
+
+async function parseFileContent(filePath: string, mimeType: string, originalName: string): Promise<ExtractedDocument> {
+  const normalizedMime = normalizedMimeType(mimeType, originalName);
+
+  if (isImageMime(normalizedMime)) {
+    throw new OcrRequiredError('Image document requires OCR or vision extraction.');
   }
 
-  if (mimeType === 'application/pdf') {
+  if (normalizedMime === 'text/plain' || normalizedMime === 'text/markdown' || normalizedMime === 'text/x-markdown') {
+    return { units: [{ content: await fs.readFile(filePath, 'utf-8'), sourceKind: 'text', sectionTitle: originalName }], extractionMode: 'text' };
+  }
+
+  if (normalizedMime === 'text/csv') {
+    const rows = formatDelimitedRows(await fs.readFile(filePath, 'utf-8'));
+    return { units: [{ content: rows.join('\n'), sourceKind: 'table', tableIndex: 1, rowRange: [1, rows.length], sectionTitle: 'CSV Table' }], extractionMode: 'spreadsheet' };
+  }
+
+  if (normalizedMime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || normalizedMime === 'application/vnd.ms-excel') {
+    return parseSpreadsheet(filePath);
+  }
+
+  if (normalizedMime === 'application/pdf') {
     try {
       const { PDFExtract } = await import('pdf.js-extract');
       const pdfExtract = new PDFExtract();
       const data = await pdfExtract.extract(filePath, {});
-      let fullText = '';
-      for (const [idx, page] of data.pages.entries()) {
-        fullText += extractPdfPageText(page, idx + 1) + '\n\n';
-      }
-      fullText = fullText.trim();
-      if (!fullText) throw new ScannedDocumentError('PDF contains no extractable text. It may be scanned/image-based.');
-      return fullText;
+      const units = data.pages.map((page: any, idx: number) => {
+        const pageNumber = idx + 1;
+        return {
+          content: extractPdfPageText(page, pageNumber).trim(),
+          sourceKind: 'page' as const,
+          pageNumber,
+          sectionTitle: `Halaman ${pageNumber}`,
+        };
+      }).filter((unit: ExtractionUnit) => unit.content.trim());
+      if (units.length === 0) throw new OcrRequiredError('PDF contains no extractable text. It may be scanned/image-based.');
+      return { units, extractionMode: 'pdf_text' };
     } catch (pdfError: any) {
-      if (pdfError instanceof ScannedDocumentError) throw pdfError;
+      if (pdfError instanceof OcrRequiredError) throw pdfError;
       if (pdfError.message?.includes('Invalid PDF structure') || pdfError.message?.includes('Invalid')) {
         throw new Error('PDF file appears to be corrupted or uses an unsupported format.');
       }
@@ -116,43 +229,43 @@ async function parseFileContent(filePath: string, mimeType: string): Promise<str
     }
   }
 
-  if (mimeType.includes('wordprocessingml')) {
+  if (normalizedMime.includes('wordprocessingml')) {
     const mammoth = await import('mammoth');
     const result = await mammoth.extractRawText({ path: filePath });
     if (!result.value?.trim()) throw new Error('DOCX contains no extractable text.');
-    return result.value;
+    return { units: [{ content: result.value, sourceKind: 'text', sectionTitle: originalName }], extractionMode: 'office' };
   }
 
-  if (mimeType === 'application/msword') {
+  if (normalizedMime === 'application/msword') {
     const WordExtractor = (await import('word-extractor')).default;
     const extractor = new WordExtractor();
     const doc = await extractor.extract(filePath);
     const extractedText = doc.getBody()?.trim() || '';
     if (!extractedText) throw new Error('DOC contains no extractable text.');
-    return extractedText;
+    return { units: [{ content: extractedText, sourceKind: 'text', sectionTitle: originalName }], extractionMode: 'office' };
   }
 
-  if (mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+  if (normalizedMime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
     const officeParser: any = await import('officeparser');
     const parseOfficeAsync = officeParser.parseOfficeAsync || officeParser.default?.parseOfficeAsync || officeParser.parseOffice;
     if (!parseOfficeAsync) throw new Error('Office parser not available');
     const result = await parseOfficeAsync(filePath);
     const text = typeof result === 'string' ? result : result?.text || '';
     if (!text.trim()) throw new Error('PPTX contains no extractable text.');
-    return text;
+    return { units: [{ content: text, sourceKind: 'text', sectionTitle: originalName }], extractionMode: 'office' };
   }
 
-  if (mimeType === 'application/vnd.ms-powerpoint') {
+  if (normalizedMime === 'application/vnd.ms-powerpoint') {
     const officeParser: any = await import('officeparser');
     const parseOfficeAsync = officeParser.parseOfficeAsync || officeParser.default?.parseOfficeAsync;
     if (!parseOfficeAsync) throw new Error('Legacy PPT format is not fully supported. Please convert your .ppt file to .pptx format and re-upload.');
     const result = await parseOfficeAsync(filePath);
     const extractedText = typeof result === 'string' ? result.trim() : (result?.text || '').trim();
     if (!extractedText) throw new Error('PPT contains no extractable text. If the file is in legacy .ppt format, please convert to .pptx and re-upload.');
-    return extractedText;
+    return { units: [{ content: extractedText, sourceKind: 'text', sectionTitle: originalName }], extractionMode: 'office' };
   }
 
-  throw new Error(`Unsupported file type: ${mimeType}`);
+  throw new Error(`Unsupported file type: ${normalizedMime}`);
 }
 
 async function updateDashboardDocument(documentId: string, data: Record<string, unknown>): Promise<void> {
@@ -167,17 +280,18 @@ async function updateDashboardDocument(documentId: string, data: Record<string, 
   }).catch((error: any) => logger.warn('Failed to update dashboard document status', { documentId, error: error.message }));
 }
 
-async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer' | 'mimeType' | 'fileHash' | 'tracePrefix'> & { content: string }) {
+async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer' | 'mimeType' | 'fileHash' | 'tracePrefix'> & { extracted: ExtractedDocument }) {
   const docTitle = input.title || input.originalName;
+  const content = unitsToText(input.extracted.units);
   let smartChunks;
   let usedAiChunking = false;
 
   try {
-    smartChunks = await smartChunkDocument(input.content, docTitle, input.villageId || undefined);
+    smartChunks = await smartChunkDocument(content, docTitle, input.villageId || undefined);
     usedAiChunking = true;
   } catch (error: any) {
     logger.warn('AI smart chunking failed, falling back to semantic chunking', { documentId: input.documentId, error: error.message });
-    const fallbackChunks = await processDocumentSemanticChunking(input.content, input.documentId, 1500);
+    const fallbackChunks = await processDocumentSemanticChunking(content, input.documentId, 1500);
     smartChunks = fallbackChunks.map((c, idx) => ({
       title: c.sectionTitle || c.metadata?.sectionTitle || docTitle,
       category: input.category || 'umum',
@@ -220,18 +334,33 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
   }
 
   await deleteDocumentVectors(input.documentId);
-  await addDocumentChunks(finalChunks.map((chunk, idx) => ({
-    documentId: input.documentId,
-    villageId: input.isGlobal ? null : input.villageId || null,
-    scope: input.isGlobal ? 'global' : 'village',
-    isGlobal: Boolean(input.isGlobal),
-    chunkIndex: idx,
-    content: chunk.content,
-    embedding: chunk.embedding,
-    documentTitle: docTitle,
-    category: chunk.category,
-    sectionTitle: chunk.title,
-  })));
+  await addDocumentChunks(finalChunks.map((chunk, idx) => {
+    const unit = findUnitForContent(input.extracted.units, chunk.content) || input.extracted.units[0];
+    const provenance = {
+      extractionMode: input.extracted.extractionMode,
+      sourceKind: unit?.sourceKind || 'text',
+      pageNumber: unit?.pageNumber,
+      sheetName: unit?.sheetName,
+      tableIndex: unit?.tableIndex,
+      rowRange: unit?.rowRange,
+      sectionTitle: unit?.sectionTitle || chunk.title,
+      paragraphRange: (chunk as any).paragraphRange,
+    };
+    return {
+      documentId: input.documentId,
+      villageId: input.isGlobal ? null : input.villageId || null,
+      scope: input.isGlobal ? 'global' : 'village',
+      isGlobal: Boolean(input.isGlobal),
+      chunkIndex: idx,
+      content: chunk.content,
+      embedding: chunk.embedding,
+      documentTitle: docTitle,
+      category: chunk.category,
+      pageNumber: unit?.pageNumber,
+      sectionTitle: chunk.title,
+      provenance,
+    };
+  }));
 
   return { chunksCount: finalChunks.length, usedAiChunking };
 }
@@ -253,8 +382,8 @@ export async function processDocumentBufferWithBilling(input: ProcessDocumentInp
   }, async () => {
     const tempFile = await createTempUploadFile({ buffer: input.fileBuffer, originalName: input.originalName });
     try {
-      const content = await parseFileContent(tempFile.filePath, input.mimeType);
-      if (!content.trim()) throw new Error('Document is empty or could not extract text');
+      const extracted = await parseFileContent(tempFile.filePath, input.mimeType, input.originalName);
+      if (!unitsToText(extracted.units).trim()) throw new Error('Document is empty or could not extract text');
       return await storeExtractedText({
         documentId: input.documentId,
         originalName: input.originalName,
@@ -262,12 +391,12 @@ export async function processDocumentBufferWithBilling(input: ProcessDocumentInp
         category: input.category,
         villageId: input.villageId,
         isGlobal: Boolean(input.isGlobal),
-        content,
+        extracted,
       });
     } catch (error: any) {
-      if (input.mimeType === 'application/pdf' && isScannedPdfError(error)) {
+      if (isOcrRequiredError(error)) {
         await enqueueDocumentOcrJob(input, error.message);
-        await updateDashboardDocument(input.documentId, { status: 'ocr_pending', error_message: 'Dokumen terdeteksi scan/image-based. OCR sedang dijadwalkan.' });
+        await updateDashboardDocument(input.documentId, { status: 'ocr_pending', error_message: 'Dokumen membutuhkan OCR/vision. Pemrosesan sedang dijadwalkan.' });
         return { chunksCount: 0, usedAiChunking: false, queuedOcr: true };
       }
       throw error;
@@ -282,7 +411,7 @@ export async function enqueueDocumentOcrJob(input: ProcessDocumentInput, reason:
   const payload = {
     documentId: input.documentId,
     originalName: input.originalName,
-    mimeType: input.mimeType,
+    mimeType: normalizedMimeType(input.mimeType, input.originalName),
     title: input.title || null,
     category: input.category || null,
     villageId: input.isGlobal ? null : input.villageId || null,
@@ -312,7 +441,7 @@ export async function enqueueDocumentOcrJob(input: ProcessDocumentInput, reason:
   `;
 }
 
-async function runOcrProvider(fileBuffer: Buffer, mimeType: string): Promise<string> {
+async function runOcrProvider(fileBuffer: Buffer, mimeType: string): Promise<{ text: string; mode: 'ocr_provider'; provider: string }> {
   const endpoint = process.env.OCR_PROVIDER_URL?.trim();
   if (!endpoint) throw new Error('OCR_PROVIDER_URL is not configured');
 
@@ -330,7 +459,62 @@ async function runOcrProvider(fileBuffer: Buffer, mimeType: string): Promise<str
   if (!response.ok) throw new Error(payload?.error || `OCR provider failed with ${response.status}`);
   const text = payload?.text || payload?.data?.text || payload?.result?.text || '';
   if (!String(text).trim()) throw new Error('OCR provider returned empty text');
-  return String(text);
+  return { text: String(text), mode: 'ocr_provider', provider: endpoint };
+}
+
+async function runVisionFallback(fileBuffer: Buffer, mimeType: string, originalName: string, villageId?: string | null): Promise<{ text: string; mode: 'vision_llm'; provider?: string; model?: string }> {
+  const result = await callAIGatewayPrompt({
+    lane: 'llm',
+    modelPriority: [],
+    requiredCapability: 'vision',
+    temperature: 0.1,
+    maxTokens: Number(process.env.DOCUMENT_VISION_MAX_TOKENS || 4096),
+    layerType: 'full_nlu',
+    callType: 'media_analysis',
+    context: { village_id: villageId || null, channel: 'system_ingest' },
+    messages: [
+      {
+        role: 'system',
+        content: 'Ekstrak seluruh teks yang terlihat dari dokumen/gambar untuk RAG GovConnect. Pertahankan tabel sebagai baris Header/Row, jangan mengarang teks yang tidak terlihat, dan jawab hanya teks hasil ekstraksi dalam Bahasa Indonesia jika ada.',
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `Nama file: ${originalName}. Ekstrak teks, tabel, nomor, dan label yang terlihat.` },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${fileBuffer.toString('base64')}` } },
+        ],
+      },
+    ],
+  });
+
+  const text = result?.text?.trim() || '';
+  if (!text) throw new Error('Vision model returned empty text');
+  return { text, mode: 'vision_llm', provider: result?.provider, model: result?.model };
+}
+
+async function extractWithOcrOrVision(input: { fileBuffer: Buffer; mimeType: string; originalName: string; villageId?: string | null }): Promise<ExtractedDocument & { provider?: string; model?: string }> {
+  try {
+    const ocr = await runOcrProvider(input.fileBuffer, input.mimeType);
+    return {
+      units: [{ content: ocr.text, sourceKind: 'ocr', sectionTitle: input.originalName }],
+      extractionMode: ocr.mode,
+      provider: ocr.provider,
+    };
+  } catch (ocrError: any) {
+    logger.warn('OCR provider failed, trying vision fallback', { originalName: input.originalName, error: ocrError.message });
+    try {
+      const vision = await runVisionFallback(input.fileBuffer, input.mimeType, input.originalName, input.villageId);
+      return {
+        units: [{ content: vision.text, sourceKind: 'image', sectionTitle: input.originalName }],
+        extractionMode: vision.mode,
+        provider: vision.provider,
+        model: vision.model,
+      };
+    } catch (visionError: any) {
+      if (visionError instanceof NoCapableGatewayModelError) throw ocrError;
+      throw new Error(`OCR/vision extraction failed: ${ocrError.message}; vision fallback: ${visionError.message}`);
+    }
+  }
 }
 
 async function processOneOcrJob() {
@@ -360,12 +544,17 @@ async function processOneOcrJob() {
     SET status = 'processing', started_at = NOW(), last_error_code = NULL
     WHERE id = ${job.id}
   `;
-  await updateDashboardDocument(documentId, { status: 'ocr_pending', error_message: 'OCR sedang diproses.' });
+  await updateDashboardDocument(documentId, { status: 'ocr_pending', error_message: 'OCR/vision sedang diproses.' });
 
   try {
     const fileBuffer = Buffer.from(payload.fileBase64, 'base64');
-    const ocrText = await runOcrProvider(fileBuffer, payload.mimeType || 'application/pdf');
     const fileHash = payload.fileHash || crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    const extracted = await extractWithOcrOrVision({
+      fileBuffer,
+      mimeType: payload.mimeType || 'application/pdf',
+      originalName: payload.originalName || `document-${documentId}`,
+      villageId: payload.villageId || null,
+    });
 
     await withAiBillingTurn({
       village_id: payload.villageId || null,
@@ -382,14 +571,15 @@ async function processOneOcrJob() {
         category: payload.category || undefined,
         villageId: payload.isGlobal ? null : payload.villageId || null,
         isGlobal: Boolean(payload.isGlobal),
-        content: ocrText,
+        extracted,
       });
       await updateDashboardDocument(documentId, { status: 'completed', error_message: null, total_chunks: result.chunksCount });
     });
 
     await prisma.$executeRaw`
       UPDATE ai.embedding_jobs
-      SET status = 'completed', completed_at = NOW(), error_message = NULL, last_error_code = NULL, next_retry_at = NULL
+      SET status = 'completed', completed_at = NOW(), error_message = NULL, last_error_code = NULL, next_retry_at = NULL,
+          payload_json = payload_json || ${JSON.stringify({ extractionMode: extracted.extractionMode, provider: extracted.provider, model: extracted.model })}::jsonb
       WHERE id = ${job.id}
     `;
   } catch (error: any) {

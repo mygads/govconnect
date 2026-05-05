@@ -148,7 +148,7 @@ export async function searchKeywords(
         : Prisma.sql`FALSE`;
 
       const documentResults = await prisma.$queryRaw<any[]>`
-        SELECT 
+        SELECT
           id,
           document_id,
           chunk_index,
@@ -156,6 +156,7 @@ export async function searchKeywords(
           document_title,
           category,
           section_title,
+          provenance_json,
           'document' as source_type,
           -- Fase 1.3: Enhanced relevance scoring with trigram similarity
           (
@@ -197,6 +198,7 @@ export async function searchKeywords(
             chunkIndex: row.chunk_index,
             category: row.category,
             sectionTitle: row.section_title,
+            provenance: row.provenance_json,
           },
         });
       }

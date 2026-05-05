@@ -115,14 +115,25 @@ export async function POST(request: NextRequest) {
       'application/msword',
       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
       'text/plain',
       'text/markdown',
+      'text/x-markdown',
       'text/csv',
+      'image/png',
+      'image/jpeg',
+      'image/webp',
+      'image/tiff',
+      'image/bmp',
+      'application/octet-stream',
     ]
+    const allowedExtensions = ['pdf', 'docx', 'doc', 'ppt', 'pptx', 'txt', 'md', 'csv', 'xls', 'xlsx', 'png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp']
+    const fileExtension = getExtension(file.name).toLowerCase()
 
-    if (!allowedTypes.includes(file.type)) {
+    if (!allowedExtensions.includes(fileExtension) || (file.type && !allowedTypes.includes(file.type))) {
       return NextResponse.json(
-        { error: `File type not supported. Allowed: PDF, DOCX, DOC, PPT, PPTX, TXT, MD, CSV` },
+        { error: `File type not supported. Allowed: PDF, DOCX, DOC, PPT, PPTX, TXT, MD, CSV, XLS, XLSX, PNG, JPG, WEBP, TIFF, BMP` },
         { status: 400 }
       )
     }

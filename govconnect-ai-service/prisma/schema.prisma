@@ -62,10 +62,11 @@ model document_vectors {
   content     String  @db.Text
 
   // Document metadata (denormalized for search)
-  document_title String?
-  category       String?
-  page_number    Int?
-  section_title  String?
+  document_title  String?
+  category        String?
+  page_number     Int?
+  section_title   String?
+  provenance_json Json?
 
   // Vector embedding
   embedding       Unsupported("vector(768)")

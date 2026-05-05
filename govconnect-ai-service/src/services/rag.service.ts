@@ -1090,6 +1090,34 @@ function rerankResults(
  * @param results - Search results to include in context
  * @returns Object with formatted context string and detected conflicts
  */
+function buildSourceLabel(result: VectorSearchResult): string {
+  if (result.sourceType === 'knowledge') {
+    return `[${result.metadata?.category?.toUpperCase() || 'INFO'}]`;
+  }
+
+  const provenance = (result.metadata?.provenance || {}) as Record<string, any>;
+  const title = result.source || 'Dokumen';
+  const sourceKind = provenance.sourceKind as string | undefined;
+  const pageNumber = provenance.pageNumber || result.metadata?.pageNumber;
+  const sheetName = provenance.sheetName;
+  const rowRange = Array.isArray(provenance.rowRange) ? provenance.rowRange : null;
+  const sectionTitle = provenance.sectionTitle || result.metadata?.sectionTitle;
+
+  if (sourceKind === 'sheet' || sheetName) {
+    const rowLabel = rowRange ? ` > Row ${rowRange[0]}-${rowRange[1]}` : '';
+    return `[SHEET: ${title}${sheetName ? ` > ${sheetName}` : ''}${rowLabel}]`;
+  }
+
+  if (sourceKind === 'image' || sourceKind === 'ocr' || provenance.extractionMode === 'vision_llm' || provenance.extractionMode === 'ocr_provider') {
+    return `[IMAGE OCR: ${title}${sectionTitle ? ` > ${sectionTitle}` : ''}]`;
+  }
+
+  if (pageNumber) {
+    return `[DOC: ${title} > Halaman ${pageNumber}]`;
+  }
+
+  return `[DOC: ${sectionTitle || title}]`;
+}
 function buildContextString(results: VectorSearchResult[]): { context: string; conflicts: RAGConflictInfo[] } {
   if (results.length === 0) {
     return { context: '', conflicts: [] };
@@ -1138,9 +1166,7 @@ function buildContextString(results: VectorSearchResult[]): { context: string; c
 
   for (let i = 0; i < dedupedResults.length; i++) {
     const result = dedupedResults[i];
-    const sourceLabel = result.sourceType === 'knowledge' 
-      ? `[${result.metadata?.category?.toUpperCase() || 'INFO'}]`
-      : `[DOC: ${result.metadata?.sectionTitle || result.source}]`;
+    const sourceLabel = buildSourceLabel(result);
 
     // Add conflict marker if this result is part of a conflict group
     let conflictMarker = '';

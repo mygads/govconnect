@@ -370,9 +370,17 @@ export function isSupportedMimeType(mimeType: string): mimeType is SupportedMime
     'application/msword',
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
     'text/plain',
     'text/markdown',
+    'text/x-markdown',
     'text/csv',
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/tiff',
+    'image/bmp',
   ];
   return supported.includes(mimeType);
 }
@@ -387,9 +395,17 @@ export function getExtensionFromMimeType(mimeType: SupportedMimeType): string {
     'application/msword': 'doc',
     'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
     'application/vnd.ms-powerpoint': 'ppt',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.ms-excel': 'xls',
     'text/plain': 'txt',
     'text/markdown': 'md',
+    'text/x-markdown': 'md',
     'text/csv': 'csv',
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+    'image/tiff': 'tiff',
+    'image/bmp': 'bmp',
   };
   return mimeMap[mimeType] || 'txt';
 }

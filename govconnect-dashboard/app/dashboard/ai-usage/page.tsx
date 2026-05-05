@@ -39,9 +39,10 @@ interface PeriodUsage { period_start: string; total_tokens: number; cost_usd: nu
 interface PeriodLayerUsage extends PeriodUsage { layer_type: string }
 interface LayerBreakdown { layer_type: string; call_type: string; total_tokens: number; cost_usd: number; call_count: number; avg_duration_ms: number }
 interface UsageUser { wa_user_id: string | null; session_id: string | null; message_count: number; call_count: number; total_tokens: number; actual_cost_usd: number; adjusted_cost_usd: number; margin_usd: number }
-interface MessageBilling { id: string; message_id: string | null; trace_id: string; billing_group_id: string; channel: string | null; wa_user_id: string | null; session_id: string | null; input_tokens: number; output_tokens: number; total_tokens: number; call_count: number; actual_cost_usd: number; adjusted_cost_usd: number; margin_usd: number; status: string; created_at: string; billed_at: string | null }
+interface MessageBillingContext { process: string; process_label: string; admin?: { id: string; name: string; username: string } | null; knowledge?: { id: string; title: string; category: string } | null; document?: { id: string; title?: string | null; original_name?: string | null; category?: string | null; status?: string | null } | null; phone_number?: string | null; webchat_session?: string | null; raw_ref?: string | null }
+interface MessageBilling { id: string; message_id: string | null; trace_id: string; billing_group_id: string; channel: string | null; wa_user_id: string | null; session_id: string | null; input_tokens: number; output_tokens: number; total_tokens: number; call_count: number; actual_cost_usd: number; adjusted_cost_usd: number; margin_usd: number; status: string; created_at: string; billed_at: string | null; context?: MessageBillingContext | null }
 interface MessageResponse { total: number; totals: { messages: number; actual_cost_usd: number; adjusted_cost_usd: number; margin_usd: number; total_tokens: number; call_count: number }; data: MessageBilling[] }
-interface TokenUsageRow { id: string; layer_type: string; call_type: string; input_tokens: number; output_tokens: number; total_tokens: number; actual_cost_usd: number; adjusted_cost_usd: number; margin_usd: number; duration_ms: number | null; success: boolean; billing_status: string; created_at: string }
+interface TokenUsageRow { id: string; model?: string | null; layer_type: string; call_type: string; input_tokens: number; output_tokens: number; total_tokens: number; actual_cost_usd: number; adjusted_cost_usd: number; margin_usd: number; duration_ms: number | null; success: boolean; billing_status: string; created_at: string }
 interface MessageDetail { billing: MessageBilling; ledger_entry: any | null; token_usage: TokenUsageRow[] }
 
 const USD_TO_IDR = 18_000
@@ -64,6 +65,64 @@ const CALL_TYPE_LABELS: Record<string, string> = {
 
 function callTypeLabel(value: string) {
   return CALL_TYPE_LABELS[value] || value.replace(/_/g, " ")
+}
+
+function aiCallPurpose(row: TokenUsageRow) {
+  const purposes: Record<string, { title: string; description: string }> = {
+    main_chat: {
+      title: "Agent LLM menjawab pesan",
+      description: "Model utama menyusun jawaban akhir dari konteks percakapan, RAG, dan data desa.",
+    },
+    agent_orchestrator: {
+      title: "Agent / tool orchestration",
+      description: "AI menentukan langkah kerja, memilih action/tool, atau mengatur alur sebelum jawaban final.",
+    },
+    embedding_single: {
+      title: "Embedding satu teks",
+      description: "Mengubah satu teks, pertanyaan, atau chunk menjadi vector untuk pencarian knowledge base.",
+    },
+    embedding_batch: {
+      title: "Embedding batch",
+      description: "Mengubah banyak chunk dokumen/knowledge menjadi vector sekaligus.",
+    },
+    rag_query_expand: {
+      title: "Rewrite query RAG",
+      description: "Menulis ulang/memperluas pertanyaan agar retrieval knowledge base lebih akurat.",
+    },
+    rerank_documents: {
+      title: "Reranking hasil RAG",
+      description: "Mengurutkan ulang kandidat dokumen/knowledge supaya konteks paling relevan dipakai.",
+    },
+    unified_classify: {
+      title: "Classifier intent/kategori",
+      description: "Mengklasifikasi maksud pesan: tanya jawab, pengaduan, layanan, salam, konfirmasi, atau alur lain.",
+    },
+    confirmation_classify: {
+      title: "Classifier konfirmasi",
+      description: "Mendeteksi apakah user mengonfirmasi, membatalkan, atau memperbaiki data.",
+    },
+    greeting_classify: {
+      title: "Classifier salam",
+      description: "Mendeteksi salam/pembuka agar respons percakapan lebih natural.",
+    },
+    farewell_classify: {
+      title: "Classifier penutup",
+      description: "Mendeteksi percakapan selesai, ucapan terima kasih, atau penutup.",
+    },
+    complaint_type_match: {
+      title: "Match kategori/jenis pengaduan",
+      description: "Mencocokkan pesan dengan kategori dan jenis pengaduan yang tersedia di desa.",
+    },
+    service_slug_match: {
+      title: "Match layanan/form",
+      description: "Mencocokkan permintaan user dengan layanan atau form publik yang tersedia.",
+    },
+  }
+
+  return purposes[row.call_type] || {
+    title: callTypeLabel(row.call_type),
+    description: `${LAYER_LABELS[row.layer_type] || row.layer_type} · ${row.call_type || "unknown"}`,
+  }
 }
 
 function defaultStart() {
@@ -100,6 +159,70 @@ function userLabel(user: UsageUser) {
   return user.wa_user_id || user.session_id || "Unknown user"
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-"
+  return new Date(value).toLocaleString("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function billingStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    billed: "Sudah ditagihkan",
+    skipped_zero_cost: "Biaya nol, tidak ditagihkan",
+    pending: "Menunggu billing",
+    failed: "Billing gagal",
+  }
+  return labels[status] || status.replace(/_/g, " ")
+}
+
+function describeBillingRow(row: MessageBilling) {
+  const ctx = row.context
+  if (ctx?.process_label) {
+    if (ctx.process === "dashboard_knowledge_test") {
+      return {
+        title: ctx.process_label,
+        subtitle: ctx.admin ? `${ctx.admin.name} (@${ctx.admin.username})` : (ctx.webchat_session || ctx.raw_ref || "-"),
+      }
+    }
+    if (ctx.process === "knowledge_embed") {
+      return {
+        title: ctx.process_label,
+        subtitle: ctx.knowledge ? `${ctx.knowledge.title} · ${ctx.knowledge.category}` : (ctx.raw_ref || "-"),
+      }
+    }
+    if (ctx.process === "document_embed" || ctx.process === "document_ocr") {
+      return {
+        title: ctx.process_label,
+        subtitle: ctx.document ? `${ctx.document.title || ctx.document.original_name || ctx.document.id} · ${ctx.document.category || "Tanpa kategori"}` : (ctx.raw_ref || "-"),
+      }
+    }
+    if (ctx.process === "whatsapp_chat") {
+      return {
+        title: ctx.process_label,
+        subtitle: ctx.phone_number || ctx.raw_ref || "-",
+      }
+    }
+    if (ctx.process === "webchat_chat") {
+      return {
+        title: ctx.process_label,
+        subtitle: ctx.webchat_session || ctx.raw_ref || "-",
+      }
+    }
+    return {
+      title: ctx.process_label,
+      subtitle: ctx.raw_ref || "-",
+    }
+  }
+
+  const source = row.trace_id?.split(":")[0] || row.channel || "ai"
+  const rawRef = row.message_id || row.billing_group_id || row.trace_id || "-"
+  return { title: `Proses AI ${source}`, subtitle: rawRef }
+}
 function endOfDay(value: string) {
   return `${value}T23:59:59.999`
 }
@@ -299,16 +422,19 @@ export default function VillageAIUsagePage() {
             <CardHeader><CardTitle className="flex items-center gap-2"><Coins className="h-5 w-5" /> Detail Billing per Pesan</CardTitle><CardDescription>Klik detail untuk melihat breakdown biaya LLM, rerank, embed, classifier, dan layer lain.</CardDescription></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader><TableRow><TableHead>Pesan / Trace</TableHead><TableHead>User</TableHead><TableHead>Call</TableHead><TableHead>Token</TableHead><TableHead>Actual</TableHead><TableHead>Billed</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Pesan / Trace</TableHead><TableHead>User</TableHead><TableHead>Waktu</TableHead><TableHead>Call</TableHead><TableHead>Token</TableHead><TableHead>Actual</TableHead><TableHead>Billed</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {!messages?.data.length ? <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">Belum ada billing AI pada filter ini.</TableCell></TableRow> : messages.data.map(row => (
+                  {!messages?.data.length ? <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">Belum ada billing AI pada filter ini.</TableCell></TableRow> : messages.data.map(row => {
+                    const described = describeBillingRow(row)
+                    return (
                     <TableRow key={row.id}>
-                      <TableCell><div className="font-mono text-xs">{row.message_id || row.billing_group_id}</div><div className="text-xs text-muted-foreground">{row.trace_id}</div></TableCell>
-                      <TableCell><div className="text-sm">{row.wa_user_id || "-"}</div><div className="text-xs text-muted-foreground">{row.session_id || "-"}</div></TableCell>
-                      <TableCell>{row.call_count}</TableCell><TableCell>{formatNumber(row.total_tokens)}</TableCell><TableCell>{formatIDR(row.actual_cost_usd)}</TableCell><TableCell className="font-medium">{formatIDR(row.adjusted_cost_usd)}</TableCell><TableCell><Badge variant={row.status === "billed" ? "default" : "secondary"}>{row.status}</Badge></TableCell>
+                      <TableCell><div className="text-sm font-medium">{described.title}</div><div className="text-xs text-muted-foreground">{described.subtitle}</div><div className="font-mono text-[11px] text-muted-foreground">Trace: {row.trace_id}</div></TableCell>
+                      <TableCell><div className="text-sm">{row.context?.admin?.name || row.context?.phone_number || row.wa_user_id || "-"}</div><div className="text-xs text-muted-foreground">{row.context?.admin ? `@${row.context.admin.username}` : (row.context?.webchat_session || row.session_id || "-")}</div></TableCell>
+                      <TableCell><div className="text-sm">{formatDateTime(row.created_at)}</div><div className="text-xs text-muted-foreground">Billed: {formatDateTime(row.billed_at)}</div></TableCell>
+                      <TableCell>{row.call_count}</TableCell><TableCell>{formatNumber(row.total_tokens)}</TableCell><TableCell>{formatIDR(row.actual_cost_usd)}</TableCell><TableCell className="font-medium">{formatIDR(row.adjusted_cost_usd)}</TableCell><TableCell><Badge variant={row.status === "billed" ? "default" : "secondary"}>{billingStatusLabel(row.status)}</Badge></TableCell>
                       <TableCell className="text-right"><Button size="sm" variant="ghost" onClick={() => openDetail(row)}><Eye className="mr-1 h-4 w-4" /> Detail</Button></TableCell>
                     </TableRow>
-                  ))}
+                  )})}
                 </TableBody>
               </Table>
             </CardContent>
@@ -317,9 +443,9 @@ export default function VillageAIUsagePage() {
       )}
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
-          <DialogHeader><DialogTitle>Detail Biaya per Pesan</DialogTitle><DialogDescription>Breakdown biaya aktual dan billed dari setiap call AI dalam satu pesan.</DialogDescription></DialogHeader>
-          {detailLoading ? <Skeleton className="h-64" /> : detail && <div className="space-y-4"><div className="grid gap-3 md:grid-cols-4"><MetricCard icon={Bot} title="Call" value={formatNumber(detail.billing.call_count)} detail={detail.billing.billing_group_id} /><MetricCard icon={Activity} title="Token" value={formatNumber(detail.billing.total_tokens)} detail={`${formatNumber(detail.billing.input_tokens)} in / ${formatNumber(detail.billing.output_tokens)} out`} /><MetricCard icon={Wallet} title="Actual" value={formatIDR(detail.billing.actual_cost_usd)} detail={formatUSD(detail.billing.actual_cost_usd)} /><MetricCard icon={Coins} title="Billed" value={formatIDR(detail.billing.adjusted_cost_usd)} detail={formatUSD(detail.billing.adjusted_cost_usd)} /></div><Table><TableHeader><TableRow><TableHead>Layer</TableHead><TableHead>Jenis Panggilan</TableHead><TableHead>Token</TableHead><TableHead>Actual</TableHead><TableHead>Billed</TableHead><TableHead>Durasi</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{detail.token_usage.map(row => <TableRow key={row.id}><TableCell>{LAYER_LABELS[row.layer_type] || row.layer_type}</TableCell><TableCell><Badge variant="outline">{callTypeLabel(row.call_type)}</Badge></TableCell><TableCell>{formatNumber(row.total_tokens)}</TableCell><TableCell>{formatIDR(row.actual_cost_usd)}</TableCell><TableCell className="font-medium">{formatIDR(row.adjusted_cost_usd)}</TableCell><TableCell>{row.duration_ms ? `${row.duration_ms} ms` : "-"}</TableCell><TableCell><Badge variant={row.success ? "default" : "destructive"}>{row.billing_status}</Badge></TableCell></TableRow>)}</TableBody></Table></div>}
+        <DialogContent className="max-h-[90vh] w-[96vw] max-w-7xl overflow-y-auto">
+          <DialogHeader><DialogTitle>Detail Biaya per Pesan</DialogTitle><DialogDescription>Breakdown biaya aktual dan billed dari setiap call AI dalam satu pesan. Lebar modal diperbesar supaya rincian lebih mudah dibaca.</DialogDescription></DialogHeader>
+          {detailLoading ? <Skeleton className="h-64" /> : detail && <div className="space-y-4"><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5"><MetricCard icon={Bot} title="Call" value={formatNumber(detail.billing.call_count)} detail={describeBillingRow(detail.billing).title} /><MetricCard icon={MessageSquare} title="Proses" value={describeBillingRow(detail.billing).subtitle} detail={`Trace: ${detail.billing.trace_id}`} /><MetricCard icon={Activity} title="Token" value={formatNumber(detail.billing.total_tokens)} detail={`${formatNumber(detail.billing.input_tokens)} in / ${formatNumber(detail.billing.output_tokens)} out`} /><MetricCard icon={Wallet} title="Actual" value={formatIDR(detail.billing.actual_cost_usd)} detail={formatUSD(detail.billing.actual_cost_usd)} /><MetricCard icon={Coins} title="Billed" value={formatIDR(detail.billing.adjusted_cost_usd)} detail={formatUSD(detail.billing.adjusted_cost_usd)} /></div><div className="grid gap-3 md:grid-cols-2"><Card><CardHeader className="pb-2"><CardTitle className="text-sm">Waktu proses</CardTitle></CardHeader><CardContent className="space-y-1 text-sm"><div>Dibuat: {formatDateTime(detail.billing.created_at)}</div><div>Ditagihkan: {formatDateTime(detail.billing.billed_at)}</div><div>Status: {billingStatusLabel(detail.billing.status)}</div></CardContent></Card><Card><CardHeader className="pb-2"><CardTitle className="text-sm">Identitas proses</CardTitle></CardHeader><CardContent className="space-y-1 text-sm"><div>Admin tester: {detail.billing.context?.admin ? `${detail.billing.context.admin.name} (@${detail.billing.context.admin.username})` : "-"}</div><div>No. WA: {detail.billing.context?.phone_number || "-"}</div><div>Session webchat: {detail.billing.context?.webchat_session || "-"}</div><div>Knowledge: {detail.billing.context?.knowledge ? `${detail.billing.context.knowledge.title} · ${detail.billing.context.knowledge.category}` : "-"}</div><div>Dokumen: {detail.billing.context?.document ? `${detail.billing.context.document.title || detail.billing.context.document.original_name || detail.billing.context.document.id} · ${detail.billing.context.document.category || "Tanpa kategori"}` : "-"}</div><div className="break-all">Ref: {detail.billing.context?.raw_ref || detail.billing.message_id || detail.billing.billing_group_id || "-"}</div></CardContent></Card></div><Table><TableHeader><TableRow><TableHead>Layer</TableHead><TableHead>Jenis Panggilan</TableHead><TableHead>Fungsi</TableHead><TableHead>Model</TableHead><TableHead>Waktu</TableHead><TableHead>Token</TableHead><TableHead>Actual</TableHead><TableHead>Billed</TableHead><TableHead>Durasi</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{detail.token_usage.map(row => { const purpose = aiCallPurpose(row); return <TableRow key={row.id}><TableCell>{LAYER_LABELS[row.layer_type] || row.layer_type}</TableCell><TableCell><Badge variant="outline">{callTypeLabel(row.call_type)}</Badge></TableCell><TableCell><div className="min-w-64 max-w-md"><div className="text-sm font-medium">{purpose.title}</div><div className="text-xs text-muted-foreground">{purpose.description}</div></div></TableCell><TableCell className="font-mono text-xs">{row.model || "-"}</TableCell><TableCell className="text-sm">{formatDateTime(row.created_at)}</TableCell><TableCell>{formatNumber(row.total_tokens)}</TableCell><TableCell>{formatIDR(row.actual_cost_usd)}</TableCell><TableCell className="font-medium">{formatIDR(row.adjusted_cost_usd)}</TableCell><TableCell>{row.duration_ms ? `${row.duration_ms} ms` : "-"}</TableCell><TableCell><Badge variant={row.success ? "default" : "destructive"}>{billingStatusLabel(row.billing_status)}</Badge></TableCell></TableRow> })}</TableBody></Table></div>}
         </DialogContent>
       </Dialog>
     </div>

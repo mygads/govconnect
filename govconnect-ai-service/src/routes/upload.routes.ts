@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import crypto from 'crypto';
+import path from 'path';
 import { processDocumentBufferWithBilling } from '../services/document-ingest.service';
 import { config } from '../config/env';
 import { firstHeader, getParam } from '../utils/http';
@@ -12,24 +13,48 @@ import { deleteDocumentVectors } from '../services/vector-db.service';
 
 const router = Router();
 
+const allowedMimeTypes = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'text/plain',
+  'text/markdown',
+  'text/x-markdown',
+  'text/csv',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/tiff',
+  'image/bmp',
+  'application/octet-stream',
+]);
+
+const allowedExtensions = new Set([
+  'pdf', 'docx', 'doc', 'pptx', 'ppt', 'txt', 'md', 'csv',
+  'xls', 'xlsx', 'png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp',
+]);
+
+function getExtension(filename?: string): string {
+  return path.extname(filename || '').replace(/^\./, '').toLowerCase();
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowedTypes = [
-      'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      'application/vnd.ms-powerpoint',
-      'text/plain',
-      'text/markdown',
-      'text/csv',
-    ];
-    if (allowedTypes.includes(file.mimetype)) {
+    const extension = getExtension(file.originalname);
+    const mimeType = (file.mimetype || '').toLowerCase();
+    const validExtension = allowedExtensions.has(extension);
+    const validMime = !mimeType || allowedMimeTypes.has(mimeType);
+
+    if (validExtension && validMime) {
       cb(null, true);
     } else {
-      cb(new Error('File type not supported. Allowed: PDF, DOCX, DOC, PPT, PPTX, TXT, MD, CSV'));
+      cb(new Error('File type not supported. Allowed: PDF, DOCX, DOC, PPT, PPTX, TXT, MD, CSV, XLS, XLSX, PNG, JPG, WEBP, TIFF, BMP'));
     }
   },
 });

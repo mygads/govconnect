@@ -28,12 +28,20 @@ export async function GET(request: NextRequest) {
 
     const where = session.admin.village_id ? { village_id: session.admin.village_id } : {}
 
-    const [total, completed, processing, failed, pending, chunks] = await Promise.all([
+    const errorStatuses = ['failed', 'parse_fail', 'ocr_fail', 'embed_fail']
+    const processingStatuses = ['processing', 'ocr_pending', 'retrying']
+
+    const [total, completed, processing, failed, pending, ocrPending, retrying, parseFail, ocrFail, embedFail, chunks] = await Promise.all([
       prisma.knowledge_documents.count({ where }),
       prisma.knowledge_documents.count({ where: { ...where, status: 'completed' } }),
-      prisma.knowledge_documents.count({ where: { ...where, status: 'processing' } }),
-      prisma.knowledge_documents.count({ where: { ...where, status: 'failed' } }),
+      prisma.knowledge_documents.count({ where: { ...where, status: { in: processingStatuses } } }),
+      prisma.knowledge_documents.count({ where: { ...where, status: { in: errorStatuses } } }),
       prisma.knowledge_documents.count({ where: { ...where, status: 'pending' } }),
+      prisma.knowledge_documents.count({ where: { ...where, status: 'ocr_pending' } }),
+      prisma.knowledge_documents.count({ where: { ...where, status: 'retrying' } }),
+      prisma.knowledge_documents.count({ where: { ...where, status: 'parse_fail' } }),
+      prisma.knowledge_documents.count({ where: { ...where, status: 'ocr_fail' } }),
+      prisma.knowledge_documents.count({ where: { ...where, status: 'embed_fail' } }),
       prisma.knowledge_documents.aggregate({
         where,
         _sum: { total_chunks: true },
@@ -47,6 +55,11 @@ export async function GET(request: NextRequest) {
         processing,
         failed,
         pending,
+        ocrPending,
+        retrying,
+        parseFail,
+        ocrFail,
+        embedFail,
         totalChunks: chunks._sum.total_chunks || 0,
       },
     })

@@ -1235,12 +1235,12 @@ export default function KnowledgePage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Unggah Dokumen</DialogTitle>
-            <DialogDescription>Unggah dokumen untuk menambah basis pengetahuan AI. Didukung: PDF, DOC/DOCX, PPT/PPTX, TXT, MD, CSV</DialogDescription>
+            <DialogDescription>Unggah dokumen untuk menambah basis pengetahuan AI. Didukung: PDF, DOC/DOCX, PPT/PPTX, TXT, MD, CSV, XLS/XLSX, gambar (PNG/JPG/WEBP/TIFF/BMP)</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="file">File *</Label>
-              <Input id="file" type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.docx,.doc,.ppt,.pptx,.txt,.md,.csv" />
+              <Input id="file" type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.docx,.doc,.ppt,.pptx,.txt,.md,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp" />
               {uploadFile && <p className="text-sm text-muted-foreground">Dipilih: {uploadFile.name} ({formatFileSize(uploadFile.size)})</p>}
             </div>
             <div className="space-y-2">

@@ -182,20 +182,37 @@ export interface RAGConfidence {
 /**
  * Document processing status
  */
-export type DocumentStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type DocumentStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'ocr_pending'
+  | 'retrying'
+  | 'parse_fail'
+  | 'ocr_fail'
+  | 'embed_fail';
 
 /**
  * Supported document MIME types
  */
-export type SupportedMimeType = 
+export type SupportedMimeType =
   | 'application/pdf'
-  | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'  // DOCX
-  | 'application/msword'     // DOC
-  | 'application/vnd.openxmlformats-officedocument.presentationml.presentation' // PPTX
-  | 'application/vnd.ms-powerpoint' // PPT
+  | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  | 'application/msword'
+  | 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  | 'application/vnd.ms-powerpoint'
+  | 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  | 'application/vnd.ms-excel'
   | 'text/plain'
   | 'text/markdown'
-  | 'text/csv';
+  | 'text/x-markdown'
+  | 'text/csv'
+  | 'image/png'
+  | 'image/jpeg'
+  | 'image/webp'
+  | 'image/tiff'
+  | 'image/bmp';
 
 /**
  * Document metadata

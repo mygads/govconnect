@@ -172,6 +172,7 @@ export interface DocumentChunkInput {
   category?: string;
   pageNumber?: number;
   sectionTitle?: string;
+  provenance?: Record<string, any>;
   embeddingModel?: string;
   scope?: VectorScope;
   isGlobal?: boolean;
@@ -194,13 +195,13 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
         await tx.$executeRaw`
           INSERT INTO ai.document_vectors (
             id, document_id, village_id, scope, is_global, chunk_index, content,
-            document_title, category, page_number, section_title,
+            document_title, category, page_number, section_title, provenance_json,
             embedding, embedding_model, created_at
           ) VALUES (
             ${`${chunk.documentId}_${chunk.chunkIndex}`},
             ${chunk.documentId}, ${vectorScope.villageId}, ${vectorScope.scope}, ${vectorScope.isGlobal}, ${chunk.chunkIndex}, ${chunk.content},
             ${chunk.documentTitle || null}, ${chunk.category || null},
-            ${chunk.pageNumber || null}, ${chunk.sectionTitle || null},
+            ${chunk.pageNumber || null}, ${chunk.sectionTitle || null}, ${chunk.provenance || null},
             ${embeddingStr}::ai.vector, ${chunk.embeddingModel || config.embeddingGateway.model},
             NOW()
           )
@@ -213,6 +214,7 @@ export async function addDocumentChunks(chunks: DocumentChunkInput[]): Promise<v
             category = EXCLUDED.category,
             page_number = EXCLUDED.page_number,
             section_title = EXCLUDED.section_title,
+            provenance_json = EXCLUDED.provenance_json,
             embedding = EXCLUDED.embedding,
             embedding_model = EXCLUDED.embedding_model
         `;
@@ -262,6 +264,7 @@ interface VectorSearchRow {
   chunk_index?: number;
   page_number?: number;
   section_title?: string;
+  provenance_json?: any;
   quality_score?: number;
 }
 
@@ -356,7 +359,7 @@ export async function searchVectors(
         ? Prisma.sql`
             SELECT 
               id, content, document_title as title, category,
-              document_id, chunk_index, page_number, section_title,
+              document_id, chunk_index, page_number, section_title, provenance_json,
               1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'document' as source_type
             FROM ai.document_vectors
@@ -366,7 +369,7 @@ export async function searchVectors(
         : Prisma.sql`
             SELECT 
               id, content, document_title as title, category,
-              document_id, chunk_index, page_number, section_title,
+              document_id, chunk_index, page_number, section_title, provenance_json,
               1 - (embedding OPERATOR(ai.<=>) ${embeddingStr}::ai.vector) as similarity,
               'document' as source_type
             FROM ai.document_vectors
@@ -398,6 +401,7 @@ export async function searchVectors(
             chunkIndex: row.chunk_index,
             pageNumber: row.page_number,
             sectionTitle: row.section_title,
+            provenance: row.provenance_json,
             category: row.category,
           },
         });
