@@ -223,14 +223,14 @@ function getKnowledgeTestWorkflowBlock(message: string): { response: string; int
   const normalized = (message || '').toLowerCase();
   const hasReference = /\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(message);
 
-  if (hasReference && /\b(cek|status|tracking|lacak|batal|batalkan|cancel|ubah|update|edit|revisi|riwayat|history)\b/i.test(normalized)) {
+  if (hasReference && /\b(cek|status|tracking|lacak|batal|batalkan|cancel|hapus|delete|ubah|update|edit|revisi|riwayat|history)\b/i.test(normalized)) {
     return {
       intent: 'KNOWLEDGE_TEST_WORKFLOW_BLOCKED',
       response: 'Halaman uji knowledge ini tidak menjalankan cek status, pembatalan, perubahan data, atau riwayat laporan/layanan. Untuk menguji workflow itu secara end-to-end, gunakan kanal WhatsApp atau Webchat sebenarnya.',
     };
   }
 
-  if (/\b(lapor|pengaduan|keluhan|aduan)\b/i.test(normalized) && /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak|rt\s*\d+)\b/i.test(normalized)) {
+  if (/\b(lapor|pengaduan|keluhan|aduan|buat laporan|bikin laporan)\b/i.test(normalized) && /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak|rt\s*\d+)\b/i.test(normalized)) {
     return {
       intent: 'KNOWLEDGE_TEST_WORKFLOW_BLOCKED',
       response: 'Halaman uji knowledge ini tidak membuat laporan atau pengaduan. Di sini hanya diuji kualitas jawaban knowledge/RAG. Untuk menguji pembuatan laporan, gunakan kanal WhatsApp atau Webchat sebenarnya.',
