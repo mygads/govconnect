@@ -679,7 +679,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   const billingGroupId = villageId
     ? `msg:${villageId}:${resolvedMessageId}`
     : `${channel}:${userId}:${traceId}`;
-  const billingTurn: AiBillingTurnHandle | null = isEvaluation
+  const billingTurn: AiBillingTurnHandle | null = isEvaluation || sideEffectMode === 'knowledge_test'
     ? null
     : startAiBillingTurn({
         village_id: villageId ?? null,
@@ -1287,7 +1287,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     });
   } finally {
     const analyticsResult = finalResult as ProcessMessageResult | null;
-    if (!isEvaluation && analyticsResult && analyticsResult.intent !== 'SPAM') {
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test' && analyticsResult && analyticsResult.intent !== 'SPAM') {
       await aiAnalyticsService.recordInteractionEvent({
         waUserId: userId,
         villageId,
