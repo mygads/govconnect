@@ -464,7 +464,7 @@ jobs:
             # Channel schema was historically created by postgres; make the runtime
             # migration role own its schema objects before channel-service starts.
             if sudo -u postgres psql -d govconnect -v ON_ERROR_STOP=1 <<'SQL'
-          DO \$\$
+          DO $$
           DECLARE
             obj record;
           BEGIN
@@ -496,7 +496,7 @@ jobs:
                 EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO govconnect', obj.sequence_schema, obj.sequence_name);
               END LOOP;
             END IF;
-          END \$\$;
+          END $$;
           SQL
             then
               echo "✅ Channel database ownership reconciled"
