@@ -513,16 +513,48 @@ jobs:
             export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:${IMAGE_TAG}
             echo "📌 Deploying image tag: ${IMAGE_TAG}"
 
+            free_kb=$(df --output=avail / | tail -n 1 | tr -d ' ')
+            min_free_kb=$((8 * 1024 * 1024))
+            echo "💽 Free disk before pull: ${free_kb} KB"
+            if [ -n "$free_kb" ] && [ "$free_kb" -lt "$min_free_kb" ]; then
+              echo "🧹 Low disk space detected, running pre-pull Docker cleanup..."
+              sudo docker builder prune -af || true
+              sudo docker image prune -af --filter "until=24h" || true
+              sudo docker system df || true
+              free_kb=$(df --output=avail / | tail -n 1 | tr -d ' ')
+              echo "💽 Free disk after cleanup: ${free_kb} KB"
+            fi
+
+            pull_services_with_retry() {
+              local services="$1"
+              local attempts=0
+              local max_attempts=2
+              while [ "$attempts" -lt "$max_attempts" ]; do
+                attempts=$((attempts + 1))
+                if sudo -E docker compose pull $services; then
+                  return 0
+                fi
+                if [ "$attempts" -ge "$max_attempts" ]; then
+                  return 1
+                fi
+                echo "⚠️ docker compose pull failed, retrying after lightweight cleanup..."
+                sudo docker builder prune -af || true
+                sudo docker image prune -af --filter "until=12h" || true
+                sleep 5
+              done
+              return 1
+            }
+
             # Pull only images that were built successfully
             if [ -n "\$SERVICES_TO_PULL" ]; then
               echo "📥 Pulling images for: \$SERVICES_TO_PULL"
-              sudo -E docker compose pull \$SERVICES_TO_PULL
-              
+              pull_services_with_retry "\$SERVICES_TO_PULL"
+
               echo "🚀 Recreating services: \$SERVICES_TO_PULL"
               sudo -E docker compose up -d --no-deps --force-recreate \$SERVICES_TO_PULL
             else
               echo "⚠️ No services to recreate, running all services"
-              sudo -E docker compose pull
+              pull_services_with_retry ""
               sudo -E docker compose up -d
             fi
             
