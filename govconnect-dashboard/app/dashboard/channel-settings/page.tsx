@@ -395,7 +395,12 @@ export default function ChannelSettingsPage() {
       if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal sync history')
       setHistoryResult(data.data || data.result || data)
       await fetchWaActivities()
-      toast({ title: 'History Sync Dikirim', description: `Provider diminta sync history ${history} pesan.` })
+      toast({
+        title: history > 0 ? 'History Sync Dikirim' : 'History Lama Dinonaktifkan',
+        description: history > 0
+          ? `Provider diminta sync history ${history} pesan.`
+          : 'Provider diminta tidak mengimpor history lama.',
+      })
     } catch (error: any) {
       toast({ title: 'Gagal Sync History', description: error.message || 'Gagal sync history', variant: 'destructive' })
     } finally {
@@ -411,7 +416,14 @@ export default function ChannelSettingsPage() {
       if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal sync S3 provider')
       await fetchOperationalDetails()
       await fetchWaActivities()
-      toast({ title: 'S3 Provider Disinkronkan', description: 'Media WhatsApp sekarang diarahkan ke mode S3.' })
+      const s3TestError = data?.data?.testResult?.error
+      toast({
+        title: s3TestError ? 'S3 Tersinkron dengan Peringatan' : 'S3 Provider Disinkronkan',
+        description: s3TestError
+          ? 'Konfigurasi S3 provider tersimpan, tetapi test koneksi gagal. Cek detail S3 provider.'
+          : 'Media WhatsApp sekarang diarahkan ke mode S3.',
+        variant: s3TestError ? 'destructive' : 'default',
+      })
     } catch (error: any) {
       toast({ title: 'Gagal Sync S3', description: error.message || 'Gagal sync S3 provider', variant: 'destructive' })
     } finally {

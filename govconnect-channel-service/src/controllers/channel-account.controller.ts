@@ -20,17 +20,23 @@ export async function handleGetChannelAccount(req: Request, res: Response) {
       where: { village_id },
     });
 
-    if (!account) {
-      return res.status(404).json({ error: 'Channel account not found' });
-    }
-
     const webhookUrl = buildWebhookUrl();
     const objectStorage = await checkObjectStorageHealth({ includeUsage: false });
-    const data = {
-      ...account,
-      webhook_url: account.webhook_url || webhookUrl,
-      object_storage: objectStorage,
-    };
+    const data = account
+      ? {
+          ...account,
+          webhook_url: account.webhook_url || webhookUrl,
+          object_storage: objectStorage,
+        }
+      : {
+          village_id,
+          wa_number: '',
+          wa_token: '',
+          webhook_url: webhookUrl,
+          enabled_wa: false,
+          enabled_webchat: false,
+          object_storage: objectStorage,
+        };
     return res.json({ data });
   } catch (error: any) {
     logger.error('Get channel account error', { error: error.message });

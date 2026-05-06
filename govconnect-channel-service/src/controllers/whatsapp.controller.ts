@@ -69,7 +69,7 @@ function getStoredMediaMessage(rawMessage: any, mediaType: string | null | undef
 }
 
 async function syncChannelAccountNumber(villageId: string, waNumber?: string | null) {
-  if (!waNumber) return;
+  const normalizedWaNumber = typeof waNumber === 'string' ? waNumber : '';
 
   const webhookUrl = (process.env.PUBLIC_CHANNEL_BASE_URL || process.env.PUBLIC_BASE_URL || '')
     .replace(/\/$/, '');
@@ -84,14 +84,14 @@ async function syncChannelAccountNumber(villageId: string, waNumber?: string | n
     where: { village_id: villageId },
     create: {
       village_id: villageId,
-      wa_number: waNumber,
+      wa_number: normalizedWaNumber,
       wa_token: '',
       webhook_url: webhook,
       enabled_wa: false,
       enabled_webchat: false,
     },
     update: {
-      wa_number: waNumber,
+      wa_number: normalizedWaNumber,
       webhook_url: webhook,
       // Preserve existing enabled settings
       enabled_wa: existing?.enabled_wa ?? false,
