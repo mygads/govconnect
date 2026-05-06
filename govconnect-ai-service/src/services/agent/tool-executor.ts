@@ -153,6 +153,7 @@ function buildServiceInfoSuggestedResponse(input: {
   estimatedProcessingTime?: string | null;
   requirementsText?: string;
   isOnline: boolean;
+  canOfferFormLink?: boolean;
 }): string {
   const parts: string[] = [`Baik Pak/Bu, untuk layanan *${input.serviceName}* informasinya seperti ini:`];
 
@@ -170,9 +171,9 @@ function buildServiceInfoSuggestedResponse(input: {
     parts.push(`Biaya: ${input.estimatedCost}`);
   }
 
-  if (input.isOnline) {
+  if (input.isOnline && input.canOfferFormLink !== false) {
     parts.push(`Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *${input.serviceName}*.`);
-  } else {
+  } else if (!input.isOnline) {
     parts.push('Layanan ini diproses di kantor desa. Silakan datang sambil membawa persyaratan di atas ya.');
   }
 
@@ -463,7 +464,9 @@ async function toolGetServiceInfo(
     ? formatServiceRequirements(formattedRequirements)
     : '';
 
-  if (isOnline && !ctx.isEvaluation) {
+  const canOfferFormLink = isOnline && !ctx.isEvaluation && ctx.sideEffectMode !== 'knowledge_test';
+
+  if (canOfferFormLink) {
     setPendingServiceFormOffer(ctx.userId, {
       service_slug: service.slug,
       village_id: ctx.villageId,
@@ -493,6 +496,7 @@ async function toolGetServiceInfo(
         estimatedProcessingTime: service.estimated_processing_time || null,
         requirementsText,
         isOnline,
+        canOfferFormLink,
       }),
     },
     meta: {
