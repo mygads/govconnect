@@ -262,7 +262,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
 
   if (/surat keterangan domisili|keterangan domisili|buat.*domisili|urus.*domisili/i.test(normalized) && (isGenericTimeout || reply.includes('form/'))) {
     return {
-      response: 'Untuk layanan *Keterangan Domisili*, persyaratan umumnya KTP, KK, dan surat pengantar RT/RW bila diperlukan. Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait Keterangan Domisili.',
+      response: 'Untuk layanan *Keterangan Domisili*, persyaratan umumnya KTP, KK, dan surat pengantar RT/RW bila diperlukan. Jika ingin menguji alur pengajuan formulirnya, silakan lakukan lewat WhatsApp atau Webchat produksi.',
       intent: 'SERVICE_INFO',
       serviceSlug: 'administrasi-kependudukan-keterangan-domisili',
     };
@@ -278,7 +278,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
 
   if (/\bkk\b|kartu keluarga/i.test(normalized) && isGenericTimeout) {
     return {
-      response: 'Untuk layanan KK, persyaratan umumnya KTP/KK lama, surat pengantar RT/RW, dan dokumen pendukung sesuai kebutuhan perubahan data. Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait layanan KK.',
+      response: 'Untuk layanan KK, persyaratan umumnya KTP/KK lama, surat pengantar RT/RW, dan dokumen pendukung sesuai kebutuhan perubahan data. Jika ingin menguji alur pengajuan formulirnya, silakan lakukan lewat WhatsApp atau Webchat produksi.',
       intent: 'SERVICE_INFO',
     };
   }
