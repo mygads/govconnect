@@ -55,6 +55,14 @@ interface DetailResponse {
 
 const defaultStart = () => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
 const defaultEnd = () => new Date().toISOString().slice(0, 16)
+function generationStatusLabel(status?: string | null) {
+  const labels: Record<string, string> = {
+    success: "Berhasil",
+    failed: "Gagal",
+  }
+  return status ? labels[status] || status.replace(/_/g, " ") : "-"
+}
+
 function formatDate(value: string) {
   return new Date(value).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" })
 }
@@ -275,7 +283,7 @@ export default function AIGenerationLogsPageContent() {
                   <TableCell>{formatCost(row.actual_cost_usd)}</TableCell>
                   <TableCell className="whitespace-nowrap">{speed(row)}</TableCell>
                   <TableCell>{row.finish_reason || "-"}</TableCell>
-                  <TableCell><Badge variant={row.status === "success" ? "default" : "destructive"}>{row.status}</Badge></TableCell>
+                  <TableCell><Badge variant={row.status === "success" ? "default" : "destructive"}>{generationStatusLabel(row.status)}</Badge></TableCell>
                   <TableCell><Button size="sm" variant="ghost"><Eye className="h-4 w-4" /></Button></TableCell>
                 </TableRow>
               ))}
