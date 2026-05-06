@@ -66,6 +66,13 @@ interface ToolContext {
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
 }
 
+interface AgentGatewayTokenContext {
+  village_id?: string | null;
+  wa_user_id?: string | null;
+  channel?: 'whatsapp' | 'webchat' | null;
+  trace_id?: string | null;
+}
+
 interface ConversationContext {
   summary?: string;
   recentMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -318,12 +325,13 @@ export async function runAgent(
   let model = '';
   let preferredReplyText: string | undefined;
   let preferredGuidanceText: string | undefined;
+  const tokenContext = buildAgentGatewayTokenContext(toolCtx);
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     iterations = i + 1;
 
     const toolChoice: AgentToolChoice = i === 0 ? firstTurnToolChoice : 'auto';
-    const response = await callLLMWithTools(messages, allowedTools, toolChoice, toolCtx.villageId);
+    const response = await callLLMWithTools(messages, allowedTools, toolChoice, tokenContext);
     if (!response) {
       return {
         replyText: buildAgentFallbackReply(userMessage, toolsUsed),
@@ -555,11 +563,20 @@ interface AgentGatewayResponse {
   }>;
 }
 
+function buildAgentGatewayTokenContext(toolCtx: ToolContext): AgentGatewayTokenContext {
+  return {
+    village_id: toolCtx.villageId ?? null,
+    wa_user_id: toolCtx.channel === 'whatsapp' ? toolCtx.userId : null,
+    channel: toolCtx.channel,
+    trace_id: toolCtx.traceId ?? null,
+  };
+}
+
 async function callLLMWithTools(
   messages: AgentMessage[],
   tools: typeof AGENT_TOOLS,
   toolChoice: AgentToolChoice,
-  villageId?: string,
+  tokenContext: AgentGatewayTokenContext,
 ): Promise<AgentGatewayResponse | null> {
   const result = await callAIGatewayPrompt({
     lane: 'llm',
@@ -570,9 +587,10 @@ async function callLLMWithTools(
     timeoutMs: 30_000,
     layerType: 'agent',
     callType: 'agent_orchestrator',
-    context: { village_id: villageId ?? null },
+    context: tokenContext,
     extraBody: tools.length > 0 ? { tools, tool_choice: toolChoice } : undefined,
   });
+
 
   if (!result) return null;
 

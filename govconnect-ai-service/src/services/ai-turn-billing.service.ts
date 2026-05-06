@@ -257,7 +257,7 @@ async function markUsageRowsFinalized(
     where: {
       billing_group_id: billingGroupId,
       id: { in: usageIds },
-      billing_status: 'unbilled',
+      billing_status: { in: ['unbilled', 'skipped_zero_cost'] } as any,
     },
     data: {
       billing_status: status,

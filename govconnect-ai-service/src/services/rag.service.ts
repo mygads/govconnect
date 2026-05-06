@@ -475,6 +475,7 @@ export async function expandQuery(
     jsonMode: false,
     layerType: 'rag_expand',
     callType: 'rag_query_expand',
+    context,
   });
 
   const expanded = gatewayResult?.text?.trim();
