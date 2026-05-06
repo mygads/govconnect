@@ -6,6 +6,7 @@ import { CheckCircle2, Loader2, Minus, Plus, Search, Ticket, Wallet } from "luci
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -97,6 +98,37 @@ function formatDate(value?: string | null) {
 
 function formatUsd(value?: number | null) {
   return `$${(value ?? 0).toFixed(2)}`
+}
+
+function walletStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    active: "Aman",
+    warning: "Warning",
+    exhausted: "Habis",
+  }
+  return labels[status] || status.replace(/_/g, " ")
+}
+
+function walletStatusBadge(status: string): "default" | "secondary" | "destructive" {
+  if (status === "exhausted") return "destructive"
+  if (status === "warning") return "secondary"
+  return "default"
+}
+
+function voucherStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    active: "Aktif",
+    redeemed: "Sudah diredeem",
+    expired: "Kedaluwarsa",
+    cancelled: "Dibatalkan",
+  }
+  return labels[status] || status.replace(/_/g, " ")
+}
+
+function voucherStatusBadge(status: string): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "redeemed") return "default"
+  if (status === "expired" || status === "cancelled") return "destructive"
+  return "secondary"
 }
 
 function villageLabel(village?: VillageRow) {
@@ -611,7 +643,7 @@ export default function SuperadminAIWalletsPage() {
                       <div className="font-medium">{village ? villageLabel(village) : wallet.village_id}</div>
                       <div className="font-mono text-xs text-muted-foreground">{village?.slug ? `${village.slug} · ` : ""}{wallet.village_id}</div>
                     </TableCell>
-                    <TableCell>{wallet.status}</TableCell>
+                    <TableCell><Badge variant={walletStatusBadge(wallet.status)}>{walletStatusLabel(wallet.status)}</Badge></TableCell>
                     <TableCell>{formatUsd(wallet.balance_usd)}</TableCell>
                     <TableCell>{formatDateTime(wallet.updated_at)}</TableCell>
                     <TableCell className="text-right">
@@ -663,7 +695,7 @@ export default function SuperadminAIWalletsPage() {
                     <div className="font-medium">{voucher.code}</div>
                     <div className="text-xs text-muted-foreground">Dibuat: {formatDateTime(voucher.created_at)}</div>
                   </TableCell>
-                  <TableCell>{voucher.status}</TableCell>
+                  <TableCell><Badge variant={voucherStatusBadge(voucher.status)}>{voucherStatusLabel(voucher.status)}</Badge></TableCell>
                   <TableCell>{formatUsd(voucher.amount_usd)}</TableCell>
                   <TableCell>
                     {voucher.redeemed_at ? (
