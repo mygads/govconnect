@@ -6,7 +6,7 @@
 
 Service 3: REST API untuk manajemen laporan (complaints) dan permohonan layanan (service requests).
 
-## 📋 OverviewS
+## 📋 Overview
 
 Case Service adalah layanan CRUD yang mengelola:
 - **Laporan** (Complaints): Laporan masalah dari warga (jalan rusak, lampu mati, dll)

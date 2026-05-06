@@ -8,7 +8,7 @@ AI Orchestrator untuk GovConnect. Service ini menerima pesan warga, menjalankan 
 
 Semua traffic AI sekarang **wajib** lewat AI gateway OpenAI-compatible. Tidak ada lagi jalur provider langsung terpisah.
 
-Lane yang tersedia:
+Lane yang tersedia
 
 1. `LLM` untuk chat completions utama.
 2. `EMBED` untuk vector embeddings.

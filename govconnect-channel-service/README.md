@@ -11,7 +11,7 @@ Channel Service handles communication channels for the Tanggapin AI platform, in
 - Webchat support
 - Live chat admin interface
 
-## Features
+## Feature
 
 - 📱 WhatsApp API integration
 - 💬 Real-time messaging via WebSocket

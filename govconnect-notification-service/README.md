@@ -4,7 +4,7 @@
 
 <!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix -->
 
-## OverviewS
+## Overview
 
 Notification Service handles outbound notifications for the Tanggapin AI platform:
 - WhatsApp notifications
