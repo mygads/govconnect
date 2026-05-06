@@ -18,13 +18,14 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/hooks/use-toast'
-import { 
-  getNotificationSettings, 
-  saveNotificationSettings, 
+import {
+  fetchNotificationSettings,
+  getNotificationSettings,
+  persistNotificationSettings,
   playNotificationSound,
   showBrowserNotification,
   requestNotificationPermission,
-  NotificationSettings 
+  NotificationSettings
 } from '@/lib/notification-settings'
 
 // Urgent types from database
@@ -45,26 +46,23 @@ export default function NotificationSettingsPage() {
     if ('Notification' in window) {
       setHasPermission(Notification.permission === 'granted')
     }
-    // Fetch urgent types from database
-    fetchUrgentTypes()
-  }, [])
 
-  const fetchUrgentTypes = async () => {
-    try {
-      const res = await fetch('/api/complaints/types?is_urgent=true')
-      if (res.ok) {
-        const data = await res.json()
-        setUrgentTypes(data.data || [])
-      }
-    } catch (error) {
-      console.error('Failed to fetch urgent types:', error)
-    }
-  }
+    fetchNotificationSettings()
+      .then((nextSettings) => {
+        setSettings(nextSettings)
+        setUrgentTypes((nextSettings.urgentCategories || []).map((name) => ({ id: name, name })))
+      })
+      .catch((error) => {
+        console.error('Failed to fetch notification settings:', error)
+      })
+  }, [])
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      saveNotificationSettings(settings)
+      const saved = await persistNotificationSettings(settings)
+      setSettings(saved)
+      setUrgentTypes((saved.urgentCategories || []).map((name) => ({ id: name, name })))
       toast({ title: 'Berhasil', description: 'Pengaturan notifikasi berhasil disimpan' })
     } catch (error) {
       toast({ title: 'Gagal', description: 'Gagal menyimpan pengaturan', variant: 'destructive' })
@@ -84,13 +82,13 @@ export default function NotificationSettingsPage() {
   }
 
   const handleTestNotification = () => {
-    playNotificationSound('normal')
-    showBrowserNotification('Test Notifikasi', 'Ini adalah test notifikasi dari GovConnect', { urgent: false })
+    playNotificationSound('normal', settings)
+    showBrowserNotification('Test Notifikasi', 'Ini adalah test notifikasi dari GovConnect', { urgent: false, settings })
   }
 
   const handleTestUrgent = () => {
-    playNotificationSound('urgent')
-    showBrowserNotification('🚨 Test Notifikasi Darurat', 'Ini adalah test notifikasi darurat', { urgent: true })
+    playNotificationSound('urgent', settings)
+    showBrowserNotification('🚨 Test Notifikasi Darurat', 'Ini adalah test notifikasi darurat', { urgent: true, settings })
   }
 
   return (

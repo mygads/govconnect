@@ -4,8 +4,10 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { dashboard, statistics } from '@/lib/frontend-api'
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
+  fetchNotificationSettings,
   getNotificationSettings,
   playNotificationSound,
+  saveNotificationSettings,
   showBrowserNotification,
   requestNotificationPermission,
   NotificationSettings,
@@ -134,12 +136,13 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
             
             // Play sound and show browser notification
             if (settings.enabled) {
-              playNotificationSound(isUrgent ? 'urgent' : 'normal')
+              playNotificationSound(isUrgent ? 'urgent' : 'normal', settings)
               showBrowserNotification(
                 notification.title,
                 notification.message,
                 {
                   urgent: isUrgent,
+                  settings,
                   onClick: () => {
                     window.focus()
                     window.location.href = `/dashboard/laporan/${complaint.id}`
@@ -198,10 +201,20 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     } finally {
       setLoading(false)
     }
-  }, [settings.enabled])
+  }, [settings])
 
   useEffect(() => {
-    setSettings(getNotificationSettings())
+    const localSettings = getNotificationSettings()
+    setSettings(localSettings)
+
+    fetchNotificationSettings()
+      .then((nextSettings) => {
+        setSettings(nextSettings)
+        saveNotificationSettings(nextSettings)
+      })
+      .catch(() => {
+        setSettings(localSettings)
+      })
   }, [])
 
   // Initial load and polling
@@ -244,7 +257,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
 
   const updateSettings = useCallback((newSettings: NotificationSettings) => {
     setSettings(newSettings)
-    // Settings are saved in the component that updates them
+    saveNotificationSettings(newSettings)
   }, [])
 
   const unreadCount = notifications.filter(n => !n.read).length

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { requireRole } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 
 // Default settings (tanpa konfigurasi model AI di UI)
@@ -12,28 +12,16 @@ const DISALLOWED_KEYS = ['ai_model_primary', 'ai_model_fallback', 'ai_model'];
 
 export async function GET(request: NextRequest) {
   try {
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const [, authError] = await requireRole(request, 'superadmin')
+    if (authError) return authError
 
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
-
-    // Get all settings
     const settings = await prisma.system_settings.findMany()
-    
-    // Convert to object format
+
     const settingsObj: Record<string, string> = {}
     settings.forEach((s: { key: string; value: string }) => {
       settingsObj[s.key] = s.value
     })
 
-    // Merge with defaults
     const mergedSettings = { ...DEFAULT_SETTINGS, ...settingsObj }
 
     return NextResponse.json({
@@ -50,22 +38,8 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
-
-    // Only superadmin can update settings
-    if (payload.role !== 'superadmin') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
+    const [, authError] = await requireRole(request, 'superadmin')
+    if (authError) return authError
 
     const body = await request.json()
     const { key, value, description } = body
@@ -84,7 +58,6 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    // Upsert setting
     const setting = await prisma.system_settings.upsert({
       where: { key },
       update: {
@@ -113,22 +86,8 @@ export async function PUT(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify authentication
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
-
-    // Only superadmin can update settings
-    if (payload.role !== 'superadmin') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
+    const [, authError] = await requireRole(request, 'superadmin')
+    if (authError) return authError
 
     const body = await request.json()
     const { settings } = body as { settings: Record<string, string> }
@@ -148,7 +107,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Batch upsert settings
     const updates = await Promise.all(
       Object.entries(settings).map(([key, value]) =>
         prisma.system_settings.upsert({

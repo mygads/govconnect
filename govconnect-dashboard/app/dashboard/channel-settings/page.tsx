@@ -19,8 +19,6 @@ import {
 } from "@/components/ui/dialog"
 import {
   AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -414,7 +412,7 @@ export default function ChannelSettingsPage() {
       const response = await fetchApiRaw(withVillage('/api/whatsapp/s3/sync'), { method: 'POST' })
       const data = await response.json().catch(() => null)
       if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal sync S3 provider')
-      await fetchOperationalDetails()
+      await Promise.all([fetchSessionStatus(), fetchOperationalDetails()])
       await fetchWaActivities()
       const s3TestError = data?.data?.testResult?.error
       toast({
@@ -458,7 +456,7 @@ export default function ChannelSettingsPage() {
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.error || 'Gagal repair semua session')
       setRepairResult(data.data)
-      await Promise.all([fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
+      await Promise.all([fetchSessionStatus(), fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
       if (data?.warning || data?.success === false) {
         toast({ title: 'Repair Semua Session Selesai dengan Peringatan', description: `${data.data?.count || 0} session diproses, ${data.data?.warningCount || 0} perlu dicek.` })
       } else {
@@ -477,7 +475,7 @@ export default function ChannelSettingsPage() {
       const response = await fetchApiRaw(withVillage('/api/whatsapp/s3/test'), { method: 'POST' })
       const data = await response.json().catch(() => null)
       if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal test S3')
-      await fetchOperationalDetails()
+      await Promise.all([fetchSessionStatus(), fetchOperationalDetails()])
       toast({ title: 'S3 OK', description: 'Provider berhasil mengakses konfigurasi S3.' })
     } catch (error: any) {
       toast({ title: 'S3 Bermasalah', description: error.message || 'Gagal test S3', variant: 'destructive' })
@@ -486,16 +484,18 @@ export default function ChannelSettingsPage() {
     }
   }
 
-  const handleDeleteS3 = async () => {
+  const handleDeleteS3 = async (): Promise<boolean> => {
     try {
       setDeletingS3(true)
       const response = await fetchApiRaw(withVillage('/api/whatsapp/s3'), { method: 'DELETE' })
       const data = await response.json().catch(() => null)
       if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal hapus S3 provider')
-      await fetchOperationalDetails()
+      await Promise.all([fetchSessionStatus(), fetchOperationalDetails()])
       toast({ title: 'S3 Provider Dihapus', description: 'Konfigurasi S3 di provider WhatsApp sudah dihapus.' })
+      return true
     } catch (error: any) {
       toast({ title: 'Gagal Hapus S3', description: error.message || 'Gagal hapus S3 provider', variant: 'destructive' })
+      return false
     } finally {
       setDeletingS3(false)
     }
@@ -671,7 +671,8 @@ export default function ChannelSettingsPage() {
   const handleDisconnectCurrentAccount = async () => {
     try {
       setIsResolvingDuplicate(true)
-      await handleDeleteSession()
+      const deleted = await handleDeleteSession(false)
+      if (!deleted) return
       setShowDuplicateDialog(false)
       setDuplicateInfo(null)
       toast({
@@ -719,7 +720,7 @@ export default function ChannelSettingsPage() {
       })
       
       // Refresh status
-      await fetchSessionStatus()
+      await Promise.all([fetchSessionStatus(), fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
     } catch (error: any) {
       toast({
         title: "Gagal",
@@ -747,6 +748,7 @@ export default function ChannelSettingsPage() {
         const duplicate = await checkDuplicateWaNumber(status.wa_number)
         if (duplicate) {
           console.log("[QR_DIALOG] Duplicate WA number found:", duplicate)
+          setShowQrDialog(false)
           setDuplicateInfo(duplicate)
           setShowDuplicateDialog(true)
         } else {
@@ -774,6 +776,12 @@ export default function ChannelSettingsPage() {
   }, [stopPolling, fetchSessionStatus, setupStage, updateSetupStage])
 
   useEffect(() => {
+    stopPolling()
+    setShowQrDialog(false)
+    setShowMaintenanceDialog(false)
+    setShowS3DeleteDialog(false)
+    setIsResolvingDuplicate(false)
+    updateSetupStage("idle")
     resetChannelSettingsState()
     setWaActivities([])
     setWebhookAudit(null)
@@ -782,7 +790,9 @@ export default function ChannelSettingsPage() {
     setSessionStatus(null)
     setSessionExists(null)
     setQrCode("")
-  }, [selectedVillageId, resetChannelSettingsState])
+    setRepairResult(null)
+    setHistoryResult(null)
+  }, [selectedVillageId, resetChannelSettingsState, stopPolling, updateSetupStage])
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -879,9 +889,7 @@ export default function ChannelSettingsPage() {
       })
     } finally {
       setSessionLoading(false)
-      fetchSessionStatus()
-      fetchWebhookAudit()
-      fetchWaActivities()
+      await Promise.all([fetchSessionStatus(), fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
     }
   }
 
@@ -907,7 +915,7 @@ export default function ChannelSettingsPage() {
         title: "Disconnected",
         description: "WhatsApp berhasil diputuskan.",
       })
-      await fetchSessionStatus()
+      await Promise.all([fetchSessionStatus(), fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
     } catch (error: any) {
       toast({
         title: "Gagal",
@@ -943,7 +951,7 @@ export default function ChannelSettingsPage() {
         title: "Logout berhasil",
         description: "Session WhatsApp logout. QR perlu discan ulang untuk login.",
       })
-      await fetchSessionStatus()
+      await Promise.all([fetchSessionStatus(), fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
     } catch (error: any) {
       toast({
         title: "Gagal",
@@ -1018,12 +1026,12 @@ export default function ChannelSettingsPage() {
     }
   }
 
-  const handleDeleteSession = async () => {
+  const handleDeleteSession = async (showSuccessToast = true): Promise<boolean> => {
     try {
       setSessionLoading(true)
       stopPolling()
       setShowQrDialog(false)
-      
+
       const response = await fetchApiRaw(withVillage("/api/whatsapp/session"), {
         method: "DELETE",
       })
@@ -1041,16 +1049,21 @@ export default function ChannelSettingsPage() {
       setSessionStatus(null)
       setSessionExists(false)
       setQrCode("")
-      toast({
-        title: "Session Dihapus",
-        description: "Session WhatsApp berhasil dihapus.",
-      })
+      if (showSuccessToast) {
+        toast({
+          title: "Session Dihapus",
+          description: "Session WhatsApp berhasil dihapus.",
+        })
+      }
+      await Promise.all([fetchWebhookAudit(), fetchOperationalDetails(), fetchWaActivities()])
+      return true
     } catch (error: any) {
       toast({
         title: "Gagal",
         description: error.message || "Gagal menghapus session",
         variant: "destructive",
       })
+      return false
     } finally {
       setSessionLoading(false)
     }
@@ -1391,7 +1404,7 @@ export default function ChannelSettingsPage() {
                 </Button>
               )}
               {sessionExists === true && (
-                <Button type="button" variant="destructive" onClick={handleDeleteSession} disabled={sessionLoading}>
+                <Button type="button" variant="destructive" onClick={() => { void handleDeleteSession() }} disabled={sessionLoading}>
                   <Trash2 className="h-4 w-4 mr-2" />
                   Hapus session
                 </Button>
@@ -1827,18 +1840,19 @@ export default function ChannelSettingsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingS3}>Batal</AlertDialogCancel>
-            <AlertDialogAction
+            <Button type="button" variant="outline" onClick={() => setShowS3DeleteDialog(false)} disabled={deletingS3}>Batal</Button>
+            <Button
+              type="button"
+              variant="destructive"
               onClick={async () => {
-                await handleDeleteS3()
-                setShowS3DeleteDialog(false)
+                const deleted = await handleDeleteS3()
+                if (deleted) setShowS3DeleteDialog(false)
               }}
               disabled={deletingS3}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deletingS3 ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
               Hapus S3 Provider
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1863,7 +1877,9 @@ export default function ChannelSettingsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel 
+            <Button
+              type="button"
+              variant="outline"
               onClick={handleDisconnectCurrentAccount}
               disabled={isResolvingDuplicate}
               className="w-full sm:w-auto"
@@ -1874,8 +1890,9 @@ export default function ChannelSettingsPage() {
                 <Trash2 className="h-4 w-4 mr-2" />
               )}
               Hapus dari Akun Ini
-            </AlertDialogCancel>
-            <AlertDialogAction 
+            </Button>
+            <Button
+              type="button"
               onClick={handleForceDisconnectOther}
               disabled={isResolvingDuplicate}
               className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700"
@@ -1886,7 +1903,7 @@ export default function ChannelSettingsPage() {
                 <CheckCircle className="h-4 w-4 mr-2" />
               )}
               Hapus dari Akun Lain & Gunakan di Sini
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -161,12 +161,10 @@ export default function SuperadminRegisterPage() {
 
     setIsSubmitting(true)
     try {
-      const token = localStorage.getItem("token")
       const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           username: form.username,

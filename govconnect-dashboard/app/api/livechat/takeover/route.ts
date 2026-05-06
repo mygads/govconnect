@@ -1,15 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import { livechat } from '@/lib/api-client'
-
-async function getAuthUser(request: NextRequest) {
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null
-  }
-  const token = authHeader.split(' ')[1]
-  return await verifyToken(token)
-}
 
 /**
  * GET /api/livechat/takeover
@@ -17,14 +8,12 @@ async function getAuthUser(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = await getAuthUser(request)
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const [session, authError] = await requireAuth(request)
+    if (authError) return authError
 
-    const response = await livechat.getTakeovers()
+    const response = await livechat.getTakeovers(session.villageId || undefined)
     const data = await response.json()
-    return NextResponse.json(data)
+    return NextResponse.json(data, { status: response.status })
   } catch (error) {
     console.error('Error fetching takeovers:', error)
     return NextResponse.json(

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { hashPassword, generateToken, requireRole } from '@/lib/auth'
+import { hashPassword, requireRole } from '@/lib/auth'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
 
 const DEFAULT_KB_CATEGORIES = [
@@ -113,16 +113,8 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    const token = await generateToken({
-      adminId: admin.id,
-      username: admin.username,
-      name: admin.name,
-      role: admin.role,
-    })
-
     return NextResponse.json({
       success: true,
-      token,
       user: {
         id: admin.id,
         username: admin.username,

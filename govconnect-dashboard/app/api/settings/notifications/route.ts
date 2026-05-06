@@ -1,67 +1,73 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { verifyToken } from '@/lib/auth'
+import { requireRole } from '@/lib/auth'
+import { apiFetch, buildUrl, getHeaders, ServicePath } from '@/lib/api-client'
 
-// Notification settings - urgentCategories now comes from database (ComplaintType.is_urgent)
-let adminSettings = {
+const NOTIFICATION_SETTINGS_KEYS = {
+  enabled: 'dashboard_notification_enabled',
+  urgentNotifications: 'dashboard_notification_urgent_enabled',
+  soundEnabled: 'dashboard_notification_sound_enabled',
+} as const
+
+const DEFAULT_NOTIFICATION_SETTINGS = {
   enabled: true,
+  urgentNotifications: true,
   soundEnabled: true,
 }
 
-async function getSession(request: NextRequest) {
-  const token = request.cookies.get('token')?.value ||
-    request.headers.get('authorization')?.replace('Bearer ', '')
-
-  if (!token) return null
-  const payload = await verifyToken(token)
-  if (!payload) return null
-
-  const session = await prisma.admin_sessions.findUnique({
-    where: { token },
-    include: { admin: true }
-  })
-
-  if (!session || session.expires_at < new Date()) return null
-  return session
-}
-
-// Get urgent complaint types from Case Service API
 async function getUrgentTypesFromDB(): Promise<string[]> {
   try {
-    // Call Case Service API to get urgent types
-    const caseServiceUrl = process.env.CASE_SERVICE_URL || 'http://case-service:3003'
-    const res = await fetch(`${caseServiceUrl}/api/complaints/types?is_urgent=true`, {
-      headers: {
-        'x-api-key': process.env.INTERNAL_API_KEY || '',
-      },
+    const url = new URL(buildUrl(ServicePath.CASE, '/complaints/types'))
+    url.searchParams.set('is_urgent', 'true')
+
+    const res = await apiFetch(url.toString(), {
+      headers: getHeaders(),
       cache: 'no-store',
     })
-    if (res.ok) {
-      const data = await res.json()
-      const types = data.data || data || []
-      return types.map((t: { name: string }) => t.name)
-    }
-    return []
+
+    if (!res.ok) return []
+
+    const data = await res.json()
+    const types = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []
+    return types.map((t: { name: string }) => t.name)
   } catch {
     return []
   }
 }
 
+async function getStoredNotificationSettings() {
+  const rows = await prisma.system_settings.findMany({
+    where: { key: { in: Object.values(NOTIFICATION_SETTINGS_KEYS) } },
+  })
+
+  const rowMap = new Map(rows.map((row) => [row.key, row.value]))
+
+  return {
+    enabled: rowMap.get(NOTIFICATION_SETTINGS_KEYS.enabled) ? rowMap.get(NOTIFICATION_SETTINGS_KEYS.enabled) === 'true' : DEFAULT_NOTIFICATION_SETTINGS.enabled,
+    urgentNotifications: rowMap.get(NOTIFICATION_SETTINGS_KEYS.urgentNotifications)
+      ? rowMap.get(NOTIFICATION_SETTINGS_KEYS.urgentNotifications) === 'true'
+      : DEFAULT_NOTIFICATION_SETTINGS.urgentNotifications,
+    soundEnabled: rowMap.get(NOTIFICATION_SETTINGS_KEYS.soundEnabled)
+      ? rowMap.get(NOTIFICATION_SETTINGS_KEYS.soundEnabled) === 'true'
+      : DEFAULT_NOTIFICATION_SETTINGS.soundEnabled,
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const session = await getSession(request)
-    if (!session || session.admin.role !== 'superadmin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const [, authError] = await requireRole(request, 'superadmin')
+    if (authError) return authError
 
-    // Fetch urgent categories from database
-    const urgentCategories = await getUrgentTypesFromDB()
+    const [urgentCategories, settings] = await Promise.all([
+      getUrgentTypesFromDB(),
+      getStoredNotificationSettings(),
+    ])
 
     return NextResponse.json({
       success: true,
       data: {
-        ...adminSettings,
-        urgentCategories, // From database, not hardcoded
+        ...settings,
+        urgentCategories,
       }
     })
   } catch (error: any) {
@@ -74,26 +80,38 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession(request)
-    if (!session || session.admin.role !== 'superadmin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const [, authError] = await requireRole(request, 'superadmin')
+    if (authError) return authError
+
+    const body = await request.json().catch(() => ({}))
+    const nextSettings = {
+      enabled: body.enabled !== undefined ? Boolean(body.enabled) : DEFAULT_NOTIFICATION_SETTINGS.enabled,
+      urgentNotifications: body.urgentNotifications !== undefined ? Boolean(body.urgentNotifications) : DEFAULT_NOTIFICATION_SETTINGS.urgentNotifications,
+      soundEnabled: body.soundEnabled !== undefined ? Boolean(body.soundEnabled) : DEFAULT_NOTIFICATION_SETTINGS.soundEnabled,
     }
 
-    const body = await request.json()
-    
-    // Update settings
-    adminSettings = {
-      ...adminSettings,
-      ...body
-    }
-    
-    // In production, save to database here
-    // Also update notification service config
-    
+    await prisma.$transaction([
+      prisma.system_settings.upsert({
+        where: { key: NOTIFICATION_SETTINGS_KEYS.enabled },
+        update: { value: String(nextSettings.enabled), description: 'Enable dashboard complaint notifications' },
+        create: { key: NOTIFICATION_SETTINGS_KEYS.enabled, value: String(nextSettings.enabled), description: 'Enable dashboard complaint notifications' },
+      }),
+      prisma.system_settings.upsert({
+        where: { key: NOTIFICATION_SETTINGS_KEYS.urgentNotifications },
+        update: { value: String(nextSettings.urgentNotifications), description: 'Enable urgent dashboard complaint notifications' },
+        create: { key: NOTIFICATION_SETTINGS_KEYS.urgentNotifications, value: String(nextSettings.urgentNotifications), description: 'Enable urgent dashboard complaint notifications' },
+      }),
+      prisma.system_settings.upsert({
+        where: { key: NOTIFICATION_SETTINGS_KEYS.soundEnabled },
+        update: { value: String(nextSettings.soundEnabled), description: 'Enable dashboard notification sound' },
+        create: { key: NOTIFICATION_SETTINGS_KEYS.soundEnabled, value: String(nextSettings.soundEnabled), description: 'Enable dashboard notification sound' },
+      }),
+    ])
+
     return NextResponse.json({
       success: true,
       message: 'Settings saved successfully',
-      data: adminSettings
+      data: nextSettings,
     })
   } catch (error: any) {
     return NextResponse.json(

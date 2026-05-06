@@ -1,4 +1,5 @@
-export type AdminRole = 'village_admin' | 'admin' | 'superadmin'
+export type { AdminRole } from "@/lib/auth"
+import type { AdminRole } from "@/lib/auth"
 
 export type RouteRule = {
   path: string

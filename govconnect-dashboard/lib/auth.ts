@@ -132,7 +132,7 @@ export async function comparePassword(
 
 // ── Fase 2: Server-side RBAC helpers ──
 
-export type AdminRole = 'superadmin' | 'village_admin'
+export type AdminRole = 'superadmin' | 'village_admin' | 'admin'
 
 /**
  * Require authentication. Returns session or sends 401 response.

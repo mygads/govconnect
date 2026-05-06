@@ -1152,8 +1152,9 @@ export const livechat = {
   /**
    * Get all takeovers
    */
-  async getTakeovers() {
-    return apiFetch(buildUrl(ServicePath.CHANNEL, '/internal/takeover'), {
+  async getTakeovers(villageId?: string) {
+    const path = withVillage('/internal/takeover', villageId);
+    return apiFetch(buildUrl(ServicePath.CHANNEL, path), {
       headers: getHeaders(),
     });
   },
