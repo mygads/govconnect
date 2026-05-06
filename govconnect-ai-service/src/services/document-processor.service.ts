@@ -16,6 +16,7 @@ import {
   EmbeddedChunk,
   ChunkingConfig,
   SupportedMimeType,
+  EmbeddingConfig,
 } from '../types/embedding.types';
 import { generateBatchEmbeddings } from './embedding.service';
 
@@ -655,7 +656,8 @@ function splitLargeParagraph(
 export async function processDocumentSemanticChunking(
   content: string,
   documentId: string,
-  maxChunkSize: number = MAX_SEMANTIC_CHUNK_SIZE
+  maxChunkSize: number = MAX_SEMANTIC_CHUNK_SIZE,
+  context?: EmbeddingConfig['context'],
 ): Promise<EmbeddedChunk[]> {
   const startTime = Date.now();
 
@@ -686,6 +688,7 @@ export async function processDocumentSemanticChunking(
   const batchResult = await generateBatchEmbeddings(texts, {
     taskType: 'RETRIEVAL_DOCUMENT',
     outputDimensionality: 768,
+    context,
   });
 
   // Combine chunks with embeddings

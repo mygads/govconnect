@@ -21,6 +21,7 @@
 
 import logger from '../utils/logger';
 import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabledAsync } from './ai-gateway.service';
+import { getCurrentBillingContext } from './ai-turn-billing.service';
 import { getCategorySlugs, FALLBACK_CATEGORY_SLUGS } from './dynamic-categories.service';
 
 // ==================== TYPES ====================
@@ -40,6 +41,19 @@ interface ChunkDefinition {
   paragraphs: number[];
   title: string;
   category: string;
+}
+
+function getChunkingGatewayContext(villageId?: string | null) {
+  const billingContext = getCurrentBillingContext();
+  return {
+    village_id: villageId ?? billingContext?.village_id ?? null,
+    message_id: billingContext?.message_id ?? null,
+    trace_id: billingContext?.trace_id ?? null,
+    billing_group_id: billingContext?.billing_group_id ?? null,
+    wa_user_id: billingContext?.wa_user_id ?? null,
+    session_id: billingContext?.session_id ?? null,
+    channel: billingContext?.channel ?? null,
+  };
 }
 
 // ==================== CONSTANTS ====================
@@ -179,6 +193,7 @@ async function callLLMForChunking(
   prompt: string,
   timeout: number = 60_000,
   validCategories?: string[],
+  villageId?: string | null,
 ): Promise<ChunkDefinition[]> {
   if (!(await isAIGatewayEnabledAsync('llm', null))) {
     throw new Error('LLM gateway lane is not configured for AI chunking');
@@ -192,6 +207,9 @@ async function callLLMForChunking(
     maxTokens: 8192,
     timeoutMs: timeout,
     jsonMode: true,
+    layerType: 'full_nlu',
+    callType: 'smart_chunking',
+    context: getChunkingGatewayContext(villageId),
   });
 
   if (!gatewayResult) {
@@ -375,7 +393,7 @@ export async function smartChunkDocument(
 
   // Very short document (1-2 paragraphs): single chunk, still ask AI for title+category
   if (paragraphs.length <= 2) {
-    return await smartChunkShortDocument(paragraphs, documentTitle, validCategories);
+    return await smartChunkShortDocument(paragraphs, documentTitle, validCategories, villageId);
   }
 
   logger.info('[SmartChunk] Starting AI-driven chunking', {
@@ -390,10 +408,10 @@ export async function smartChunkDocument(
     // Small/medium document: single LLM call
     const numbered = formatNumberedParagraphs(paragraphs);
     const prompt = buildChunkingPrompt(numbered, documentTitle, paragraphs.length, validCategories);
-    chunkDefs = await callLLMForChunking(prompt, 60_000, validCategories);
+    chunkDefs = await callLLMForChunking(prompt, 60_000, validCategories, villageId);
   } else {
     // Large document: process in overlapping batches
-    chunkDefs = await batchChunkDocument(paragraphs, documentTitle, validCategories);
+    chunkDefs = await batchChunkDocument(paragraphs, documentTitle, validCategories, villageId);
   }
 
   // Validate coverage
@@ -437,7 +455,7 @@ export async function smartChunkKnowledge(
 
   // Short text: single chunk, ask AI for title+category only
   if (paragraphs.length <= 3) {
-    return await smartChunkShortDocument(paragraphs, title, validCategories);
+    return await smartChunkShortDocument(paragraphs, title, validCategories, villageId);
   }
 
   logger.info('[SmartChunk] Chunking knowledge entry', {
@@ -449,7 +467,7 @@ export async function smartChunkKnowledge(
   const prompt = buildKnowledgeChunkingPrompt(numbered, title, paragraphs.length, validCategories);
 
   try {
-    const chunkDefs = await callLLMForChunking(prompt, 30_000, validCategories);
+    const chunkDefs = await callLLMForChunking(prompt, 30_000, validCategories, villageId);
     const validated = validateCoverage(chunkDefs, paragraphs.length);
     return reconstructChunks(paragraphs, validated);
   } catch (err: any) {
@@ -475,6 +493,7 @@ async function smartChunkShortDocument(
   paragraphs: string[],
   documentTitle: string,
   validCategories?: string[],
+  villageId?: string | null,
 ): Promise<SmartChunk[]> {
   const cats = validCategories || [...FALLBACK_CATEGORY_SLUGS];
   const content = paragraphs.join('\n\n');
@@ -507,6 +526,9 @@ Jawab HANYA JSON (tanpa markdown):
       maxTokens: 200,
       timeoutMs: 10_000,
       jsonMode: true,
+      layerType: 'full_nlu',
+      callType: 'smart_chunking',
+      context: getChunkingGatewayContext(villageId),
     });
 
     if (gatewayResult) {
@@ -540,6 +562,7 @@ async function batchChunkDocument(
   paragraphs: string[],
   documentTitle: string,
   validCategories?: string[],
+  villageId?: string | null,
 ): Promise<ChunkDefinition[]> {
   const allChunkDefs: ChunkDefinition[] = [];
   const totalBatches = Math.ceil(paragraphs.length / (MAX_PARAGRAPHS_PER_BATCH - BATCH_OVERLAP));
@@ -568,7 +591,7 @@ async function batchChunkDocument(
     const prompt = buildChunkingPrompt(numbered, documentTitle, batchParagraphs.length, cats);
 
     try {
-      const batchDefs = await callLLMForChunking(prompt, 60_000, validCategories);
+      const batchDefs = await callLLMForChunking(prompt, 60_000, validCategories, villageId);
 
       // Adjust paragraph numbers to global scope (batch-local → document-global)
       const adjusted = batchDefs.map(def => ({

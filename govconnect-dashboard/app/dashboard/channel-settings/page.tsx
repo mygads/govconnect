@@ -346,7 +346,7 @@ export default function ChannelSettingsPage() {
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.error || data?.message || "Gagal sinkron webhook")
       setWebhookAudit(data?.data || null)
-      await fetchWaActivities()
+      await Promise.all([fetchSessionStatus(), fetchOperationalDetails(), fetchWaActivities()])
       toast({
         title: "Webhook Disinkronkan",
         description: "Konfigurasi webhook/session WhatsApp sudah diperiksa dan diperbaiki jika perlu.",
@@ -392,7 +392,7 @@ export default function ChannelSettingsPage() {
       const data = await response.json().catch(() => null)
       if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal sync history')
       setHistoryResult(data.data || data.result || data)
-      await fetchWaActivities()
+      await Promise.all([fetchSessionStatus(), fetchOperationalDetails(), fetchWaActivities()])
       toast({
         title: history > 0 ? 'History Sync Dikirim' : 'History Lama Dinonaktifkan',
         description: history > 0

@@ -291,7 +291,9 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
     usedAiChunking = true;
   } catch (error: any) {
     logger.warn('AI smart chunking failed, falling back to semantic chunking', { documentId: input.documentId, error: error.message });
-    const fallbackChunks = await processDocumentSemanticChunking(content, input.documentId, 1500);
+    const fallbackChunks = await processDocumentSemanticChunking(content, input.documentId, 1500, {
+      village_id: input.villageId || null,
+    });
     smartChunks = fallbackChunks.map((c, idx) => ({
       title: c.sectionTitle || c.metadata?.sectionTitle || docTitle,
       category: input.category || 'umum',
@@ -322,6 +324,9 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
     const batchResult = await generateBatchEmbeddings(texts, {
       taskType: 'RETRIEVAL_DOCUMENT',
       outputDimensionality: 768,
+      context: {
+        village_id: input.villageId || null,
+      },
     });
     finalChunks = smartChunks.map((chunk, idx) => ({
       title: chunk.title,

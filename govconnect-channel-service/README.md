@@ -1,5 +1,7 @@
 # Tanggapin AI Channel Service
 
+<!-- CI/CD Trigger: 2026-05-06-v1 - GovConnect full rebuild check -->
+
 <!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix X-->
 
 ## OverviewS

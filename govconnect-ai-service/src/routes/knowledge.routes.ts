@@ -87,6 +87,9 @@ async function embedKnowledgeChunks(input: {
   const batchResult = await generateBatchEmbeddings(texts, {
     taskType: 'RETRIEVAL_DOCUMENT',
     outputDimensionality: 768,
+    context: {
+      village_id: input.villageId || null,
+    },
   });
 
   for (let i = 0; i < finalChunks.length; i++) {
@@ -205,7 +208,13 @@ router.post('/', async (req: Request, res: Response) => {
 
     res.status(responsePayload.statusCode).json(responsePayload.body);
 
-    generateAndStoreVariants(id, title, content, resolvedScope.villageId, 'knowledge', resolvedScope.scope).catch((err: any) => {
+    generateAndStoreVariants(id, title, content, resolvedScope.villageId, 'knowledge', resolvedScope.scope, {
+      village_id: resolvedScope.villageId,
+      channel: 'system_ingest',
+      message_id: `ingest:${id}`,
+      session_id: `ingest:${id}`,
+      billing_group_id: buildKnowledgeIngestBillingGroupId(id, content),
+    }).catch((err: any) => {
       logger.warn('Question variant generation failed (non-blocking)', { id, error: err.message });
     });
   } catch (error: any) {
@@ -277,7 +286,13 @@ router.put('/:id', async (req: Request, res: Response) => {
     res.status(responsePayload.statusCode).json(responsePayload.body);
 
     deleteVariants(id).then(() =>
-      generateAndStoreVariants(id, title, content, resolvedScope.villageId, 'knowledge', resolvedScope.scope)
+      generateAndStoreVariants(id, title, content, resolvedScope.villageId, 'knowledge', resolvedScope.scope, {
+        village_id: resolvedScope.villageId,
+        channel: 'system_ingest',
+        message_id: `ingest:${id}`,
+        session_id: `ingest:${id}`,
+        billing_group_id: buildKnowledgeIngestBillingGroupId(id, content),
+      })
     ).catch((err: any) => {
       logger.warn('Question variant regeneration failed (non-blocking)', { id, error: err.message });
     });
@@ -361,6 +376,9 @@ router.post('/search', async (req: Request, res: Response) => {
       taskType: 'RETRIEVAL_QUERY',
       outputDimensionality: 768,
       useCache: true,
+      context: {
+        village_id: typeof villageId === 'string' && villageId.trim() ? villageId.trim() : null,
+      },
     });
 
     // Search vectors

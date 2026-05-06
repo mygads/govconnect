@@ -58,6 +58,9 @@ export interface EmbeddingConfig {
     wa_user_id?: string | null;
     session_id?: string | null;
     channel?: string | null;
+    message_id?: string | null;
+    trace_id?: string | null;
+    billing_group_id?: string | null;
   };
 }
 

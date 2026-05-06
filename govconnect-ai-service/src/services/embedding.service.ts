@@ -21,6 +21,7 @@ import {
   EmbeddingStats,
 } from '../types/embedding.types';
 import { callAIGatewayEmbeddings } from './ai-gateway.service';
+import { getCurrentBillingContext } from './ai-turn-billing.service';
 import { registerInterval } from '../utils/timer-registry';
 
 const DEFAULT_MODEL = config.embeddingGateway.model;
@@ -156,6 +157,52 @@ function updateSuccessRate(): void {
   }
 }
 
+function resolveEmbeddingContext(context?: EmbeddingConfig['context']): EmbeddingConfig['context'] {
+  const billingContext = getCurrentBillingContext();
+  return {
+    village_id: context?.village_id ?? billingContext?.village_id ?? null,
+    wa_user_id: context?.wa_user_id ?? billingContext?.wa_user_id ?? null,
+    session_id: context?.session_id ?? billingContext?.session_id ?? null,
+    channel: context?.channel ?? billingContext?.channel ?? null,
+    message_id: context?.message_id ?? billingContext?.message_id ?? null,
+    trace_id: context?.trace_id ?? billingContext?.trace_id ?? null,
+    billing_group_id: context?.billing_group_id ?? billingContext?.billing_group_id ?? null,
+  };
+}
+
+function requiresEmbeddingBillingContext(taskType: EmbeddingTaskType): boolean {
+  return taskType === 'RETRIEVAL_DOCUMENT';
+}
+
+function getEffectiveEmbeddingContext(
+  taskType: EmbeddingTaskType,
+  context?: EmbeddingConfig['context'],
+): EmbeddingConfig['context'] {
+  const resolved = resolveEmbeddingContext(context) ?? {};
+  if (resolved.village_id || resolved.wa_user_id || resolved.session_id || resolved.channel || resolved.message_id || resolved.trace_id || resolved.billing_group_id) {
+    return resolved;
+  }
+  return requiresEmbeddingBillingContext(taskType) ? resolved : (context ?? resolved);
+}
+
+function buildSingleEmbeddingFallbackOptions(
+  options: EmbeddingConfig,
+  taskType: EmbeddingTaskType,
+  normalize: boolean,
+  model: string,
+  outputDimensionality: EmbeddingDimension,
+): EmbeddingConfig {
+  return {
+    ...options,
+    model,
+    outputDimensionality,
+    taskType,
+    normalize,
+    useCache: false,
+    context: getEffectiveEmbeddingContext(taskType, options.context),
+  };
+}
+
 function finalizeEmbeddingValues(
   values: number[],
   outputDimensionality: number,
@@ -276,7 +323,7 @@ export async function generateEmbedding(
   }
 
   try {
-    const gatewayResult = await requestGatewayEmbeddings(text, model, outputDimensionality, 'embedding_single', options.context);
+    const gatewayResult = await requestGatewayEmbeddings(text, model, outputDimensionality, 'embedding_single', getEffectiveEmbeddingContext(taskType, options.context));
     const rawValues = gatewayResult.embeddings[0];
     const finalized = finalizeEmbeddingValues(rawValues, outputDimensionality, normalize);
 
@@ -375,7 +422,7 @@ export async function generateBatchEmbeddings(
   }
 
   try {
-    const gatewayResult = await requestGatewayEmbeddings(nonBlankTexts, model, outputDimensionality, 'embedding_batch', options.context);
+    const gatewayResult = await requestGatewayEmbeddings(nonBlankTexts, model, outputDimensionality, 'embedding_batch', getEffectiveEmbeddingContext(taskType, options.context));
     const nonBlankEmbeddings = gatewayResult.embeddings.map((values) => {
       const finalized = finalizeEmbeddingValues(values, outputDimensionality, normalize);
       return {
@@ -412,13 +459,7 @@ export async function generateBatchEmbeddings(
     try {
       const fallbackEmbeddings = await Promise.all(
         nonBlankTexts.map(text =>
-          generateEmbedding(text, {
-            model,
-            outputDimensionality,
-            taskType,
-            normalize,
-            useCache: false,
-          }),
+          generateEmbedding(text, buildSingleEmbeddingFallbackOptions(options, taskType, normalize, model, outputDimensionality)),
         ),
       );
 

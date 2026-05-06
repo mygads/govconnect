@@ -66,6 +66,9 @@ router.post('/', async (req: Request, res: Response) => {
           taskType: 'RETRIEVAL_QUERY',
           outputDimensionality: 768,
           useCache: true,
+          context: {
+            village_id: typeof villageId === 'string' && villageId.trim() ? villageId.trim() : null,
+          },
         });
         queryEmbedding = embeddingResult.values;
       } catch (error: any) {

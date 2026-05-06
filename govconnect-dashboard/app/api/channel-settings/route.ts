@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 
+export const dynamic = 'force-dynamic'
+
 const CHANNEL_SERVICE_URL = process.env['CHANNEL_SERVICE_URL'] || 'http://localhost:3001'
 const INTERNAL_API_KEY = process.env['INTERNAL_API_KEY'] || ''
 
@@ -41,7 +43,8 @@ export async function GET(request: NextRequest) {
   if (!villageId) return NextResponse.json({ error: 'village_id diperlukan' }, { status: 400 })
 
   const response = await fetch(`${CHANNEL_SERVICE_URL}/internal/channel-accounts/${villageId}`, {
-    headers: { 'x-internal-api-key': INTERNAL_API_KEY }
+    headers: { 'x-internal-api-key': INTERNAL_API_KEY },
+    cache: 'no-store'
   })
 
   if (!response.ok) {

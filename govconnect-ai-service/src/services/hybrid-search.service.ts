@@ -433,6 +433,9 @@ export async function hybridSearch(
       taskType: 'RETRIEVAL_QUERY',
       outputDimensionality: 768,
       useCache: true,
+      context: {
+        village_id: villageId || null,
+      },
     });
 
     // Run both searches in parallel

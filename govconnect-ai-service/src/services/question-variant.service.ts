@@ -15,6 +15,7 @@ import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { generateEmbedding } from './embedding.service';
+import { EmbeddingConfig } from '../types/embedding.types';
 
 type VariantScope = 'village' | 'global';
 
@@ -100,6 +101,7 @@ export async function generateAndStoreVariants(
   villageId?: string | null,
   sourceType: string = 'knowledge',
   scope: VariantScope = 'village',
+  context?: EmbeddingConfig['context'],
 ): Promise<number> {
   const variants = await generateQuestionVariants(title, content);
   const variantScope = resolveVariantScope(villageId, scope);
@@ -116,6 +118,7 @@ export async function generateAndStoreVariants(
       const embeddingResult = await generateEmbedding(variantText, {
         taskType: 'RETRIEVAL_DOCUMENT',
         outputDimensionality: 768,
+        context,
       });
 
       if (!embeddingResult?.values) continue;

@@ -115,7 +115,8 @@ export type CallType =
   | 'sentiment_urgency'
   | 'rerank_documents'
   | 'agent_orchestrator'
-  | 'media_analysis';
+  | 'media_analysis'
+  | 'smart_chunking';
 
 export interface TokenUsageRecord {
   model: string;
