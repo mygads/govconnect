@@ -1,6 +1,6 @@
 # GovConnect AI Service
 
-<!-- CI/CD Trigger: 2026-05-06-v1 - GovConnect full rebuild check -->
+<!-- CI/CD Trigger: 2026-05-06-v2 - GovConnect full rebuild retry -->
 
 AI Orchestrator untuk GovConnect. Service ini menerima pesan warga, menjalankan NLU/RAG/agent tools, menyimpan vector/observability/billing di database AI, berkoordinasi dengan service lain, lalu mengembalikan jawaban ke channel.
 

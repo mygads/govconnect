@@ -213,6 +213,7 @@ export default function ChannelSettingsPage() {
   const statusPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const qrPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const setupStageRef = useRef<WhatsAppSetupStage>("idle")
+  const latestVillageIdRef = useRef<string | null>(null)
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -221,6 +222,10 @@ export default function ChannelSettingsPage() {
       if (qrPollingRef.current) clearInterval(qrPollingRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    latestVillageIdRef.current = selectedVillageId
+  }, [selectedVillageId])
 
   useEffect(() => {
     if (["idle", "connected", "error", "session_created"].includes(setupStage)) return
@@ -270,14 +275,15 @@ export default function ChannelSettingsPage() {
     return `${path}${joiner}village_id=${encodeURIComponent(selectedVillageId)}`
   }, [selectedVillageId])
 
-  const fetchWebhookAudit = useCallback(async () => {
-    if (!selectedVillageId) {
+  const fetchWebhookAudit = useCallback(async (villageId = selectedVillageId) => {
+    if (!villageId) {
       setWebhookAudit(null)
       return null
     }
     try {
-      const response = await fetchApiRaw(withVillage("/api/whatsapp/webhook-audit"))
+      const response = await fetchApiRaw(`/api/whatsapp/webhook-audit?village_id=${encodeURIComponent(villageId)}`)
       const data = await response.json().catch(() => null)
+      if (latestVillageIdRef.current !== villageId) return null
       if (!response.ok) {
         setWebhookAudit(null)
         return null
@@ -290,19 +296,20 @@ export default function ChannelSettingsPage() {
       return audit || null
     } catch (error) {
       console.error("Error fetching webhook audit:", error)
-      setWebhookAudit(null)
+      if (latestVillageIdRef.current === villageId) setWebhookAudit(null)
       return null
     }
-  }, [selectedVillageId, withVillage])
+  }, [selectedVillageId])
 
-  const fetchWaActivities = useCallback(async () => {
-    if (!selectedVillageId) {
+  const fetchWaActivities = useCallback(async (villageId = selectedVillageId) => {
+    if (!villageId) {
       setWaActivities([])
       return
     }
     try {
-      const response = await fetchApiRaw(withVillage("/api/whatsapp/activity?limit=8"))
+      const response = await fetchApiRaw(`/api/whatsapp/activity?limit=8&village_id=${encodeURIComponent(villageId)}`)
       const data = await response.json().catch(() => null)
+      if (latestVillageIdRef.current !== villageId) return
       if (response.ok) {
         setWaActivities(Array.isArray(data?.data) ? data.data : [])
         return
@@ -310,9 +317,9 @@ export default function ChannelSettingsPage() {
       setWaActivities([])
     } catch (error) {
       console.error("Error fetching WA activities:", error)
-      setWaActivities([])
+      if (latestVillageIdRef.current === villageId) setWaActivities([])
     }
-  }, [selectedVillageId, withVillage])
+  }, [selectedVillageId])
 
   const handleSetWaStatusText = async () => {
     const text = waStatusText.trim()
@@ -362,27 +369,30 @@ export default function ChannelSettingsPage() {
     }
   }
 
-  const fetchOperationalDetails = useCallback(async () => {
-    if (!selectedVillageId) {
+  const fetchOperationalDetails = useCallback(async (villageId = selectedVillageId) => {
+    if (!villageId) {
       setProxyConfig(null)
       setS3Status(null)
       return
     }
     try {
       const [proxyResponse, s3Response] = await Promise.all([
-        fetchApiRaw(withVillage('/api/whatsapp/proxy-config')),
-        fetchApiRaw(withVillage('/api/whatsapp/s3')),
+        fetchApiRaw(`/api/whatsapp/proxy-config?village_id=${encodeURIComponent(villageId)}`),
+        fetchApiRaw(`/api/whatsapp/s3?village_id=${encodeURIComponent(villageId)}`),
       ])
       const proxyData = await proxyResponse.json().catch(() => null)
       const s3Data = await s3Response.json().catch(() => null)
+      if (latestVillageIdRef.current !== villageId) return
       setProxyConfig(proxyResponse.ok ? (proxyData?.data || null) : null)
       setS3Status(s3Response.ok ? (s3Data?.data || null) : null)
     } catch (error) {
       console.error('Error fetching WA operational details:', error)
-      setProxyConfig(null)
-      setS3Status(null)
+      if (latestVillageIdRef.current === villageId) {
+        setProxyConfig(null)
+        setS3Status(null)
+      }
     }
-  }, [selectedVillageId, withVillage])
+  }, [selectedVillageId])
 
   const handleSyncHistory = async () => {
     try {
@@ -502,16 +512,16 @@ export default function ChannelSettingsPage() {
   }
 
   // Fetch session status - returns the status data
-  const fetchSessionStatus = useCallback(async (): Promise<SessionStatus | null> => {
+  const fetchSessionStatus = useCallback(async (villageId = selectedVillageId): Promise<SessionStatus | null> => {
     try {
-      if (!selectedVillageId) {
+      if (!villageId) {
         setSessionStatus(null)
         setSessionExists(null)
         setQrCode("")
         return null
       }
 
-      const response = await fetchApiRaw(withVillage("/api/whatsapp/status"))
+      const response = await fetchApiRaw(`/api/whatsapp/status?village_id=${encodeURIComponent(villageId)}`)
 
       let data: any = null
       try {
@@ -520,9 +530,10 @@ export default function ChannelSettingsPage() {
         data = null
       }
 
+      if (latestVillageIdRef.current !== villageId) return null
+
       const nextQrCode = extractQrCode(data)
 
-      // Session belum dibuat
       if (response.status === 404 || data?.error === 'Session belum dibuat') {
         setSessionExists(false)
         setSessionStatus(null)
@@ -537,7 +548,6 @@ export default function ChannelSettingsPage() {
         return null
       }
 
-      // Dashboard API memetakan "belum ada session" => exists=false (status 200)
       if (data?.data?.exists === false) {
         setSessionExists(false)
         setSessionStatus(null)
@@ -577,7 +587,6 @@ export default function ChannelSettingsPage() {
         if (showQrDialog && !status.loggedIn) updateSetupStage("waiting_scan")
       }
 
-      // Update wa_number in settings if available
       if (data.data?.wa_number) {
         setSettings((prev) => ({ ...prev, wa_number: data.data.wa_number }))
       }
@@ -585,12 +594,14 @@ export default function ChannelSettingsPage() {
       return status
     } catch (error) {
       console.error("Error fetching session status:", error)
-      setSessionStatus(null)
-      setSessionExists(null)
-      setQrCode("")
+      if (latestVillageIdRef.current === villageId) {
+        setSessionStatus(null)
+        setSessionExists(null)
+        setQrCode("")
+      }
       return null
     }
-  }, [selectedVillageId, withVillage, showQrDialog, updateSetupStage])
+  }, [selectedVillageId, showQrDialog, updateSetupStage])
 
   // Fetch QR code
   const fetchQRCode = useCallback(async () => {
@@ -821,11 +832,11 @@ export default function ChannelSettingsPage() {
     }
 
     fetchSettings()
-    fetchSessionStatus()
-    fetchWebhookAudit()
-    fetchWaActivities()
-    fetchOperationalDetails()
-  }, [selectedVillageId, withVillage, fetchSessionStatus, fetchWebhookAudit, fetchWaActivities, fetchOperationalDetails, resetChannelSettingsState])
+    void fetchSessionStatus(selectedVillageId)
+    void fetchWebhookAudit(selectedVillageId)
+    void fetchWaActivities(selectedVillageId)
+    void fetchOperationalDetails(selectedVillageId)
+  }, [selectedVillageId, fetchSessionStatus, fetchWebhookAudit, fetchWaActivities, fetchOperationalDetails, resetChannelSettingsState])
 
   // Auto-refresh session status every 15 seconds (outside QR dialog)
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -997,6 +1008,7 @@ export default function ChannelSettingsPage() {
 
       if (initialStatus?.loggedIn) {
         updateSetupStage("connected")
+        setShowQrDialog(false)
         toast({
           title: "Sudah Terhubung",
           description: "Session WhatsApp sudah terautentikasi.",
@@ -1379,7 +1391,7 @@ export default function ChannelSettingsPage() {
                   {sessionLoading ? getSetupMessage() : "Hubungkan WhatsApp"}
                 </Button>
               )}
-              {sessionExists === true && (lifecycleStatus === "offline" || lifecycleStatus === "active" || lifecycleStatus === "unknown" || lifecycleStatus === "error" || lifecycleStatus === "replaced") && (
+              {sessionExists === true && (lifecycleStatus === "offline" || lifecycleStatus === "unknown" || lifecycleStatus === "error" || lifecycleStatus === "replaced") && (
                 <Button type="button" onClick={handleViewQR} disabled={sessionLoading}>
                   <Wifi className="h-4 w-4 mr-2" />
                   {lifecycleStatus === "offline" ? "Reconnect" : "Connect"}
@@ -1479,7 +1491,7 @@ export default function ChannelSettingsPage() {
                 {webhookAudit && <span className="text-xs text-muted-foreground">DB: {webhookAudit.dbStatus || "-"}</span>}
               </div>
               <div className="flex gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={fetchWebhookAudit} disabled={!selectedVillageId || syncingWebhook}>
+                <Button type="button" variant="outline" size="sm" onClick={() => { void fetchWebhookAudit() }} disabled={!selectedVillageId || syncingWebhook}>
                   <RefreshCw className="h-4 w-4 mr-2" />
                   Audit
                 </Button>
@@ -1578,7 +1590,7 @@ export default function ChannelSettingsPage() {
                   {s3Status?.provider?.error && <p className="text-red-600">{s3Status.provider.error}</p>}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={fetchOperationalDetails}>Refresh</Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => { void fetchOperationalDetails() }}>Refresh</Button>
                   <Button type="button" variant="outline" size="sm" onClick={handleSyncS3} disabled={syncingS3 || !sessionExists || !s3Status?.localConfigured}>
                     <RefreshCw className={`h-4 w-4 mr-2 ${syncingS3 ? "animate-spin" : ""}`} />Sync S3
                   </Button>
@@ -1595,7 +1607,7 @@ export default function ChannelSettingsPage() {
             <div className="rounded-lg border p-3">
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-sm font-medium">Aktivitas WhatsApp Terbaru</p>
-                <Button type="button" variant="ghost" size="sm" onClick={fetchWaActivities}>Refresh</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => { void fetchWaActivities() }}>Refresh</Button>
               </div>
               {waActivities.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Belum ada aktivitas WA tersimpan.</p>

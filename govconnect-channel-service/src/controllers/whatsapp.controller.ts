@@ -68,7 +68,7 @@ function getStoredMediaMessage(rawMessage: any, mediaType: string | null | undef
   return null;
 }
 
-async function syncChannelAccountNumber(villageId: string, waNumber?: string | null) {
+async function syncChannelAccountNumber(villageId: string, waNumber?: string | null, enabledWa?: boolean) {
   const normalizedWaNumber = typeof waNumber === 'string' ? waNumber : '';
 
   const webhookUrl = (process.env.PUBLIC_CHANNEL_BASE_URL || process.env.PUBLIC_BASE_URL || '')
@@ -87,14 +87,13 @@ async function syncChannelAccountNumber(villageId: string, waNumber?: string | n
       wa_number: normalizedWaNumber,
       wa_token: '',
       webhook_url: webhook,
-      enabled_wa: false,
+      enabled_wa: typeof enabledWa === 'boolean' ? enabledWa : false,
       enabled_webchat: false,
     },
     update: {
       wa_number: normalizedWaNumber,
       webhook_url: webhook,
-      // Preserve existing enabled settings
-      enabled_wa: existing?.enabled_wa ?? false,
+      enabled_wa: typeof enabledWa === 'boolean' ? enabledWa : existing?.enabled_wa ?? false,
       enabled_webchat: existing?.enabled_webchat ?? false,
     },
   });
@@ -354,7 +353,7 @@ export async function logout(_req: Request, res: Response): Promise<void> {
 
     await updateStoredSessionStatus({ villageId, status: 'logged_out' });
     try {
-      await syncChannelAccountNumber(villageId, null);
+      await syncChannelAccountNumber(villageId, null, false);
     } catch {
       // no-op
     }
