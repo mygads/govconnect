@@ -867,6 +867,15 @@ export async function deleteSessionForVillage(villageId: string) {
   return { deleted: true };
 }
 
+async function backfillWebhookSecret(villageId: string): Promise<string | null> {
+  const nextSecret = randomBytes(48).toString('hex');
+  const updated = await prisma.wa_sessions.update({
+    where: { village_id: villageId },
+    data: { webhook_secret: nextSecret },
+  });
+  return updated.webhook_secret || nextSecret;
+}
+
 type LifecycleSyncResult = {
   success: boolean;
   warning: boolean;
@@ -879,6 +888,16 @@ export async function ensureWhatsAppLifecycleSync(villageId: string, options: { 
 
   const results: Record<string, unknown> = {};
   const webhook = getPublicWhatsAppWebhookUrl();
+  let webhookSecret = session.webhook_secret || null;
+
+  if (!webhookSecret && session.wa_support_session_id) {
+    try {
+      webhookSecret = await backfillWebhookSecret(villageId);
+      results.hmac_backfill = { success: true };
+    } catch (error: any) {
+      results.hmac_backfill = { success: false, error: error.message };
+    }
+  }
 
   if (options.syncWebhook !== false && webhook) {
     try {
@@ -893,10 +912,10 @@ export async function ensureWhatsAppLifecycleSync(villageId: string, options: { 
     }
   }
 
-  if (session.webhook_secret) {
+  if (webhookSecret) {
     try {
       await waGatewayRequest(session.wa_token, '/session/hmac/config', 'POST', {
-        hmac_key: session.webhook_secret,
+        hmac_key: webhookSecret,
       });
       results.hmac = { success: true };
     } catch (error: any) {
