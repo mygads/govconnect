@@ -437,27 +437,27 @@ jobs:
           export SERVICES_TO_RECREATE
           export IMAGE_TAG
 
-          ssh $VPS_USER@$VPS_HOST "bash -s" << EOF
+          ssh $VPS_USER@$VPS_HOST "GHCR_TOKEN='$GHCR_TOKEN' SERVICES_TO_RECREATE='$SERVICES_TO_RECREATE' IMAGE_TAG='$IMAGE_TAG' bash -s" << 'EOF'
             set -e
-            
+
             # Ensure directory exists and is a git repo
             if [ ! -d ~/genfity/govconnect/.git ]; then
               echo "📂 Directory is not a git repo, cloning..."
               mkdir -p ~/genfity
               rm -rf ~/genfity/govconnect
-              git clone https://x-access-token:${GHCR_TOKEN}@github.com/${{ github.repository }}.git ~/genfity/govconnect
+              git clone https://x-access-token:$GHCR_TOKEN@github.com/${{ github.repository }}.git ~/genfity/govconnect
             fi
-            
+
             cd ~/genfity/govconnect
-            
+
             SERVICES_TO_PULL="$SERVICES_TO_RECREATE"
-            
+
             # Force pull latest changes (override local, no conflicts)
-            git remote set-url origin https://x-access-token:${GHCR_TOKEN}@github.com/${{ github.repository }}.git
+            git remote set-url origin https://x-access-token:$GHCR_TOKEN@github.com/${{ github.repository }}.git
             git fetch origin main
             git reset --hard origin/main
             git remote set-url origin https://github.com/${{ github.repository }}.git
-            
+
             # Login to GHCR using PAT
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
 
@@ -513,7 +513,7 @@ jobs:
             export IMAGE_NOTIFICATION=ghcr.io/mygads/govconnect-notification-service:${IMAGE_TAG}
             echo "📌 Deploying image tag: ${IMAGE_TAG}"
 
-            free_kb=$(df --output=avail / | tail -n 1 | tr -d ' ')
+            free_kb=$(df --output=avail / | tail -n 1 | tr -cd '0-9')
             min_free_kb=$((8 * 1024 * 1024))
             echo "💽 Free disk before pull: ${free_kb} KB"
             if [ -n "$free_kb" ] && [ "$free_kb" -lt "$min_free_kb" ]; then
@@ -521,7 +521,7 @@ jobs:
               sudo docker builder prune -af || true
               sudo docker image prune -af --filter "until=24h" || true
               sudo docker system df || true
-              free_kb=$(df --output=avail / | tail -n 1 | tr -d ' ')
+              free_kb=$(df --output=avail / | tail -n 1 | tr -cd '0-9')
               echo "💽 Free disk after cleanup: ${free_kb} KB"
             fi
 
@@ -546,25 +546,25 @@ jobs:
             }
 
             # Pull only images that were built successfully
-            if [ -n "\$SERVICES_TO_PULL" ]; then
-              echo "📥 Pulling images for: \$SERVICES_TO_PULL"
-              pull_services_with_retry "\$SERVICES_TO_PULL"
+            if [ -n "$SERVICES_TO_PULL" ]; then
+              echo "📥 Pulling images for: $SERVICES_TO_PULL"
+              pull_services_with_retry "$SERVICES_TO_PULL"
 
-              echo "🚀 Recreating services: \$SERVICES_TO_PULL"
-              sudo -E docker compose up -d --no-deps --force-recreate \$SERVICES_TO_PULL
+              echo "🚀 Recreating services: $SERVICES_TO_PULL"
+              sudo -E docker compose up -d --no-deps --force-recreate $SERVICES_TO_PULL
             else
               echo "⚠️ No services to recreate, running all services"
               pull_services_with_retry ""
               sudo -E docker compose up -d
             fi
-            
+
             # Wait for services to start
             sleep 15
-            
+
             # Check container status
             echo "📊 Container status:"
             sudo docker compose ps
-            
+
             echo "✅ Deployment complete!"
           EOF
 
