@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
+import { isSupportedVillageTimezone, resolveVillageTimezone } from '@/lib/utils'
 
 export async function PATCH(
   request: NextRequest,
@@ -12,17 +13,30 @@ export async function PATCH(
   const { id } = await params
   const body = await request.json().catch(() => ({}))
 
-  if (typeof body.is_active !== 'boolean') {
-    return NextResponse.json({ error: 'is_active must be boolean' }, { status: 400 })
+  const nextData: { is_active?: boolean; timezone?: string } = {}
+
+  if (typeof body.is_active === 'boolean') {
+    nextData.is_active = body.is_active
+  }
+
+  if (typeof body.timezone === 'string' && body.timezone.trim()) {
+    if (!isSupportedVillageTimezone(body.timezone.trim())) {
+      return NextResponse.json({ error: 'Timezone desa tidak valid' }, { status: 400 })
+    }
+    nextData.timezone = resolveVillageTimezone(body.timezone.trim())
+  }
+
+  if (Object.keys(nextData).length === 0) {
+    return NextResponse.json({ error: 'Tidak ada perubahan yang dikirim' }, { status: 400 })
   }
 
   try {
     const village = await prisma.villages.update({
       where: { id },
-      data: { is_active: body.is_active },
+      data: nextData,
     })
 
-    if (!body.is_active) {
+    if (nextData.is_active === false) {
       const admins = await prisma.admin_users.findMany({
         where: { village_id: id },
         select: { id: true },
@@ -33,7 +47,7 @@ export async function PATCH(
       }
     }
 
-    return NextResponse.json({ data: village })
+    return NextResponse.json({ data: { ...village, timezone: resolveVillageTimezone(village.timezone) } })
   } catch (error: any) {
     if (error?.code === 'P2025') {
       return NextResponse.json({ error: 'Village not found' }, { status: 404 })

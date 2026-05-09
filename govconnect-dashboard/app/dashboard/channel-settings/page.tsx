@@ -1308,6 +1308,7 @@ export default function ChannelSettingsPage() {
   const isSuperadmin = auth?.role === "superadmin"
   const sessionDisplay = getSessionDisplay()
   const lifecycleStatus = getLifecycleStatus()
+  const isActiveConnection = sessionStatus?.loggedIn === true && sessionStatus?.connected === true
 
   return (
     <div className="space-y-6">
@@ -1391,7 +1392,7 @@ export default function ChannelSettingsPage() {
                   {sessionLoading ? getSetupMessage() : "Hubungkan WhatsApp"}
                 </Button>
               )}
-              {sessionExists === true && (lifecycleStatus === "offline" || lifecycleStatus === "unknown" || lifecycleStatus === "error" || lifecycleStatus === "replaced") && (
+              {sessionExists === true && !isActiveConnection && (lifecycleStatus === "offline" || lifecycleStatus === "unknown" || lifecycleStatus === "error" || lifecycleStatus === "replaced") && (
                 <Button type="button" onClick={handleViewQR} disabled={sessionLoading}>
                   <Wifi className="h-4 w-4 mr-2" />
                   {lifecycleStatus === "offline" ? "Reconnect" : "Connect"}
@@ -1415,7 +1416,7 @@ export default function ChannelSettingsPage() {
                   Logout & reset
                 </Button>
               )}
-              {sessionExists === true && (
+              {sessionExists === true && !isActiveConnection && (lifecycleStatus === "offline" || lifecycleStatus === "logged_out") && (
                 <Button type="button" variant="destructive" onClick={() => { void handleDeleteSession() }} disabled={sessionLoading}>
                   <Trash2 className="h-4 w-4 mr-2" />
                   Hapus session

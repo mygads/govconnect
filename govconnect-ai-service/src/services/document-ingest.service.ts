@@ -524,31 +524,42 @@ async function extractWithOcrOrVision(input: { fileBuffer: Buffer; mimeType: str
 
 async function processOneOcrJob() {
   const maxRetries = Number(process.env.OCR_MAX_RETRIES || 3);
-  const rows = await prisma.$queryRaw<Array<{
-    id: string;
-    target_id: string;
-    retry_count: number;
-    payload_json: any;
-  }>>`
-    SELECT id, target_id, retry_count, payload_json
-    FROM ai.embedding_jobs
-    WHERE type = 'document_ocr'
-      AND status IN ('pending', 'failed')
-      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-      AND retry_count < ${maxRetries}
-    ORDER BY priority DESC, created_at ASC
-    LIMIT 1
-  `;
-  const job = rows[0];
+  const job = await prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{
+      id: string;
+      target_id: string;
+      retry_count: number;
+      payload_json: any;
+    }>>`
+      SELECT id, target_id, retry_count, payload_json
+      FROM ai.embedding_jobs
+      WHERE type = 'document_ocr'
+        AND status IN ('pending', 'failed')
+        AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+        AND retry_count < ${maxRetries}
+      ORDER BY priority DESC, created_at ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+    `;
+
+    const claimed = rows[0];
+    if (!claimed?.payload_json) {
+      return null;
+    }
+
+    await tx.$executeRaw`
+      UPDATE ai.embedding_jobs
+      SET status = 'processing', started_at = NOW(), last_error_code = NULL
+      WHERE id = ${claimed.id}
+    `;
+
+    return claimed;
+  });
+
   if (!job?.payload_json) return;
 
   const payload = job.payload_json as any;
   const documentId = payload.documentId || job.target_id;
-  await prisma.$executeRaw`
-    UPDATE ai.embedding_jobs
-    SET status = 'processing', started_at = NOW(), last_error_code = NULL
-    WHERE id = ${job.id}
-  `;
   await updateDashboardDocument(documentId, { status: 'ocr_pending', error_message: 'OCR/vision sedang diproses.' });
 
   try {

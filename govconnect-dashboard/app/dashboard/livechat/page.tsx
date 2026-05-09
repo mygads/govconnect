@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
+import { useAuth } from "@/components/auth/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -22,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+import { formatDateOnly, formatDateTime, formatTimeOnly } from "@/lib/utils"
 import {
   MessageCircle,
   RefreshCw,
@@ -182,6 +184,7 @@ const quickEmojis = ['👍', '🙏', '✅', '😊', '📍', '📄', '⏳', '❗'
 
 export default function LiveChatPage() {
   const { toast } = useToast()
+  const { user } = useAuth()
 
   // State
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -305,10 +308,7 @@ export default function LiveChatPage() {
   }
 
   const formatTakeoverStartedAt = (startedAt?: string | null) => {
-    if (!startedAt) return ""
-    const date = new Date(startedAt)
-    if (Number.isNaN(date.getTime())) return ""
-    return date.toLocaleString("id-ID", {
+    return formatDateTime(startedAt, user?.village_timezone, {
       day: "2-digit",
       month: "long",
       year: "numeric",
@@ -1680,14 +1680,15 @@ export default function LiveChatPage() {
 
   // Format timestamp
   const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp)
+    const target = new Date(timestamp)
     const now = new Date()
-    const isToday = date.toDateString() === now.toDateString()
+    const targetDay = formatDateOnly(target, user?.village_timezone)
+    const todayDay = formatDateOnly(now, user?.village_timezone)
 
-    if (isToday) {
-      return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
+    if (targetDay === todayDay) {
+      return formatTimeOnly(target, user?.village_timezone)
     }
-    return date.toLocaleDateString("id-ID", { day: "numeric", month: "short" })
+    return formatDateOnly(target, user?.village_timezone)
   }
 
   const getMessageStatusLabel = (msg: Message) => {

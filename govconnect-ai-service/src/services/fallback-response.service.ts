@@ -107,7 +107,8 @@ export function getFallbackByState(userId: string): string {
 export function getSmartFallback(
   userId: string,
   intent?: string,
-  message?: string
+  message?: string,
+  timezone?: string | null,
 ): string {
   const ctx = getContext(userId);
   
@@ -142,7 +143,7 @@ export function getSmartFallback(
       intent,
     });
     
-    return getFallbackByIntent(intent);
+    return getFallbackByIntent(intent, timezone);
   }
   
   // 4. Try to detect intent from message using centralized patterns
@@ -154,13 +155,13 @@ export function getSmartFallback(
         detectedIntent,
       });
       
-      return getFallbackByIntent(detectedIntent);
+      return getFallbackByIntent(detectedIntent, timezone);
     }
   }
   
   // 5. Default fallback
   logger.info('[Fallback] Using default fallback', { userId });
-  return getFallbackByIntent('UNKNOWN');
+  return getFallbackByIntent('UNKNOWN', timezone);
 }
 
 

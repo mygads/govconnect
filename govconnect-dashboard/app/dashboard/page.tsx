@@ -12,7 +12,7 @@ import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { documents, statistics } from "@/lib/frontend-api"
 import { isSuperadmin } from "@/lib/rbac"
-import { cn } from "@/lib/utils"
+import { cn, formatDateTime } from "@/lib/utils"
 import {
   AlertTriangle,
   ArrowRight,
@@ -61,8 +61,8 @@ function normalizeTrends(data: any): TrendPoint[] {
     .filter((row) => row.complaints > 0 || row.services > 0)
 }
 
-function formatTime(date: string) {
-  return new Date(date).toLocaleString("id-ID", {
+function formatTime(date: string, timezone?: string | null) {
+  return formatDateTime(date, timezone, {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
@@ -365,7 +365,7 @@ function DashboardHome() {
                         {complaint.is_urgent && <Badge variant="destructive">Darurat</Badge>}
                       </div>
                       <p className="mt-1 truncate text-sm text-muted-foreground">{complaint.kategori?.replace(/_/g, " ")}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{formatTime(complaint.created_at)}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{formatTime(complaint.created_at, user?.village_timezone)}</p>
                     </div>
                   </Link>
                 ))}

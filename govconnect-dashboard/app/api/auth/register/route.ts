@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { hashPassword, requireRole } from '@/lib/auth'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { DEFAULT_VILLAGE_TIME_ZONE, isSupportedVillageTimezone, resolveVillageTimezone } from '@/lib/utils'
 
 const DEFAULT_KB_CATEGORIES = [
   'Profil Desa',
@@ -25,6 +26,8 @@ export async function POST(request: NextRequest) {
     const village_name = (body.village_name || '').trim()
     const village_slug = (body.village_slug || '').trim().toLowerCase().replace(/\s+/g, '-')
     const short_name = (body.short_name || '').trim()
+    const rawTimezone = typeof body.timezone === 'string' ? body.timezone.trim() : ''
+    const timezone = rawTimezone ? resolveVillageTimezone(rawTimezone) : DEFAULT_VILLAGE_TIME_ZONE
 
     if (!username || !password || !name || !village_name || !village_slug) {
       return NextResponse.json(
@@ -41,6 +44,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (rawTimezone && !isSupportedVillageTimezone(rawTimezone)) {
+      return NextResponse.json(
+        { error: 'Timezone desa tidak valid' },
+        { status: 400 }
+      )
+    }
+
     const existing = await prisma.admin_users.findUnique({ where: { username } })
     if (existing) {
       return NextResponse.json({ error: 'Username sudah digunakan' }, { status: 409 })
@@ -50,6 +60,7 @@ export async function POST(request: NextRequest) {
       data: {
         name: village_name,
         slug: village_slug,
+        timezone,
         is_active: true,
       }
     })
@@ -125,6 +136,7 @@ export async function POST(request: NextRequest) {
         id: village.id,
         name: village.name,
         slug: village.slug,
+        timezone: village.timezone,
       }
     })
   } catch (error) {

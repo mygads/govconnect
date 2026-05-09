@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { formatJakartaDateTime, formatUSD } from "@/lib/utils"
 
 interface GenerationRow {
   id: string
@@ -64,22 +65,15 @@ function generationStatusLabel(status?: string | null) {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" })
+  return formatJakartaDateTime(value, { dateStyle: "medium", timeStyle: "short" })
 }
 
 function formatNumber(value: number) {
   return (value || 0).toLocaleString("id-ID")
 }
 
-function formatUSD(usd: number) {
-  const amount = usd || 0
-  const minimumFractionDigits = amount > 0 && amount < 0.000001 ? 8 : 4
-  const maximumFractionDigits = amount > 0 && amount < 0.000001 ? 8 : 6
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits, maximumFractionDigits }).format(amount)
-}
-
 function formatCost(usd: number) {
-  return formatUSD(usd)
+  return formatUSD(usd, { preciseSmall: true, minimumFractionDigits: 4, maximumFractionDigits: 8 })
 }
 
 function gatewayLabel(value?: string | null) {
@@ -133,6 +127,8 @@ export default function AIGenerationLogsPageContent() {
   const [search, setSearch] = useState("")
   const [rows, setRows] = useState<GenerationRow[]>([])
   const [total, setTotal] = useState(0)
+  const [offset, setOffset] = useState(0)
+  const pageSize = 100
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -140,12 +136,12 @@ export default function AIGenerationLogsPageContent() {
   const [detailLoading, setDetailLoading] = useState(false)
 
   const params = useMemo(() => {
-    const result: Record<string, string> = { start: new Date(start).toISOString(), end: new Date(end).toISOString(), limit: "100" }
+    const result: Record<string, string> = { start: new Date(start).toISOString(), end: new Date(end).toISOString(), limit: String(pageSize), offset: String(offset) }
     if (status !== "all") result.status = status
     if (lane !== "all") result.lane_type = lane
     if (search.trim()) result.search = search.trim()
     return result
-  }, [start, end, status, lane, search])
+  }, [start, end, status, lane, search, offset])
 
   const loadRows = useCallback(async () => {
     setLoading(true)
@@ -163,7 +159,15 @@ export default function AIGenerationLogsPageContent() {
     }
   }, [params])
 
+  useEffect(() => {
+    setOffset(0)
+  }, [start, end, status, lane, search])
+
+
   useEffect(() => { loadRows() }, [loadRows])
+
+  const currentPage = Math.floor(offset / pageSize) + 1
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   const openDetail = async (id: string) => {
     setSelectedId(id)
@@ -245,9 +249,16 @@ export default function AIGenerationLogsPageContent() {
       <Card>
         <CardHeader>
           <CardTitle>Generations</CardTitle>
-          <CardDescription>{formatNumber(total)} total row · {formatNumber(rows.length)} ditampilkan · export hanya mengikuti row yang sedang dimuat (maks 100 per fetch)</CardDescription>
+          <CardDescription>{formatNumber(total)} total row · halaman {formatNumber(currentPage)}/{formatNumber(totalPages)} · {formatNumber(rows.length)} row pada halaman ini · export hanya mengikuti halaman yang sedang dimuat (maks {formatNumber(pageSize)} row)</CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="mb-4 flex items-center justify-between gap-2 text-sm text-muted-foreground">
+            <div>Offset {formatNumber(offset)} · Menampilkan {formatNumber(rows.length)} row</div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={loading || offset === 0} onClick={() => setOffset((current) => Math.max(0, current - pageSize))}>Sebelumnya</Button>
+              <Button variant="outline" size="sm" disabled={loading || offset + pageSize >= total} onClick={() => setOffset((current) => current + pageSize)}>Berikutnya</Button>
+            </div>
+          </div>
           <Table>
             <TableHeader>
               <TableRow>

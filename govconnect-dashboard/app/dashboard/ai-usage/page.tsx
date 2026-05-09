@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useAuth } from "@/components/auth/AuthContext"
+import { formatIDRFromUSD, formatJakartaDateTime, formatUSD as formatMoneyUSD } from "@/lib/utils"
 
 export const dynamic = "force-dynamic"
 
@@ -46,7 +47,6 @@ interface TokenUsageRow { id: string; model?: string | null; layer_type: string;
 interface ToolTraceRow { id: string; tool_name: string; sequence: number; success: boolean; duration_ms: number | null; trust_level?: string | null; source_kind?: string | null; error_message?: string | null; created_at: string }
 interface MessageDetail { billing: MessageBilling; ledger_entry: any | null; token_usage: TokenUsageRow[]; tool_traces?: ToolTraceRow[] }
 
-const USD_TO_IDR = 18_000
 const LAYER_COLORS: Record<string, string> = { agent: "#6366f1", micro_nlu: "#f59e0b", rag_expand: "#10b981", rag_rerank: "#0f766e", embedding: "#ef4444", full_nlu: "#64748b" }
 const LAYER_LABELS: Record<string, string> = { agent: "LLM / Agent", micro_nlu: "Classifier", rag_expand: "Rewrite", rag_rerank: "Rerank", embedding: "Embed", full_nlu: "LLM" }
 const CALL_TYPE_LABELS: Record<string, string> = {
@@ -163,17 +163,11 @@ function formatNumber(n: number) {
 }
 
 function formatIDR(usd: number) {
-  const idr = (usd || 0) * USD_TO_IDR
-  if (idr > 0 && idr < 0.01) return `Rp ${idr.toFixed(8)}`
-  if (idr >= 1_000_000) return `Rp ${(idr / 1_000_000).toFixed(2)} jt`
-  if (idr >= 1_000) return `Rp ${(idr / 1_000).toFixed(1)} rb`
-  return `Rp ${idr.toFixed(idr >= 1 ? 0 : 2)}`
+  return formatIDRFromUSD(usd)
 }
 
 function formatUSD(usd: number) {
-  const amount = usd || 0
-  if (amount > 0 && amount < 0.000001) return `$${amount.toFixed(8)}`
-  return `$${amount.toFixed(6)}`
+  return formatMoneyUSD(usd)
 }
 
 function userLabel(user: UsageUser) {
@@ -181,15 +175,7 @@ function userLabel(user: UsageUser) {
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return "-"
-  return new Date(value).toLocaleString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+  return formatJakartaDateTime(value)
 }
 
 function billingStatusLabel(status: string) {
@@ -311,7 +297,7 @@ export default function VillageAIUsagePage() {
         fetchJson<PeriodUsage[]>("/api/ai-usage/by-period", { ...params, period: "day" }),
         fetchJson<PeriodLayerUsage[]>("/api/ai-usage/by-period-layer", { ...params, period: "day" }),
         fetchJson<LayerBreakdown[]>("/api/ai-usage/layer-breakdown", params),
-        fetchJson<UsageUser[]>("/api/ai-usage/users", { start, end }),
+        fetchJson<UsageUser[]>("/api/ai-usage/users", { start, end, ...selectedUserParams }),
         fetchJson<MessageResponse>("/api/ai-usage/messages", { ...params, limit: "50" }),
       ])
       const [summaryResult, periodResult, periodLayerResult, layerResult, userResult, messageResult] = results

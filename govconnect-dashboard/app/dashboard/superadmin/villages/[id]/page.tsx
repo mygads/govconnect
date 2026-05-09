@@ -9,8 +9,10 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAuth } from "@/components/auth/AuthContext"
-import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
+import { formatDate, formatStatus, getStatusColor, getVillageTimezoneLabel, getVillageTimezoneOptions } from "@/lib/utils"
 import { ArrowLeft, FileText, Settings2, Brain, Users, AlertCircle, BookOpen, Loader2, Power, PowerOff, Phone, ListChecks } from "lucide-react"
 
 interface VillageDetail {
@@ -18,6 +20,8 @@ interface VillageDetail {
     id: string
     name: string
     slug: string
+    timezone: string
+    timezone_raw?: string | null
     is_active: boolean
     created_at: string
     profile: { short_name?: string; address?: string; gmaps_url?: string; operating_hours?: any } | null
@@ -51,6 +55,8 @@ export default function SuperadminVillageDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [updatingTimezone, setUpdatingTimezone] = useState(false)
+  const timezoneOptions = getVillageTimezoneOptions()
 
   useEffect(() => {
     if (user && user.role !== "superadmin") router.replace("/dashboard")
@@ -96,6 +102,25 @@ export default function SuperadminVillageDetailPage() {
     }
   }
 
+  const updateVillageTimezone = async (timezone: string) => {
+    if (!data || timezone === data.village.timezone) return
+
+    try {
+      setUpdatingTimezone(true)
+      const res = await fetch(`/api/superadmin/villages/${params.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ timezone }),
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Gagal memperbarui timezone desa")
+      await fetchData()
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setUpdatingTimezone(false)
+    }
+  }
+
   if (loading) {
     return <div className="space-y-6"><Skeleton className="h-8 w-64" /><div className="grid gap-4 md:grid-cols-4">{[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-28" />)}</div><Skeleton className="h-96" /></div>
   }
@@ -117,6 +142,7 @@ export default function SuperadminVillageDetailPage() {
           <div className="flex items-center gap-3"><h1 className="text-3xl font-bold">{village.name}</h1><Badge variant={village.is_active ? "default" : "secondary"}>{village.is_active ? "Aktif" : "Nonaktif"}</Badge></div>
           <p className="mt-1 text-muted-foreground">{village.slug} · {village.profile?.short_name || "Tanpa alias"} · {village.admins.length} admin</p>
           <p className="text-sm text-muted-foreground">{village.profile?.address || "Alamat belum diisi"}</p>
+          <p className="text-sm text-muted-foreground">Timezone: {getVillageTimezoneLabel(village.timezone)}</p>
         </div>
         <Button variant={village.is_active ? "outline" : "default"} size="sm" disabled={updatingStatus} onClick={() => updateVillageStatus(!village.is_active)}>
           {updatingStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : village.is_active ? <PowerOff className="mr-2 h-4 w-4" /> : <Power className="mr-2 h-4 w-4" />}
@@ -133,7 +159,31 @@ export default function SuperadminVillageDetailPage() {
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Knowledge Base</CardTitle></CardHeader><CardContent><div className="text-3xl font-bold">{knowledgeItems.length}</div><div className="mt-2 flex flex-wrap gap-2 text-xs"><Badge variant="outline">Embedded: {knowledgeItems.filter(k => k.is_embedded).length}</Badge><Badge variant="outline">Dokumen: {documents.length}</Badge></div></CardContent></Card>
       </div>
 
-      <Card><CardHeader><CardTitle className="flex items-center gap-2"><Users className="h-5 w-5" /> Admin Desa</CardTitle></CardHeader><CardContent><div className="flex flex-wrap gap-3">{village.admins.map(admin => <div key={admin.id} className="rounded-lg border p-3"><p className="font-medium text-sm">{admin.name}</p><p className="text-xs text-muted-foreground">@{admin.username}</p><Badge variant={admin.is_active ? "default" : "secondary"} className="mt-2 text-xs">{admin.is_active ? "Aktif" : "Nonaktif"}</Badge></div>)}</div></CardContent></Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5" /> Pengaturan Desa</CardTitle>
+          <CardDescription>Super admin dapat mengubah timezone desa dari sini.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="max-w-sm space-y-2">
+            <Label>Timezone Desa</Label>
+            <Select value={village.timezone} onValueChange={updateVillageTimezone} disabled={updatingTimezone}>
+              <SelectTrigger>
+                <SelectValue placeholder="Pilih timezone desa" />
+              </SelectTrigger>
+              <SelectContent>
+                {timezoneOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">Dipakai untuk tampilan waktu desa dan konteks AI. Penyimpanan timestamp database tetap seperti sekarang.</p>
+          </div>
+          <div className="flex flex-wrap gap-3">{village.admins.map(admin => <div key={admin.id} className="rounded-lg border p-3"><p className="font-medium text-sm">{admin.name}</p><p className="text-xs text-muted-foreground">@{admin.username}</p><Badge variant={admin.is_active ? "default" : "secondary"} className="mt-2 text-xs">{admin.is_active ? "Aktif" : "Nonaktif"}</Badge></div>)}</div>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="catalog">
         <TabsList className="flex flex-wrap h-auto">
@@ -151,11 +201,11 @@ export default function SuperadminVillageDetailPage() {
 
         <TabsContent value="complaint-categories" className="mt-4"><Card><CardContent className="pt-6"><Table><TableHeader><TableRow><TableHead>Kategori</TableHead><TableHead>Jenis</TableHead><TableHead>Urgent</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{complaintCategories.map(c => <TableRow key={c.id}><TableCell className="font-medium">{c.name}</TableCell><TableCell>{c.types_count}</TableCell><TableCell>{c.urgent_count}</TableCell><TableCell><Badge variant={c.is_active ? "default" : "secondary"}>{c.is_active ? "Aktif" : "Nonaktif"}</Badge></TableCell></TableRow>)}</TableBody></Table></CardContent></Card></TabsContent>
 
-        <TabsContent value="complaints" className="mt-4"><Card><CardContent className="pt-6">{complaints.length === 0 ? <p className="py-8 text-center text-muted-foreground">Belum ada pengaduan</p> : <Table><TableHeader><TableRow><TableHead>No.</TableHead><TableHead>Pelapor</TableHead><TableHead>Kategori</TableHead><TableHead>Status</TableHead><TableHead>Tanggal</TableHead></TableRow></TableHeader><TableBody>{complaints.map(c => <TableRow key={c.id}><TableCell className="font-mono text-sm">{c.complaint_id}</TableCell><TableCell>{c.reporter_name || "-"}</TableCell><TableCell>{c.kategori?.replace(/_/g, " ")}</TableCell><TableCell><Badge className={getStatusColor(c.status)}>{formatStatus(c.status)}</Badge></TableCell><TableCell className="text-sm">{formatDate(c.created_at)}</TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card></TabsContent>
+        <TabsContent value="complaints" className="mt-4"><Card><CardContent className="pt-6">{complaints.length === 0 ? <p className="py-8 text-center text-muted-foreground">Belum ada pengaduan</p> : <Table><TableHeader><TableRow><TableHead>No.</TableHead><TableHead>Pelapor</TableHead><TableHead>Kategori</TableHead><TableHead>Status</TableHead><TableHead>Tanggal</TableHead></TableRow></TableHeader><TableBody>{complaints.map(c => <TableRow key={c.id}><TableCell className="font-mono text-sm">{c.complaint_id}</TableCell><TableCell>{c.reporter_name || "-"}</TableCell><TableCell>{c.kategori?.replace(/_/g, " ")}</TableCell><TableCell><Badge className={getStatusColor(c.status)}>{formatStatus(c.status)}</Badge></TableCell><TableCell className="text-sm">{formatDate(c.created_at, village.timezone)}</TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card></TabsContent>
 
-        <TabsContent value="requests" className="mt-4"><Card><CardContent className="pt-6">{serviceRequests.length === 0 ? <p className="py-8 text-center text-muted-foreground">Belum ada permohonan layanan</p> : <Table><TableHeader><TableRow><TableHead>No.</TableHead><TableHead>Layanan</TableHead><TableHead>Pemohon</TableHead><TableHead>Status</TableHead><TableHead>Tanggal</TableHead></TableRow></TableHeader><TableBody>{serviceRequests.map(sr => <TableRow key={sr.id}><TableCell className="font-mono text-sm">{sr.request_number}</TableCell><TableCell>{sr.service_name}</TableCell><TableCell>{sr.requester_name || "-"}</TableCell><TableCell><Badge className={getStatusColor(sr.status)}>{formatStatus(sr.status)}</Badge></TableCell><TableCell className="text-sm">{formatDate(sr.created_at)}</TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card></TabsContent>
+        <TabsContent value="requests" className="mt-4"><Card><CardContent className="pt-6">{serviceRequests.length === 0 ? <p className="py-8 text-center text-muted-foreground">Belum ada permohonan layanan</p> : <Table><TableHeader><TableRow><TableHead>No.</TableHead><TableHead>Layanan</TableHead><TableHead>Pemohon</TableHead><TableHead>Status</TableHead><TableHead>Tanggal</TableHead></TableRow></TableHeader><TableBody>{serviceRequests.map(sr => <TableRow key={sr.id}><TableCell className="font-mono text-sm">{sr.request_number}</TableCell><TableCell>{sr.service_name}</TableCell><TableCell>{sr.requester_name || "-"}</TableCell><TableCell><Badge className={getStatusColor(sr.status)}>{formatStatus(sr.status)}</Badge></TableCell><TableCell className="text-sm">{formatDate(sr.created_at, village.timezone)}</TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card></TabsContent>
 
-        <TabsContent value="knowledge" className="mt-4"><Card><CardContent className="pt-6"><Table><TableHeader><TableRow><TableHead>Judul</TableHead><TableHead>Kategori</TableHead><TableHead>Prioritas</TableHead><TableHead>Embedded</TableHead><TableHead>Diperbarui</TableHead></TableRow></TableHeader><TableBody>{knowledgeItems.map(k => <TableRow key={k.id}><TableCell className="font-medium">{k.title}</TableCell><TableCell><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{k.category}</Badge>{k.needs_reembed && <Badge variant="secondary">Perlu re-embed</Badge>}</div></TableCell><TableCell>{k.priority}</TableCell><TableCell><Badge variant={k.is_embedded ? "default" : "secondary"}>{k.is_embedded ? "Ya" : "Belum"}</Badge></TableCell><TableCell className="text-sm">{formatDate(k.updated_at)}</TableCell></TableRow>)}</TableBody></Table>{documents.length > 0 && <div className="mt-6"><h3 className="font-semibold mb-3 flex items-center gap-2"><BookOpen className="h-4 w-4" /> Dokumen ({documents.length})</h3><Table><TableHeader><TableRow><TableHead>Nama File</TableHead><TableHead>Kategori</TableHead><TableHead>Status</TableHead><TableHead>Chunks</TableHead><TableHead>Tanggal</TableHead></TableRow></TableHeader><TableBody>{documents.map(d => <TableRow key={d.id}><TableCell className="font-mono text-sm">{d.original_name || d.filename}</TableCell><TableCell>{d.category || "-"}</TableCell><TableCell><Badge variant={d.status === "completed" ? "default" : "secondary"}>{d.status}</Badge></TableCell><TableCell>{d.chunk_count}</TableCell><TableCell className="text-sm">{formatDate(d.created_at)}</TableCell></TableRow>)}</TableBody></Table></div>}</CardContent></Card></TabsContent>
+        <TabsContent value="knowledge" className="mt-4"><Card><CardContent className="pt-6"><Table><TableHeader><TableRow><TableHead>Judul</TableHead><TableHead>Kategori</TableHead><TableHead>Prioritas</TableHead><TableHead>Embedded</TableHead><TableHead>Diperbarui</TableHead></TableRow></TableHeader><TableBody>{knowledgeItems.map(k => <TableRow key={k.id}><TableCell className="font-medium">{k.title}</TableCell><TableCell><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{k.category}</Badge>{k.needs_reembed && <Badge variant="secondary">Perlu re-embed</Badge>}</div></TableCell><TableCell>{k.priority}</TableCell><TableCell><Badge variant={k.is_embedded ? "default" : "secondary"}>{k.is_embedded ? "Ya" : "Belum"}</Badge></TableCell><TableCell className="text-sm">{formatDate(k.updated_at, village.timezone)}</TableCell></TableRow>)}</TableBody></Table>{documents.length > 0 && <div className="mt-6"><h3 className="font-semibold mb-3 flex items-center gap-2"><BookOpen className="h-4 w-4" /> Dokumen ({documents.length})</h3><Table><TableHeader><TableRow><TableHead>Nama File</TableHead><TableHead>Kategori</TableHead><TableHead>Status</TableHead><TableHead>Chunks</TableHead><TableHead>Tanggal</TableHead></TableRow></TableHeader><TableBody>{documents.map(d => <TableRow key={d.id}><TableCell className="font-mono text-sm">{d.original_name || d.filename}</TableCell><TableCell>{d.category || "-"}</TableCell><TableCell><Badge variant={d.status === "completed" ? "default" : "secondary"}>{d.status}</Badge></TableCell><TableCell>{d.chunk_count}</TableCell><TableCell className="text-sm">{formatDate(d.created_at, village.timezone)}</TableCell></TableRow>)}</TableBody></Table></div>}</CardContent></Card></TabsContent>
       </Tabs>
     </div>
   )

@@ -15,6 +15,7 @@ import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import { generateEmbedding } from './embedding.service';
+import { callAIGatewayPrompt } from './ai-gateway.service';
 import { EmbeddingConfig } from '../types/embedding.types';
 
 type VariantScope = 'village' | 'global';
@@ -48,38 +49,39 @@ CONTOH OUTPUT:
 export async function generateQuestionVariants(
   title: string,
   content: string,
+  context?: EmbeddingConfig['context'],
 ): Promise<string[]> {
   try {
     const userMessage = `Judul: ${title}\nIsi: ${content.slice(0, 500)}`;
-
-    const response = await fetch(`${config.aiGateway.baseUrl}${config.aiGateway.chatCompletionsPath}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.aiGateway.apiKeys[0]}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: config.aiGateway.model,
-        messages: [
-          { role: 'system', content: VARIANT_PROMPT },
-          { role: 'user', content: userMessage },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.7,
-        max_tokens: 500,
-      }),
+    const response = await callAIGatewayPrompt({
+      lane: 'llm',
+      modelPriority: [config.aiGateway.model],
+      messages: [
+        { role: 'system', content: VARIANT_PROMPT },
+        { role: 'user', content: userMessage },
+      ],
+      jsonMode: true,
+      temperature: 0.7,
+      maxTokens: 500,
+      layerType: 'agent',
+      callType: 'agent_orchestrator',
+      context: context ? {
+        village_id: context.village_id ?? null,
+        wa_user_id: context.wa_user_id ?? null,
+        session_id: context.session_id ?? null,
+        channel: context.channel ?? null,
+        message_id: context.message_id ?? null,
+        trace_id: context.trace_id ?? null,
+        billing_group_id: context.billing_group_id ?? null,
+      } : undefined,
     });
 
-    if (!response.ok) {
-      logger.warn('LLM call failed for question variants', { status: response.status });
+    if (!response?.text) {
+      logger.warn('LLM call returned empty response for question variants');
       return [];
     }
 
-    const data: any = await response.json();
-    const raw = data.choices?.[0]?.message?.content || '[]';
-
-    // Parse — handle both array and { variants: [...] } formats
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(response.text);
     const variants: string[] = Array.isArray(parsed)
       ? parsed
       : (parsed.variants || parsed.questions || []);
@@ -103,7 +105,7 @@ export async function generateAndStoreVariants(
   scope: VariantScope = 'village',
   context?: EmbeddingConfig['context'],
 ): Promise<number> {
-  const variants = await generateQuestionVariants(title, content);
+  const variants = await generateQuestionVariants(title, content, context);
   const variantScope = resolveVariantScope(villageId, scope);
 
   if (variants.length === 0) {

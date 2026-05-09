@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
+import { formatJakartaDateTime, formatUSD } from "@/lib/utils"
 
 interface BillingRow {
   id: string
@@ -219,7 +220,7 @@ function formatNumber(value?: number | null) {
 }
 
 function formatDateTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short" }) : "-"
+  return value ? formatJakartaDateTime(value, { dateStyle: "medium", timeStyle: "short" }) : "-"
 }
 
 function shortId(value?: string | null) {
@@ -229,7 +230,7 @@ function shortId(value?: string | null) {
 
 function statusLabel(status?: string | null) {
   const labels: Record<string, string> = {
-    billed: "Billed",
+    billed: "Sudah ditagihkan",
     success: "Berhasil",
     completed: "Selesai",
     pending: "Pending",
@@ -270,7 +271,7 @@ function DebugJson({ value }: { value: unknown }) {
 }
 
 function formatUsd(value?: number | null) {
-  return `$${(value ?? 0).toFixed(8)}`
+  return formatUSD(value, { preciseSmall: true, minimumFractionDigits: 4, maximumFractionDigits: 8 })
 }
 
 function SummaryMetricCard({ title, value, description, tone = "default" }: { title: string; value: string; description: string; tone?: "default" | "success" | "warning" | "danger" }) {

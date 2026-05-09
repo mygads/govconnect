@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
+import { useAuth } from "@/components/auth/AuthContext"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
+import { formatDateTime } from "@/lib/utils"
 
 interface ServiceRequest {
   id: string
@@ -61,6 +63,7 @@ export default function ServiceRequestsPage() {
   const [restoringId, setRestoringId] = useState<string | null>(null)
   const [selectedDeletedItem, setSelectedDeletedItem] = useState<ServiceRequest | null>(null)
   const { toast } = useToast()
+  const { user } = useAuth()
 
   const fetchRequests = async () => {
     try {
@@ -287,7 +290,7 @@ export default function ServiceRequestsPage() {
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {new Date(item.created_at).toLocaleString("id-ID")}
+                          {formatDateTime(item.created_at, user?.village_timezone)}
                         </p>
                       </div>
                       <div className="flex flex-col gap-2 shrink-0">
@@ -427,7 +430,7 @@ export default function ServiceRequestsPage() {
                   </div>
                   <div>
                     <p className="text-muted-foreground">Tanggal</p>
-                    <p>{new Date(selectedDeletedItem.created_at).toLocaleString("id-ID")}</p>
+                    <p>{formatDateTime(selectedDeletedItem.created_at, user?.village_timezone)}</p>
                   </div>
                 </div>
                 <div className="space-y-2">

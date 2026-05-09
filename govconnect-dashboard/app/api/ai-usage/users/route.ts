@@ -4,7 +4,7 @@ import { getAdminSession } from '@/lib/auth'
 
 function scopedParams(request: NextRequest) {
   const params = new URL(request.url).searchParams
-  const allowed = ['start', 'end']
+  const allowed = ['start', 'end', 'wa_user_id', 'session_id']
   const result: Record<string, string> = {}
   for (const key of allowed) {
     const value = params.get(key)

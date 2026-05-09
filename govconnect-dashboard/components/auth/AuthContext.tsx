@@ -8,6 +8,8 @@ interface AdminUser {
   username: string
   name: string
   role: string
+  village_id?: string | null
+  village_timezone?: string | null
 }
 
 interface AuthContextType {

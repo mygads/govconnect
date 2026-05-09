@@ -314,6 +314,7 @@ model villages {
   id         String   @id @default(cuid())
   name       String
   slug       String   @unique
+  timezone   String?
   is_active  Boolean  @default(true)
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt

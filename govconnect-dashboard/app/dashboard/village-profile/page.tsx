@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { formatDateTime, getVillageTimezoneLabel } from "@/lib/utils"
 import { MapPin, Save, Building2, Clock, AlertCircle, RefreshCw, Info, Loader2 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
@@ -39,6 +40,8 @@ interface ProfileResponse {
   data: {
     name?: string
     slug?: string
+    timezone?: string
+    timezone_label?: string
     address?: string
     gmaps_url?: string | null
     latitude?: number | null
@@ -59,6 +62,8 @@ export default function VillageProfilePage() {
   const [form, setForm] = useState({
     name: "",
     slug: "",
+    timezone: "",
+    timezone_label: "",
     address: "",
     gmaps_url: "",
     latitude: "",
@@ -84,6 +89,8 @@ export default function VillageProfilePage() {
             setForm({
               name: profile.name || "",
               slug: profile.slug || "",
+              timezone: profile.timezone || "Asia/Jakarta",
+              timezone_label: profile.timezone_label || getVillageTimezoneLabel(profile.timezone),
               address: profile.address || "",
               gmaps_url: profile.gmaps_url || "",
               latitude: profile.latitude != null ? String(profile.latitude) : "",
@@ -234,10 +241,10 @@ export default function VillageProfilePage() {
             <p>Profil desa telah diubah sejak terakhir kali di-embed ke knowledge base AI.</p>
             <div className="mt-2 text-sm space-y-1">
               {embeddingStatus.last_edited_at && (
-                <p><strong>Terakhir diedit:</strong> {new Date(embeddingStatus.last_edited_at).toLocaleString("id-ID")}</p>
+                <p><strong>Terakhir diedit:</strong> {formatDateTime(embeddingStatus.last_edited_at, form.timezone)}</p>
               )}
               {embeddingStatus.last_embedded_at && (
-                <p><strong>Terakhir di-embed:</strong> {new Date(embeddingStatus.last_embedded_at).toLocaleString("id-ID")}</p>
+                <p><strong>Terakhir di-embed:</strong> {formatDateTime(embeddingStatus.last_embedded_at, form.timezone)}</p>
               )}
             </div>
             <p className="mt-2 text-sm">
@@ -323,6 +330,15 @@ export default function VillageProfilePage() {
                 value={form.short_name}
                 onChange={(e) => setForm((prev) => ({ ...prev, short_name: e.target.value }))}
                 placeholder="Nama populer/alias desa"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="timezone">Timezone Desa</Label>
+              <Input
+                id="timezone"
+                value={form.timezone_label || form.timezone}
+                disabled
+                className="bg-muted"
               />
             </div>
             <div className="space-y-2 md:col-span-2">

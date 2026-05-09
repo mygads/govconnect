@@ -31,10 +31,11 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { AlertCircle, AlertTriangle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe, Download, FileSpreadsheet, FileText as FilePdf, CheckSquare, Trash2, Loader2, RotateCcw, Archive } from "lucide-react"
 import { laporan } from "@/lib/frontend-api"
-import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
+import { formatDateTime, formatStatus, getStatusColor } from "@/lib/utils"
 import { exportToExcel, exportToPDF } from "@/lib/export-utils"
 import { useToast } from "@/hooks/use-toast"
 import { useRealtime } from "@/components/dashboard/RealtimeProvider"
+import { useAuth } from "@/components/auth/AuthContext"
 import {
   Dialog,
   DialogContent,
@@ -72,6 +73,7 @@ function formatComplaintCategory(complaint: Complaint) {
 }
 
 export default function LaporanListPage() {
+  const { user } = useAuth()
   const [complaints, setComplaints] = useState<Complaint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -527,7 +529,7 @@ export default function LaporanListPage() {
                           {formatStatus(complaint.status)}
                         </Badge>
                       </TableCell>
-                      <TableCell>{formatDate(complaint.created_at)}</TableCell>
+                      <TableCell>{formatDateTime(complaint.created_at, user?.village_timezone)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           <Link href={`/dashboard/laporan/${complaint.id}`}>
@@ -688,7 +690,7 @@ export default function LaporanListPage() {
                   </div>
                   <div>
                     <p className="text-muted-foreground">Tanggal</p>
-                    <p>{formatDate(selectedDeletedItem.created_at)}</p>
+                    <p>{formatDateTime(selectedDeletedItem.created_at, user?.village_timezone)}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Channel</p>

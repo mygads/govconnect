@@ -64,6 +64,8 @@ interface ToolContext {
   traceId?: string;
   isEvaluation?: boolean;
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
+  activeServiceSlug?: string;
+  activeServiceName?: string;
 }
 
 interface AgentGatewayTokenContext {
@@ -76,6 +78,8 @@ interface AgentGatewayTokenContext {
 interface ConversationContext {
   summary?: string;
   recentMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  activeServiceSlug?: string;
+  activeServiceName?: string;
 }
 
 function readStringField(record: Record<string, unknown>, key: string): string | undefined {
@@ -153,6 +157,7 @@ function validateFinalAgentReply(text: string, toolsUsed: string[]): string {
 }
 function buildAgentFallbackReply(userMessage: string, toolsUsed: string[] = []): string {
   const normalized = (userMessage || '').toLowerCase();
+  const looksOutOfScopeGeneral = /\b(javascript|typescript|python|java|coding|ngoding|code|program|loop|for\s*\(|console\.log|1\s*\+\s*1|matematika|rumus|algoritma)\b/i.test(normalized);
   const looksLikeStatus = /\b(lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
   const looksLikeExternalAdminQuery =
     /\b(cara|bagaimana|gimana|mau bikin|buat|urus|pengurusan)\b/i.test(normalized)
@@ -160,6 +165,10 @@ function buildAgentFallbackReply(userMessage: string, toolsUsed: string[] = []):
 
   if (looksLikeExternalAdminQuery) {
     return 'Maaf Pak/Bu, informasi untuk layanan itu belum tersedia di sistem kami. Kalau perlu penjelasan lebih lanjut, silakan datang ke kantor desa pada jam kerja ya.';
+  }
+
+  if (looksOutOfScopeGeneral) {
+    return 'Maaf Pak/Bu, saya fokus membantu layanan desa dan penggunaan GovConnect. Kalau ada pertanyaan soal administrasi desa, pengaduan, status layanan, atau cara pakai GovConnect, saya bantu ya.';
   }
 
   if (!looksLikeStatus && (toolsUsed.includes('search_knowledge') || toolsUsed.includes('get_service_info'))) {
@@ -269,7 +278,7 @@ export async function runAgent(
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const systemPrompt = buildAgentSystemPrompt(promptCtx);
-  const toolSelection = await selectAllowedTools(userMessage);
+  const toolSelection = await selectAllowedTools(userMessage, conversationCtx);
   const {
     heuristicTools,
     learnedTools,
@@ -601,7 +610,10 @@ async function callLLMWithTools(
   };
 }
 
-async function selectAllowedTools(userMessage: string): Promise<{
+async function selectAllowedTools(
+  userMessage: string,
+  conversationCtx: ConversationContext = {},
+): Promise<{
   heuristicTools: AgentToolName[];
   learnedTools: AgentToolName[];
   allowedToolNames: AgentToolName[];
@@ -612,6 +624,8 @@ async function selectAllowedTools(userMessage: string): Promise<{
 }> {
   const normalized = userMessage.toLowerCase().trim();
   const heuristicSet = new Set<AgentToolName>();
+  const hasActiveServiceContext = !!conversationCtx.activeServiceSlug || !!conversationCtx.activeServiceName;
+  const isShortServiceFollowUp = hasActiveServiceContext && /\b(berapa lama|lama proses(?:nya)?|syarat(?:nya)?|persyaratan(?:nya)?|biaya(?:nya)?|online|offline|link(?:nya)?|form(?:nya)?|formulir(?:nya)?|ajukan|pengajuan|harus ke kantor|ke kantor)\b/i.test(normalized);
   const hasReference = /\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
   const isGreetingOnly = /^(halo|hai|hi|hello|assalamualaikum|permisi|p|selamat (pagi|siang|sore|malam))[\s!.,?]*$/i.test(userMessage);
 
@@ -625,6 +639,9 @@ async function selectAllowedTools(userMessage: string): Promise<{
   }
 
   const add = (...names: AgentToolName[]) => names.forEach((name) => heuristicSet.add(name));
+  if (isShortServiceFollowUp) {
+    add('get_service_info', 'create_service_request');
+  }
   const isServiceEditRequest =
     /\b(edit|ubah data|update data|perbarui data|perbaiki data|revisi data)\b/i.test(normalized)
     && /\b(lay|lyn)-[\w-]+\b/i.test(userMessage);
@@ -1105,3 +1122,9 @@ async function selectAllowedTools(userMessage: string): Promise<{
     toolPolicyReason: learnedTools.length > 0 ? 'learned_policy_applied' : 'heuristic_policy_applied',
   };
 }
+
+export const __test_only__ = {
+  selectAllowedTools,
+  detectAmbiguousIntent,
+  resolveFirstTurnToolChoice,
+};

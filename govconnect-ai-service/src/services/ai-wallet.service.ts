@@ -9,7 +9,8 @@ export class InsufficientAIWalletBalanceError extends Error {
   }
 }
 
-type LedgerEntryType = 'topup' | 'usage_debit' | 'voucher_redeem' | 'manual_adjustment' | 'refund' | 'seed';
+const LEDGER_ENTRY_TYPES = ['topup', 'usage_debit', 'voucher_redeem', 'manual_adjustment', 'refund', 'seed', 'topup_credit', 'refund_credit'] as const;
+type LedgerEntryType = typeof LEDGER_ENTRY_TYPES[number];
 
 type WalletStatus = 'active' | 'warning' | 'exhausted';
 

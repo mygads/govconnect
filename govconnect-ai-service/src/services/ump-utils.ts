@@ -105,6 +105,25 @@ export function appendToHistoryCache(userId: string, role: 'user' | 'assistant',
   }
 }
 
+export interface LastDiscussedServiceContext {
+  serviceSlug?: string;
+  serviceName?: string;
+}
+
+export function deriveLastDiscussedServiceContext(
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+): LastDiscussedServiceContext {
+  const recent = history.slice(-8);
+  for (let index = recent.length - 1; index >= 0; index -= 1) {
+    const content = recent[index]?.content || '';
+    const slugMatch = content.match(/layanan\s+\*?([^*\n]+)\*?/i);
+    if (slugMatch?.[1]) {
+      return { serviceName: slugMatch[1].trim() };
+    }
+  }
+  return {};
+}
+
 export async function buildAgentConversationContext(
   userId: string,
   history: Array<{ role: 'user' | 'assistant'; content: string }>,

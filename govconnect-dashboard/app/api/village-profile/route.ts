@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { addKnowledgeVector, updateKnowledgeVector } from '@/lib/ai-service'
+import { getVillageTimezoneLabel, resolveVillageTimezone } from '@/lib/utils'
 
 const PROFILE_CATEGORY_NAME = 'Profil Desa'
 
@@ -31,13 +32,14 @@ function buildOperatingHoursText(operatingHours: Record<string, { open?: string;
     .join('\n')
 }
 
-function buildProfileKnowledgeContent(profile: { name?: string; slug?: string; address?: string; gmaps_url?: string | null; latitude?: number | null; longitude?: number | null; short_name?: string; operating_hours?: Record<string, { open?: string; close?: string }> | null }) {
+function buildProfileKnowledgeContent(profile: { name?: string; slug?: string; address?: string; gmaps_url?: string | null; latitude?: number | null; longitude?: number | null; short_name?: string; timezone?: string | null; operating_hours?: Record<string, { open?: string; close?: string }> | null }) {
   const hoursText = buildOperatingHoursText(profile.operating_hours)
 
   const lines = [
     `Nama Desa/Kelurahan: ${profile.name || '-'}`,
     `Slug Form/Webchat: ${profile.slug || '-'}`,
     `Nama Singkat/Alias: ${profile.short_name || '-'}`,
+    `Zona Waktu Desa: ${getVillageTimezoneLabel(profile.timezone)}`,
   ]
   lines.push(
     `Alamat Kantor: ${profile.address || '-'}`,
@@ -76,6 +78,7 @@ async function upsertProfileKnowledge(villageId: string, adminId: string | null,
   address?: string
   gmaps_url?: string | null
   short_name?: string
+  timezone?: string | null
   latitude?: number | null
   longitude?: number | null
   operating_hours?: Record<string, { open?: string; close?: string }> | null
@@ -194,7 +197,7 @@ async function upsertProfileKnowledge(villageId: string, adminId: string | null,
 async function getVillageIdentity(villageId: string) {
   return prisma.villages.findUnique({
     where: { id: villageId },
-    select: { id: true, name: true, slug: true },
+    select: { id: true, name: true, slug: true, timezone: true },
   })
 }
 
@@ -264,10 +267,14 @@ export async function GET(request: NextRequest) {
     ...profile,
     name: village?.name || profile.name,
     slug: village?.slug || '',
+    timezone: resolveVillageTimezone(village?.timezone),
+    timezone_label: getVillageTimezoneLabel(village?.timezone),
   } : village ? {
     village_id: village.id,
     name: village.name,
     slug: village.slug,
+    timezone: resolveVillageTimezone(village.timezone),
+    timezone_label: getVillageTimezoneLabel(village.timezone),
     address: '',
     gmaps_url: null,
     latitude: null,
@@ -287,6 +294,9 @@ export async function PUT(request: NextRequest) {
 
   const body = await request.json()
   const { address, gmaps_url, short_name, operating_hours } = body
+  if (body.timezone !== undefined) {
+    return NextResponse.json({ error: 'Timezone hanya dapat diubah oleh superadmin' }, { status: 403 })
+  }
   const latitude = body.latitude === '' || body.latitude === null || body.latitude === undefined ? null : Number(body.latitude)
   const longitude = body.longitude === '' || body.longitude === null || body.longitude === undefined ? null : Number(body.longitude)
 
@@ -331,6 +341,7 @@ export async function PUT(request: NextRequest) {
   await upsertProfileKnowledge(session.admin.village_id, session.admin_id, {
     name: village?.name || profile.name,
     slug: village?.slug || '',
+    timezone: village?.timezone,
     address: profile.address,
     gmaps_url: profile.gmaps_url,
     latitude: (profile as any).latitude,
@@ -343,5 +354,7 @@ export async function PUT(request: NextRequest) {
     ...profile,
     name: village?.name || profile.name,
     slug: village?.slug || '',
+    timezone: resolveVillageTimezone(village?.timezone),
+    timezone_label: getVillageTimezoneLabel(village?.timezone),
   } })
 }

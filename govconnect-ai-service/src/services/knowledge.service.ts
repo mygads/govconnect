@@ -72,6 +72,7 @@ interface VillageProfileSummary {
   short_name?: string | null;
   address?: string | null;
   gmaps_url?: string | null;
+  timezone?: string | null;
   operating_hours?: any | null;
 }
 

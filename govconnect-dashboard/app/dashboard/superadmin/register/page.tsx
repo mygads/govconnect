@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAuth } from "@/components/auth/AuthContext"
+import { getVillageTimezoneOptions } from "@/lib/utils"
 import { UserPlus, CheckCircle2, AlertCircle } from "lucide-react"
 
 function slugify(value: string) {
@@ -31,6 +32,8 @@ export default function SuperadminRegisterPage() {
   const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid" | "error">("idle")
   const [slugMessage, setSlugMessage] = useState("")
 
+  const timezoneOptions = getVillageTimezoneOptions()
+
   const [form, setForm] = useState({
     username: "",
     password: "",
@@ -39,6 +42,7 @@ export default function SuperadminRegisterPage() {
     village_name: "",
     village_slug: "",
     short_name: "",
+    timezone: "",
   })
 
   useEffect(() => {
@@ -173,6 +177,7 @@ export default function SuperadminRegisterPage() {
           village_name: form.village_name,
           village_slug: form.village_slug,
           short_name: form.short_name || undefined,
+          timezone: form.timezone || undefined,
         }),
       })
 
@@ -190,6 +195,7 @@ export default function SuperadminRegisterPage() {
         village_name: "",
         village_slug: "",
         short_name: "",
+        timezone: "",
       })
       setSlugEdited(false)
       setSlugStatus("idle")
@@ -372,6 +378,27 @@ export default function SuperadminRegisterPage() {
                     placeholder="melati"
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label>Timezone Desa</Label>
+                  <Select value={form.timezone || undefined} onValueChange={(value) => setForm((prev) => ({ ...prev, timezone: value }))}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Default WIB / Asia/Jakarta" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {timezoneOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    Jika kosong, timezone default adalah WIB / Asia/Jakarta.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2 mt-4">
                 <div className="space-y-2">
                   <Label>Jenis Instansi</Label>
                   <Select value="desa" disabled>

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSession } from '@/lib/auth'
 import { caseService } from '@/lib/api-client'
 import prisma from '@/lib/prisma'
+import { resolveVillageTimezone } from '@/lib/utils'
 
 // GET - Get village detail data (complaints, services, knowledge) for superadmin
 export async function GET(
@@ -189,6 +190,8 @@ export async function GET(
         id: village.id,
         name: village.name,
         slug: village.slug,
+        timezone: resolveVillageTimezone(village.timezone),
+        timezone_raw: village.timezone,
         is_active: village.is_active,
         created_at: village.created_at,
         profile: village.profiles?.[0] || null,

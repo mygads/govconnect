@@ -34,6 +34,7 @@ type ChartComponent = ComponentType<{ data: any; options?: any }>
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/components/auth/AuthContext"
+import { formatIDRFromUSD, formatJakartaDate, formatUSD as formatMoneyUSD } from "@/lib/utils"
 
 // ==================== Types ====================
 
@@ -168,8 +169,6 @@ interface VillageInfo {
 
 // ==================== Helpers ====================
 
-const USD_TO_IDR = 18_000
-
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M"
   if (n >= 1_000) return (n / 1_000).toFixed(1) + "K"
@@ -177,25 +176,15 @@ function formatNumber(n: number): string {
 }
 
 function formatIDR(usd: number): string {
-  const idr = usd * USD_TO_IDR
-  if (idr >= 1_000_000) return "Rp " + (idr / 1_000_000).toFixed(2) + " jt"
-  if (idr >= 1_000) return "Rp " + (idr / 1_000).toFixed(1) + " rb"
-  if (idr >= 1) return "Rp " + idr.toFixed(0)
-  if (idr >= 0.01) return "Rp " + idr.toFixed(2)
-  return "Rp 0"
+  return formatIDRFromUSD(usd)
 }
 
 function formatUSD(usd: number): string {
-  const amount = usd || 0
-  if (amount > 0 && amount < 0.000001) return "$" + amount.toFixed(8)
-  return "$" + amount.toFixed(6)
+  return formatMoneyUSD(usd)
 }
 
 function formatDate(iso: string, period: string): string {
-  const d = new Date(iso)
-  if (period === "month") return d.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", month: "short", year: "numeric" })
-  if (period === "week") return d.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short" })
-  return d.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short" })
+  return formatJakartaDate(iso, period as "day" | "week" | "month")
 }
 
 function sumCostUsd<T extends { cost_usd: number }>(rows: T[]): number {
@@ -655,13 +644,15 @@ export default function AITokenUsagePage() {
         />
         <SummaryCard
           icon={<MessageSquare className="h-5 w-5 text-blue-600" />}
-          label="Respons Chat"          value={summaryLoading ? null : formatNumber(summary?.main_chat_calls || 0)}
+          label="Respons Chat"
+          value={summaryLoading ? null : formatNumber(summary?.main_chat_calls || 0)}
           sub={summaryLoading ? null : `${formatNumber(summary?.main_chat_tokens || 0)} tokens · ${formatUSD(summary?.main_chat_cost || 0)}`}
           loading={summaryLoading}
         />
         <SummaryCard
           icon={<Layers className="h-5 w-5 text-purple-600" />}
-          label="Embedding"          value={summaryLoading ? null : formatNumber(summary?.embedding_tokens || 0)}
+          label="Embedding"
+          value={summaryLoading ? null : formatNumber(summary?.embedding_tokens || 0)}
           sub={summaryLoading ? null : `${formatNumber(summary?.embedding_calls || 0)} calls · ${formatUSD(summary?.embedding_cost || 0)}`}
           loading={summaryLoading}
         />
@@ -998,7 +989,7 @@ export default function AITokenUsagePage() {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <DollarSign className="h-4 w-4" /> Rincian Biaya per Model
               </CardTitle>
-              <CardDescription>Biaya memakai `cost_usd` yang direkam backend sebagai biaya per call model/provider dalam USD. Nilai ini tidak selalu sama dengan billed wallet desa.</CardDescription>
+              <CardDescription>Biaya di tab ini memakai actual provider cost yang direkam backend per model/provider dalam USD. Untuk billed wallet desa, lihat adjusted/charged di tabel provider.</CardDescription>
             </CardHeader>
             <CardContent>
               {summaryLoading ? <Skeleton className="h-48" /> : (
@@ -1011,8 +1002,8 @@ export default function AITokenUsagePage() {
                         <th className="pb-2 pr-3 text-right">Output Tokens</th>
                         <th className="pb-2 pr-3 text-right">Total Tokens</th>
                         <th className="pb-2 pr-3 text-right">API Calls</th>
-                        <th className="pb-2 pr-3 text-right">Total Biaya (USD)</th>
-                        <th className="pb-2 text-right">Biaya (USD)</th>
+                        <th className="pb-2 pr-3 text-right">Actual Cost (USD)</th>
+                        <th className="pb-2 text-right">Avg / Call</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1026,7 +1017,7 @@ export default function AITokenUsagePage() {
                           <td className="py-2 pr-3 text-right">{formatNumber(m.total_tokens)}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(m.call_count)}</td>
                           <td className="py-2 pr-3 text-right font-semibold text-emerald-600 dark:text-emerald-400">{formatUSD(m.cost_usd)}</td>
-                          <td className="py-2 text-right text-muted-foreground">{formatUSD(m.cost_usd)}</td>
+                          <td className="py-2 text-right text-muted-foreground">{m.call_count > 0 ? formatUSD(m.cost_usd / m.call_count) : "-"}</td>
                         </tr>
                       ))}
                       {byModel.length > 0 && (
@@ -1037,7 +1028,7 @@ export default function AITokenUsagePage() {
                           <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.total_tokens, 0))}</td>
                           <td className="py-2 pr-3 text-right">{formatNumber(byModel.reduce((s, m) => s + m.call_count, 0))}</td>
                           <td className="py-2 pr-3 text-right text-emerald-600 dark:text-emerald-400">{formatUSD(sumCostUsd(byModel))}</td>
-                          <td className="py-2 text-right text-muted-foreground">{formatUSD(sumCostUsd(byModel))}</td>
+                          <td className="py-2 text-right text-muted-foreground">{byModel.reduce((s, m) => s + m.call_count, 0) > 0 ? formatUSD(sumCostUsd(byModel) / byModel.reduce((s, m) => s + m.call_count, 0)) : "-"}</td>
                         </tr>
                       )}
                       {byModel.length === 0 && (

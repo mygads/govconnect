@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAuthorizedInternalRequest } from '@/lib/internal-api-auth'
 import prisma from '@/lib/prisma'
+import { resolveVillageTimezone } from '@/lib/utils'
 
 // Internal API for AI service to fetch village profile
 // Uses internal API key for authentication
@@ -24,7 +25,7 @@ export async function GET(request: NextRequest) {
     const [village, profile] = await Promise.all([
       prisma.villages.findUnique({
         where: { id: villageId },
-        select: { id: true, name: true, slug: true },
+        select: { id: true, name: true, slug: true, timezone: true },
       }),
       (prisma.village_profiles as any).findFirst({
         where: { village_id: villageId },
@@ -49,6 +50,7 @@ export async function GET(request: NextRequest) {
         id: villageId,
         name: village?.name || profile?.name || null,
         slug: village?.slug || null,
+        timezone: resolveVillageTimezone(village?.timezone),
         short_name: profile?.short_name || null,
         address: profile?.address || null,
         gmaps_url: profile?.gmaps_url || null,

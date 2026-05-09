@@ -136,6 +136,90 @@ const EMERGENCY_PATTERN = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sa
 const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|saya mau lapor|aduan)\b/i;
 const SERVICE_EVENT_PATTERN = /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i;
 const OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN = /\b(sim|paspor|bpjs|visa|imigrasi|npwp|stnk|bpkb)\b/i;
+const OUT_OF_SCOPE_GENERAL_PATTERN = /\b(javascript|typescript|python|java|coding|ngoding|code|program|programmer|console\.log|for\s*\(|while\s*\(|loop\b|algoritma|matematika|rumus|1\s*\+\s*1|game|sepak bola|film|artis|zodiak)\b/i;
+const SERVICE_PENDING_LINK_PATTERN = /\b(link(?:nya)?|form(?:nya)?|formulir(?:nya)?|ajukan|pengajuan|daftar online|online|isi online|bisa online)\b/i;
+const SERVICE_PENDING_INFO_PATTERN = /\b(syarat(?:nya)?|persyaratan(?:nya)?|biaya(?:nya)?|berapa lama|lama proses(?:nya)?|proses(?:nya)?|dokumen(?:nya)?|berkas(?:nya)?|harus ke kantor|ke kantor|offline|online|link(?:nya)?|form(?:nya)?)\b/i;
+const GOVCONNECT_USAGE_PATTERN = /\b(govconnect|whatsapp|webchat|lay-|lap-|cek status|riwayat|pengaduan|layanan desa|kantor desa)\b/i;
+const VILLAGE_SERVICE_SCOPE_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengaduan|laporan|status|kantor desa|jam buka|kontak|darurat)\b/i;
+
+function isOutOfScopeGeneralQuestion(message: string): boolean {
+  const normalized = (message || '').toLowerCase();
+  if (/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)) return false;
+  if (GOVCONNECT_USAGE_PATTERN.test(normalized) || VILLAGE_SERVICE_SCOPE_PATTERN.test(normalized)) return false;
+  return OUT_OF_SCOPE_GENERAL_PATTERN.test(normalized);
+}
+
+function isPendingServiceFollowUp(message: string): boolean {
+  return SERVICE_PENDING_INFO_PATTERN.test((message || '').toLowerCase());
+}
+
+function isPendingServiceLinkRequest(message: string): boolean {
+  return SERVICE_PENDING_LINK_PATTERN.test((message || '').toLowerCase());
+}
+
+function isClearlyDifferentIntent(message: string): boolean {
+  const normalized = (message || '').toLowerCase();
+  return /\b(mau lapor|lapor jalan|lampu mati|sampah|darurat|cek status|riwayat|batal|batalkan|edit layanan|ubah data)\b/i.test(normalized);
+}
+
+function buildOutOfScopeRedirect(): string {
+  return 'Maaf Pak/Bu, saya fokus membantu layanan desa dan penggunaan GovConnect. Kalau ada pertanyaan soal administrasi desa, pengaduan, status layanan, atau cara pakai GovConnect, saya bantu ya.';
+}
+
+async function buildPendingServiceInfoReply(serviceSlug: string, villageId?: string): Promise<string | null> {
+  try {
+    const { getServiceCatalog, getServiceRequirements } = await import('./case-client.service');
+    const services = await getServiceCatalog(villageId);
+    const service = services.find((item) => item.slug === serviceSlug && item.is_active !== false);
+    if (!service) return null;
+    const requirements = Array.isArray(service.requirements) && service.requirements.length > 0
+      ? service.requirements
+      : await getServiceRequirements(service.id || service.slug);
+    const requirementLines = requirements.slice(0, 6).map((item) => `- ${item.label}${item.is_required ? '' : ' (opsional)'}`);
+    const detailLines = [
+      `Untuk layanan *${service.name}*:` ,
+      service.estimated_processing_time ? `- Estimasi proses: ${service.estimated_processing_time}` : '',
+      service.estimated_cost ? `- Perkiraan biaya: ${service.estimated_cost}` : '',
+      service.mode === 'online' || service.mode === 'both'
+        ? '- Pengajuan bisa dilakukan online.'
+        : '- Pengajuan saat ini diproses offline di kantor desa.',
+      requirementLines.length > 0 ? `- Syarat utama:\n${requirementLines.join('\n')}` : '',
+      service.mode === 'online' || service.mode === 'both'
+        ? 'Kalau Bapak/Ibu mau, saya bisa kirim link formulirnya.'
+        : 'Kalau perlu, saya bantu jelaskan langkah berikutnya ya.',
+    ].filter(Boolean);
+    return detailLines.join('\n');
+  } catch {
+    return null;
+  }
+}
+
+export function tryHandleOutOfScopeGuard(input: {
+  message: string;
+  traceId: string;
+  startTime: number;
+}): ProcessMessageResult | null {
+  if (OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN.test(input.message) && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(input.message)) {
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response: 'Maaf Pak/Bu, informasi untuk layanan itu belum tersedia di sistem desa kami. Untuk penjelasan lebih lanjut, silakan datang langsung ke kantor desa pada jam kerja ya. Kalau ada layanan desa lain yang ingin ditanyakan, saya bantu cek.',
+      intent: 'KNOWLEDGE_QUERY',
+    });
+  }
+
+  if (isOutOfScopeGeneralQuestion(input.message)) {
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response: buildOutOfScopeRedirect(),
+      intent: 'QUESTION',
+    });
+  }
+
+  return null;
+}
+
 
 function pickEmergencyContacts(
   message: string,
@@ -279,6 +363,44 @@ export async function tryHandlePendingOffers(
           response: 'Baik Pak/Bu, siap. Kalau Bapak/Ibu mau proses nanti, kabari kami ya.',
           intent: 'QUESTION',
         });
+      }
+
+      if (isPendingServiceLinkRequest(message)) {
+        clearPendingServiceFormOffer(userId);
+        const linkReply = await handleServiceRequestCreation(userId, channel, {
+          intent: 'CREATE_SERVICE_REQUEST',
+          fields: {
+            service_slug: pendingOffer.service_slug,
+            ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
+          },
+          reply_text: '',
+        });
+        const normalized = normalizeHandlerResult(linkReply);
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: normalized.replyText,
+          guidanceText: normalized.guidanceText,
+          intent: 'CREATE_SERVICE_REQUEST',
+        });
+      }
+
+      if (isPendingServiceFollowUp(message) && !isClearlyDifferentIntent(message)) {
+        const followUpReply = await buildPendingServiceInfoReply(pendingOffer.service_slug, pendingOffer.village_id || villageId);
+        if (followUpReply) {
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: followUpReply,
+            intent: 'SERVICE_INFO',
+            hasKnowledge: true,
+          });
+        }
+        return null;
+      }
+
+      if (!isClearlyDifferentIntent(message)) {
+        return null;
       }
 
       clearPendingServiceFormOffer(userId);
@@ -602,15 +724,6 @@ export async function tryHandleLatePreAgentState(
         intent: 'CREATE_COMPLAINT',
       });
     }
-  }
-
-  if (OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN.test(message) && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)) {
-    return buildGuardResult({
-      startTime,
-      traceId,
-      response: 'Maaf Pak/Bu, informasi untuk layanan itu belum tersedia di sistem desa kami. Untuk penjelasan lebih lanjut, silakan datang langsung ke kantor desa pada jam kerja ya. Kalau ada layanan desa lain yang ingin ditanyakan, saya bantu cek.',
-      intent: 'KNOWLEDGE_QUERY',
-    });
   }
 
   const isEmergencyShortcut =
@@ -1035,3 +1148,12 @@ export async function tryHandleLatePreAgentState(
 
   return null;
 }
+
+export const __test_only__ = {
+  detectExplicitConfirmationReply,
+  detectServiceCorrectionReply,
+  isPendingServiceFollowUp,
+  isPendingServiceLinkRequest,
+  isClearlyDifferentIntent,
+  buildOutOfScopeRedirect,
+};

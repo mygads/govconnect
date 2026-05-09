@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { useAuth } from "@/components/auth/AuthContext"
 import Image from "next/image"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -49,6 +50,7 @@ import {
   File
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { formatDateTime } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
 
 interface ServiceRequirement {
@@ -188,6 +190,7 @@ export default function ServiceRequestDetailPage() {
   const params = useParams()
   const router = useRouter()
   const { toast } = useToast()
+  const { user } = useAuth()
 
   const [request, setRequest] = useState<ServiceRequest | null>(null)
   const [loading, setLoading] = useState(true)
@@ -381,13 +384,13 @@ export default function ServiceRequestDetailPage() {
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("id-ID", {
+    return formatDateTime(dateString, user?.village_timezone, {
       weekday: "long",
       day: "numeric",
       month: "long",
       year: "numeric",
       hour: "2-digit",
-      minute: "2-digit"
+      minute: "2-digit",
     })
   }
 

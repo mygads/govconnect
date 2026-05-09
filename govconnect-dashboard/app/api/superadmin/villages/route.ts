@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { verifyToken } from '@/lib/auth'
+import { resolveVillageTimezone } from '@/lib/utils'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -43,6 +44,8 @@ export async function GET(request: NextRequest) {
       id: v.id,
       name: v.name,
       slug: v.slug,
+      timezone: resolveVillageTimezone(v.timezone),
+      timezone_raw: v.timezone,
       is_active: v.is_active,
       created_at: v.created_at,
       admins: v.admins,

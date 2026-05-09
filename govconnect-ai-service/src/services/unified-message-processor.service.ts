@@ -19,7 +19,7 @@
  */
 
 import logger from '../utils/logger';
-import { getWIBDateTime } from '../utils/wib-datetime';
+import { formatVillageDateTimeForPrompt } from '../utils/wib-datetime';
 import { sanitizeUserInput } from './context-builder.service';
 import { getVillageProfileSummary } from './knowledge.service';
 import { isSpamMessage } from './rag.service';
@@ -50,11 +50,12 @@ import { analyzeIncomingMedia } from './media-analysis.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
-import { incrementActiveProcessing, decrementActiveProcessing, setPendingServiceFormOffer } from './ump-state';
+import { incrementActiveProcessing, decrementActiveProcessing, setPendingServiceFormOffer, getPendingServiceFormOfferWithFallback } from './ump-state';
 import {
   fetchConversationHistoryFromChannel,
   appendToHistoryCache,
   buildAgentConversationContext,
+  deriveLastDiscussedServiceContext,
 } from './ump-utils';
 import { handleComplaintCreation, handleComplaintUpdate, handleCancellationRequest, handleHistory } from './complaint-handler';
 import { handleServiceInfo, handleServiceRequestCreation } from './service-handler';
@@ -64,6 +65,7 @@ import {
   tryHandleLatePreAgentState,
   tryHandlePendingOffers,
   tryHandleProtocolGuards,
+  tryHandleOutOfScopeGuard,
 } from './pre-agent-state-router.service';
 
 // ── Barrel re-exports (backward compatibility) ──
@@ -118,8 +120,11 @@ interface AgentProcessInput {
   villageId?: string;
   conversationSummary?: string;
   recentConversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  activeServiceSlug?: string;
+  activeServiceName?: string;
   memorySummary?: string;
   villageName?: string;
+  villageTimezone?: string | null;
   userName?: string | null;
   sentimentContext?: string;
   traceId: string;
@@ -514,8 +519,11 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     villageId,
     conversationSummary,
     recentConversationHistory,
+    activeServiceSlug,
+    activeServiceName,
     memorySummary,
     villageName,
+    villageTimezone,
     userName,
     sentimentContext,
     sideEffectMode,
@@ -538,7 +546,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         villageName: villageName ?? undefined,
         villageBehaviorSummary,
         memorySummary,
-        currentDatetime: String(getWIBDateTime()),
+        currentDatetime: formatVillageDateTimeForPrompt(villageTimezone),
         userName,
         sentimentContext,
         sideEffectMode,
@@ -550,10 +558,14 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         traceId,
         isEvaluation: input.isEvaluation,
         sideEffectMode,
+        activeServiceSlug,
+        activeServiceName,
       },
       {
         summary: conversationSummary,
         recentMessages: recentConversationHistory,
+        activeServiceSlug,
+        activeServiceName,
       },
     );
 
@@ -652,6 +664,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange, messageId, batchedMessageIds } = input;
   let workingMessage = message;
   let resolvedHistory = conversationHistory;
+  let villageTimezone: string | null = null;
   let finalResult: ProcessMessageResult | null = null;
   const finish = (result: ProcessMessageResult) => {
     if (sideEffectMode) {
@@ -994,6 +1007,28 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(latePreAgentResult);
     }
 
+    const outOfScopeGuardResult = sideEffectMode === 'knowledge_test'
+      ? null
+      : tryHandleOutOfScopeGuard({
+          message: workingMessage,
+          traceId,
+          startTime,
+        });
+    if (outOfScopeGuardResult) {
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'pre_agent_scope',
+        guardType: 'out_of_scope',
+        action: 'handled',
+        reason: outOfScopeGuardResult.intent,
+        messagePreview: workingMessage,
+      });
+      return finish(outOfScopeGuardResult);
+    }
+
     const explicitHumanHandoffRequest = isExplicitHumanHandoffRequest(workingMessage);
     const walletAccess = await canProcessVillageAI(resolvedVillageId);
     if (!walletAccess.allowed) {
@@ -1086,6 +1121,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     const conversationContext = resolvedHistory?.length
       ? await buildAgentConversationContext(userId, resolvedHistory)
       : { summary: undefined, recentMessages: [] as Array<{ role: 'user' | 'assistant'; content: string }> };
+    const pendingServiceOffer = sideEffectMode === 'knowledge_test'
+      ? null
+      : await getPendingServiceFormOfferWithFallback(userId);
+    const lastDiscussedService = resolvedHistory?.length
+      ? deriveLastDiscussedServiceContext(resolvedHistory)
+      : {};
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
 
     // Step 3: Sanitize and correct typos
@@ -1115,6 +1156,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
 
     if (resolvedVillageId) {
       const profile = await getVillageProfileSummary(resolvedVillageId);
+      villageTimezone = profile?.timezone || null;
       if (profile?.name) {
         templateContext = {
           villageName: profile.name,
@@ -1198,8 +1240,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       villageId: resolvedVillageId,
       conversationSummary: conversationContext.summary,
       recentConversationHistory: conversationContext.recentMessages,
+      activeServiceSlug: pendingServiceOffer?.service_slug || lastDiscussedService.serviceSlug,
+      activeServiceName: lastDiscussedService.serviceName,
       memorySummary,
       villageName: templateContext?.villageName ?? undefined,
+      villageTimezone,
       userName: savedProfile.nama_lengkap ?? null,
       sentimentContext,
       traceId,
@@ -1282,7 +1327,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     // Get smart fallback - tries to continue conversation flow if possible
     const fallbackResponse = errorType 
       ? getErrorFallback(errorType)
-      : getSmartFallback(userId, undefined, workingMessage);
+      : getSmartFallback(userId, undefined, workingMessage, villageTimezone);
     
     return finish({
       success: false,

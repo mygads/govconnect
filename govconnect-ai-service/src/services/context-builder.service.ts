@@ -1,6 +1,6 @@
 import axios from 'axios';
 import logger from '../utils/logger';
-import { getWIBDateTime } from '../utils/wib-datetime';
+import { getVillageDateTime } from '../utils/wib-datetime';
 import { config } from '../config/env';
 import { getFullSystemPrompt, getAdaptiveSystemPrompt, type PromptFocus } from '../prompts/system-prompt';
 import { RAGContext } from '../types/embedding.types';
@@ -26,13 +26,14 @@ interface MessageHistoryResponse {
  * Now accepts full RAGContext to utilize confidence scoring
  */
 export async function buildContext(
-  wa_user_id: string, 
-  currentMessage: string, 
+  wa_user_id: string,
+  currentMessage: string,
   ragContext?: RAGContext | string,
   complaintCategoriesText?: string,
   promptFocus?: PromptFocus,
   villageName?: string,
-  serviceCatalogText?: string
+  serviceCatalogText?: string,
+  villageTimezone?: string | null,
 ) {
   logger.info('Building context for LLM', { wa_user_id, promptFocus: promptFocus || 'full' });
 
@@ -47,12 +48,13 @@ export async function buildContext(
     const knowledgeSection = buildKnowledgeSection(ragContext);
     const hasKnowledge = !!knowledgeSection.trim();
     
-    // Calculate current date, time, and tomorrow for prompt (in WIB timezone)
-    const wib = getWIBDateTime();
-    const currentDate = wib.date;
-    const tomorrowDate = wib.tomorrow;
-    const currentTime = wib.time;
-    const timeOfDay = wib.timeOfDay;
+    const villageDateTime = getVillageDateTime(villageTimezone);
+    const currentDate = villageDateTime.date;
+    const tomorrowDate = villageDateTime.tomorrow;
+    const currentTime = villageDateTime.time;
+    const timeOfDay = villageDateTime.timeOfDay;
+    const timezoneLabel = villageDateTime.timezoneAbbreviation;
+    const timezoneName = villageDateTime.timezone;
 
     // Default complaint categories: use dynamic DB-driven list when available
     const categoriesText = complaintCategoriesText || await buildComplaintCategoriesText(undefined);
@@ -69,6 +71,8 @@ export async function buildContext(
       .replace(/\{\{tomorrow_date\}\}/g, tomorrowDate)
       .replace(/\{\{current_time\}\}/g, currentTime)
       .replace(/\{\{time_of_day\}\}/g, timeOfDay)
+      .replace(/\{\{timezone_label\}\}/g, timezoneLabel)
+      .replace(/\{\{timezone_name\}\}/g, timezoneName)
       .replace(/\{\{complaint_categories\}\}/g, categoriesText)
       .replace(/\{\{service_catalog\}\}/g, servicesText)
       .replace(/\{\{village_name\}\}/g, villageName || 'Desa');
@@ -99,16 +103,18 @@ export async function buildContext(
     
     // Fallback: return prompt without history
     // Still need to replace all template placeholders to avoid raw strings in LLM
-    const wibFallback = getWIBDateTime();
-    
+    const fallbackDateTime = getVillageDateTime(villageTimezone);
+
     const fallbackPrompt = getFullSystemPrompt()
       .replace('{knowledge_context}', '')
       .replace('{history}', '(No conversation history available)')
       .replace('{user_message}', currentMessage)
-      .replace(/\{\{current_date\}\}/g, wibFallback.date)
-      .replace(/\{\{tomorrow_date\}\}/g, wibFallback.tomorrow)
-      .replace(/\{\{current_time\}\}/g, wibFallback.time)
-      .replace(/\{\{time_of_day\}\}/g, wibFallback.timeOfDay)
+      .replace(/\{\{current_date\}\}/g, fallbackDateTime.date)
+      .replace(/\{\{tomorrow_date\}\}/g, fallbackDateTime.tomorrow)
+      .replace(/\{\{current_time\}\}/g, fallbackDateTime.time)
+      .replace(/\{\{time_of_day\}\}/g, fallbackDateTime.timeOfDay)
+      .replace(/\{\{timezone_label\}\}/g, fallbackDateTime.timezoneAbbreviation)
+      .replace(/\{\{timezone_name\}\}/g, fallbackDateTime.timezone)
       .replace(/\{\{complaint_categories\}\}/g, await buildComplaintCategoriesText(undefined))
       .replace(/\{\{service_catalog\}\}/g, await buildServiceCatalogText(undefined))
       .replace(/\{\{village_name\}\}/g, villageName || 'Desa');

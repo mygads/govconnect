@@ -1,43 +1,77 @@
 /**
- * WIB (Waktu Indonesia Barat / UTC+7) Date-Time Utility
+ * Village timezone date-time utility.
  *
- * Single source of truth for all WIB time calculations used in prompt templates.
+ * Safe across any server timezone and defaults to Asia/Jakarta.
  */
 
-export interface WIBDateTime {
-  /** YYYY-MM-DD */
+export const DEFAULT_VILLAGE_TIMEZONE = 'Asia/Jakarta';
+export const SUPPORTED_VILLAGE_TIMEZONES = [
+  'Asia/Jakarta',
+  'Asia/Makassar',
+  'Asia/Jayapura',
+] as const;
+
+export type SupportedVillageTimezone = typeof SUPPORTED_VILLAGE_TIMEZONES[number];
+
+export interface VillageDateTime {
   date: string;
-  /** YYYY-MM-DD (tomorrow) */
   tomorrow: string;
-  /** HH:MM */
   time: string;
-  /** pagi | siang | sore | malam */
   timeOfDay: string;
+  timezone: SupportedVillageTimezone;
+  timezoneAbbreviation: 'WIB' | 'WITA' | 'WIT';
 }
 
-/**
- * Get current date/time in WIB timezone.
- * Safe across any server timezone.
- */
-export function getWIBDateTime(): WIBDateTime {
-  const now = new Date();
-  const wibOffsetMs = 7 * 60 * 60_000; // UTC+7
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000;
-  const wibTime = new Date(utcMs + wibOffsetMs);
+export function resolveVillageTimezone(timezone?: string | null): SupportedVillageTimezone {
+  return SUPPORTED_VILLAGE_TIMEZONES.includes((timezone || '') as SupportedVillageTimezone)
+    ? (timezone as SupportedVillageTimezone)
+    : DEFAULT_VILLAGE_TIMEZONE;
+}
 
-  const date = wibTime.toISOString().split('T')[0];
+export function getTimezoneAbbreviation(timezone?: string | null): 'WIB' | 'WITA' | 'WIT' {
+  const resolved = resolveVillageTimezone(timezone);
+  if (resolved === 'Asia/Makassar') return 'WITA';
+  if (resolved === 'Asia/Jayapura') return 'WIT';
+  return 'WIB';
+}
 
-  const tom = new Date(wibTime);
-  tom.setDate(tom.getDate() + 1);
-  const tomorrow = tom.toISOString().split('T')[0];
+export function getVillageDateTime(timezone?: string | null): VillageDateTime {
+  const resolved = resolveVillageTimezone(timezone);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: resolved,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
 
-  const time = wibTime.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+  const getPart = (type: string) => parts.find((part) => part.type === type)?.value || '';
+  const hour = Number(getPart('hour'));
 
-  const hour = wibTime.getHours();
   let timeOfDay = 'malam';
   if (hour >= 5 && hour < 11) timeOfDay = 'pagi';
   else if (hour >= 11 && hour < 15) timeOfDay = 'siang';
   else if (hour >= 15 && hour < 18) timeOfDay = 'sore';
 
-  return { date, tomorrow, time, timeOfDay };
+  const date = `${getPart('year')}-${getPart('month')}-${getPart('day')}`;
+  const tomorrowBase = new Date(Date.UTC(Number(getPart('year')), Number(getPart('month')) - 1, Number(getPart('day')) + 1));
+  const tomorrow = tomorrowBase.toISOString().split('T')[0];
+
+  return {
+    date,
+    tomorrow,
+    time: `${getPart('hour')}:${getPart('minute')}`,
+    timeOfDay,
+    timezone: resolved,
+    timezoneAbbreviation: getTimezoneAbbreviation(resolved),
+  };
 }
+
+export function formatVillageDateTimeForPrompt(timezone?: string | null): string {
+  const ctx = getVillageDateTime(timezone);
+  return `${ctx.date} ${ctx.time} ${ctx.timezoneAbbreviation}`;
+}
+
+export const getWIBDateTime = () => getVillageDateTime('Asia/Jakarta');

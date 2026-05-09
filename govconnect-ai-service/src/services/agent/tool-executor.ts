@@ -91,6 +91,8 @@ interface ToolContext {
   isEvaluation?: boolean;
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   userMessage?: string;
+  activeServiceSlug?: string;
+  activeServiceName?: string;
 }
 
 const MUTATION_TOOLS = new Set<AgentToolName>([
@@ -370,6 +372,8 @@ async function toolGetServiceInfo(
   ctx: ToolContext,
 ): Promise<ToolCallResult> {
   const serviceName = typeof args.service_name === 'string' ? args.service_name.trim() : '';
+  const contextualServiceSlug = typeof ctx.activeServiceSlug === 'string' ? ctx.activeServiceSlug.trim() : '';
+  const contextualServiceName = typeof ctx.activeServiceName === 'string' ? ctx.activeServiceName.trim() : '';
   const services = (await getServiceCatalog(ctx.villageId)).filter((service) => service.is_active);
 
   if (services.length === 0) {
@@ -388,7 +392,7 @@ async function toolGetServiceInfo(
     };
   }
 
-  if (!serviceName) {
+  if (!serviceName && !contextualServiceSlug && !contextualServiceName) {
     return {
       success: true,
       data: {
@@ -414,7 +418,15 @@ async function toolGetServiceInfo(
     };
   }
 
-  const resolved = await resolveServiceFromName(serviceName, ctx.villageId, services, ctx.userMessage);
+  const contextualService = contextualServiceSlug
+    ? services.find((service) => service.slug === contextualServiceSlug) || null
+    : null;
+  const resolved: {
+    service: ServiceCatalogItem | null;
+    alternatives?: Array<{ slug: string; name: string }>;
+  } = contextualService
+    ? { service: contextualService, alternatives: undefined }
+    : await resolveServiceFromName(serviceName || contextualServiceName, ctx.villageId, services, ctx.userMessage);
   if (resolved.alternatives && resolved.alternatives.length > 0) {
     return {
       success: true,
@@ -1019,7 +1031,8 @@ async function toolCreateServiceRequest(
   ctx: ToolContext,
 ): Promise<ToolCallResult> {
   const serviceSlug = typeof args.service_slug === 'string' ? args.service_slug.trim() : '';
-  if (!serviceSlug) {
+  const effectiveServiceSlug = serviceSlug || (typeof ctx.activeServiceSlug === 'string' ? ctx.activeServiceSlug.trim() : '');
+  if (!effectiveServiceSlug) {
     return {
       success: false,
       error: 'service_slug harus diisi.',
@@ -1030,11 +1043,11 @@ async function toolCreateServiceRequest(
   }
 
   const services = await getServiceCatalog(ctx.villageId);
-  const service = services.find((item) => item.slug === serviceSlug);
+  const service = services.find((item) => item.slug === effectiveServiceSlug);
   if (!service) {
     return {
       success: false,
-      error: `Layanan dengan slug "${serviceSlug}" tidak ditemukan.`,
+      error: `Layanan dengan slug "${effectiveServiceSlug}" tidak ditemukan.`,
       data: {
         suggested_response: 'Maaf Pak/Bu, layanan yang ingin diajukan belum saya temukan. Coba sebutkan nama layanannya lagi ya.',
       },

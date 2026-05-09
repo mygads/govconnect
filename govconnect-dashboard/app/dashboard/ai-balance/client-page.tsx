@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { isSuperadmin } from "@/lib/rbac"
+import { formatJakartaDateTime, formatUSD } from "@/lib/utils"
 
 type WalletStatus = "active" | "warning" | "exhausted"
 
@@ -55,24 +56,11 @@ interface LedgerEntry {
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+  return formatJakartaDateTime(value)
 }
 
 function formatUsd(value?: number | null, options?: { preciseSmall?: boolean; signed?: boolean }) {
-  const amount = value ?? 0
-  const sign = options?.signed && amount > 0 ? "+" : ""
-  const roundedCents = Number(amount.toFixed(2))
-  if (options?.preciseSmall && amount !== 0 && Math.abs(amount - roundedCents) >= 0.000001) {
-    return `${sign}$${amount.toFixed(8)}`
-  }
-  return `${sign}$${amount.toFixed(2)}`
+  return formatUSD(value, { preciseSmall: options?.preciseSmall, signed: options?.signed, minimumFractionDigits: 2, maximumFractionDigits: 8 })
 }
 
 function formatRunway(days?: number | null) {
@@ -120,9 +108,11 @@ function formatEntryLabel(entry: LedgerEntry) {
 
   const map: Record<string, string> = {
     topup: "Topup",
+    topup_credit: "Topup Kredit",
     voucher_redeem: "Redeem Voucher",
     manual_adjustment: "Penyesuaian Manual",
     refund: "Refund",
+    refund_credit: "Refund Kredit",
     seed: "Seed",
   }
   return map[entry.entry_type] || entry.entry_type
