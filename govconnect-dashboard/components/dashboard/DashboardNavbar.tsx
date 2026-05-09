@@ -101,9 +101,9 @@ export function DashboardNavbar() {
               <Settings className="mr-2 h-4 w-4" />
               <span>Pengaturan</span>
             </DropdownMenuItem>
-            {userIsSuperadmin && (
-              <DropdownMenuItem 
-                onClick={() => router.push('/dashboard/settings/notifications')} 
+            {!userIsSuperadmin && (
+              <DropdownMenuItem
+                onClick={() => router.push('/dashboard/settings/notifications')}
                 className="cursor-pointer"
               >
                 <Bell className="mr-2 h-4 w-4" />

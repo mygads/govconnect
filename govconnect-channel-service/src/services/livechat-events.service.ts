@@ -1,4 +1,4 @@
-export type LivechatEventType = 'message' | 'message_status' | 'conversation' | 'takeover' | 'delete' | 'typing' | 'wa_session_status' | 'heartbeat';
+export type LivechatEventType = 'message' | 'message_status' | 'conversation' | 'takeover' | 'delete' | 'typing' | 'wa_session_status' | 'heartbeat' | 'complaint_created' | 'complaint_updated' | 'urgent_alert';
 
 export interface LivechatEvent {
   type: LivechatEventType;
@@ -24,8 +24,22 @@ type LivechatEventListener = (event: LivechatEvent) => void;
 
 const listeners = new Set<LivechatEventListener>();
 
+const sseMetrics = {
+  totalEventsPublished: 0,
+  lastEventPublishedAt: 0,
+};
+
+export function getSseMetrics() {
+  return {
+    ...sseMetrics,
+    activeListeners: listeners.size,
+  };
+}
+
 export function publishLivechatEvent(event: Omit<LivechatEvent, 'at'>): void {
   const payload: LivechatEvent = { ...event, at: Date.now() };
+  sseMetrics.totalEventsPublished += 1;
+  sseMetrics.lastEventPublishedAt = payload.at;
   for (const listener of listeners) {
     listener(payload);
   }

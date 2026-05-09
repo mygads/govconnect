@@ -68,20 +68,22 @@ model system_settings {
 }
 
 model village_behavior_configs {
-  id                   String   @id @default(cuid())
-  village_id           String   @unique
-  active_service_ids   String[] @default([])
-  important_contacts   String[] @default([])
-  service_hours        Json?
-  local_faq_priority   String[] @default([])
-  escalation_routing   Json?
-  complaint_rules      String[] @default([])
-  service_rules        String[] @default([])
-  notice               String?  @db.Text
-  created_at           DateTime @default(now())
-  updated_at           DateTime @updatedAt
+  id                          String   @id @default(cuid())
+  village_id                  String   @unique
+  active_service_ids          String[] @default([])
+  important_contacts          String[] @default([])
+  service_hours               Json?
+  local_faq_priority          String[] @default([])
+  escalation_routing          Json?
+  complaint_rules             String[] @default([])
+  service_rules               String[] @default([])
+  notice                      String?  @db.Text
+  notification_enabled        Boolean? @default(true)
+  notification_urgent_enabled Boolean? @default(true)
+  created_at                  DateTime @default(now())
+  updated_at                  DateTime @updatedAt
 
-  village              villages @relation(fields: [village_id], references: [id], onDelete: Cascade)
+  village                     villages @relation(fields: [village_id], references: [id], onDelete: Cascade)
 
   @@index([village_id])
 }

@@ -10,6 +10,7 @@ import { updateConversation, clearAIStatus, setAIError, setAIPendingBalance, isU
 import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.service';
 import { clearUserBubble } from './spam-guard.service';
 import { getCorrelationId } from '../shared/correlation-context';
+import { publishLivechatEvent } from './livechat-events.service';
 
 let connection: any = null;
 let channel: any = null;
@@ -165,6 +166,7 @@ async function handleReconnect(): Promise<void> {
       await startConsumingAIReply();
       await startConsumingAIError();
       await startConsumingMessageStatus();
+      await startConsumingComplaintEvents();
       
       logger.info('✅ RabbitMQ reconnected successfully after ' + reconnectAttempts + ' attempts');
       reconnectAttempts = 0;
@@ -698,7 +700,7 @@ export async function startConsumingMessageStatus(): Promise<void> {
 
       try {
         const payload: MessageStatusEvent = JSON.parse(msg.content.toString());
-        
+
         logger.info('📨 Message status event received', {
           village_id: payload.village_id,
           wa_user_id: payload.wa_user_id,
@@ -746,6 +748,110 @@ export async function startConsumingMessageStatus(): Promise<void> {
     });
   } catch (error: any) {
     logger.error('Failed to start consuming message status events', {
+      error: error.message,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Complaint Event payload interface
+ */
+interface ComplaintEvent {
+  village_id: string;
+  complaint_id: string;
+  citizen_id?: string;
+  category?: string;
+  urgency?: string;
+  status?: string;
+  previous_status?: string;
+  admin_id?: string;
+  admin_name?: string;
+  message?: string;
+}
+
+/**
+ * Start consuming complaint events for SSE broadcast
+ */
+export async function startConsumingComplaintEvents(): Promise<void> {
+  if (!channel) {
+    logger.error('RabbitMQ channel not initialized');
+    throw new Error('RabbitMQ channel not available');
+  }
+
+  try {
+    const queueName = rabbitmqConfig.QUEUES.CHANNEL_COMPLAINT_EVENTS;
+    const routingKeys = [
+      rabbitmqConfig.ROUTING_KEYS.COMPLAINT_CREATED,
+      rabbitmqConfig.ROUTING_KEYS.COMPLAINT_STATUS_UPDATED,
+      rabbitmqConfig.ROUTING_KEYS.COMPLAINT_URGENT_ALERT,
+    ];
+
+    // Declare queue
+    await channel.assertQueue(queueName, { durable: true });
+
+    // Bind queue to exchange with multiple routing keys
+    for (const routingKey of routingKeys) {
+      await channel.bindQueue(
+        queueName,
+        rabbitmqConfig.EXCHANGE_NAME,
+        routingKey
+      );
+    }
+
+    logger.info('🎧 Started consuming complaint events', {
+      queue: queueName,
+      routingKeys,
+    });
+
+    // Consume messages
+    channel.consume(queueName, async (msg: any) => {
+      if (!msg) return;
+
+      const routingKey = msg.fields?.routingKey || '';
+
+      try {
+        const payload: ComplaintEvent = JSON.parse(msg.content.toString());
+
+        logger.info('📨 Complaint event received', {
+          routingKey,
+          village_id: payload.village_id,
+          complaint_id: payload.complaint_id,
+        });
+
+        // Determine event type from routing key
+        let eventType: 'complaint_created' | 'complaint_updated' | 'urgent_alert' = 'complaint_updated';
+        if (routingKey === rabbitmqConfig.ROUTING_KEYS.COMPLAINT_CREATED) {
+          eventType = 'complaint_created';
+        } else if (routingKey === rabbitmqConfig.ROUTING_KEYS.COMPLAINT_URGENT_ALERT) {
+          eventType = 'urgent_alert';
+        }
+
+        // Publish to SSE stream for dashboard clients
+        publishLivechatEvent({
+          type: eventType,
+          village_id: payload.village_id,
+          channel_identifier: payload.complaint_id,
+        });
+
+        logger.info('✅ Complaint event published to SSE', {
+          eventType,
+          village_id: payload.village_id,
+          complaint_id: payload.complaint_id,
+        });
+
+        // Acknowledge message
+        channel.ack(msg);
+      } catch (error: any) {
+        logger.error('Error processing complaint event', {
+          routingKey,
+          error: error.message,
+        });
+        await retryOrDlq(msg, routingKey, error);
+      }
+    });
+  } catch (error: any) {
+    logger.error('Failed to start consuming complaint events', {
       error: error.message,
     });
     throw error;

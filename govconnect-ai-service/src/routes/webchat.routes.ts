@@ -26,6 +26,7 @@ import {
   checkWebchatTakeover,
   getAdminMessages,
 } from '../services/webchat-sync.service';
+import { getStatus, onStatusUpdate } from '../services/processing-status.service';
 import {
   addWebchatMessageToBatch,
   cancelWebchatBatch,
@@ -544,7 +545,7 @@ router.get('/:session_id/poll', async (req: Request, res: Response) => {
     const since = sinceRaw ? new Date(sinceRaw) : undefined;
 
     const village_id = getQuery(req, 'village_id') ?? getQuery(req, 'villageId');
-    
+
     if (!session_id.startsWith('web_')) {
       res.status(400).json({
         success: false,
@@ -560,16 +561,16 @@ router.get('/:session_id/poll', async (req: Request, res: Response) => {
       });
       return;
     }
-    
+
     // Check takeover status
     const takeoverStatus = await checkWebchatTakeover(session_id, village_id);
-    
+
     // Get admin messages if in takeover
     let adminMessages: Array<{ message: string; admin_name?: string; timestamp: Date }> = [];
     if (takeoverStatus.is_takeover) {
       adminMessages = await getAdminMessages(session_id, since, village_id);
     }
-    
+
     res.json({
       success: true,
       is_takeover: takeoverStatus.is_takeover,
@@ -580,7 +581,7 @@ router.get('/:session_id/poll', async (req: Request, res: Response) => {
         timestamp: m.timestamp.toISOString(),
       })),
     });
-    
+
   } catch (error: any) {
     logger.error('Poll error', { error: error.message });
     res.status(500).json({
@@ -588,6 +589,188 @@ router.get('/:session_id/poll', async (req: Request, res: Response) => {
       error: 'Failed to poll for messages',
     });
   }
+});
+
+router.get('/:session_id/events', async (req: Request, res: Response) => {
+  const session_id = getParam(req, 'session_id');
+  const village_id = getQuery(req, 'village_id') ?? getQuery(req, 'villageId');
+
+  if (!session_id) {
+    res.status(400).json({
+      success: false,
+      error: 'session_id is required',
+    });
+    return;
+  }
+
+  if (!session_id.startsWith('web_')) {
+    res.status(400).json({
+      success: false,
+      error: 'Invalid session_id format',
+    });
+    return;
+  }
+
+  if (!village_id) {
+    res.status(400).json({
+      success: false,
+      error: 'village_id is required',
+    });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event: string, data: unknown) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  send('connected', { sessionId: session_id, villageId: village_id, at: Date.now() });
+
+  const takeoverStatus = await checkWebchatTakeover(session_id, String(village_id));
+  send('takeover', {
+    sessionId: session_id,
+    is_takeover: takeoverStatus.is_takeover,
+    admin_name: takeoverStatus.admin_name || null,
+    at: Date.now(),
+  });
+
+  const initialStatus = getStatus(session_id);
+  if (initialStatus) {
+    send('processing_status', {
+      sessionId: session_id,
+      stage: initialStatus.stage,
+      message: initialStatus.message,
+      progress: initialStatus.progress,
+      done: initialStatus.stage === 'completed' || initialStatus.stage === 'error',
+      at: Date.now(),
+    });
+  }
+
+  const statusUnsubscribe = onStatusUpdate(session_id, (status) => {
+    send('processing_status', {
+      sessionId: session_id,
+      stage: status.stage,
+      message: status.message,
+      progress: status.progress,
+      done: status.stage === 'completed' || status.stage === 'error',
+      at: Date.now(),
+    });
+  });
+
+  const channelUrl = `${config.channelServiceUrl}/internal/livechat/events`;
+  const params = new URLSearchParams({
+    village_id: String(village_id),
+    channel: 'WEBCHAT',
+    channel_identifier: session_id,
+  });
+
+  const upstream = await axios.get(`${channelUrl}?${params.toString()}`, {
+    headers: {
+      'x-internal-api-key': config.internalApiKey,
+      'x-village-id': String(village_id),
+      Accept: 'text/event-stream',
+    },
+    responseType: 'stream',
+    timeout: 0,
+  });
+
+  let buffer = '';
+  const cleanup = () => {
+    statusUnsubscribe();
+    upstream.data.destroy();
+    clearInterval(heartbeat);
+  };
+
+  const flushEvent = (rawEvent: string) => {
+    const lines = rawEvent.split(/\r?\n/);
+    let eventName = 'message';
+    const dataLines: string[] = [];
+
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+
+    if (dataLines.length === 0) return;
+
+    try {
+      const payload = JSON.parse(dataLines.join('\n'));
+      if (eventName === 'message') {
+        const isTakeoverMessage = payload.channel === 'WEBCHAT'
+          && payload.channel_identifier === session_id
+          && payload.source === 'ADMIN';
+        if (!isTakeoverMessage) return;
+
+        const timestamp = payload.timestamp || payload.sent_at || payload.at || new Date().toISOString();
+        send('message', {
+          sessionId: session_id,
+          message_id: payload.message_id || payload.id,
+          content: payload.message_text || payload.content || '',
+          role: 'assistant',
+          source: 'admin',
+          admin_name: payload.admin_name || takeoverStatus.admin_name || null,
+          timestamp,
+          at: Date.now(),
+        });
+        return;
+      }
+
+      if (eventName === 'takeover') {
+        send('takeover', {
+          sessionId: session_id,
+          is_takeover: true,
+          admin_name: payload.admin_name || null,
+          at: Date.now(),
+        });
+      }
+    } catch (error: any) {
+      logger.warn('Failed to parse webchat SSE payload', {
+        session_id,
+        eventName,
+        error: error.message,
+      });
+    }
+  };
+
+  upstream.data.on('data', (chunk: Buffer | string) => {
+    buffer += chunk.toString();
+    const events = buffer.split(/\n\n/);
+    buffer = events.pop() || '';
+    for (const eventBlock of events) {
+      flushEvent(eventBlock);
+    }
+  });
+
+  upstream.data.on('error', (error: Error) => {
+    logger.warn('Webchat SSE upstream error', { session_id, error: error.message });
+    cleanup();
+    if (!res.writableEnded) {
+      res.end();
+    }
+  });
+
+  upstream.data.on('end', () => {
+    cleanup();
+    if (!res.writableEnded) {
+      res.end();
+    }
+  });
+
+  const heartbeat = setInterval(() => {
+    res.write(': heartbeat\n\n');
+  }, 25000);
+
+  req.on('close', () => {
+    cleanup();
+  });
 });
 
 export default router;

@@ -94,6 +94,8 @@ function shouldSendTyping(key: string, state: TypingState) {
 
 export function handleLivechatEvents(req: Request, res: Response): void {
   const villageId = resolveVillageId(req);
+  const channelIdentifier = getQuery(req, 'channel_identifier') || getQuery(req, 'wa_user_id');
+  const channel = (getQuery(req, 'channel') || '').toUpperCase();
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -105,10 +107,17 @@ export function handleLivechatEvents(req: Request, res: Response): void {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  send('connected', { village_id: villageId, at: Date.now() });
+  send('connected', {
+    village_id: villageId,
+    channel_identifier: channelIdentifier || undefined,
+    channel: channel === 'WEBCHAT' || channel === 'WHATSAPP' ? channel : undefined,
+    at: Date.now(),
+  });
 
   const unsubscribe = subscribeLivechatEvents((event) => {
     if (villageId && event.village_id && event.village_id !== villageId) return;
+    if (channel && event.channel && event.channel !== channel) return;
+    if (channelIdentifier && event.channel_identifier && event.channel_identifier !== channelIdentifier) return;
     send(event.type, event);
   });
 

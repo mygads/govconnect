@@ -13,6 +13,20 @@ import {
   NotificationSettings,
 } from '@/lib/notification-settings'
 
+type DashboardSseEvent =
+  | { type: 'complaint_created' | 'complaint_updated' | 'urgent_alert'; village_id: string; complaint_id: string; at: number }
+  | { type: 'connected'; village_id: string; at: number }
+  | { type: 'heartbeat'; at: number }
+
+interface DashboardSseStatusEvent {
+  type: 'processing_status'
+  stage: string
+  message?: string
+  progress?: number
+  done?: boolean
+  at: number
+}
+
 interface Complaint {
   id: string
   complaint_id: string
@@ -99,6 +113,133 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   const previousComplaintsRef = useRef<Set<string>>(new Set())
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const isInitialLoadRef = useRef(true)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const reconnectAttemptRef = useRef(0)
+  const isUnmountingRef = useRef(false)
+  const fallbackPollingRef = useRef<NodeJS.Timeout | null>(null)
+  const isFallbackModeRef = useRef(false)
+  const consecutiveSseFailuresRef = useRef(0)
+
+  const SSE_FAILURE_THRESHOLD = 3
+  const MAX_RECONNECT_DELAY_MS = 15000
+  const FALLBACK_POLL_INTERVAL_MS = 30000
+  const RETRY_SSE_WHILE_FALLBACK_MS = 60000
+
+  const getReconnectDelay = (attempt: number) => Math.min(1000 * 2 ** Math.max(attempt, 0), MAX_RECONNECT_DELAY_MS)
+
+  const clearTimer = (ref: React.MutableRefObject<NodeJS.Timeout | null>) => {
+    if (ref.current) {
+      clearTimeout(ref.current)
+      ref.current = null
+    }
+  }
+
+  const clearIntervalRef = (ref: React.MutableRefObject<NodeJS.Timeout | null>) => {
+    if (ref.current) {
+      clearInterval(ref.current)
+      ref.current = null
+    }
+  }
+
+  const closeEventSource = (ref: React.MutableRefObject<EventSource | null>) => {
+    if (ref.current) {
+      ref.current.close()
+      ref.current = null
+    }
+  }
+
+  const parseSseEvent = <T,>(event: MessageEvent<string>): T | null => {
+    try {
+      return JSON.parse(event.data) as T
+    } catch {
+      return null
+    }
+  }
+
+  const stopFallbackPolling = useCallback(() => {
+    clearIntervalRef(fallbackPollingRef)
+    clearTimer(reconnectTimeoutRef)
+  }, [])
+
+  const startFallbackPolling = useCallback(() => {
+    stopFallbackPolling()
+
+    const poll = async () => {
+      if (isUnmountingRef.current) return
+      await fetchData()
+    }
+
+    void poll()
+    fallbackPollingRef.current = setInterval(poll, FALLBACK_POLL_INTERVAL_MS)
+
+    // Retry SSE while in fallback mode
+    reconnectTimeoutRef.current = setTimeout(() => {
+      if (isUnmountingRef.current || !isFallbackModeRef.current) return
+      openSse()
+    }, RETRY_SSE_WHILE_FALLBACK_MS)
+  }, [])
+
+  const openSse = useCallback(() => {
+    closeEventSource(eventSourceRef)
+    clearTimer(reconnectTimeoutRef)
+
+    const url = '/api/dashboard/events'
+    const eventSource = new EventSource(url)
+    eventSourceRef.current = eventSource
+
+    eventSource.onopen = () => {
+      consecutiveSseFailuresRef.current = 0
+      reconnectAttemptRef.current = 0
+      isFallbackModeRef.current = false
+      stopFallbackPolling()
+    }
+
+    eventSource.onerror = () => {
+      closeEventSource(eventSourceRef)
+      const failures = consecutiveSseFailuresRef.current + 1
+      consecutiveSseFailuresRef.current = failures
+
+      if (failures >= SSE_FAILURE_THRESHOLD) {
+        isFallbackModeRef.current = true
+        startFallbackPolling()
+        return
+      }
+
+      const delay = getReconnectDelay(reconnectAttemptRef.current)
+      reconnectAttemptRef.current += 1
+
+      clearTimer(reconnectTimeoutRef)
+      reconnectTimeoutRef.current = setTimeout(() => {
+        if (isUnmountingRef.current) return
+        openSse()
+      }, delay)
+    }
+
+    eventSource.addEventListener('complaint_created', (event: MessageEvent<string>) => {
+      const payload = parseSseEvent<DashboardSseEvent>(event)
+      if (!payload || payload.type !== 'complaint_created') return
+
+      // Trigger data refresh to get new complaint details
+      void fetchData()
+    })
+
+    eventSource.addEventListener('complaint_updated', (event: MessageEvent<string>) => {
+      const payload = parseSseEvent<DashboardSseEvent>(event)
+      if (!payload || payload.type !== 'complaint_updated') return
+
+      // Trigger data refresh to get updated stats
+      void fetchData()
+    })
+
+    eventSource.addEventListener('urgent_alert', (event: MessageEvent<string>) => {
+      const payload = parseSseEvent<DashboardSseEvent>(event)
+      if (!payload || payload.type !== 'urgent_alert') return
+
+      // Trigger data refresh for urgent complaint
+      void fetchData()
+    })
+  }, [stopFallbackPolling, startFallbackPolling])
 
   // Fetch all data
   const fetchData = useCallback(async () => {
@@ -210,14 +351,14 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     fetchNotificationSettings()
       .then((nextSettings) => {
         setSettings(nextSettings)
-        saveNotificationSettings(nextSettings)
+        saveNotificationSettings(nextSettings, nextSettings.villageId)
       })
       .catch(() => {
         setSettings(localSettings)
       })
   }, [])
 
-  // Initial load and polling
+  // Initial load and SSE connection
   useEffect(() => {
     // Request notification permission
     requestNotificationPermission()
@@ -225,15 +366,17 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     // Initial fetch
     fetchData()
 
-    // Start polling (every 30 seconds)
-    pollingIntervalRef.current = setInterval(fetchData, 30000)
-    
+    // Start SSE connection
+    openSse()
+
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current)
-      }
+      isUnmountingRef.current = true
+      closeEventSource(eventSourceRef)
+      clearTimer(reconnectTimeoutRef)
+      clearIntervalRef(fallbackPollingRef)
+      clearIntervalRef(pollingIntervalRef)
     }
-  }, [fetchData])
+  }, [fetchData, openSse])
 
   // Notification actions
   const markAsRead = useCallback((id: string) => {
@@ -257,7 +400,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
 
   const updateSettings = useCallback((newSettings: NotificationSettings) => {
     setSettings(newSettings)
-    saveNotificationSettings(newSettings)
+    saveNotificationSettings(newSettings, newSettings.villageId)
   }, [])
 
   const unreadCount = notifications.filter(n => !n.read).length

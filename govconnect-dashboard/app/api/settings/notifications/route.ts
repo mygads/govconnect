@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { requireRole } from '@/lib/auth'
+import { requireAuth } from '@/lib/auth'
 import { apiFetch, buildUrl, getHeaders, ServicePath } from '@/lib/api-client'
-
-const NOTIFICATION_SETTINGS_KEYS = {
-  enabled: 'dashboard_notification_enabled',
-  urgentNotifications: 'dashboard_notification_urgent_enabled',
-  soundEnabled: 'dashboard_notification_sound_enabled',
-} as const
 
 const DEFAULT_NOTIFICATION_SETTINGS = {
   enabled: true,
@@ -15,10 +9,18 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   soundEnabled: true,
 }
 
-async function getUrgentTypesFromDB(): Promise<string[]> {
+function requireVillageAdminSession(session: Awaited<ReturnType<typeof requireAuth>>[0]) {
+  if (!session?.villageId) {
+    return NextResponse.json({ error: 'Forbidden: village admin only' }, { status: 403 })
+  }
+  return null
+}
+
+async function getUrgentTypesFromDB(villageId: string): Promise<string[]> {
   try {
     const url = new URL(buildUrl(ServicePath.CASE, '/complaints/types'))
     url.searchParams.set('is_urgent', 'true')
+    url.searchParams.set('village_id', villageId)
 
     const res = await apiFetch(url.toString(), {
       headers: getHeaders(),
@@ -35,32 +37,35 @@ async function getUrgentTypesFromDB(): Promise<string[]> {
   }
 }
 
-async function getStoredNotificationSettings() {
-  const rows = await prisma.system_settings.findMany({
-    where: { key: { in: Object.values(NOTIFICATION_SETTINGS_KEYS) } },
+async function getNotificationSettingsFromBehaviorConfig(villageId: string) {
+  const config = await prisma.village_behavior_configs.findUnique({
+    where: { village_id: villageId },
+    select: {
+      notification_enabled: true,
+      notification_urgent_enabled: true,
+    },
   })
 
-  const rowMap = new Map(rows.map((row) => [row.key, row.value]))
-
   return {
-    enabled: rowMap.get(NOTIFICATION_SETTINGS_KEYS.enabled) ? rowMap.get(NOTIFICATION_SETTINGS_KEYS.enabled) === 'true' : DEFAULT_NOTIFICATION_SETTINGS.enabled,
-    urgentNotifications: rowMap.get(NOTIFICATION_SETTINGS_KEYS.urgentNotifications)
-      ? rowMap.get(NOTIFICATION_SETTINGS_KEYS.urgentNotifications) === 'true'
-      : DEFAULT_NOTIFICATION_SETTINGS.urgentNotifications,
-    soundEnabled: rowMap.get(NOTIFICATION_SETTINGS_KEYS.soundEnabled)
-      ? rowMap.get(NOTIFICATION_SETTINGS_KEYS.soundEnabled) === 'true'
-      : DEFAULT_NOTIFICATION_SETTINGS.soundEnabled,
+    enabled: config?.notification_enabled ?? DEFAULT_NOTIFICATION_SETTINGS.enabled,
+    urgentNotifications: config?.notification_urgent_enabled ?? DEFAULT_NOTIFICATION_SETTINGS.urgentNotifications,
+    soundEnabled: DEFAULT_NOTIFICATION_SETTINGS.soundEnabled,
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const [, authError] = await requireRole(request, 'superadmin')
+    const [session, authError] = await requireAuth(request)
     if (authError) return authError
 
+    const villageAdminError = requireVillageAdminSession(session)
+    if (villageAdminError) return villageAdminError
+
+    const villageId = session.villageId!
+
     const [urgentCategories, settings] = await Promise.all([
-      getUrgentTypesFromDB(),
-      getStoredNotificationSettings(),
+      getUrgentTypesFromDB(villageId),
+      getNotificationSettingsFromBehaviorConfig(villageId),
     ])
 
     return NextResponse.json({
@@ -68,6 +73,7 @@ export async function GET(request: NextRequest) {
       data: {
         ...settings,
         urgentCategories,
+        villageId,
       }
     })
   } catch (error: any) {
@@ -80,9 +86,13 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const [, authError] = await requireRole(request, 'superadmin')
+    const [session, authError] = await requireAuth(request)
     if (authError) return authError
 
+    const villageAdminError = requireVillageAdminSession(session)
+    if (villageAdminError) return villageAdminError
+
+    const villageId = session.villageId!
     const body = await request.json().catch(() => ({}))
     const nextSettings = {
       enabled: body.enabled !== undefined ? Boolean(body.enabled) : DEFAULT_NOTIFICATION_SETTINGS.enabled,
@@ -90,28 +100,27 @@ export async function POST(request: NextRequest) {
       soundEnabled: body.soundEnabled !== undefined ? Boolean(body.soundEnabled) : DEFAULT_NOTIFICATION_SETTINGS.soundEnabled,
     }
 
-    await prisma.$transaction([
-      prisma.system_settings.upsert({
-        where: { key: NOTIFICATION_SETTINGS_KEYS.enabled },
-        update: { value: String(nextSettings.enabled), description: 'Enable dashboard complaint notifications' },
-        create: { key: NOTIFICATION_SETTINGS_KEYS.enabled, value: String(nextSettings.enabled), description: 'Enable dashboard complaint notifications' },
-      }),
-      prisma.system_settings.upsert({
-        where: { key: NOTIFICATION_SETTINGS_KEYS.urgentNotifications },
-        update: { value: String(nextSettings.urgentNotifications), description: 'Enable urgent dashboard complaint notifications' },
-        create: { key: NOTIFICATION_SETTINGS_KEYS.urgentNotifications, value: String(nextSettings.urgentNotifications), description: 'Enable urgent dashboard complaint notifications' },
-      }),
-      prisma.system_settings.upsert({
-        where: { key: NOTIFICATION_SETTINGS_KEYS.soundEnabled },
-        update: { value: String(nextSettings.soundEnabled), description: 'Enable dashboard notification sound' },
-        create: { key: NOTIFICATION_SETTINGS_KEYS.soundEnabled, value: String(nextSettings.soundEnabled), description: 'Enable dashboard notification sound' },
-      }),
-    ])
+    await prisma.village_behavior_configs.upsert({
+      where: { village_id: villageId },
+      update: {
+        notification_enabled: nextSettings.enabled,
+        notification_urgent_enabled: nextSettings.urgentNotifications,
+        updated_at: new Date(),
+      },
+      create: {
+        village_id: villageId,
+        notification_enabled: nextSettings.enabled,
+        notification_urgent_enabled: nextSettings.urgentNotifications,
+      },
+    })
 
     return NextResponse.json({
       success: true,
       message: 'Settings saved successfully',
-      data: nextSettings,
+      data: {
+        ...nextSettings,
+        villageId,
+      },
     })
   } catch (error: any) {
     return NextResponse.json(

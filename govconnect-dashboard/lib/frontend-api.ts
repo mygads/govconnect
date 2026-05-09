@@ -484,7 +484,7 @@ export const settings = {
 
   async updateNotifications(data: any) {
     return fetchApi<any>('/api/settings/notifications', {
-      method: 'PATCH',
+      method: 'POST',
       body: JSON.stringify(data),
     });
   },

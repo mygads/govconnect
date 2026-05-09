@@ -5,6 +5,7 @@ import { isConnected } from '../services/rabbitmq.service';
 import logger from '../utils/logger';
 import { getCaseServiceMetrics } from '../clients/case-service.client';
 import { checkObjectStorageHealth } from '../services/object-storage.service';
+import { getSseMetrics } from '../services/livechat-events.service';
 
 const router: ExpressRouter = Router();
 
@@ -101,6 +102,25 @@ router.get('/circuit-breakers', (req: Request, res: Response) => {
       message: error.message,
     });
   }
+});
+
+/**
+ * SSE metrics endpoint
+ */
+router.get('/sse', (req: Request, res: Response) => {
+  void req;
+  const metrics = getSseMetrics();
+  res.json({
+    status: 'ok',
+    sse: {
+      activeListeners: metrics.activeListeners,
+      totalEventsPublished: metrics.totalEventsPublished,
+      lastEventPublishedAt: metrics.lastEventPublishedAt > 0
+        ? new Date(metrics.lastEventPublishedAt).toISOString()
+        : null,
+    },
+    timestamp: new Date().toISOString(),
+  });
 });
 
 export default router;

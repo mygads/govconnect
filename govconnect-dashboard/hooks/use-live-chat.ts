@@ -6,6 +6,100 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+
+type RealtimeState = 'connecting' | 'live' | 'fallback' | 'offline';
+
+interface WebchatIncomingMessage {
+  message_id?: string;
+  id?: string;
+  content: string;
+  admin_name?: string | null;
+  timestamp?: string;
+}
+
+interface WebchatSseMessageEvent {
+  sessionId: string;
+  message_id?: string;
+  content: string;
+  role?: 'assistant' | 'user';
+  source?: 'admin' | 'ai';
+  admin_name?: string | null;
+  timestamp?: string;
+  at?: number;
+}
+
+interface WebchatSseTakeoverEvent {
+  sessionId: string;
+  is_takeover: boolean;
+  admin_name?: string | null;
+  at?: number;
+}
+
+interface WebchatSseStatusEvent {
+  sessionId: string;
+  stage: ProcessingStatus['stage'];
+  message: string;
+  progress: number;
+  done?: boolean;
+  at?: number;
+}
+
+const SSE_FAILURE_THRESHOLD = 3;
+const FALLBACK_POLL_INTERVAL_MS = 4000;
+const FALLBACK_STATUS_POLL_INTERVAL_MS = 2500;
+const RETRY_SSE_WHILE_FALLBACK_MS = 30000;
+const MAX_RECONNECT_DELAY_MS = 15000;
+
+function getReconnectDelay(attempt: number) {
+  return Math.min(1000 * 2 ** Math.max(attempt, 0), MAX_RECONNECT_DELAY_MS);
+}
+
+function parseEventData<T>(event: MessageEvent<string>): T | null {
+  try {
+    return JSON.parse(event.data) as T;
+  } catch {
+    return null;
+  }
+}
+
+function eventTimestampToIso(value?: string | number) {
+  if (typeof value === 'string' && value) return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return new Date(value).toISOString();
+  return new Date().toISOString();
+}
+
+function buildProcessedMessageKey(message: Pick<WebchatIncomingMessage, 'message_id' | 'id' | 'content' | 'timestamp'>) {
+  return message.message_id || message.id || `${message.content}_${message.timestamp || 'no-ts'}`;
+}
+
+function isDocumentVisible() {
+  return typeof document === 'undefined' || document.visibilityState === 'visible';
+}
+
+function supportsEventSource() {
+  return typeof window !== 'undefined' && typeof window.EventSource !== 'undefined';
+}
+
+function clearTimer(ref: React.MutableRefObject<ReturnType<typeof setTimeout> | null>) {
+  if (ref.current) {
+    clearTimeout(ref.current);
+    ref.current = null;
+  }
+}
+
+function clearIntervalRef(ref: React.MutableRefObject<ReturnType<typeof setInterval> | null>) {
+  if (ref.current) {
+    clearInterval(ref.current);
+    ref.current = null;
+  }
+}
+
+function closeEventSource(ref: React.MutableRefObject<EventSource | null>) {
+  if (ref.current) {
+    ref.current.close();
+    ref.current = null;
+  }
+}
 import {
   ChatMessage,
   ChatSession,
@@ -37,7 +131,59 @@ export function useLiveChat() {
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const statusPollingRef = useRef<NodeJS.Timeout | null>(null);
+  const statusPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fallbackPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retrySseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const consecutiveSseFailuresRef = useRef(0);
+  const reconnectAttemptRef = useRef(0);
+  const isFallbackModeRef = useRef(false);
+  const lastEventAtRef = useRef<string>(new Date().toISOString());
+  const realtimeStateRef = useRef<RealtimeState>('offline');
+  const isStatusPollingActiveRef = useRef(false);
+  const lastSessionKeyRef = useRef<string | null>(null);
+  const processedMessagesRef = useRef<Set<string>>(new Set());
+  const isUnmountingRef = useRef(false);
+
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>('offline');
+  const [isTakeover, setIsTakeover] = useState(false);
+  const [adminName, setAdminName] = useState<string | null>(null);
+
+  const setRealtimeMode = useCallback((nextState: RealtimeState) => {
+    realtimeStateRef.current = nextState;
+    setRealtimeState(nextState);
+  }, []);
+
+  const resetRealtimeBuffers = useCallback(() => {
+    processedMessagesRef.current.clear();
+    lastEventAtRef.current = new Date().toISOString();
+    consecutiveSseFailuresRef.current = 0;
+    reconnectAttemptRef.current = 0;
+    isFallbackModeRef.current = false;
+    isStatusPollingActiveRef.current = false;
+    setIsTakeover(false);
+    setAdminName(null);
+    setProcessingStatus(null);
+    setRealtimeMode('offline');
+  }, [setRealtimeMode]);
+
+  const stopStatusPolling = useCallback(() => {
+    clearIntervalRef(statusPollingRef);
+    isStatusPollingActiveRef.current = false;
+  }, []);
+
+  const stopFallbackPolling = useCallback(() => {
+    clearIntervalRef(fallbackPollingRef);
+  }, []);
+
+  const stopRealtime = useCallback(() => {
+    stopStatusPolling();
+    stopFallbackPolling();
+    clearTimer(reconnectTimeoutRef);
+    clearTimer(retrySseTimeoutRef);
+    closeEventSource(eventSourceRef);
+  }, [stopFallbackPolling, stopStatusPolling]);
 
   // Load session from localStorage on mount
   useEffect(() => {
@@ -262,29 +408,24 @@ export function useLiveChat() {
     // Set typing indicator
     setState(prev => ({ ...prev, isTyping: true }));
 
-    // Start polling for processing status
+    // If SSE is not live, enable status polling as fallback during send
     const sessionId = currentSession?.sessionId || state.session?.sessionId;
-    if (sessionId) {
-      statusPollingRef.current = setInterval(async () => {
-        try {
-          const statusResponse = await fetch(`/api/webchat/status?sessionId=${sessionId}`);
-          const statusData = await statusResponse.json().catch(() => null);
-          if (!statusResponse.ok) {
-            setServiceError(statusData?.error || 'Status webchat tidak dapat dimuat.');
-            return;
-          }
-          if (statusData?.success && statusData.data?.status) {
-            setServiceError(null);
-            setProcessingStatus({
-              stage: statusData.data.status.stage,
-              message: statusData.data.status.message,
-              progress: statusData.data.status.progress,
-            });
-          }
-        } catch (e: any) {
-          setServiceError(e?.message || 'Status webchat tidak dapat dimuat.');
+    if (sessionId && realtimeStateRef.current !== 'live') {
+      isStatusPollingActiveRef.current = true;
+      try {
+        const statusResponse = await fetch(`/api/webchat/status?sessionId=${sessionId}`);
+        const statusData = await statusResponse.json().catch(() => null);
+        if (statusResponse.ok && statusData?.success && statusData.data?.status) {
+          setServiceError(null);
+          setProcessingStatus({
+            stage: statusData.data.status.stage,
+            message: statusData.data.status.message,
+            progress: statusData.data.status.progress,
+          });
         }
-      }, 500);
+      } catch {
+        // Ignore; polling loop will retry
+      }
     }
 
     try {
@@ -367,20 +508,18 @@ export function useLiveChat() {
         status: 'delivered',
       });
     } finally {
-      // Stop status polling
-      if (statusPollingRef.current) {
-        clearInterval(statusPollingRef.current);
-        statusPollingRef.current = null;
-      }
+      stopStatusPolling();
       setProcessingStatus(null);
       setState(prev => ({ ...prev, isTyping: false }));
     }
-  }, [state.session, initSession, addMessage, updateMessageStatus]);
+  }, [state.session, initSession, addMessage, updateMessageStatus, stopStatusPolling]);
 
   // Clear chat / Start new session
   const clearChat = useCallback(() => {
     const oldSessionId = state.session?.sessionId;
     if (oldSessionId) {
+      stopRealtime();
+      resetRealtimeBuffers();
       fetch('/api/webchat/clear-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -412,7 +551,7 @@ export function useLiveChat() {
       };
       return { ...prev, session: newSession, unreadCount: 0 };
     });
-  }, [state.session?.sessionId]);
+  }, [state.session?.sessionId, stopRealtime, resetRealtimeBuffers]);
 
   const switchVillage = useCallback(() => {
     if (typeof window !== 'undefined') {
@@ -426,102 +565,296 @@ export function useLiveChat() {
     setState(prev => ({ ...prev, unreadCount: 0 }));
   }, []);
 
-  // Track takeover status
-  const [isTakeover, setIsTakeover] = useState(false);
-  const [adminName, setAdminName] = useState<string | null>(null);
-  const lastPollRef = useRef<Date>(new Date());
-  const processedMessagesRef = useRef<Set<string>>(new Set());
+  const catchUpPoll = useCallback(async (sessionId: string, villageId: string) => {
+    try {
+      const since = lastEventAtRef.current;
+      const response = await fetch(
+        `/api/webchat/poll?sessionId=${encodeURIComponent(sessionId)}&villageId=${encodeURIComponent(villageId)}&since=${since}`
+      );
 
-  // Poll for admin messages - always poll when session exists
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success) return;
+
+      if (data.is_takeover !== undefined) setIsTakeover(data.is_takeover);
+      if (data.admin_name) setAdminName(data.admin_name);
+
+      const messages: WebchatIncomingMessage[] = data.messages || [];
+      for (const msg of messages) {
+        const key = buildProcessedMessageKey({
+          message_id: msg.message_id,
+          id: msg.id,
+          content: msg.content,
+          timestamp: msg.timestamp,
+        });
+        if (processedMessagesRef.current.has(key)) continue;
+
+        processedMessagesRef.current.add(key);
+        lastEventAtRef.current = eventTimestampToIso(msg.timestamp);
+
+        setState(prev => {
+          if (!prev.session) return prev;
+          const newMessage: ChatMessage = {
+            id: generateMessageId(),
+            content: msg.content,
+            role: 'assistant',
+            timestamp: new Date(msg.timestamp || Date.now()),
+            status: 'delivered',
+          };
+          return {
+            ...prev,
+            session: {
+              ...prev.session,
+              messages: [...prev.session.messages, newMessage],
+              lastActivity: new Date(),
+            },
+            unreadCount: prev.isMinimized ? prev.unreadCount + 1 : prev.unreadCount,
+          };
+        });
+      }
+    } catch (error: any) {
+      console.debug('Catch-up poll error:', error);
+    }
+  }, []);
+
+  const openSse = useCallback((sessionId: string, villageId: string) => {
+    if (isUnmountingRef.current) return;
+    if (!supportsEventSource()) {
+      isFallbackModeRef.current = true;
+      setRealtimeMode('fallback');
+      return;
+    }
+
+    closeEventSource(eventSourceRef);
+    setRealtimeMode('connecting');
+
+    const url = `/api/webchat/events?sessionId=${encodeURIComponent(sessionId)}&villageId=${encodeURIComponent(villageId)}`;
+    const eventSource = new EventSource(url);
+    eventSourceRef.current = eventSource;
+
+    eventSource.onopen = () => {
+      if (isUnmountingRef.current) return;
+      consecutiveSseFailuresRef.current = 0;
+      reconnectAttemptRef.current = 0;
+      isFallbackModeRef.current = false;
+      setRealtimeMode('live');
+      stopFallbackPolling();
+      clearTimer(retrySseTimeoutRef);
+    };
+
+    eventSource.onerror = () => {
+      if (isUnmountingRef.current) return;
+      closeEventSource(eventSourceRef);
+
+      const failures = consecutiveSseFailuresRef.current + 1;
+      consecutiveSseFailuresRef.current = failures;
+
+      if (failures >= SSE_FAILURE_THRESHOLD) {
+        isFallbackModeRef.current = true;
+        setRealtimeMode('fallback');
+      } else {
+        setRealtimeMode('connecting');
+      }
+
+      const delay = getReconnectDelay(reconnectAttemptRef.current);
+      reconnectAttemptRef.current += 1;
+
+      clearTimer(reconnectTimeoutRef);
+      reconnectTimeoutRef.current = setTimeout(() => {
+        if (isUnmountingRef.current || !state.session?.sessionId || !state.session?.village?.id) return;
+        openSse(state.session.sessionId, state.session.village.id);
+      }, delay);
+    };
+
+    eventSource.addEventListener('connected', (event: MessageEvent<string>) => {
+      if (isUnmountingRef.current) return;
+      const payload = parseEventData<{ sessionId?: string; at?: number }>(event);
+      if (payload) {
+        lastEventAtRef.current = new Date(payload.at || Date.now()).toISOString();
+      }
+    });
+
+    eventSource.addEventListener('processing_status', (event: MessageEvent<string>) => {
+      if (isUnmountingRef.current) return;
+      const payload = parseEventData<WebchatSseStatusEvent>(event);
+      if (!payload) return;
+      lastEventAtRef.current = new Date(payload.at || Date.now()).toISOString();
+      setProcessingStatus({
+        stage: payload.stage,
+        message: payload.message,
+        progress: payload.progress,
+      });
+      if (payload.done) {
+        setTimeout(() => {
+          if (!isUnmountingRef.current) setProcessingStatus(null);
+        }, 300);
+      }
+    });
+
+    eventSource.addEventListener('message', (event: MessageEvent<string>) => {
+      if (isUnmountingRef.current) return;
+      const payload = parseEventData<WebchatSseMessageEvent>(event);
+      if (!payload) return;
+
+      const key = buildProcessedMessageKey({
+        message_id: payload.message_id,
+        content: payload.content,
+        timestamp: payload.timestamp,
+      });
+      if (processedMessagesRef.current.has(key)) return;
+      processedMessagesRef.current.add(key);
+
+      const timestamp = eventTimestampToIso(payload.timestamp || payload.at);
+      lastEventAtRef.current = timestamp;
+
+      setState(prev => {
+        if (!prev.session) return prev;
+        const newMessage: ChatMessage = {
+          id: generateMessageId(),
+          content: payload.content,
+          role: 'assistant',
+          timestamp: new Date(timestamp),
+          status: 'delivered',
+        };
+        return {
+          ...prev,
+          session: {
+            ...prev.session,
+            messages: [...prev.session.messages, newMessage],
+            lastActivity: new Date(),
+          },
+          unreadCount: prev.isMinimized ? prev.unreadCount + 1 : prev.unreadCount,
+        };
+      });
+    });
+
+    eventSource.addEventListener('takeover', (event: MessageEvent<string>) => {
+      if (isUnmountingRef.current) return;
+      const payload = parseEventData<WebchatSseTakeoverEvent>(event);
+      if (!payload) return;
+      lastEventAtRef.current = new Date(payload.at || Date.now()).toISOString();
+      setIsTakeover(payload.is_takeover);
+      setAdminName(payload.admin_name || null);
+    });
+
+    eventSource.addEventListener('heartbeat', () => {
+      lastEventAtRef.current = new Date().toISOString();
+    });
+  }, [setRealtimeMode, stopFallbackPolling, state.session?.sessionId, state.session?.village?.id]);
+
+  const startRealtime = useCallback((sessionId: string, villageId: string) => {
+    stopRealtime();
+    resetRealtimeBuffers();
+    lastSessionKeyRef.current = `${sessionId}:${villageId}`;
+    openSse(sessionId, villageId);
+  }, [stopRealtime, resetRealtimeBuffers, openSse]);
+
   useEffect(() => {
-    if (!state.session?.sessionId || !state.session?.village?.id) return;
+    if (!state.session?.sessionId || !state.session?.village?.id) {
+      stopRealtime();
+      return;
+    }
+
+    const sessionId = state.session.sessionId;
+    const villageId = state.session.village.id;
+    const sessionKey = `${sessionId}:${villageId}`;
+
+    if (lastSessionKeyRef.current !== sessionKey) {
+      startRealtime(sessionId, villageId);
+    }
+
+    return () => {
+      stopRealtime();
+    };
+  }, [state.session?.sessionId, state.session?.village?.id, startRealtime, stopRealtime]);
+
+  useEffect(() => {
+    if (!isFallbackModeRef.current || !state.session?.sessionId || !state.session?.village?.id) return;
 
     const sessionId = state.session.sessionId;
     const villageId = state.session.village.id;
 
-    const pollInterval = setInterval(async () => {
+    const poll = async () => {
+      if (isUnmountingRef.current) return;
+      await catchUpPoll(sessionId, villageId);
+    };
+
+    poll();
+    fallbackPollingRef.current = setInterval(poll, FALLBACK_POLL_INTERVAL_MS);
+
+    return () => {
+      stopFallbackPolling();
+    };
+  }, [realtimeState, state.session?.sessionId, state.session?.village?.id, catchUpPoll, stopFallbackPolling]);
+
+  useEffect(() => {
+    if (!isFallbackModeRef.current || !isStatusPollingActiveRef.current || !state.session?.sessionId) return;
+
+    const sessionId = state.session.sessionId;
+
+    const pollStatus = async () => {
+      if (isUnmountingRef.current) return;
       try {
-        const response = await fetch(
-          `/api/webchat/poll?sessionId=${encodeURIComponent(sessionId)}&villageId=${encodeURIComponent(villageId)}&since=${lastPollRef.current.toISOString()}`
-        );
-        
+        const response = await fetch(`/api/webchat/status?sessionId=${sessionId}`);
         const data = await response.json().catch(() => null);
-        if (!response.ok) {
-          setServiceError(data?.error || 'Gagal mengambil pesan admin terbaru.');
-          return;
-        }
-        setServiceError(null);
-
-        // Update takeover status
-        setIsTakeover(data.is_takeover || false);
-        setAdminName(data.admin_name || null);
-        
-        // Add new admin messages
-        if (data.messages && data.messages.length > 0) {
-          let hasNewMessages = false;
-          
-          for (const msg of data.messages) {
-            // Create unique key for message deduplication (prefer message_id if available)
-            const msgKey = msg.message_id || msg.id || `${msg.content}_${msg.timestamp}`;
-            
-            // Check if message already processed
-            if (processedMessagesRef.current.has(msgKey)) {
-              continue;
-            }
-            
-            // Check if message already exists in session
-            const exists = state.session?.messages.some(
-              m => m.role === 'assistant' && m.content === msg.content
-            );
-            
-            if (!exists) {
-              processedMessagesRef.current.add(msgKey);
-              hasNewMessages = true;
-              
-              // Add message directly to state to avoid dependency issues
-              setState(prev => {
-                if (!prev.session) return prev;
-                
-                const newMessage: ChatMessage = {
-                  id: generateMessageId(),
-                  content: msg.content,
-                  role: 'assistant',
-                  timestamp: new Date(msg.timestamp),
-                  status: 'delivered',
-                };
-                
-                const updatedSession: ChatSession = {
-                  ...prev.session,
-                  messages: [...prev.session.messages, newMessage],
-                  lastActivity: new Date(),
-                };
-
-                // Increment unread if minimized
-                const unreadCount = prev.isMinimized 
-                  ? prev.unreadCount + 1 
-                  : prev.unreadCount;
-
-                return { ...prev, session: updatedSession, unreadCount };
-              });
-            }
-          }
-          
-          if (hasNewMessages) {
-            lastPollRef.current = new Date();
-            // Force scroll to bottom after new messages
-            setTimeout(() => {
-              messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-            }, 100);
-          }
-        }
-      } catch (error: any) {
-        setServiceError(error?.message || 'Gagal mengambil pesan admin terbaru.');
-        console.debug('Poll error:', error);
+        if (!response.ok || !data?.success || !data.data?.status) return;
+        setProcessingStatus({
+          stage: data.data.status.stage,
+          message: data.data.status.message,
+          progress: data.data.status.progress,
+        });
+      } catch (error) {
+        console.debug('Fallback status poll error:', error);
       }
-    }, 2000); // Poll every 2 seconds for faster response
+    };
 
-    return () => clearInterval(pollInterval);
-  }, [state.session?.sessionId, state.session?.village?.id]);
+    statusPollingRef.current = setInterval(pollStatus, FALLBACK_STATUS_POLL_INTERVAL_MS);
+
+    return () => {
+      stopStatusPolling();
+    };
+  }, [realtimeState, state.session?.sessionId, stopStatusPolling]);
+
+  useEffect(() => {
+    if (!isFallbackModeRef.current || realtimeStateRef.current === 'live') return;
+
+    const attemptReconnect = () => {
+      if (isUnmountingRef.current || realtimeStateRef.current === 'live') return;
+      if (state.session?.sessionId && state.session?.village?.id) {
+        openSse(state.session.sessionId, state.session.village.id);
+      }
+    };
+
+    retrySseTimeoutRef.current = setInterval(attemptReconnect, RETRY_SSE_WHILE_FALLBACK_MS);
+
+    return () => {
+      clearTimer(retrySseTimeoutRef);
+    };
+  }, [realtimeState, state.session?.sessionId, state.session?.village?.id, openSse]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && state.session?.sessionId && state.session?.village?.id) {
+        catchUpPoll(state.session.sessionId, state.session.village.id);
+        if (!eventSourceRef.current && !isFallbackModeRef.current) {
+          openSse(state.session.sessionId, state.session.village.id);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [state.session?.sessionId, state.session?.village?.id, catchUpPoll, openSse]);
+
+  useEffect(() => {
+    isUnmountingRef.current = false;
+    return () => {
+      isUnmountingRef.current = true;
+      stopRealtime();
+    };
+  }, [stopRealtime]);
+
 
   return {
     // State
@@ -537,6 +870,7 @@ export function useLiveChat() {
     isTakeover,
     adminName,
     serviceError,
+    realtimeState,
 
     // Actions
     openChat,
@@ -549,7 +883,7 @@ export function useLiveChat() {
     selectVillage,
     switchVillage,
     markAllAsRead,
-    
+
     // Refs
     messagesEndRef,
   };

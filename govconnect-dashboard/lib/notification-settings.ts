@@ -6,6 +6,7 @@ export interface NotificationSettings {
   urgentNotifications: boolean;
   soundEnabled: boolean;
   urgentCategories: string[];
+  villageId?: string;
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -15,13 +16,15 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   urgentCategories: [],
 };
 
-const LOCAL_STORAGE_KEY = 'notificationSettings';
+function getLocalStorageKey(villageId?: string | null): string {
+  return villageId ? `notificationSettings:${villageId}` : 'notificationSettings';
+}
 
-export function getNotificationSettings(): NotificationSettings {
+export function getNotificationSettings(villageId?: string | null): NotificationSettings {
   if (typeof window === 'undefined') return DEFAULT_NOTIFICATION_SETTINGS;
 
   try {
-    const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const stored = localStorage.getItem(getLocalStorageKey(villageId));
     if (stored) {
       return { ...DEFAULT_NOTIFICATION_SETTINGS, ...JSON.parse(stored) };
     }
@@ -31,11 +34,11 @@ export function getNotificationSettings(): NotificationSettings {
   return DEFAULT_NOTIFICATION_SETTINGS;
 }
 
-export function saveNotificationSettings(settings: NotificationSettings): void {
+export function saveNotificationSettings(settings: NotificationSettings, villageId?: string | null): void {
   if (typeof window === 'undefined') return;
 
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(getLocalStorageKey(villageId || settings.villageId), JSON.stringify(settings));
   } catch (e) {
     console.error('Failed to save notification settings:', e);
   }
@@ -70,9 +73,10 @@ export async function fetchNotificationSettings(): Promise<NotificationSettings>
 
   const data = await response.json();
   const remote = data?.data || {};
-  const local = getNotificationSettings();
+  const local = getNotificationSettings(remote.villageId);
   return mergeNotificationSettings(remote, {
     soundEnabled: local.soundEnabled,
+    villageId: remote.villageId,
   });
 }
 
@@ -98,8 +102,9 @@ export async function persistNotificationSettings(settings: NotificationSettings
   const merged = mergeNotificationSettings(remote, {
     soundEnabled: settings.soundEnabled,
     urgentCategories: settings.urgentCategories,
+    villageId: remote.villageId,
   });
-  saveNotificationSettings(merged);
+  saveNotificationSettings(merged, remote.villageId);
   return merged;
 }
 

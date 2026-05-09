@@ -1,6 +1,6 @@
 import { createApp } from './app';
 import { config } from './config/env';
-import { connectRabbitMQ, disconnectRabbitMQ, startConsumingAIReply, startConsumingAIError, startConsumingMessageStatus, isRabbitMQConnected } from './services/rabbitmq.service';
+import { connectRabbitMQ, disconnectRabbitMQ, startConsumingAIReply, startConsumingAIError, startConsumingMessageStatus, startConsumingComplaintEvents, isRabbitMQConnected } from './services/rabbitmq.service';
 import { loadSettingsFromDatabase } from './services/wa.service';
 import { cleanupOldMessages } from './services/pending-message.service';
 import { flushAllBatches } from './services/message-batcher.service';
@@ -70,6 +70,7 @@ async function startServer() {
         await startConsumingAIReply();
         await startConsumingAIError();
         await startConsumingMessageStatus();
+        await startConsumingComplaintEvents();
         logger.info('✅ RabbitMQ consumers started');
       } catch (error: any) {
         logger.warn('RabbitMQ init failed, will retry', { error: error.message });
