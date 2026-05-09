@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { caseService } from '@/lib/api-client'
 
+export const revalidate = 30 // Cache for 30 seconds
+
 export async function GET(request: NextRequest) {
   try {
     // Get admin session with village_id

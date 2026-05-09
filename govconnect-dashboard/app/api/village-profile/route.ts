@@ -223,19 +223,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ data: null })
   }
 
-  const village = await getVillageIdentity(session.admin.village_id)
-  const profile = await prisma.village_profiles.findFirst({
-    where: { village_id: session.admin.village_id }
-  })
+  // Parallel fetch all data
+  const [village, profile, profileCategory] = await Promise.all([
+    getVillageIdentity(session.admin.village_id),
+    prisma.village_profiles.findFirst({
+      where: { village_id: session.admin.village_id }
+    }),
+    prisma.knowledge_categories.findFirst({
+      where: { village_id: session.admin.village_id, name: PROFILE_CATEGORY_NAME },
+    }),
+  ])
 
-  // Check knowledge base embedding status for this village's profile
-  const profileCategory = await prisma.knowledge_categories.findFirst({
-    where: { village_id: session.admin.village_id, name: PROFILE_CATEGORY_NAME },
-  })
-
-  let embeddingStatus = null
+  // Get knowledge if category exists
+  let profileKnowledgeItem = null
   if (profileCategory) {
-    const profileKnowledge = await prisma.knowledge_base.findFirst({
+    profileKnowledgeItem = await prisma.knowledge_base.findFirst({
       where: {
         village_id: session.admin.village_id,
         category_id: profileCategory.id,
@@ -248,18 +250,19 @@ export async function GET(request: NextRequest) {
         updated_at: true,
       }
     })
+  }
 
-    if (profileKnowledge) {
-      const needsReembed = profileKnowledge.last_edited_at && (
-        !profileKnowledge.last_embedded_at || 
-        profileKnowledge.last_edited_at > profileKnowledge.last_embedded_at
-      )
-      embeddingStatus = {
-        knowledge_id: profileKnowledge.id,
-        last_edited_at: profileKnowledge.last_edited_at,
-        last_embedded_at: profileKnowledge.last_embedded_at,
-        needs_reembed: needsReembed,
-      }
+  let embeddingStatus = null
+  if (profileKnowledgeItem) {
+    const needsReembed = profileKnowledgeItem.last_edited_at && (
+      !profileKnowledgeItem.last_embedded_at ||
+      profileKnowledgeItem.last_edited_at > profileKnowledgeItem.last_embedded_at
+    )
+    embeddingStatus = {
+      knowledge_id: profileKnowledgeItem.id,
+      last_edited_at: profileKnowledgeItem.last_edited_at,
+      last_embedded_at: profileKnowledgeItem.last_embedded_at,
+      needs_reembed: needsReembed,
     }
   }
 
