@@ -124,10 +124,11 @@ function derivePreferredToolReply(
 function isExplicitServiceActionRequest(userMessage: string): boolean {
   const normalized = (userMessage || '').toLowerCase();
   return [
-    /\b(kirim(?:kan)?|buat(?:kan)?|minta|tolong kirim)\s+link(?:nya)?\b/i,
-    /\b(link(?:nya)?)\s+(sekarang|saja)\b/i,
+    /\b(kirim(?:kan)?|tolong kirim|minta|mana)\s+(link|tautan|form|formulir)(?:nya)?\b/i,
+    /\b(link|tautan|form|formulir)(?:nya)?\s+(mana|sekarang|saja)\b/i,
     /\b(lanjut(?:kan)?|proses)\s+(ajukan|pengajuan|permohonan)\b/i,
     /\b(ajukan(?:kan)?|buat(?:kan)?|proseskan)\s+(layanan|permohonan|pengajuan)\b/i,
+    /\b(isi\s+formulir)\b/i,
   ].some((pattern) => pattern.test(normalized));
 }
 

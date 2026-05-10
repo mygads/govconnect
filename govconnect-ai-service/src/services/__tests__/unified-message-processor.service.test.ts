@@ -258,18 +258,74 @@ vi.mock('../case-client.service', () => ({
     const service = testState.services.find((item: any) => item.id === serviceIdOrSlug || item.slug === serviceIdOrSlug);
     return service?.requirements || [];
   }),
+  buildServiceInfoContext: vi.fn(async (service: any, options: any = {}) => {
+    const requirements = Array.isArray(service.requirements) ? service.requirements : [];
+    const formattedRequirements = requirements.map((requirement: any) => ({
+      label: requirement.label,
+      type: requirement.field_type,
+      required: requirement.is_required,
+      help_text: requirement.help_text || null,
+    }));
+    const isOnline = service.mode === 'online' || service.mode === 'both';
+    const canOfferFormLink = isOnline && options.allowFormLinkOffer !== false;
+    let replyText = `Baik, untuk layanan *${service.name}* persyaratannya seperti ini:\n\n`;
+    if (requirements.length > 0) {
+      replyText += requirements
+        .map((requirement: any, index: number) => `${index + 1}. ${requirement.label}${requirement.is_required ? ' (wajib)' : ' (opsional)'}`)
+        .join('\n');
+      replyText += '\n\n';
+    } else if (service.description) {
+      replyText += `${service.description}\n\n`;
+    }
+    if (!isOnline) {
+      replyText += 'Layanan ini diproses langsung di kantor desa. Silakan datang dengan membawa persyaratan di atas ya.';
+    }
+    const guidanceText = canOfferFormLink
+      ? `Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *${service.name}*.`
+      : undefined;
+    const suggestedResponse = guidanceText ? `${replyText}\n\n${guidanceText}` : replyText;
+
+    return {
+      service,
+      requirements,
+      formattedRequirements,
+      requirementsText: '',
+      replyText,
+      guidanceText,
+      suggestedResponse,
+      isOnline,
+      canOfferFormLink,
+      activeService: {
+        service_slug: service.slug,
+        service_name: service.name,
+        village_id: options.villageId,
+        mode: service.mode || null,
+        is_online: isOnline,
+        can_send_form_link: canOfferFormLink,
+        estimated_cost: service.estimated_cost || null,
+        estimated_processing_time: service.estimated_processing_time || null,
+        requirements: formattedRequirements,
+        requirements_count: requirements.length,
+        suggested_response: suggestedResponse,
+        timestamp: Date.now(),
+      },
+    };
+  }),
   cancelComplaint: vi.fn(async () => null),
   cancelServiceRequest: vi.fn(async () => null),
   getUserHistory: vi.fn(async () => []),
 }));
 
+import { canProcessVillageAI } from '../ai-wallet.service';
 import { processUnifiedMessage } from '../unified-message-processor.service';
 import {
   clearActiveServiceInfo,
   clearPendingServiceClarification,
   clearPendingServiceFormOffer,
   getPendingServiceClarification,
+  getPendingServiceFormOffer,
   setPendingServiceClarification,
+  setPendingServiceFormOffer,
 } from '../ump-state';
 
 describe('processUnifiedMessage service clarification flow', () => {
@@ -278,6 +334,9 @@ describe('processUnifiedMessage service clarification flow', () => {
 
   beforeEach(() => {
     testState.guardrailEvents.length = 0;
+    testState.conversationSessions.clear();
+    vi.mocked(canProcessVillageAI).mockClear();
+    vi.mocked(canProcessVillageAI).mockResolvedValue({ allowed: true, balanceUsd: 10, status: 'ok' } as any);
     clearActiveServiceInfo(userId);
     clearPendingServiceClarification(userId);
     clearPendingServiceFormOffer(userId);
@@ -378,5 +437,76 @@ describe('processUnifiedMessage service clarification flow', () => {
       serviceSlug: 'surat-domisili',
       followUpType: 'office_visit',
     });
+  });
+});
+
+describe('processUnifiedMessage pending service offer flow', () => {
+  const userId = 'ump-pending-offer-user';
+  const villageId = 'village-1';
+
+  beforeEach(() => {
+    testState.guardrailEvents.length = 0;
+    testState.conversationSessions.clear();
+    vi.mocked(canProcessVillageAI).mockClear();
+    vi.mocked(canProcessVillageAI).mockResolvedValue({ allowed: true, balanceUsd: 10, status: 'ok' } as any);
+    clearActiveServiceInfo(userId);
+    clearPendingServiceClarification(userId);
+    clearPendingServiceFormOffer(userId);
+  });
+
+  it('keeps pending offer informational when user only asks whether a link exists', async () => {
+    setPendingServiceFormOffer(userId, {
+      service_slug: 'surat-pengantar-ktp',
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'ada link?',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    expect(result.intent).toBe('SERVICE_INFO');
+    expect(result.response).not.toContain('service create');
+    expect(getPendingServiceFormOffer(userId)?.service_slug).toBe('surat-pengantar-ktp');
+  });
+
+  it('creates a service request only when the user explicitly asks for the link', async () => {
+    setPendingServiceFormOffer(userId, {
+      service_slug: 'surat-pengantar-ktp',
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'kirim linknya',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    expect(result.intent).toBe('CREATE_SERVICE_REQUEST');
+    expect(result.response).toContain('service create');
+    expect(getPendingServiceFormOffer(userId)).toBeUndefined();
+  });
+
+  it('checks the wallet gate only once per message', async () => {
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'halo',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    expect(result.response).toBe('agent reply');
+    expect(canProcessVillageAI).toHaveBeenCalledTimes(1);
   });
 });

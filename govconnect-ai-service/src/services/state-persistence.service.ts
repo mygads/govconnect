@@ -3,53 +3,126 @@
  *
  * Persists critical in-memory conversation state to PostgreSQL
  * so state survives service restarts.
- *
- * Strategy:
- * - Fire-and-forget writes (don't block message processing)
- * - Load on cache-miss (lazy hydration)
- * - Auto-cleanup expired sessions
  */
 
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 import { registerInterval } from '../utils/timer-registry';
 
-const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes (matches LRU cache TTL)
+const SESSION_TTL_MS = 10 * 60 * 1000;
+const STATE_PERSIST_DEBOUNCE_MS = 250;
 
-/**
- * Save a conversation session state to DB (fire-and-forget).
- */
-export function persistState(waUserId: string, sessionKey: string, data: unknown): void {
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  const stateJson = JSON.stringify(data);
-
-  prisma.conversation_sessions
-    .upsert({
-      where: {
-        wa_user_id_session_key: { wa_user_id: waUserId, session_key: sessionKey },
-      },
-      update: { state_json: stateJson, expires_at: expiresAt },
-      create: {
-        wa_user_id: waUserId,
-        session_key: sessionKey,
-        state_json: stateJson,
-        expires_at: expiresAt,
-      },
-    })
-    .catch((e: unknown) => {
-      logger.warn('Failed to persist conversation state', {
-        waUserId,
-        sessionKey,
-        error: (e as Error).message,
-      });
-    });
+interface PendingStateWrite {
+  waUserId: string;
+  sessionKey: string;
+  data: unknown;
+  expiresAt: Date;
+  sequence: number;
 }
 
-/**
- * Load a conversation session state from DB.
- * Returns null if not found or expired.
- */
+const statePersistTimers = new Map<string, NodeJS.Timeout>();
+const pendingStateWrites = new Map<string, PendingStateWrite>();
+let nextPendingStateSequence = 0;
+
+function buildPersistKey(waUserId: string, sessionKey: string): string {
+  return `${waUserId}:${sessionKey}`;
+}
+
+function clearPersistTimer(key: string): void {
+  const existing = statePersistTimers.get(key);
+  if (!existing) return;
+  clearTimeout(existing);
+  statePersistTimers.delete(key);
+}
+
+function dropBufferedState(key: string): void {
+  clearPersistTimer(key);
+  pendingStateWrites.delete(key);
+}
+
+async function flushPendingState(key: string): Promise<void> {
+  clearPersistTimer(key);
+
+  const pending = pendingStateWrites.get(key);
+  if (!pending) {
+    return;
+  }
+
+  try {
+    const stateJson = JSON.stringify(pending.data);
+    await prisma.conversation_sessions.upsert({
+      where: {
+        wa_user_id_session_key: { wa_user_id: pending.waUserId, session_key: pending.sessionKey },
+      },
+      update: { state_json: stateJson, expires_at: pending.expiresAt },
+      create: {
+        wa_user_id: pending.waUserId,
+        session_key: pending.sessionKey,
+        state_json: stateJson,
+        expires_at: pending.expiresAt,
+      },
+    });
+
+    if (pendingStateWrites.get(key)?.sequence === pending.sequence) {
+      pendingStateWrites.delete(key);
+    }
+  } catch (e: unknown) {
+    logger.warn('Failed to persist conversation state', {
+      waUserId: pending.waUserId,
+      sessionKey: pending.sessionKey,
+      error: (e as Error).message,
+    });
+  }
+}
+
+function scheduleStatePersist(key: string): void {
+  clearPersistTimer(key);
+
+  const timer = setTimeout(() => {
+    flushPendingState(key).catch((error: any) => {
+      logger.warn('Failed to flush buffered conversation state', {
+        key,
+        error: error.message,
+      });
+    });
+  }, STATE_PERSIST_DEBOUNCE_MS);
+
+  statePersistTimers.set(key, timer);
+}
+
+function clearUserBufferedStates(waUserId: string): void {
+  const prefix = `${waUserId}:`;
+  const keys = new Set<string>([
+    ...statePersistTimers.keys(),
+    ...pendingStateWrites.keys(),
+  ]);
+
+  for (const key of keys) {
+    if (key.startsWith(prefix)) {
+      dropBufferedState(key);
+    }
+  }
+}
+
+export function persistState(waUserId: string, sessionKey: string, data: unknown): void {
+  const key = buildPersistKey(waUserId, sessionKey);
+  pendingStateWrites.set(key, {
+    waUserId,
+    sessionKey,
+    data,
+    expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+    sequence: ++nextPendingStateSequence,
+  });
+  scheduleStatePersist(key);
+}
+
 export async function loadState<T>(waUserId: string, sessionKey: string): Promise<T | null> {
+  const key = buildPersistKey(waUserId, sessionKey);
+  const pending = pendingStateWrites.get(key);
+  if (pending) {
+    return pending.data as T;
+  }
+
   try {
     const row = await prisma.conversation_sessions.findUnique({
       where: {
@@ -59,9 +132,7 @@ export async function loadState<T>(waUserId: string, sessionKey: string): Promis
 
     if (!row) return null;
 
-    // Check expiry
     if (row.expires_at < new Date()) {
-      // Cleanup expired row (fire-and-forget)
       prisma.conversation_sessions
         .delete({
           where: {
@@ -83,31 +154,26 @@ export async function loadState<T>(waUserId: string, sessionKey: string): Promis
   }
 }
 
-/**
- * Delete a conversation session state from DB (fire-and-forget).
- */
 export function deleteState(waUserId: string, sessionKey: string): void {
+  dropBufferedState(buildPersistKey(waUserId, sessionKey));
+
   prisma.conversation_sessions
     .delete({
       where: {
         wa_user_id_session_key: { wa_user_id: waUserId, session_key: sessionKey },
       },
     })
-    .catch(() => {}); // Ignore if not found
+    .catch(() => {});
 }
 
-/**
- * Delete all conversation states for a user (fire-and-forget).
- */
 export function deleteAllUserStates(waUserId: string): void {
+  clearUserBufferedStates(waUserId);
+
   prisma.conversation_sessions
     .deleteMany({ where: { wa_user_id: waUserId } })
     .catch(() => {});
 }
 
-/**
- * Cleanup expired sessions periodically.
- */
 function cleanupExpiredSessions(): void {
   prisma.conversation_sessions
     .deleteMany({ where: { expires_at: { lt: new Date() } } })
@@ -121,8 +187,23 @@ function cleanupExpiredSessions(): void {
     });
 }
 
-// Run cleanup every 5 minutes
 registerInterval(cleanupExpiredSessions, 5 * 60 * 1000, 'state-persistence-cleanup');
+
+function resetBufferedStateForTests(): void {
+  for (const timer of statePersistTimers.values()) {
+    clearTimeout(timer);
+  }
+  statePersistTimers.clear();
+  pendingStateWrites.clear();
+  nextPendingStateSequence = 0;
+}
+
+export const __test_only__ = {
+  STATE_PERSIST_DEBOUNCE_MS,
+  flushPendingState,
+  resetBufferedStateForTests,
+  getBufferedStateCount: () => pendingStateWrites.size,
+};
 
 export default {
   persistState,

@@ -6,8 +6,8 @@
 import logger from '../utils/logger';
 import {
   requestServiceRequestEditToken,
+  buildServiceInfoContext,
   getServiceCatalog,
-  getServiceRequirements,
   type ServiceCatalogItem,
 } from './case-client.service';
 import { matchServiceSlug } from './micro-llm-matcher.service';
@@ -250,71 +250,27 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
     }
 
     const resolvedVillageId = villageId || service.village_id || service.villageId || '';
-
-    // Build requirements list
-    const requirements = Array.isArray(service.requirements) && service.requirements.length > 0
-      ? service.requirements
-      : await getServiceRequirements(service.id || service.slug);
-    let requirementsList = '';
-    if (requirements.length > 0) {
-      requirementsList = requirements
-        .sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0))
-        .map((req: any, i: number) => {
-          const required = req.is_required ? ' (wajib)' : ' (opsional)';
-          return `${i + 1}. ${req.label}${required}`;
-        })
-        .join('\n');
-    }
-
-    // Check if service is available online
-    const isOnline = service.mode === 'online' || service.mode === 'both';
-    let replyText = `Baik, untuk layanan *${service.name}* persyaratannya seperti ini:\n\n`;
-    let guidanceText = '';
-
-    if (requirementsList) {
-      replyText += `${requirementsList}\n\n`;
-    } else if (service.description) {
-      replyText += `${service.description}\n\n`;
-    }
-
-    const formattedRequirements = requirements.map((requirement: any) => ({
-      label: requirement.label,
-      type: requirement.field_type,
-      required: requirement.is_required,
-      help_text: requirement.help_text || null,
-    }));
+    const serviceInfo = await buildServiceInfoContext(service, {
+      villageId: resolvedVillageId || villageId || undefined,
+      allowFormLinkOffer: true,
+    });
 
     clearPendingServiceClarification(userId);
 
-    if (isOnline) {
+    if (serviceInfo.canOfferFormLink) {
       setPendingServiceFormOffer(userId, {
         service_slug: service.slug,
         village_id: resolvedVillageId || villageId,
         timestamp: Date.now(),
       });
-
-      guidanceText = `Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *${service.name}*.`;
-    } else {
-      replyText += 'Layanan ini diproses langsung di kantor desa. Silakan datang dengan membawa persyaratan di atas ya.';
     }
 
-    const finalGuidanceText = guidanceText || undefined;
-    setActiveServiceInfo(userId, {
-      service_slug: service.slug,
-      service_name: service.name,
-      village_id: resolvedVillageId || villageId || undefined,
-      mode: service.mode || null,
-      is_online: isOnline,
-      can_send_form_link: isOnline,
-      estimated_cost: service.estimated_cost || null,
-      estimated_processing_time: service.estimated_processing_time || null,
-      requirements: formattedRequirements,
-      requirements_count: requirements.length,
-      suggested_response: finalGuidanceText ? `${replyText}\n\n${finalGuidanceText}` : replyText,
-      timestamp: Date.now(),
-    });
+    setActiveServiceInfo(userId, serviceInfo.activeService);
 
-    return { replyText, guidanceText: finalGuidanceText };
+    return {
+      replyText: serviceInfo.replyText,
+      guidanceText: serviceInfo.guidanceText,
+    };
   } catch (error: any) {
     logger.error('Failed to fetch service info', {
       error: error.message,

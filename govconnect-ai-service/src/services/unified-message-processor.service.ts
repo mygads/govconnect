@@ -754,16 +754,86 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   });
   
   try {
-    const walletGate = await canProcessVillageAI(villageId);
+    const resolvedVillageId = villageId;
+    const agentChannel = channel === 'webchat' ? 'webchat' : 'whatsapp';
+    const walletGate = await canProcessVillageAI(resolvedVillageId);
+    const explicitHumanHandoffRequest = isExplicitHumanHandoffRequest(workingMessage);
     if (!walletGate.allowed) {
       logger.warn('AI processing blocked by wallet gate', {
         traceId,
         userId,
-        villageId,
+        villageId: resolvedVillageId,
         balanceUsd: walletGate.balanceUsd,
         status: walletGate.status,
         reason: walletGate.reason,
+        explicitHumanHandoffRequest,
       });
+
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'pre_agent_balance',
+        guardType: 'wallet_balance',
+        action: explicitHumanHandoffRequest ? 'handoff_allowed' : 'blocked',
+        reason: walletGate.reason || 'wallet_exhausted',
+        messagePreview: workingMessage,
+        metadata: {
+          balance_usd: walletGate.balanceUsd ?? null,
+          wallet_status: walletGate.status ?? null,
+          explicit_handoff: explicitHumanHandoffRequest,
+        },
+      });
+
+      if (explicitHumanHandoffRequest) {
+        const started = !isEvaluation && sideEffectMode !== 'knowledge_test' && await startTakeoverForUser(userId, {
+          village_id: resolvedVillageId,
+          channel: agentChannel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+          admin_id: 'system-auto-handoff',
+          admin_name: 'Petugas Desa',
+          reason: 'user_requested_human_agent_wallet_exhausted',
+          enrichment: {
+            last_user_message: workingMessage,
+            wallet_status: walletGate.status ?? null,
+            balance_usd: walletGate.balanceUsd ?? null,
+            village_id: resolvedVillageId ?? null,
+          },
+        });
+
+        tracker.complete();
+        notifyStage('done', 100);
+
+        return finish({
+          success: true,
+          response: started
+            ? 'Baik, karena saldo AI desa sedang habis, percakapan ini kami teruskan ke petugas agar dibantu langsung. Mohon tunggu sebentar ya.'
+            : 'Saldo AI desa sedang habis. Silakan hubungi petugas desa agar dibantu langsung.',
+          intent: 'TAKEOVER',
+          metadata: {
+            processingTimeMs: Date.now() - startTime,
+            hasKnowledge: false,
+            agentMode: 'pre_agent_guard',
+            toolsUsed: [],
+            traceId,
+            handoff: {
+              started: !!started,
+              reason: 'user_requested_human_agent_wallet_exhausted',
+            },
+            walletStatus: walletGate.status,
+            walletBalanceUsd: walletGate.balanceUsd,
+            guardrail: {
+              stage: 'pre_agent_balance',
+              type: 'wallet_balance',
+              action: 'handoff_allowed',
+              reason: walletGate.reason || 'wallet_exhausted',
+            },
+          },
+        });
+      }
+
+      tracker.complete();
+      notifyStage('done', 100);
 
       return finish({
         success: false,
@@ -775,6 +845,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           traceId,
           walletStatus: walletGate.status,
           walletBalanceUsd: walletGate.balanceUsd,
+          guardrail: {
+            stage: 'pre_agent_balance',
+            type: 'wallet_balance',
+            action: 'blocked',
+            reason: walletGate.reason || 'wallet_exhausted',
+          },
         },
         error: walletGate.reason,
       });
@@ -853,9 +929,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         error: 'Spam message detected',
       });
     }
-
-    const resolvedVillageId = villageId;
-    const agentChannel = channel === 'webchat' ? 'webchat' : 'whatsapp';
 
     // Cumulative timeout budget for micro-NLU classifiers (prevents worst-case stacking)
     const MICRO_NLU_BUDGET_MS = 8000;
@@ -981,6 +1054,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           villageId: resolvedVillageId,
           traceId,
           startTime,
+          sideEffectMode,
           runWithMicroBudget: withMicroNluBudget,
         });
     if (pendingOfferResult) {
@@ -1104,94 +1178,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         messagePreview: workingMessage,
       });
       return finish(outOfScopeGuardResult);
-    }
-
-    const explicitHumanHandoffRequest = isExplicitHumanHandoffRequest(workingMessage);
-    const walletAccess = await canProcessVillageAI(resolvedVillageId);
-    if (!walletAccess.allowed) {
-      await recordGuardrail({
-        traceId,
-        waUserId: userId,
-        villageId: resolvedVillageId,
-        channel,
-        guardStage: 'pre_agent_balance',
-        guardType: 'wallet_balance',
-        action: explicitHumanHandoffRequest ? 'handoff_allowed' : 'blocked',
-        reason: walletAccess.reason || 'wallet_exhausted',
-        messagePreview: workingMessage,
-        metadata: {
-          balance_usd: walletAccess.balanceUsd ?? null,
-          wallet_status: walletAccess.status ?? null,
-          explicit_handoff: explicitHumanHandoffRequest,
-        },
-      });
-
-      if (explicitHumanHandoffRequest) {
-        const started = !isEvaluation && sideEffectMode !== 'knowledge_test' && await startTakeoverForUser(userId, {
-          village_id: resolvedVillageId,
-          channel: agentChannel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
-          admin_id: 'system-auto-handoff',
-          admin_name: 'Petugas Desa',
-          reason: 'user_requested_human_agent_wallet_exhausted',
-          enrichment: {
-            last_user_message: workingMessage,
-            wallet_status: walletAccess.status ?? null,
-            balance_usd: walletAccess.balanceUsd ?? null,
-            village_id: resolvedVillageId ?? null,
-          },
-        });
-
-        tracker.complete();
-        notifyStage('done', 100);
-
-        return finish({
-          success: true,
-          response: started
-            ? 'Baik, karena saldo AI desa sedang habis, percakapan ini kami teruskan ke petugas agar dibantu langsung. Mohon tunggu sebentar ya.'
-            : 'Saldo AI desa sedang habis. Silakan hubungi petugas desa agar dibantu langsung.',
-          intent: 'TAKEOVER',
-          metadata: {
-            processingTimeMs: Date.now() - startTime,
-            hasKnowledge: false,
-            agentMode: 'pre_agent_guard',
-            toolsUsed: [],
-            traceId,
-            handoff: {
-              started: !!started,
-              reason: 'user_requested_human_agent_wallet_exhausted',
-            },
-            guardrail: {
-              stage: 'pre_agent_balance',
-              type: 'wallet_balance',
-              action: 'handoff_allowed',
-              reason: walletAccess.reason || 'wallet_exhausted',
-            },
-          },
-        });
-      }
-
-      tracker.complete();
-      notifyStage('done', 100);
-
-      return finish({
-        success: true,
-        response: 'Saldo AI desa saat ini habis, jadi pesan Bapak/Ibu kami tahan dulu sambil menunggu saldo diisi ulang oleh admin desa.',
-        guidanceText: 'Kalau ingin dibantu sekarang, silakan minta diteruskan ke petugas manusia.',
-        intent: 'AI_BALANCE_EXHAUSTED',
-        metadata: {
-          processingTimeMs: Date.now() - startTime,
-          hasKnowledge: false,
-          agentMode: 'pre_agent_guard',
-          toolsUsed: [],
-          traceId,
-          guardrail: {
-            stage: 'pre_agent_balance',
-            type: 'wallet_balance',
-            action: 'blocked',
-            reason: walletAccess.reason || 'wallet_exhausted',
-          },
-        },
-      });
     }
 
     // Step 2.5: AI Optimization - cheap context first, expensive context only after fast exits miss

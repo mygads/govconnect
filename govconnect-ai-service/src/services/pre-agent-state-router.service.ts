@@ -149,7 +149,8 @@ const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|buat laporan|buat pengaduan|lapo
 const SERVICE_EVENT_PATTERN = /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i;
 const OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN = /\b(sim|paspor|bpjs|visa|imigrasi|npwp|stnk|bpkb)\b/i;
 const OUT_OF_SCOPE_GENERAL_PATTERN = /\b(javascript|typescript|python|java|coding|ngoding|code|program|programmer|console\.log|for\s*\(|while\s*\(|loop\b|algoritma|matematika|rumus|1\s*\+\s*1|game|sepak bola|film|artis|zodiak)\b/i;
-const SERVICE_PENDING_LINK_PATTERN = /\b(link(?:nya)?|tautan(?:nya)?|form(?:nya)?|formulir(?:nya)?|kirim(?:kan)?\s+link|link\s+formulir|daftar\s+online|ajukan\s+online|isi\s+formulir)\b/i;
+const SERVICE_INFORMATIONAL_LINK_PATTERN = /\b(ada\s+(link|tautan|form|formulir)(?:nya)?|(link|tautan|form|formulir)(?:nya)?\s+ada|link\s+online|form\s+online|tautan\s+online)\b/i;
+const SERVICE_EXPLICIT_ACTION_PATTERN = /\b((kirim(?:kan)?|tolong kirim|minta|mana)\s+(link|tautan|form|formulir)(?:nya)?|(link|tautan|form|formulir)(?:nya)?\s+(mana|sekarang|saja)|lanjut(?:kan)?\s+(ajukan|pengajuan|permohonan)|ajukan(?:kan)?\s+(layanan|permohonan|pengajuan)|buat(?:kan)?\s+(pengajuan|permohonan)|isi\s+formulir)\b/i;
 const SERVICE_PENDING_INFO_PATTERN = /\b(syarat(?:nya)?|persyaratan(?:nya)?|biaya(?:nya)?|berapa lama|lama proses(?:nya)?|proses(?:nya)?|dokumen(?:nya)?|berkas(?:nya)?|harus ke kantor|ke kantor|offline|online|link(?:nya)?|form(?:nya)?)\b/i;
 const GOVCONNECT_USAGE_PATTERN = /\b(govconnect|whatsapp|webchat|lay-|lap-|cek status|riwayat|pengaduan|layanan desa|kantor desa)\b/i;
 const VILLAGE_SERVICE_SCOPE_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengaduan|laporan|status|kantor desa|jam buka|kontak|darurat)\b/i;
@@ -165,8 +166,19 @@ function isPendingServiceFollowUp(message: string): boolean {
   return SERVICE_PENDING_INFO_PATTERN.test((message || '').toLowerCase());
 }
 
+function isExplicitServiceActionRequest(message: string): boolean {
+  return SERVICE_EXPLICIT_ACTION_PATTERN.test((message || '').toLowerCase());
+}
+
+function isInformationalServiceLinkInquiry(message: string): boolean {
+  if (isExplicitServiceActionRequest(message)) {
+    return false;
+  }
+  return SERVICE_INFORMATIONAL_LINK_PATTERN.test((message || '').toLowerCase());
+}
+
 function isPendingServiceLinkRequest(message: string): boolean {
-  return SERVICE_PENDING_LINK_PATTERN.test((message || '').toLowerCase());
+  return isExplicitServiceActionRequest(message) || isInformationalServiceLinkInquiry(message);
 }
 
 function isClearlyDifferentIntent(message: string): boolean {
@@ -189,53 +201,19 @@ async function buildPendingServiceInfoContext(
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test',
 ): Promise<PendingServiceInfoReplyContext | null> {
   try {
-    const { getServiceCatalog, getServiceRequirements } = await import('./case-client.service');
+    const { buildServiceInfoContext, getServiceCatalog } = await import('./case-client.service');
     const services = await getServiceCatalog(villageId);
     const service = services.find((item) => item.slug === serviceSlug && item.is_active !== false);
     if (!service) return null;
-    const requirements = Array.isArray(service.requirements) && service.requirements.length > 0
-      ? service.requirements
-      : await getServiceRequirements(service.id || service.slug);
-    const formattedRequirements = requirements.map((item) => ({
-      label: item.label,
-      type: item.field_type,
-      required: item.is_required,
-      help_text: item.help_text || null,
-    }));
-    const requirementLines = formattedRequirements.slice(0, 6).map((item) => `- ${item.label}${item.required ? '' : ' (opsional)'}`);
-    const isOnline = service.mode === 'online' || service.mode === 'both';
-    const canSendFormLink = isOnline && sideEffectMode !== 'knowledge_test' && sideEffectMode !== 'evaluation';
-    const detailLines = [
-      `Untuk layanan *${service.name}*:`,
-      service.estimated_processing_time ? `- Estimasi proses: ${service.estimated_processing_time}` : '',
-      service.estimated_cost ? `- Perkiraan biaya: ${service.estimated_cost}` : '',
-      isOnline
-        ? '- Pengajuan bisa dilakukan online.'
-        : '- Pengajuan saat ini diproses offline di kantor desa.',
-      requirementLines.length > 0 ? `- Syarat utama:\n${requirementLines.join('\n')}` : '',
-      isOnline
-        ? (canSendFormLink
-            ? 'Kalau Bapak/Ibu mau, saya bisa kirim link formulirnya.'
-            : 'Kalau perlu, saya bantu jelaskan alurnya dari sini ya.')
-        : 'Kalau perlu, saya bantu jelaskan langkah berikutnya ya.',
-    ].filter(Boolean);
-    const response = detailLines.join('\n');
+
+    const context = await buildServiceInfoContext(service, {
+      villageId,
+      allowFormLinkOffer: sideEffectMode !== 'knowledge_test' && sideEffectMode !== 'evaluation',
+    });
+
     return {
-      response,
-      activeService: {
-        service_slug: service.slug,
-        service_name: service.name,
-        village_id: villageId,
-        mode: service.mode || null,
-        is_online: isOnline,
-        can_send_form_link: canSendFormLink,
-        estimated_cost: service.estimated_cost || null,
-        estimated_processing_time: service.estimated_processing_time || null,
-        requirements: formattedRequirements,
-        requirements_count: requirements.length,
-        suggested_response: response,
-        timestamp: Date.now(),
-      },
+      response: context.suggestedResponse,
+      activeService: context.activeService,
     };
   } catch {
     return null;
@@ -745,6 +723,7 @@ interface PendingOfferInput {
   villageId?: string;
   traceId: string;
   startTime: number;
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
   runWithMicroBudget: MicroBudgetRunner;
 }
 
@@ -758,6 +737,7 @@ export async function tryHandlePendingOffers(
     villageId,
     traceId,
     startTime,
+    sideEffectMode,
     runWithMicroBudget,
   } = input;
 
@@ -772,8 +752,10 @@ export async function tryHandlePendingOffers(
         return null;
       }
 
-      let decision = detectExplicitConfirmationReply(message);
-      if (decision === 'uncertain') {
+      const explicitActionRequest = isExplicitServiceActionRequest(message);
+      const informationalLinkInquiry = isInformationalServiceLinkInquiry(message);
+      let decision = explicitActionRequest ? 'yes' : detectExplicitConfirmationReply(message);
+      if (decision === 'uncertain' && !informationalLinkInquiry) {
         const confirmationResult = await runWithMicroBudget(
           () => classifyConfirmation(message.trim(), {
             village_id: villageId,
@@ -816,28 +798,30 @@ export async function tryHandlePendingOffers(
         });
       }
 
-      if (isPendingServiceLinkRequest(message)) {
-        clearPendingServiceFormOffer(userId);
-        const linkReply = await handleServiceRequestCreation(userId, channel, {
-          intent: 'CREATE_SERVICE_REQUEST',
-          fields: {
-            service_slug: pendingOffer.service_slug,
-            ...(pendingOffer.village_id ? { village_id: pendingOffer.village_id } : {}),
-          },
-          reply_text: '',
-        });
-        const normalized = normalizeHandlerResult(linkReply);
-        return buildGuardResult({
-          startTime,
-          traceId,
-          response: normalized.replyText,
-          guidanceText: normalized.guidanceText,
-          intent: 'CREATE_SERVICE_REQUEST',
-        });
+      if (informationalLinkInquiry) {
+        const followUpReply = await buildPendingServiceInfoReply(
+          pendingOffer.service_slug,
+          pendingOffer.village_id || villageId,
+          sideEffectMode,
+        );
+        if (followUpReply) {
+          return buildGuardResult({
+            startTime,
+            traceId,
+            response: followUpReply,
+            intent: 'SERVICE_INFO',
+            hasKnowledge: true,
+          });
+        }
+        return null;
       }
 
       if (isPendingServiceFollowUp(message) && !isClearlyDifferentIntent(message)) {
-        const followUpReply = await buildPendingServiceInfoReply(pendingOffer.service_slug, pendingOffer.village_id || villageId);
+        const followUpReply = await buildPendingServiceInfoReply(
+          pendingOffer.service_slug,
+          pendingOffer.village_id || villageId,
+          sideEffectMode,
+        );
         if (followUpReply) {
           return buildGuardResult({
             startTime,

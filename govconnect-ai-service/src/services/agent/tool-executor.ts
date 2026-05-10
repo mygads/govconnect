@@ -14,9 +14,9 @@ import {
   getComplaintStatusWithOwnership,
   getComplaintTypes,
   requestServiceRequestEditToken,
+  buildServiceInfoContext,
   getServiceCatalog,
   getServiceRequestStatusWithOwnership,
-  getServiceRequirements,
   getUserHistory,
   updateComplaintByUser,
   type ServiceCatalogItem,
@@ -138,52 +138,6 @@ const OFFICE_CONTACT_HINTS = [
   'kepala desa',
   'lurah',
 ];
-
-function formatServiceRequirements(
-  requirements: Array<{ label: string; required?: boolean; help_text?: string | null }>,
-): string {
-  return requirements
-    .map((requirement, index) => {
-      const suffix = requirement.required ? ' (wajib)' : ' (opsional)';
-      const helpText = requirement.help_text ? ` - ${requirement.help_text}` : '';
-      return `${index + 1}. ${requirement.label}${suffix}${helpText}`;
-    })
-    .join('\n');
-}
-
-function buildServiceInfoSuggestedResponse(input: {
-  serviceName: string;
-  description?: string | null;
-  estimatedCost?: string | null;
-  estimatedProcessingTime?: string | null;
-  requirementsText?: string;
-  isOnline: boolean;
-  canOfferFormLink?: boolean;
-}): string {
-  const parts: string[] = [`Baik Pak/Bu, untuk layanan *${input.serviceName}* informasinya seperti ini:`];
-
-  if (input.requirementsText) {
-    parts.push(input.requirementsText);
-  } else if (input.description) {
-    parts.push(input.description);
-  }
-
-  if (input.estimatedProcessingTime) {
-    parts.push(`Estimasi proses: ${input.estimatedProcessingTime}`);
-  }
-
-  if (input.estimatedCost) {
-    parts.push(`Biaya: ${input.estimatedCost}`);
-  }
-
-  if (input.isOnline && input.canOfferFormLink !== false) {
-    parts.push(`Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *${input.serviceName}*.`);
-  } else if (!input.isOnline) {
-    parts.push('Layanan ini diproses di kantor desa. Silakan datang sambil membawa persyaratan di atas ya.');
-  }
-
-  return parts.filter(Boolean).join('\n\n');
-}
 
 function buildServiceFormGuidanceText(formUrl: string): string {
   return `Link formulir layanan:\n${formUrl}\n\nNomor WhatsApp Bapak/Ibu akan dipakai sebagai identitas pengajuan. Setelah formulir dikirim, nomor layanan bisa dipakai untuk cek status, ubah data, atau membatalkan pengajuan bila masih memungkinkan.`;
@@ -485,23 +439,12 @@ async function toolGetServiceInfo(
   }
 
   const service = resolved.service;
-  const requirements = Array.isArray(service.requirements) && service.requirements.length > 0
-    ? service.requirements
-    : await getServiceRequirements(service.id || service.slug);
-  const isOnline = service.mode === 'online' || service.mode === 'both';
-  const formattedRequirements = requirements.map((requirement) => ({
-    label: requirement.label,
-    type: requirement.field_type,
-    required: requirement.is_required,
-    help_text: requirement.help_text || null,
-  }));
-  const requirementsText = formattedRequirements.length > 0
-    ? formatServiceRequirements(formattedRequirements)
-    : '';
+  const serviceInfo = await buildServiceInfoContext(service, {
+    villageId: ctx.villageId,
+    allowFormLinkOffer: !ctx.isEvaluation && ctx.sideEffectMode !== 'knowledge_test',
+  });
 
-  const canOfferFormLink = isOnline && !ctx.isEvaluation && ctx.sideEffectMode !== 'knowledge_test';
-
-  if (canOfferFormLink) {
+  if (serviceInfo.canOfferFormLink) {
     setPendingServiceFormOffer(ctx.userId, {
       service_slug: service.slug,
       village_id: ctx.villageId,
@@ -509,30 +452,7 @@ async function toolGetServiceInfo(
     });
   }
 
-  const suggestedResponse = buildServiceInfoSuggestedResponse({
-    serviceName: service.name,
-    description: service.description || null,
-    estimatedCost: service.estimated_cost || null,
-    estimatedProcessingTime: service.estimated_processing_time || null,
-    requirementsText,
-    isOnline,
-    canOfferFormLink,
-  });
-
-  setActiveServiceInfo(ctx.userId, {
-    service_slug: service.slug,
-    service_name: service.name,
-    village_id: ctx.villageId,
-    mode: service.mode || null,
-    is_online: isOnline,
-    can_send_form_link: canOfferFormLink,
-    estimated_cost: service.estimated_cost || null,
-    estimated_processing_time: service.estimated_processing_time || null,
-    requirements: formattedRequirements,
-    requirements_count: requirements.length,
-    suggested_response: suggestedResponse,
-    timestamp: Date.now(),
-  });
+  setActiveServiceInfo(ctx.userId, serviceInfo.activeService);
 
   return {
     success: true,
@@ -543,13 +463,13 @@ async function toolGetServiceInfo(
       description: service.description || null,
       category: service.category?.name || null,
       mode: service.mode || null,
-      is_online: isOnline,
+      is_online: serviceInfo.isOnline,
       estimated_cost: service.estimated_cost || null,
       estimated_processing_time: service.estimated_processing_time || null,
-      can_send_form_link: canOfferFormLink,
-      requirements: formattedRequirements,
-      requirements_count: requirements.length,
-      suggested_response: suggestedResponse,
+      can_send_form_link: serviceInfo.canOfferFormLink,
+      requirements: serviceInfo.formattedRequirements,
+      requirements_count: serviceInfo.requirements.length,
+      suggested_response: serviceInfo.suggestedResponse,
     },
     meta: {
       trustLevel: 'trusted_fact',

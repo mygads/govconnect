@@ -729,8 +729,11 @@ export interface ServiceCatalogItem {
 
 // Per-village cache to prevent multi-tenant data leakage (TENANT-01 fix)
 const serviceCatalogCacheMap = new Map<string, { data: ServiceCatalogItem[]; time: number }>();
+const serviceRequirementsCacheMap = new Map<string, { data: ServiceRequirementDefinition[]; time: number }>();
 const SERVICE_CATALOG_TTL = 15 * 60 * 1000; // 15 minutes
+const SERVICE_REQUIREMENTS_TTL = 15 * 60 * 1000; // 15 minutes
 const SERVICE_CATALOG_CACHE_MAX_ENTRIES = 50; // Prevent unbounded growth
+const SERVICE_REQUIREMENTS_CACHE_MAX_ENTRIES = 200;
 
 function mergeServiceCatalogItem(
   existing: ServiceCatalogItem,
@@ -860,6 +863,7 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
  */
 export function clearServiceCatalogCache(): void {
   serviceCatalogCacheMap.clear();
+  serviceRequirementsCacheMap.clear();
 }
 
 export interface ServiceRequirementDefinition {
@@ -871,8 +875,57 @@ export interface ServiceRequirementDefinition {
   order_index?: number | null;
 }
 
+export interface FormattedServiceRequirement {
+  label: string;
+  type: string;
+  required: boolean;
+  help_text: string | null;
+}
+
+export interface BuiltServiceInfoContext {
+  service: ServiceCatalogItem;
+  requirements: ServiceRequirementDefinition[];
+  formattedRequirements: FormattedServiceRequirement[];
+  requirementsText: string;
+  replyText: string;
+  guidanceText?: string;
+  suggestedResponse: string;
+  isOnline: boolean;
+  canOfferFormLink: boolean;
+  activeService: {
+    service_slug: string;
+    service_name: string;
+    village_id?: string;
+    mode?: string | null;
+    is_online: boolean;
+    can_send_form_link: boolean;
+    estimated_cost?: string | null;
+    estimated_processing_time?: string | null;
+    requirements: FormattedServiceRequirement[];
+    requirements_count: number;
+    suggested_response: string;
+    timestamp: number;
+  };
+}
+
+function formatServiceRequirements(requirements: ServiceRequirementDefinition[]): string {
+  return requirements
+    .map((requirement, index) => {
+      const suffix = requirement.is_required ? ' (wajib)' : ' (opsional)';
+      return `${index + 1}. ${requirement.label}${suffix}`;
+    })
+    .join('\n');
+}
+
 export async function getServiceRequirements(serviceId: string): Promise<ServiceRequirementDefinition[]> {
   if (!serviceId) return [];
+
+  const cacheKey = serviceId.trim();
+  const now = Date.now();
+  const cached = serviceRequirementsCacheMap.get(cacheKey);
+  if (cached && (now - cached.time) < SERVICE_REQUIREMENTS_TTL) {
+    return cached.data;
+  }
 
   try {
     const url = `${config.caseServiceUrl}/services/${serviceId}/requirements`;
@@ -884,17 +937,99 @@ export async function getServiceRequirements(serviceId: string): Promise<Service
       timeout: 10000,
     });
 
-    if (resilientHttp.isFallbackResponse(response)) return [];
+    if (resilientHttp.isFallbackResponse(response)) {
+      return cached?.data || [];
+    }
 
-    return Array.isArray(response.data?.data) ? response.data.data : [];
+    const requirements = Array.isArray(response.data?.data) ? response.data.data : [];
+
+    if (serviceRequirementsCacheMap.size >= SERVICE_REQUIREMENTS_CACHE_MAX_ENTRIES) {
+      const oldestKey = serviceRequirementsCacheMap.keys().next().value;
+      if (oldestKey) serviceRequirementsCacheMap.delete(oldestKey);
+    }
+
+    serviceRequirementsCacheMap.set(cacheKey, { data: requirements, time: now });
+    return requirements;
   } catch (error: any) {
     logger.warn('Failed to fetch service requirements', {
       service_id: serviceId,
       error: error.message,
       status: error.response?.status,
+      hasCachedData: !!cached,
     });
-    return [];
+    return cached?.data || [];
   }
+}
+
+export async function buildServiceInfoContext(
+  service: ServiceCatalogItem,
+  options: {
+    villageId?: string;
+    allowFormLinkOffer?: boolean;
+  } = {},
+): Promise<BuiltServiceInfoContext> {
+  const requirements = Array.isArray(service.requirements) && service.requirements.length > 0
+    ? [...service.requirements]
+    : await getServiceRequirements(service.id || service.slug);
+  const sortedRequirements = requirements
+    .slice()
+    .sort((left, right) => (left.order_index || 0) - (right.order_index || 0));
+  const formattedRequirements = sortedRequirements.map((requirement) => ({
+    label: requirement.label,
+    type: requirement.field_type,
+    required: requirement.is_required,
+    help_text: requirement.help_text || null,
+  }));
+  const requirementsText = sortedRequirements.length > 0
+    ? formatServiceRequirements(sortedRequirements)
+    : '';
+  const isOnline = service.mode === 'online' || service.mode === 'both';
+  const canOfferFormLink = isOnline && options.allowFormLinkOffer !== false;
+  const resolvedVillageId = options.villageId || service.village_id || service.villageId || undefined;
+
+  let replyText = `Baik, untuk layanan *${service.name}* persyaratannya seperti ini:\n\n`;
+  if (requirementsText) {
+    replyText += `${requirementsText}\n\n`;
+  } else if (service.description) {
+    replyText += `${service.description}\n\n`;
+  }
+
+  let guidanceText: string | undefined;
+  if (isOnline) {
+    if (canOfferFormLink) {
+      guidanceText = `Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *${service.name}*.`;
+    }
+  } else {
+    replyText += 'Layanan ini diproses langsung di kantor desa. Silakan datang dengan membawa persyaratan di atas ya.';
+  }
+
+  const suggestedResponse = guidanceText ? `${replyText}\n\n${guidanceText}` : replyText;
+
+  return {
+    service,
+    requirements: sortedRequirements,
+    formattedRequirements,
+    requirementsText,
+    replyText,
+    guidanceText,
+    suggestedResponse,
+    isOnline,
+    canOfferFormLink,
+    activeService: {
+      service_slug: service.slug,
+      service_name: service.name,
+      village_id: resolvedVillageId,
+      mode: service.mode || null,
+      is_online: isOnline,
+      can_send_form_link: canOfferFormLink,
+      estimated_cost: service.estimated_cost || null,
+      estimated_processing_time: service.estimated_processing_time || null,
+      requirements: formattedRequirements,
+      requirements_count: sortedRequirements.length,
+      suggested_response: suggestedResponse,
+      timestamp: Date.now(),
+    },
+  };
 }
 
 /**
