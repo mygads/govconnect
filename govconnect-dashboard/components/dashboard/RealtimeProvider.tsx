@@ -109,7 +109,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [settings, setSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS)
-  
+
   const previousComplaintsRef = useRef<Set<string>>(new Set())
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const isInitialLoadRef = useRef(true)
@@ -120,11 +120,13 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   const fallbackPollingRef = useRef<NodeJS.Timeout | null>(null)
   const isFallbackModeRef = useRef(false)
   const consecutiveSseFailuresRef = useRef(0)
+  const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null)
 
   const SSE_FAILURE_THRESHOLD = 3
   const MAX_RECONNECT_DELAY_MS = 15000
   const FALLBACK_POLL_INTERVAL_MS = 30000
   const RETRY_SSE_WHILE_FALLBACK_MS = 60000
+  const FETCH_DEBOUNCE_MS = 500
 
   const getReconnectDelay = (attempt: number) => Math.min(1000 * 2 ** Math.max(attempt, 0), MAX_RECONNECT_DELAY_MS)
 
@@ -157,29 +159,128 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     }
   }
 
+  // Fetch all data - defined first as it's used by other functions
+  const fetchData = useCallback(async () => {
+    try {
+      const [statsData, realtimeData] = await Promise.all([
+        statistics.getOverview(),
+        dashboard.getRealtimeSummary(),
+      ])
+      const summary = realtimeData.data
+      const urgent: Complaint[] = (summary.urgentComplaints || []).filter((complaint: Complaint) => ['OPEN', 'baru'].includes(complaint.status))
+      const recent: Complaint[] = summary.recentComplaints || []
+      const allComplaints = Array.from(new Map([...recent, ...urgent].map((complaint) => [complaint.id, complaint])).values())
+
+      // Check for new complaints (not on initial load)
+      if (!isInitialLoadRef.current) {
+        const currentIds = new Set(allComplaints.map(c => c.id))
+
+        allComplaints.forEach(complaint => {
+          if (!previousComplaintsRef.current.has(complaint.id)) {
+            // New complaint detected - is_urgent from database
+            const isUrgent = complaint.is_urgent === true
+
+            // Create notification
+            const notification: Notification = {
+              id: `notif-${complaint.id}-${Date.now()}`,
+              type: isUrgent ? 'urgent' : 'new_complaint',
+              title: isUrgent ? '🚨 LAPORAN DARURAT!' : 'Laporan Baru',
+              message: `${complaint.complaint_id}: ${complaint.kategori.replace(/_/g, ' ')}`,
+              complaint,
+              timestamp: new Date(),
+              read: false,
+            }
+
+            setNotifications(prev => [notification, ...prev].slice(0, 50))
+
+            // Play sound and show browser notification
+            if (settings.enabled) {
+              playNotificationSound(isUrgent ? 'urgent' : 'normal', settings)
+              showBrowserNotification(
+                notification.title,
+                notification.message,
+                {
+                  urgent: isUrgent,
+                  settings,
+                  onClick: () => {
+                    window.focus()
+                    window.location.href = `/dashboard/laporan/${complaint.id}`
+                  }
+                }
+              )
+            }
+          }
+        })
+
+        previousComplaintsRef.current = currentIds
+      } else {
+        // Initial load - populate recent activity notifications (last 24 hours)
+        const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000)
+        const recentActivity = allComplaints
+          .filter(c => new Date(c.created_at) >= last24Hours)
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 10)
+
+        const initialNotifications: Notification[] = recentActivity.map(complaint => {
+          const isUrgent = complaint.is_urgent === true
+          return {
+            id: `notif-${complaint.id}`,
+            type: isUrgent ? 'urgent' : 'new_complaint',
+            title: isUrgent ? '🚨 LAPORAN DARURAT!' : 'Laporan Masuk',
+            message: `${complaint.complaint_id}: ${complaint.kategori.replace(/_/g, ' ')}`,
+            complaint,
+            timestamp: new Date(complaint.created_at),
+            read: true, // Mark as read for initial load
+          }
+        })
+
+        setNotifications(initialNotifications)
+        previousComplaintsRef.current = new Set(allComplaints.map(c => c.id))
+        isInitialLoadRef.current = false
+      }
+
+      // Update state
+      setStats({
+        complaints: {
+          ...statsData.complaints,
+          urgent: urgent.length,
+        },
+        services: statsData.services,
+        todayCount: summary.todayCount || 0,
+        lastHourCount: summary.lastHourCount || 0,
+      })
+
+      setUrgentComplaints(urgent)
+      setRecentComplaints(recent)
+      setError(null)
+
+    } catch (err: any) {
+      console.error('Failed to fetch realtime data:', err)
+      setError(err.message || 'Failed to fetch data')
+    } finally {
+      setLoading(false)
+    }
+  }, [settings])
+
+  // Debounced fetch: batches multiple SSE events into a single API call
+  const debouncedFetchData = useCallback(() => {
+    if (fetchDebounceRef.current) {
+      clearTimeout(fetchDebounceRef.current)
+    }
+    fetchDebounceRef.current = setTimeout(() => {
+      fetchDebounceRef.current = null
+      if (!isUnmountingRef.current) {
+        void fetchData()
+      }
+    }, FETCH_DEBOUNCE_MS)
+  }, [fetchData])
+
   const stopFallbackPolling = useCallback(() => {
     clearIntervalRef(fallbackPollingRef)
     clearTimer(reconnectTimeoutRef)
   }, [])
 
-  const startFallbackPolling = useCallback(() => {
-    stopFallbackPolling()
-
-    const poll = async () => {
-      if (isUnmountingRef.current) return
-      await fetchData()
-    }
-
-    void poll()
-    fallbackPollingRef.current = setInterval(poll, FALLBACK_POLL_INTERVAL_MS)
-
-    // Retry SSE while in fallback mode
-    reconnectTimeoutRef.current = setTimeout(() => {
-      if (isUnmountingRef.current || !isFallbackModeRef.current) return
-      openSse()
-    }, RETRY_SSE_WHILE_FALLBACK_MS)
-  }, [])
-
+  // SSE event handlers - uses debouncedFetchData to batch events
   const openSse = useCallback(() => {
     closeEventSource(eventSourceRef)
     clearTimer(reconnectTimeoutRef)
@@ -202,7 +303,20 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
 
       if (failures >= SSE_FAILURE_THRESHOLD) {
         isFallbackModeRef.current = true
-        startFallbackPolling()
+        // Start fallback polling when SSE fails
+        clearIntervalRef(fallbackPollingRef)
+        const poll = () => {
+          if (isUnmountingRef.current) return
+          void fetchData()
+        }
+        void poll()
+        fallbackPollingRef.current = setInterval(poll, FALLBACK_POLL_INTERVAL_MS)
+
+        // Retry SSE while in fallback mode
+        reconnectTimeoutRef.current = setTimeout(() => {
+          if (isUnmountingRef.current || !isFallbackModeRef.current) return
+          openSse()
+        }, RETRY_SSE_WHILE_FALLBACK_MS)
         return
       }
 
@@ -220,129 +334,53 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       const payload = parseSseEvent<DashboardSseEvent>(event)
       if (!payload || payload.type !== 'complaint_created') return
 
-      // Trigger data refresh to get new complaint details
-      void fetchData()
+      // Incremental update: increment total count immediately
+      setStats(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          complaints: {
+            ...prev.complaints,
+            total: prev.complaints.total + 1,
+            open: prev.complaints.open + 1,
+          },
+          todayCount: prev.todayCount + 1,
+          lastHourCount: prev.lastHourCount + 1,
+        }
+      })
+
+      // Debounced fetch to get complaint details for notification
+      debouncedFetchData()
     })
 
     eventSource.addEventListener('complaint_updated', (event: MessageEvent<string>) => {
       const payload = parseSseEvent<DashboardSseEvent>(event)
       if (!payload || payload.type !== 'complaint_updated') return
 
-      // Trigger data refresh to get updated stats
-      void fetchData()
+      // Debounced fetch to get accurate status counts
+      debouncedFetchData()
     })
 
     eventSource.addEventListener('urgent_alert', (event: MessageEvent<string>) => {
       const payload = parseSseEvent<DashboardSseEvent>(event)
       if (!payload || payload.type !== 'urgent_alert') return
 
-      // Trigger data refresh for urgent complaint
-      void fetchData()
-    })
-  }, [stopFallbackPolling, startFallbackPolling])
-
-  // Fetch all data
-  const fetchData = useCallback(async () => {
-    try {
-      const [statsData, realtimeData] = await Promise.all([
-        statistics.getOverview(),
-        dashboard.getRealtimeSummary(),
-      ])
-      const summary = realtimeData.data
-      const urgent: Complaint[] = (summary.urgentComplaints || []).filter((complaint: Complaint) => ['OPEN', 'baru'].includes(complaint.status))
-      const recent: Complaint[] = summary.recentComplaints || []
-      const allComplaints = Array.from(new Map([...recent, ...urgent].map((complaint) => [complaint.id, complaint])).values())
-      
-      // Check for new complaints (not on initial load)
-      if (!isInitialLoadRef.current) {
-        const currentIds = new Set(allComplaints.map(c => c.id))
-        
-        allComplaints.forEach(complaint => {
-          if (!previousComplaintsRef.current.has(complaint.id)) {
-            // New complaint detected - is_urgent from database
-            const isUrgent = complaint.is_urgent === true
-            
-            // Create notification
-            const notification: Notification = {
-              id: `notif-${complaint.id}-${Date.now()}`,
-              type: isUrgent ? 'urgent' : 'new_complaint',
-              title: isUrgent ? '🚨 LAPORAN DARURAT!' : 'Laporan Baru',
-              message: `${complaint.complaint_id}: ${complaint.kategori.replace(/_/g, ' ')}`,
-              complaint,
-              timestamp: new Date(),
-              read: false,
-            }
-            
-            setNotifications(prev => [notification, ...prev].slice(0, 50))
-            
-            // Play sound and show browser notification
-            if (settings.enabled) {
-              playNotificationSound(isUrgent ? 'urgent' : 'normal', settings)
-              showBrowserNotification(
-                notification.title,
-                notification.message,
-                {
-                  urgent: isUrgent,
-                  settings,
-                  onClick: () => {
-                    window.focus()
-                    window.location.href = `/dashboard/laporan/${complaint.id}`
-                  }
-                }
-              )
-            }
-          }
-        })
-        
-        previousComplaintsRef.current = currentIds
-      } else {
-        // Initial load - populate recent activity notifications (last 24 hours)
-        const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000)
-        const recentActivity = allComplaints
-          .filter(c => new Date(c.created_at) >= last24Hours)
-          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-          .slice(0, 10)
-        
-        const initialNotifications: Notification[] = recentActivity.map(complaint => {
-          const isUrgent = complaint.is_urgent === true
-          return {
-            id: `notif-${complaint.id}`,
-            type: isUrgent ? 'urgent' : 'new_complaint',
-            title: isUrgent ? '🚨 LAPORAN DARURAT!' : 'Laporan Masuk',
-            message: `${complaint.complaint_id}: ${complaint.kategori.replace(/_/g, ' ')}`,
-            complaint,
-            timestamp: new Date(complaint.created_at),
-            read: true, // Mark as read for initial load
-          }
-        })
-        
-        setNotifications(initialNotifications)
-        previousComplaintsRef.current = new Set(allComplaints.map(c => c.id))
-        isInitialLoadRef.current = false
-      }
-      
-      // Update state
-      setStats({
-        complaints: {
-          ...statsData.complaints,
-          urgent: urgent.length,
-        },
-        services: statsData.services,
-        todayCount: summary.todayCount || 0,
-        lastHourCount: summary.lastHourCount || 0,
+      // Incremental update: increment urgent count immediately
+      setStats(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          complaints: {
+            ...prev.complaints,
+            urgent: prev.complaints.urgent + 1,
+          },
+        }
       })
-      
-      setUrgentComplaints(urgent)
-      setRecentComplaints(recent)
-      setError(null)
-      
-    } catch (err: any) {
-      console.error('Failed to fetch realtime data:', err)
-      setError(err.message || 'Failed to fetch data')
-    } finally {
-      setLoading(false)
-    }
-  }, [settings])
+
+      // Debounced fetch for urgent complaint details
+      debouncedFetchData()
+    })
+  }, [stopFallbackPolling, debouncedFetchData, fetchData])
 
   useEffect(() => {
     const localSettings = getNotificationSettings()
@@ -375,12 +413,15 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       clearTimer(reconnectTimeoutRef)
       clearIntervalRef(fallbackPollingRef)
       clearIntervalRef(pollingIntervalRef)
+      if (fetchDebounceRef.current) {
+        clearTimeout(fetchDebounceRef.current)
+      }
     }
   }, [fetchData, openSse])
 
   // Notification actions
   const markAsRead = useCallback((id: string) => {
-    setNotifications(prev => 
+    setNotifications(prev =>
       prev.map(n => n.id === id ? { ...n, read: true } : n)
     )
   }, [])

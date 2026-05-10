@@ -214,6 +214,7 @@ model ai_token_usage {
   @@index([billing_group_id])
   @@index([billing_status, created_at])
   @@index([village_id, billing_status, created_at])
+  @@index([village_id, created_at, call_type])
 }
 
 model ai_village_wallets {

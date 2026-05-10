@@ -238,6 +238,8 @@ model knowledge_base {
   @@index([village_id, scope, is_global])
   @@index([is_active])
   @@index([keywords])
+  @@index([village_id, is_active, created_at])
+  @@index([village_id, category_id, is_active])
 }
 
 // ==================== KNOWLEDGE DOCUMENTS ====================

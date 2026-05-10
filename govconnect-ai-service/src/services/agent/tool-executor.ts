@@ -38,6 +38,7 @@ import {
   getStatusLabel,
 } from '../ump-formatters';
 import {
+  setActiveServiceInfo,
   setPendingAddressRequest,
   setPendingCancelConfirmation,
   setPendingServiceFormOffer,
@@ -486,6 +487,31 @@ async function toolGetServiceInfo(
     });
   }
 
+  const suggestedResponse = buildServiceInfoSuggestedResponse({
+    serviceName: service.name,
+    description: service.description || null,
+    estimatedCost: service.estimated_cost || null,
+    estimatedProcessingTime: service.estimated_processing_time || null,
+    requirementsText,
+    isOnline,
+    canOfferFormLink,
+  });
+
+  setActiveServiceInfo(ctx.userId, {
+    service_slug: service.slug,
+    service_name: service.name,
+    village_id: ctx.villageId,
+    mode: service.mode || null,
+    is_online: isOnline,
+    can_send_form_link: canOfferFormLink,
+    estimated_cost: service.estimated_cost || null,
+    estimated_processing_time: service.estimated_processing_time || null,
+    requirements: formattedRequirements,
+    requirements_count: requirements.length,
+    suggested_response: suggestedResponse,
+    timestamp: Date.now(),
+  });
+
   return {
     success: true,
     data: {
@@ -498,18 +524,10 @@ async function toolGetServiceInfo(
       is_online: isOnline,
       estimated_cost: service.estimated_cost || null,
       estimated_processing_time: service.estimated_processing_time || null,
-      can_send_form_link: isOnline,
+      can_send_form_link: canOfferFormLink,
       requirements: formattedRequirements,
       requirements_count: requirements.length,
-      suggested_response: buildServiceInfoSuggestedResponse({
-        serviceName: service.name,
-        description: service.description || null,
-        estimatedCost: service.estimated_cost || null,
-        estimatedProcessingTime: service.estimated_processing_time || null,
-        requirementsText,
-        isOnline,
-        canOfferFormLink,
-      }),
+      suggested_response: suggestedResponse,
     },
     meta: {
       trustLevel: 'trusted_fact',

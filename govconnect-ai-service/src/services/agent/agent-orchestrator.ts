@@ -114,6 +114,58 @@ function derivePreferredToolReply(
   return {};
 }
 
+function isExplicitServiceActionRequest(userMessage: string): boolean {
+  const normalized = (userMessage || '').toLowerCase();
+  return [
+    /\b(kirim(?:kan)?|buat(?:kan)?|minta|tolong kirim)\s+link(?:nya)?\b/i,
+    /\b(link(?:nya)?)\s+(sekarang|saja)\b/i,
+    /\b(lanjut(?:kan)?|proses)\s+(ajukan|pengajuan|permohonan)\b/i,
+    /\b(ajukan(?:kan)?|buat(?:kan)?|proseskan)\s+(layanan|permohonan|pengajuan)\b/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function shouldStopAfterSufficientServiceInfo(
+  userMessage: string,
+  toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
+): boolean {
+  const wantsImmediateAction = isExplicitServiceActionRequest(userMessage);
+
+  return toolResults.some(({ toolName, result }) => {
+    if (toolName !== 'get_service_info' || result?.success !== true || result.meta?.sourceKind !== 'official_service_info') {
+      return false;
+    }
+
+    const payload = result.data;
+    if (!payload || typeof payload !== 'object') {
+      return false;
+    }
+
+    const data = payload as Record<string, unknown>;
+    const found = typeof data.found === 'boolean' ? data.found : undefined;
+    const needsClarification = data.needs_clarification === true;
+    const hasSuggestedReply = !!(
+      readStringField(data, 'suggested_response')
+      || readStringField(result as unknown as Record<string, unknown>, 'suggested_response')
+      || readStringField(data, 'reply_text')
+      || readStringField(data, 'replyText')
+    );
+
+    if (!hasSuggestedReply) {
+      return false;
+    }
+
+    if (needsClarification || found === false) {
+      return true;
+    }
+
+    if (found === true) {
+      return !wantsImmediateAction;
+    }
+
+    return false;
+  });
+}
+
 function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { toolName: AgentToolName; args: Record<string, unknown> } | null {
   const functionMatch = text.match(/<function=([a-z_]+)>/i);
   if (!functionMatch) return null;
@@ -329,6 +381,7 @@ export async function runAgent(
 
   const toolsUsed: string[] = [];
   const toolTrace: ToolExecutionTrace[] = [];
+  const executedToolSignatures = new Set<string>();
   let totalTokens = 0;
   let iterations = 0;
   let model = '';
@@ -417,6 +470,26 @@ export async function runAgent(
           continue;
         }
 
+        // Tool deduplication: skip if same tool with same args already executed
+        const toolSignature = `${toolName}:${JSON.stringify(args)}`;
+        if (executedToolSignatures.has(toolSignature)) {
+          logger.info('Skipping duplicate tool call', { toolName, args, iteration: i + 1 });
+          toolResults.push({
+            toolName,
+            result: {
+              success: true,
+              data: { cached: true, message: 'Tool already executed with same arguments' },
+              meta: { trustLevel: 'action_result', sourceKind: 'tool_deduplication' },
+            },
+            role: 'tool',
+            tool_call_id: tc.id,
+            name: toolName,
+            content: JSON.stringify({ success: true, cached: true }),
+          });
+          continue;
+        }
+        executedToolSignatures.add(toolSignature);
+
         toolsUsed.push(toolName);
         const result = await executeToolCall(toolName, args, { ...toolCtx, userMessage });
         toolTrace.push(result.trace);
@@ -441,6 +514,70 @@ export async function runAgent(
           preferredGuidanceText = preferredFromTool.guidanceText;
         }
         messages.push(tr);
+      }
+
+      if (preferredReplyText && shouldStopAfterSufficientServiceInfo(userMessage, toolResults)) {
+        logger.info('Agent early termination: service info already sufficient', {
+          iterations: i + 1,
+          toolsUsed,
+        });
+        return {
+          replyText: validateFinalAgentReply(preferredReplyText, toolsUsed),
+          guidanceText: preferredGuidanceText,
+          toolsUsed,
+          heuristicTools,
+          learnedTools,
+          allowedToolNames,
+          matchedPolicyKey,
+          matchedPolicySource,
+          matchedPolicyConfidence,
+          toolPolicyReason,
+          firstTurnToolChoice,
+          firstTurnToolChoiceReason,
+          toolTrace,
+          totalTokens,
+          iterations: i + 1,
+          model,
+          durationMs: Date.now() - startTime,
+        };
+      }
+
+      // Early termination: if multiple tools returned "not found" and we have a suggested response,
+      // return immediately instead of continuing to loop
+      if (i >= 1 && preferredReplyText) {
+        const notFoundCount = toolResults.filter(tr => {
+          const data = tr.result?.data;
+          return tr.result?.success === true &&
+            data && typeof data === 'object' &&
+            ('found' in data ? (data as any).found === false : false);
+        }).length;
+
+        if (notFoundCount >= 1) {
+          logger.info('Agent early termination: tool returned not found with suggested response', {
+            iterations: i + 1,
+            toolsUsed,
+            notFoundCount,
+          });
+          return {
+            replyText: validateFinalAgentReply(preferredReplyText, toolsUsed),
+            guidanceText: preferredGuidanceText,
+            toolsUsed,
+            heuristicTools,
+            learnedTools,
+            allowedToolNames,
+            matchedPolicyKey,
+            matchedPolicySource,
+            matchedPolicyConfidence,
+            toolPolicyReason,
+            firstTurnToolChoice,
+            firstTurnToolChoiceReason,
+            toolTrace,
+            totalTokens,
+            iterations: i + 1,
+            model,
+            durationMs: Date.now() - startTime,
+          };
+        }
       }
 
       continue;
@@ -1127,4 +1264,5 @@ export const __test_only__ = {
   selectAllowedTools,
   detectAmbiguousIntent,
   resolveFirstTurnToolChoice,
+  shouldStopAfterSufficientServiceInfo,
 };

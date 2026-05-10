@@ -51,6 +51,33 @@ export const pendingServiceFormOffer = new LRUCache<string, {
   timestamp: number;
 }>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingServiceFormOffer' });
 
+export interface ActiveServiceRequirementState {
+  label: string;
+  type: string;
+  required: boolean;
+  help_text?: string | null;
+}
+
+export interface ActiveServiceInfoState {
+  service_slug: string;
+  service_name: string;
+  village_id?: string;
+  mode?: string | null;
+  is_online: boolean;
+  can_send_form_link: boolean;
+  estimated_cost?: string | null;
+  estimated_processing_time?: string | null;
+  requirements: ActiveServiceRequirementState[];
+  requirements_count: number;
+  suggested_response?: string;
+  timestamp: number;
+}
+
+/** Trusted active service info cache for short follow-up turns */
+export const activeServiceInfo = new LRUCache<string, ActiveServiceInfoState>({
+  maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'activeServiceInfo',
+});
+
 /** Emergency complaint offer state cache (after emergency contact lookup) */
 export const pendingEmergencyComplaintOffer = new LRUCache<string, {
   contact_entity?: string;
@@ -120,7 +147,7 @@ export const serviceSearchCache = new LRUCache<string, {
 registerInterval(() => {
   const caches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, activeServiceInfo, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
     serviceSearchCache,
@@ -198,6 +225,7 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
     { cache: pendingAddressRequest, name: 'pendingAddressRequest' },
     { cache: pendingCancelConfirmation, name: 'pendingCancelConfirmation' },
     { cache: pendingServiceFormOffer, name: 'pendingServiceFormOffer' },
+    { cache: activeServiceInfo, name: 'activeServiceInfo' },
     { cache: pendingEmergencyComplaintOffer, name: 'pendingEmergencyComplaintOffer' },
     { cache: pendingComplaintData, name: 'pendingComplaintData' },
     { cache: pendingPhotos, name: 'pendingPhotos' },
@@ -226,7 +254,7 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
 export function clearUserCaches(userId: string): { cleared: number } {
   const userCaches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, activeServiceInfo, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, conversationHistoryCache,
   ];
@@ -271,7 +299,7 @@ export function syncNameToChannelService(
 export function getUMPCacheStats() {
   return [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingServiceFormOffer, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, activeServiceInfo, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
     serviceSearchCache,
@@ -391,6 +419,26 @@ export function setPendingServiceFormOffer(userId: string, data: {
 }) {
   pendingServiceFormOffer.set(userId, data);
   persistState(userId, 'pendingServiceFormOffer', data);
+}
+
+// --- Active Service Info ---
+export function getActiveServiceInfo(userId: string) {
+  return activeServiceInfo.get(userId);
+}
+export async function getActiveServiceInfoWithFallback(userId: string) {
+  const cached = activeServiceInfo.get(userId);
+  if (cached) return cached;
+  const persisted = await loadState<typeof cached>(userId, 'activeServiceInfo');
+  if (persisted) activeServiceInfo.set(userId, persisted);
+  return persisted;
+}
+export function clearActiveServiceInfo(userId: string) {
+  activeServiceInfo.delete(userId);
+  deleteState(userId, 'activeServiceInfo');
+}
+export function setActiveServiceInfo(userId: string, data: ActiveServiceInfoState) {
+  activeServiceInfo.set(userId, data);
+  persistState(userId, 'activeServiceInfo', data);
 }
 
 // --- Emergency Complaint Offer ---

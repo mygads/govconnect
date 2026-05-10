@@ -50,7 +50,13 @@ import { analyzeIncomingMedia } from './media-analysis.service';
 
 // ── Decomposed module imports ──
 import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
-import { incrementActiveProcessing, decrementActiveProcessing, setPendingServiceFormOffer, getPendingServiceFormOfferWithFallback } from './ump-state';
+import {
+  incrementActiveProcessing,
+  decrementActiveProcessing,
+  setPendingServiceFormOffer,
+  getPendingServiceFormOfferWithFallback,
+  getActiveServiceInfoWithFallback,
+} from './ump-state';
 import {
   fetchConversationHistoryFromChannel,
   appendToHistoryCache,
@@ -62,6 +68,7 @@ import { handleServiceInfo, handleServiceRequestCreation } from './service-handl
 import { runAgent } from './agent';
 import { handleStatusCheck } from './status-handler';
 import {
+  tryHandleActiveServiceFollowUp,
   tryHandleLatePreAgentState,
   tryHandlePendingOffers,
   tryHandleProtocolGuards,
@@ -137,6 +144,7 @@ const CACHEABLE_AGENT_TOOLS = new Set([
   'get_village_profile',
   'get_complaint_categories',
   'get_emergency_contacts',
+  'get_service_info',
   'search_knowledge',
   'search_documents',
 ]);
@@ -1007,6 +1015,31 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(latePreAgentResult);
     }
 
+    const activeServiceFollowUpResult = await tryHandleActiveServiceFollowUp({
+      userId,
+      message: workingMessage,
+      villageId: resolvedVillageId,
+      traceId,
+      startTime,
+      sideEffectMode,
+    });
+    if (activeServiceFollowUpResult) {
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: 'pre_agent_active_service',
+        guardType: 'active_service_follow_up',
+        action: 'handled',
+        reason: activeServiceFollowUpResult.intent,
+        messagePreview: workingMessage,
+      });
+      tracker.complete();
+      notifyStage('done', 100);
+      return finish(activeServiceFollowUpResult);
+    }
+
     const outOfScopeGuardResult = sideEffectMode === 'knowledge_test'
       ? null
       : tryHandleOutOfScopeGuard({
@@ -1117,53 +1150,18 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       });
     }
 
-    // Step 2.5: AI Optimization - Pre-process message
-    const conversationContext = resolvedHistory?.length
-      ? await buildAgentConversationContext(userId, resolvedHistory)
-      : { summary: undefined, recentMessages: [] as Array<{ role: 'user' | 'assistant'; content: string }> };
+    // Step 2.5: AI Optimization - cheap context first, expensive context only after fast exits miss
     const pendingServiceOffer = sideEffectMode === 'knowledge_test'
       ? null
       : await getPendingServiceFormOfferWithFallback(userId);
+    const activeServiceInfo = await getActiveServiceInfoWithFallback(userId);
     const lastDiscussedService = resolvedHistory?.length
       ? deriveLastDiscussedServiceContext(resolvedHistory)
       : {};
-    let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
 
     // Step 3: Sanitize and correct typos
     let sanitizedMessage = sanitizeUserInput(workingMessage);
     sanitizedMessage = normalizeText(sanitizedMessage);
-
-    const [savedProfile, memorySummary, sentiment] = await Promise.all([
-      getAutoFillSuggestionsWithFallback(userId),
-      sideEffectMode === 'knowledge_test'
-        ? Promise.resolve(undefined)
-        : buildHybridMemorySummary({
-            wa_user_id: userId,
-            query: sanitizedMessage,
-            village_id: resolvedVillageId,
-            trace_id: traceId,
-            channel: agentChannel,
-            skip_observability: !!isEvaluation,
-          }),
-      analyzeSentimentWithLLM(sanitizedMessage, userId, {
-        village_id: resolvedVillageId,
-        wa_user_id: channel === 'whatsapp' ? userId : undefined,
-        session_id: channel === 'webchat' ? userId : undefined,
-        channel,
-      }),
-    ]);
-    const sentimentContext = getSentimentContext(sentiment);
-
-    if (resolvedVillageId) {
-      const profile = await getVillageProfileSummary(resolvedVillageId);
-      villageTimezone = profile?.timezone || null;
-      if (profile?.name) {
-        templateContext = {
-          villageName: profile.name,
-          villageShortName: profile.short_name || null,
-        };
-      }
-    }
 
     const knowledgeTestWorkflowBlock = sideEffectMode === 'knowledge_test'
       ? getKnowledgeTestWorkflowBlock(sanitizedMessage)
@@ -1206,26 +1204,78 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       });
     }
 
-    const cachedKnowledge = !isEvaluation && sideEffectMode !== 'knowledge_test'
-      ? getCachedResponse(sanitizedMessage, 'KNOWLEDGE_QUERY', resolvedVillageId)
-      : null;
-    if (cachedKnowledge) {
+    // Check response cache for multiple cacheable intents
+    const CACHEABLE_INTENTS = ['KNOWLEDGE_QUERY', 'SERVICE_INFO', 'VILLAGE_PROFILE', 'EMERGENCY_CONTACTS'];
+    let cachedResponse: { response: string; guidanceText?: string; intent: string } | null = null;
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test') {
+      for (const cacheIntent of CACHEABLE_INTENTS) {
+        const hit = getCachedResponse(sanitizedMessage, cacheIntent, resolvedVillageId);
+        if (hit) {
+          cachedResponse = { response: hit.response, guidanceText: hit.guidanceText, intent: cacheIntent };
+          break;
+        }
+      }
+    }
+    if (cachedResponse) {
       tracker.complete();
       notifyStage('done', 100);
 
       return finish({
         success: true,
-        response: cachedKnowledge.response,
-        guidanceText: cachedKnowledge.guidanceText,
-        intent: 'KNOWLEDGE_QUERY',
+        response: cachedResponse.response,
+        guidanceText: cachedResponse.guidanceText,
+        intent: cachedResponse.intent,
         metadata: {
           processingTimeMs: Date.now() - startTime,
-          hasKnowledge: true,
+          hasKnowledge: cachedResponse.intent === 'KNOWLEDGE_QUERY',
           agentMode: 'response_cache',
           toolsUsed: [],
           traceId,
         },
       });
+    }
+
+    const conversationContext = resolvedHistory?.length
+      ? await buildAgentConversationContext(userId, resolvedHistory)
+      : { summary: undefined, recentMessages: [] as Array<{ role: 'user' | 'assistant'; content: string }> };
+    const enhancedContext = getEnhancedContext(userId);
+    const mergedConversationSummary = [
+      enhancedContext.conversationSummary
+        ? `[STATE AKTIF]\n${enhancedContext.conversationSummary}`
+        : undefined,
+      conversationContext.summary
+        ? `[RINGKASAN RIWAYAT]\n${conversationContext.summary}`
+        : undefined,
+    ].filter(Boolean).join('\n\n') || undefined;
+
+    const [savedProfile, memorySummary, sentiment, villageProfile] = await Promise.all([
+      getAutoFillSuggestionsWithFallback(userId),
+      sideEffectMode === 'knowledge_test'
+        ? Promise.resolve(undefined)
+        : buildHybridMemorySummary({
+            wa_user_id: userId,
+            query: sanitizedMessage,
+            village_id: resolvedVillageId,
+            trace_id: traceId,
+            channel: agentChannel,
+            skip_observability: !!isEvaluation,
+          }),
+      analyzeSentimentWithLLM(sanitizedMessage, userId, {
+        village_id: resolvedVillageId,
+        wa_user_id: channel === 'whatsapp' ? userId : undefined,
+        session_id: channel === 'webchat' ? userId : undefined,
+        channel,
+      }),
+      resolvedVillageId ? getVillageProfileSummary(resolvedVillageId) : Promise.resolve(null),
+    ]);
+    const sentimentContext = getSentimentContext(sentiment);
+    let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
+    villageTimezone = villageProfile?.timezone || null;
+    if (villageProfile?.name) {
+      templateContext = {
+        villageName: villageProfile.name,
+        villageShortName: villageProfile.short_name || null,
+      };
     }
 
     // ── Agent Mode (always active) ──
@@ -1238,10 +1288,10 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       isEvaluation,
       sideEffectMode,
       villageId: resolvedVillageId,
-      conversationSummary: conversationContext.summary,
+      conversationSummary: mergedConversationSummary,
       recentConversationHistory: conversationContext.recentMessages,
-      activeServiceSlug: pendingServiceOffer?.service_slug || lastDiscussedService.serviceSlug,
-      activeServiceName: lastDiscussedService.serviceName,
+      activeServiceSlug: pendingServiceOffer?.service_slug || activeServiceInfo?.service_slug || lastDiscussedService.serviceSlug,
+      activeServiceName: activeServiceInfo?.service_name || lastDiscussedService.serviceName,
       memorySummary,
       villageName: templateContext?.villageName ?? undefined,
       villageTimezone,
@@ -1263,7 +1313,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       message: sanitizedMessage,
       result: agentResult,
       sentiment,
-      conversationSummary: conversationContext.summary,
+      conversationSummary: mergedConversationSummary,
       recentConversationHistory: conversationContext.recentMessages,
       memorySummary,
       isEvaluation,
@@ -1287,10 +1337,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     if (!isEvaluation && sideEffectMode !== 'knowledge_test' && agentResult.success && isCacheableAgentResult(agentResult)) {
+      const cacheIntent = CACHEABLE_INTENTS.includes(agentResult.intent)
+        ? agentResult.intent
+        : 'KNOWLEDGE_QUERY';
       setCachedResponse(
         sanitizedMessage,
         agentResult.response,
-        'KNOWLEDGE_QUERY',
+        cacheIntent,
         agentResult.guidanceText,
         resolvedVillageId,
       );

@@ -169,8 +169,10 @@ export function isCacheable(query: string, intent?: string): boolean {
     }
   }
   
-  // Cache knowledge queries and greetings by intent
-  if (intent === 'KNOWLEDGE_QUERY' || intent === 'GREETING') {
+  // Cache knowledge queries, greetings, and static info by intent
+  if (intent === 'KNOWLEDGE_QUERY' || intent === 'GREETING'
+    || intent === 'SERVICE_INFO' || intent === 'VILLAGE_PROFILE'
+    || intent === 'EMERGENCY_CONTACTS') {
     return true;
   }
   
@@ -286,6 +288,11 @@ function getTTLForIntent(intent: string): number {
       return CACHE_CONFIG.greetingTTL;
     case 'KNOWLEDGE_QUERY':
       return CACHE_CONFIG.knowledgeTTL;
+    case 'VILLAGE_PROFILE':
+    case 'EMERGENCY_CONTACTS':
+      return 120 * 60 * 1000; // 2 hours for very static data
+    case 'SERVICE_INFO':
+      return 60 * 60 * 1000; // 1 hour for service catalog info
     default:
       return CACHE_CONFIG.defaultTTL;
   }

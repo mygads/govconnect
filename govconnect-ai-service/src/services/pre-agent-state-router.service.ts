@@ -24,11 +24,13 @@ import { ProcessMessageResult, normalizeHandlerResult } from './ump-types';
 import {
   MAX_PHOTOS_PER_COMPLAINT,
   addPendingPhoto,
+  clearActiveServiceInfo,
   clearPendingAddressRequest,
   clearPendingCancelConfirmation,
   clearPendingComplaintData,
   clearPendingEmergencyComplaintOffer,
   clearPendingServiceFormOffer,
+  getActiveServiceInfoWithFallback,
   getPendingAddressConfirmationWithFallback,
   getPendingAddressRequestWithFallback,
   getPendingCancelConfirmationWithFallback,
@@ -39,7 +41,9 @@ import {
   setPendingAddressRequest,
   setPendingComplaintData,
   setPendingEmergencyComplaintOffer,
+  setPendingServiceFormOffer,
   syncNameToChannelService,
+  type ActiveServiceInfoState,
 } from './ump-state';
 import {
   appendToHistoryCache,
@@ -137,7 +141,7 @@ const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|buat laporan|buat pengaduan|lapo
 const SERVICE_EVENT_PATTERN = /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i;
 const OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN = /\b(sim|paspor|bpjs|visa|imigrasi|npwp|stnk|bpkb)\b/i;
 const OUT_OF_SCOPE_GENERAL_PATTERN = /\b(javascript|typescript|python|java|coding|ngoding|code|program|programmer|console\.log|for\s*\(|while\s*\(|loop\b|algoritma|matematika|rumus|1\s*\+\s*1|game|sepak bola|film|artis|zodiak)\b/i;
-const SERVICE_PENDING_LINK_PATTERN = /\b(link(?:nya)?|form(?:nya)?|formulir(?:nya)?|ajukan|pengajuan|daftar online|online|isi online|bisa online)\b/i;
+const SERVICE_PENDING_LINK_PATTERN = /\b(link(?:nya)?|tautan(?:nya)?|form(?:nya)?|formulir(?:nya)?|kirim(?:kan)?\s+link|link\s+formulir|daftar\s+online|ajukan\s+online|isi\s+formulir)\b/i;
 const SERVICE_PENDING_INFO_PATTERN = /\b(syarat(?:nya)?|persyaratan(?:nya)?|biaya(?:nya)?|berapa lama|lama proses(?:nya)?|proses(?:nya)?|dokumen(?:nya)?|berkas(?:nya)?|harus ke kantor|ke kantor|offline|online|link(?:nya)?|form(?:nya)?)\b/i;
 const GOVCONNECT_USAGE_PATTERN = /\b(govconnect|whatsapp|webchat|lay-|lap-|cek status|riwayat|pengaduan|layanan desa|kantor desa)\b/i;
 const VILLAGE_SERVICE_SCOPE_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengaduan|laporan|status|kantor desa|jam buka|kontak|darurat)\b/i;
@@ -284,6 +288,144 @@ export function tryHandleProtocolGuards(
     traceId: input.traceId,
     response: `Mohon maaf, saat ini kami belum bisa memproses ${label}. Silakan ketik pesan dalam bentuk teks ya, Pak/Bu.\n\nKetik *bantuan* untuk melihat daftar layanan yang tersedia.`,
     intent: 'QUESTION',
+  });
+}
+
+interface ActiveServiceFollowUpInput {
+  userId: string;
+  message: string;
+  villageId?: string;
+  traceId: string;
+  startTime: number;
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
+}
+
+function formatActiveServiceRequirements(requirements: ActiveServiceInfoState['requirements']): string {
+  return requirements
+    .slice(0, 6)
+    .map((item) => `- ${item.label}${item.required ? '' : ' (opsional)'}`)
+    .join('\n');
+}
+
+function buildActiveServiceFollowUpReply(
+  activeService: ActiveServiceInfoState,
+  message: string,
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test',
+): string | null {
+  const normalized = (message || '').toLowerCase();
+  const serviceName = activeService.service_name;
+  const canSendLinkFromSession = activeService.can_send_form_link
+    && sideEffectMode !== 'knowledge_test'
+    && sideEffectMode !== 'evaluation';
+  const asksLink = isPendingServiceLinkRequest(message);
+  const asksRequirements = /\b(syarat(?:nya)?|persyaratan(?:nya)?|dokumen(?:nya)?|berkas(?:nya)?)\b/i.test(normalized);
+  const asksDuration = /\b(berapa lama|lama proses(?:nya)?|proses(?:nya)?)\b/i.test(normalized);
+  const asksCost = /\b(biaya(?:nya)?|tarif(?:nya)?)\b/i.test(normalized);
+  const asksOfficeVisit = /\b(harus ke kantor|ke kantor|offline)\b/i.test(normalized);
+  const asksOnline = /\b(online|bisa online)\b/i.test(normalized);
+
+  if (asksLink) {
+    if (activeService.is_online && canSendLinkFromSession) {
+      return `Untuk layanan *${serviceName}*, pengajuan bisa dilakukan online.\n\nKalau Bapak/Ibu mau, saya bisa kirim link formulirnya. Balas *iya* ya.`;
+    }
+
+    if (activeService.is_online) {
+      return `Untuk layanan *${serviceName}*, pengajuan memang bisa dilakukan online.\n\nHalaman ini hanya untuk uji jawaban, jadi saya belum mengirim link formulir dari sini. Untuk uji alur pengajuan, silakan gunakan kanal WhatsApp/Webchat produksi.`;
+    }
+
+    return `Untuk layanan *${serviceName}*, pengajuan saat ini belum tersedia lewat link online. Prosesnya dilakukan di kantor desa.`;
+  }
+
+  if (asksRequirements) {
+    if (activeService.requirements_count > 0 && activeService.requirements.length > 0) {
+      return `Syarat utama untuk layanan *${serviceName}* adalah:\n${formatActiveServiceRequirements(activeService.requirements)}`;
+    }
+    return null;
+  }
+
+  if (asksDuration) {
+    if (activeService.estimated_processing_time) {
+      return `Untuk layanan *${serviceName}*, estimasi prosesnya ${activeService.estimated_processing_time}.`;
+    }
+    return null;
+  }
+
+  if (asksCost) {
+    if (activeService.estimated_cost) {
+      return `Untuk layanan *${serviceName}*, perkiraan biayanya ${activeService.estimated_cost}.`;
+    }
+    return null;
+  }
+
+  if (asksOfficeVisit) {
+    if (activeService.mode === 'both') {
+      return `Untuk layanan *${serviceName}*, pengajuan bisa dilakukan online dan juga tersedia di kantor desa.`;
+    }
+    if (activeService.is_online) {
+      return `Untuk layanan *${serviceName}*, pengajuan bisa dilakukan online, jadi tidak perlu datang ke kantor desa untuk mulai mengajukan.`;
+    }
+    return `Untuk layanan *${serviceName}*, pengajuan saat ini diproses di kantor desa.`;
+  }
+
+  if (asksOnline) {
+    if (activeService.mode === 'both') {
+      return `Bisa Pak/Bu, layanan *${serviceName}* bisa diajukan online dan juga tersedia di kantor desa.`;
+    }
+    if (activeService.is_online) {
+      return canSendLinkFromSession
+        ? `Bisa Pak/Bu, layanan *${serviceName}* bisa diajukan online. Kalau Bapak/Ibu mau, saya bisa kirim link formulirnya.`
+        : `Bisa Pak/Bu, layanan *${serviceName}* bisa diajukan online.`;
+    }
+    return `Untuk layanan *${serviceName}*, pengajuan saat ini belum tersedia online dan diproses di kantor desa.`;
+  }
+
+  return activeService.suggested_response || null;
+}
+
+export async function tryHandleActiveServiceFollowUp(
+  input: ActiveServiceFollowUpInput,
+): Promise<ProcessMessageResult | null> {
+  const activeService = await getActiveServiceInfoWithFallback(input.userId);
+  if (!activeService) {
+    return null;
+  }
+
+  if (isClearlyDifferentIntent(input.message)) {
+    clearActiveServiceInfo(input.userId);
+    return null;
+  }
+
+  if (!isPendingServiceFollowUp(input.message) && !isPendingServiceLinkRequest(input.message)) {
+    return null;
+  }
+
+  if (
+    isPendingServiceLinkRequest(input.message)
+    && activeService.is_online
+    && activeService.can_send_form_link
+    && input.sideEffectMode !== 'knowledge_test'
+    && input.sideEffectMode !== 'evaluation'
+  ) {
+    setPendingServiceFormOffer(input.userId, {
+      service_slug: activeService.service_slug,
+      village_id: activeService.village_id || input.villageId,
+      timestamp: Date.now(),
+    });
+  }
+
+  const reply = buildActiveServiceFollowUpReply(activeService, input.message, input.sideEffectMode)
+    || await buildPendingServiceInfoReply(activeService.service_slug, activeService.village_id || input.villageId);
+
+  if (!reply) {
+    return null;
+  }
+
+  return buildGuardResult({
+    startTime: input.startTime,
+    traceId: input.traceId,
+    response: reply,
+    intent: 'SERVICE_INFO',
+    hasKnowledge: true,
   });
 }
 
@@ -1156,4 +1298,5 @@ export const __test_only__ = {
   isPendingServiceLinkRequest,
   isClearlyDifferentIntent,
   buildOutOfScopeRedirect,
+  buildActiveServiceFollowUpReply,
 };
