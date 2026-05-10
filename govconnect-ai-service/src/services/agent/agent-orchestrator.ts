@@ -55,6 +55,13 @@ export interface AgentResult {
   iterations: number;
   model: string;
   durationMs: number;
+  guardrail?: {
+    type: 'sufficient_service_info_stop';
+    trigger: 'found' | 'needs_clarification' | 'suggested_response';
+    toolName: AgentToolName;
+    sourceKind?: string;
+    iterations: number;
+  };
 }
 
 interface ToolContext {
@@ -124,20 +131,20 @@ function isExplicitServiceActionRequest(userMessage: string): boolean {
   ].some((pattern) => pattern.test(normalized));
 }
 
-function shouldStopAfterSufficientServiceInfo(
+function getSufficientServiceInfoStopReason(
   userMessage: string,
   toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
-): boolean {
+): { trigger: 'found' | 'needs_clarification' | 'suggested_response'; toolName: AgentToolName; sourceKind?: string } | null {
   const wantsImmediateAction = isExplicitServiceActionRequest(userMessage);
 
-  return toolResults.some(({ toolName, result }) => {
+  for (const { toolName, result } of toolResults) {
     if (toolName !== 'get_service_info' || result?.success !== true || result.meta?.sourceKind !== 'official_service_info') {
-      return false;
+      continue;
     }
 
     const payload = result.data;
     if (!payload || typeof payload !== 'object') {
-      return false;
+      continue;
     }
 
     const data = payload as Record<string, unknown>;
@@ -151,19 +158,30 @@ function shouldStopAfterSufficientServiceInfo(
     );
 
     if (!hasSuggestedReply) {
-      return false;
+      continue;
     }
 
-    if (needsClarification || found === false) {
-      return true;
+    if (needsClarification) {
+      return { trigger: 'needs_clarification', toolName, sourceKind: result.meta?.sourceKind };
     }
 
-    if (found === true) {
-      return !wantsImmediateAction;
+    if (found === false) {
+      return { trigger: 'suggested_response', toolName, sourceKind: result.meta?.sourceKind };
     }
 
-    return false;
-  });
+    if (found === true && !wantsImmediateAction) {
+      return { trigger: 'found', toolName, sourceKind: result.meta?.sourceKind };
+    }
+  }
+
+  return null;
+}
+
+function shouldStopAfterSufficientServiceInfo(
+  userMessage: string,
+  toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
+): boolean {
+  return !!getSufficientServiceInfoStopReason(userMessage, toolResults);
 }
 
 function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { toolName: AgentToolName; args: Record<string, unknown> } | null {
@@ -516,10 +534,14 @@ export async function runAgent(
         messages.push(tr);
       }
 
-      if (preferredReplyText && shouldStopAfterSufficientServiceInfo(userMessage, toolResults)) {
+      const sufficientStopReason = preferredReplyText
+        ? getSufficientServiceInfoStopReason(userMessage, toolResults)
+        : null;
+      if (preferredReplyText && sufficientStopReason) {
         logger.info('Agent early termination: service info already sufficient', {
           iterations: i + 1,
           toolsUsed,
+          trigger: sufficientStopReason.trigger,
         });
         return {
           replyText: validateFinalAgentReply(preferredReplyText, toolsUsed),
@@ -539,6 +561,13 @@ export async function runAgent(
           iterations: i + 1,
           model,
           durationMs: Date.now() - startTime,
+          guardrail: {
+            type: 'sufficient_service_info_stop',
+            trigger: sufficientStopReason.trigger,
+            toolName: sufficientStopReason.toolName,
+            sourceKind: sufficientStopReason.sourceKind,
+            iterations: i + 1,
+          },
         };
       }
 

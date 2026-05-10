@@ -51,6 +51,27 @@ export const pendingServiceFormOffer = new LRUCache<string, {
   timestamp: number;
 }>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingServiceFormOffer' });
 
+export interface PendingServiceClarificationAlternativeState {
+  slug: string;
+  name: string;
+  mode?: string | null;
+  is_online?: boolean;
+  can_send_form_link?: boolean;
+}
+
+export interface PendingServiceClarificationState {
+  original_query: string;
+  village_id?: string;
+  alternatives: PendingServiceClarificationAlternativeState[];
+  source: 'get_service_info' | 'handle_service_info';
+  timestamp: number;
+}
+
+/** Pending service clarification state cache */
+export const pendingServiceClarification = new LRUCache<string, PendingServiceClarificationState>({
+  maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingServiceClarification',
+});
+
 export interface ActiveServiceRequirementState {
   label: string;
   type: string;
@@ -147,7 +168,7 @@ export const serviceSearchCache = new LRUCache<string, {
 registerInterval(() => {
   const caches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingServiceFormOffer, activeServiceInfo, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, pendingServiceClarification, activeServiceInfo, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
     serviceSearchCache,
@@ -225,6 +246,7 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
     { cache: pendingAddressRequest, name: 'pendingAddressRequest' },
     { cache: pendingCancelConfirmation, name: 'pendingCancelConfirmation' },
     { cache: pendingServiceFormOffer, name: 'pendingServiceFormOffer' },
+    { cache: pendingServiceClarification, name: 'pendingServiceClarification' },
     { cache: activeServiceInfo, name: 'activeServiceInfo' },
     { cache: pendingEmergencyComplaintOffer, name: 'pendingEmergencyComplaintOffer' },
     { cache: pendingComplaintData, name: 'pendingComplaintData' },
@@ -254,7 +276,7 @@ export function clearAllUMPCaches(): { cleared: number; caches: string[] } {
 export function clearUserCaches(userId: string): { cleared: number } {
   const userCaches = [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingServiceFormOffer, activeServiceInfo, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, pendingServiceClarification, activeServiceInfo, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, conversationHistoryCache,
   ];
@@ -299,7 +321,7 @@ export function syncNameToChannelService(
 export function getUMPCacheStats() {
   return [
     pendingAddressConfirmation, pendingAddressRequest, pendingCancelConfirmation,
-    pendingServiceFormOffer, activeServiceInfo, pendingEmergencyComplaintOffer,
+    pendingServiceFormOffer, pendingServiceClarification, activeServiceInfo, pendingEmergencyComplaintOffer,
     pendingComplaintData,
     pendingPhotos, complaintTypeCache, conversationHistoryCache,
     serviceSearchCache,
@@ -419,6 +441,26 @@ export function setPendingServiceFormOffer(userId: string, data: {
 }) {
   pendingServiceFormOffer.set(userId, data);
   persistState(userId, 'pendingServiceFormOffer', data);
+}
+
+// --- Pending Service Clarification ---
+export function getPendingServiceClarification(userId: string) {
+  return pendingServiceClarification.get(userId);
+}
+export async function getPendingServiceClarificationWithFallback(userId: string) {
+  const cached = pendingServiceClarification.get(userId);
+  if (cached) return cached;
+  const persisted = await loadState<typeof cached>(userId, 'pendingServiceClarification');
+  if (persisted) pendingServiceClarification.set(userId, persisted);
+  return persisted;
+}
+export function clearPendingServiceClarification(userId: string) {
+  pendingServiceClarification.delete(userId);
+  deleteState(userId, 'pendingServiceClarification');
+}
+export function setPendingServiceClarification(userId: string, data: PendingServiceClarificationState) {
+  pendingServiceClarification.set(userId, data);
+  persistState(userId, 'pendingServiceClarification', data);
 }
 
 // --- Active Service Info ---

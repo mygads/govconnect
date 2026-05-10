@@ -1,0 +1,382 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const testState = vi.hoisted(() => {
+  const guardrailEvents: any[] = [];
+  const services = [
+    {
+      id: 'svc-1',
+      slug: 'surat-pengantar-ktp',
+      name: 'Surat Pengantar KTP',
+      description: 'Pengantar untuk pengurusan KTP.',
+      is_active: true,
+      mode: 'online',
+      estimated_processing_time: '1 hari kerja',
+      estimated_cost: 'Gratis',
+      requirements: [
+        {
+          label: 'Fotokopi KK',
+          field_type: 'file',
+          is_required: true,
+          help_text: null,
+        },
+      ],
+      category: { name: 'Administrasi' },
+    },
+    {
+      id: 'svc-2',
+      slug: 'surat-domisili',
+      name: 'Surat Keterangan Domisili',
+      description: 'Keterangan domisili warga.',
+      is_active: true,
+      mode: 'offline',
+      estimated_processing_time: '2 hari kerja',
+      estimated_cost: 'Gratis',
+      requirements: [
+        {
+          label: 'Fotokopi KTP',
+          field_type: 'file',
+          is_required: true,
+          help_text: null,
+        },
+      ],
+      category: { name: 'Administrasi' },
+    },
+  ];
+  const conversationSessions = new Map<string, { wa_user_id: string; session_key: string; state_json: string; expires_at: Date }>();
+  const buildSessionKey = (waUserId: string, sessionKey: string) => `${waUserId}:${sessionKey}`;
+
+  const prismaMock = {
+    $queryRaw: vi.fn(async () => []),
+    $executeRaw: vi.fn(async () => 1),
+    $transaction: vi.fn(async (callback: any) => callback(prismaMock)),
+    conversation_sessions: {
+      upsert: vi.fn(async ({ where, update, create }: any) => {
+        const compositeKey = buildSessionKey(where.wa_user_id_session_key.wa_user_id, where.wa_user_id_session_key.session_key);
+        const existing = conversationSessions.get(compositeKey);
+        const nextValue = existing
+          ? { ...existing, ...update }
+          : { ...create };
+        conversationSessions.set(compositeKey, nextValue);
+        return nextValue;
+      }),
+      findUnique: vi.fn(async ({ where }: any) => {
+        const compositeKey = buildSessionKey(where.wa_user_id_session_key.wa_user_id, where.wa_user_id_session_key.session_key);
+        return conversationSessions.get(compositeKey) ?? null;
+      }),
+      delete: vi.fn(async ({ where }: any) => {
+        const compositeKey = buildSessionKey(where.wa_user_id_session_key.wa_user_id, where.wa_user_id_session_key.session_key);
+        const existing = conversationSessions.get(compositeKey);
+        if (!existing) throw new Error('Not found');
+        conversationSessions.delete(compositeKey);
+        return existing;
+      }),
+      deleteMany: vi.fn(async ({ where }: any = {}) => {
+        let deletedCount = 0;
+        for (const [compositeKey, session] of conversationSessions.entries()) {
+          const matchesUser = !where?.wa_user_id || session.wa_user_id === where.wa_user_id;
+          const matchesExpiry = !where?.expires_at?.lt || session.expires_at < where.expires_at.lt;
+          if (matchesUser && matchesExpiry) {
+            conversationSessions.delete(compositeKey);
+            deletedCount += 1;
+          }
+        }
+        return { count: deletedCount };
+      }),
+    },
+  };
+
+  return { guardrailEvents, services, prismaMock, conversationSessions };
+});
+
+vi.mock('../../lib/prisma', () => ({
+  default: testState.prismaMock,
+}));
+
+vi.mock('../runtime-observability.service', () => ({
+  recordGuardrailEvent: vi.fn(async (input: any) => {
+    testState.guardrailEvents.push(input);
+  }),
+  recordMemoryTrace: vi.fn(async () => {}),
+}));
+
+vi.mock('../rag.service', () => ({
+  isSpamMessage: vi.fn(() => false),
+}));
+
+vi.mock('../ai-wallet.service', () => ({
+  canProcessVillageAI: vi.fn(async () => ({ allowed: true, balanceUsd: 10, status: 'ok' })),
+}));
+
+vi.mock('../processing-status.service', () => ({
+  createProcessingTracker: vi.fn(() => ({
+    reading: vi.fn(),
+    thinking: vi.fn(),
+    complete: vi.fn(),
+    error: vi.fn(),
+  })),
+}));
+
+vi.mock('../ump-formatters', () => ({
+  validateResponse: vi.fn((value: string) => value),
+  normalizeHandlerResult: vi.fn((value: any) => value),
+  buildCancelErrorResponse: vi.fn(),
+  buildCancelSuccessResponse: vi.fn(),
+  buildImportantContactsMessage: vi.fn(),
+  buildChannelParams: vi.fn(() => ({})),
+  toVCardContacts: vi.fn(() => []),
+}));
+
+vi.mock('../context-builder.service', () => ({
+  sanitizeUserInput: vi.fn((value: string) => value),
+}));
+
+vi.mock('../knowledge.service', () => ({
+  getVillageProfileSummary: vi.fn(async () => null),
+}));
+
+vi.mock('../user-profile.service', () => ({
+  getAutoFillSuggestionsWithFallback: vi.fn(async () => ({ nama_lengkap: null })),
+  updateProfile: vi.fn(async () => {}),
+  recordServiceUsage: vi.fn(async () => {}),
+}));
+
+vi.mock('../text-normalizer.service', () => ({
+  normalizeText: vi.fn((value: string) => value),
+}));
+
+vi.mock('../micro-llm-matcher.service', () => ({
+  classifyMessage: vi.fn(async () => null),
+  analyzeAddress: vi.fn(async () => null),
+}));
+
+vi.mock('../ai-analytics.service', () => ({
+  aiAnalyticsService: {
+    recordInteractionEvent: vi.fn(async () => {}),
+  },
+}));
+
+vi.mock('../fallback-response.service', () => ({
+  getSmartFallback: vi.fn(() => 'fallback'),
+  getErrorFallback: vi.fn(() => 'fallback'),
+}));
+
+vi.mock('../response-cache.service', () => ({
+  getCachedResponse: vi.fn(() => null),
+  setCachedResponse: vi.fn(() => {}),
+}));
+
+vi.mock('../hybrid-memory.service', () => ({
+  buildHybridMemorySummary: vi.fn(async () => undefined),
+  rememberMemoryEvent: vi.fn(async () => {}),
+}));
+
+vi.mock('../agent/tool-policy.service', () => ({
+  recordToolPolicyEvent: vi.fn(async () => {}),
+}));
+
+vi.mock('../tool-execution-trace.service', () => ({
+  recordToolExecutionTraces: vi.fn(async () => {}),
+}));
+
+vi.mock('../sentiment-analysis.service', () => ({
+  analyzeSentimentWithLLM: vi.fn(async () => ({ level: 'neutral' })),
+  getSentimentContext: vi.fn(() => ''),
+  needsHumanEscalation: vi.fn(() => false),
+}));
+
+vi.mock('../channel-client.service', () => ({
+  startTakeoverForUser: vi.fn(async () => false),
+  updateConversationUserProfile: vi.fn(async () => true),
+}));
+
+vi.mock('../conversation-context.service', () => ({
+  getEnhancedContext: vi.fn(() => ({ conversationSummary: '' })),
+}));
+
+vi.mock('../village-behavior.service', () => ({
+  getVillageBehaviorConfig: vi.fn(async () => null),
+  formatVillageBehaviorConfig: vi.fn(() => ''),
+}));
+
+vi.mock('../ai-turn-billing.service', () => ({
+  startAiBillingTurn: vi.fn(() => null),
+  finishAiBillingTurn: vi.fn(async () => {}),
+}));
+
+vi.mock('../media-analysis.service', () => ({
+  analyzeIncomingMedia: vi.fn(async () => null),
+}));
+
+vi.mock('../ump-utils', () => ({
+  fetchConversationHistoryFromChannel: vi.fn(async () => []),
+  appendToHistoryCache: vi.fn(() => {}),
+  buildAgentConversationContext: vi.fn(async () => ({ summary: undefined, recentMessages: [] })),
+  deriveLastDiscussedServiceContext: vi.fn(() => ({})),
+  extractAddressFromMessage: vi.fn(() => undefined),
+  extractNameFromTextNLU: vi.fn(() => undefined),
+}));
+
+vi.mock('../complaint-handler', () => ({
+  handleComplaintCreation: vi.fn(async () => ({ replyText: 'complaint' })),
+  handleComplaintUpdate: vi.fn(async () => ({ replyText: 'update complaint' })),
+  handleCancellationRequest: vi.fn(async () => ({ replyText: 'cancel complaint' })),
+  handleHistory: vi.fn(async () => ({ replyText: 'history' })),
+  handlePendingAddressConfirmation: vi.fn(async () => null),
+}));
+
+vi.mock('../service-handler', () => ({
+  handleServiceInfo: vi.fn(async () => ({ replyText: 'service info' })),
+  handleServiceRequestCreation: vi.fn(async () => ({ replyText: 'service create' })),
+  handleServiceRequestEditLink: vi.fn(async () => ({ replyText: 'service edit link' })),
+}));
+
+vi.mock('../status-handler', () => ({
+  handleStatusCheck: vi.fn(async () => ({ replyText: 'status' })),
+}));
+
+vi.mock('../agent', () => ({
+  runAgent: vi.fn(async () => ({
+    replyText: 'agent reply',
+    toolsUsed: [],
+    heuristicTools: [],
+    learnedTools: [],
+    allowedToolNames: [],
+    toolPolicyReason: 'test',
+    firstTurnToolChoice: 'auto',
+    firstTurnToolChoiceReason: 'test',
+    toolTrace: [],
+    totalTokens: 0,
+    iterations: 1,
+    model: 'test-model',
+    durationMs: 1,
+  })),
+}));
+
+vi.mock('../case-client.service', () => ({
+  getServiceCatalog: vi.fn(async () => testState.services),
+  getServiceRequirements: vi.fn(async (serviceIdOrSlug: string) => {
+    const service = testState.services.find((item: any) => item.id === serviceIdOrSlug || item.slug === serviceIdOrSlug);
+    return service?.requirements || [];
+  }),
+  cancelComplaint: vi.fn(async () => null),
+  cancelServiceRequest: vi.fn(async () => null),
+  getUserHistory: vi.fn(async () => []),
+}));
+
+import { processUnifiedMessage } from '../unified-message-processor.service';
+import {
+  clearActiveServiceInfo,
+  clearPendingServiceClarification,
+  clearPendingServiceFormOffer,
+  getPendingServiceClarification,
+  setPendingServiceClarification,
+} from '../ump-state';
+
+describe('processUnifiedMessage service clarification flow', () => {
+  const userId = 'ump-clarification-user';
+  const villageId = 'village-1';
+
+  beforeEach(() => {
+    testState.guardrailEvents.length = 0;
+    clearActiveServiceInfo(userId);
+    clearPendingServiceClarification(userId);
+    clearPendingServiceFormOffer(userId);
+  });
+
+  it('resolves pending service clarification before agent execution', async () => {
+    setPendingServiceClarification(userId, {
+      original_query: 'surat ktp',
+      village_id: villageId,
+      source: 'get_service_info',
+      timestamp: Date.now(),
+      alternatives: [
+        {
+          slug: 'surat-pengantar-ktp',
+          name: 'Surat Pengantar KTP',
+          mode: 'online',
+          is_online: true,
+          can_send_form_link: true,
+        },
+        {
+          slug: 'surat-domisili',
+          name: 'Surat Keterangan Domisili',
+          mode: 'offline',
+          is_online: false,
+          can_send_form_link: false,
+        },
+      ],
+    });
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'nomor 2',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    expect(result.intent).toBe('SERVICE_INFO');
+    expect(result.response).toContain('Surat Keterangan Domisili');
+    expect(result.metadata.guardrail?.type).toBe('service_clarification');
+    expect(result.metadata.guardrail?.action).toBe('resolved');
+    expect(getPendingServiceClarification(userId)).toBeUndefined();
+    expect(testState.guardrailEvents.at(-1)?.guardType).toBe('service_clarification');
+    expect(testState.guardrailEvents.at(-1)?.metadata).toMatchObject({
+      selectedServiceSlug: 'surat-domisili',
+      source: 'get_service_info',
+    });
+  });
+
+  it('uses active service follow-up after clarification resolution', async () => {
+    setPendingServiceClarification(userId, {
+      original_query: 'surat warga',
+      village_id: villageId,
+      source: 'handle_service_info',
+      timestamp: Date.now(),
+      alternatives: [
+        {
+          slug: 'surat-pengantar-ktp',
+          name: 'Surat Pengantar KTP',
+          mode: 'online',
+          is_online: true,
+          can_send_form_link: true,
+        },
+        {
+          slug: 'surat-domisili',
+          name: 'Surat Keterangan Domisili',
+          mode: 'offline',
+          is_online: false,
+          can_send_form_link: false,
+        },
+      ],
+    });
+
+    await processUnifiedMessage({
+      userId,
+      message: 'nomor 2',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'harus ke kantor?',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    expect(result.intent).toBe('SERVICE_INFO');
+    expect(result.response).toContain('diproses di kantor desa');
+    expect(result.metadata.guardrail?.type).toBe('active_service_follow_up');
+    expect(testState.guardrailEvents.at(-1)?.guardType).toBe('active_service_follow_up');
+    expect(testState.guardrailEvents.at(-1)?.metadata).toMatchObject({
+      serviceSlug: 'surat-domisili',
+      followUpType: 'office_visit',
+    });
+  });
+});

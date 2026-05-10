@@ -38,9 +38,11 @@ import {
   getStatusLabel,
 } from '../ump-formatters';
 import {
+  clearPendingServiceClarification,
   setActiveServiceInfo,
   setPendingAddressRequest,
   setPendingCancelConfirmation,
+  setPendingServiceClarification,
   setPendingServiceFormOffer,
 } from '../ump-state';
 import {
@@ -429,16 +431,34 @@ async function toolGetServiceInfo(
     ? { service: contextualService, alternatives: undefined }
     : await resolveServiceFromName(serviceName || contextualServiceName, ctx.villageId, services, ctx.userMessage);
   if (resolved.alternatives && resolved.alternatives.length > 0) {
+    const alternatives = resolved.alternatives.map((alternative) => {
+      const match = services.find((service) => service.slug === alternative.slug);
+      const isOnline = match ? (match.mode === 'online' || match.mode === 'both') : undefined;
+      return {
+        slug: alternative.slug,
+        name: alternative.name,
+        mode: match?.mode || null,
+        is_online: isOnline,
+        can_send_form_link: isOnline,
+      };
+    });
+    setPendingServiceClarification(ctx.userId, {
+      original_query: serviceName || contextualServiceName || ctx.userMessage || '',
+      village_id: ctx.villageId,
+      alternatives,
+      source: 'get_service_info',
+      timestamp: Date.now(),
+    });
     return {
       success: true,
       data: {
         found: false,
         needs_clarification: true,
-        alternatives: resolved.alternatives,
+        alternatives,
         message: 'Ada beberapa layanan yang mirip. Minta user memilih layanan yang dimaksud.',
-        suggested_response: `Ada beberapa layanan KTP yang cocok. Biar tidak salah, Bapak/Ibu maksud yang mana?\n\n${resolved.alternatives
+        suggested_response: `Ada beberapa layanan yang cocok. Biar tidak salah, Bapak/Ibu maksud yang mana?\n\n${alternatives
           .map((alternative, index) => `${index + 1}. ${alternative.name}`)
-          .join('\n')}`,
+          .join('\n')}\n\nBalas dengan nomor atau nama layanannya ya.`,
       },
       meta: {
         trustLevel: 'trusted_fact',
@@ -446,6 +466,8 @@ async function toolGetServiceInfo(
       },
     };
   }
+
+  clearPendingServiceClarification(ctx.userId);
 
   if (!resolved.service) {
     return {

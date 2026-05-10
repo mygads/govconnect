@@ -20,7 +20,13 @@ import {
   buildEditServiceFormUrl,
 } from './ump-formatters';
 import { rememberMemoryEvent } from './hybrid-memory.service';
-import { serviceSearchCache, setPendingServiceFormOffer } from './ump-state';
+import {
+  clearPendingServiceClarification,
+  serviceSearchCache,
+  setActiveServiceInfo,
+  setPendingServiceClarification,
+  setPendingServiceFormOffer,
+} from './ump-state';
 import { resolveVillageSlugForPublicForm } from './ump-utils';
 import { recordServiceUsage } from './user-profile.service';
 
@@ -187,8 +193,26 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
   if (!service_slug && !service_id && rawMessage) {
     const resolved = await resolveServiceSlugFromSearch(rawMessage, villageId);
     if (resolved?.alternatives && resolved.alternatives.length > 1) {
-      const optionsList = resolved.alternatives.map((a, i) => `${i + 1}. ${a.name}`).join('\n');
-      return { replyText: `Mohon maaf Pak/Bu, ada beberapa layanan yang cocok:\n\n${optionsList}\n\nMohon pilih salah satu dengan menyebutkan nama lengkap layanannya.` };
+      const alternatives = resolved.alternatives.map((alternative) => {
+        const match = activeServices.find((service) => service.slug === alternative.slug);
+        const isOnline = match ? (match.mode === 'online' || match.mode === 'both') : undefined;
+        return {
+          slug: alternative.slug,
+          name: alternative.name,
+          mode: match?.mode || null,
+          is_online: isOnline,
+          can_send_form_link: isOnline,
+        };
+      });
+      setPendingServiceClarification(userId, {
+        original_query: rawMessage,
+        village_id: villageId || undefined,
+        alternatives,
+        source: 'handle_service_info',
+        timestamp: Date.now(),
+      });
+      const optionsList = alternatives.map((a, i) => `${i + 1}. ${a.name}`).join('\n');
+      return { replyText: `Mohon maaf Pak/Bu, ada beberapa layanan yang cocok:\n\n${optionsList}\n\nMohon pilih salah satu dengan balas nomor atau nama layanannya ya.` };
     }
     if (resolved?.slug) {
       service_slug = resolved.slug;
@@ -216,10 +240,12 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
     }
 
     if (!service) {
+      clearPendingServiceClarification(userId);
       return { replyText: llmResponse.reply_text || 'Mohon maaf Pak/Bu, layanan tersebut tidak ditemukan. Silakan tanyakan layanan lain.' };
     }
 
     if (service.is_active === false) {
+      clearPendingServiceClarification(userId);
       return { replyText: `Mohon maaf Pak/Bu, layanan ${service.name} saat ini belum tersedia.` };
     }
 
@@ -251,6 +277,15 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
       replyText += `${service.description}\n\n`;
     }
 
+    const formattedRequirements = requirements.map((requirement: any) => ({
+      label: requirement.label,
+      type: requirement.field_type,
+      required: requirement.is_required,
+      help_text: requirement.help_text || null,
+    }));
+
+    clearPendingServiceClarification(userId);
+
     if (isOnline) {
       setPendingServiceFormOffer(userId, {
         service_slug: service.slug,
@@ -263,7 +298,23 @@ export async function handleServiceInfo(userId: string, llmResponse: any, channe
       replyText += 'Layanan ini diproses langsung di kantor desa. Silakan datang dengan membawa persyaratan di atas ya.';
     }
 
-    return { replyText, guidanceText: guidanceText || undefined };
+    const finalGuidanceText = guidanceText || undefined;
+    setActiveServiceInfo(userId, {
+      service_slug: service.slug,
+      service_name: service.name,
+      village_id: resolvedVillageId || villageId || undefined,
+      mode: service.mode || null,
+      is_online: isOnline,
+      can_send_form_link: isOnline,
+      estimated_cost: service.estimated_cost || null,
+      estimated_processing_time: service.estimated_processing_time || null,
+      requirements: formattedRequirements,
+      requirements_count: requirements.length,
+      suggested_response: finalGuidanceText ? `${replyText}\n\n${finalGuidanceText}` : replyText,
+      timestamp: Date.now(),
+    });
+
+    return { replyText, guidanceText: finalGuidanceText };
   } catch (error: any) {
     logger.error('Failed to fetch service info', {
       error: error.message,

@@ -71,6 +71,7 @@ import {
   tryHandleActiveServiceFollowUp,
   tryHandleLatePreAgentState,
   tryHandlePendingOffers,
+  tryHandlePendingServiceClarification,
   tryHandleProtocolGuards,
   tryHandleOutOfScopeGuard,
 } from './pre-agent-state-router.service';
@@ -644,6 +645,20 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
           firstTurnToolChoice: result.firstTurnToolChoice,
         },
         toolTrace: result.toolTrace,
+        ...(result.guardrail ? {
+          guardrail: {
+            stage: 'agent_orchestrator',
+            type: result.guardrail.type,
+            action: 'handled',
+            reason: result.guardrail.trigger,
+            details: {
+              toolName: result.guardrail.toolName,
+              sourceKind: result.guardrail.sourceKind,
+              iterations: result.guardrail.iterations,
+              toolsUsed: result.toolsUsed,
+            },
+          },
+        } : {}),
         traceId,
       },
     };
@@ -1015,6 +1030,33 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(latePreAgentResult);
     }
 
+    const pendingServiceClarificationResult = await tryHandlePendingServiceClarification({
+      userId,
+      message: workingMessage,
+      villageId: resolvedVillageId,
+      traceId,
+      startTime,
+      sideEffectMode,
+    });
+    if (pendingServiceClarificationResult) {
+      const guardrail = pendingServiceClarificationResult.metadata.guardrail;
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: guardrail?.stage || 'pre_agent_service_clarification',
+        guardType: guardrail?.type || 'service_clarification',
+        action: guardrail?.action || 'handled',
+        reason: guardrail?.reason || pendingServiceClarificationResult.intent,
+        messagePreview: workingMessage,
+        metadata: guardrail?.details,
+      });
+      tracker.complete();
+      notifyStage('done', 100);
+      return finish(pendingServiceClarificationResult);
+    }
+
     const activeServiceFollowUpResult = await tryHandleActiveServiceFollowUp({
       userId,
       message: workingMessage,
@@ -1024,16 +1066,18 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       sideEffectMode,
     });
     if (activeServiceFollowUpResult) {
+      const guardrail = activeServiceFollowUpResult.metadata.guardrail;
       await recordGuardrail({
         traceId,
         waUserId: userId,
         villageId: resolvedVillageId,
         channel,
-        guardStage: 'pre_agent_active_service',
-        guardType: 'active_service_follow_up',
-        action: 'handled',
-        reason: activeServiceFollowUpResult.intent,
+        guardStage: guardrail?.stage || 'pre_agent_active_service',
+        guardType: guardrail?.type || 'active_service_follow_up',
+        action: guardrail?.action || 'handled',
+        reason: guardrail?.reason || activeServiceFollowUpResult.intent,
         messagePreview: workingMessage,
+        metadata: guardrail?.details,
       });
       tracker.complete();
       notifyStage('done', 100);
@@ -1334,6 +1378,21 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           },
         },
       };
+    }
+
+    if (agentResult.metadata.guardrail) {
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: agentResult.metadata.guardrail.stage,
+        guardType: agentResult.metadata.guardrail.type,
+        action: agentResult.metadata.guardrail.action,
+        reason: agentResult.metadata.guardrail.reason,
+        messagePreview: workingMessage,
+        metadata: agentResult.metadata.guardrail.details,
+      });
     }
 
     if (!isEvaluation && sideEffectMode !== 'knowledge_test' && agentResult.success && isCacheableAgentResult(agentResult)) {

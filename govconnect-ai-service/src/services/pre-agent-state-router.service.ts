@@ -29,8 +29,10 @@ import {
   clearPendingCancelConfirmation,
   clearPendingComplaintData,
   clearPendingEmergencyComplaintOffer,
+  clearPendingServiceClarification,
   clearPendingServiceFormOffer,
   getActiveServiceInfoWithFallback,
+  getPendingServiceClarificationWithFallback,
   getPendingAddressConfirmationWithFallback,
   getPendingAddressRequestWithFallback,
   getPendingCancelConfirmationWithFallback,
@@ -38,12 +40,16 @@ import {
   getPendingEmergencyComplaintOfferWithFallback,
   getPendingPhotoCount,
   getPendingServiceFormOfferWithFallback,
+  setActiveServiceInfo,
   setPendingAddressRequest,
   setPendingComplaintData,
   setPendingEmergencyComplaintOffer,
+  setPendingServiceClarification,
   setPendingServiceFormOffer,
   syncNameToChannelService,
   type ActiveServiceInfoState,
+  type PendingServiceClarificationAlternativeState,
+  type PendingServiceClarificationState,
 } from './ump-state';
 import {
   appendToHistoryCache,
@@ -68,6 +74,7 @@ function buildGuardResult(input: {
   intent: string;
   hasKnowledge?: boolean;
   contacts?: ProcessMessageResult['contacts'];
+  guardrail?: NonNullable<ProcessMessageResult['metadata']['guardrail']>;
 }): ProcessMessageResult {
   return {
     success: true,
@@ -80,6 +87,7 @@ function buildGuardResult(input: {
       hasKnowledge: input.hasKnowledge ?? false,
       agentMode: 'pre_agent_guard',
       traceId: input.traceId,
+      ...(input.guardrail ? { guardrail: input.guardrail } : {}),
     },
   };
 }
@@ -170,7 +178,16 @@ function buildOutOfScopeRedirect(): string {
   return 'Maaf Pak/Bu, saya fokus membantu layanan desa dan penggunaan GovConnect. Kalau ada pertanyaan soal administrasi desa, pengaduan, status layanan, atau cara pakai GovConnect, saya bantu ya.';
 }
 
-async function buildPendingServiceInfoReply(serviceSlug: string, villageId?: string): Promise<string | null> {
+interface PendingServiceInfoReplyContext {
+  response: string;
+  activeService: ActiveServiceInfoState;
+}
+
+async function buildPendingServiceInfoContext(
+  serviceSlug: string,
+  villageId?: string,
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test',
+): Promise<PendingServiceInfoReplyContext | null> {
   try {
     const { getServiceCatalog, getServiceRequirements } = await import('./case-client.service');
     const services = await getServiceCatalog(villageId);
@@ -179,23 +196,171 @@ async function buildPendingServiceInfoReply(serviceSlug: string, villageId?: str
     const requirements = Array.isArray(service.requirements) && service.requirements.length > 0
       ? service.requirements
       : await getServiceRequirements(service.id || service.slug);
-    const requirementLines = requirements.slice(0, 6).map((item) => `- ${item.label}${item.is_required ? '' : ' (opsional)'}`);
+    const formattedRequirements = requirements.map((item) => ({
+      label: item.label,
+      type: item.field_type,
+      required: item.is_required,
+      help_text: item.help_text || null,
+    }));
+    const requirementLines = formattedRequirements.slice(0, 6).map((item) => `- ${item.label}${item.required ? '' : ' (opsional)'}`);
+    const isOnline = service.mode === 'online' || service.mode === 'both';
+    const canSendFormLink = isOnline && sideEffectMode !== 'knowledge_test' && sideEffectMode !== 'evaluation';
     const detailLines = [
-      `Untuk layanan *${service.name}*:` ,
+      `Untuk layanan *${service.name}*:`,
       service.estimated_processing_time ? `- Estimasi proses: ${service.estimated_processing_time}` : '',
       service.estimated_cost ? `- Perkiraan biaya: ${service.estimated_cost}` : '',
-      service.mode === 'online' || service.mode === 'both'
+      isOnline
         ? '- Pengajuan bisa dilakukan online.'
         : '- Pengajuan saat ini diproses offline di kantor desa.',
       requirementLines.length > 0 ? `- Syarat utama:\n${requirementLines.join('\n')}` : '',
-      service.mode === 'online' || service.mode === 'both'
-        ? 'Kalau Bapak/Ibu mau, saya bisa kirim link formulirnya.'
+      isOnline
+        ? (canSendFormLink
+            ? 'Kalau Bapak/Ibu mau, saya bisa kirim link formulirnya.'
+            : 'Kalau perlu, saya bantu jelaskan alurnya dari sini ya.')
         : 'Kalau perlu, saya bantu jelaskan langkah berikutnya ya.',
     ].filter(Boolean);
-    return detailLines.join('\n');
+    const response = detailLines.join('\n');
+    return {
+      response,
+      activeService: {
+        service_slug: service.slug,
+        service_name: service.name,
+        village_id: villageId,
+        mode: service.mode || null,
+        is_online: isOnline,
+        can_send_form_link: canSendFormLink,
+        estimated_cost: service.estimated_cost || null,
+        estimated_processing_time: service.estimated_processing_time || null,
+        requirements: formattedRequirements,
+        requirements_count: requirements.length,
+        suggested_response: response,
+        timestamp: Date.now(),
+      },
+    };
   } catch {
     return null;
   }
+}
+
+async function buildPendingServiceInfoReply(
+  serviceSlug: string,
+  villageId?: string,
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test',
+): Promise<string | null> {
+  const context = await buildPendingServiceInfoContext(serviceSlug, villageId, sideEffectMode);
+  return context?.response || null;
+}
+
+function buildPendingServiceClarificationPrompt(
+  alternatives: PendingServiceClarificationAlternativeState[],
+  intro: string = 'Ada beberapa layanan yang cocok. Biar tidak salah, Bapak/Ibu maksud yang mana?',
+): string {
+  const optionsList = alternatives.map((alternative, index) => `${index + 1}. ${alternative.name}`).join('\n');
+  return `${intro}\n\n${optionsList}\n\nBalas dengan nomor atau nama layanannya ya.`;
+}
+
+const SERVICE_SELECTION_STOPWORDS = new Set([
+  'yang', 'layanan', 'surat', 'nomor', 'no', 'opsi', 'option', 'pilih', 'maksud', 'mau', 'info', 'untuk', 'saya', 'pak', 'bu',
+]);
+
+function normalizeServiceSelectionValue(value: string): string {
+  return (value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractOrdinalSelectionIndex(message: string): number | null {
+  const normalized = normalizeServiceSelectionValue(message);
+  const match = normalized.match(/(?:^| )(?:nomor|no|pilih|opsi|option|yang)?\s*(\d+|pertama|kedua|ketiga|keempat|kelima)(?:$| )/i);
+  if (!match) return null;
+  const token = match[1];
+  const ordinalMap: Record<string, number> = {
+    pertama: 1,
+    kedua: 2,
+    ketiga: 3,
+    keempat: 4,
+    kelima: 5,
+  };
+  const parsed = Number(token);
+  if (Number.isFinite(parsed) && parsed >= 1) return parsed - 1;
+  return ordinalMap[token] ? ordinalMap[token] - 1 : null;
+}
+
+function filterAlternativesByAttribute(
+  alternatives: PendingServiceClarificationAlternativeState[],
+  message: string,
+): PendingServiceClarificationAlternativeState[] | null {
+  const normalized = normalizeServiceSelectionValue(message);
+  if (/\bonline\b/i.test(normalized)) {
+    return alternatives.filter((alternative) => alternative.is_online === true);
+  }
+  if (/\boffline\b/i.test(normalized) || /\bke kantor\b/i.test(normalized)) {
+    return alternatives.filter((alternative) => alternative.is_online === false);
+  }
+  return null;
+}
+
+interface PendingServiceClarificationResolution {
+  resolutionMethod?: 'ordinal' | 'name_fragment' | 'attribute';
+  selectedAlternative?: PendingServiceClarificationAlternativeState;
+  narrowedAlternatives?: PendingServiceClarificationAlternativeState[];
+}
+
+function resolvePendingServiceClarification(
+  message: string,
+  alternatives: PendingServiceClarificationAlternativeState[],
+): PendingServiceClarificationResolution | null {
+  if (!alternatives.length) return null;
+
+  const selectedIndex = extractOrdinalSelectionIndex(message);
+  if (selectedIndex !== null) {
+    return alternatives[selectedIndex]
+      ? { resolutionMethod: 'ordinal', selectedAlternative: alternatives[selectedIndex] }
+      : null;
+  }
+
+  const attributeMatches = filterAlternativesByAttribute(alternatives, message);
+  if (attributeMatches?.length === 1) {
+    return { resolutionMethod: 'attribute', selectedAlternative: attributeMatches[0] };
+  }
+  if (attributeMatches && attributeMatches.length > 1 && attributeMatches.length < alternatives.length) {
+    return { resolutionMethod: 'attribute', narrowedAlternatives: attributeMatches };
+  }
+
+  const tokens = normalizeServiceSelectionValue(message)
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !SERVICE_SELECTION_STOPWORDS.has(token));
+
+  if (tokens.length > 0) {
+    const nameMatches = alternatives.filter((alternative) => {
+      const normalizedName = normalizeServiceSelectionValue(alternative.name);
+      return tokens.every((token) => normalizedName.includes(token));
+    });
+
+    if (nameMatches.length === 1) {
+      return { resolutionMethod: 'name_fragment', selectedAlternative: nameMatches[0] };
+    }
+
+    if (nameMatches.length > 1 && nameMatches.length < alternatives.length) {
+      return { resolutionMethod: 'name_fragment', narrowedAlternatives: nameMatches };
+    }
+  }
+
+  return null;
+}
+
+function classifyActiveServiceFollowUpType(message: string): 'link' | 'requirements' | 'duration' | 'cost' | 'office_visit' | 'online' | 'fallback' {
+  const normalized = (message || '').toLowerCase();
+  if (isPendingServiceLinkRequest(message)) return 'link';
+  if (/\b(syarat(?:nya)?|persyaratan(?:nya)?|dokumen(?:nya)?|berkas(?:nya)?)\b/i.test(normalized)) return 'requirements';
+  if (/\b(berapa lama|lama proses(?:nya)?|proses(?:nya)?)\b/i.test(normalized)) return 'duration';
+  if (/\b(biaya(?:nya)?|tarif(?:nya)?)\b/i.test(normalized)) return 'cost';
+  if (/\b(harus ke kantor|ke kantor|offline)\b/i.test(normalized)) return 'office_visit';
+  if (/\b(online|bisa online)\b/i.test(normalized)) return 'online';
+  return 'fallback';
 }
 
 export function tryHandleOutOfScopeGuard(input: {
@@ -291,6 +456,15 @@ export function tryHandleProtocolGuards(
   });
 }
 
+interface PendingServiceClarificationInput {
+  userId: string;
+  message: string;
+  villageId?: string;
+  traceId: string;
+  startTime: number;
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
+}
+
 interface ActiveServiceFollowUpInput {
   userId: string;
   message: string;
@@ -382,6 +556,129 @@ function buildActiveServiceFollowUpReply(
   return activeService.suggested_response || null;
 }
 
+export async function tryHandlePendingServiceClarification(
+  input: PendingServiceClarificationInput,
+): Promise<ProcessMessageResult | null> {
+  const pendingClarification = await getPendingServiceClarificationWithFallback(input.userId);
+  if (!pendingClarification || pendingClarification.alternatives.length === 0) {
+    return null;
+  }
+
+  if (isClearlyDifferentIntent(input.message)) {
+    clearPendingServiceClarification(input.userId);
+    return null;
+  }
+
+  const resolution = resolvePendingServiceClarification(input.message, pendingClarification.alternatives);
+
+  if (resolution?.selectedAlternative) {
+    clearPendingServiceClarification(input.userId);
+    const context = await buildPendingServiceInfoContext(
+      resolution.selectedAlternative.slug,
+      pendingClarification.village_id || input.villageId,
+      input.sideEffectMode,
+    );
+
+    if (!context) {
+      return buildGuardResult({
+        startTime: input.startTime,
+        traceId: input.traceId,
+        response: 'Maaf Pak/Bu, layanan yang dipilih belum bisa saya tampilkan sekarang. Coba sebutkan nama layanannya sekali lagi ya.',
+        intent: 'SERVICE_INFO',
+        hasKnowledge: true,
+        guardrail: {
+          stage: 'pre_agent_service_clarification',
+          type: 'service_clarification',
+          action: 'selection_missing',
+          reason: resolution.resolutionMethod,
+          details: {
+            selectedServiceSlug: resolution.selectedAlternative.slug,
+            selectedServiceName: resolution.selectedAlternative.name,
+            alternativesCount: pendingClarification.alternatives.length,
+            source: pendingClarification.source,
+          },
+        },
+      });
+    }
+
+    setActiveServiceInfo(input.userId, context.activeService);
+    if (context.activeService.can_send_form_link) {
+      setPendingServiceFormOffer(input.userId, {
+        service_slug: context.activeService.service_slug,
+        village_id: context.activeService.village_id || input.villageId,
+        timestamp: Date.now(),
+      });
+    }
+
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response: context.response,
+      intent: 'SERVICE_INFO',
+      hasKnowledge: true,
+      guardrail: {
+        stage: 'pre_agent_service_clarification',
+        type: 'service_clarification',
+        action: 'resolved',
+        reason: resolution.resolutionMethod,
+        details: {
+          selectedServiceSlug: context.activeService.service_slug,
+          selectedServiceName: context.activeService.service_name,
+          alternativesCount: pendingClarification.alternatives.length,
+          source: pendingClarification.source,
+        },
+      },
+    });
+  }
+
+  if (resolution?.narrowedAlternatives && resolution.narrowedAlternatives.length > 1) {
+    const narrowedState: PendingServiceClarificationState = {
+      ...pendingClarification,
+      alternatives: resolution.narrowedAlternatives,
+      timestamp: Date.now(),
+    };
+    setPendingServiceClarification(input.userId, narrowedState);
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response: buildPendingServiceClarificationPrompt(
+        resolution.narrowedAlternatives,
+        'Saya sempitkan opsinya dulu ya. Bapak/Ibu maksud yang mana?',
+      ),
+      intent: 'SERVICE_INFO',
+      hasKnowledge: true,
+      guardrail: {
+        stage: 'pre_agent_service_clarification',
+        type: 'service_clarification',
+        action: 'narrowed',
+        reason: resolution.resolutionMethod,
+        details: {
+          alternativesCount: resolution.narrowedAlternatives.length,
+          source: pendingClarification.source,
+        },
+      },
+    });
+  }
+
+  return buildGuardResult({
+    startTime: input.startTime,
+    traceId: input.traceId,
+    response: buildPendingServiceClarificationPrompt(pendingClarification.alternatives),
+    intent: 'SERVICE_INFO',
+    hasKnowledge: true,
+    guardrail: {
+      stage: 'pre_agent_service_clarification',
+      type: 'service_clarification',
+      action: 're_prompted',
+      reason: 'unclear_selection',
+      details: {
+        alternativesCount: pendingClarification.alternatives.length,
+        source: pendingClarification.source,
+      },
+    },
+  });
+}
+
 export async function tryHandleActiveServiceFollowUp(
   input: ActiveServiceFollowUpInput,
 ): Promise<ProcessMessageResult | null> {
@@ -413,8 +710,9 @@ export async function tryHandleActiveServiceFollowUp(
     });
   }
 
+  const followUpType = classifyActiveServiceFollowUpType(input.message);
   const reply = buildActiveServiceFollowUpReply(activeService, input.message, input.sideEffectMode)
-    || await buildPendingServiceInfoReply(activeService.service_slug, activeService.village_id || input.villageId);
+    || await buildPendingServiceInfoReply(activeService.service_slug, activeService.village_id || input.villageId, input.sideEffectMode);
 
   if (!reply) {
     return null;
@@ -426,6 +724,17 @@ export async function tryHandleActiveServiceFollowUp(
     response: reply,
     intent: 'SERVICE_INFO',
     hasKnowledge: true,
+    guardrail: {
+      stage: 'pre_agent_active_service',
+      type: 'active_service_follow_up',
+      action: 'handled',
+      reason: followUpType,
+      details: {
+        serviceSlug: activeService.service_slug,
+        serviceName: activeService.service_name,
+        followUpType,
+      },
+    },
   });
 }
 
@@ -1299,4 +1608,7 @@ export const __test_only__ = {
   isClearlyDifferentIntent,
   buildOutOfScopeRedirect,
   buildActiveServiceFollowUpReply,
+  buildPendingServiceClarificationPrompt,
+  resolvePendingServiceClarification,
+  classifyActiveServiceFollowUpType,
 };

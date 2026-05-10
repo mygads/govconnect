@@ -93,6 +93,7 @@ export interface ProcessMessageResult {
       type: string;
       action: string;
       reason?: string;
+      details?: Record<string, unknown>;
     };
     /** Unique trace ID for correlating logs across NLU → RAG → LLM → response */
     traceId?: string;

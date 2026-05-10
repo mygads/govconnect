@@ -18,6 +18,9 @@ const {
   isClearlyDifferentIntent,
   detectExplicitConfirmationReply,
   buildActiveServiceFollowUpReply,
+  buildPendingServiceClarificationPrompt,
+  resolvePendingServiceClarification,
+  classifyActiveServiceFollowUpType,
 } = preAgentTestOnly;
 
 const { selectAllowedTools, shouldStopAfterSufficientServiceInfo } = agentOrchestratorTestOnly;
@@ -87,6 +90,65 @@ describe('pending service follow-up helpers', () => {
     expect(detectExplicitConfirmationReply('iya')).toBe('yes');
     expect(detectExplicitConfirmationReply('gak jadi')).toBe('no');
     expect(detectExplicitConfirmationReply('berapa lama?')).toBe('uncertain');
+  });
+});
+
+describe('pending service clarification helpers', () => {
+  const alternatives = [
+    {
+      slug: 'surat-pengantar-ktp',
+      name: 'Surat Pengantar KTP',
+      mode: 'online',
+      is_online: true,
+      can_send_form_link: true,
+    },
+    {
+      slug: 'surat-domisili',
+      name: 'Surat Keterangan Domisili',
+      mode: 'offline',
+      is_online: false,
+      can_send_form_link: false,
+    },
+  ];
+
+  it('resolves ordinal clarification replies deterministically', () => {
+    expect(resolvePendingServiceClarification('nomor 2', alternatives)).toMatchObject({
+      resolutionMethod: 'ordinal',
+      selectedAlternative: {
+        slug: 'surat-domisili',
+      },
+    });
+  });
+
+  it('resolves attribute-based clarification when exactly one online option exists', () => {
+    expect(resolvePendingServiceClarification('yang online', alternatives)).toMatchObject({
+      resolutionMethod: 'attribute',
+      selectedAlternative: {
+        slug: 'surat-pengantar-ktp',
+      },
+    });
+  });
+
+  it('resolves name-fragment clarification replies deterministically', () => {
+    expect(resolvePendingServiceClarification('yang domisili', alternatives)).toMatchObject({
+      resolutionMethod: 'name_fragment',
+      selectedAlternative: {
+        slug: 'surat-domisili',
+      },
+    });
+  });
+
+  it('builds a numbered clarification prompt', () => {
+    const prompt = buildPendingServiceClarificationPrompt(alternatives);
+    expect(prompt).toContain('1. Surat Pengantar KTP');
+    expect(prompt).toContain('2. Surat Keterangan Domisili');
+    expect(prompt).toContain('Balas dengan nomor atau nama layanannya ya.');
+  });
+
+  it('classifies active service follow-up types for observability', () => {
+    expect(classifyActiveServiceFollowUpType('ada link?')).toBe('link');
+    expect(classifyActiveServiceFollowUpType('berapa lama prosesnya?')).toBe('duration');
+    expect(classifyActiveServiceFollowUpType('harus ke kantor?')).toBe('office_visit');
   });
 });
 
