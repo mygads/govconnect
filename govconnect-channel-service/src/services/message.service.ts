@@ -245,8 +245,7 @@ export async function replaceFailedOutgoingMessage(
 
 /**
  * Maintain maximum 30 messages per user (FIFO)
- * Optimized: only runs every 5th message per conversation to reduce DB load,
- * and uses a single raw SQL query instead of 3 separate queries.
+ * Optimized: only runs every 5th message per conversation to reduce DB load.
  */
 async function enforceFIFO(village_id: string, channel: 'WHATSAPP' | 'WEBCHAT', channel_identifier: string): Promise<void> {
   const key = `${village_id}:${channel}:${channel_identifier}`;
@@ -257,31 +256,35 @@ async function enforceFIFO(village_id: string, channel: 'WHATSAPP' | 'WEBCHAT', 
   if (count % FIFO_CHECK_INTERVAL !== 0) return;
 
   try {
-    // Single query: delete old messages beyond MAX_MESSAGES limit
-    // Table is "messages" (@@map), enum is "ChannelType" in PostgreSQL
-    const result = await prisma.$executeRaw`
-      DELETE FROM "messages"
-      WHERE id IN (
-        SELECT id FROM "messages"
-        WHERE village_id = ${village_id}
-          AND channel = ${channel}::"ChannelType"
-          AND channel_identifier = ${channel_identifier}
-        ORDER BY "createdAt" ASC, timestamp ASC
-        OFFSET 0
-        LIMIT (
-          SELECT GREATEST(
-            (SELECT COUNT(*) FROM "messages"
-             WHERE village_id = ${village_id}
-               AND channel = ${channel}::"ChannelType"
-               AND channel_identifier = ${channel_identifier})
-            - ${MAX_MESSAGES}, 0
-          )
-        )
-      )
-    `;
+    // Use ORM delete instead of raw SQL so Prisma applies the schema (`channel`)
+    // automatically from DATABASE_URL. Raw queries don't inherit the schema
+    // search_path, which is why `relation "messages" does not exist` happened.
+    const total = await prisma.message.count({
+      where: { village_id, channel, channel_identifier },
+    });
 
-    if (result > 0) {
-      logger.info(`FIFO: Deleted ${result} old messages`, { channel, channel_identifier });
+    const overflow = total - MAX_MESSAGES;
+    if (overflow <= 0) {
+      return;
+    }
+
+    const oldest = await prisma.message.findMany({
+      where: { village_id, channel, channel_identifier },
+      orderBy: [{ createdAt: 'asc' }, { timestamp: 'asc' }],
+      take: overflow,
+      select: { id: true },
+    });
+
+    if (oldest.length === 0) {
+      return;
+    }
+
+    const result = await prisma.message.deleteMany({
+      where: { id: { in: oldest.map((row) => row.id) } },
+    });
+
+    if (result.count > 0) {
+      logger.info(`FIFO: Deleted ${result.count} old messages`, { channel, channel_identifier });
     }
   } catch (error: any) {
     logger.warn('FIFO enforcement failed, will retry next cycle', {

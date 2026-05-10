@@ -19,6 +19,7 @@ interface CachedResponse {
   response: string;
   guidanceText?: string;
   intent: string;
+  toolsUsed?: string[];
   timestamp: number;
   hitCount: number;
   lastHit: number;
@@ -151,31 +152,55 @@ const NON_CACHEABLE_RESPONSE_PATTERNS = [
   /\btemporarily unavailable\b/i,
 ];
 
+const CONTEXTUAL_SERVICE_FOLLOW_UP_PATTERN = /^(syarat(?:nya)?|biaya(?:nya)?|berapa lama|proses(?:nya)?|ada link\??|link(?:nya)?\??|form(?:nya)?\??|lanjut|iya|ya|oke|ok|siap|nomor\s*\d+|yang\s+.+|harus ke kantor\??|bisa online\??)[\s?.!]*$/i;
+const SERVICE_LISTING_CACHEABLE_PATTERN = /\b(layanan\s+apa\s+aja|daftar\s+layanan|list\s+layanan|apa\s+aja\s+layanan|pelayanan\s+desa\s+apa\s+aja|bisa\s+urus\s+apa\s+aja)\b/i;
+const EXPLICIT_SERVICE_INFO_CACHEABLE_PATTERN = /\b(syarat|persyaratan|biaya|tarif|cara|proses|prosedur|berapa\s+lama)\s+(buat|bikin|urus|untuk)\s+\S+/i;
+
+function isContextualServiceFollowUp(query: string): boolean {
+  return CONTEXTUAL_SERVICE_FOLLOW_UP_PATTERN.test((query || '').trim().toLowerCase());
+}
+
+function isExplicitCacheSafeServiceInfoQuery(query: string): boolean {
+  const normalized = (query || '').trim().toLowerCase();
+  return SERVICE_LISTING_CACHEABLE_PATTERN.test(normalized)
+    || EXPLICIT_SERVICE_INFO_CACHEABLE_PATTERN.test(normalized);
+}
+
 /**
  * Check if a query is cacheable
  */
 export function isCacheable(query: string, intent?: string): boolean {
+  const normalized = (query || '').trim().toLowerCase();
+
   // Check non-cacheable patterns first
   for (const pattern of NON_CACHEABLE_PATTERNS) {
-    if (pattern.test(query)) {
+    if (pattern.test(normalized)) {
       return false;
     }
   }
-  
+
+  if (intent === 'SERVICE_INFO') {
+    return isExplicitCacheSafeServiceInfoQuery(normalized) && !isContextualServiceFollowUp(normalized);
+  }
+
+  if (isContextualServiceFollowUp(normalized)) {
+    return false;
+  }
+
   // Check if matches cacheable patterns
   for (const pattern of CACHEABLE_PATTERNS) {
-    if (pattern.test(query)) {
+    if (pattern.test(normalized)) {
       return true;
     }
   }
-  
+
   // Cache knowledge queries, greetings, and static info by intent
   if (intent === 'KNOWLEDGE_QUERY' || intent === 'GREETING'
-    || intent === 'SERVICE_INFO' || intent === 'VILLAGE_PROFILE'
+    || intent === 'VILLAGE_PROFILE'
     || intent === 'EMERGENCY_CONTACTS') {
     return true;
   }
-  
+
   return false;
 }
 
@@ -224,7 +249,8 @@ export function setCachedResponse(
   response: string,
   intent: string,
   guidanceText?: string,
-  villageId?: string
+  villageId?: string,
+  toolsUsed: string[] = []
 ): void {
   // Check if cacheable
   if (!isCacheable(query, intent)) {
@@ -266,6 +292,7 @@ export function setCachedResponse(
     response,
     guidanceText,
     intent,
+    toolsUsed,
     timestamp: Date.now(),
     hitCount: 0,
     lastHit: Date.now(),
@@ -393,6 +420,53 @@ export function getTopCachedQueries(limit: number = 10): Array<{ key: string; hi
     .slice(0, limit);
 }
 
+/**
+ * Invalidate cached entries for a specific village. Called by admin-side
+ * webhook when kontak/layanan/profil desa is updated so cached answers
+ * don't serve stale values. Returns the number of entries removed.
+ *
+ * Cache key format (see generateCacheKey): `{village}:{intent}:{normalized}`.
+ */
+export function invalidateVillageCache(villageId: string): number {
+  if (!villageId) return 0;
+  const prefix = `${villageId}:`;
+  let removed = 0;
+  for (const [key] of responseCache) {
+    if (key.startsWith(prefix)) {
+      responseCache.delete(key);
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    logger.info('[ResponseCache] Village cache invalidated', { villageId, removed });
+  }
+  return removed;
+}
+
+/**
+ * Invalidate cached entries scoped to a specific intent family. Useful
+ * when admin edits kategori pengaduan only (KNOWLEDGE_QUERY shouldn't be
+ * nuked just because CONTACT_DIRECTORY changed).
+ */
+export function invalidateCacheByIntent(
+  villageId: string | null,
+  intents: string[],
+): number {
+  if (!intents || intents.length === 0) return 0;
+  const villagePrefix = villageId ? `${villageId}:` : null;
+  let removed = 0;
+  for (const [key, value] of responseCache) {
+    if (!intents.includes(value.intent)) continue;
+    if (villagePrefix && !key.startsWith(villagePrefix)) continue;
+    responseCache.delete(key);
+    removed++;
+  }
+  if (removed > 0) {
+    logger.info('[ResponseCache] Cache invalidated by intent', { villageId, intents, removed });
+  }
+  return removed;
+}
+
 export default {
   getCachedResponse,
   setCachedResponse,
@@ -400,4 +474,6 @@ export default {
   getCacheStats,
   clearCache,
   getTopCachedQueries,
+  invalidateVillageCache,
+  invalidateCacheByIntent,
 };

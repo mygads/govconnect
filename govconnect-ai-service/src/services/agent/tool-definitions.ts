@@ -78,11 +78,35 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       name: 'get_emergency_contacts',
       strict: true,
       description:
-        'Nomor darurat dan kontak penting publik seperti pemadam, ambulans, polisi, puskesmas, atau fasilitas bantuan cepat lainnya.',
+        'Nomor darurat dan kontak penting publik seperti pemadam, ambulans, polisi, puskesmas, atau fasilitas bantuan cepat lainnya. ' +
+        'Gunakan HANYA jika user melaporkan situasi darurat yang sedang berlangsung, bukan saat user hanya bertanya "ada nomor X?".',
       parameters: {
         type: 'object',
         properties: {},
         required: [],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_important_contact',
+      strict: true,
+      description:
+        'Cari nomor kontak penting berdasarkan nama entitas, peran, atau kategori. ' +
+        'Gunakan tool ini untuk semua pertanyaan DIREKTORI seperti "ada nomor kepala desa?", "nomor puskesmas solo", "nomor damkar", "nomor polsek", "nomor kecamatan", "nomor RT". ' +
+        'Ini BUKAN untuk situasi darurat yang sedang berlangsung. Untuk darurat aktif gunakan get_emergency_contacts. ' +
+        'Tool ini mengembalikan kontak paling relevan dari database resmi desa. Jangan mengarang nomor jika tool tidak menemukan hasil.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Pertanyaan atau nama entitas yang dicari. Contoh: "kepala desa", "puskesmas solo", "damkar", "polsek", "kecamatan", "nomor RT 03".',
+          },
+        },
+        required: ['query'],
         additionalProperties: false,
       },
     },
@@ -333,6 +357,7 @@ export type AgentToolName =
   | 'get_service_info'
   | 'get_complaint_categories'
   | 'get_emergency_contacts'
+  | 'get_important_contact'
   | 'search_knowledge'
   | 'search_documents'
   | 'search_user_memory'

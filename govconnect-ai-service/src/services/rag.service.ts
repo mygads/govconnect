@@ -199,15 +199,35 @@ const OBVIOUS_SKIP_PATTERNS = [
   /^(terima\s*kasih|makasih|thanks?)\s*[.!?]*$/i,
 ];
 
-// Spam/malicious content patterns - skip processing entirely
+// Spam/malicious content patterns - skip processing entirely.
+// URLs are intentionally NOT in this list: villagers often paste official
+// portal links (e.g., "dukcapil.go.id/...") or ask about a link the admin
+// sent them. Suspicious URLs are filtered below via TRUSTED_URL / SHORTENER
+// heuristics so official domains pass while phishing shortlinks don't.
 const SPAM_PATTERNS = [
-  /(.)\1{30,}/,                         // 30+ repeated single characters (was 25+, now more lenient)
+  /(.)\1{30,}/,                         // 30+ repeated single characters
   /^[^\w\s]+$/,                         // Only symbols (no letters/numbers/spaces)
-  /(http|https|www\.|bit\.ly|t\.co|tinyurl)/i,  // URLs (potential spam/phishing)
-  /\b(viagra|casino|poker|judi|togel|slot|xxx|porn)\b/i, // Adult/gambling content (added word boundaries)
-  /\b(click\s+here|klik\s+disini|download\s+now|claim\s+now)\b/i, // Spam call-to-action (added word boundaries)
-  /\b(menang\s+jutaan|hadiah\s+milyar|transfer\s+sekarang|bonus\s+besar)\b/i, // Scam phrases (added word boundaries)
+  /\b(viagra|casino|poker|judi|togel|slot|xxx|porn)\b/i,
+  /\b(click\s+here|klik\s+disini|download\s+now|claim\s+now)\b/i,
+  /\b(menang\s+jutaan|hadiah\s+milyar|transfer\s+sekarang|bonus\s+besar)\b/i,
 ];
+
+// Shortener / opaque-link domains that are rarely legitimate in a village
+// CS context. If a message contains ONE of these AND no trusted domain,
+// treat as spam.
+const SUSPICIOUS_URL_SHORTENERS = /\b(?:bit\.ly|t\.co|tinyurl\.com|rb\.gy|cutt\.ly|is\.gd|ow\.ly|buff\.ly|goo\.gl)\b/i;
+
+// Trusted TLD/domain hints. Official Indonesian gov, edu, and common village
+// hosting suffixes are whitelisted so users can reference them safely.
+const TRUSTED_URL_DOMAINS = /\b(?:\w+\.)?(go\.id|desa\.id|kemendesa\.go\.id|kemendagri\.go\.id|dukcapil\.go\.id|ac\.id|sch\.id|or\.id|gov\.id)\b/i;
+
+function hasSuspiciousLink(message: string): boolean {
+  if (SUSPICIOUS_URL_SHORTENERS.test(message)) return true;
+  // Generic URL with no trusted-domain hint — treat as suspicious.
+  const anyUrl = /(https?:\/\/\S+|www\.\S+\.\w+)/i.test(message);
+  if (!anyUrl) return false;
+  return !TRUSTED_URL_DOMAINS.test(message);
+}
 
 /**
  * Check if message is spam or malicious.
@@ -217,12 +237,15 @@ const SPAM_PATTERNS = [
 export function isSpamMessage(message: string): boolean {
   if (!message) return true;
   if (message.length > 3000) return true;
-  
+
   for (const pattern of SPAM_PATTERNS) {
     if (pattern.test(message)) {
       return true;
     }
   }
+
+  if (hasSuspiciousLink(message)) return true;
+
   return false;
 }
 

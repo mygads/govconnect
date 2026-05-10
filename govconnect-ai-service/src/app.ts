@@ -25,9 +25,10 @@ import { exportObservabilityData, toNdjson, type ObservabilityExportKind } from 
 import { getEmbeddingStats, getEmbeddingCacheStats } from './services/embedding.service';
 import { getVectorDbStats } from './services/vector-db.service';
 import { resilientHttp } from './services/circuit-breaker.service';
-import { getTopCachedQueries, getCacheStats, clearCache as clearResponseCache } from './services/response-cache.service';
+import { getTopCachedQueries, getCacheStats, clearCache as clearResponseCache, invalidateVillageCache, invalidateCacheByIntent } from './services/response-cache.service';
 import { getFSMStats, getAllActiveContexts } from './services/conversation-fsm.service';
 import knowledgeRoutes from './routes/knowledge.routes';
+import knowledgeConsistencyRoutes from './routes/knowledge-consistency.routes';
 import searchRoutes from './routes/search.routes';
 import uploadRoutes from './routes/upload.routes';
 import webchatRoutes from './routes/webchat.routes';
@@ -478,6 +479,50 @@ app.post('/admin/cache/mode', internalAuthMiddleware, (req: Request, res: Respon
   res.json({
     cacheEnabled: _cacheEnabled,
     message: enabled ? 'Cache enabled (production mode)' : 'Cache disabled (dev mode) — all caches cleared',
+  });
+});
+
+/**
+ * POST /admin/cache/invalidate-village — Admin webhook: dashboard calls this
+ * after editing kontak, layanan, or profil desa so cached AI answers don't
+ * serve stale values.
+ * Body: { villageId: string, intents?: string[], retrieval?: boolean, profile?: boolean }
+ */
+app.post('/admin/cache/invalidate-village', internalAuthMiddleware, async (req: Request, res: Response) => {
+  const { villageId, intents, retrieval = true, profile = true } = req.body || {};
+  if (!villageId || typeof villageId !== 'string') {
+    res.status(400).json({ status: 'error', message: 'villageId required' });
+    return;
+  }
+
+  const responseRemoved = Array.isArray(intents) && intents.length > 0
+    ? invalidateCacheByIntent(villageId, intents)
+    : invalidateVillageCache(villageId);
+
+  let retrievalRemoved = 0;
+  if (retrieval) {
+    const { clearRetrievalCache } = await import('./services/rag.service');
+    retrievalRemoved = clearRetrievalCache(villageId);
+  }
+
+  if (profile) {
+    clearVillageProfileCache();
+  }
+
+  logger.info('Village cache invalidated via admin webhook', {
+    villageId,
+    responseRemoved,
+    retrievalRemoved,
+    intents,
+  });
+
+  res.json({
+    status: 'success',
+    villageId,
+    responseRemoved,
+    retrievalRemoved,
+    profileCacheCleared: profile,
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -1681,6 +1726,12 @@ app.use('/uploads/documents', internalAuthMiddleware, express.static(uploadsDir,
 
 // Mount API routes
 app.use('/api/knowledge', knowledgeRoutes);
+app.use(
+  '/api/knowledge-consistency',
+  internalAuthMiddleware,
+  express.urlencoded({ extended: true }),
+  knowledgeConsistencyRoutes,
+);
 app.use('/api/search', searchRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/webchat', webchatRoutes);

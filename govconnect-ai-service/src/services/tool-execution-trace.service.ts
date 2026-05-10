@@ -51,7 +51,12 @@ export async function recordToolExecutionTraces(input: {
           ${trace.durationMs ?? null},
           ${trace.trustLevel ?? null},
           ${trace.sourceKind ?? null},
-          ${JSON.stringify({ trustLevel: trace.trustLevel, sourceKind: trace.sourceKind })}::jsonb
+          ${JSON.stringify({
+            trustLevel: trace.trustLevel,
+            sourceKind: trace.sourceKind,
+            ...(trace.redactedPayload ? { payload: trace.redactedPayload } : {}),
+            ...(trace.outcome ? { outcome: trace.outcome } : {}),
+          })}::jsonb
         )
       `);
     }

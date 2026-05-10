@@ -5,6 +5,7 @@ import {
   tryHandleOutOfScopeGuard,
 } from '../pre-agent-state-router.service';
 import { __test_only__ as agentOrchestratorTestOnly } from '../agent/agent-orchestrator';
+import { isCacheable } from '../response-cache.service';
 import {
   clearActiveServiceInfo,
   clearPendingServiceFormOffer,
@@ -15,8 +16,11 @@ import {
 const {
   isPendingServiceFollowUp,
   isPendingServiceLinkRequest,
+  isInformationalServiceLinkInquiry,
+  isExplicitServiceActionRequest,
   isClearlyDifferentIntent,
   detectExplicitConfirmationReply,
+  decideFastIntent,
   buildActiveServiceFollowUpReply,
   buildPendingServiceClarificationPrompt,
   resolvePendingServiceClarification,
@@ -69,7 +73,11 @@ describe('pending service follow-up helpers', () => {
 
   it('detects direct link requests separately from generic follow-up', () => {
     expect(isPendingServiceLinkRequest('ada link?')).toBe(true);
+    expect(isInformationalServiceLinkInquiry('ada link?')).toBe(true);
+    expect(isExplicitServiceActionRequest('ada link?')).toBe(false);
     expect(isPendingServiceLinkRequest('formnya mana?')).toBe(true);
+    expect(isInformationalServiceLinkInquiry('formnya mana?')).toBe(false);
+    expect(isExplicitServiceActionRequest('formnya mana?')).toBe(true);
     expect(isPendingServiceLinkRequest('bisa online kah?')).toBe(false);
     expect(isPendingServiceLinkRequest('berapa lama prosesnya?')).toBe(false);
   });
@@ -84,12 +92,37 @@ describe('pending service follow-up helpers', () => {
     expect(isClearlyDifferentIntent('mau lapor jalan rusak')).toBe(true);
     expect(isClearlyDifferentIntent('cek status LAY-20260509-001')).toBe(true);
     expect(isClearlyDifferentIntent('batalkan layanan saya')).toBe(true);
+    expect(isClearlyDifferentIntent('nomor puskesmas dulu')).toBe(true);
+    expect(isClearlyDifferentIntent('kantor desa buka jam berapa')).toBe(true);
+    expect(isClearlyDifferentIntent('bukan itu maksud saya')).toBe(true);
   });
 
   it('keeps explicit confirmation parsing stable', () => {
     expect(detectExplicitConfirmationReply('iya')).toBe('yes');
     expect(detectExplicitConfirmationReply('gak jadi')).toBe('no');
+    expect(detectExplicitConfirmationReply('nanti dulu')).toBe('no');
+    expect(detectExplicitConfirmationReply('oke makasih')).toBe('no');
     expect(detectExplicitConfirmationReply('berapa lama?')).toBe('uncertain');
+  });
+
+  it('marks pending offer link availability as informational, not action', () => {
+    expect(decideFastIntent({ message: 'ada link?', hasPendingServiceOffer: true })).toMatchObject({
+      primaryIntent: 'service_follow_up',
+      action: 'handle_pre_agent',
+      stateAffinity: 'answers_pending_state',
+    });
+    expect(decideFastIntent({ message: 'kirim linknya', hasPendingServiceOffer: true })).toMatchObject({
+      primaryIntent: 'service_form_confirmation',
+      action: 'handle_pre_agent',
+      confidence: 'hard',
+    });
+  });
+
+  it('releases pending clarification on clear topic shift', () => {
+    expect(decideFastIntent({ message: 'nomor puskesmas dulu', hasPendingServiceClarification: true })).toMatchObject({
+      action: 'release_state_and_defer',
+      stateAffinity: 'switches_topic',
+    });
   });
 });
 
@@ -310,5 +343,56 @@ describe('agent tool routing with active service context', () => {
     const result = await selectAllowedTools('berapa lama?', {});
 
     expect(result.allowedToolNames).not.toContain('create_service_request');
+  });
+
+  it('marks contact directory lookup as required and hard-denies unrelated tools', async () => {
+    const result = await selectAllowedTools('nomor puskesmas solo', {});
+
+    expect(result.requiredTools).toContain('get_important_contact');
+    expect(result.allowedToolNames).toEqual(['get_important_contact']);
+    expect(result.hardDeniedTools).toContain('get_emergency_contacts');
+    expect(result.hardDeniedTools).toContain('search_knowledge');
+  });
+
+  it('marks village profile facts as required when that is the grounding path', async () => {
+    const result = await selectAllowedTools('kantor desa buka jam berapa?', {});
+
+    expect(result.requiredTools).toContain('get_village_profile');
+    expect(result.allowedToolNames).toContain('get_village_profile');
+  });
+
+  it('keeps general retrieval tools out of structured service detail queries', async () => {
+    const result = await selectAllowedTools('biaya surat domisili berapa?', {});
+
+    expect(result.allowedToolNames).toContain('get_service_info');
+    expect(result.allowedToolNames).not.toContain('search_knowledge');
+    expect(result.allowedToolNames).not.toContain('search_documents');
+  });
+
+  it('keeps general retrieval tools out of structured village profile queries', async () => {
+    const result = await selectAllowedTools('alamat kantor desa dimana?', {});
+
+    expect(result.requiredTools).toContain('get_village_profile');
+    expect(result.allowedToolNames).toContain('get_village_profile');
+    expect(result.allowedToolNames).not.toContain('search_knowledge');
+    expect(result.allowedToolNames).not.toContain('search_documents');
+  });
+});
+
+describe('response cacheability rules', () => {
+  it('does not cache short contextual service follow-ups', () => {
+    expect(isCacheable('syaratnya?', 'SERVICE_INFO')).toBe(false);
+    expect(isCacheable('ada link?', 'SERVICE_INFO')).toBe(false);
+    expect(isCacheable('nomor 2', 'SERVICE_INFO')).toBe(false);
+  });
+
+  it('keeps explicit service listing queries cacheable', () => {
+    expect(isCacheable('layanan apa aja', 'SERVICE_INFO')).toBe(true);
+    expect(isCacheable('daftar layanan desa', 'SERVICE_INFO')).toBe(true);
+  });
+
+  it('keeps explicit standalone service detail questions cacheable', () => {
+    expect(isCacheable('syarat buat surat domisili', 'SERVICE_INFO')).toBe(true);
+    expect(isCacheable('biaya untuk akta kelahiran', 'SERVICE_INFO')).toBe(true);
   });
 });

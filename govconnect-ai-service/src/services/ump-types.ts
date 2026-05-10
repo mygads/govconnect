@@ -65,7 +65,7 @@ export interface ProcessMessageResult {
     knowledgeConfidence?: string;
     sentiment?: string;
     language?: string;
-    agentMode?: 'single_orchestrator' | 'deterministic_fact_router' | 'pre_agent_guard' | 'response_cache';
+    agentMode?: 'single_orchestrator' | 'deterministic_fact_router' | 'pre_agent_guard' | 'response_cache' | 'answer_policy_verifier';
     sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
     toolsUsed?: string[];
     allowedTools?: string[];
@@ -94,6 +94,15 @@ export interface ProcessMessageResult {
       action: string;
       reason?: string;
       details?: Record<string, unknown>;
+    };
+    routing?: {
+      action: string;
+      confidence: string;
+      primaryIntent: string;
+      mixedSignals: boolean;
+      stateAffinity?: string;
+      reasons: string[];
+      allowedToolHints?: string[];
     };
     /** Unique trace ID for correlating logs across NLU → RAG → LLM → response */
     traceId?: string;

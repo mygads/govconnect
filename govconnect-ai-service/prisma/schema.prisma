@@ -87,17 +87,17 @@ model document_vectors {
 // Track embedding generation jobs for async processing
 
 model embedding_jobs {
-  id            String  @id @default(cuid())
-  type          String // "knowledge" | "document" | "document_ocr"
-  target_id     String // ID of knowledge/document
-  status        String  @default("pending") // pending, processing, completed, failed
-  error_message String? @db.Text
-  retry_count   Int     @default(0)
-  priority      Int     @default(0)
-  stage         String? // parse | ocr | embed
+  id              String    @id @default(cuid())
+  type            String // "knowledge" | "document" | "document_ocr"
+  target_id       String // ID of knowledge/document
+  status          String    @default("pending") // pending, processing, completed, failed
+  error_message   String?   @db.Text
+  retry_count     Int       @default(0)
+  priority        Int       @default(0)
+  stage           String? // parse | ocr | embed
   last_error_code String?
-  next_retry_at DateTime?
-  payload_json  Json?
+  next_retry_at   DateTime?
+  payload_json    Json?
 
   created_at   DateTime  @default(now())
   started_at   DateTime?
@@ -715,22 +715,68 @@ model ai_tool_allowlist_policies {
 }
 
 model ai_tool_policy_events {
-  id                   String   @id @default(cuid())
-  trace_id             String?
-  wa_user_id           String?
-  village_id           String?
-  channel              String?
-  query                String   @db.Text
-  policy_key           String?
-  policy_source        String?
-  heuristic_tools_json Json?
-  learned_tools_json   Json?
-  allowed_tools_json   Json?
-  actual_tools_json    Json?
-  success              Boolean  @default(true)
-  created_at           DateTime @default(now())
+  id                            String   @id @default(cuid())
+  trace_id                      String?
+  wa_user_id                    String?
+  village_id                    String?
+  channel                       String?
+  query                         String   @db.Text
+  policy_key                    String?
+  policy_source                 String?
+  heuristic_tools_json          Json?
+  learned_tools_json            Json?
+  allowed_tools_json            Json?
+  actual_tools_json             Json?
+  success                       Boolean  @default(true)
+  // Persist policy reasoning for traceability.
+  tool_policy_reason            String?
+  first_turn_tool_choice        String?
+  first_turn_tool_choice_reason String?
+  final_intent_source           String?
+  state_resume_result           String?
+  answer_policy_kind            String?
+  answer_policy_rewritten       Boolean?
+  created_at                    DateTime @default(now())
 
   @@index([policy_key, created_at])
   @@index([village_id, created_at])
   @@index([channel, created_at])
+  @@index([first_turn_tool_choice, created_at])
+  @@index([final_intent_source, created_at])
+  @@index([state_resume_result, created_at])
+}
+
+// ==================== KNOWLEDGE INCONSISTENCIES ====================
+// Detected conflicts between documents and/or DB ground truth.
+// Populated by the knowledge-consistency pipeline after ingestion and by
+// periodic sweeps. Admin reviews these to clean up the corpus.
+model ai_knowledge_inconsistencies {
+  id               String    @id @default(cuid())
+  village_id       String?
+  // "doc_vs_doc" (two chunks from different sources disagree),
+  // "doc_vs_db"  (a chunk contradicts DB ground truth), or
+  // "kb_vs_kb"   (two curated knowledge entries disagree).
+  kind             String
+  // Free-form hint: "phone_number", "operating_hours", "service_requirements", etc.
+  topic_hint       String?
+  source_a_id      String?
+  source_a_type    String? // "document" | "knowledge" | "db_contact" | "db_profile" | "db_service"
+  source_a_title   String?
+  source_b_id      String?
+  source_b_type    String?
+  source_b_title   String?
+  snippet_a        String?   @db.Text
+  snippet_b        String?   @db.Text
+  similarity_score Float?
+  severity         String    @default("medium") // "low" | "medium" | "high"
+  status           String    @default("open") // "open" | "resolved" | "ignored"
+  detected_by      String? // "doc_vs_doc_pipeline" | "doc_vs_db_pipeline" | "kb_sweep" | "manual_scan"
+  resolved_at      DateTime?
+  resolved_by      String?
+  resolution_note  String?   @db.Text
+  detected_at      DateTime  @default(now())
+
+  @@index([village_id, status, detected_at])
+  @@index([kind, detected_at])
+  @@index([severity, status])
 }

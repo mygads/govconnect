@@ -116,7 +116,8 @@ export type CallType =
   | 'rerank_documents'
   | 'agent_orchestrator'
   | 'media_analysis'
-  | 'smart_chunking';
+  | 'smart_chunking'
+  | 'consistency_entity_extract';
 
 export interface TokenUsageRecord {
   model: string;

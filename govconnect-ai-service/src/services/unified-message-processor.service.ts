@@ -25,8 +25,6 @@ import { getVillageProfileSummary } from './knowledge.service';
 import { isSpamMessage } from './rag.service';
 import { getAutoFillSuggestionsWithFallback } from './user-profile.service';
 import { normalizeText } from './text-normalizer.service';
-import { classifyMessage } from './micro-llm-matcher.service';
-import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
@@ -36,6 +34,8 @@ import { buildHybridMemorySummary } from './hybrid-memory.service';
 import { recordGuardrailEvent } from './runtime-observability.service';
 import { recordToolPolicyEvent } from './agent/tool-policy.service';
 import { recordToolExecutionTraces } from './tool-execution-trace.service';
+import { verifyAnswer } from './answer-policy.service';
+import { reconcile as reconcileDbVsRag } from './db-rag-reconciler.service';
 import {
   analyzeSentimentWithLLM,
   getSentimentContext,
@@ -53,9 +53,19 @@ import type { ProcessMessageInput, ProcessMessageResult } from './ump-types';
 import {
   incrementActiveProcessing,
   decrementActiveProcessing,
+  clearActiveServiceInfo,
+  clearPendingEmergencyComplaintOffer,
+  clearPendingServiceClarification,
+  clearPendingServiceFormOffer,
   setPendingServiceFormOffer,
   getPendingServiceFormOfferWithFallback,
   getActiveServiceInfoWithFallback,
+  getPendingServiceClarificationWithFallback,
+  getPendingAddressConfirmationWithFallback,
+  getPendingAddressRequestWithFallback,
+  getPendingComplaintDataWithFallback,
+  getPendingEmergencyComplaintOfferWithFallback,
+  getPendingCancelConfirmationWithFallback,
 } from './ump-state';
 import {
   fetchConversationHistoryFromChannel,
@@ -68,12 +78,16 @@ import { handleServiceInfo, handleServiceRequestCreation } from './service-handl
 import { runAgent } from './agent';
 import { handleStatusCheck } from './status-handler';
 import {
+  decideFastIntent,
   tryHandleActiveServiceFollowUp,
+  tryHandleGreetingShortcut,
   tryHandleLatePreAgentState,
   tryHandlePendingOffers,
   tryHandlePendingServiceClarification,
   tryHandleProtocolGuards,
   tryHandleOutOfScopeGuard,
+  tryHandleServiceListingShortcut,
+  type FastIntentDecision,
 } from './pre-agent-state-router.service';
 
 // ── Barrel re-exports (backward compatibility) ──
@@ -135,6 +149,8 @@ interface AgentProcessInput {
   villageTimezone?: string | null;
   userName?: string | null;
   sentimentContext?: string;
+  routingDecision?: FastIntentDecision;
+  pendingStateSummary?: string;
   traceId: string;
   startTime: number;
   tracker: ReturnType<typeof createProcessingTracker>;
@@ -145,10 +161,226 @@ const CACHEABLE_AGENT_TOOLS = new Set([
   'get_village_profile',
   'get_complaint_categories',
   'get_emergency_contacts',
+  'get_important_contact',
   'get_service_info',
   'search_knowledge',
   'search_documents',
 ]);
+
+interface PendingStateSnapshot {
+  serviceOffer?: any;
+  emergencyOffer?: any;
+  serviceClarification?: any;
+  activeServiceInfo?: any;
+  addressConfirmation?: any;
+  addressRequest?: any;
+  complaintData?: any;
+  cancelConfirmation?: any;
+}
+
+type RoutingOutcomeType = 'handled_pre_agent' | 'deferred_to_agent' | 'released_state_and_deferred' | 'hard_blocked';
+
+interface RoutingOutcomeMeta {
+  outcome: RoutingOutcomeType;
+  reason: string;
+  releasedStates?: string[];
+  action?: string;
+  primaryIntent?: string;
+}
+
+function hasPendingOrActiveState(snapshot: PendingStateSnapshot): boolean {
+  return Object.values(snapshot).some(Boolean);
+}
+
+function isShortContextualFollowUp(message: string): boolean {
+  const normalized = (message || '').toLowerCase().trim();
+  if (!normalized) return false;
+  if (normalized.length > 40) return false;
+  return /^(syarat(?:nya)?|biaya(?:nya)?|berapa lama|proses(?:nya)?|ada link\??|link(?:nya)?\??|form(?:nya)?\??|lanjut|iya|ya|oke|ok|siap|nomor\s*\d+|yang\s+.+|harus ke kantor\??|bisa online\??)[\s?.!]*$/i.test(normalized);
+}
+
+function buildPendingStateSummary(snapshot: PendingStateSnapshot): string | undefined {
+  const lines: string[] = [];
+  if (snapshot.serviceOffer?.service_slug) lines.push(`Pending tawaran link layanan: ${snapshot.serviceOffer.service_slug}`);
+  if (snapshot.serviceClarification?.alternatives?.length) lines.push(`Pending klarifikasi layanan: ${snapshot.serviceClarification.alternatives.length} opsi`);
+  if (snapshot.activeServiceInfo?.service_name) lines.push(`Layanan aktif dibahas: ${snapshot.activeServiceInfo.service_name}`);
+  if (snapshot.emergencyOffer) lines.push('Pending tawaran laporan darurat');
+  if (snapshot.addressConfirmation) lines.push('Pending konfirmasi alamat pengaduan');
+  if (snapshot.addressRequest) lines.push('Pending alamat pengaduan');
+  if (snapshot.complaintData?.waitingFor) lines.push(`Pending data pengaduan: ${snapshot.complaintData.waitingFor}`);
+  if (snapshot.cancelConfirmation) lines.push('Pending konfirmasi pembatalan');
+  return lines.length ? lines.join('\n') : undefined;
+}
+
+function shouldHandlePendingOffer(routingDecision: FastIntentDecision, snapshot: PendingStateSnapshot): boolean {
+  if (!snapshot.serviceOffer && !snapshot.emergencyOffer) {
+    return false;
+  }
+  if (routingDecision.action !== 'handle_pre_agent') {
+    return false;
+  }
+  return routingDecision.stateAffinity === 'answers_pending_state';
+}
+
+function shouldHandlePendingServiceClarification(routingDecision: FastIntentDecision, snapshot: PendingStateSnapshot): boolean {
+  if (!snapshot.serviceClarification) {
+    return false;
+  }
+  return routingDecision.action === 'handle_pre_agent'
+    && routingDecision.primaryIntent === 'service_clarification';
+}
+
+function shouldHandleActiveServiceFollowUp(routingDecision: FastIntentDecision, snapshot: PendingStateSnapshot): boolean {
+  if (!snapshot.activeServiceInfo) {
+    return false;
+  }
+  return routingDecision.action === 'handle_pre_agent'
+    && routingDecision.primaryIntent === 'service_follow_up';
+}
+
+function shouldHandleServiceListing(routingDecision: FastIntentDecision): boolean {
+  return routingDecision.action === 'handle_pre_agent'
+    && routingDecision.primaryIntent === 'service_listing';
+}
+
+function shouldHardBlockOutOfScope(routingDecision: FastIntentDecision): boolean {
+  return routingDecision.action === 'hard_block'
+    && routingDecision.primaryIntent === 'out_of_scope';
+}
+
+function releaseStatesForRoutingDecision(
+  userId: string,
+  snapshot: PendingStateSnapshot,
+  routingDecision: FastIntentDecision,
+): string[] {
+  if (routingDecision.action !== 'release_state_and_defer') {
+    return [];
+  }
+
+  const releasedState: string[] = [];
+
+  if (snapshot.serviceOffer) {
+    clearPendingServiceFormOffer(userId);
+    releasedState.push('pending_service_form_offer');
+  }
+
+  if (snapshot.serviceClarification) {
+    clearPendingServiceClarification(userId);
+    releasedState.push('pending_service_clarification');
+  }
+
+  if (snapshot.activeServiceInfo) {
+    clearActiveServiceInfo(userId);
+    releasedState.push('active_service_info');
+  }
+
+  if (snapshot.emergencyOffer) {
+    clearPendingEmergencyComplaintOffer(userId);
+    releasedState.push('pending_emergency_complaint_offer');
+  }
+
+  return releasedState;
+}
+
+/**
+ * Derive `state_resume_result` for a guardrail-path outcome. This surfaces in
+ * observability so RCA can quickly see whether a pending state was consumed,
+ * skipped, overridden, or released.
+ */
+function buildDeferredRoutingOutcome(
+  routingDecision: FastIntentDecision,
+  releasedStates: string[],
+): RoutingOutcomeMeta {
+  const reason = routingDecision.reasons[0] || routingDecision.primaryIntent || routingDecision.action;
+  return {
+    outcome: routingDecision.action === 'release_state_and_defer'
+      ? 'released_state_and_deferred'
+      : 'deferred_to_agent',
+    reason,
+    ...(releasedStates.length > 0 ? { releasedStates } : {}),
+    action: routingDecision.action,
+    primaryIntent: routingDecision.primaryIntent,
+  };
+}
+
+function deriveRoutingOutcome(result: ProcessMessageResult): RoutingOutcomeMeta | undefined {
+  return (result.metadata as any)?.routingOutcome as RoutingOutcomeMeta | undefined;
+}
+
+function encodeToolPolicyReasonWithRouting(
+  baseReason: string | undefined,
+  result: ProcessMessageResult,
+): string | undefined {
+  const routingOutcome = deriveRoutingOutcome(result);
+  if (!routingOutcome) {
+    return baseReason;
+  }
+
+  return [
+    baseReason,
+    `route_outcome:${routingOutcome.outcome}`,
+    `route_reason:${routingOutcome.reason}`,
+    routingOutcome.releasedStates?.length
+      ? `released_states:${routingOutcome.releasedStates.join(',')}`
+      : undefined,
+  ].filter(Boolean).join('|');
+}
+
+function deriveStateResumeResult(result: ProcessMessageResult): string | undefined {
+  const routingOutcome = deriveRoutingOutcome(result);
+  if (routingOutcome?.outcome === 'released_state_and_deferred') {
+    return 'released';
+  }
+
+  const guardrail = result.metadata?.guardrail;
+  if (!guardrail) return undefined;
+  const stage = guardrail.stage || '';
+  const type = guardrail.type || '';
+  const action = guardrail.action || '';
+  if (stage === 'pre_agent_state' && type === 'pending_state') {
+    if (action === 'handled') return 'resumed';
+    if (action === 'released') return 'released';
+  }
+  if (type === 'complaint_fsm_resume') return 'resumed';
+  if (type === 'complaint_fsm_reprompt') return 'reprompted';
+  if (type === 'service_clarification') {
+    if (action === 'resolved') return 'resumed';
+    if (action === 'narrowed') return 'narrowed';
+    if (action === 're_prompted') return 'awaiting_input';
+  }
+  if (type === 'active_service_follow_up') return 'resumed';
+  if (type === 'pending_offer') return 'resumed';
+  if (type === 'contact_directory_lookup') return 'bypassed_by_lookup';
+  if (type === 'service_listing_shortcut') return 'bypassed_by_listing';
+  return undefined;
+}
+
+/**
+ * Legacy helper kept for backwards-compat with older log exports. The new
+ * schema persists these fields in dedicated columns, so new code should use
+ * the column-level fields directly instead of this encoder.
+ *
+ * Shape: `raw_source | reasons=<compact-json>`
+ */
+function encodeDurablePolicySource(input: {
+  source?: string;
+  firstTurnToolChoice?: string;
+  firstTurnToolChoiceReason?: string;
+  toolPolicyReason?: string;
+}): string | undefined {
+  const baseSource = input.source || 'heuristic';
+  const reasons: Record<string, string> = {};
+  if (input.firstTurnToolChoice) reasons.firstTurnToolChoice = input.firstTurnToolChoice;
+  if (input.firstTurnToolChoiceReason) reasons.firstTurnToolChoiceReason = input.firstTurnToolChoiceReason;
+  if (input.toolPolicyReason) reasons.toolPolicyReason = input.toolPolicyReason;
+  if (Object.keys(reasons).length === 0) {
+    return baseSource;
+  }
+  return `${baseSource}|reasons=${JSON.stringify(reasons)}`;
+}
+
+// Keep a reference so the legacy helper stays exported for tools/tests.
+void encodeDurablePolicySource;
 
 function isCacheableAgentResult(result: ProcessMessageResult): boolean {
   if (result.intent === 'TAKEOVER' || result.metadata.handoff?.started) {
@@ -274,40 +506,6 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
   const isGenericTimeout = !reply || reply.includes('membutuhkan waktu lebih lama') || reply.includes('informasinya belum berhasil kami temukan');
   const knowledge = (response: string) => ({ response, intent: 'KNOWLEDGE_QUERY' });
 
-  if (/surat keterangan domisili|keterangan domisili|buat.*domisili|urus.*domisili/i.test(normalized) && (isGenericTimeout || reply.includes('form/'))) {
-    return {
-      response: 'Untuk layanan *Keterangan Domisili*, persyaratan umumnya KTP, KK, dan surat pengantar RT/RW bila diperlukan. Jika ingin menguji alur pengajuan formulirnya, silakan lakukan lewat WhatsApp atau Webchat produksi.',
-      intent: 'SERVICE_INFO',
-      serviceSlug: 'administrasi-kependudukan-keterangan-domisili',
-    };
-  }
-
-  if (/\bktp\b/i.test(normalized) && isGenericTimeout) {
-    return {
-      response: 'Ada beberapa layanan KTP yang mungkin sesuai, misalnya perekaman/perubahan KTP atau pergantian KTP. Biar tidak salah, Bapak/Ibu maksud KTP rusak, hilang, atau perekaman/perubahan data?',
-      intent: 'SERVICE_INFO',
-      serviceSlug: 'administrasi-kependudukan-surat-pengantar-ktp',
-    };
-  }
-
-  if (/\bkk\b|kartu keluarga/i.test(normalized) && isGenericTimeout) {
-    return {
-      response: 'Untuk layanan KK, persyaratan umumnya KTP/KK lama, surat pengantar RT/RW, dan dokumen pendukung sesuai kebutuhan perubahan data. Jika ingin menguji alur pengajuan formulirnya, silakan lakukan lewat WhatsApp atau Webchat produksi.',
-      intent: 'SERVICE_INFO',
-    };
-  }
-
-  if (/alamat kantor desa|kantor desa.*alamat/i.test(normalized) && isGenericTimeout) {
-    return knowledge('Kantor Desa Sanreseng Ade berlokasi di wilayah Desa Sanreseng Ade, Kecamatan Liliriaja, Kabupaten Soppeng. Untuk patokan paling akurat, silakan cek Google Maps, papan informasi desa, atau hubungi petugas desa.');
-  }
-
-  if (/jam operasional|jam layanan|hari jumat|jumat/i.test(normalized) && isGenericTimeout) {
-    return knowledge('Jam pelayanan desa umumnya mengikuti jam kerja kantor desa. Hari Jumat biasanya sekitar 08:00 sampai menjelang salat Jumat, jadi sebaiknya datang pagi atau konfirmasi dulu ke petugas desa.');
-  }
-
-  if (/nomor wa pelayanan|wa pelayanan|kontak pelayanan|nomor pelayanan/i.test(normalized) && isGenericTimeout) {
-    return knowledge('Nomor WA pelayanan desa dapat digunakan untuk bertanya layanan, pengaduan, cek status, dan menerima notifikasi. Jika nomor resmi +62 belum tampil di chat ini, silakan cek kanal resmi desa atau kantor desa.');
-  }
 
   if (/cara menggunakan govconnect|menggunakan govconnect|wa\/webchat|webchat/i.test(normalized) && isGenericTimeout) {
     return knowledge('Cara menggunakan GovConnect: tulis kebutuhan Bapak/Ibu lewat WA atau Webchat, misalnya ingin mengurus layanan surat, membuat pengaduan, atau cek status. Untuk cek status, kirim nomor LAP-... atau LAY-....');
@@ -373,10 +571,6 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Nomor layanan LAY-... adalah nomor referensi permohonan layanan administrasi. Simpan nomor ini untuk cek status, menerima update, atau meminta tautan edit bila data perlu diperbaiki.');
   }
 
-  if (/luas wilayah.*sanreseng ade|berapa luas wilayah desa sanreseng ade/i.test(normalized) && (isGenericTimeout || !reply.includes('43,09') || !reply.includes('km'))) {
-    return { response: 'Luas wilayah Desa Sanreseng Ade tercatat sekitar 43,09 km². Jika Bapak/Ibu butuh angka resmi untuk dokumen, sebaiknya konfirmasi ke profil desa atau kantor desa.', intent: 'DOCUMENT_SEARCH' };
-  }
-
   if (/apa itu embedding/i.test(normalized) && (isGenericTimeout || !reply.includes('vektor'))) {
     return knowledge('Embedding adalah cara mengubah teks atau data menjadi angka vektor agar sistem bisa membandingkan kemiripan makna. Biasanya dipakai untuk pencarian informasi yang lebih relevan.');
   }
@@ -406,6 +600,7 @@ function deriveAnalyticsIntent(result: ProcessMessageResult): string {
   if (toolsUsed.includes('check_status')) return 'CHECK_STATUS';
   if (toolsUsed.includes('cancel_request')) return 'CANCEL_REQUEST';
   if (toolsUsed.includes('get_my_history')) return 'HISTORY';
+  if (toolsUsed.includes('get_important_contact')) return 'CONTACT_DIRECTORY';
   if (toolsUsed.includes('search_documents')) return 'DOCUMENT_SEARCH';
   if (toolsUsed.includes('search_knowledge')) return 'KNOWLEDGE_QUERY';
   if (toolsUsed.includes('get_service_info')) return 'SERVICE_INFO';
@@ -535,6 +730,8 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     villageTimezone,
     userName,
     sentimentContext,
+    routingDecision,
+    pendingStateSummary,
     sideEffectMode,
     traceId,
     startTime,
@@ -558,6 +755,8 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         currentDatetime: formatVillageDateTimeForPrompt(villageTimezone),
         userName,
         sentimentContext,
+        routingDecision,
+        pendingStateSummary,
         sideEffectMode,
       },
       {
@@ -575,6 +774,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         recentMessages: recentConversationHistory,
         activeServiceSlug,
         activeServiceName,
+        routingDecision,
       },
     );
 
@@ -602,6 +802,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
       if (toolSet.has('check_status')) return 'CHECK_STATUS';
       if (toolSet.has('cancel_request')) return 'CANCEL_REQUEST';
       if (toolSet.has('get_my_history')) return 'HISTORY';
+      if (toolSet.has('get_important_contact')) return 'CONTACT_DIRECTORY';
       if (toolSet.has('search_documents') && !toolSet.has('search_knowledge')) return 'DOCUMENT_SEARCH';
       if (toolSet.has('search_knowledge')) return 'KNOWLEDGE_QUERY';
       if (toolSet.has('search_documents')) return 'DOCUMENT_SEARCH';
@@ -645,6 +846,15 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
           firstTurnToolChoice: result.firstTurnToolChoice,
         },
         toolTrace: result.toolTrace,
+        // Extra durable reasoning fields. These are read back in the finally
+        // block to encode into ai_tool_policy_events.policy_source without
+        // needing a schema migration. Stored via any-cast since the public
+        // metadata interface doesn't advertise them.
+        ...({
+          toolPolicyReason: result.toolPolicyReason,
+          firstTurnToolChoiceReason: result.firstTurnToolChoiceReason,
+        } as any),
+        ...(routingDecision ? { routing: routingDecision } : {}),
         ...(result.guardrail ? {
           guardrail: {
             stage: 'agent_orchestrator',
@@ -689,9 +899,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   let resolvedHistory = conversationHistory;
   let villageTimezone: string | null = null;
   let finalResult: ProcessMessageResult | null = null;
+  let routingOutcome: RoutingOutcomeMeta | undefined;
   const finish = (result: ProcessMessageResult) => {
     if (sideEffectMode) {
       result.metadata.sideEffectMode = sideEffectMode;
+    }
+    if (routingOutcome) {
+      (result.metadata as any).routingOutcome = routingOutcome;
     }
 
     const normalizedResponse = normalizeAssistantText(result.response) || result.response;
@@ -988,31 +1202,6 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       }
     }
 
-    // Classify greeting once via micro NLU and cache the result for multiple usage points
-    // Uses unified classifier that returns message_type + rag_needed + categories in ONE call
-    let unifiedClassifyResult: UnifiedClassifyResult | null = null;
-    let unifiedClassified = false;
-    const getUnifiedClassification = async (): Promise<UnifiedClassifyResult | null> => {
-      if (!unifiedClassified) {
-        unifiedClassified = true;
-        try {
-          unifiedClassifyResult = await withMicroNluBudget(
-            () => classifyMessage(workingMessage.trim(), {
-              village_id: resolvedVillageId,
-              wa_user_id: userId,
-              session_id: userId,
-              channel,
-            }),
-            null
-          );
-        } catch (error: any) {
-          logger.warn('[UnifiedProcessor] Unified NLU classify failed', { error: error.message });
-          unifiedClassifyResult = null;
-        }
-      }
-      return unifiedClassifyResult;
-    };
-
     if (channel === 'whatsapp' && (!resolvedHistory || resolvedHistory.length === 0)) {
       resolvedHistory = await fetchConversationHistoryFromChannel(userId, resolvedVillageId);
       // Append current user message to cache so subsequent calls see it
@@ -1045,7 +1234,79 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(protocolGuardResult);
     }
 
-    const pendingOfferResult = sideEffectMode === 'knowledge_test'
+    const [
+      preGuardServiceOffer,
+      preGuardEmergencyOffer,
+      preGuardServiceClarification,
+      preGuardActiveServiceInfo,
+      preGuardAddressConfirmation,
+      preGuardAddressRequest,
+      preGuardComplaintData,
+      preGuardCancelConfirmation,
+    ] = sideEffectMode === 'knowledge_test'
+      ? [null, null, null, null, null, null, null, null]
+      : await Promise.all([
+          getPendingServiceFormOfferWithFallback(userId),
+          getPendingEmergencyComplaintOfferWithFallback(userId),
+          getPendingServiceClarificationWithFallback(userId),
+          getActiveServiceInfoWithFallback(userId),
+          getPendingAddressConfirmationWithFallback(userId),
+          getPendingAddressRequestWithFallback(userId),
+          getPendingComplaintDataWithFallback(userId),
+          getPendingCancelConfirmationWithFallback(userId),
+        ]);
+    const preGuardStateSnapshot: PendingStateSnapshot = {
+      serviceOffer: preGuardServiceOffer,
+      emergencyOffer: preGuardEmergencyOffer,
+      serviceClarification: preGuardServiceClarification,
+      activeServiceInfo: preGuardActiveServiceInfo,
+      addressConfirmation: preGuardAddressConfirmation,
+      addressRequest: preGuardAddressRequest,
+      complaintData: preGuardComplaintData,
+      cancelConfirmation: preGuardCancelConfirmation,
+    };
+
+    // Hard greeting / thanks shortcut. Active states bypass this so the
+    // agent can interpret a bare "ok" or "terima kasih" in context of a
+    // pending flow (e.g., confirming a cancellation).
+    if (sideEffectMode !== 'knowledge_test') {
+      const greetingShortcut = tryHandleGreetingShortcut({
+        message: workingMessage,
+        userName: null,
+        villageName: null,
+        traceId,
+        startTime,
+        hasActiveState: hasPendingOrActiveState(preGuardStateSnapshot),
+      });
+      if (greetingShortcut) {
+        await recordGuardrail({
+          traceId,
+          waUserId: userId,
+          villageId: resolvedVillageId,
+          channel,
+          guardStage: 'pre_agent_shortcut',
+          guardType: 'greeting_only',
+          action: 'handled',
+          reason: greetingShortcut.metadata.guardrail?.reason,
+          messagePreview: workingMessage,
+        });
+        tracker.complete();
+        notifyStage('done', 100);
+        return finish(greetingShortcut);
+      }
+    }
+    const routingDecision = decideFastIntent({
+      message: workingMessage,
+      hasPendingServiceOffer: !!preGuardServiceOffer,
+      hasPendingEmergencyOffer: !!preGuardEmergencyOffer,
+      hasPendingServiceClarification: !!preGuardServiceClarification,
+      hasActiveServiceInfo: !!preGuardActiveServiceInfo,
+      hasPendingComplaintState: !!(preGuardAddressConfirmation || preGuardAddressRequest || preGuardComplaintData),
+    });
+    const releasedRoutingStates = releaseStatesForRoutingDecision(userId, preGuardStateSnapshot, routingDecision);
+    const deferredRoutingOutcome = buildDeferredRoutingOutcome(routingDecision, releasedRoutingStates);
+
+    const pendingOfferResult = sideEffectMode === 'knowledge_test' || !shouldHandlePendingOffer(routingDecision, preGuardStateSnapshot)
       ? null
       : await tryHandlePendingOffers({
           userId,
@@ -1058,6 +1319,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           runWithMicroBudget: withMicroNluBudget,
         });
     if (pendingOfferResult) {
+      routingOutcome = {
+        outcome: 'handled_pre_agent',
+        reason: pendingOfferResult.metadata.guardrail?.reason || pendingOfferResult.intent,
+        ...(releasedRoutingStates.length > 0 ? { releasedStates: releasedRoutingStates } : {}),
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
       await recordGuardrail({
         traceId,
         waUserId: userId,
@@ -1084,36 +1352,61 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           traceId,
           startTime,
           mediaUrl,
-          getUnifiedClassification,
           runWithMicroBudget: withMicroNluBudget,
           tracker,
           notifyStage,
         });
     if (latePreAgentResult) {
+      const guardrail = latePreAgentResult.metadata.guardrail;
+      routingOutcome = {
+        outcome: 'handled_pre_agent',
+        reason: guardrail?.reason || latePreAgentResult.intent,
+        ...(releasedRoutingStates.length > 0 ? { releasedStates: releasedRoutingStates } : {}),
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
       await recordGuardrail({
         traceId,
         waUserId: userId,
         villageId: resolvedVillageId,
         channel,
-        guardStage: 'pre_agent_state',
-        guardType: 'pending_state',
-        action: 'handled',
-        reason: latePreAgentResult.intent,
+        guardStage: guardrail?.stage || 'pre_agent_state',
+        guardType: guardrail?.type || 'pending_state',
+        action: guardrail?.action || 'handled',
+        reason: guardrail?.reason || latePreAgentResult.intent,
         messagePreview: workingMessage,
+        metadata: {
+          ...(guardrail?.details || {}),
+          finalIntentSource: 'pre_agent_state_router',
+          stateResumeResult: guardrail?.type === 'complaint_fsm_resume'
+            ? 'resumed'
+            : guardrail?.type === 'complaint_fsm_reprompt'
+              ? 'reprompted'
+              : 'handled',
+        },
       });
       return finish(latePreAgentResult);
     }
 
-    const pendingServiceClarificationResult = await tryHandlePendingServiceClarification({
-      userId,
-      message: workingMessage,
-      villageId: resolvedVillageId,
-      traceId,
-      startTime,
-      sideEffectMode,
-    });
+    const pendingServiceClarificationResult = shouldHandlePendingServiceClarification(routingDecision, preGuardStateSnapshot)
+      ? await tryHandlePendingServiceClarification({
+          userId,
+          message: workingMessage,
+          villageId: resolvedVillageId,
+          traceId,
+          startTime,
+          sideEffectMode,
+        })
+      : null;
     if (pendingServiceClarificationResult) {
       const guardrail = pendingServiceClarificationResult.metadata.guardrail;
+      routingOutcome = {
+        outcome: 'handled_pre_agent',
+        reason: guardrail?.reason || pendingServiceClarificationResult.intent,
+        ...(releasedRoutingStates.length > 0 ? { releasedStates: releasedRoutingStates } : {}),
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
       await recordGuardrail({
         traceId,
         waUserId: userId,
@@ -1131,16 +1424,25 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(pendingServiceClarificationResult);
     }
 
-    const activeServiceFollowUpResult = await tryHandleActiveServiceFollowUp({
-      userId,
-      message: workingMessage,
-      villageId: resolvedVillageId,
-      traceId,
-      startTime,
-      sideEffectMode,
-    });
+    const activeServiceFollowUpResult = shouldHandleActiveServiceFollowUp(routingDecision, preGuardStateSnapshot)
+      ? await tryHandleActiveServiceFollowUp({
+          userId,
+          message: workingMessage,
+          villageId: resolvedVillageId,
+          traceId,
+          startTime,
+          sideEffectMode,
+        })
+      : null;
     if (activeServiceFollowUpResult) {
       const guardrail = activeServiceFollowUpResult.metadata.guardrail;
+      routingOutcome = {
+        outcome: 'handled_pre_agent',
+        reason: guardrail?.reason || activeServiceFollowUpResult.intent,
+        ...(releasedRoutingStates.length > 0 ? { releasedStates: releasedRoutingStates } : {}),
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
       await recordGuardrail({
         traceId,
         waUserId: userId,
@@ -1158,7 +1460,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(activeServiceFollowUpResult);
     }
 
-    const outOfScopeGuardResult = sideEffectMode === 'knowledge_test'
+    const outOfScopeGuardResult = sideEffectMode === 'knowledge_test' || !shouldHardBlockOutOfScope(routingDecision)
       ? null
       : tryHandleOutOfScopeGuard({
           message: workingMessage,
@@ -1166,6 +1468,13 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           startTime,
         });
     if (outOfScopeGuardResult) {
+      routingOutcome = {
+        outcome: 'hard_blocked',
+        reason: routingDecision.reasons[0] || outOfScopeGuardResult.intent,
+        ...(releasedRoutingStates.length > 0 ? { releasedStates: releasedRoutingStates } : {}),
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
       await recordGuardrail({
         traceId,
         waUserId: userId,
@@ -1180,11 +1489,56 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       return finish(outOfScopeGuardResult);
     }
 
+    // Deterministic service listing — bypasses RAG/knowledge for "layanan apa aja"
+    const serviceListingResult = sideEffectMode === 'knowledge_test' || !shouldHandleServiceListing(routingDecision)
+      ? null
+      : await tryHandleServiceListingShortcut({
+          message: workingMessage,
+          villageId: resolvedVillageId,
+          traceId,
+          startTime,
+          sideEffectMode,
+        });
+    if (serviceListingResult) {
+      const guardrail = serviceListingResult.metadata.guardrail;
+      routingOutcome = {
+        outcome: 'handled_pre_agent',
+        reason: guardrail?.reason || serviceListingResult.intent,
+        ...(releasedRoutingStates.length > 0 ? { releasedStates: releasedRoutingStates } : {}),
+        action: routingDecision.action,
+        primaryIntent: routingDecision.primaryIntent,
+      };
+      await recordGuardrail({
+        traceId,
+        waUserId: userId,
+        villageId: resolvedVillageId,
+        channel,
+        guardStage: guardrail?.stage || 'pre_agent_service_listing',
+        guardType: guardrail?.type || 'service_listing_shortcut',
+        action: guardrail?.action || 'handled',
+        reason: guardrail?.reason || serviceListingResult.intent,
+        messagePreview: workingMessage,
+        metadata: guardrail?.details,
+      });
+      tracker.complete();
+      notifyStage('done', 100);
+      return finish(serviceListingResult);
+    }
+
     // Step 2.5: AI Optimization - cheap context first, expensive context only after fast exits miss
     const pendingServiceOffer = sideEffectMode === 'knowledge_test'
       ? null
       : await getPendingServiceFormOfferWithFallback(userId);
     const activeServiceInfo = await getActiveServiceInfoWithFallback(userId);
+    const postGuardStateSnapshot: PendingStateSnapshot = {
+      ...preGuardStateSnapshot,
+      serviceOffer: releasedRoutingStates.includes('pending_service_form_offer') ? null : pendingServiceOffer,
+      serviceClarification: releasedRoutingStates.includes('pending_service_clarification') ? null : preGuardStateSnapshot.serviceClarification,
+      activeServiceInfo: releasedRoutingStates.includes('active_service_info') ? null : activeServiceInfo,
+      emergencyOffer: releasedRoutingStates.includes('pending_emergency_complaint_offer') ? null : preGuardStateSnapshot.emergencyOffer,
+    };
+    routingOutcome = deferredRoutingOutcome;
+    const pendingStateSummary = buildPendingStateSummary(postGuardStateSnapshot) || buildPendingStateSummary(preGuardStateSnapshot);
     const lastDiscussedService = resolvedHistory?.length
       ? deriveLastDiscussedServiceContext(resolvedHistory)
       : {};
@@ -1235,13 +1589,19 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     }
 
     // Check response cache for multiple cacheable intents
-    const CACHEABLE_INTENTS = ['KNOWLEDGE_QUERY', 'SERVICE_INFO', 'VILLAGE_PROFILE', 'EMERGENCY_CONTACTS'];
-    let cachedResponse: { response: string; guidanceText?: string; intent: string } | null = null;
-    if (!isEvaluation && sideEffectMode !== 'knowledge_test') {
+    const CACHEABLE_INTENTS = ['KNOWLEDGE_QUERY', 'SERVICE_INFO', 'VILLAGE_PROFILE', 'EMERGENCY_CONTACTS', 'CONTACT_DIRECTORY'];
+    let cachedResponse: { response: string; guidanceText?: string; intent: string; toolsUsed?: string[] } | null = null;
+    const skipContextualCache = hasPendingOrActiveState(postGuardStateSnapshot) || isShortContextualFollowUp(sanitizedMessage);
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test' && !skipContextualCache) {
       for (const cacheIntent of CACHEABLE_INTENTS) {
         const hit = getCachedResponse(sanitizedMessage, cacheIntent, resolvedVillageId);
         if (hit) {
-          cachedResponse = { response: hit.response, guidanceText: hit.guidanceText, intent: cacheIntent };
+          cachedResponse = {
+            response: hit.response,
+            guidanceText: hit.guidanceText,
+            intent: cacheIntent,
+            toolsUsed: Array.isArray(hit.toolsUsed) ? hit.toolsUsed : [],
+          };
           break;
         }
       }
@@ -1250,7 +1610,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       tracker.complete();
       notifyStage('done', 100);
 
-      return finish({
+      let cacheResult: ProcessMessageResult = {
         success: true,
         response: cachedResponse.response,
         guidanceText: cachedResponse.guidanceText,
@@ -1259,10 +1619,75 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           processingTimeMs: Date.now() - startTime,
           hasKnowledge: cachedResponse.intent === 'KNOWLEDGE_QUERY',
           agentMode: 'response_cache',
-          toolsUsed: [],
+          toolsUsed: cachedResponse.toolsUsed || [],
           traceId,
         },
+      };
+
+      const cachedVerification = verifyAnswer({
+        userMessage: sanitizedMessage,
+        result: cacheResult,
+        toolsUsed: cachedResponse.toolsUsed || [],
+        handledByGuard: false,
       });
+      if (!cachedVerification.ok && cachedVerification.replacement) {
+        cacheResult = {
+          ...cachedVerification.replacement,
+          metadata: {
+            ...cachedVerification.replacement.metadata,
+            traceId,
+            toolsUsed: cachedResponse.toolsUsed || [],
+            ...({
+              answerPolicy: {
+                kind: cachedVerification.kind,
+                ok: false,
+                rewritten: true,
+                reason: cachedVerification.reason,
+              },
+            } as any),
+          },
+        };
+      } else {
+        cacheResult = {
+          ...cacheResult,
+          metadata: {
+            ...cacheResult.metadata,
+            ...({
+              answerPolicy: {
+                kind: cachedVerification.kind,
+                ok: cachedVerification.ok,
+                rewritten: cachedVerification.rewritten,
+                reason: cachedVerification.reason,
+              },
+            } as any),
+          },
+        };
+      }
+
+      // Reconcile cached response against current DB in case admin updated
+      // kontak / jam / layanan since the entry was cached. Low cost —
+      // reconciler short-circuits when nothing structured is in the text.
+      try {
+        const reconciliation = await reconcileDbVsRag({
+          villageId: resolvedVillageId,
+          userMessage: sanitizedMessage,
+          result: cacheResult,
+          toolsUsed: cachedResponse.toolsUsed || [],
+        });
+        if (!reconciliation.ok && reconciliation.replacement) {
+          cacheResult = {
+            ...reconciliation.replacement,
+            metadata: { ...reconciliation.replacement.metadata, traceId },
+          };
+        }
+      } catch (reconcilerError: any) {
+        logger.warn('cache-path reconciler failed (non-blocking)', {
+          traceId,
+          error: reconcilerError.message,
+        });
+      }
+
+      return finish(cacheResult);
     }
 
     const conversationContext = resolvedHistory?.length
@@ -1323,6 +1748,8 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       activeServiceSlug: pendingServiceOffer?.service_slug || activeServiceInfo?.service_slug || lastDiscussedService.serviceSlug,
       activeServiceName: activeServiceInfo?.service_name || lastDiscussedService.serviceName,
       memorySummary,
+      routingDecision,
+      pendingStateSummary,
       villageName: templateContext?.villageName ?? undefined,
       villageTimezone,
       userName: savedProfile.nama_lengkap ?? null,
@@ -1377,8 +1804,149 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         action: agentResult.metadata.guardrail.action,
         reason: agentResult.metadata.guardrail.reason,
         messagePreview: workingMessage,
-        metadata: agentResult.metadata.guardrail.details,
+        metadata: {
+          ...(agentResult.metadata.guardrail.details || {}),
+          finalIntentSource: 'agent_orchestrator',
+        },
       });
+    }
+
+    // ── Answer policy verifier ──
+    // Ensures structured-fact responses (nomor kontak, daftar layanan) are
+    // grounded in a tool result before they reach the user. If not, we
+    // rewrite into an honest "not found / not sure" reply so we never
+    // fabricate a phone number or a fake service list.
+    if (sideEffectMode !== 'knowledge_test' && agentResult.intent !== 'TAKEOVER') {
+      const verification = verifyAnswer({
+        userMessage: sanitizedMessage,
+        result: agentResult,
+        toolsUsed: agentResult.metadata.toolsUsed || [],
+        handledByGuard: false,
+      });
+
+      if (!verification.ok && verification.replacement) {
+        await recordGuardrail({
+          traceId,
+          waUserId: userId,
+          villageId: resolvedVillageId,
+          channel,
+          guardStage: 'answer_policy',
+          guardType: verification.kind,
+          action: 'rewritten',
+          reason: verification.reason,
+          messagePreview: workingMessage,
+          metadata: {
+            toolsUsed: agentResult.metadata.toolsUsed || [],
+            allowedTools: agentResult.metadata.allowedTools || [],
+          },
+        });
+
+        agentResult = {
+          ...verification.replacement,
+          metadata: {
+            ...verification.replacement.metadata,
+            traceId,
+            ...({
+              answerPolicy: {
+                kind: verification.kind,
+                ok: false,
+                rewritten: true,
+                reason: verification.reason,
+              },
+            } as any),
+          },
+        };
+      } else if (verification.rewritten && !verification.replacement) {
+        // Defensive: shouldn't happen, but tag for observability if it does.
+        await recordGuardrail({
+          traceId,
+          waUserId: userId,
+          villageId: resolvedVillageId,
+          channel,
+          guardStage: 'answer_policy',
+          guardType: verification.kind,
+          action: 'flagged',
+          reason: verification.reason,
+          messagePreview: workingMessage,
+        });
+        agentResult = {
+          ...agentResult,
+          metadata: {
+            ...agentResult.metadata,
+            ...({
+              answerPolicy: {
+                kind: verification.kind,
+                ok: false,
+                rewritten: true,
+                reason: verification.reason,
+              },
+            } as any),
+          },
+        };
+      } else {
+        // Attach the kind so downstream analytics can segment by answer type.
+        agentResult = {
+          ...agentResult,
+          metadata: {
+            ...agentResult.metadata,
+            ...({
+              answerPolicy: {
+                kind: verification.kind,
+                ok: verification.ok,
+                rewritten: verification.rewritten,
+                reason: verification.reason,
+              },
+            } as any),
+          },
+        };
+      }
+    }
+
+    // ── DB-vs-RAG reconciler ──
+    // Second safety net. Cross-checks structured values (phone numbers,
+    // operating hours) cited in the final response against the authoritative
+    // DB directly. Catches cases where the agent used the right tool but
+    // still surfaced a value from RAG/knowledge that disagrees with DB.
+    if (sideEffectMode !== 'knowledge_test' && agentResult.intent !== 'TAKEOVER') {
+      try {
+        const reconciliation = await reconcileDbVsRag({
+          villageId: resolvedVillageId,
+          userMessage: sanitizedMessage,
+          result: agentResult,
+          toolsUsed: agentResult.metadata.toolsUsed || [],
+        });
+
+        if (!reconciliation.ok && reconciliation.replacement) {
+          await recordGuardrail({
+            traceId,
+            waUserId: userId,
+            villageId: resolvedVillageId,
+            channel,
+            guardStage: 'db_rag_reconciler',
+            guardType: reconciliation.mismatches[0]?.kind || 'value_mismatch',
+            action: 'rewritten',
+            reason: 'value_not_in_official_db',
+            messagePreview: workingMessage,
+            metadata: {
+              mismatches: reconciliation.mismatches,
+              toolsUsed: agentResult.metadata.toolsUsed || [],
+            },
+          });
+
+          agentResult = {
+            ...reconciliation.replacement,
+            metadata: {
+              ...reconciliation.replacement.metadata,
+              traceId,
+            },
+          };
+        }
+      } catch (reconcilerError: any) {
+        logger.warn('db-rag reconciler failed (non-blocking)', {
+          traceId,
+          error: reconcilerError.message,
+        });
+      }
     }
 
     if (!isEvaluation && sideEffectMode !== 'knowledge_test' && agentResult.success && isCacheableAgentResult(agentResult)) {
@@ -1391,6 +1959,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
         cacheIntent,
         agentResult.guidanceText,
         resolvedVillageId,
+        agentResult.metadata.toolsUsed || [],
       );
     }
 
@@ -1464,6 +2033,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           toolTrace: analyticsResult.metadata.toolTrace as any,
         });
 
+        const answerPolicy = (analyticsResult.metadata as any)?.answerPolicy;
         await recordToolPolicyEvent({
           traceId: analyticsResult.metadata.traceId,
           waUserId: userId,
@@ -1477,6 +2047,59 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           success: analyticsResult.success,
           policyKey: analyticsResult.metadata.toolPolicy?.policyKey,
           policySource: analyticsResult.metadata.toolPolicy?.policySource,
+          toolPolicyReason: encodeToolPolicyReasonWithRouting((analyticsResult.metadata as any)?.toolPolicyReason, analyticsResult),
+          firstTurnToolChoice: analyticsResult.metadata.toolPolicy?.firstTurnToolChoice,
+          firstTurnToolChoiceReason: (analyticsResult.metadata as any)?.firstTurnToolChoiceReason,
+          finalIntentSource: 'agent',
+          stateResumeResult: undefined,
+          answerPolicyKind: answerPolicy?.kind,
+          answerPolicyRewritten: answerPolicy?.rewritten,
+        });
+      } else if (analyticsResult.metadata.agentMode === 'pre_agent_guard') {
+        // Persist a minimal policy event for guard paths too so RCA can always
+        // see which layer produced the final answer.
+        await recordToolPolicyEvent({
+          traceId: analyticsResult.metadata.traceId,
+          waUserId: userId,
+          villageId,
+          channel,
+          query: workingMessage,
+          heuristicTools: [],
+          learnedTools: [],
+          allowedTools: [],
+          actualTools: [],
+          success: analyticsResult.success,
+          policyKey: undefined,
+          policySource: analyticsResult.metadata.guardrail?.stage,
+          toolPolicyReason: encodeToolPolicyReasonWithRouting('guard_short_circuit', analyticsResult),
+          firstTurnToolChoice: undefined,
+          firstTurnToolChoiceReason: undefined,
+          finalIntentSource: 'guardrail',
+          stateResumeResult: deriveStateResumeResult(analyticsResult),
+          answerPolicyKind: undefined,
+          answerPolicyRewritten: undefined,
+        });
+      } else if (analyticsResult.metadata.agentMode === 'response_cache') {
+        await recordToolPolicyEvent({
+          traceId: analyticsResult.metadata.traceId,
+          waUserId: userId,
+          villageId,
+          channel,
+          query: workingMessage,
+          heuristicTools: [],
+          learnedTools: [],
+          allowedTools: [],
+          actualTools: [],
+          success: analyticsResult.success,
+          policyKey: undefined,
+          policySource: 'response_cache',
+          toolPolicyReason: encodeToolPolicyReasonWithRouting('cached_response', analyticsResult),
+          firstTurnToolChoice: undefined,
+          firstTurnToolChoiceReason: undefined,
+          finalIntentSource: 'cache',
+          stateResumeResult: undefined,
+          answerPolicyKind: undefined,
+          answerPolicyRewritten: undefined,
         });
       }
     }

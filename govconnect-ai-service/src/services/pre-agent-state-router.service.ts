@@ -1,16 +1,14 @@
 import {
   cancelComplaint,
   cancelServiceRequest,
+  getServiceCatalog,
   getUserHistory,
 } from './case-client.service';
 import { updateConversationUserProfile } from './channel-client.service';
 import { rememberMemoryEvent } from './hybrid-memory.service';
 import { handleCancellationRequest, handleComplaintCreation, handlePendingAddressConfirmation } from './complaint-handler';
 import { classifyConfirmation } from './confirmation-classifier.service';
-import {
-  analyzeAddress,
-  UnifiedClassifyResult,
-} from './micro-llm-matcher.service';
+import type { UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { handleServiceRequestCreation, handleServiceRequestEditLink } from './service-handler';
 import { handleStatusCheck } from './status-handler';
 import {
@@ -53,18 +51,50 @@ import {
 } from './ump-state';
 import {
   appendToHistoryCache,
-  extractAddressFromMessage,
-  extractNameFromTextNLU,
   fetchConversationHistoryFromChannel,
 } from './ump-utils';
 import { getAutoFillSuggestionsWithFallback, updateProfile } from './user-profile.service';
-import { getImportantContacts } from './important-contacts.service';
+import { getImportantContacts, isContactDirectoryLookup, lookupImportantContacts } from './important-contacts.service';
+import logger from '../utils/logger';
 
 type MicroBudgetRunner = <T>(task: () => Promise<T>, fallback: T) => Promise<T>;
 type TrackerLike = {
   preparing(): void;
   complete(): void;
 };
+
+export type RoutingAction = 'handle_pre_agent' | 'defer_to_agent' | 'release_state_and_defer' | 'hard_block';
+export type RoutingConfidence = 'hard' | 'high' | 'medium' | 'low';
+export type FastIntentPrimary =
+  | 'status_lookup'
+  | 'service_info'
+  | 'service_listing'
+  | 'service_follow_up'
+  | 'service_clarification'
+  | 'service_form_confirmation'
+  | 'complaint_creation'
+  | 'complaint_resume'
+  | 'contact_lookup'
+  | 'emergency_contact'
+  | 'out_of_scope'
+  | 'knowledge_query'
+  | 'greeting'
+  | 'unknown';
+
+export interface FastIntentDecision {
+  action: RoutingAction;
+  confidence: RoutingConfidence;
+  primaryIntent: FastIntentPrimary;
+  mixedSignals: boolean;
+  stateAffinity?: 'answers_pending_state' | 'switches_topic' | 'unclear';
+  reasons: string[];
+  allowedToolHints?: string[];
+}
+
+export type PreAgentRouteResult =
+  | { kind: 'handled'; result: ProcessMessageResult }
+  | { kind: 'defer'; reason: string }
+  | { kind: 'release_and_defer'; reason: string; releasedState: string[] };
 
 function buildGuardResult(input: {
   startTime: number;
@@ -75,6 +105,7 @@ function buildGuardResult(input: {
   hasKnowledge?: boolean;
   contacts?: ProcessMessageResult['contacts'];
   guardrail?: NonNullable<ProcessMessageResult['metadata']['guardrail']>;
+  routing?: FastIntentDecision;
 }): ProcessMessageResult {
   return {
     success: true,
@@ -88,6 +119,7 @@ function buildGuardResult(input: {
       agentMode: 'pre_agent_guard',
       traceId: input.traceId,
       ...(input.guardrail ? { guardrail: input.guardrail } : {}),
+      ...(input.routing ? { routing: input.routing } : {}),
     },
   };
 }
@@ -127,6 +159,8 @@ function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncer
     /^(tidak|nggak|ga|gak)\s+(jadi|dulu|usah|perlu)$/i,
     /^(batal|jangan)\s+(saja|dulu|ya)$/i,
     /^gak jadi$/i,
+    /^nanti(\s+dulu)?$/i,
+    /^(terima\s+kasih|makasih|oke\s+makasih|ok\s+makasih|siap\s+makasih)$/i,
   ];
 
   if (explicitYesPatterns.some((pattern) => pattern.test(normalized))) {
@@ -140,26 +174,105 @@ function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncer
   return 'uncertain';
 }
 
-const COMPLAINT_INCIDENT_PATTERN = /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|selokan|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas)\b/i;
+// Keyword-only patterns are kept narrow. Broader intent is asserted by
+// combining these keywords with an ACTIVE-EVENT signal below.
+// Audit (2026-05-10): previously a bare "polisi" or "banjir" was enough to
+// route to emergency/complaint; this misrouted asks like "nomor polsek",
+// "program edukasi sampah", or "nomor KTP hilang".
+const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|jalan berlubang|lampu mati|sampah menumpuk|sampah berserakan|drainase|selokan mampet|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|kecelaka+an|kebakaran|orang pingsan|ledakan)\b/i;
 const COMPLAINT_INFO_QUERY_PATTERN = /\b(pengaduan|keluhan|laporan)\b/i;
 const COMPLAINT_INFO_HINT_PATTERN = /\b(apa|bagaimana|gimana|jelaskan|contoh|format|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i;
 const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengantar)\b/i;
-const EMERGENCY_PATTERN = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|polisi|pencurian|darurat|bencana|banjir mendadak|longsor|gempa|tsunami|evakuasi|ledakan)\b/i;
-const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|saya mau lapor|aduan)\b/i;
+const EMERGENCY_KEYWORDS = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|pencurian|darurat|bencana|longsor|gempa|tsunami|evakuasi|ledakan)\b/i;
+
+/** Active-event signal: user is *reporting* something happening now. */
+const ACTIVE_EVENT_SIGNAL = /\b(tolong|segera|help|help\s*me|bantu|bantuin|terjadi|sedang\s+terjadi|barusan|baru\s+saja|lagi|ada\s+(?:yang|yg)|di\s*sini\s+ada|telah\s+terjadi|baru\s+terjadi|kejadian|ya\s*allah|ya\s*tuhan|astaga|gawat|bahaya)\b/i;
+
+/** Explicit "I want to report" — this alone is enough to enter complaint flow. */
+const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|mau lapor|saya lapor|saya mau lapor|buat laporan|buat pengaduan|laporkan|aduan)\b/i;
+
+/** Directory lookup — user asking FOR a number, not reporting an emergency. */
+const CONTACT_DIRECTORY_SIGNAL = /\b(nomor|no\.?|nomer|kontak|telp|telpon|telepon|hp|wa|whatsapp)\b/i;
+
+/** Information/query signal — user is asking ABOUT, not reporting. */
+const INFORMATION_QUERY_SIGNAL = /\b(apa|apakah|bagaimana|gimana|kenapa|kapan|dimana|di\s*mana|berapa|siapa|program|edukasi|sosialisasi|penjelasan|jelaskan|pengertian|definisi|maksud|arti)\b/i;
+
+/**
+ * Complaint incident detection with guard-rails against false positives.
+ * Returns true ONLY when keywords co-occur with an active-event signal OR
+ * an explicit-report phrase. "Program edukasi sampah" will NOT trigger.
+ */
+function matchesComplaintIncident(normalized: string): boolean {
+  if (EXPLICIT_REPORT_PATTERN.test(normalized)) return true;
+  if (!COMPLAINT_INCIDENT_KEYWORDS.test(normalized)) return false;
+  // Guard: if the query is clearly informational, it's a knowledge question.
+  if (INFORMATION_QUERY_SIGNAL.test(normalized) && !ACTIVE_EVENT_SIGNAL.test(normalized)) {
+    return false;
+  }
+  // Guard: if the user is asking for a contact number, not reporting.
+  if (CONTACT_DIRECTORY_SIGNAL.test(normalized)) return false;
+  return ACTIVE_EVENT_SIGNAL.test(normalized);
+}
+
+/**
+ * Emergency detection. Requires either explicit active-event signal OR
+ * kebakaran/ledakan (which are rarely casual conversation). "Nomor polisi"
+ * or "program damkar sekolah" will NOT trigger.
+ */
+function matchesActiveEmergency(normalized: string): boolean {
+  // Contact lookup intent overrides emergency — "ada nomor damkar?" is not
+  // an active fire, it's a directory query.
+  if (CONTACT_DIRECTORY_SIGNAL.test(normalized)) return false;
+  // Pure information queries about emergency topics aren't emergencies.
+  if (INFORMATION_QUERY_SIGNAL.test(normalized) && !ACTIVE_EVENT_SIGNAL.test(normalized)) {
+    return false;
+  }
+  if (!EMERGENCY_KEYWORDS.test(normalized)) return false;
+  // Rare severe-event keywords carry enough signal by themselves.
+  if (/\b(kebakaran|ledakan|gempa|tsunami|longsor)\b/i.test(normalized)) return true;
+  return ACTIVE_EVENT_SIGNAL.test(normalized);
+}
+
+/** Legacy aliases retained so existing call-sites keep working. */
+const COMPLAINT_INCIDENT_PATTERN = {
+  test: (s: string) => matchesComplaintIncident(s),
+};
+const EMERGENCY_PATTERN = {
+  test: (s: string) => matchesActiveEmergency(s),
+};
 const SERVICE_EVENT_PATTERN = /\b(meninggal|kematian|lahir|kelahiran|pindah|nikah|cerai|ktp|kk|domisili|akta|sktm|surat)\b/i;
 const OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN = /\b(sim|paspor|bpjs|visa|imigrasi|npwp|stnk|bpkb)\b/i;
-const OUT_OF_SCOPE_GENERAL_PATTERN = /\b(javascript|typescript|python|java|coding|ngoding|code|program|programmer|console\.log|for\s*\(|while\s*\(|loop\b|algoritma|matematika|rumus|1\s*\+\s*1|game|sepak bola|film|artis|zodiak)\b/i;
+// Narrow, high-confidence out-of-scope signals. Keywords here must be
+// essentially unambiguous signs of programming or entertainment chatter.
+// We deliberately avoid loose Indonesian words like "program" (could mean
+// "program bantuan/pkh"), "film" (could mean "film desa"), "rumus" (could
+// mean "rumus perhitungan pajak"), etc.
+const OUT_OF_SCOPE_GENERAL_PATTERN = /\b(javascript|typescript|\bpython\b|\bjava\s+script\b|ngoding|console\.log|for\s*\(|while\s*\(|algoritma|zodiak|horoskop|tarot|cocokologi)\b/i;
+const OUT_OF_SCOPE_STRONG_SIGNALS = [
+  // Entertainment request explicit
+  /\b(rekomendasi|rekomendasiin|bahas)\s+(film|anime|drama|game|lagu|artis)\b/i,
+  // Programming help explicit
+  /\b(bantu|ajari?|tolong)\s+(ngoding|coding|nulis\s+code|debug|bikin\s+program)\b/i,
+  /\b(cara|gimana)\s+(ngoding|coding|bikin\s+(program|script|aplikasi)\s+(javascript|python|java|typescript))\b/i,
+  // Math tutoring explicit
+  /\b(kerjain|bantu|tolong)\s+(soal|pr|tugas)\s+(matematika|fisika|kimia)\b/i,
+  /^\s*\d+\s*[+\-*/x]\s*\d+\s*(?:=\s*)?\s*(?:\?|berapa|hasil|sama dengan|result|ya)?[\s?.]*$/i,
+];
 const SERVICE_INFORMATIONAL_LINK_PATTERN = /\b(ada\s+(link|tautan|form|formulir)(?:nya)?|(link|tautan|form|formulir)(?:nya)?\s+ada|link\s+online|form\s+online|tautan\s+online)\b/i;
 const SERVICE_EXPLICIT_ACTION_PATTERN = /\b((kirim(?:kan)?|tolong kirim|minta|mana)\s+(link|tautan|form|formulir)(?:nya)?|(link|tautan|form|formulir)(?:nya)?\s+(mana|sekarang|saja)|lanjut(?:kan)?\s+(ajukan|pengajuan|permohonan)|ajukan(?:kan)?\s+(layanan|permohonan|pengajuan)|buat(?:kan)?\s+(pengajuan|permohonan)|isi\s+formulir)\b/i;
 const SERVICE_PENDING_INFO_PATTERN = /\b(syarat(?:nya)?|persyaratan(?:nya)?|biaya(?:nya)?|berapa lama|lama proses(?:nya)?|proses(?:nya)?|dokumen(?:nya)?|berkas(?:nya)?|harus ke kantor|ke kantor|offline|online|link(?:nya)?|form(?:nya)?)\b/i;
 const GOVCONNECT_USAGE_PATTERN = /\b(govconnect|whatsapp|webchat|lay-|lap-|cek status|riwayat|pengaduan|layanan desa|kantor desa)\b/i;
 const VILLAGE_SERVICE_SCOPE_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengaduan|laporan|status|kantor desa|jam buka|kontak|darurat)\b/i;
+const VILLAGE_PROFILE_TOPIC_PATTERN = /\b(jam\s+(buka|kerja|operasional|pelayanan|tutup)|kapan\s+(buka|tutup)|alamat\s+(kantor|desa|kelurahan)|kantor\s+desa|lokasi\s+(kantor|desa)|maps?|google\s*maps?)\b/i;
+const STATUS_CANCEL_EDIT_TOPIC_PATTERN = /\b(cek\s+status|status\s+(laporan|layanan|pengajuan|permohonan)|riwayat|history|batal|batalkan|cancel|edit\s+layanan|ubah\s+data|update\s+data|perbarui\s+data)\b/i;
+const CORRECTION_TOPIC_SHIFT_PATTERN = /\b(bukan\s+itu|maksud\s+saya|maksudnya|ganti\s+topik|sebentar|nanti\s+dulu)\b/i;
 
 function isOutOfScopeGeneralQuestion(message: string): boolean {
   const normalized = (message || '').toLowerCase();
   if (/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)) return false;
   if (GOVCONNECT_USAGE_PATTERN.test(normalized) || VILLAGE_SERVICE_SCOPE_PATTERN.test(normalized)) return false;
-  return OUT_OF_SCOPE_GENERAL_PATTERN.test(normalized);
+  if (OUT_OF_SCOPE_GENERAL_PATTERN.test(normalized)) return true;
+  return OUT_OF_SCOPE_STRONG_SIGNALS.some((pattern) => pattern.test(normalized));
 }
 
 function isPendingServiceFollowUp(message: string): boolean {
@@ -183,7 +296,159 @@ function isPendingServiceLinkRequest(message: string): boolean {
 
 function isClearlyDifferentIntent(message: string): boolean {
   const normalized = (message || '').toLowerCase();
-  return /\b(mau lapor|lapor jalan|lampu mati|sampah|darurat|cek status|riwayat|batal|batalkan|edit layanan|ubah data)\b/i.test(normalized);
+  if (!normalized) return false;
+  if (isContactDirectoryLookup(message)) return true;
+  if (VILLAGE_PROFILE_TOPIC_PATTERN.test(normalized)) return true;
+  if (STATUS_CANCEL_EDIT_TOPIC_PATTERN.test(normalized)) return true;
+  if (CORRECTION_TOPIC_SHIFT_PATTERN.test(normalized)) return true;
+  return /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|lapor jalan|lampu mati|sampah|darurat|kebakaran|kecelaka+an|pohon tumbang)\b/i.test(normalized);
+}
+
+function buildRoutingDecision(input: Partial<FastIntentDecision> & Pick<FastIntentDecision, 'primaryIntent'>): FastIntentDecision {
+  return {
+    action: input.action || 'defer_to_agent',
+    confidence: input.confidence || 'low',
+    primaryIntent: input.primaryIntent,
+    mixedSignals: input.mixedSignals ?? false,
+    ...(input.stateAffinity ? { stateAffinity: input.stateAffinity } : {}),
+    reasons: input.reasons || [],
+    ...(input.allowedToolHints ? { allowedToolHints: input.allowedToolHints } : {}),
+  };
+}
+
+export function decideFastIntent(input: {
+  message: string;
+  hasPendingServiceOffer?: boolean;
+  hasPendingEmergencyOffer?: boolean;
+  hasPendingServiceClarification?: boolean;
+  hasActiveServiceInfo?: boolean;
+  hasPendingComplaintState?: boolean;
+  unified?: UnifiedClassifyResult | null;
+}): FastIntentDecision {
+  const normalized = (input.message || '').toLowerCase().trim();
+  const stateActive = !!(input.hasPendingServiceOffer || input.hasPendingServiceClarification || input.hasActiveServiceInfo || input.hasPendingComplaintState);
+  const serviceSignal = SERVICE_ADMIN_PATTERN.test(normalized) || isServiceListingQuery(normalized) || isPendingServiceFollowUp(normalized);
+  const contactSignal = isContactDirectoryLookup(input.message);
+  const complaintSignal = COMPLAINT_INCIDENT_PATTERN.test(normalized) || EXPLICIT_REPORT_PATTERN.test(normalized);
+  const emergencySignal = EMERGENCY_PATTERN.test(normalized) && !contactSignal;
+  const villageProfileSignal = VILLAGE_PROFILE_TOPIC_PATTERN.test(normalized);
+  const outOfScopeSignal = OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN.test(normalized) || isOutOfScopeGeneralQuestion(normalized);
+  const signalCount = [serviceSignal, contactSignal, complaintSignal, emergencySignal, villageProfileSignal, outOfScopeSignal].filter(Boolean).length;
+  const mixedSignals = signalCount > 1;
+
+  if (/^(halo|hai|hi|assalamualaikum|permisi|terima kasih|makasih)[\s!.,?]*$/i.test(normalized)) {
+    return buildRoutingDecision({ primaryIntent: 'greeting', action: 'defer_to_agent', confidence: 'high', reasons: ['greeting_or_thanks'] });
+  }
+
+  if ((input.hasPendingServiceOffer || input.hasPendingServiceClarification) && contactSignal) {
+    return buildRoutingDecision({
+      primaryIntent: 'contact_lookup',
+      action: 'release_state_and_defer',
+      confidence: 'high',
+      mixedSignals,
+      stateAffinity: 'switches_topic',
+      reasons: ['pending_state_contact_topic_shift'],
+      allowedToolHints: ['get_important_contact'],
+    });
+  }
+
+  if (contactSignal) {
+    return buildRoutingDecision({
+      primaryIntent: 'contact_lookup',
+      action: mixedSignals ? 'defer_to_agent' : 'handle_pre_agent',
+      confidence: mixedSignals ? 'medium' : 'hard',
+      mixedSignals,
+      stateAffinity: stateActive ? 'switches_topic' : undefined,
+      reasons: ['contact_directory_lookup'],
+      allowedToolHints: ['get_important_contact'],
+    });
+  }
+
+  if (input.hasPendingServiceOffer) {
+    const pendingServiceDecision = detectExplicitConfirmationReply(normalized);
+    if (isExplicitServiceActionRequest(normalized) || pendingServiceDecision === 'yes' || pendingServiceDecision === 'no') {
+      return buildRoutingDecision({ primaryIntent: pendingServiceDecision === 'no' ? 'service_follow_up' : 'service_form_confirmation', action: 'handle_pre_agent', confidence: 'hard', stateAffinity: 'answers_pending_state', reasons: [pendingServiceDecision === 'no' ? 'declined_service_form_confirmation' : 'explicit_service_form_confirmation'], allowedToolHints: ['create_service_request'] });
+    }
+    if (isInformationalServiceLinkInquiry(normalized) || isPendingServiceFollowUp(normalized)) {
+      return buildRoutingDecision({ primaryIntent: 'service_follow_up', action: 'handle_pre_agent', confidence: 'high', stateAffinity: 'answers_pending_state', reasons: ['pending_service_informational_follow_up'], allowedToolHints: ['get_service_info'] });
+    }
+    if (isClearlyDifferentIntent(normalized)) {
+      return buildRoutingDecision({ primaryIntent: 'unknown', action: 'release_state_and_defer', confidence: 'high', stateAffinity: 'switches_topic', reasons: ['pending_service_topic_shift'] });
+    }
+  }
+
+  if (input.hasPendingEmergencyOffer) {
+    const confirmationDecision = detectExplicitConfirmationReply(normalized);
+    if (confirmationDecision === 'yes' || confirmationDecision === 'no') {
+      return buildRoutingDecision({
+        primaryIntent: 'complaint_creation',
+        action: 'handle_pre_agent',
+        confidence: 'hard',
+        stateAffinity: 'answers_pending_state',
+        reasons: ['pending_emergency_offer_confirmation'],
+        allowedToolHints: ['create_complaint', 'get_emergency_contacts'],
+      });
+    }
+    if (isClearlyDifferentIntent(normalized) || villageProfileSignal) {
+      return buildRoutingDecision({
+        primaryIntent: contactSignal ? 'contact_lookup' : villageProfileSignal ? 'knowledge_query' : 'unknown',
+        action: 'release_state_and_defer',
+        confidence: 'high',
+        mixedSignals,
+        stateAffinity: 'switches_topic',
+        reasons: ['pending_emergency_offer_topic_shift'],
+        allowedToolHints: contactSignal ? ['get_important_contact'] : villageProfileSignal ? ['get_village_profile'] : undefined,
+      });
+    }
+    return buildRoutingDecision({
+      primaryIntent: 'complaint_creation',
+      action: 'handle_pre_agent',
+      confidence: 'medium',
+      stateAffinity: 'answers_pending_state',
+      reasons: ['pending_emergency_offer'],
+      allowedToolHints: ['create_complaint', 'get_emergency_contacts'],
+    });
+  }
+
+  if (input.hasPendingServiceClarification) {
+    if (isClearlyDifferentIntent(normalized)) {
+      return buildRoutingDecision({ primaryIntent: contactSignal ? 'contact_lookup' : 'unknown', action: 'release_state_and_defer', confidence: 'high', mixedSignals, stateAffinity: 'switches_topic', reasons: ['pending_clarification_topic_shift'], allowedToolHints: contactSignal ? ['get_important_contact'] : undefined });
+    }
+    return buildRoutingDecision({ primaryIntent: 'service_clarification', action: 'handle_pre_agent', confidence: 'medium', stateAffinity: 'answers_pending_state', reasons: ['pending_service_clarification'] });
+  }
+
+  if (input.hasActiveServiceInfo && (isPendingServiceFollowUp(normalized) || isPendingServiceLinkRequest(normalized))) {
+    return buildRoutingDecision({ primaryIntent: 'service_follow_up', action: 'handle_pre_agent', confidence: 'high', stateAffinity: 'answers_pending_state', reasons: ['active_service_follow_up'], allowedToolHints: ['get_service_info', 'create_service_request'] });
+  }
+
+  if (isServiceListingQuery(normalized)) {
+    return buildRoutingDecision({ primaryIntent: 'service_listing', action: mixedSignals ? 'defer_to_agent' : 'handle_pre_agent', confidence: mixedSignals ? 'medium' : 'high', mixedSignals, reasons: ['service_listing_query'], allowedToolHints: ['get_service_info'] });
+  }
+
+  if (emergencySignal) {
+    return buildRoutingDecision({ primaryIntent: 'emergency_contact', action: mixedSignals ? 'defer_to_agent' : 'handle_pre_agent', confidence: mixedSignals ? 'medium' : 'high', mixedSignals, reasons: ['emergency_signal'], allowedToolHints: ['get_emergency_contacts', 'create_complaint'] });
+  }
+
+  if (complaintSignal) {
+    return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: mixedSignals ? 'defer_to_agent' : 'handle_pre_agent', confidence: mixedSignals ? 'medium' : 'high', mixedSignals, reasons: ['complaint_signal'], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
+  }
+
+  if (villageProfileSignal) {
+    return buildRoutingDecision({ primaryIntent: 'knowledge_query', action: 'defer_to_agent', confidence: 'high', reasons: ['village_profile_query'], allowedToolHints: ['get_village_profile'] });
+  }
+
+  if (outOfScopeSignal) {
+    return buildRoutingDecision({ primaryIntent: 'out_of_scope', action: mixedSignals ? 'defer_to_agent' : 'hard_block', confidence: mixedSignals ? 'medium' : 'high', mixedSignals, reasons: ['out_of_scope_signal'] });
+  }
+
+  return buildRoutingDecision({
+    primaryIntent: input.unified?.message_type === 'QUESTION' ? 'knowledge_query' : 'unknown',
+    action: 'defer_to_agent',
+    confidence: input.unified?.confidence && input.unified.confidence >= 0.7 ? 'medium' : 'low',
+    mixedSignals,
+    stateAffinity: stateActive ? 'unclear' : undefined,
+    reasons: input.unified?.reason ? [`classifier:${input.unified.reason}`] : ['no_hard_route'],
+  });
 }
 
 function buildOutOfScopeRedirect(): string {
@@ -341,12 +606,110 @@ function classifyActiveServiceFollowUpType(message: string): 'link' | 'requireme
   return 'fallback';
 }
 
+// ============================================================
+// Service listing shortcut
+// ============================================================
+
+const SERVICE_LISTING_PATTERN = /\b(layanan|pelayanan|surat(?:\s+menyurat)?)(?:\s+desa)?\s+(apa|apa\s+(aja|saja)|yang\s+(ada|tersedia)|tersedia|bisa\s+(diurus|dilayani)|list)\b/i;
+const SERVICE_LISTING_SHORT_PATTERN = /^\s*(apa\s+(aja|saja)\s+(layanan|pelayanan|surat)(\s+desa)?|layanan\s+(desa|yang\s+ada)|pelayanan\s+desa\s+apa\s+(aja|saja)|list\s+layanan|daftar\s+layanan|bisa\s+(urus|ngurus|mengurus|diurus)\s+apa\s+(aja|saja)(\s+di\s+(sini|desa))?)\s*\??\s*$/i;
+
+export function isServiceListingQuery(message: string): boolean {
+  const normalized = (message || '').toLowerCase().trim();
+  if (!normalized) return false;
+  if (SERVICE_LISTING_SHORT_PATTERN.test(normalized)) return true;
+  if (SERVICE_LISTING_PATTERN.test(normalized) && !/\b(ktp|kk|akta|domisili|sktm|pindah|kematian|kelahiran|nikah)\b/i.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function buildServiceListingResponse(
+  services: Array<{ name: string; slug: string; category?: { name?: string } | null; mode?: string | null }>,
+): string {
+  if (services.length === 0) {
+    return 'Saat ini belum ada layanan aktif yang terdaftar di sistem desa. Kalau Bapak/Ibu butuh bantuan tertentu, sebutkan keperluannya ya, nanti saya arahkan langkah berikutnya.';
+  }
+
+  // Group by category
+  const byCategory = new Map<string, string[]>();
+  for (const service of services) {
+    const categoryName = service.category?.name || 'Lainnya';
+    if (!byCategory.has(categoryName)) {
+      byCategory.set(categoryName, []);
+    }
+    byCategory.get(categoryName)!.push(service.name);
+  }
+
+  const lines: string[] = ['Berikut layanan yang tersedia di desa saat ini:\n'];
+  for (const [category, names] of byCategory) {
+    lines.push(`*${category}*:`);
+    for (const name of names.slice(0, 6)) {
+      lines.push(`- ${name}`);
+    }
+    if (names.length > 6) {
+      lines.push(`- dan ${names.length - 6} layanan lainnya di kategori ini`);
+    }
+    lines.push('');
+  }
+
+  lines.push('Kalau mau tahu syarat atau cara mengajukan salah satunya, tinggal sebut nama layanannya ya.');
+  return lines.join('\n');
+}
+
+export async function tryHandleServiceListingShortcut(input: {
+  message: string;
+  villageId?: string;
+  traceId: string;
+  startTime: number;
+  sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
+}): Promise<ProcessMessageResult | null> {
+  if (!isServiceListingQuery(input.message)) {
+    return null;
+  }
+
+  if (!input.villageId) {
+    return null;
+  }
+
+  try {
+    const services = (await getServiceCatalog(input.villageId)).filter((service) => service.is_active);
+    const response = buildServiceListingResponse(services.slice(0, 30));
+
+    return buildGuardResult({
+      startTime: input.startTime,
+      traceId: input.traceId,
+      response,
+      intent: 'SERVICE_INFO',
+      hasKnowledge: services.length > 0,
+      guardrail: {
+        stage: 'pre_agent_service_listing',
+        type: 'service_listing_shortcut',
+        action: 'handled',
+        reason: 'deterministic_catalog',
+        details: {
+          totalServices: services.length,
+        },
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function tryHandleOutOfScopeGuard(input: {
   message: string;
   traceId: string;
   startTime: number;
 }): ProcessMessageResult | null {
-  if (OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN.test(input.message) && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(input.message)) {
+  const normalized = (input.message || '').toLowerCase();
+  const hasVillageScopedSignal = GOVCONNECT_USAGE_PATTERN.test(input.message) || VILLAGE_SERVICE_SCOPE_PATTERN.test(input.message);
+  // Village-help exemption: when the user asks about BPJS/SIM/NPWP but in
+  // the context of asking for a village-side contact or rujukan (referral),
+  // do NOT block — defer to the agent which can surface the relevant
+  // kontak desa / puskesmas / kelurahan helper.
+  const asksVillageHelp =
+    /\b(siapa|nomor|kontak|telp|telepon|hp|wa|whatsapp|bantu|dibantu|rujuk|rujukan|pengantar|surat\s+pengantar|desa|kelurahan|kantor|pak|bu|ibu|bapak)\b/i.test(normalized);
+  if (OUT_OF_SCOPE_PUBLIC_SERVICE_PATTERN.test(input.message) && !hasVillageScopedSignal && !asksVillageHelp && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(input.message)) {
     return buildGuardResult({
       startTime: input.startTime,
       traceId: input.traceId,
@@ -441,6 +804,56 @@ interface PendingServiceClarificationInput {
   traceId: string;
   startTime: number;
   sideEffectMode?: 'production' | 'evaluation' | 'knowledge_test';
+}
+
+const GREETING_ONLY_PATTERN = /^(halo|hai|hi|hello|hey|p|assalamu?\s?alaikum|assalamualaikum|permisi|selamat\s+(pagi|siang|sore|malam))[\s!.,?]*$/i;
+const THANKS_ONLY_PATTERN = /^(terima\s*kasih|makasih|maksih|mksh|thx|thanks?|tq|ok(?:e)?\s+(?:makasih|terima\s*kasih))[\s!.,?]*$/i;
+
+interface GreetingShortcutInput {
+  message: string;
+  userName?: string | null;
+  villageName?: string | null;
+  traceId: string;
+  startTime: number;
+  hasActiveState: boolean;
+}
+
+/**
+ * Hard shortcut for pure greetings / thanks when there is no active state.
+ * Returns a template reply without any LLM call. When a state is pending
+ * (complaint address, service clarification, etc.), we defer to the agent
+ * so the reply can consider the open flow.
+ */
+export function tryHandleGreetingShortcut(
+  input: GreetingShortcutInput,
+): ProcessMessageResult | null {
+  if (input.hasActiveState) return null;
+  const normalized = (input.message || '').trim().toLowerCase();
+  if (!normalized || normalized.length > 40) return null;
+
+  const isGreeting = GREETING_ONLY_PATTERN.test(normalized);
+  const isThanks = THANKS_ONLY_PATTERN.test(normalized);
+  if (!isGreeting && !isThanks) return null;
+
+  const nameSuffix = input.userName ? `, ${input.userName}` : '';
+  const villagePart = input.villageName ? ` ${input.villageName}` : '';
+
+  const response = isThanks
+    ? `Sama-sama${nameSuffix}. Kalau ada keperluan lain terkait layanan desa, tinggal kirim ke sini saja ya.`
+    : `Halo${nameSuffix}, selamat datang di layanan desa${villagePart}. Saya bisa bantu urus pengaduan, informasi pelayanan (KTP, KK, surat domisili, SKTM), atau cek status laporan.\n\nAda yang bisa saya bantu?`;
+
+  return buildGuardResult({
+    startTime: input.startTime,
+    traceId: input.traceId,
+    response,
+    intent: isThanks ? 'GRATITUDE' : 'GREETING',
+    guardrail: {
+      stage: 'pre_agent_shortcut',
+      type: 'greeting_only',
+      action: 'handled',
+      reason: isThanks ? 'thanks_template' : 'greeting_template',
+    },
+  });
 }
 
 interface ActiveServiceFollowUpInput {
@@ -638,6 +1051,19 @@ export async function tryHandlePendingServiceClarification(
     });
   }
 
+  const normalizedSelection = normalizeServiceSelectionValue(input.message);
+  const tokenCount = normalizedSelection ? normalizedSelection.split(/\s+/).filter(Boolean).length : 0;
+  const isAmbiguousShortReply = tokenCount > 0
+    && tokenCount <= 3
+    && (
+      detectExplicitConfirmationReply(input.message) !== 'uncertain'
+      || /^(yang\s+(tadi|itu|ini|atas|bawah)|itu|ini|tadi)$/i.test(normalizedSelection)
+    );
+
+  if (isAmbiguousShortReply) {
+    return null;
+  }
+
   return buildGuardResult({
     startTime: input.startTime,
     traceId: input.traceId,
@@ -744,18 +1170,24 @@ export async function tryHandlePendingOffers(
   const pendingOffer = await getPendingServiceFormOfferWithFallback(userId);
   if (pendingOffer) {
     const hasLapLayCode = /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(message);
-    if (hasLapLayCode) {
+    // Escape hatch: if the user clearly switched topic to a contact lookup or
+    // a complaint incident, release the pending service form offer instead of
+    // trapping them in a confirmation loop.
+    const wantsContactLookup = isContactDirectoryLookup(message);
+    const incidentSignal = /\b(jalan rusak|lampu mati|sampah|banjir|kebakaran|kecelakaan|pohon tumbang)\b/i.test(message);
+    if (hasLapLayCode || wantsContactLookup || incidentSignal) {
       clearPendingServiceFormOffer(userId);
     } else {
-      if (detectServiceCorrectionReply(message)) {
+      if (detectServiceCorrectionReply(message) || isClearlyDifferentIntent(message)) {
         clearPendingServiceFormOffer(userId);
         return null;
       }
 
       const explicitActionRequest = isExplicitServiceActionRequest(message);
       const informationalLinkInquiry = isInformationalServiceLinkInquiry(message);
+      const serviceFollowUp = isPendingServiceFollowUp(message);
       let decision = explicitActionRequest ? 'yes' : detectExplicitConfirmationReply(message);
-      if (decision === 'uncertain' && !informationalLinkInquiry) {
+      if (decision === 'uncertain' && !informationalLinkInquiry && !serviceFollowUp) {
         const confirmationResult = await runWithMicroBudget(
           () => classifyConfirmation(message.trim(), {
             village_id: villageId,
@@ -816,7 +1248,7 @@ export async function tryHandlePendingOffers(
         return null;
       }
 
-      if (isPendingServiceFollowUp(message) && !isClearlyDifferentIntent(message)) {
+      if (serviceFollowUp && !isClearlyDifferentIntent(message)) {
         const followUpReply = await buildPendingServiceInfoReply(
           pendingOffer.service_slug,
           pendingOffer.village_id || villageId,
@@ -844,6 +1276,18 @@ export async function tryHandlePendingOffers(
 
   const pendingEmergency = await getPendingEmergencyComplaintOfferWithFallback(userId);
   if (!pendingEmergency) {
+    return null;
+  }
+
+  // Escape hatches: contact directory lookup or a clear new complaint should
+  // not be blocked by a pending emergency offer confirmation.
+  if (isContactDirectoryLookup(message)) {
+    clearPendingEmergencyComplaintOffer(userId);
+    return null;
+  }
+  const hasNewIncidentKeyword = /\b(jalan rusak|lampu mati|sampah|banjir mendadak|pohon tumbang)\b/i.test(message);
+  if (hasNewIncidentKeyword) {
+    clearPendingEmergencyComplaintOffer(userId);
     return null;
   }
 
@@ -907,7 +1351,6 @@ interface LatePreAgentInput {
   traceId: string;
   startTime: number;
   mediaUrl?: string;
-  getUnifiedClassification: () => Promise<UnifiedClassifyResult | null>;
   runWithMicroBudget: MicroBudgetRunner;
   tracker: TrackerLike;
   notifyStage: (stage: string, progress: number) => void;
@@ -924,7 +1367,6 @@ export async function tryHandleLatePreAgentState(
     traceId,
     startTime,
     mediaUrl,
-    getUnifiedClassification,
     runWithMicroBudget,
     tracker,
     notifyStage,
@@ -986,99 +1428,109 @@ export async function tryHandleLatePreAgentState(
 
   const pendingAddr = await getPendingAddressRequestWithFallback(userId);
   if (pendingAddr) {
-    const unified = await getUnifiedClassification();
-    const isNewIntent = unified?.message_type === 'QUESTION' && unified.confidence >= 0.7;
-    const isComplaint = unified?.message_type === 'COMPLAINT' && unified.confidence >= 0.7;
-    const isGreeting = unified?.message_type === 'GREETING';
-    const isFarewell = unified?.message_type === 'FAREWELL';
-    const needsRAG = unified?.rag_needed === true && isNewIntent;
+    const { decideAddressResume } = await import('./complaint-fsm.service');
+    const decision = await decideAddressResume({
+      userId,
+      message,
+      pendingAddr,
+      channel,
+    });
 
-    if (isNewIntent || isComplaint || isGreeting || isFarewell || needsRAG) {
+    if (decision.action === 'interrupt') {
       clearPendingAddressRequest(userId);
-    } else {
-      const extractedAddr = await extractAddressFromMessage(message, userId, { village_id: pendingAddr.village_id });
-      if (extractedAddr && extractedAddr.length >= 5) {
-        clearPendingAddressRequest(userId);
-        if (mediaUrl) addPendingPhoto(userId, mediaUrl);
+      // Fall through so the rest of the router (contact lookup, status, etc.)
+      // or the agent can handle this turn.
+      logger.info('🧭 complaint-fsm: pending address released due to interrupt', {
+        userId,
+        reason: decision.reason,
+        messagePreview: message.substring(0, 60),
+      });
+    } else if (decision.action === 'resume') {
+      clearPendingAddressRequest(userId);
+      if (mediaUrl) addPendingPhoto(userId, mediaUrl);
 
-        const complaintResult = await handleComplaintCreation(userId, channel, {
-          fields: {
-            village_id: pendingAddr.village_id,
-            kategori: pendingAddr.kategori,
-            deskripsi: pendingAddr.deskripsi,
-            alamat: extractedAddr,
-          },
-        }, message);
-        const normalized = normalizeHandlerResult(complaintResult);
-        return buildGuardResult({
-          startTime,
-          traceId,
-          response: normalized.replyText,
-          contacts: normalized.contacts,
-          intent: 'CREATE_COMPLAINT',
-        });
-      }
-
-      if (message.trim().length > 10) {
-        const addrAnalysis = await analyzeAddress(message.trim(), {
+      const complaintResult = await handleComplaintCreation(userId, channel, {
+        fields: {
           village_id: pendingAddr.village_id,
-          is_complaint_context: true,
           kategori: pendingAddr.kategori,
-        });
-        if (addrAnalysis?.quality === 'not_address') {
-          return buildGuardResult({
-            startTime,
-            traceId,
-            response: 'Mohon maaf Pak/Bu, saya belum bisa mengenali lokasi dari pesan tersebut. Bisa disebutkan alamat lengkapnya? Misalnya nama jalan, RT/RW, atau patokan terdekat.',
-            intent: 'CREATE_COMPLAINT',
-          });
-        }
-
-        clearPendingAddressRequest(userId);
-        if (mediaUrl) addPendingPhoto(userId, mediaUrl);
-
-        const complaintResult = await handleComplaintCreation(userId, channel, {
-          fields: {
-            village_id: pendingAddr.village_id,
-            kategori: pendingAddr.kategori,
-            deskripsi: pendingAddr.deskripsi,
-            alamat: message.trim(),
+          deskripsi: pendingAddr.deskripsi,
+          alamat: decision.alamat,
+        },
+      }, message);
+      const normalized = normalizeHandlerResult(complaintResult);
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response: normalized.replyText,
+        contacts: normalized.contacts,
+        intent: 'CREATE_COMPLAINT',
+        guardrail: {
+          stage: 'pre_agent_complaint_fsm',
+          type: 'complaint_fsm_resume',
+          action: 'resumed',
+          reason: decision.reason,
+          details: {
+            waitingFor: 'alamat',
+            extractedAddress: decision.alamat,
           },
-        }, message);
-        const normalized = normalizeHandlerResult(complaintResult);
+        },
+      });
+    } else if (decision.action === 'reprompt') {
+      if (decision.reason === 'not_address') {
         return buildGuardResult({
           startTime,
           traceId,
-          response: normalized.replyText,
-          contacts: normalized.contacts,
+          response: 'Mohon maaf Pak/Bu, saya belum bisa mengenali lokasi dari pesan tersebut. Bisa disebutkan alamat lengkapnya? Misalnya nama jalan, RT/RW, atau patokan terdekat.',
           intent: 'CREATE_COMPLAINT',
+          guardrail: {
+            stage: 'pre_agent_complaint_fsm',
+            type: 'complaint_fsm_reprompt',
+            action: 'reprompted',
+            reason: decision.reason,
+          },
         });
       }
+      // too_short → re-prompt with a friendlier nudge
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response: 'Baik Pak/Bu, mohon sebutkan alamat lengkap lokasi kejadian ya. Bisa tulis nama jalan, RT/RW, atau patokan terdekat.',
+        intent: 'CREATE_COMPLAINT',
+        guardrail: {
+          stage: 'pre_agent_complaint_fsm',
+          type: 'complaint_fsm_reprompt',
+          action: 'reprompted',
+          reason: decision.reason,
+        },
+      });
     }
   }
 
   const pendingComplaint = await getPendingComplaintDataWithFallback(userId);
   if (pendingComplaint) {
-    const unified = await getUnifiedClassification();
-    const isNewIntent = unified?.message_type === 'QUESTION' && unified.confidence >= 0.7;
-    const isComplaint = unified?.message_type === 'COMPLAINT' && unified.confidence >= 0.7;
-    const isGreeting = unified?.message_type === 'GREETING';
-    const isFarewell = unified?.message_type === 'FAREWELL';
-    const needsRAG = unified?.rag_needed === true && isNewIntent;
+    const { decideIdentityResume } = await import('./complaint-fsm.service');
+    const identityDecision = await decideIdentityResume({
+      userId,
+      message,
+      waitingFor: pendingComplaint.waitingFor,
+      channel,
+      villageId,
+    });
 
-    if (isNewIntent || isComplaint || isGreeting || isFarewell || needsRAG) {
+    if (identityDecision.action === 'interrupt') {
       clearPendingComplaintData(userId);
+      logger.info('🧭 complaint-fsm: pending identity released due to interrupt', {
+        userId,
+        reason: identityDecision.reason,
+        waitingFor: pendingComplaint.waitingFor,
+        messagePreview: message.substring(0, 60),
+      });
     } else {
       const userProfile = await getAutoFillSuggestionsWithFallback(userId);
 
       if (pendingComplaint.waitingFor === 'nama') {
-        const extractedName = await extractNameFromTextNLU(message, {
-          village_id: villageId,
-          wa_user_id: userId,
-          session_id: userId,
-          channel,
-        });
-        if (extractedName) {
+        if (identityDecision.action === 'resume' && identityDecision.extractedName) {
+          const extractedName = identityDecision.extractedName;
           updateProfile(userId, { nama_lengkap: extractedName });
           syncNameToChannelService(userId, extractedName, villageId, channel);
 
@@ -1124,9 +1576,8 @@ export async function tryHandleLatePreAgentState(
         });
       }
 
-      const phoneMatch = message.match(/\b(0[87]\d{8,11}|62[87]\d{8,11}|\+62[87]\d{8,11})\b/);
-      if (phoneMatch) {
-        const phone = phoneMatch[1].replace(/^\+/, '');
+      if (identityDecision.action === 'resume' && identityDecision.extractedPhone) {
+        const phone = identityDecision.extractedPhone;
         updateProfile(userId, { no_hp: phone });
         const channelUpper = (pendingComplaint.channel || 'webchat').toUpperCase() as 'WHATSAPP' | 'WEBCHAT';
         updateConversationUserProfile(userId, { user_phone: phone }, pendingComplaint.village_id, channelUpper)
@@ -1161,11 +1612,113 @@ export async function tryHandleLatePreAgentState(
     }
   }
 
+  const isComplaintInfoQuestion =
+    COMPLAINT_INFO_QUERY_PATTERN.test(message)
+    && COMPLAINT_INFO_HINT_PATTERN.test(message);
+  const isServiceLikeReportMessage =
+    /\blapor\b/i.test(message)
+    && SERVICE_EVENT_PATTERN.test(message);
+  const hasComplaintLocationPhrase = /\b(rt\s*\d+|rw\s*\d+|dekat|depan|samping|belakang|dusun|lorong|gang|pertigaan|perempatan|patokan|pos ronda|nomor\s*rumah|jalan\s+[a-z0-9]|jl\.?\s+[a-z0-9]|di\s+(jalan|jl\.?|pertigaan|perempatan|depan|samping|belakang|dekat|dusun|gang|kantor|pasar|sekolah|masjid|pos|balai|desa|kelurahan|kecamatan))\b/i.test(message);
+  const isLocationRichComplaintIncident =
+    COMPLAINT_INCIDENT_PATTERN.test(message)
+    && hasComplaintLocationPhrase
+    && !/\b(di\s+rumah\s+saya|rumah\s+saya|rumahku|rumah\s+kami)\b/i.test(message);
+  const looksLikeComplaintShortcut =
+    !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)
+    && !isComplaintInfoQuestion
+    && !isServiceLikeReportMessage
+    && !SERVICE_ADMIN_PATTERN.test(message)
+    && (
+      COMPLAINT_INCIDENT_PATTERN.test(message)
+      || EXPLICIT_REPORT_PATTERN.test(message)
+    );
+
   const isEmergencyShortcut =
     !!villageId
     && EMERGENCY_PATTERN.test(message)
     && !EXPLICIT_REPORT_PATTERN.test(message)
-    && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message);
+    && !isLocationRichComplaintIncident
+    && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)
+    && !isContactDirectoryLookup(message);
+
+  // Contact directory lookup shortcut: user asks for a number without being in
+  // active emergency. Route deterministically to the contact directory.
+  const isContactLookupShortcut =
+    !!villageId
+    && !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)
+    && !EXPLICIT_REPORT_PATTERN.test(message)
+    && isContactDirectoryLookup(message);
+
+  if (isContactLookupShortcut) {
+    const lookup = await lookupImportantContacts(message, villageId, { limit: 3 });
+
+    if (lookup.matches.length > 0) {
+      const topMatch = lookup.matches[0];
+      const isConfident =
+        topMatch.score >= 0.75
+        && (lookup.matches.length === 1 || topMatch.score - lookup.matches[1].score >= 0.15);
+
+      const formatLine = (match: typeof lookup.matches[number], index?: number) => {
+        const prefix = typeof index === 'number' ? `${index + 1}. ` : '';
+        const descriptor = match.contact.category?.name ? ` (${match.contact.category.name})` : '';
+        const desc = match.contact.description ? `\n   ${match.contact.description}` : '';
+        return `${prefix}*${match.contact.name}*${descriptor}\n   ${match.contact.phone}${desc}`;
+      };
+
+      const vcardContacts = toVCardContacts(
+        lookup.matches.map((match) => ({
+          name: match.contact.name,
+          phone: match.contact.phone,
+          description: match.contact.description,
+          category: match.contact.category?.name ? { name: match.contact.category.name } : null,
+        })),
+      );
+
+      const response = isConfident
+        ? formatLine(lookup.matches[0])
+        : `Beberapa kontak yang cocok:\n\n${lookup.matches.map((match, index) => formatLine(match, index)).join('\n\n')}\n\nKalau belum sesuai, sebutkan nama atau jabatan yang lebih spesifik ya.`;
+
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response,
+        contacts: vcardContacts,
+        intent: 'CONTACT_DIRECTORY',
+        guardrail: {
+          stage: 'pre_agent_contact_directory',
+          type: 'contact_directory_lookup',
+          action: 'handled',
+          reason: isConfident ? 'confident_match' : 'multiple_matches',
+          details: {
+            matchCount: lookup.matches.length,
+            topScore: topMatch.score,
+            roleHint: lookup.role_hint,
+            categoryHint: lookup.category_hint,
+          },
+        },
+      });
+    }
+
+    // No direct match: return honest "not found" at the router level so we
+    // never fabricate a number. The agent can still help with follow-up.
+    return buildGuardResult({
+      startTime,
+      traceId,
+      response: `Maaf Pak/Bu, saya belum menemukan nomor yang cocok untuk permintaan tersebut di daftar kontak desa.\n\nKalau mau, sebutkan nama atau jabatan yang lebih spesifik ya.`,
+      intent: 'CONTACT_DIRECTORY',
+      guardrail: {
+        stage: 'pre_agent_contact_directory',
+        type: 'contact_directory_lookup',
+        action: 'handled',
+        reason: 'no_match',
+        details: {
+          totalCandidates: lookup.total_candidates,
+          roleHint: lookup.role_hint,
+          categoryHint: lookup.category_hint,
+        },
+      },
+    });
+  }
 
   if (isEmergencyShortcut) {
     const contacts = pickEmergencyContacts(message, await getImportantContacts(villageId));
@@ -1204,22 +1757,6 @@ export async function tryHandleLatePreAgentState(
       intent: 'QUESTION',
     });
   }
-
-  const isComplaintInfoQuestion =
-    COMPLAINT_INFO_QUERY_PATTERN.test(message)
-    && COMPLAINT_INFO_HINT_PATTERN.test(message);
-  const isServiceLikeReportMessage =
-    /\blapor\b/i.test(message)
-    && SERVICE_EVENT_PATTERN.test(message);
-  const looksLikeComplaintShortcut =
-    !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)
-    && !isComplaintInfoQuestion
-    && !isServiceLikeReportMessage
-    && !SERVICE_ADMIN_PATTERN.test(message)
-    && (
-      COMPLAINT_INCIDENT_PATTERN.test(message)
-      || EXPLICIT_REPORT_PATTERN.test(message)
-    );
 
   if (looksLikeComplaintShortcut && /\b(dekat|depan|samping|belakang)\b/i.test(message) && !/\b(jl\.?|rt\.?\s*\d+|rw\.?\s*\d+|no\.?\s*\d+|dusun|desa|kelurahan|kecamatan)\b/i.test(message)) {
     setPendingAddressRequest(userId, {
@@ -1589,7 +2126,10 @@ export const __test_only__ = {
   detectServiceCorrectionReply,
   isPendingServiceFollowUp,
   isPendingServiceLinkRequest,
+  isInformationalServiceLinkInquiry,
+  isExplicitServiceActionRequest,
   isClearlyDifferentIntent,
+  decideFastIntent,
   buildOutOfScopeRedirect,
   buildActiveServiceFollowUpReply,
   buildPendingServiceClarificationPrompt,

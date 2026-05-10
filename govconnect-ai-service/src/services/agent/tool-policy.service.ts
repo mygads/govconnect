@@ -225,6 +225,20 @@ export async function recordToolPolicyEvent(input: {
   success: boolean;
   policyKey?: string;
   policySource?: string;
+  /** Reason string from the agent orchestrator ("heuristic_policy_applied", "learned_policy_applied", etc.). */
+  toolPolicyReason?: string;
+  /** "auto" | "required" — whether first turn forced a tool. */
+  firstTurnToolChoice?: string;
+  /** Why the first-turn choice was made (e.g. "clear_operational_or_factual_intent"). */
+  firstTurnToolChoiceReason?: string;
+  /** Which layer produced the final answer: guardrail | agent | cache | fallback | complaint_state | service_context. */
+  finalIntentSource?: string;
+  /** What happened to a pending transactional state: resumed | skipped | overridden | released. */
+  stateResumeResult?: string;
+  /** Kind emitted by the answer-policy verifier (if it ran). */
+  answerPolicyKind?: string;
+  /** Whether the verifier rewrote the reply. */
+  answerPolicyRewritten?: boolean;
 }): Promise<void> {
   try {
     await prisma.$executeRaw(Prisma.sql`
@@ -241,7 +255,14 @@ export async function recordToolPolicyEvent(input: {
         learned_tools_json,
         allowed_tools_json,
         actual_tools_json,
-        success
+        success,
+        tool_policy_reason,
+        first_turn_tool_choice,
+        first_turn_tool_choice_reason,
+        final_intent_source,
+        state_resume_result,
+        answer_policy_kind,
+        answer_policy_rewritten
       ) VALUES (
         ${randomUUID()},
         ${input.traceId ?? null},
@@ -255,7 +276,14 @@ export async function recordToolPolicyEvent(input: {
         ${JSON.stringify(input.learnedTools)}::jsonb,
         ${JSON.stringify(input.allowedTools)}::jsonb,
         ${JSON.stringify(input.actualTools)}::jsonb,
-        ${input.success}
+        ${input.success},
+        ${input.toolPolicyReason ?? null},
+        ${input.firstTurnToolChoice ?? null},
+        ${input.firstTurnToolChoiceReason ?? null},
+        ${input.finalIntentSource ?? null},
+        ${input.stateResumeResult ?? null},
+        ${input.answerPolicyKind ?? null},
+        ${input.answerPolicyRewritten ?? null}
       )
     `);
 
@@ -296,6 +324,8 @@ export async function getToolPolicyObservabilityDurable(filters?: {
     totalPolicies: number;
     totalEvents: number;
     policyHitRate: number;
+    answerRewriteCount: number;
+    stateResumeCount: number;
   };
   policies: PersistedToolPolicy[];
   recentEvents: Array<{
@@ -308,6 +338,13 @@ export async function getToolPolicyObservabilityDurable(filters?: {
     allowedTools: string[];
     actualTools: string[];
     success: boolean;
+    toolPolicyReason?: string;
+    firstTurnToolChoice?: string;
+    firstTurnToolChoiceReason?: string;
+    finalIntentSource?: string;
+    stateResumeResult?: string;
+    answerPolicyKind?: string;
+    answerPolicyRewritten?: boolean;
     createdAt: string;
   }>;
 }> {
@@ -324,6 +361,13 @@ export async function getToolPolicyObservabilityDurable(filters?: {
         allowed_tools_json: Prisma.JsonValue | string | null;
         actual_tools_json: Prisma.JsonValue | string | null;
         success: boolean;
+        tool_policy_reason: string | null;
+        first_turn_tool_choice: string | null;
+        first_turn_tool_choice_reason: string | null;
+        final_intent_source: string | null;
+        state_resume_result: string | null;
+        answer_policy_kind: string | null;
+        answer_policy_rewritten: boolean | null;
         created_at: Date;
       }>>(Prisma.sql`
         SELECT
@@ -336,6 +380,13 @@ export async function getToolPolicyObservabilityDurable(filters?: {
           allowed_tools_json,
           actual_tools_json,
           success,
+          tool_policy_reason,
+          first_turn_tool_choice,
+          first_turn_tool_choice_reason,
+          final_intent_source,
+          state_resume_result,
+          answer_policy_kind,
+          answer_policy_rewritten,
           created_at
         FROM ai."ai_tool_policy_events"
         WHERE 1 = 1
@@ -347,6 +398,9 @@ export async function getToolPolicyObservabilityDurable(filters?: {
     ]);
 
     const policyHitEvents = events.filter((event) => !!event.policy_key);
+    const answerRewriteCount = events.filter((event) => event.answer_policy_rewritten === true).length;
+    const stateResumeCount = events.filter((event) => !!event.state_resume_result).length;
+
     return {
       summary: {
         totalPolicies: policies.length,
@@ -354,6 +408,8 @@ export async function getToolPolicyObservabilityDurable(filters?: {
         policyHitRate: events.length > 0
           ? Math.round((policyHitEvents.length / events.length) * 1000) / 10
           : 0,
+        answerRewriteCount,
+        stateResumeCount,
       },
       policies: policies.slice(0, 20),
       recentEvents: events.slice(0, 30).map((event) => ({
@@ -366,13 +422,20 @@ export async function getToolPolicyObservabilityDurable(filters?: {
         allowedTools: parseJsonArray<string>(event.allowed_tools_json),
         actualTools: parseJsonArray<string>(event.actual_tools_json),
         success: event.success,
+        toolPolicyReason: event.tool_policy_reason || undefined,
+        firstTurnToolChoice: event.first_turn_tool_choice || undefined,
+        firstTurnToolChoiceReason: event.first_turn_tool_choice_reason || undefined,
+        finalIntentSource: event.final_intent_source || undefined,
+        stateResumeResult: event.state_resume_result || undefined,
+        answerPolicyKind: event.answer_policy_kind || undefined,
+        answerPolicyRewritten: event.answer_policy_rewritten ?? undefined,
         createdAt: event.created_at.toISOString(),
       })),
     };
   } catch (error: any) {
     logger.error('Failed to get tool policy observability', { error: error.message });
     return {
-      summary: { totalPolicies: 0, totalEvents: 0, policyHitRate: 0 },
+      summary: { totalPolicies: 0, totalEvents: 0, policyHitRate: 0, answerRewriteCount: 0, stateResumeCount: 0 },
       policies: [],
       recentEvents: [],
     };

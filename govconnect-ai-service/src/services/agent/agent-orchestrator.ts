@@ -14,7 +14,7 @@ import { callAIGatewayPrompt, type GatewayChatMessage } from '../ai-gateway.serv
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
 import { resolveLearnedToolPolicy } from './tool-policy.service';
 import { executeToolCall, type ToolCallResult, type ToolExecutionTrace } from './tool-executor';
-import { buildAgentSystemPrompt, type AgentPromptContext } from './agent-prompt';
+import { buildAgentSystemPrompt, buildAgentDynamicContext, type AgentPromptContext } from './agent-prompt';
 
 const MAX_TOOL_ITERATIONS = 5;
 
@@ -87,6 +87,15 @@ interface ConversationContext {
   recentMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   activeServiceSlug?: string;
   activeServiceName?: string;
+  routingDecision?: {
+    action: string;
+    confidence: string;
+    primaryIntent: string;
+    mixedSignals: boolean;
+    stateAffinity?: string;
+    reasons: string[];
+    allowedToolHints?: string[];
+  };
 }
 
 function readStringField(record: Record<string, unknown>, key: string): string | undefined {
@@ -202,7 +211,7 @@ function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { t
   return { toolName, args };
 }
 
-function validateFinalAgentReply(text: string, toolsUsed: string[]): string {
+function validateFinalAgentReply(text: string, toolsUsed: string[], userMessage?: string): string {
   const normalized = text.toLowerCase();
   if (/<tool_call>|<function=|<parameter=/i.test(text)) {
     return buildAgentFallbackReply('', toolsUsed);
@@ -222,6 +231,22 @@ function validateFinalAgentReply(text: string, toolsUsed: string[]): string {
   ].includes(tool));
   if (claimsActionSuccess && !usedActionTool) {
     return 'Saya belum bisa memastikan aksi itu sudah tercatat. Kirim detail atau nomor referensinya ya, nanti saya bantu cek langkah berikutnya.';
+  }
+
+  // Guard against fabricated phone numbers: if the user asked for a contact
+  // and the reply mentions a phone number BUT no contact tool was actually
+  // used, downgrade the reply so we never invent a number.
+  if (userMessage) {
+    const askedForContact = /\b(nomor|nomer|no|kontak|telp|telepon|hp|wa|whatsapp)\b/i.test(userMessage);
+    // Strict phone pattern: matches Indonesian mobile/landline formats only.
+    // Must NOT match LAP-20260101-001, NIK (16 digits), or year-counts ("tahun 2024").
+    const repliedWithNumber = /(?:(?<![-\w])0\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}(?!\d)|\+?62\s?\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}|(?<!\d)08\d{8,11}(?!\d)|\(0\d{2,3}\)\s?\d{6,8})/.test(text);
+    const usedContactTool = toolsUsed.some((tool) => tool === 'get_important_contact' || tool === 'get_emergency_contacts' || tool === 'get_village_profile');
+    // Skip if the reply is referencing LAP/LAY codes (status lookup talk).
+    const mentionsReferenceCode = /\b(LAP|LAY|LYN|RPT)-\d{8}-\d{3}\b/i.test(text);
+    if (askedForContact && repliedWithNumber && !usedContactTool && !mentionsReferenceCode) {
+      return 'Maaf Pak/Bu, untuk nomor kontaknya saya belum bisa memastikan dari sini. Kalau mau, sebutkan nama atau jabatannya lebih spesifik, nanti saya cek ke daftar kontak desa ya.';
+    }
   }
 
   return text;
@@ -302,6 +327,7 @@ function resolveFirstTurnToolChoice(
   heuristicTools: AgentToolName[],
   allowedToolNames: AgentToolName[],
   allowedToolsCount: number,
+  requiredTools: AgentToolName[] = [],
 ): { choice: AgentToolChoice; reason: string } {
   if (allowedToolsCount === 0) {
     return {
@@ -311,6 +337,32 @@ function resolveFirstTurnToolChoice(
   }
 
   const normalized = (userMessage || '').toLowerCase().trim();
+
+  if (requiredTools.includes('get_important_contact')) {
+    return {
+      choice: 'required',
+      reason: 'contact_directory_lookup_requires_tool',
+    };
+  }
+
+  if (requiredTools.includes('check_status') && /\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage)) {
+    return {
+      choice: 'required',
+      reason: 'status_reference_requires_tool',
+    };
+  }
+
+  if (
+    requiredTools.includes('get_village_profile')
+    && allowedToolNames.length === 1
+    && /\b(alamat|lokasi|maps|gmaps|jam buka|jam operasional|kontak|nomor kantor|telepon kantor|kantor desa)\b/i.test(normalized)
+  ) {
+    return {
+      choice: 'required',
+      reason: 'village_profile_fact_requires_tool',
+    };
+  }
+
   const shortAmbiguousUtterance = normalized.split(/\s+/).filter(Boolean).length <= 3
     && /\b(mau|ingin|tolong|bantu|lapor|urus|gimana|bagaimana|bingung|info|status)\b/i.test(normalized)
     && !/\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
@@ -321,20 +373,27 @@ function resolveFirstTurnToolChoice(
     };
   }
 
-  const hasKnowledgeOnlySignal = /\b(govconnect|kanal|whatsapp|webchat|5w1h|embedding|kebijakan data|penggunaan data|keamanan data|privasi|notifikasi|tahap layanan|layanan umum|pelayanan publik|alur layanan|format file|file terlalu besar|penamaan file|update data|memperbarui data|salah pilih layanan|nomor layanan|lay-)\b/i.test(normalized);
-  const hasRetrievalTool = allowedToolNames.some((tool) => tool === 'search_knowledge' || tool === 'search_documents');
-
-  if (hasKnowledgeOnlySignal && hasRetrievalTool) {
+  const ambiguous = detectAmbiguousIntent(userMessage, heuristicTools, allowedToolNames);
+  if (ambiguous) {
     return {
-      choice: 'required',
-      reason: 'knowledge_query_with_retrieval_tools',
+      choice: 'auto',
+      reason: 'ambiguous_or_multi_intent',
     };
   }
 
-  const ambiguous = detectAmbiguousIntent(userMessage, heuristicTools, allowedToolNames);
+  const singleGroundingTool = allowedToolNames.length === 1
+    ? allowedToolNames[0]
+    : null;
+  if (singleGroundingTool && ['get_service_info', 'get_village_profile', 'get_emergency_contacts'].includes(singleGroundingTool)) {
+    return {
+      choice: 'required',
+      reason: 'single_grounding_tool_available',
+    };
+  }
+
   return {
-    choice: ambiguous ? 'auto' : 'required',
-    reason: ambiguous ? 'ambiguous_or_multi_intent' : 'clear_operational_or_factual_intent',
+    choice: 'auto',
+    reason: 'multiple_non_mandatory_tools_available',
   };
 }
 
@@ -353,6 +412,7 @@ export async function runAgent(
   const {
     heuristicTools,
     learnedTools,
+    requiredTools,
     allowedToolNames: selectedAllowedToolNames,
     matchedPolicyKey,
     matchedPolicySource,
@@ -364,6 +424,7 @@ export async function runAgent(
     'get_service_info',
     'get_complaint_categories',
     'get_emergency_contacts',
+    'get_important_contact',
     'search_knowledge',
     'search_documents',
   ]);
@@ -376,11 +437,25 @@ export async function runAgent(
     heuristicTools,
     allowedToolNames,
     allowedTools.length,
+    requiredTools,
   );
   const firstTurnToolChoice = firstTurnToolResolution.choice;
   const firstTurnToolChoiceReason = firstTurnToolResolution.reason;
 
   const messages: AgentMessage[] = [{ role: 'system', content: systemPrompt }];
+
+  // Dynamic per-turn context (datetime, routing, memory, sentiment, state)
+  // is delivered as a leading user message so the static system prompt
+  // above stays byte-identical across turns and benefits from provider
+  // prefix caching.
+  const dynamicContext = buildAgentDynamicContext(promptCtx);
+  if (dynamicContext) {
+    messages.push({ role: 'user', content: dynamicContext });
+    messages.push({
+      role: 'assistant',
+      content: 'Baik, saya siapkan sesuai konteks tersebut.',
+    });
+  }
 
   if (conversationCtx.summary) {
     messages.push({
@@ -408,11 +483,22 @@ export async function runAgent(
   let preferredGuidanceText: string | undefined;
   const tokenContext = buildAgentGatewayTokenContext(toolCtx);
 
+  const criticalToolIntent = allowedToolNames.some((tool) =>
+    tool === 'get_important_contact'
+    || tool === 'create_complaint'
+    || tool === 'create_service_request'
+    || tool === 'check_status'
+    || tool === 'update_complaint'
+    || tool === 'cancel_request',
+  );
+
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     iterations = i + 1;
 
     const toolChoice: AgentToolChoice = i === 0 ? firstTurnToolChoice : 'auto';
-    const response = await callLLMWithTools(messages, allowedTools, toolChoice, tokenContext);
+    const response = await callLLMWithTools(messages, allowedTools, toolChoice, tokenContext, {
+      criticalTurn: criticalToolIntent,
+    });
     if (!response) {
       return {
         replyText: buildAgentFallbackReply(userMessage, toolsUsed),
@@ -545,7 +631,7 @@ export async function runAgent(
           trigger: sufficientStopReason.trigger,
         });
         return {
-          replyText: validateFinalAgentReply(preferredReplyText, toolsUsed),
+          replyText: validateFinalAgentReply(preferredReplyText, toolsUsed, userMessage),
           guidanceText: preferredGuidanceText,
           toolsUsed,
           heuristicTools,
@@ -589,7 +675,7 @@ export async function runAgent(
             notFoundCount,
           });
           return {
-            replyText: validateFinalAgentReply(preferredReplyText, toolsUsed),
+            replyText: validateFinalAgentReply(preferredReplyText, toolsUsed, userMessage),
             guidanceText: preferredGuidanceText,
             toolsUsed,
             heuristicTools,
@@ -659,7 +745,7 @@ export async function runAgent(
       });
 
       return {
-        replyText: validateFinalAgentReply(preferredReplyText || finalText, toolsUsed),
+        replyText: validateFinalAgentReply(preferredReplyText || finalText, toolsUsed, userMessage),
         guidanceText: preferredGuidanceText,
         toolsUsed,
         heuristicTools,
@@ -753,13 +839,20 @@ async function callLLMWithTools(
   tools: typeof AGENT_TOOLS,
   toolChoice: AgentToolChoice,
   tokenContext: AgentGatewayTokenContext,
+  options: { criticalTurn?: boolean } = {},
 ): Promise<AgentGatewayResponse | null> {
+  // Critical turns (complaint creation, contact lookup, status check, service
+  // request) need more deterministic behavior. Drop the temperature further
+  // and allow a longer deliberation window so tool_calls land cleanly.
+  const temperature = options.criticalTurn ? 0.1 : 0.3;
+  const maxTokens = options.criticalTurn ? 1800 : 1500;
+
   const result = await callAIGatewayPrompt({
     lane: 'llm',
     modelPriority: [],
     messages: messages as GatewayChatMessage[],
-    temperature: 0.3,
-    maxTokens: 1500,
+    temperature,
+    maxTokens,
     timeoutMs: 30_000,
     layerType: 'agent',
     callType: 'agent_orchestrator',
@@ -783,6 +876,9 @@ async function selectAllowedTools(
 ): Promise<{
   heuristicTools: AgentToolName[];
   learnedTools: AgentToolName[];
+  suggestedTools: AgentToolName[];
+  requiredTools: AgentToolName[];
+  hardDeniedTools: AgentToolName[];
   allowedToolNames: AgentToolName[];
   matchedPolicyKey?: string;
   matchedPolicySource?: string;
@@ -791,6 +887,13 @@ async function selectAllowedTools(
 }> {
   const normalized = userMessage.toLowerCase().trim();
   const heuristicSet = new Set<AgentToolName>();
+  const suggestedSet = new Set<AgentToolName>();
+  const requiredSet = new Set<AgentToolName>();
+  const hardDeniedSet = new Set<AgentToolName>();
+  const routingDecision = conversationCtx.routingDecision;
+  const knownToolNames = new Set(AGENT_TOOLS.map((tool) => tool.function.name as AgentToolName));
+  const routingHintTools = (routingDecision?.allowedToolHints || [])
+    .filter((tool): tool is AgentToolName => knownToolNames.has(tool as AgentToolName));
   const hasActiveServiceContext = !!conversationCtx.activeServiceSlug || !!conversationCtx.activeServiceName;
   const isShortServiceFollowUp = hasActiveServiceContext && /\b(berapa lama|lama proses(?:nya)?|syarat(?:nya)?|persyaratan(?:nya)?|biaya(?:nya)?|online|offline|link(?:nya)?|form(?:nya)?|formulir(?:nya)?|ajukan|pengajuan|harus ke kantor|ke kantor)\b/i.test(normalized);
   const hasReference = /\b(?:lap|lay|lyn|rpt)-[\w-]+\b/i.test(userMessage);
@@ -800,12 +903,26 @@ async function selectAllowedTools(
     return {
       heuristicTools: [],
       learnedTools: [],
+      suggestedTools: [],
+      requiredTools: [],
+      hardDeniedTools: [],
       allowedToolNames: [],
       toolPolicyReason: 'greeting_only_no_tools',
     };
   }
 
   const add = (...names: AgentToolName[]) => names.forEach((name) => heuristicSet.add(name));
+  const suggest = (...names: AgentToolName[]) => names.forEach((name) => suggestedSet.add(name));
+  const requireTool = (...names: AgentToolName[]) => names.forEach((name) => requiredSet.add(name));
+  const deny = (...names: AgentToolName[]) => names.forEach((name) => {
+    hardDeniedSet.add(name);
+    heuristicSet.delete(name);
+  });
+
+  if (routingHintTools.length > 0) {
+    suggest(...routingHintTools);
+    add(...routingHintTools);
+  }
   if (isShortServiceFollowUp) {
     add('get_service_info', 'create_service_request');
   }
@@ -837,11 +954,26 @@ async function selectAllowedTools(
   const isDocumentQuery = /\b(pdf|dokumen|lampiran|berkas|sop|peraturan|sk|surat keputusan|file)\b/i.test(normalized);
   const isVillageDocumentQuery = /\b(luas wilayah|luas desa|km2|batas wilayah|jumlah penduduk|sejarah desa|profil desa|visi|misi|rpjm|rencana pembangunan)\b/i.test(normalized);
   const isEmergencyQuery = /\b(darurat|ambulans|pemadam|polisi|nomor darurat|kontak penting)\b/i.test(normalized);
+  const isActiveEmergencySituation =
+    /\b(kebakaran|terbakar|api\s+besar|kecelakaan|tabrakan|pingsan|kejang|tenggelam|pencurian|perampokan|penjambretan|banjir mendadak|tanah longsor|gempa|ledakan|orang\s+(sakit\s+keras|meninggal))\b/i.test(normalized)
+    || /\b(tolong|bantu|gawat)\b.*\b(sekarang|segera|barusan|di\s+depan|di\s+rumah)\b/i.test(normalized);
   const isVillageProfileQuery = /\b(alamat|lokasi|maps|gmaps|jam buka|jam operasional|kontak|nomor kantor|telepon kantor|kantor desa)\b/i.test(normalized);
   const isMemoryQuery = /\b(sebelumnya|tadi|terakhir|alamat saya|preferensi saya|yang pernah saya|saya pernah)\b/i.test(normalized);
   const isStatusByReference = hasReference && /\b(status|cek|periksa|tracking|lacak)\b/i.test(normalized);
   const isCancelIntent = /\b(batal|batalkan|cancel)\b/i.test(normalized);
-  const hasComplaintIncidentKeyword = /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|banjir|pohon tumbang|fasilitas rusak|amblas|longsor|licin|gelap|bau menyengat|tersumbat)\b/i.test(normalized);
+  const isContactDirectoryLookupIntent =
+    !hasReference
+    && /\b(nomor|nomer|no|kontak|telp|telepon|hp|wa|whatsapp)\b/i.test(normalized)
+    && /\b(kepala desa|kades|lurah|sekdes|sekretaris desa|damkar|pemadam|polisi|polsek|polres|babinsa|bhabinkamtibmas|puskesmas|pustu|klinik|bidan|rumah sakit|\brs\b|rsud|ambulans|ambulan|kecamatan|camat|rt|rw|bpd|pln|pdam|basarnas|sar|bpbd|admin|petugas|kantor)\b/i.test(normalized)
+    && !/\b(kebakaran|terbakar|kecelakaan|tabrakan|pingsan|sakit keras|pencurian|perampokan|banjir mendadak|longsor|gempa|ledakan|tenggelam)\b/i.test(normalized);
+  const shouldPreferAuthoritativeDbTools =
+    isShortServiceFollowUp
+    || isServiceInfoRequest
+    || isVillageProfileQuery
+    || isStatusByReference
+    || isContactDirectoryLookupIntent
+    || isEmergencyQuery;
+  const hasComplaintIncidentKeyword = /\b(jalan rusak|jalan berlubang|lampu mati|sampah|drainase|selokan|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|amblas|longsor|licin|gelap|bau menyengat|tersumbat|kecelaka+an|kebakaran|orang pingsan|ledakan)\b/i.test(normalized);
   const hasExplicitComplaintCreationIntent = /\b(mau lapor|ingin lapor|buat laporan|buat pengaduan|laporkan|saya lapor|aduan)\b/i.test(normalized);
   const hasComplaintLocationDetail = /\b(rt\s*\d+|rw\s*\d+|dekat|dusun|lorong|gang|jalan\s+[a-z0-9]|jl\.?\s+[a-z0-9]|patokan|pos ronda|nomor\s*rumah)\b/i.test(normalized);
   const isServiceLikeReport = /\blapor\b/i.test(normalized)
@@ -875,6 +1007,7 @@ async function selectAllowedTools(
   }
 
   if (isStatusByReference) {
+    requireTool('check_status');
     add('check_status');
   }
 
@@ -887,6 +1020,7 @@ async function selectAllowedTools(
   }
 
   if (isVillageProfileQuery) {
+    requireTool('get_village_profile');
     add('get_village_profile');
   }
 
@@ -900,6 +1034,26 @@ async function selectAllowedTools(
 
   if (isEmergencyQuery) {
     add('get_emergency_contacts');
+  }
+
+  if (isContactDirectoryLookupIntent) {
+    requireTool('get_important_contact');
+    add('get_important_contact');
+    deny(
+      'get_emergency_contacts',
+      'get_service_info',
+      'create_service_request',
+      'search_knowledge',
+      'search_documents',
+      'create_complaint',
+      'get_complaint_categories',
+    );
+  }
+
+  if (isActiveEmergencySituation) {
+    requireTool('get_emergency_contacts');
+    add('get_emergency_contacts');
+    deny('get_important_contact');
   }
 
   if (isDocumentQuery) {
@@ -1262,6 +1416,23 @@ async function selectAllowedTools(
     add('search_knowledge');
   }
 
+  if (routingDecision?.mixedSignals || routingDecision?.confidence === 'medium') {
+    if (routingDecision.primaryIntent !== 'contact_lookup') {
+      add('get_village_profile', 'get_service_info');
+      if (!shouldPreferAuthoritativeDbTools) {
+        add('search_knowledge');
+      }
+    }
+    if (routingDecision.primaryIntent === 'complaint_creation' || routingDecision.primaryIntent === 'emergency_contact') {
+      add('get_emergency_contacts', 'create_complaint', 'get_complaint_categories');
+    }
+  }
+
+  if (shouldPreferAuthoritativeDbTools) {
+    heuristicSet.delete('search_knowledge');
+    heuristicSet.delete('search_documents');
+  }
+
   if (heuristicSet.size === 0) {
     add(
       'get_village_profile',
@@ -1271,22 +1442,59 @@ async function selectAllowedTools(
     );
   }
 
+  if (isContactDirectoryLookupIntent) {
+    add('get_important_contact');
+    [
+      'get_emergency_contacts',
+      'get_service_info',
+      'create_service_request',
+      'search_knowledge',
+      'search_documents',
+      'create_complaint',
+      'get_complaint_categories',
+      'get_my_history',
+      'search_user_memory',
+      'check_status',
+      'cancel_request',
+      'get_service_request_edit_link',
+      'update_complaint',
+      'get_village_profile',
+    ].forEach((tool) => heuristicSet.delete(tool as AgentToolName));
+  }
+
   const heuristicTools = Array.from(heuristicSet);
+  const suggestedTools = Array.from(suggestedSet);
+  const hardDeniedTools = Array.from(hardDeniedSet);
   const learnedPolicy = await resolveLearnedToolPolicy(userMessage);
-  const learnedTools = learnedPolicy.tools || [];
+  const learnedTools = (isContactDirectoryLookupIntent
+    ? (learnedPolicy.tools || []).filter((tool) => tool === 'get_important_contact')
+    : learnedPolicy.tools || []
+  ).filter((tool) => !hardDeniedSet.has(tool));
   const allowedToolNames = Array.from(new Set<AgentToolName>([
     ...heuristicTools,
     ...learnedTools,
-  ]));
+  ])).filter((tool) => !hardDeniedSet.has(tool));
+  const requiredTools = Array.from(requiredSet).filter((tool) => allowedToolNames.includes(tool));
+
+  const policyReasons = [
+    suggestedTools.length > 0 ? `routing_hints:${suggestedTools.join(',')}` : null,
+    requiredTools.length > 0 ? `required:${requiredTools.join(',')}` : null,
+    hardDeniedTools.length > 0 ? `denied:${hardDeniedTools.join(',')}` : null,
+    routingDecision?.mixedSignals ? 'mixed_signals_broadened' : null,
+    learnedTools.length > 0 ? 'learned_policy_applied' : 'heuristic_policy_applied',
+  ].filter(Boolean).join('|');
 
   return {
     heuristicTools,
     learnedTools,
+    suggestedTools,
+    requiredTools,
+    hardDeniedTools,
     allowedToolNames,
     matchedPolicyKey: learnedPolicy.matchedPolicyKey,
     matchedPolicySource: learnedPolicy.matchedPolicySource,
     matchedPolicyConfidence: learnedPolicy.confidence,
-    toolPolicyReason: learnedTools.length > 0 ? 'learned_policy_applied' : 'heuristic_policy_applied',
+    toolPolicyReason: policyReasons,
   };
 }
 

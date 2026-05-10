@@ -12,6 +12,8 @@ import { generateBatchEmbeddings } from './embedding.service';
 import { addDocumentChunks, deleteDocumentVectors } from './vector-db.service';
 import { withAiBillingTurn } from './ai-turn-billing.service';
 import { callAIGatewayPrompt, NoCapableGatewayModelError } from './ai-gateway.service';
+import { runDocVsDocForDocument } from './knowledge-consistency.service';
+import { runDocVsDbForDocument } from './doc-vs-db-pipeline.service';
 
 export interface ProcessDocumentInput {
   documentId: string;
@@ -370,6 +372,89 @@ async function storeExtractedText(input: Omit<ProcessDocumentInput, 'fileBuffer'
   return { chunksCount: finalChunks.length, usedAiChunking };
 }
 
+/**
+ * Fire-and-forget post-ingest consistency audit.
+ *
+ * Runs doc-vs-doc against the village corpus and doc-vs-db against
+ * structured ground truth. Errors are swallowed — this is observability,
+ * not a critical ingest path.
+ *
+ * Concurrency is bounded by CONSISTENCY_AUDIT_CONCURRENCY (default 2) so
+ * bulk ingests don't pile up on DB. Lost audits (on shutdown) are
+ * recoverable via `POST /api/knowledge-consistency/scan`.
+ */
+const MAX_AUDIT_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.CONSISTENCY_AUDIT_CONCURRENCY || 2),
+);
+const MAX_AUDIT_QUEUE = Math.max(
+  MAX_AUDIT_CONCURRENCY,
+  Number(process.env.CONSISTENCY_AUDIT_MAX_QUEUE || 200),
+);
+let auditInFlight = 0;
+const auditQueue: Array<{ documentId: string; villageId: string | null }> = [];
+const auditSeen = new Set<string>();
+
+function drainAuditQueue(): void {
+  while (auditInFlight < MAX_AUDIT_CONCURRENCY && auditQueue.length > 0) {
+    const job = auditQueue.shift()!;
+    auditSeen.delete(`${job.documentId}::${job.villageId ?? ''}`);
+    auditInFlight++;
+    runAuditJob(job).finally(() => {
+      auditInFlight--;
+      drainAuditQueue();
+    });
+  }
+}
+
+async function runAuditJob(job: { documentId: string; villageId: string | null }): Promise<void> {
+  try {
+    await runDocVsDocForDocument({ documentId: job.documentId, villageId: job.villageId });
+  } catch (error: any) {
+    logger.warn('post-ingest doc-vs-doc audit failed', {
+      documentId: job.documentId,
+      villageId: job.villageId,
+      error: error.message,
+    });
+  }
+
+  if (job.villageId) {
+    try {
+      await runDocVsDbForDocument({ documentId: job.documentId, villageId: job.villageId });
+    } catch (error: any) {
+      logger.warn('post-ingest doc-vs-db audit failed', {
+        documentId: job.documentId,
+        villageId: job.villageId,
+        error: error.message,
+      });
+    }
+  }
+}
+
+export function scheduleConsistencyAuditForDocument(params: {
+  documentId: string;
+  villageId?: string | null;
+}): void {
+  const { documentId, villageId } = params;
+  if (!documentId) return;
+
+  const seenKey = `${documentId}::${villageId ?? ''}`;
+  if (auditSeen.has(seenKey)) return;
+
+  if (auditQueue.length >= MAX_AUDIT_QUEUE) {
+    logger.warn('consistency audit queue full, dropping oldest', {
+      queued: auditQueue.length,
+      limit: MAX_AUDIT_QUEUE,
+    });
+    const dropped = auditQueue.shift();
+    if (dropped) auditSeen.delete(`${dropped.documentId}::${dropped.villageId ?? ''}`);
+  }
+
+  auditSeen.add(seenKey);
+  auditQueue.push({ documentId, villageId: villageId ?? null });
+  setImmediate(drainAuditQueue);
+}
+
 function billingGroupId(input: ProcessDocumentInput): string {
   const hash = input.fileHash || crypto.createHash('sha256').update(input.fileBuffer).digest('hex');
   return `ingest:document:${input.documentId}:${hash}`;
@@ -389,7 +474,7 @@ export async function processDocumentBufferWithBilling(input: ProcessDocumentInp
     try {
       const extracted = await parseFileContent(tempFile.filePath, input.mimeType, input.originalName);
       if (!unitsToText(extracted.units).trim()) throw new Error('Document is empty or could not extract text');
-      return await storeExtractedText({
+      const result = await storeExtractedText({
         documentId: input.documentId,
         originalName: input.originalName,
         title: input.title,
@@ -398,6 +483,17 @@ export async function processDocumentBufferWithBilling(input: ProcessDocumentInp
         isGlobal: Boolean(input.isGlobal),
         extracted,
       });
+
+      // Fire-and-forget consistency audit. Only runs for village-scoped
+      // docs (global docs have no single DB ground truth to compare to).
+      if (!input.isGlobal && result.chunksCount > 0) {
+        scheduleConsistencyAuditForDocument({
+          documentId: input.documentId,
+          villageId: input.villageId || null,
+        });
+      }
+
+      return result;
     } catch (error: any) {
       if (isOcrRequiredError(error)) {
         await enqueueDocumentOcrJob(input, error.message);
@@ -590,6 +686,12 @@ async function processOneOcrJob() {
         extracted,
       });
       await updateDashboardDocument(documentId, { status: 'completed', error_message: null, total_chunks: result.chunksCount });
+      if (!payload.isGlobal && result.chunksCount > 0) {
+        scheduleConsistencyAuditForDocument({
+          documentId,
+          villageId: payload.villageId || null,
+        });
+      }
     });
 
     await prisma.$executeRaw`

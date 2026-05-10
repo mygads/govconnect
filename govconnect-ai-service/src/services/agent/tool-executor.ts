@@ -6,7 +6,7 @@
  */
 
 import logger from '../../utils/logger';
-import { getImportantContacts } from '../important-contacts.service';
+import { getImportantContacts, lookupImportantContacts } from '../important-contacts.service';
 import {
   cancelComplaint,
   cancelServiceRequest,
@@ -78,6 +78,18 @@ export interface ToolExecutionTrace {
   durationMs: number;
   trustLevel: ToolTrustLevel;
   sourceKind?: string;
+  /**
+   * Redacted request payload for mutation tools only. Persisted to
+   * `ai_tool_execution_traces.metadata_json.payload` so post-incident RCA
+   * can see what was attempted without storing raw PII. Read-only tools
+   * leave this undefined.
+   */
+  redactedPayload?: Record<string, unknown>;
+  /**
+   * Short outcome tag written alongside the payload (e.g., "complaint_created",
+   * "not_owner", "locked", "validation_error"). Useful for forensics.
+   */
+  outcome?: string;
 }
 
 export interface ExecutedToolCall {
@@ -105,6 +117,62 @@ const MUTATION_TOOLS = new Set<AgentToolName>([
   'get_service_request_edit_link',
   'cancel_request',
 ]);
+
+// ── Mutation audit trail helpers ───────────────────────────────────────
+// Save a redacted copy of the arguments we sent to a mutation tool plus
+// a short outcome tag. Used by post-incident RCA and audit exports.
+
+function maskPhoneLike(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 6) return '***';
+  return `${digits.slice(0, 3)}***${digits.slice(-3)}`;
+}
+
+function redactMutationArgs(
+  tool: AgentToolName,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args || {})) {
+    const lower = key.toLowerCase();
+    if (value === null || value === undefined) {
+      out[key] = value;
+      continue;
+    }
+    if (typeof value === 'string') {
+      if (/^(no_?hp|phone|telp)$/i.test(lower) || /phone|no_hp/.test(lower)) {
+        out[key] = maskPhoneLike(value);
+      } else if (/alamat|address/.test(lower)) {
+        const words = value.trim().split(/\s+/);
+        out[key] = words.length > 2 ? `${words.slice(0, 2).join(' ')} …` : '***';
+      } else if (/nik|nama_pelapor|nama_lengkap|email/.test(lower)) {
+        out[key] = value.length > 4 ? `${value.slice(0, 2)}***${value.slice(-2)}` : '***';
+      } else {
+        out[key] = value;
+      }
+    } else {
+      out[key] = value;
+    }
+  }
+  out._audit_tool = tool;
+  return out;
+}
+
+function deriveMutationOutcome(result: ToolCallResult): string {
+  if (result.success === false) {
+    const errorCode = (result as any).error_code || (result as any).error || 'error';
+    return typeof errorCode === 'string' ? errorCode.toLowerCase() : 'error';
+  }
+  const data = result.data as Record<string, unknown> | undefined;
+  if (!data) return 'success';
+  if (data.created === true) return 'complaint_created';
+  if (data.cancelled === true) return 'cancelled';
+  if (data.ready === true) return 'form_link_issued';
+  if (data.updated === true) return 'updated';
+  if (data.needs_confirmation === true) return 'awaiting_confirmation';
+  if (data.needs_input) return `awaiting_input:${String(data.needs_input)}`;
+  return 'success';
+}
 
 const EMERGENCY_CONTACT_HINTS = [
   'darurat',
@@ -193,6 +261,11 @@ export async function executeToolCall(
       sourceKind: result.meta?.sourceKind,
     };
 
+    if (MUTATION_TOOLS.has(toolName)) {
+      trace.redactedPayload = redactMutationArgs(toolName, args);
+      trace.outcome = deriveMutationOutcome(result);
+    }
+
     logger.info('Agent tool executed', {
       tool: toolName,
       success: result.success,
@@ -258,6 +331,8 @@ async function dispatchTool(
       return toolGetComplaintCategories(ctx);
     case 'get_emergency_contacts':
       return toolGetEmergencyContacts(ctx);
+    case 'get_important_contact':
+      return toolGetImportantContact(args, ctx);
     case 'search_knowledge':
       return toolSearchKnowledge(args, ctx);
     case 'search_documents':
@@ -562,6 +637,130 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
       sourceKind: 'official_emergency_contacts',
     },
   };
+}
+
+async function toolGetImportantContact(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolCallResult> {
+  const rawQuery = typeof args.query === 'string' ? args.query.trim() : '';
+  const fallbackQuery = rawQuery || (ctx.userMessage || '').trim();
+
+  if (!fallbackQuery) {
+    return {
+      success: false,
+      error: 'Query lookup kontak tidak boleh kosong.',
+      data: {
+        suggested_response: 'Bapak/Ibu mau cari nomor siapa atau nomor apa ya? Sebutkan namanya singkat, misalnya kepala desa, puskesmas, atau damkar.',
+      },
+      meta: {
+        trustLevel: 'trusted_fact',
+        sourceKind: 'contact_directory_lookup',
+      },
+    };
+  }
+
+  if (!ctx.villageId) {
+    return {
+      success: true,
+      data: {
+        found: false,
+        matches: [],
+        total_candidates: 0,
+        message: 'Village belum terdeteksi untuk sesi ini.',
+        suggested_response: 'Mohon maaf Pak/Bu, saya belum bisa melihat daftar kontak desa untuk sesi ini. Silakan hubungi kantor desa pada jam kerja untuk mendapatkan nomor yang dicari.',
+      },
+      meta: {
+        trustLevel: 'trusted_fact',
+        sourceKind: 'contact_directory_lookup',
+      },
+    };
+  }
+
+  const lookup = await lookupImportantContacts(fallbackQuery, ctx.villageId, { limit: 3 });
+
+  if (lookup.matches.length === 0) {
+    return {
+      success: true,
+      data: {
+        found: false,
+        matches: [],
+        total_candidates: lookup.total_candidates,
+        category_hint: lookup.category_hint,
+        role_hint: lookup.role_hint,
+        message: `Tidak ada kontak yang cocok untuk "${fallbackQuery}".`,
+        suggested_response: `Maaf Pak/Bu, saya belum menemukan nomor yang cocok untuk *${fallbackQuery}* di daftar kontak desa.\n\nKalau mau, sebutkan nama atau jabatan yang lebih spesifik ya, nanti saya bantu cari lagi.`,
+      },
+      meta: {
+        trustLevel: 'trusted_fact',
+        sourceKind: 'contact_directory_lookup',
+      },
+    };
+  }
+
+  const topMatch = lookup.matches[0];
+  const isConfident =
+    topMatch.score >= 0.75
+    && (lookup.matches.length === 1 || topMatch.score - lookup.matches[1].score >= 0.15);
+
+  const matchesPayload = lookup.matches.map((match) => ({
+    name: match.contact.name,
+    phone: match.contact.phone,
+    description: match.contact.description || null,
+    category: match.contact.category?.name || null,
+    score: match.score,
+    matched_by: Array.isArray(match.matchedBy) ? match.matchedBy.join(',') : String(match.matchedBy || ''),
+  }));
+
+  const formatContactLine = (contact: ImportantContactPayload, index?: number) => {
+    const prefix = typeof index === 'number' ? `${index + 1}. ` : '';
+    const descriptor = contact.category ? ` (${contact.category})` : '';
+    return `${prefix}*${contact.name}*${descriptor}\n   ${contact.phone}`;
+  };
+
+  if (isConfident) {
+    const top = matchesPayload[0];
+    return {
+      success: true,
+      data: {
+        found: true,
+        confident: true,
+        matches: matchesPayload,
+        top_match: top,
+        category_hint: lookup.category_hint,
+        role_hint: lookup.role_hint,
+        suggested_response: `${formatContactLine(top)}${top.description ? `\n   ${top.description}` : ''}`,
+      },
+      meta: {
+        trustLevel: 'trusted_fact',
+        sourceKind: 'contact_directory_lookup',
+      },
+    };
+  }
+
+  const lines = matchesPayload.map((contact, index) => formatContactLine(contact, index));
+  return {
+    success: true,
+    data: {
+      found: true,
+      confident: false,
+      matches: matchesPayload,
+      category_hint: lookup.category_hint,
+      role_hint: lookup.role_hint,
+      suggested_response: `Beberapa kontak yang cocok saya temukan:\n\n${lines.join('\n\n')}\n\nKalau belum sesuai, sebutkan nama atau jabatan yang lebih spesifik ya.`,
+    },
+    meta: {
+      trustLevel: 'trusted_fact',
+      sourceKind: 'contact_directory_lookup',
+    },
+  };
+}
+
+interface ImportantContactPayload {
+  name: string;
+  phone: string;
+  description?: string | null;
+  category?: string | null;
 }
 
 async function toolSearchKnowledge(

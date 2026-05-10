@@ -316,7 +316,9 @@ vi.mock('../case-client.service', () => ({
   getUserHistory: vi.fn(async () => []),
 }));
 
+import { runAgent } from '../agent';
 import { canProcessVillageAI } from '../ai-wallet.service';
+import { getCachedResponse } from '../response-cache.service';
 import { processUnifiedMessage } from '../unified-message-processor.service';
 import {
   clearActiveServiceInfo,
@@ -337,6 +339,9 @@ describe('processUnifiedMessage service clarification flow', () => {
     testState.conversationSessions.clear();
     vi.mocked(canProcessVillageAI).mockClear();
     vi.mocked(canProcessVillageAI).mockResolvedValue({ allowed: true, balanceUsd: 10, status: 'ok' } as any);
+    vi.mocked(getCachedResponse).mockClear();
+    vi.mocked(getCachedResponse).mockReturnValue(null as any);
+    vi.mocked(runAgent).mockClear();
     clearActiveServiceInfo(userId);
     clearPendingServiceClarification(userId);
     clearPendingServiceFormOffer(userId);
@@ -438,6 +443,91 @@ describe('processUnifiedMessage service clarification flow', () => {
       followUpType: 'office_visit',
     });
   });
+
+  it('defers ambiguous clarification replies to the agent instead of hard re-prompting', async () => {
+    setPendingServiceClarification(userId, {
+      original_query: 'surat warga',
+      village_id: villageId,
+      source: 'handle_service_info',
+      timestamp: Date.now(),
+      alternatives: [
+        {
+          slug: 'surat-pengantar-ktp',
+          name: 'Surat Pengantar KTP',
+          mode: 'online',
+          is_online: true,
+          can_send_form_link: true,
+        },
+        {
+          slug: 'surat-domisili',
+          name: 'Surat Keterangan Domisili',
+          mode: 'offline',
+          is_online: false,
+          can_send_form_link: false,
+        },
+      ],
+    });
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'iya',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    expect(result.response).toBe('agent reply');
+    expect(getPendingServiceClarification(userId)?.alternatives).toHaveLength(2);
+    expect((result.metadata as any).routingOutcome).toMatchObject({
+      outcome: 'deferred_to_agent',
+      reason: 'pending_service_clarification',
+    });
+    expect(runAgent).toHaveBeenCalled();
+  });
+
+  it('releases pending clarification state and defers on clear topic shift', async () => {
+    setPendingServiceClarification(userId, {
+      original_query: 'surat warga',
+      village_id: villageId,
+      source: 'handle_service_info',
+      timestamp: Date.now(),
+      alternatives: [
+        {
+          slug: 'surat-pengantar-ktp',
+          name: 'Surat Pengantar KTP',
+          mode: 'online',
+          is_online: true,
+          can_send_form_link: true,
+        },
+        {
+          slug: 'surat-domisili',
+          name: 'Surat Keterangan Domisili',
+          mode: 'offline',
+          is_online: false,
+          can_send_form_link: false,
+        },
+      ],
+    });
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'bukan itu maksud saya',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    expect(result.response).toBe('agent reply');
+    expect(getPendingServiceClarification(userId)).toBeUndefined();
+    expect((result.metadata as any).routingOutcome).toMatchObject({
+      outcome: 'released_state_and_deferred',
+      reason: 'pending_clarification_topic_shift',
+      releasedStates: ['pending_service_clarification'],
+    });
+    expect(runAgent).toHaveBeenCalled();
+  });
 });
 
 describe('processUnifiedMessage pending service offer flow', () => {
@@ -449,6 +539,9 @@ describe('processUnifiedMessage pending service offer flow', () => {
     testState.conversationSessions.clear();
     vi.mocked(canProcessVillageAI).mockClear();
     vi.mocked(canProcessVillageAI).mockResolvedValue({ allowed: true, balanceUsd: 10, status: 'ok' } as any);
+    vi.mocked(getCachedResponse).mockClear();
+    vi.mocked(getCachedResponse).mockReturnValue(null as any);
+    vi.mocked(runAgent).mockClear();
     clearActiveServiceInfo(userId);
     clearPendingServiceClarification(userId);
     clearPendingServiceFormOffer(userId);
@@ -506,7 +599,98 @@ describe('processUnifiedMessage pending service offer flow', () => {
       isEvaluation: true,
     });
 
-    expect(result.response).toBe('agent reply');
+    expect(result.response).toContain('Ada yang bisa saya bantu?');
     expect(canProcessVillageAI).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips response cache while pending state is active', async () => {
+    setPendingServiceFormOffer(userId, {
+      service_slug: 'surat-pengantar-ktp',
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+    vi.mocked(getCachedResponse).mockReturnValue({ response: 'cached stale answer' } as any);
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'syaratnya?',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: false,
+    });
+
+    expect(result.response).not.toBe('cached stale answer');
+    expect(getCachedResponse).not.toHaveBeenCalled();
+  });
+
+  it('uses cached official service info when cache provenance includes the grounding tool', async () => {
+    vi.mocked(getCachedResponse).mockReturnValue({
+      response: 'Surat Keterangan Domisili gratis dan estimasi prosesnya 2 hari kerja.',
+      intent: 'SERVICE_INFO',
+      toolsUsed: ['get_service_info'],
+    } as any);
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'biaya surat domisili berapa?',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: false,
+    });
+
+    expect(result.response).toContain('Surat Keterangan Domisili gratis');
+    expect((result.metadata as any).answerPolicy).toMatchObject({
+      ok: true,
+      reason: 'grounded_via_service_tool',
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('rewrites cached structured facts when cache provenance is missing', async () => {
+    vi.mocked(getCachedResponse).mockReturnValue({
+      response: 'Surat Keterangan Domisili biayanya Rp 25.000.',
+      intent: 'SERVICE_INFO',
+      toolsUsed: [],
+    } as any);
+
+    const result = await processUnifiedMessage({
+      userId,
+      message: 'biaya surat domisili berapa?',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: false,
+    });
+
+    expect(result.response).not.toContain('Rp 25.000');
+    expect((result.metadata as any).answerPolicy).toMatchObject({
+      ok: false,
+      rewritten: true,
+      reason: 'service_detail_without_tool',
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('passes routing and pending-state context into the agent for ambiguous turns', async () => {
+    setPendingServiceFormOffer(userId, {
+      service_slug: 'surat-pengantar-ktp',
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+
+    await processUnifiedMessage({
+      userId,
+      message: 'bukan itu maksud saya',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    const promptCtx = vi.mocked(runAgent).mock.calls.at(-1)?.[1] as any;
+    expect(promptCtx.routingDecision).toMatchObject({ stateAffinity: 'switches_topic' });
+    expect(promptCtx.pendingStateSummary).toContain('Pending tawaran link layanan');
   });
 });

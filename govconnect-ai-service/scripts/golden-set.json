@@ -198,6 +198,36 @@
   {"id": "gs-197", "query": "Saluran air tersumbat sampah di depan warung Bu Siti RT 03 RW 02, air meluap ke jalan setiap hujan, warga sudah beberapa kali lapor tapi belum ada tindakan", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["drainase", "sampah"], "note": "detailed with frustration"},
   {"id": "gs-198", "query": "Saya warga baru di RT 05, mau tanya bagaimana cara ikut program bantuan dan apa saja syaratnya, terus sekalian mau lapor lampu jalan di depan rumah mati", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint", "search_knowledge"], "expected_keywords": ["bantuan", "lampu"], "note": "multi-intent complex"},
   {"id": "gs-199", "query": "Pak/Bu tolong di gang kami ada genangan air sudah beberapa hari, baunya tidak enak, warga khawatir jadi sarang nyamuk DBD, mohon segera ditindaklanjuti", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["drainase"], "note": "urgent tone"},
-  {"id": "gs-200", "query": "Minta tolong ya, pohon besar di pinggir jalan miring ke arah rumah warga setelah angin kencang kemarin, takut roboh dan menimpa rumah, sangat berbahaya", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["pohon"], "note": "urgent emergency"}
-]
+  {"id": "gs-200", "query": "Minta tolong ya, pohon besar di pinggir jalan miring ke arah rumah warga setelah angin kencang kemarin, takut roboh dan menimpa rumah, sangat berbahaya", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["pohon"], "note": "urgent emergency"},
 
+  {"id": "gs-201", "query": "ada nomor puskesmas solo?", "expected_intent": "CONTACT_DIRECTORY", "expected_tools": ["get_important_contact"], "expected_keywords": ["puskesmas"], "note": "audit A — directory lookup (not emergency)"},
+  {"id": "gs-202", "query": "ada nomor damkar?", "expected_intent": "CONTACT_DIRECTORY", "expected_tools": ["get_important_contact"], "expected_keywords": ["damkar"], "note": "audit A — directory lookup, must not trigger emergency flow"},
+  {"id": "gs-203", "query": "ada nomor pemadam kebakaran?", "expected_intent": "CONTACT_DIRECTORY", "expected_tools": ["get_important_contact"], "expected_keywords": ["pemadam"], "note": "audit A — directory lookup variant"},
+  {"id": "gs-204", "query": "nomor kepala desa", "expected_intent": "CONTACT_DIRECTORY", "expected_tools": ["get_important_contact"], "expected_keywords": ["kepala"], "note": "audit A — kades directory"},
+  {"id": "gs-205", "query": "kontak polsek", "expected_intent": "CONTACT_DIRECTORY", "expected_tools": ["get_important_contact"], "expected_keywords": ["polsek"], "note": "audit A — police directory"},
+  {"id": "gs-206", "query": "nomor kecamatan", "expected_intent": "CONTACT_DIRECTORY", "expected_tools": ["get_important_contact"], "expected_keywords": ["kecamatan"], "note": "audit A — kecamatan directory"},
+  {"id": "gs-207", "query": "siapa admin desa yang bisa dihubungi?", "expected_intent": "CONTACT_DIRECTORY", "expected_tools": ["get_important_contact"], "expected_keywords": ["admin"], "note": "audit A — admin directory"},
+
+  {"id": "gs-210", "query": "tolong rumah saya kebakaran", "expected_intent": "EMERGENCY_CONTACTS", "expected_tools": ["get_emergency_contacts"], "expected_keywords": ["darurat"], "note": "audit B — active emergency"},
+  {"id": "gs-211", "query": "ada kecelakaan di depan sekolah, tolong", "expected_intent": "EMERGENCY_CONTACTS", "expected_tools": ["get_emergency_contacts"], "expected_keywords": ["darurat"], "note": "audit B — active emergency accident"},
+  {"id": "gs-212", "query": "orang pingsan butuh ambulans segera", "expected_intent": "EMERGENCY_CONTACTS", "expected_tools": ["get_emergency_contacts"], "expected_keywords": ["ambulans"], "note": "audit B — active medical emergency"},
+
+  {"id": "gs-220", "query": "layanan apa aja yg bisa dilakukan disini?", "expected_intent": "SERVICE_INFO", "expected_tools": ["get_service_info"], "expected_keywords": ["layanan"], "note": "audit C — service listing must be deterministic"},
+  {"id": "gs-221", "query": "pelayanan desa apa aja?", "expected_intent": "SERVICE_INFO", "expected_tools": ["get_service_info"], "expected_keywords": ["layanan"], "note": "audit C — service listing variant"},
+  {"id": "gs-222", "query": "bisa urus apa aja di sini?", "expected_intent": "SERVICE_INFO", "expected_tools": ["get_service_info"], "expected_keywords": ["layanan"], "note": "audit C — service listing variant"},
+  {"id": "gs-223", "query": "daftar layanan", "expected_intent": "SERVICE_INFO", "expected_tools": ["get_service_info"], "expected_keywords": ["layanan"], "note": "audit C — short listing query"},
+
+  {"id": "gs-230", "query": "syarat KTP apa?", "expected_intent": "SERVICE_INFO", "expected_tools": ["get_service_info"], "expected_keywords": ["syarat", "KTP"], "note": "audit D — service follow-up"},
+  {"id": "gs-231", "query": "berapa lama proses surat domisili?", "expected_intent": "SERVICE_INFO", "expected_tools": ["get_service_info"], "expected_keywords": ["proses"], "note": "audit D — duration follow-up"},
+  {"id": "gs-232", "query": "bisa online ga urus KK?", "expected_intent": "SERVICE_INFO", "expected_tools": ["get_service_info"], "expected_keywords": ["online"], "note": "audit D — online availability"},
+
+  {"id": "gs-240", "query": "saya mau lapor dong tadi ada kecelakaan", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["kecelakaan", "alamat"], "note": "audit E — complaint creation, kecelakaan category"},
+  {"id": "gs-241", "query": "mau lapor lampu mati di RT 03", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["lampu"], "note": "audit E — complaint with partial address"},
+  {"id": "gs-242", "query": "mau mengadu soal jalan rusak parah di depan masjid", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["jalan"], "note": "audit E — complaint with landmark"},
+
+  {"id": "gs-250", "query": "ada kecelakaan di pertigaan desa, korban banyak", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["kecelakaan"], "note": "audit F — complaint with send_important_contacts"},
+  {"id": "gs-251", "query": "rumah tetangga saya kebakaran di dusun 2", "expected_intent": "CREATE_COMPLAINT", "expected_tools": ["create_complaint"], "expected_keywords": ["kebakaran"], "note": "audit F — fire with location, should create complaint + send contacts"},
+
+  {"id": "gs-260", "query": "nomor rumah sakit swasta xyz", "expected_intent": "CONTACT_DIRECTORY", "expected_tools": ["get_important_contact"], "expected_keywords": ["belum", "tidak"], "note": "audit H — unknown contact, must not hallucinate"},
+  {"id": "gs-261", "query": "ada layanan buat paspor disini?", "expected_intent": "QUESTION", "expected_tools": [], "expected_keywords": ["belum", "tidak"], "note": "audit H — out-of-scope service"}
+]
