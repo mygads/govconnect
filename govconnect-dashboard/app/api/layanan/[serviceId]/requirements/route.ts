@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
 
 async function getSession(request: NextRequest) {
   const token =
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ service
     if (!serviceId) return NextResponse.json({ error: 'serviceId diperlukan' }, { status: 400 })
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/${encodeURIComponent(serviceId)}/requirements`), {
-      headers: getHeaders(),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
     })
 
     const data = await response.json().catch(() => null)
@@ -59,11 +60,14 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ servic
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/${encodeURIComponent(serviceId)}/requirements`), {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
       body: JSON.stringify(body),
     })
 
     const data = await response.json().catch(() => null)
+    if (response.ok) {
+      await invalidateVillageAiCacheSafely(session.admin.village_id)
+    }
     return NextResponse.json(data ?? { error: 'Invalid response from case-service' }, { status: response.status })
   } catch (error) {
     console.error('Error creating layanan requirement:', error)

@@ -207,6 +207,13 @@ const OFFICE_CONTACT_HINTS = [
   'lurah',
 ];
 
+const OFFICE_CONTACT_PRIORITY_RULES: Array<{ pattern: RegExp; weight: number }> = [
+  { pattern: /\b(kantor desa|kantor kelurahan|balai desa|sekretariat desa|sekretariat|nomor kantor|kontak kantor)\b/i, weight: 100 },
+  { pattern: /\b(admin|operator|petugas|pelayanan|layanan|front office)\b/i, weight: 50 },
+  { pattern: /\b(sekdes|sekretaris desa)\b/i, weight: 25 },
+  { pattern: /\b(kepala desa|kades|lurah)\b/i, weight: 10 },
+];
+
 function buildServiceFormGuidanceText(formUrl: string): string {
   return `Link formulir layanan:\n${formUrl}\n\nNomor WhatsApp Bapak/Ibu akan dipakai sebagai identitas pengajuan. Setelah formulir dikirim, nomor layanan bisa dipakai untuk cek status, ubah data, atau membatalkan pengajuan bila masih memungkinkan.`;
 }
@@ -285,14 +292,22 @@ export async function executeToolCall(
     logger.error('Agent tool execution failed', {
       tool: toolName,
       error: error.message,
+      stack: error.stack,
       durationMs,
       userId: ctx.userId,
     });
 
+    // Map raw exception to citizen-friendly text. Raw error.message may
+    // contain stack hints, internal codes, or sensitive debugging info
+    // that should never land in a user reply. The real details stay in
+    // logs for RCA; the user gets a polite, actionable response.
+    const userFacingError = buildUserFacingToolError(toolName);
+
     return {
       content: JSON.stringify({
         success: false,
-        error: `Tool ${toolName} gagal: ${error.message}`,
+        error: userFacingError.code,
+        suggested_response: userFacingError.reply,
         meta: {
           trustLevel: 'action_result',
           sourceKind: 'tool_error',
@@ -307,7 +322,8 @@ export async function executeToolCall(
       },
       result: {
         success: false,
-        error: `Tool ${toolName} gagal: ${error.message}`,
+        error: userFacingError.code,
+        suggested_response: userFacingError.reply,
         meta: {
           trustLevel: 'action_result',
           sourceKind: 'tool_error',
@@ -315,6 +331,32 @@ export async function executeToolCall(
       },
     };
   }
+}
+
+function buildUserFacingToolError(
+  toolName: AgentToolName,
+): { code: string; reply: string } {
+  // Keep technical detail out of user-facing text. Short, empathetic,
+  // with a clear next step. Mutation and retrieval tools get slightly
+  // different wording because the impact on the user is different.
+  if (MUTATION_TOOLS.has(toolName)) {
+    return {
+      code: `mutation_tool_failed:${toolName}`,
+      reply: 'Maaf Pak/Bu, sistem desa sedang ada kendala saat memproses permintaan ini. Silakan coba kirim ulang sebentar lagi; kalau masih belum bisa, saya bantu hubungkan ke petugas.',
+    };
+  }
+
+  if (toolName === 'search_knowledge' || toolName === 'search_documents' || toolName === 'search_user_memory') {
+    return {
+      code: `retrieval_tool_failed:${toolName}`,
+      reply: 'Maaf Pak/Bu, saya belum bisa mengambil informasi lengkap saat ini. Coba tanyakan lagi sebentar ya, atau sebutkan keperluannya lebih spesifik.',
+    };
+  }
+
+  return {
+    code: `tool_failed:${toolName}`,
+    reply: 'Maaf Pak/Bu, sistem desa sedang lambat merespons permintaan itu. Coba tanyakan lagi sebentar ya. Kalau masih terkendala, saya bantu arahkan ke kantor desa.',
+  };
 }
 
 async function dispatchTool(
@@ -363,6 +405,7 @@ async function toolGetVillageProfile(ctx: ToolContext): Promise<ToolCallResult> 
   const contacts = ctx.villageId ? await getImportantContacts(ctx.villageId) : [];
   const officeContacts = contacts
     .filter((contact) => matchContactHints(contact, OFFICE_CONTACT_HINTS))
+    .sort((a, b) => scoreOfficeContactCandidate(b) - scoreOfficeContactCandidate(a))
     .slice(0, 5)
     .map((contact) => ({
       name: contact.name,
@@ -555,42 +598,71 @@ async function toolGetServiceInfo(
 
 async function toolGetComplaintCategories(ctx: ToolContext): Promise<ToolCallResult> {
   const categories = await getComplaintTypes(ctx.villageId);
+  const complaintTypes = categories.map((category) => ({
+    name: category.name,
+    slug: slugifyCategory(category.name),
+    description: category.description ?? null,
+    type_id: category.id,
+    category_id: category.category_id,
+    type_name: category.name,
+    category_name: category.category?.name || null,
+    is_urgent: category.is_urgent === true,
+    require_address: category.require_address !== false,
+    send_important_contacts: category.send_important_contacts === true,
+    important_contact_category: category.important_contact_category || null,
+    important_contact_category_id: category.important_contact_category_id || null,
+  }));
+  const groupedCategories = Array.from(
+    complaintTypes.reduce((map, complaintType) => {
+      const key = complaintType.category_id || complaintType.type_id;
+      const existing = map.get(key);
+
+      if (existing) {
+        existing.types.push(complaintType);
+        return map;
+      }
+
+      map.set(key, {
+        category_id: complaintType.category_id,
+        category_name: complaintType.category_name,
+        types: [complaintType],
+      });
+      return map;
+    }, new Map<string, {
+      category_id: string;
+      category_name: string | null;
+      types: typeof complaintTypes;
+    }>()).values(),
+  ).map((category) => ({
+    ...category,
+    type_count: category.types.length,
+  }));
 
   return {
     success: true,
     data: {
-      categories: categories.map((category) => ({
-        name: category.name,
-        slug: slugifyCategory(category.name || category.category?.name || ''),
-        description: null,
-        is_urgent: category.is_urgent === true,
-        require_address: category.require_address !== false,
-        send_important_contacts: category.send_important_contacts === true,
-      })),
-      total: categories.length,
+      categories: groupedCategories,
+      complaint_types: complaintTypes,
+      total: complaintTypes.length,
+      category_total: groupedCategories.length,
+      selection_hint: 'Utamakan type_id resmi saat membuat pengaduan. category_id hanya kategori induk.',
     },
     meta: {
       trustLevel: 'trusted_fact',
-      sourceKind: 'official_complaint_categories',
+      sourceKind: 'official_complaint_types',
     },
   };
 }
 
 async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResult> {
-  const nationalFallbackContacts = [
-    { name: 'Polisi', phone: '110', description: 'Layanan darurat kepolisian nasional', category: 'Darurat Nasional' },
-    { name: 'Ambulans', phone: '119', description: 'Layanan gawat darurat medis nasional', category: 'Darurat Nasional' },
-    { name: 'Pemadam Kebakaran', phone: '113', description: 'Layanan pemadam kebakaran nasional', category: 'Darurat Nasional' },
-  ];
-
   if (!ctx.villageId) {
     return {
       success: true,
       data: {
-        contacts: nationalFallbackContacts,
-        total: nationalFallbackContacts.length,
+        contacts: [],
+        total: 0,
         has_local_contacts: false,
-        suggested_response: 'Untuk kondisi darurat, mohon segera hubungi *110* (Polisi), *119* (Ambulans), atau *113* (Pemadam Kebakaran).',
+        suggested_response: 'Saya belum bisa menentukan desa untuk mengambil kontak darurat resmi. Kalau Bapak/Ibu beri tahu desanya, saya bantu cek nomor yang tercatat.',
       },
       meta: {
         trustLevel: 'trusted_fact',
@@ -600,17 +672,22 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
   }
 
   const contacts = await getImportantContacts(ctx.villageId);
-  const prioritized = contacts.filter((contact) => matchContactHints(contact, EMERGENCY_CONTACT_HINTS));
-  const finalContacts = (prioritized.length > 0 ? prioritized : contacts).slice(0, 8);
+  const finalContacts = contacts
+    .filter((contact) => matchContactHints(contact, EMERGENCY_CONTACT_HINTS))
+    .slice(0, 8);
 
   if (finalContacts.length === 0) {
+    const suggestedResponse = contacts.length > 0
+      ? 'Saya belum menemukan kontak darurat resmi yang cocok untuk desa ini di database saat ini. Kalau situasinya mendesak sekarang, mohon segera cari bantuan terdekat di sekitar lokasi sambil saya bantu catat kejadian untuk petugas desa.'
+      : 'Kontak darurat untuk desa ini belum tersedia di database saat ini. Jika perlu, saya bisa bantu catat kejadian atau laporan agar segera diteruskan ke petugas desa.';
+
     return {
       success: true,
       data: {
-        contacts: nationalFallbackContacts,
-        total: nationalFallbackContacts.length,
+        contacts: [],
+        total: 0,
         has_local_contacts: false,
-        suggested_response: 'Kontak darurat lokal belum tersedia. Untuk kondisi darurat, mohon segera hubungi *110* (Polisi), *119* (Ambulans), atau *113* (Pemadam Kebakaran).',
+        suggested_response: suggestedResponse,
       },
       meta: {
         trustLevel: 'trusted_fact',
@@ -630,7 +707,7 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
       })),
       total: finalContacts.length,
       has_local_contacts: true,
-      suggested_response: 'Berikut kontak darurat yang bisa dihubungi sekarang. Jika tidak tersambung, gunakan juga *110* (Polisi), *119* (Ambulans), atau *113* (Pemadam Kebakaran).',
+      suggested_response: 'Berikut kontak darurat yang tercatat untuk desa ini dan bisa segera dihubungi.',
     },
     meta: {
       trustLevel: 'trusted_fact',
@@ -1018,6 +1095,8 @@ async function toolCreateComplaint(
   ctx: ToolContext,
 ): Promise<ToolCallResult> {
   const kategori = typeof args.kategori === 'string' ? args.kategori.trim() : '';
+  const rawTypeId = typeof args.type_id === 'string' && args.type_id.trim() ? args.type_id.trim() : undefined;
+  const rawCategoryId = typeof args.category_id === 'string' && args.category_id.trim() ? args.category_id.trim() : undefined;
   const alamat = typeof args.alamat === 'string' ? args.alamat.trim() : '';
   const deskripsi = typeof args.deskripsi === 'string' ? args.deskripsi.trim() : '';
   const rtRw = typeof args.rt_rw === 'string' && args.rt_rw.trim() ? args.rt_rw.trim() : undefined;
@@ -1025,31 +1104,49 @@ async function toolCreateComplaint(
     ? args.nama_pelapor.trim()
     : undefined;
   const noHp = typeof args.no_hp === 'string' && args.no_hp.trim() ? args.no_hp.trim() : undefined;
-  const categoryConfig = kategori ? await findComplaintCategoryConfig(kategori, ctx.villageId) : null;
-  const categoryLabel = (categoryConfig?.name || kategori || 'laporan').replace(/_/g, ' ').toLowerCase();
+  const hasComplaintHint = Boolean(rawTypeId || rawCategoryId || kategori);
+  const categoryConfig = hasComplaintHint
+    ? await findComplaintCategoryConfig(kategori || undefined, ctx.villageId, rawTypeId, rawCategoryId)
+    : null;
+  const resolvedTypeId = categoryConfig?.id || rawTypeId;
+  const resolvedCategoryId = categoryConfig?.category_id || rawCategoryId;
+  const resolvedComplaintName = categoryConfig?.name || kategori;
+  const resolvedCategoryName = categoryConfig?.category?.name || null;
+  const categoryLabel = (resolvedComplaintName || resolvedCategoryName || 'laporan').replace(/_/g, ' ').toLowerCase();
+  const requiresAddress = categoryConfig?.require_address === true;
+  const needsAddress = requiresAddress && !alamat;
+  const needsComplaintType = !resolvedTypeId && !resolvedComplaintName;
 
-  if (!kategori || !alamat || !deskripsi) {
-    if (kategori && !alamat && !ctx.isEvaluation) {
+  if (needsComplaintType || !deskripsi || needsAddress) {
+    if ((resolvedComplaintName || resolvedCategoryName) && needsAddress && !ctx.isEvaluation) {
       setPendingAddressRequest(ctx.userId, {
-        kategori: categoryConfig?.name || kategori,
+        kategori: resolvedComplaintName || resolvedCategoryName || 'Laporan',
         deskripsi: deskripsi || `Laporan ${categoryLabel}`,
         village_id: ctx.villageId,
         timestamp: Date.now(),
       });
     }
 
-    const suggestedResponse = !kategori
-      ? 'Silakan ceritakan dulu masalah yang ingin dilaporkan ya Pak/Bu, misalnya jalan rusak, lampu mati, atau sampah menumpuk.'
-      : !alamat
+    const suggestedResponse = needsComplaintType
+      ? rawTypeId || rawCategoryId
+        ? 'Baik, mohon pilih dulu jenis pengaduan resmi yang paling sesuai dari daftar desa ya Pak/Bu, lalu saya bantu catat laporannya.'
+        : 'Silakan ceritakan dulu jenis masalah yang ingin dilaporkan ya Pak/Bu, nanti saya cocokkan dengan jenis pengaduan resmi desa.'
+      : needsAddress
         ? `Baik, mohon sebutkan lokasi ${categoryLabel} tersebut ya Pak/Bu. Kalau ada RT/RW atau patokan terdekat, sekalian ditulis.`
         : `Siap, supaya laporannya bisa kami catat, mohon jelaskan singkat kondisi ${categoryLabel} tersebut ya Pak/Bu.`;
 
     return {
       success: false,
-      error: 'Kategori, alamat, dan deskripsi harus lengkap sebelum membuat laporan.',
+      error: needsAddress
+        ? 'Jenis pengaduan, alamat, dan deskripsi harus lengkap sebelum membuat laporan.'
+        : needsComplaintType
+          ? 'Jenis pengaduan resmi dan deskripsi harus lengkap sebelum membuat laporan.'
+          : 'Jenis pengaduan dan deskripsi harus lengkap sebelum membuat laporan.',
       suggested_response: suggestedResponse,
       data: {
-        needs_input: !kategori ? 'kategori' : !alamat ? 'alamat' : 'deskripsi',
+        needs_input: needsComplaintType
+          ? (rawTypeId || rawCategoryId ? 'type_id' : 'kategori')
+          : needsAddress ? 'alamat' : 'deskripsi',
         suggested_response: suggestedResponse,
       },
       meta: {
@@ -1074,6 +1171,7 @@ async function toolCreateComplaint(
     };
   }
 
+  const complaintNameForSubmission = resolvedComplaintName || resolvedCategoryName || kategori || 'Laporan warga';
   const profile = await getAutoFillSuggestionsWithFallback(ctx.userId);
   const reporterName = namaPelapor || profile.nama_lengkap || (ctx.isEvaluation ? 'User Evaluasi' : undefined);
   const reporterPhone = ctx.channel === 'webchat'
@@ -1100,13 +1198,15 @@ async function toolCreateComplaint(
     saveDefaultAddress(ctx.userId, alamat, rtRw);
   }
   if (ctx.isEvaluation) {
-    const simulatedId = referenceFromSeed('LAP', `${ctx.userId}:${kategori}:${alamat}`);
+    const simulatedId = referenceFromSeed('LAP', `${ctx.userId}:${complaintNameForSubmission}:${alamat}`);
     return {
       success: true,
       data: {
         created: true,
         complaint_id: simulatedId,
         reference_number: simulatedId,
+        type_id: resolvedTypeId || null,
+        category_id: resolvedCategoryId || null,
         status: 'OPEN',
         status_label: getStatusLabel('OPEN'),
         is_urgent: categoryConfig?.is_urgent === true,
@@ -1124,7 +1224,9 @@ async function toolCreateComplaint(
     wa_user_id: ctx.channel === 'whatsapp' ? ctx.userId : undefined,
     channel: ctx.channel === 'whatsapp' ? 'WHATSAPP' : 'WEBCHAT',
     channel_identifier: ctx.channel === 'webchat' ? ctx.userId : undefined,
-    kategori: categoryConfig?.name || kategori,
+    kategori: complaintNameForSubmission,
+    category_id: resolvedCategoryId,
+    type_id: resolvedTypeId,
     deskripsi,
     alamat,
     rt_rw: rtRw,
@@ -1144,22 +1246,41 @@ async function toolCreateComplaint(
     };
   }
 
-  recordComplaintCreated(ctx.userId, slugifyCategory(categoryConfig?.name || kategori));
+  recordComplaintCreated(ctx.userId, slugifyCategory(complaintNameForSubmission));
   void rememberMemoryEvent({
     wa_user_id: ctx.userId,
     village_id: ctx.villageId,
     memory_type: 'complaint',
     memory_key: complaintId,
     importance: categoryConfig?.is_urgent === true ? 0.95 : 0.86,
-    content: `Laporan ${complaintId} dibuat untuk kategori ${categoryConfig?.name || kategori}${alamat ? ` di ${alamat}` : ''}.`,
+    content: `Laporan ${complaintId} dibuat untuk kategori ${complaintNameForSubmission}${alamat ? ` di ${alamat}` : ''}.`,
     metadata_json: {
       reference_number: complaintId,
-      kategori: categoryConfig?.name || kategori,
+      kategori: complaintNameForSubmission,
       alamat,
       rt_rw: rtRw,
       is_urgent: categoryConfig?.is_urgent === true,
     },
   });
+
+  let importantContactsNotice = '';
+
+  if (
+    categoryConfig?.send_important_contacts
+    && (categoryConfig.important_contact_category_id || categoryConfig.important_contact_category)
+  ) {
+    importantContactsNotice = '\n\n📞 Kontak penting terkait akan saya kirim terpisah setelah laporan dibuat.';
+  } else if (categoryConfig?.send_important_contacts) {
+    logger.warn('Complaint type requests important-contact auto send without category config', {
+      userId: ctx.userId,
+      villageId: ctx.villageId,
+      kategori: categoryConfig.name,
+    });
+  }
+
+  const suggestedResponse = categoryConfig?.is_urgent === true
+    ? `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`
+    : `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.${importantContactsNotice}\n\nJika ada laporan lain, silakan langsung sampaikan.`;
 
   return {
     success: true,
@@ -1167,16 +1288,18 @@ async function toolCreateComplaint(
       created: true,
       complaint_id: complaintId,
       reference_number: complaintId,
+      type_id: resolvedTypeId || null,
+      category_id: resolvedCategoryId || null,
       status: 'OPEN',
       status_label: getStatusLabel('OPEN'),
       is_urgent: categoryConfig?.is_urgent === true,
       send_important_contacts: categoryConfig?.send_important_contacts === true,
+      important_contacts: [],
+      contacts: [],
       message: categoryConfig?.is_urgent === true
         ? `Laporan darurat berhasil dibuat dengan nomor ${complaintId}.`
         : `Laporan berhasil dibuat dengan nomor ${complaintId}.`,
-      suggested_response: categoryConfig?.is_urgent === true
-        ? `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.\n\nJika ada laporan lain, silakan langsung sampaikan.`
-        : `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.\nStatus laporan saat ini: OPEN.\n\n📷 Tip: Bapak/Ibu bisa kirim foto pendukung untuk mempercepat penanganan. Cukup kirim foto kapan saja.\n\nJika ada laporan lain, silakan langsung sampaikan.`,
+      suggested_response: suggestedResponse,
     },
     meta: {
       trustLevel: 'action_result',
@@ -2033,30 +2156,92 @@ async function resolveServiceFromName(
 }
 
 async function findComplaintCategoryConfig(
-  kategori: string,
+  kategori: string | undefined,
   villageId?: string,
+  typeId?: string,
+  categoryId?: string,
 ) {
-  const normalized = slugifyCategory(kategori);
   const categories = await getComplaintTypes(villageId);
-  return categories.find((category) => {
-    const candidates = [
-      category.name,
-      category.category?.name,
-      slugifyCategory(category.name),
-      slugifyCategory(category.category?.name || ''),
-    ]
+
+  if (typeId) {
+    const exactType = categories.find((category) => category.id === typeId);
+    if (exactType) return exactType;
+  }
+
+  const scopedCategories = categoryId
+    ? categories.filter((category) => category.category_id === categoryId)
+    : categories;
+
+  if (scopedCategories.length === 0) {
+    return null;
+  }
+
+  if (!kategori) {
+    return scopedCategories.length === 1 ? scopedCategories[0] : null;
+  }
+
+  const normalized = slugifyCategory(kategori);
+  const exactType = scopedCategories.find((category) => (
+    [category.name, slugifyCategory(category.name)]
+      .filter(Boolean)
+      .map((value) => String(value).toLowerCase())
+      .includes(normalized)
+  ));
+  if (exactType) {
+    return exactType;
+  }
+
+  const fuzzyType = scopedCategories.find((category) => {
+    const candidates = [category.name, slugifyCategory(category.name)]
       .filter(Boolean)
       .map((value) => String(value).toLowerCase());
 
-    return candidates.includes(normalized) || candidates.some((value) => value.includes(normalized));
-  }) || null;
+    return candidates.some((value) => value.includes(normalized) || normalized.includes(value));
+  });
+  if (fuzzyType) {
+    return fuzzyType;
+  }
+
+  const matchingCategoryTypes = scopedCategories.filter((category) => (
+    [category.category?.name, slugifyCategory(category.category?.name || '')]
+      .filter(Boolean)
+      .map((value) => String(value).toLowerCase())
+      .includes(normalized)
+  ));
+
+  return matchingCategoryTypes.length === 1 ? matchingCategoryTypes[0] : null;
+}
+
+function buildContactHintHaystack(
+  contact: Awaited<ReturnType<typeof getImportantContacts>>[number],
+): string {
+  return `${contact.name} ${contact.description || ''} ${contact.category?.name || ''}`.toLowerCase();
+}
+
+function scoreOfficeContactCandidate(
+  contact: Awaited<ReturnType<typeof getImportantContacts>>[number],
+): number {
+  const haystack = buildContactHintHaystack(contact);
+  let score = 0;
+
+  for (const rule of OFFICE_CONTACT_PRIORITY_RULES) {
+    if (rule.pattern.test(haystack)) {
+      score += rule.weight;
+    }
+  }
+
+  if (contact.description) score += 2;
+  if (contact.category?.name) score += 1;
+  score += Math.min(contact.name.length, 40) / 100;
+
+  return score;
 }
 
 function matchContactHints(
   contact: Awaited<ReturnType<typeof getImportantContacts>>[number],
   hints: string[],
 ): boolean {
-  const haystack = `${contact.name} ${contact.description || ''} ${contact.category?.name || ''}`.toLowerCase();
+  const haystack = buildContactHintHaystack(contact);
   return hints.some((hint) => haystack.includes(hint));
 }
 

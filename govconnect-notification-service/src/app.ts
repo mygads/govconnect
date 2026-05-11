@@ -10,6 +10,7 @@ import prisma from './config/database';
 import { isConnected } from './services/rabbitmq.service';
 import { swaggerSpec } from './config/swagger';
 import { handleEvent } from './handlers/event.handler';
+import { handleChannelDeliveryUpdate } from './services/notification.service';
 import { errorResponse, successResponse } from './shared/error-response';
 
 // Initialize Prometheus default metrics
@@ -120,6 +121,32 @@ app.post('/internal/events/:routingKey', internalAuthGuard, async (req: Request,
       error: error.message,
     });
     return res.status(500).json(errorResponse('Internal event handling failed'));
+  }
+});
+
+app.post('/internal/delivery-status', internalAuthGuard, async (req: Request, res: Response) => {
+  try {
+    const { message_id, delivery_status, occurred_at, provider_status, provider_error } = req.body || {};
+
+    if (!message_id || typeof message_id !== 'string') {
+      return res.status(400).json(errorResponse('message_id is required'));
+    }
+
+    if (!['sent', 'delivered', 'read', 'failed'].includes(String(delivery_status || ''))) {
+      return res.status(400).json(errorResponse('delivery_status is invalid'));
+    }
+
+    await handleChannelDeliveryUpdate({
+      message_id,
+      delivery_status,
+      occurred_at,
+      provider_status,
+      provider_error,
+    });
+    return res.json(successResponse());
+  } catch (error: any) {
+    logger.error('Internal delivery status handling failed', { error: error.message });
+    return res.status(500).json(errorResponse('Internal delivery status handling failed'));
   }
 });
 

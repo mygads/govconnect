@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { caseService } from '@/lib/api-client'
 
-export const revalidate = 15 // Cache for 15 seconds (more frequent updates)
+export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   try {

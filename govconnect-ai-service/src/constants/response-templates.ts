@@ -105,8 +105,8 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   ],
   
   'KNOWLEDGE_QUERY': [
-    'Mohon maaf Pak/Bu, informasi tersebut belum tersedia.\nSilakan datang langsung ke kantor desa/kelurahan untuk bantuan lebih lanjut.',
-    'Mohon maaf Pak/Bu, informasi terkait hal tersebut belum tersedia.\nSilakan datang ke kantor desa/kelurahan pada jam kerja.',
+    'Mohon maaf Pak/Bu, saya belum bisa memastikan informasi yang dimaksud dari data yang tersedia saat ini. Kalau berkenan, sebutkan topik atau nama layanannya lebih spesifik ya.',
+    'Mohon maaf Pak/Bu, saya belum menemukan informasi yang cukup tepat untuk pertanyaan tadi. Boleh diperjelas sedikit, misalnya nama layanan, dokumen, atau kebutuhan yang ingin dicek?',
   ],
   
   'THANKS': THANKS_RESPONSES,
@@ -124,15 +124,15 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   ],
   
   'UNKNOWN': [
-    'Mohon maaf Pak/Bu, bisa dijelaskan lebih detail? Kami siap bantu untuk:\n\n• Lapor masalah/pengaduan\n• Ajukan layanan administrasi\n• Info desa/kelurahan',
-    'Mohon maaf Pak/Bu, kami kurang paham. Bapak/Ibu ingin:\n\n1) Lapor masalah\n2) Urus surat/layanan\n3) Cek status\n\nSilakan pilih atau jelaskan lebih detail.',
-    'Mohon maaf Pak/Bu, silakan jelaskan lagi. Kami bisa bantu:\n\n• Laporan keluhan/aduan\n• Ajukan layanan\n• Informasi desa/kelurahan',
+    'Maaf Pak/Bu, saya siap bantu, tetapi maksud pesan tadi belum terlalu jelas. Bapak/Ibu mau lapor masalah, urus layanan administrasi, atau minta info desa?',
+    'Maaf Pak/Bu, saya belum menangkap kebutuhan Bapak/Ibu dengan jelas. Kalau berkenan, balas singkat saja: lapor masalah, urus surat/layanan, atau cek status.',
+    'Maaf Pak/Bu, boleh dijelaskan sedikit lagi? Saya bisa bantu untuk pengaduan, layanan administrasi, atau informasi desa/kelurahan.',
   ],
   
   'ERROR': [
-    'Mohon maaf Pak/Bu, ada kendala teknis. Silakan ulangi pesan Anda.',
-    'Mohon maaf Pak/Bu, sistem sedang sibuk. Silakan coba lagi dalam beberapa saat.',
-    'Mohon maaf Pak/Bu, terjadi gangguan teknis. Silakan kirim ulang pesannya.',
+    'Mohon maaf Pak/Bu, sistem kami sedang ada kendala sebentar. Saya mengerti ini merepotkan — mohon coba kirim ulang pesannya ya. Kalau masih belum bisa, saya bantu hubungkan ke petugas desa langsung.',
+    'Mohon maaf Pak/Bu, jawabannya belum berhasil kami proses saat ini. Silakan kirim ulang sebentar lagi — kalau masih terkendala, sebutkan saja keperluan Bapak/Ibu, nanti saya catat dan arahkan ke petugas.',
+    'Mohon maaf Pak/Bu, ada kendala dari sisi kami. Coba ulangi pesan tadi ya. Kalau sudah beberapa kali belum berhasil, balas *petugas* dan saya teruskan ke staff desa.',
   ],
 };
 
@@ -168,16 +168,16 @@ export const MISSING_FIELD_PROMPTS: Record<string, string[]> = {
 
 export const ERROR_TEMPLATES: Record<string, string[]> = {
   'TIMEOUT': [
-    'Mohon maaf Pak/Bu, prosesnya agak lama. Silakan kirim ulang pesannya.',
-    'Mohon maaf Pak/Bu, terjadi timeout. Silakan coba lagi dalam beberapa saat.',
+    'Maaf Pak/Bu, prosesnya belum sempat selesai karena sistem kami sedang lambat. Coba kirim ulang pesannya sebentar lagi ya.',
+    'Maaf Pak/Bu, pengecekannya butuh waktu lebih lama dari biasanya. Silakan coba lagi beberapa saat lagi, nanti saya bantu lanjutkan.',
   ],
   'RATE_LIMIT': [
-    'Mohon maaf Pak/Bu, sistem sedang sibuk. Coba lagi dalam 1-2 menit.',
-    'Mohon maaf Pak/Bu, sistem sedang padat. Silakan coba lagi sebentar.',
+    'Maaf Pak/Bu, antrian pesan sedang ramai. Coba kirim lagi dalam 1-2 menit ya, nanti saya bantu lanjutkan.',
+    'Maaf Pak/Bu, sistem sedang padat sebentar. Silakan coba lagi ya, biasanya tidak lama.',
   ],
   'SERVICE_DOWN': [
-    'Mohon maaf Pak/Bu, layanan sedang maintenance. Silakan coba lagi nanti.',
-    'Mohon maaf Pak/Bu, sistem sedang dalam perbaikan. Coba lagi dalam beberapa saat.',
+    'Maaf Pak/Bu, layanan sedang kami perbaiki sebentar. Silakan coba lagi nanti; kalau masih terkendala, saya bantu arahkan ke petugas desa.',
+    'Maaf Pak/Bu, sistem sedang dalam perbaikan dari sisi kami. Coba lagi beberapa saat ya, nanti saya bantu lanjutkan.',
   ],
   'DEFAULT': FALLBACK_TEMPLATES['ERROR'],
 };

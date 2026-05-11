@@ -35,7 +35,7 @@ export async function GET(
     const { wa_user_id } = await params
     const response = await livechat.getTakeoverStatus(wa_user_id, session.admin.village_id || undefined)
     const data = await response.json()
-    return NextResponse.json(data)
+    return NextResponse.json(data, { status: response.status })
   } catch (error) {
     console.error('Error checking takeover status:', error)
     return NextResponse.json(

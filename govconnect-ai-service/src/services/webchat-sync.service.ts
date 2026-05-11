@@ -22,9 +22,10 @@ export async function saveWebchatMessage(data: {
   message: string;
   direction: 'IN' | 'OUT';
   source?: 'USER' | 'AI' | 'ADMIN';
+  message_id?: string;
 }): Promise<boolean> {
   try {
-    const messageId = `webchat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const messageId = data.message_id || `webchat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     await axios.post(
       `${CHANNEL_SERVICE_URL}/internal/messages`,
@@ -85,6 +86,45 @@ export async function updateWebchatConversation(data: {
     resetUnread: data.resetUnread,
   });
   return true;
+}
+
+export async function updateWebchatAIStatus(data: {
+  session_id: string;
+  village_id?: string;
+  action: 'processing' | 'clear' | 'error' | 'pending_balance';
+  message_id?: string;
+  error_message?: string;
+}): Promise<boolean> {
+  try {
+    await axios.post(
+      `${CHANNEL_SERVICE_URL}/internal/ai-status`,
+      {
+        village_id: data.village_id,
+        channel: 'WEBCHAT',
+        channel_identifier: data.session_id,
+        action: data.action,
+        message_id: data.message_id,
+        error_message: data.error_message,
+      },
+      {
+        headers: {
+          'x-internal-api-key': INTERNAL_API_KEY,
+          ...(data.village_id ? { 'x-village-id': data.village_id } : {}),
+          'Content-Type': 'application/json',
+        },
+        timeout: 5000,
+      }
+    );
+
+    return true;
+  } catch (error: any) {
+    logger.warn('Failed to update webchat AI status in Channel Service', {
+      session_id: data.session_id,
+      action: data.action,
+      error: error.message,
+    });
+    return false;
+  }
 }
 
 /**
@@ -219,6 +259,7 @@ export async function getAdminMessages(
 export default {
   saveWebchatMessage,
   updateWebchatConversation,
+  updateWebchatAIStatus,
   checkWebchatTakeover,
   getAdminMessages,
 };

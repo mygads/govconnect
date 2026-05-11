@@ -8,6 +8,7 @@ interface Config {
   databaseUrl: string;
   rabbitmqUrl: string;
   channelServiceUrl: string;
+  caseServiceUrl?: string;
   internalApiKey: string;
   logLevel: string;
   logDir: string;
@@ -34,6 +35,7 @@ function validateEnv(): Config {
     databaseUrl: process.env.DATABASE_URL!,
     rabbitmqUrl: process.env.RABBITMQ_URL!,
     channelServiceUrl: process.env.CHANNEL_SERVICE_URL!,
+    caseServiceUrl: process.env.CASE_SERVICE_URL || process.env.CASE_SERVICE_INTERNAL_URL || undefined,
     internalApiKey: process.env.INTERNAL_API_KEY!,
     logLevel: process.env.LOG_LEVEL || 'info',
     logDir: process.env.LOG_DIR || './logs'

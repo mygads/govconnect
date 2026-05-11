@@ -95,9 +95,13 @@ describe('decideAddressResume', () => {
     }
   });
 
-  it('accepts the raw message as address when NLU extraction fails but analysis is usable', async () => {
+  it('accepts the analyzed address when extraction fails but analysis says it is specific', async () => {
     (extractAddressFromMessage as any).mockResolvedValue('');
-    (analyzeAddress as any).mockResolvedValue({ quality: 'usable', has_address: true });
+    (analyzeAddress as any).mockResolvedValue({
+      quality: 'specific',
+      has_address: true,
+      address: 'Jalan Radio dekat SMAN 1 Margahayu',
+    });
 
     const decision = await decideAddressResume({
       userId: 'user-2',
@@ -108,7 +112,45 @@ describe('decideAddressResume', () => {
 
     expect(decision.action).toBe('resume');
     if (decision.action === 'resume') {
-      expect(decision.alamat).toBe('didepan sman 1 margahayu jalan radio');
+      expect(decision.alamat).toBe('Jalan Radio dekat SMAN 1 Margahayu');
+      expect(decision.reason).toBe('nlu_usable');
+    }
+  });
+
+  it('re-prompts when extraction fails and analysis says the address is vague', async () => {
+    (extractAddressFromMessage as any).mockResolvedValue('');
+    (analyzeAddress as any).mockResolvedValue({
+      quality: 'vague',
+      has_address: true,
+      address: 'dekat lapangan',
+    });
+
+    const decision = await decideAddressResume({
+      userId: 'user-vague',
+      message: 'dekat lapangan',
+      pendingAddr: { ...BASE_PENDING },
+      channel: 'whatsapp',
+    });
+
+    expect(decision.action).toBe('reprompt');
+    if (decision.action === 'reprompt') {
+      expect(decision.reason).toBe('not_address');
+    }
+  });
+
+  it('accepts raw text with a clearly specific street-number pattern even when extraction fails', async () => {
+    (extractAddressFromMessage as any).mockResolvedValue('');
+
+    const decision = await decideAddressResume({
+      userId: 'user-pattern',
+      message: 'Jalan Kenanga No 12 RT 03/RW 05',
+      pendingAddr: { ...BASE_PENDING },
+      channel: 'whatsapp',
+    });
+
+    expect(decision.action).toBe('resume');
+    if (decision.action === 'resume') {
+      expect(decision.alamat).toBe('Jalan Kenanga No 12 RT 03/RW 05');
       expect(decision.reason).toBe('nlu_usable');
     }
   });

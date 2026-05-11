@@ -3,6 +3,7 @@ export const RABBITMQ_CONFIG = {
   EXCHANGE_TYPE: 'topic',
   ROUTING_KEYS: {
     COMPLAINT_CREATED: 'govconnect.complaint.created',
+    COMPLAINT_IMPORTANT_CONTACTS: 'govconnect.complaint.important_contacts',
     SERVICE_REQUESTED: 'govconnect.service.requested',
     STATUS_UPDATED: 'govconnect.status.updated',
     URGENT_ALERT: 'govconnect.urgent.alert',

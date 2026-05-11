@@ -159,19 +159,31 @@ router.post('/scan/doc', async (req: Request, res: Response) => {
 router.post('/:id/resolve', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { status, resolvedBy, resolutionNote } = req.body || {};
+    const { status, resolvedBy, resolutionNote, villageId } = req.body || {};
     if (!VALID_STATUSES.has(status)) {
       res.status(400).json({ success: false, error: 'status must be open|resolved|ignored' });
       return;
     }
-    const updated = await updateInconsistencyStatus(id, {
-      status,
-      resolvedBy,
-      resolutionNote,
-    });
+    const updated = await updateInconsistencyStatus(
+      id,
+      {
+        status,
+        resolvedBy,
+        resolutionNote,
+      },
+      typeof villageId === 'string' && villageId.trim() ? villageId.trim() : undefined,
+    );
     res.json({ success: true, item: updated });
   } catch (error: any) {
-    logger.error('knowledge-consistency resolve failed', { error: error.message });
+    logger.error('knowledge-consistency resolve failed', { error: error.message, code: error.code });
+    if (error?.code === 'NOT_FOUND') {
+      res.status(404).json({ success: false, error: 'Inconsistency not found' });
+      return;
+    }
+    if (error?.code === 'FORBIDDEN') {
+      res.status(403).json({ success: false, error: 'Forbidden' });
+      return;
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });

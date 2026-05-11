@@ -61,6 +61,15 @@ interface ServiceRequirement {
   help_text?: string | null
 }
 
+interface UploadedRequirementFile {
+  url: string
+  internal_url?: string | null
+  file_name?: string | null
+  mime_type?: string | null
+  size?: number | null
+  storage_key?: string | null
+}
+
 interface ServiceRequest {
   id: string
   request_number: string
@@ -164,13 +173,31 @@ const statusConfig: Record<string, {
   },
 }
 
-const statusOptions = [
-  { value: "OPEN", label: "Baru" },
-  { value: "PROCESS", label: "Proses" },
-  { value: "DONE", label: "Selesai" },
-  { value: "CANCELED", label: "Dibatalkan" },
-  { value: "REJECT", label: "Ditolak" },
-]
+const SERVICE_STATUS_LABELS: Record<string, string> = {
+  OPEN: "Baru",
+  PROCESS: "Proses",
+  DONE: "Selesai",
+  CANCELED: "Dibatalkan",
+  REJECT: "Ditolak",
+}
+
+const VALID_SERVICE_REQUEST_TRANSITIONS: Record<string, string[]> = {
+  OPEN: ["PROCESS", "DONE", "CANCELED", "REJECT"],
+  PROCESS: ["DONE", "CANCELED", "REJECT"],
+  DONE: [],
+  CANCELED: [],
+  REJECT: [],
+}
+
+function getServiceStatusOptions(currentStatus: string) {
+  const normalizedStatus = (currentStatus || "OPEN").toUpperCase()
+  const nextStatuses = VALID_SERVICE_REQUEST_TRANSITIONS[normalizedStatus] || []
+
+  return [normalizedStatus, ...nextStatuses].map((status) => ({
+    value: status,
+    label: SERVICE_STATUS_LABELS[status] || status,
+  }))
+}
 
 const citizenFieldLabels: Record<string, { label: string; icon: React.ElementType }> = {
   nama_lengkap: { label: "Nama Lengkap", icon: User },
@@ -184,6 +211,33 @@ const citizenFieldLabels: Record<string, { label: string; icon: React.ElementTyp
   agama: { label: "Agama", icon: User },
   kewarganegaraan: { label: "Kewarganegaraan", icon: User },
   status_perkawinan: { label: "Status Perkawinan", icon: User },
+}
+
+function normalizeUploadedRequirementFile(value: unknown): UploadedRequirementFile | null {
+  if (typeof value === "string") {
+    const url = value.trim()
+    return url ? { url } : null
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+
+  const record = value as Record<string, unknown>
+  const url = typeof record.url === "string" ? record.url.trim() : ""
+  if (!url) return null
+
+  return {
+    url,
+    internal_url: typeof record.internal_url === "string" ? record.internal_url : null,
+    file_name: typeof record.file_name === "string" ? record.file_name : null,
+    mime_type: typeof record.mime_type === "string" ? record.mime_type : null,
+    size: typeof record.size === "number" ? record.size : null,
+    storage_key: typeof record.storage_key === "string" ? record.storage_key : null,
+  }
+}
+
+function getUploadedRequirementFileName(file: UploadedRequirementFile): string {
+  if (file.file_name?.trim()) return file.file_name.trim()
+  return file.url.split("/").pop()?.split("?")[0] || "File"
 }
 
 export default function ServiceRequestDetailPage() {
@@ -200,6 +254,7 @@ export default function ServiceRequestDetailPage() {
   const [resultFile, setResultFile] = useState<File | null>(null)
   const [resultFileUrl, setResultFileUrl] = useState("")
   const [resultFileName, setResultFileName] = useState("")
+  const [resultDescription, setResultDescription] = useState("")
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   
@@ -283,6 +338,7 @@ export default function ServiceRequestDetailPage() {
       setAdminNotes(payload.admin_notes || "")
       setResultFileUrl(payload.result_file_url || "")
       setResultFileName(payload.result_file_name || "")
+      setResultDescription(payload.result_description || "")
       setError(null)
     } catch (err: any) {
       setError(err.message || "Gagal memuat permohonan")
@@ -335,20 +391,40 @@ export default function ServiceRequestDetailPage() {
 
   const handleSave = async () => {
     if (!request) return
+
+    const trimmedAdminNotes = adminNotes.trim()
+    const isStatusChange = status !== request.status
+    const requiresTerminalNotes = isStatusChange && ["DONE", "CANCELED", "REJECT"].includes(status)
+
+    if (requiresTerminalNotes && !trimmedAdminNotes) {
+      toast({
+        title: "Catatan wajib diisi",
+        description: "Status selesai, dibatalkan, atau ditolak wajib menyertakan catatan admin.",
+        variant: "destructive",
+      })
+      return
+    }
+
     setSaving(true)
     try {
+      const payload: Record<string, string | null> = {
+        admin_notes: trimmedAdminNotes || null,
+        result_file_url: resultFileUrl || null,
+        result_file_name: resultFileName || null,
+        result_description: resultDescription.trim() || null,
+      }
+
+      if (isStatusChange) {
+        payload.status = status
+      }
+
       const response = await fetch(`/api/service-requests/${request.id}/status`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
-        body: JSON.stringify({ 
-          status, 
-          admin_notes: adminNotes,
-          result_file_url: resultFileUrl || null,
-          result_file_name: resultFileName || null,
-        }),
+        body: JSON.stringify(payload),
       })
 
       if (!response.ok) {
@@ -357,8 +433,8 @@ export default function ServiceRequestDetailPage() {
       }
 
       toast({
-        title: "Status diperbarui",
-        description: "Status permohonan layanan berhasil disimpan.",
+        title: "Perubahan disimpan",
+        description: "Permohonan layanan berhasil diperbarui.",
       })
       await fetchRequest(request.id)
     } catch (err: any) {
@@ -408,6 +484,10 @@ export default function ServiceRequestDetailPage() {
       </div>
     )
   }
+
+  const allowedStatusOptions = request ? getServiceStatusOptions(request.status) : []
+  const isStatusChange = !!request && status !== request.status
+  const requiresTerminalNotes = isStatusChange && ["DONE", "CANCELED", "REJECT"].includes(status)
 
   if (error || !request) {
     return (
@@ -503,7 +583,7 @@ export default function ServiceRequestDetailPage() {
                               <Icon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
                               <div className="min-w-0">
                                 <p className="text-xs text-muted-foreground">{fieldConfig.label}</p>
-                                <p className="font-medium break-words">{String(value)}</p>
+                                <p className="font-medium wrap-break-word">{String(value)}</p>
                               </div>
                             </div>
                           )
@@ -549,14 +629,17 @@ export default function ServiceRequestDetailPage() {
                   {Object.entries(request.requirement_data_json).map(([key, value]) => {
                     const label = getRequirementLabel(key)
                     const fieldType = getRequirementFieldType(key)
-                    const valueStr = String(value || "")
-                    const isFileUrl = fieldType === "file" || valueStr.match(/^https?:\/\/.+\.(jpg|jpeg|png|gif|pdf|doc|docx)(\?|$)/i)
-                    
-                    if (isFileUrl && valueStr) {
-                      const FileIcon = getFileIcon(valueStr)
-                      const fileType = getFileType(valueStr)
-                      const fileName = valueStr.split("/").pop()?.split("?")[0] || "File"
-                      
+                    const file = normalizeUploadedRequirementFile(value)
+                    const valueStr = typeof value === "string" ? value : String(value || "")
+                    const isFileValue = fieldType === "file"
+                      ? !!file
+                      : !!file && /^https?:\/\//i.test(file.url)
+
+                    if (isFileValue && file) {
+                      const FileIcon = getFileIcon(file.url)
+                      const fileType = getFileType(file.url)
+                      const fileName = getUploadedRequirementFileName(file)
+
                       return (
                         <div key={key} className="p-4 rounded-lg border bg-muted/30">
                           <p className="text-xs text-muted-foreground mb-2 font-medium">{label}</p>
@@ -571,7 +654,7 @@ export default function ServiceRequestDetailPage() {
                               variant="outline"
                               size="sm"
                               className="flex-1"
-                              onClick={() => openPreview(valueStr, label)}
+                              onClick={() => openPreview(file.url, label)}
                             >
                               <Eye className="h-4 w-4 mr-1" />
                               Lihat
@@ -580,7 +663,7 @@ export default function ServiceRequestDetailPage() {
                               variant="outline"
                               size="sm"
                               className="flex-1"
-                              onClick={() => downloadFile(valueStr, fileName)}
+                              onClick={() => downloadFile(file.url, fileName)}
                             >
                               <Download className="h-4 w-4 mr-1" />
                               Unduh
@@ -589,7 +672,7 @@ export default function ServiceRequestDetailPage() {
                           {fileType === "image" && (
                             <div className="mt-3 rounded-md overflow-hidden border">
                               <Image
-                                src={valueStr}
+                                src={file.url}
                                 alt={label}
                                 width={200}
                                 height={150}
@@ -601,7 +684,7 @@ export default function ServiceRequestDetailPage() {
                         </div>
                       )
                     }
-                    
+
                     return (
                       <div key={key} className="p-4 rounded-lg border bg-muted/30">
                         <p className="text-xs text-muted-foreground mb-1 font-medium">{label}</p>
@@ -705,7 +788,7 @@ export default function ServiceRequestDetailPage() {
                     <SelectValue placeholder="Pilih status" />
                   </SelectTrigger>
                   <SelectContent>
-                    {statusOptions.map((opt) => {
+                    {allowedStatusOptions.map((opt) => {
                       const config = statusConfig[opt.value]
                       const Icon = config?.icon || Inbox
                       return (
@@ -724,7 +807,7 @@ export default function ServiceRequestDetailPage() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <MessageSquare className="h-4 w-4" />
-                  Catatan Admin
+                  Catatan Admin {requiresTerminalNotes ? "(Wajib)" : "(Opsional)"}
                 </Label>
                 <Textarea
                   value={adminNotes}
@@ -734,6 +817,9 @@ export default function ServiceRequestDetailPage() {
                   className="resize-none placeholder:text-muted-foreground/40"
                 />
                 <p className="text-xs text-muted-foreground">Catatan ini akan dikirim ke warga melalui WhatsApp</p>
+                {requiresTerminalNotes && !adminNotes.trim() && (
+                  <p className="text-xs text-destructive">Catatan wajib diisi untuk status selesai, dibatalkan, atau ditolak.</p>
+                )}
               </div>
               
               <Separator />
@@ -744,6 +830,13 @@ export default function ServiceRequestDetailPage() {
                   <FileCheck className="h-4 w-4" />
                   Hasil Layanan (Opsional)
                 </Label>
+                <Textarea
+                  value={resultDescription}
+                  onChange={(e) => setResultDescription(e.target.value)}
+                  placeholder="Deskripsi hasil layanan, misal: Surat sudah ditandatangani dan bisa diambil di kantor desa."
+                  rows={3}
+                  className="resize-none placeholder:text-muted-foreground/40"
+                />
                 <p className="text-xs text-muted-foreground -mt-1">Upload file hasil (surat, dokumen) yang akan dikirim ke warga</p>
                 
                 {resultFileUrl ? (

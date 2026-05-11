@@ -14,6 +14,7 @@ interface TestResult {
     response: string
     guidanceText?: string
     intent: string
+    error?: string
     fields?: Record<string, any>
     metadata?: {
       processingTimeMs: number
@@ -46,12 +47,49 @@ interface TestHistoryItem {
   content: string
 }
 
+function getTestErrorMessage(data: TestResult | null) {
+  const responseText = data?.data?.response?.trim()
+
+  return responseText || data?.data?.error || data?.error || "Gagal memproses pertanyaan"
+}
+
 export default function TestingKnowledgePage() {
   const { toast } = useToast()
   const [query, setQuery] = useState("")
   const [history, setHistory] = useState<TestHistoryItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [resetting, setResetting] = useState(false)
   const [result, setResult] = useState<TestResult | null>(null)
+
+  const handleResetContext = async () => {
+    setResetting(true)
+    try {
+      const response = await fetch('/api/testing-knowledge/reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.error || 'Gagal mereset konteks server-side')
+      }
+
+      setHistory([])
+      setResult(null)
+      toast({ title: 'Konteks uji direset', description: 'Riwayat lokal dan konteks AI server-side sudah dibersihkan.' })
+    } catch (error: any) {
+      toast({
+        title: 'Reset gagal',
+        description: error.message || 'Gagal mereset konteks server-side',
+        variant: 'destructive',
+      })
+    } finally {
+      setResetting(false)
+    }
+  }
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -75,9 +113,13 @@ export default function TestingKnowledgePage() {
         }),
       })
 
-      const data = (await response.json()) as TestResult
-      if (!response.ok) {
-        throw new Error(data?.error || "Gagal memproses pertanyaan")
+      const data = (await response.json().catch(() => null)) as TestResult | null
+      if (!response.ok || data?.success === false) {
+        throw new Error(getTestErrorMessage(data))
+      }
+
+      if (!data?.data) {
+        throw new Error("Respons AI tidak lengkap")
       }
 
       setResult(data)
@@ -119,6 +161,7 @@ export default function TestingKnowledgePage() {
           <CardTitle className="flex items-center gap-2">✨ Form Uji AI</CardTitle>
           <CardDescription>
             Tulis pertanyaan seperti warga. Halaman ini hanya mengecek jawaban AI; tidak membuat laporan, layanan, pembatalan, atau riwayat.
+            Riwayat pada sesi uji ini ikut dikirim sebagai konteks multi-turn sampai di-reset.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -134,14 +177,52 @@ export default function TestingKnowledgePage() {
               />
             </div>
 
-            <Button type="submit" disabled={loading} className="w-full md:w-auto">
-              {loading ? (
-                <>Memproses...</>
-              ) : (
-                <>Uji AI</>
-              )}
-            </Button>
+            <div className="flex flex-col gap-2 md:flex-row">
+              <Button type="submit" disabled={loading} className="w-full md:w-auto">
+                {loading ? (
+                  <>Memproses...</>
+                ) : (
+                  <>Uji AI</>
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={loading || resetting}
+                onClick={handleResetContext}
+                className="w-full md:w-auto"
+              >
+                {resetting ? 'Mereset...' : 'Reset Konteks'}
+              </Button>
+            </div>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Konteks Percakapan Uji</CardTitle>
+          <CardDescription>
+            {history.length === 0
+              ? 'Belum ada konteks tersimpan. Pertanyaan pertama akan diproses sebagai turn awal.'
+              : `${history.length} turn tersimpan dan akan ikut dipakai pada uji berikutnya.`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {history.length === 0 ? (
+            <div className="text-sm text-muted-foreground">Belum ada riwayat percakapan.</div>
+          ) : (
+            <div className="space-y-3">
+              {history.map((item, index) => (
+                <div key={`${item.role}-${index}`} className="rounded-lg border p-3">
+                  <p className="text-xs font-semibold uppercase text-muted-foreground">
+                    {item.role === 'user' ? 'Warga' : 'AI'}
+                  </p>
+                  <p className="mt-1 whitespace-pre-line text-sm text-foreground">{item.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

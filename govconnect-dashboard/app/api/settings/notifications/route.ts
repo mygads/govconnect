@@ -7,6 +7,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   enabled: true,
   urgentNotifications: true,
   soundEnabled: true,
+  adminNotificationNumber: '',
 }
 
 function requireVillageAdminSession(session: Awaited<ReturnType<typeof requireAuth>>[0]) {
@@ -43,6 +44,7 @@ async function getNotificationSettingsFromBehaviorConfig(villageId: string) {
     select: {
       notification_enabled: true,
       notification_urgent_enabled: true,
+      admin_notification_number: true,
     },
   })
 
@@ -50,6 +52,7 @@ async function getNotificationSettingsFromBehaviorConfig(villageId: string) {
     enabled: config?.notification_enabled ?? DEFAULT_NOTIFICATION_SETTINGS.enabled,
     urgentNotifications: config?.notification_urgent_enabled ?? DEFAULT_NOTIFICATION_SETTINGS.urgentNotifications,
     soundEnabled: DEFAULT_NOTIFICATION_SETTINGS.soundEnabled,
+    adminNotificationNumber: config?.admin_notification_number ?? DEFAULT_NOTIFICATION_SETTINGS.adminNotificationNumber,
   }
 }
 
@@ -94,10 +97,15 @@ export async function POST(request: NextRequest) {
 
     const villageId = session.villageId!
     const body = await request.json().catch(() => ({}))
+    const adminNotificationNumber = typeof body.adminNotificationNumber === 'string'
+      ? body.adminNotificationNumber.trim()
+      : DEFAULT_NOTIFICATION_SETTINGS.adminNotificationNumber
+
     const nextSettings = {
       enabled: body.enabled !== undefined ? Boolean(body.enabled) : DEFAULT_NOTIFICATION_SETTINGS.enabled,
       urgentNotifications: body.urgentNotifications !== undefined ? Boolean(body.urgentNotifications) : DEFAULT_NOTIFICATION_SETTINGS.urgentNotifications,
       soundEnabled: body.soundEnabled !== undefined ? Boolean(body.soundEnabled) : DEFAULT_NOTIFICATION_SETTINGS.soundEnabled,
+      adminNotificationNumber,
     }
 
     await prisma.village_behavior_configs.upsert({
@@ -105,12 +113,14 @@ export async function POST(request: NextRequest) {
       update: {
         notification_enabled: nextSettings.enabled,
         notification_urgent_enabled: nextSettings.urgentNotifications,
+        admin_notification_number: nextSettings.adminNotificationNumber || null,
         updated_at: new Date(),
       },
       create: {
         village_id: villageId,
         notification_enabled: nextSettings.enabled,
         notification_urgent_enabled: nextSettings.urgentNotifications,
+        admin_notification_number: nextSettings.adminNotificationNumber || null,
       },
     })
 

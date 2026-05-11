@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -87,7 +88,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     },
     include: { category: true }
   })
-  
+
+  await invalidateVillageAiCacheSafely(session.admin.village_id)
   return NextResponse.json({ data: contact })
 }
 
@@ -114,6 +116,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   await prisma.important_contacts.delete({
     where: { id }
   })
-  
+
+  await invalidateVillageAiCacheSafely(session.admin.village_id)
   return NextResponse.json({ success: true })
 }

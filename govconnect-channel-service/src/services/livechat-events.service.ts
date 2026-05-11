@@ -1,4 +1,4 @@
-export type LivechatEventType = 'message' | 'message_status' | 'conversation' | 'takeover' | 'delete' | 'typing' | 'wa_session_status' | 'heartbeat' | 'complaint_created' | 'complaint_updated' | 'urgent_alert';
+export type LivechatEventType = 'message' | 'message_status' | 'conversation' | 'takeover' | 'delete' | 'typing' | 'wa_session_status' | 'heartbeat' | 'complaint_created' | 'complaint_updated' | 'urgent_alert' | 'webchat_system_notification';
 
 export interface LivechatEvent {
   type: LivechatEventType;
@@ -6,6 +6,9 @@ export interface LivechatEvent {
   channel?: 'WHATSAPP' | 'WEBCHAT';
   channel_identifier?: string;
   message_id?: string;
+  message?: string;
+  notification_type?: string;
+  reference_number?: string | null;
   delivery_status?: string | null;
   sent_at?: Date | string | null;
   delivered_at?: Date | string | null;

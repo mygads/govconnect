@@ -5,6 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+export function normalizeScopedName(value: unknown): string {
+  return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : ''
+}
+
+export function buildScopedNameKey(value: string): string {
+  return normalizeScopedName(value).toLocaleLowerCase('id-ID')
+}
+
 export const DEFAULT_VILLAGE_TIME_ZONE = "Asia/Jakarta"
 export const SUPPORTED_VILLAGE_TIME_ZONES = [
   "Asia/Jakarta",

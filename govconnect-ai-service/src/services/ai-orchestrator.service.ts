@@ -22,7 +22,7 @@
 
 import logger from '../utils/logger';
 import { MessageReceivedEvent } from '../types/event.types';
-import { publishAIReply, publishMessageStatus, addToAIRetryQueue } from './rabbitmq.service';
+import { publishAIReply, addToAIRetryQueue } from './rabbitmq.service';
 import { isAIChatbotEnabled } from './settings.service';
 import { startTyping, stopTyping, isUserInTakeover, markMessagesAsRead } from './channel-client.service';
 import { isSpamMessage } from './rag.service';
@@ -357,26 +357,16 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       message_id: message_id,
       batched_message_ids: allBatchedIds,
     });
-    
-    // Mark all messages (including bubble/spam duplicates) as completed
-    if (allBatchedIds && allBatchedIds.length > 0) {
-      await publishMessageStatus({
-        village_id,
-        wa_user_id,
-        message_ids: allBatchedIds,
-        status: 'completed',
-      });
-    }
-    
+
     completeProcessing(village_id, wa_user_id, message_id);
-    
+
     logger.info('✅ WhatsApp message processed successfully', {
       wa_user_id,
       message_id,
       intent: result.intent,
       processingTimeMs: result.metadata.processingTimeMs,
       spamGuardSendCheck: sendCheck.reason,
-      totalMarkedComplete: allBatchedIds?.length,
+      queuedReplyMessageCount: allBatchedIds?.length,
     });
     
   } catch (error: any) {

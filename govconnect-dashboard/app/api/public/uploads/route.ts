@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireInternalApiKey } from '@/lib/api-client'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -7,9 +8,8 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const CHANNEL_SERVICE_URL = process.env.CHANNEL_SERVICE_URL || 'http://localhost:3001'
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || ''
 
-const MAX_SIZE = 11 * 1024 * 1024
+const MAX_SIZE = 10 * 1024 * 1024
 const ALLOWED_TYPES = new Set([
   'application/pdf',
   'image/jpeg',
@@ -20,6 +20,8 @@ const ALLOWED_TYPES = new Set([
 
 export async function POST(request: NextRequest) {
   try {
+    const internalApiKey = requireInternalApiKey()
+
     // Check content type to ensure it's multipart/form-data
     const contentType = request.headers.get('content-type') || ''
     if (!contentType.includes('multipart/form-data')) {
@@ -69,7 +71,7 @@ export async function POST(request: NextRequest) {
       response = await fetch(`${CHANNEL_SERVICE_URL}/internal/media/upload?scope=service-requests&village_id=${encodeURIComponent(villageId)}`, {
         method: 'POST',
         headers: {
-          'x-internal-api-key': INTERNAL_API_KEY,
+          'x-internal-api-key': internalApiKey,
         },
         body: forward,
       })
@@ -109,8 +111,10 @@ export async function POST(request: NextRequest) {
       data: {
         url: result?.data?.url,
         internal_url: result?.data?.internal_url,
+        file_name: result?.data?.file_name,
         mime_type: result?.data?.mime_type,
         size: result?.data?.size,
+        storage_key: result?.data?.storage_key,
       },
     })
   } catch (error: any) {

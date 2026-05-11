@@ -1,6 +1,12 @@
+import { Prisma } from '@prisma/client'
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
+
+function isDuplicateCategoryError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
+}
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -35,18 +41,39 @@ export async function POST(request: NextRequest) {
   if (!session.admin.village_id) return NextResponse.json({ error: 'Village not found' }, { status: 404 })
 
   const body = await request.json()
-  const { name } = body
-  if (!name) {
+  const normalizedName = normalizeScopedName(body?.name)
+  if (!normalizedName) {
     return NextResponse.json({ error: 'Name is required' }, { status: 400 })
   }
 
-  const category = await prisma.knowledge_categories.create({
-    data: {
+  const nameKey = buildScopedNameKey(normalizedName)
+  const existing = await prisma.knowledge_categories.findFirst({
+    where: {
       village_id: session.admin.village_id,
-      name,
-      is_default: false,
-    }
+      name_key: nameKey,
+    },
+    select: { id: true },
   })
 
-  return NextResponse.json({ data: category })
+  if (existing) {
+    return NextResponse.json({ error: 'Nama kategori knowledge sudah dipakai di desa ini.' }, { status: 409 })
+  }
+
+  try {
+    const category = await prisma.knowledge_categories.create({
+      data: {
+        village_id: session.admin.village_id,
+        name: normalizedName,
+        name_key: nameKey,
+        is_default: false,
+      }
+    })
+
+    return NextResponse.json({ data: category })
+  } catch (error) {
+    if (isDuplicateCategoryError(error)) {
+      return NextResponse.json({ error: 'Nama kategori knowledge sudah dipakai di desa ini.' }, { status: 409 })
+    }
+    throw error
+  }
 }

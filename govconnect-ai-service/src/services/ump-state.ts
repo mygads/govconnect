@@ -102,6 +102,8 @@ export const activeServiceInfo = new LRUCache<string, ActiveServiceInfoState>({
 /** Emergency complaint offer state cache (after emergency contact lookup) */
 export const pendingEmergencyComplaintOffer = new LRUCache<string, {
   contact_entity?: string;
+  kategori?: string;
+  deskripsi?: string;
   village_id?: string;
   timestamp: number;
 }>({ maxSize: 500, ttlMs: 10 * 60 * 1000, name: 'pendingEmergencyComplaintOffer' });
@@ -364,6 +366,46 @@ export async function drainActiveProcessing(maxWaitMs: number = 15_000): Promise
   return true;
 }
 
+// ==================== PER-USER SERIALIZATION MUTEX ====================
+//
+// When a user sends two messages back-to-back (fast typing, resend, or
+// a burst), the processing pipeline can interleave state reads/writes
+// and end up with inconsistent pending-state snapshots. This tiny
+// promise-chain mutex guarantees that for the SAME user, messages are
+// processed sequentially. Different users still run concurrently.
+//
+// Map entry holds the most recent tail promise; the new task chains onto
+// it. Entries are pruned when the chain completes so the map doesn't
+// grow unbounded.
+
+const userLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Execute `fn` while holding the per-user lock. Guarantees FIFO order
+ * for the same userId. Errors propagate to the caller as normal.
+ */
+export async function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  if (!userId) return fn();
+  const previous = userLocks.get(userId) || Promise.resolve();
+
+  const current = previous
+    // Swallow prior errors so one user's failure doesn't block the next
+    // request; the prior caller already received/handled its own error.
+    .catch(() => undefined)
+    .then(fn);
+
+  userLocks.set(userId, current);
+
+  try {
+    return await current;
+  } finally {
+    // Only prune when no newer task has chained onto this one.
+    if (userLocks.get(userId) === current) {
+      userLocks.delete(userId);
+    }
+  }
+}
+
 // ==================== PENDING STATE ACCESSORS ====================
 
 // --- Address Confirmation ---
@@ -498,11 +540,7 @@ export function clearPendingEmergencyComplaintOffer(userId: string) {
   pendingEmergencyComplaintOffer.delete(userId);
   deleteState(userId, 'pendingEmergencyComplaintOffer');
 }
-export function setPendingEmergencyComplaintOffer(userId: string, data: {
-  contact_entity?: string;
-  village_id?: string;
-  timestamp: number;
-}) {
+export function setPendingEmergencyComplaintOffer(userId: string, data: Parameters<typeof pendingEmergencyComplaintOffer.set>[1]) {
   pendingEmergencyComplaintOffer.set(userId, data);
   persistState(userId, 'pendingEmergencyComplaintOffer', data);
 }

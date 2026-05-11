@@ -11,6 +11,7 @@ export interface VillageBehaviorConfig {
   complaint_rules?: string[];
   service_rules?: string[];
   notice?: string;
+  admin_notification_number?: string | null;
 }
 
 const cache = new Map<string, { value: VillageBehaviorConfig | null; ts: number }>();

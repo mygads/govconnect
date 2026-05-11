@@ -25,9 +25,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const { id } = await context.params
     const body = await request.json()
     const { status, admin_notes, result_file_url, result_file_name, result_description } = body
+    const hasMutableField = ['status', 'admin_notes', 'result_file_url', 'result_file_name', 'result_description']
+      .some((key) => Object.prototype.hasOwnProperty.call(body, key))
 
-    if (!status) {
-      return NextResponse.json({ error: 'status is required' }, { status: 400 })
+    if (!hasMutableField) {
+      return NextResponse.json({ error: 'Tidak ada perubahan yang dikirim' }, { status: 400 })
     }
 
     // Build URL with village_id for multi-tenancy validation

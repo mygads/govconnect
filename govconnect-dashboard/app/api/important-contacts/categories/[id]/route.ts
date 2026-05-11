@@ -1,7 +1,31 @@
+import { Prisma } from '@prisma/client'
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
+import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
+
+function isDuplicateCategoryError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
+}
+
+function buildComplaintTypesUrl(villageId: string) {
+  const url = new URL(buildUrl(ServicePath.CASE, '/complaints/types'))
+  url.searchParams.set('village_id', villageId)
+  return url.toString()
+}
+
+function isLinkedToImportantCategory(
+  type: { send_important_contacts?: boolean; important_contact_category?: string | null; important_contact_category_id?: string | null },
+  category: { id: string; name: string },
+) {
+  if (!type.send_important_contacts) return false
+  if (type.important_contact_category_id) {
+    return type.important_contact_category_id === category.id
+  }
+  return type.important_contact_category === category.name
+}
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -40,16 +64,16 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   // The complaint_types table uses the category NAME to link, not ID
   let linkedComplaintTypes: any[] = []
   try {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, '/complaints/types'), {
+    const response = await apiFetch(buildComplaintTypesUrl(category.village_id), {
       method: 'GET',
-      headers: getHeaders(),
+      headers: getHeaders({ 'x-village-id': category.village_id }),
     })
     
     if (response.ok) {
       const data = await response.json()
       const allTypes = data.data || []
       linkedComplaintTypes = allTypes.filter((type: any) => 
-        type.send_important_contacts && type.important_contact_category === category.name
+        isLinkedToImportantCategory(type, category)
       )
     }
   } catch (error) {
@@ -85,47 +109,71 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   }
   
   const body = await request.json()
-  const { name } = body
-  
-  if (!name) {
+  const normalizedName = normalizeScopedName(body?.name)
+
+  if (!normalizedName) {
     return NextResponse.json({ error: 'name is required' }, { status: 400 })
   }
-  
-  const oldName = existingCategory.name
-  
-  const category = await prisma.important_contact_categories.update({
-    where: { id },
-    data: { name },
-    include: { contacts: true }
+
+  const nameKey = buildScopedNameKey(normalizedName)
+  const duplicate = await prisma.important_contact_categories.findFirst({
+    where: {
+      village_id: existingCategory.village_id,
+      name_key: nameKey,
+      NOT: { id },
+    },
+    select: { id: true },
   })
-  
+
+  if (duplicate) {
+    return NextResponse.json({ error: 'Nama kategori kontak penting sudah dipakai di desa ini.' }, { status: 409 })
+  }
+
+  const oldName = existingCategory.name
+
+  let category
+  try {
+    category = await prisma.important_contact_categories.update({
+      where: { id },
+      data: {
+        name: normalizedName,
+        name_key: nameKey,
+      },
+      include: { contacts: true }
+    })
+  } catch (error) {
+    if (isDuplicateCategoryError(error)) {
+      return NextResponse.json({ error: 'Nama kategori kontak penting sudah dipakai di desa ini.' }, { status: 409 })
+    }
+    throw error
+  }
+
   // If name changed, update all complaint types that reference the old name
-  if (oldName !== name) {
+  if (oldName !== normalizedName) {
     try {
-      const response = await apiFetch(buildUrl(ServicePath.CASE, '/complaints/types'), {
+      const response = await apiFetch(buildComplaintTypesUrl(existingCategory.village_id), {
         method: 'GET',
-        headers: getHeaders(),
+        headers: getHeaders({ 'x-village-id': existingCategory.village_id }),
       })
       
       if (response.ok) {
         const data = await response.json()
         const allTypes = data.data || []
-        const linkedTypes = allTypes.filter((type: any) => 
-          type.send_important_contacts && type.important_contact_category === oldName
-        )
-        
-        // Update each linked type with new category name
-        for (const type of linkedTypes) {
+        const linkedTypes = allTypes.filter((type: any) => isLinkedToImportantCategory(type, existingCategory))
+        const legacyLinkedTypes = linkedTypes.filter((type: any) => !type.important_contact_category_id)
+
+        for (const type of legacyLinkedTypes) {
           await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${type.id}`), {
             method: 'PATCH',
-            headers: getHeaders(),
+            headers: getHeaders({ 'x-village-id': existingCategory.village_id }),
             body: JSON.stringify({
               name: type.name,
               description: type.description,
               is_urgent: type.is_urgent,
               require_address: type.require_address,
               send_important_contacts: true,
-              important_contact_category: name,
+              important_contact_category: normalizedName,
+              important_contact_category_id: null,
             }),
           })
         }
@@ -134,7 +182,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       console.error('Error updating linked complaint types:', error)
     }
   }
-  
+
+  await invalidateVillageAiCacheSafely(existingCategory.village_id)
   return NextResponse.json({ data: category })
 }
 
@@ -160,17 +209,15 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   // Check for linked complaint types
   let linkedComplaintTypes: any[] = []
   try {
-    const response = await apiFetch(buildUrl(ServicePath.CASE, '/complaints/types'), {
+    const response = await apiFetch(buildComplaintTypesUrl(existingCategory.village_id), {
       method: 'GET',
-      headers: getHeaders(),
+      headers: getHeaders({ 'x-village-id': existingCategory.village_id }),
     })
     
     if (response.ok) {
       const data = await response.json()
       const allTypes = data.data || []
-      linkedComplaintTypes = allTypes.filter((type: any) => 
-        type.send_important_contacts && type.important_contact_category === existingCategory.name
-      )
+      linkedComplaintTypes = allTypes.filter((type: any) => isLinkedToImportantCategory(type, existingCategory))
     }
   } catch (error) {
     console.error('Error fetching complaint types:', error)
@@ -182,7 +229,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
       try {
         await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${type.id}`), {
           method: 'PATCH',
-          headers: getHeaders(),
+          headers: getHeaders({ 'x-village-id': existingCategory.village_id }),
           body: JSON.stringify({
             name: type.name,
             description: type.description,
@@ -190,6 +237,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
             require_address: type.require_address,
             send_important_contacts: false,
             important_contact_category: null,
+            important_contact_category_id: null,
           }),
         })
       } catch (error) {
@@ -202,8 +250,9 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   await prisma.important_contact_categories.delete({
     where: { id }
   })
-  
-  return NextResponse.json({ 
+
+  await invalidateVillageAiCacheSafely(existingCategory.village_id)
+  return NextResponse.json({
     success: true,
     linkedTypesCleared: linkedComplaintTypes.length
   })

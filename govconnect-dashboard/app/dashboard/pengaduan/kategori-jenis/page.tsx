@@ -72,6 +72,7 @@ interface ComplaintType {
   require_address: boolean
   send_important_contacts: boolean
   important_contact_category?: string | null
+  important_contact_category_id?: string | null
   category?: ComplaintCategory
 }
 
@@ -117,7 +118,7 @@ export default function ComplaintMetaPage() {
     is_urgent: false,
     require_address: true,
     send_important_contacts: false,
-    important_contact_category: "",
+    important_contact_category_id: "",
   })
   const [typeForm, setTypeForm] = useState({
     category_id: "",
@@ -126,7 +127,7 @@ export default function ComplaintMetaPage() {
     is_urgent: false,
     require_address: true,
     send_important_contacts: false,
-    important_contact_category: "",
+    important_contact_category_id: "",
   })
 
   const normalizedCategoryForm = {
@@ -137,11 +138,19 @@ export default function ComplaintMetaPage() {
     ...typeForm,
     name: typeForm.name.trim(),
     description: typeForm.description.trim(),
-    important_contact_category: typeForm.send_important_contacts ? typeForm.important_contact_category : "",
+    important_contact_category_id: typeForm.send_important_contacts ? typeForm.important_contact_category_id : "",
   }
   const isCategoryDirty = JSON.stringify(normalizedCategoryForm) !== JSON.stringify(categoryFormInitial)
   const isTypeDirty = JSON.stringify(normalizedTypeForm) !== JSON.stringify(typeFormInitial)
   const openConfirm = (action: ConfirmAction) => setPendingConfirm(action)
+
+  const resolveImportantContactCategoryId = (type?: ComplaintType | null) => {
+    if (!type) return ""
+    if (type.important_contact_category_id) return type.important_contact_category_id
+    if (!type.important_contact_category) return ""
+    const match = importantCategories.find((category) => category.name === type.important_contact_category)
+    return match?.id || ""
+  }
 
   const fetchAll = async () => {
     try {
@@ -310,7 +319,7 @@ export default function ComplaintMetaPage() {
         is_urgent: type.is_urgent,
         require_address: type.require_address,
         send_important_contacts: type.send_important_contacts,
-        important_contact_category: type.important_contact_category || "",
+        important_contact_category_id: resolveImportantContactCategoryId(type),
       }
       setEditingType(type)
       setTypeForm(next)
@@ -318,7 +327,7 @@ export default function ComplaintMetaPage() {
         ...next,
         name: next.name.trim(),
         description: next.description.trim(),
-        important_contact_category: next.send_important_contacts ? next.important_contact_category : "",
+        important_contact_category_id: next.send_important_contacts ? next.important_contact_category_id : "",
       })
     } else {
       const next = {
@@ -328,7 +337,7 @@ export default function ComplaintMetaPage() {
         is_urgent: false,
         require_address: true,
         send_important_contacts: false,
-        important_contact_category: "",
+        important_contact_category_id: "",
       }
       setEditingType(null)
       setTypeForm(next)
@@ -343,7 +352,7 @@ export default function ComplaintMetaPage() {
       return
     }
 
-    if (typeForm.send_important_contacts && !typeForm.important_contact_category) {
+    if (typeForm.send_important_contacts && !typeForm.important_contact_category_id) {
       toast({
         title: "Kategori nomor penting wajib",
         description: "Pilih kategori nomor penting untuk jenis yang mengirim kontak darurat.",
@@ -366,7 +375,7 @@ export default function ComplaintMetaPage() {
   const handleSaveType = async () => {
     if (!typeForm.category_id || !typeForm.name.trim() || !isTypeDirty) return
 
-    if (typeForm.send_important_contacts && !typeForm.important_contact_category) {
+    if (typeForm.send_important_contacts && !typeForm.important_contact_category_id) {
       toast({
         title: "Kategori nomor penting wajib",
         description: "Pilih kategori nomor penting untuk jenis yang mengirim kontak darurat.",
@@ -391,8 +400,8 @@ export default function ComplaintMetaPage() {
         },
         body: JSON.stringify({
           ...typeForm,
-          important_contact_category: typeForm.send_important_contacts
-            ? typeForm.important_contact_category
+          important_contact_category_id: typeForm.send_important_contacts
+            ? typeForm.important_contact_category_id || null
             : null,
         }),
       })
@@ -908,7 +917,11 @@ export default function ComplaintMetaPage() {
                 </div>
                 <Switch
                   checked={typeForm.send_important_contacts}
-                  onCheckedChange={(value) => setTypeForm(prev => ({ ...prev, send_important_contacts: value }))}
+                  onCheckedChange={(value) => setTypeForm(prev => ({
+                    ...prev,
+                    send_important_contacts: value,
+                    important_contact_category_id: value ? prev.important_contact_category_id : "",
+                  }))}
                 />
               </div>
 
@@ -916,15 +929,15 @@ export default function ComplaintMetaPage() {
                 <div className="space-y-2 pl-4 border-l-2 border-muted">
                   <Label>Kategori Nomor Penting</Label>
                   <Select
-                    value={typeForm.important_contact_category}
-                    onValueChange={(value) => setTypeForm(prev => ({ ...prev, important_contact_category: value }))}
+                    value={typeForm.important_contact_category_id}
+                    onValueChange={(value) => setTypeForm(prev => ({ ...prev, important_contact_category_id: value }))}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Pilih kategori nomor" />
                     </SelectTrigger>
                     <SelectContent>
                       {importantCategories.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.name}>
+                        <SelectItem key={cat.id} value={cat.id}>
                           {cat.name}
                         </SelectItem>
                       ))}

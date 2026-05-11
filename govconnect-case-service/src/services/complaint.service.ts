@@ -1,10 +1,11 @@
 import prisma from '../config/database';
 import { generateComplaintId } from '../utils/id-generator';
-import { publishEvent } from './rabbitmq.service';
+import { enqueueOutboxEvent } from './outbox.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import logger from '../utils/logger';
 import { invalidateStatsCache } from './query-batcher.service';
 import { resolveWithMicroLLM } from './micro-llm-resolver.service';
+import { mergeComplaintClassification } from './complaint-classification';
 
 // ==================== COMPLAINT TYPE RESOLVER (Micro LLM) ====================
 
@@ -15,6 +16,7 @@ interface ResolvedComplaintType {
   require_address: boolean;
   send_important_contacts: boolean;
   important_contact_category: string | null;
+  important_contact_category_id: string | null;
   matched_name: string;
   match_method: string;
 }
@@ -72,6 +74,7 @@ export async function resolveComplaintTypeFromDB(
           require_address: matched.require_address ?? false,
           send_important_contacts: matched.send_important_contacts ?? false,
           important_contact_category: matched.important_contact_category || null,
+          important_contact_category_id: matched.important_contact_category_id || null,
           matched_name: matched.name,
           match_method: `micro_llm (confidence: ${llmResult.confidence}, reason: ${llmResult.reason})`,
         };
@@ -86,6 +89,38 @@ export async function resolveComplaintTypeFromDB(
     return null;
   } catch (error: any) {
     logger.error('resolveComplaintTypeFromDB failed', { error: error.message, kategori, villageId });
+    return null;
+  }
+}
+
+async function resolveComplaintTypeById(
+  typeId: string,
+  villageId: string
+): Promise<ResolvedComplaintType | null> {
+  try {
+    const matched = await prisma.complaintType.findFirst({
+      where: {
+        id: typeId,
+        category: { village_id: villageId },
+      },
+      include: { category: true },
+    });
+
+    if (!matched) return null;
+
+    return {
+      type_id: matched.id,
+      category_id: matched.category_id,
+      is_urgent: matched.is_urgent ?? false,
+      require_address: matched.require_address ?? false,
+      send_important_contacts: matched.send_important_contacts ?? false,
+      important_contact_category: matched.important_contact_category || null,
+      important_contact_category_id: matched.important_contact_category_id || null,
+      matched_name: matched.name,
+      match_method: 'type_id',
+    };
+  } catch (error: any) {
+    logger.error('resolveComplaintTypeById failed', { error: error.message, typeId, villageId });
     return null;
   }
 }
@@ -179,77 +214,137 @@ export async function createComplaint(data: CreateComplaintData) {
     ? data.channel_identifier
     : data.wa_user_id;
 
-  // Server-side auto-resolve: lookup kategori → ComplaintType in DB
-  // This ensures correct type_id/category_id even if the AI didn't provide them
+  // Server-side authoritative resolution: village complaint type config wins over request payload.
   let resolvedTypeId = data.type_id || undefined;
   let resolvedCategoryId = data.category_id || undefined;
   let resolvedIsUrgent = data.is_urgent ?? false;
   let resolvedRequireAddress = data.require_address ?? false;
 
-  if (!resolvedTypeId && data.kategori) {
-    const resolved = await resolveComplaintTypeFromDB(data.kategori, data.village_id);
-    if (resolved) {
-      resolvedTypeId = resolved.type_id;
-      resolvedCategoryId = resolvedCategoryId || resolved.category_id;
-      resolvedIsUrgent = resolved.is_urgent;
-      resolvedRequireAddress = resolved.require_address;
-      logger.info('Auto-resolved complaint type from DB', {
-        kategori: data.kategori,
-        matched_name: resolved.matched_name,
-        match_method: resolved.match_method,
+  let resolved = resolvedTypeId
+    ? await resolveComplaintTypeById(resolvedTypeId, data.village_id)
+    : null;
+
+  if (!resolved && data.kategori) {
+    resolved = await resolveComplaintTypeFromDB(data.kategori, data.village_id);
+  }
+
+  if (resolved) {
+    const merged = mergeComplaintClassification(
+      {
+        type_id: resolvedTypeId,
+        category_id: resolvedCategoryId,
+        is_urgent: resolvedIsUrgent,
+        require_address: resolvedRequireAddress,
+      },
+      {
         type_id: resolved.type_id,
+        category_id: resolved.category_id,
         is_urgent: resolved.is_urgent,
-      });
-    } else {
-      logger.warn('Could not resolve complaint type from DB', {
-        kategori: data.kategori,
-        village_id: data.village_id,
-      });
-    }
+        require_address: resolved.require_address,
+      },
+    );
+
+    resolvedTypeId = merged.type_id || undefined;
+    resolvedCategoryId = merged.category_id || undefined;
+    resolvedIsUrgent = merged.is_urgent;
+    resolvedRequireAddress = merged.require_address;
+    logger.info('Resolved complaint type from authoritative DB config', {
+      kategori: data.kategori,
+      matched_name: resolved.matched_name,
+      match_method: resolved.match_method,
+      type_id: resolved.type_id,
+      is_urgent: resolved.is_urgent,
+    });
+  } else if (data.type_id || data.kategori) {
+    resolvedTypeId = undefined;
+    resolvedCategoryId = undefined;
+    resolvedIsUrgent = false;
+    resolvedRequireAddress = false;
+    logger.warn('Could not resolve complaint type from authoritative DB config', {
+      provided_type_id: data.type_id,
+      kategori: data.kategori,
+      village_id: data.village_id,
+    });
   }
   
-  const complaint = await prisma.complaint.create({
-    data: {
-      complaint_id,
-      wa_user_id: data.wa_user_id || null,
-      channel,
-      channel_identifier: channelIdentifier || null,
-      kategori: data.kategori,
-      category_id: resolvedCategoryId,
-      type_id: resolvedTypeId,
-      deskripsi: data.deskripsi,
-      alamat: data.alamat,
-      rt_rw: data.rt_rw,
-      foto_url: data.foto_url,
-      is_urgent: resolvedIsUrgent,
-      require_address: resolvedRequireAddress,
-      reporter_name: data.reporter_name || null,
-      reporter_phone: data.reporter_phone || null,
-      village_id: data.village_id,
-      status: 'OPEN',
-    },
+  const complaint = await prisma.$transaction(async (tx) => {
+    const createdComplaint = await tx.complaint.create({
+      data: {
+        complaint_id,
+        wa_user_id: data.wa_user_id || null,
+        channel,
+        channel_identifier: channelIdentifier || null,
+        kategori: data.kategori,
+        category_id: resolvedCategoryId,
+        type_id: resolvedTypeId,
+        deskripsi: data.deskripsi,
+        alamat: data.alamat,
+        rt_rw: data.rt_rw,
+        foto_url: data.foto_url,
+        is_urgent: resolvedIsUrgent,
+        require_address: resolvedRequireAddress,
+        reporter_name: data.reporter_name || null,
+        reporter_phone: data.reporter_phone || null,
+        village_id: data.village_id!,
+        status: 'OPEN',
+      },
+    });
+
+    if (resolved?.send_important_contacts && (resolved.important_contact_category_id || resolved.important_contact_category)) {
+      await enqueueOutboxEvent(tx, {
+        routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_IMPORTANT_CONTACTS,
+        payload: {
+          type: 'complaint_important_contacts',
+          complaint_id: createdComplaint.complaint_id,
+          village_id: createdComplaint.village_id,
+          kategori: createdComplaint.kategori,
+          important_contact_category: resolved.important_contact_category,
+          important_contact_category_id: resolved.important_contact_category_id,
+          wa_user_id: data.wa_user_id,
+          channel,
+          channel_identifier: channelIdentifier || null,
+          created_at: createdComplaint.created_at,
+        },
+        entityType: 'complaint',
+        entityId: createdComplaint.complaint_id,
+      });
+    } else if (resolved?.send_important_contacts) {
+      logger.warn('Complaint type requests important-contact auto send without category config', {
+        complaint_id: createdComplaint.complaint_id,
+        village_id: createdComplaint.village_id,
+        type_id: resolved.type_id,
+      });
+    }
+
+    if (resolvedIsUrgent) {
+      await enqueueOutboxEvent(tx, {
+        routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.URGENT_ALERT,
+        payload: {
+          type: 'urgent_complaint',
+          complaint_id: createdComplaint.complaint_id,
+          village_id: createdComplaint.village_id,
+          kategori: createdComplaint.kategori,
+          deskripsi: createdComplaint.deskripsi,
+          alamat: createdComplaint.alamat,
+          rt_rw: createdComplaint.rt_rw,
+          wa_user_id: data.wa_user_id,
+          channel,
+          channel_identifier: channelIdentifier || null,
+          created_at: createdComplaint.created_at,
+        },
+        entityType: 'complaint',
+        entityId: createdComplaint.complaint_id,
+      });
+    }
+
+    return createdComplaint;
   });
-  
+
   // NOTE: We don't publish COMPLAINT_CREATED event anymore because AI Service
   // already sends the response to user via publishAIReply. Publishing this event
   // would cause double response to the user.
-  
-  // Check if this is an urgent category and publish urgent alert
+
   if (resolvedIsUrgent) {
-    await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.URGENT_ALERT, {
-      type: 'urgent_complaint',
-      complaint_id: complaint.complaint_id,
-      village_id: complaint.village_id,
-      kategori: complaint.kategori,
-      deskripsi: complaint.deskripsi,
-      alamat: complaint.alamat,
-      rt_rw: complaint.rt_rw,
-      wa_user_id: data.wa_user_id,
-      channel,
-      channel_identifier: channelIdentifier || null,
-      created_at: complaint.created_at,
-    });
-    
     logger.warn('URGENT COMPLAINT CREATED', {
       complaint_id: complaint.complaint_id,
       kategori: complaint.kategori,
@@ -431,23 +526,37 @@ export async function updateComplaintStatus(
     throw new Error(`Transisi status tidak valid: ${existingComplaint.status} → ${updateData.status}. Status ${existingComplaint.status} sudah final.`);
   }
   
-  const complaint = await prisma.complaint.update({
-    where: { id: existingComplaint.id },
-    data: {
-      status: updateData.status,
-      admin_notes: updateData.admin_notes,
-    },
-  });
-  
-  // Publish event untuk notification service
-  await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED, {
-    village_id: complaint.village_id,
-    wa_user_id: complaint.wa_user_id,
-    channel: complaint.channel || 'WHATSAPP',
-    channel_identifier: complaint.channel_identifier || complaint.wa_user_id,
-    complaint_id: complaint.complaint_id,
-    status: complaint.status,
-    admin_notes: complaint.admin_notes,
+  const complaint = await prisma.$transaction(async (tx) => {
+    const updatedComplaint = await tx.complaint.update({
+      where: { id: existingComplaint.id },
+      data: {
+        status: updateData.status,
+        admin_notes: updateData.admin_notes,
+        status_notified_at: null,
+        status_delivered_at: null,
+        last_delivery_message_id: null,
+        last_delivery_status: null,
+        last_delivery_error: null,
+        last_delivery_attempt_at: null,
+      },
+    });
+
+    await enqueueOutboxEvent(tx, {
+      routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED,
+      payload: {
+        village_id: updatedComplaint.village_id,
+        wa_user_id: updatedComplaint.wa_user_id,
+        channel: updatedComplaint.channel || 'WHATSAPP',
+        channel_identifier: updatedComplaint.channel_identifier || updatedComplaint.wa_user_id,
+        complaint_id: updatedComplaint.complaint_id,
+        status: updatedComplaint.status,
+        admin_notes: updatedComplaint.admin_notes,
+      },
+      entityType: 'complaint',
+      entityId: updatedComplaint.complaint_id,
+    });
+
+    return updatedComplaint;
   });
   
   logger.info('Complaint status updated', {
@@ -578,23 +687,37 @@ export async function cancelComplaint(
     const cancelReason = data.cancel_reason?.trim() || 'tanpa alasan tambahan';
     const cancelNote = `Dibatalkan oleh masyarakat: ${cancelReason}`;
     
-    const updatedComplaint = await prisma.complaint.update({
-      where: { id: complaint.id },
-      data: {
-        status: 'CANCELED',
-        admin_notes: cancelNote,
-      },
-    });
-    
-    // Publish event for notification service
-    await publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED, {
-      village_id: updatedComplaint.village_id,
-      wa_user_id: updatedComplaint.wa_user_id,
-      channel: updatedComplaint.channel || 'WHATSAPP',
-      channel_identifier: updatedComplaint.channel_identifier || updatedComplaint.wa_user_id,
-      complaint_id: updatedComplaint.complaint_id,
-      status: 'CANCELED',
-      admin_notes: cancelNote,
+    const updatedComplaint = await prisma.$transaction(async (tx) => {
+      const cancelledComplaint = await tx.complaint.update({
+        where: { id: complaint.id },
+        data: {
+          status: 'CANCELED',
+          admin_notes: cancelNote,
+          status_notified_at: null,
+          status_delivered_at: null,
+          last_delivery_message_id: null,
+          last_delivery_status: null,
+          last_delivery_error: null,
+          last_delivery_attempt_at: null,
+        },
+      });
+
+      await enqueueOutboxEvent(tx, {
+        routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED,
+        payload: {
+          village_id: cancelledComplaint.village_id,
+          wa_user_id: cancelledComplaint.wa_user_id,
+          channel: cancelledComplaint.channel || 'WHATSAPP',
+          channel_identifier: cancelledComplaint.channel_identifier || cancelledComplaint.wa_user_id,
+          complaint_id: cancelledComplaint.complaint_id,
+          status: 'CANCELED',
+          admin_notes: cancelNote,
+        },
+        entityType: 'complaint',
+        entityId: cancelledComplaint.complaint_id,
+      });
+
+      return cancelledComplaint;
     });
     
     logger.info('Complaint cancelled by user', {

@@ -18,16 +18,44 @@ Kategori: ${kategoriText}
 Kami akan segera menindaklanjuti. Anda akan dinotifikasi saat selesai.`;
 }
 
+export function buildComplaintImportantContactsMessage(data: {
+  complaint_id: string;
+  contacts: Array<{
+    name: string;
+    phone: string;
+    description?: string | null;
+  }>;
+}): string {
+  const lines = data.contacts.map((contact) => {
+    const desc = contact.description ? ` (${contact.description})` : '';
+    return `• ${contact.name}: ${contact.phone}${desc}`;
+  });
+
+  return `📞 *Nomor Penting Terkait*
+
+Berikut kontak resmi yang terkait dengan laporan *${data.complaint_id}*:
+${lines.join('\n')}
+
+Silakan hubungi jika memang diperlukan.`;
+}
+
+type NotificationChannel = 'WHATSAPP' | 'WEBCHAT';
+
 export function buildServiceRequestedMessage(data: {
   request_number: string;
   service_name?: string;
+  channel?: NotificationChannel;
 }): string {
+  const updateChannelLabel = data.channel === 'WEBCHAT'
+    ? 'melalui percakapan ini'
+    : 'melalui WhatsApp ini';
+
   return `🎫 *Permohonan Layanan Diterima*
 
 No: *${data.request_number}*
 Layanan: ${data.service_name || 'Layanan Administrasi'}
 
-Permohonan Anda sudah kami terima. Anda akan mendapat update status melalui WhatsApp ini.`;
+Permohonan Anda sudah kami terima. Anda akan mendapat update status ${updateChannelLabel}.`;
 }
 
 export function buildStatusUpdatedMessage(data: {

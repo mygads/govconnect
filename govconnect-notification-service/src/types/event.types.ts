@@ -27,6 +27,15 @@ export interface ComplaintCreatedEvent extends BaseChannelEvent {
   kategori: string;
 }
 
+export interface ComplaintImportantContactsEvent extends BaseChannelEvent {
+  type: 'complaint_important_contacts';
+  complaint_id: string;
+  kategori: string;
+  important_contact_category?: string | null;
+  important_contact_category_id?: string | null;
+  created_at: string;
+}
+
 export interface ServiceRequestedEvent extends BaseChannelEvent {
   request_number: string;
   service_id: string;

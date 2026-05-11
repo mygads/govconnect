@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma'
 import { ai } from '@/lib/api-client'
 import { randomUUID, createHash } from 'crypto'
 import { verifyToken } from '@/lib/auth'
+import { resolveVillageKnowledgeCategory } from '@/lib/knowledge-categories'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -202,23 +203,14 @@ export async function POST(request: NextRequest) {
 
     const documentId = randomUUID()
 
-    let resolvedCategoryId = categoryId || undefined
-    let resolvedCategoryName = category || undefined
-
-    if (!resolvedCategoryId && category && session.admin.village_id) {
-      const existingCategory = await prisma.knowledge_categories.findFirst({
-        where: { name: category, village_id: session.admin.village_id }
-      })
-      if (existingCategory) {
-        resolvedCategoryId = existingCategory.id
-        resolvedCategoryName = existingCategory.name
-      }
-    } else if (resolvedCategoryId) {
-      const categoryRef = await prisma.knowledge_categories.findUnique({
-        where: { id: resolvedCategoryId }
-      })
-      resolvedCategoryName = categoryRef?.name || resolvedCategoryName
-    }
+    const resolvedCategory = await resolveVillageKnowledgeCategory({
+      villageId,
+      categoryId,
+      categoryName: category,
+      createIfMissing: true,
+    })
+    const resolvedCategoryId = resolvedCategory.categoryId
+    const resolvedCategoryName = resolvedCategory.categoryName
 
     const document = await prisma.knowledge_documents.create({
       data: {
@@ -250,7 +242,7 @@ export async function POST(request: NextRequest) {
     aiFormData.append('scope', requestedScope)
     aiFormData.append('is_global', String(isGlobal))
     if (title) aiFormData.append('title', title)
-    if (category) aiFormData.append('category', category)
+    if (resolvedCategoryName) aiFormData.append('category', resolvedCategoryName)
 
     const aiResponse = await ai.uploadDocument(aiFormData)
     const aiData = await aiResponse.json().catch(() => null)

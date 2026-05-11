@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
+import { buildScopedNameKey } from '../lib/utils'
 
 const prisma = new PrismaClient({
   datasourceUrl: process.env.DATABASE_URL
@@ -144,6 +145,7 @@ async function main() {
       data: defaultCategories.map((name) => ({
         village_id: village.id,
         name,
+        name_key: buildScopedNameKey(name),
         is_default: true,
       })),
       skipDuplicates: true,
@@ -203,8 +205,17 @@ async function main() {
     for (const categoryName of importantCategories) {
       const category = await prisma.important_contact_categories.upsert({
         where: { id: `${village.slug}-${categoryName.toLowerCase().replace(/\s+/g, '-')}` },
-        update: { name: categoryName, village_id: village.id },
-        create: { id: `${village.slug}-${categoryName.toLowerCase().replace(/\s+/g, '-')}`, name: categoryName, village_id: village.id },
+        update: {
+          name: categoryName,
+          name_key: buildScopedNameKey(categoryName),
+          village_id: village.id,
+        },
+        create: {
+          id: `${village.slug}-${categoryName.toLowerCase().replace(/\s+/g, '-')}`,
+          name: categoryName,
+          name_key: buildScopedNameKey(categoryName),
+          village_id: village.id,
+        },
       })
 
       const contacts = contactsByCategory[categoryName]

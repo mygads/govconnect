@@ -29,6 +29,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { AlertCircle, AlertTriangle, Eye, Search, ImageIcon, Phone, MessageSquare, Globe, Download, FileSpreadsheet, FileText as FilePdf, CheckSquare, Trash2, Loader2, RotateCcw, Archive } from "lucide-react"
 import { laporan } from "@/lib/frontend-api"
 import { formatDateTime, formatStatus, getStatusColor } from "@/lib/utils"
@@ -72,6 +74,28 @@ function formatComplaintCategory(complaint: Complaint) {
   return complaint.kategori?.replace(/_/g, " ") || "Belum terkategori"
 }
 
+const COMPLAINT_STATUS_OPTIONS = [
+  { value: "PROCESS", label: "Tandai Proses" },
+  { value: "DONE", label: "Tandai Selesai" },
+  { value: "REJECT", label: "Tandai Ditolak" },
+  { value: "CANCELED", label: "Tandai Dibatalkan" },
+] as const
+
+const VALID_COMPLAINT_TRANSITIONS: Record<string, string[]> = {
+  OPEN: ["PROCESS", "DONE", "CANCELED", "REJECT"],
+  PROCESS: ["DONE", "CANCELED", "REJECT"],
+  DONE: [],
+  CANCELED: [],
+  REJECT: [],
+}
+
+const TERMINAL_COMPLAINT_STATUSES = new Set(["DONE", "CANCELED", "REJECT"])
+
+function isValidComplaintTransition(currentStatus: string, nextStatus: string) {
+  const allowed = VALID_COMPLAINT_TRANSITIONS[currentStatus] || []
+  return allowed.includes(nextStatus)
+}
+
 export default function LaporanListPage() {
   const { user } = useAuth()
   const [complaints, setComplaints] = useState<Complaint[]>([])
@@ -82,6 +106,8 @@ export default function LaporanListPage() {
   const [pagination, setPagination] = useState({ total: 0, limit: 20, offset: 0 })
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkUpdating, setBulkUpdating] = useState(false)
+  const [pendingBulkStatus, setPendingBulkStatus] = useState<string | null>(null)
+  const [bulkAdminNotes, setBulkAdminNotes] = useState("")
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [showDeletedModal, setShowDeletedModal] = useState(false)
   const [deletedItems, setDeletedItems] = useState<Complaint[]>([])
@@ -126,6 +152,12 @@ export default function LaporanListPage() {
   }
 
   const filteredComplaints = complaints
+  const selectedComplaints = filteredComplaints.filter((complaint) => selectedIds.has(complaint.id))
+  const bulkEligibleComplaints = pendingBulkStatus
+    ? selectedComplaints.filter((complaint) => isValidComplaintTransition(complaint.status, pendingBulkStatus))
+    : []
+  const bulkSkippedCount = pendingBulkStatus ? selectedComplaints.length - bulkEligibleComplaints.length : 0
+  const bulkRequiresNotes = pendingBulkStatus ? TERMINAL_COMPLAINT_STATUSES.has(pendingBulkStatus) : false
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -143,21 +175,56 @@ export default function LaporanListPage() {
     }
   }
 
-  const handleBulkStatusUpdate = async (newStatus: string) => {
-    if (selectedIds.size === 0) return
-    setBulkUpdating(true)
-    let success = 0, failed = 0
-    for (const id of selectedIds) {
-      try {
-        await laporan.updateStatus(id, { status: newStatus })
-        success++
-      } catch { failed++ }
+  const startBulkStatusUpdate = (newStatus: string) => {
+    setPendingBulkStatus(newStatus)
+    setBulkAdminNotes("")
+  }
+
+  const handleBulkStatusUpdate = async () => {
+    if (!pendingBulkStatus || selectedComplaints.length === 0) return
+
+    const trimmedNotes = bulkAdminNotes.trim()
+    if (bulkRequiresNotes && !trimmedNotes) {
+      toast({
+        title: "Catatan wajib diisi",
+        description: `Bulk update ke ${formatStatus(pendingBulkStatus)} wajib menyertakan catatan admin.`,
+        variant: "destructive",
+      })
+      return
     }
+
+    if (bulkEligibleComplaints.length === 0) {
+      toast({
+        title: "Tidak ada transisi valid",
+        description: `Pengaduan terpilih tidak bisa diubah ke ${formatStatus(pendingBulkStatus)}.`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    setBulkUpdating(true)
+    let success = 0
+    let failed = 0
+
+    for (const complaint of bulkEligibleComplaints) {
+      try {
+        await laporan.updateStatus(complaint.id, {
+          status: pendingBulkStatus,
+          admin_notes: trimmedNotes || undefined,
+        })
+        success++
+      } catch {
+        failed++
+      }
+    }
+
     toast({
       title: "Bulk Update Selesai",
-      description: `${success} berhasil, ${failed} gagal diperbarui ke ${formatStatus(newStatus)}`,
+      description: `${success} berhasil, ${failed} gagal, ${bulkSkippedCount} dilewati untuk status ${formatStatus(pendingBulkStatus)}.`,
     })
     setSelectedIds(new Set())
+    setPendingBulkStatus(null)
+    setBulkAdminNotes("")
     setBulkUpdating(false)
     fetchComplaints()
     refreshData()
@@ -208,6 +275,8 @@ export default function LaporanListPage() {
       description: `${success} berhasil dihapus, ${failed} gagal`,
     })
     setSelectedIds(new Set())
+    setPendingBulkStatus(null)
+    setBulkAdminNotes("")
     setBulkUpdating(false)
     fetchComplaints()
     refreshData()
@@ -325,34 +394,94 @@ export default function LaporanListPage() {
       {/* Bulk Actions Bar */}
       {selectedIds.size > 0 && (
         <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="py-3 flex items-center justify-between">
-            <span className="text-sm font-medium">
-              <CheckSquare className="h-4 w-4 inline mr-1" />
-              {selectedIds.size} pengaduan dipilih
-            </span>
-            <div className="flex gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="outline" disabled={bulkUpdating}>
-                    {bulkUpdating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
-                    Ubah Status
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem onClick={() => handleBulkStatusUpdate("PROCESS")}>Tandai Proses</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleBulkStatusUpdate("DONE")}>Tandai Selesai</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleBulkStatusUpdate("REJECT")}>Tandai Ditolak</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleBulkStatusUpdate("CANCELED")}>Tandai Dibatalkan</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button size="sm" variant="outline" onClick={handleBulkSoftDelete} disabled={bulkUpdating} className="text-destructive hover:text-destructive">
-                {bulkUpdating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
-                Hapus
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
-                Batal
-              </Button>
+          <CardContent className="space-y-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm font-medium">
+                <CheckSquare className="mr-1 inline h-4 w-4" />
+                {selectedIds.size} pengaduan dipilih
+              </span>
+              <div className="flex flex-wrap gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="outline" disabled={bulkUpdating}>
+                      {bulkUpdating ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                      Ubah Status
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    {COMPLAINT_STATUS_OPTIONS.map((option) => (
+                      <DropdownMenuItem key={option.value} onClick={() => startBulkStatusUpdate(option.value)}>
+                        {option.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button size="sm" variant="outline" onClick={handleBulkSoftDelete} disabled={bulkUpdating} className="text-destructive hover:text-destructive">
+                  {bulkUpdating ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}
+                  Hapus
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setSelectedIds(new Set())
+                    setPendingBulkStatus(null)
+                    setBulkAdminNotes("")
+                  }}
+                >
+                  Batal
+                </Button>
+              </div>
             </div>
+
+            {pendingBulkStatus && (
+              <div className="space-y-3 rounded-lg border bg-background/80 p-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Bulk update ke {formatStatus(pendingBulkStatus)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {bulkEligibleComplaints.length} pengaduan siap diperbarui
+                    {bulkSkippedCount > 0 ? `, ${bulkSkippedCount} dilewati karena statusnya sudah final atau transisinya tidak valid.` : "."}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="bulk-admin-notes">
+                    Catatan Admin {bulkRequiresNotes ? "(Wajib)" : "(Opsional)"}
+                  </Label>
+                  <Textarea
+                    id="bulk-admin-notes"
+                    placeholder="Tambahkan catatan yang akan dikirim ke warga terpilih..."
+                    value={bulkAdminNotes}
+                    onChange={(e) => setBulkAdminNotes(e.target.value)}
+                    rows={3}
+                  />
+                  {bulkRequiresNotes && !bulkAdminNotes.trim() && (
+                    <p className="text-xs text-destructive">Catatan wajib diisi untuk status selesai, dibatalkan, atau ditolak.</p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setPendingBulkStatus(null)
+                      setBulkAdminNotes("")
+                    }}
+                  >
+                    Batalkan Aksi
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleBulkStatusUpdate}
+                    disabled={bulkUpdating || bulkEligibleComplaints.length === 0 || (bulkRequiresNotes && !bulkAdminNotes.trim())}
+                  >
+                    {bulkUpdating ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                    Terapkan Bulk Update
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

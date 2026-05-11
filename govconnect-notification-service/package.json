@@ -15,6 +15,7 @@
     "db:migrate:status": "prisma migrate status",
     "db:migrate:resolve": "prisma migrate resolve",
     "prisma:studio": "prisma studio",
+    "test": "tsx --test src/**/*.test.ts",
     "type-check": "tsc --noEmit"
   },
   "keywords": [

@@ -13,7 +13,7 @@ import logger from '../utils/logger';
 import { getParam, getQuery, getQueryInt } from '../utils/http';
 import prisma from '../config/database';
 import { invalidateStatsCache } from '../services/query-batcher.service';
-import { publishEvent } from '../services/rabbitmq.service';
+import { enqueueOutboxEvent } from '../services/outbox.service';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import { recordAuditLog } from '../services/audit-log.service';
 
@@ -459,9 +459,24 @@ export async function handleSoftDeleteComplaint(req: Request, res: Response) {
     }
 
     const archivedAt = new Date();
-    await prisma.complaint.update({
-      where: { id: complaint.id },
-      data: { deleted_at: archivedAt },
+    await prisma.$transaction(async (tx) => {
+      await tx.complaint.update({
+        where: { id: complaint.id },
+        data: { deleted_at: archivedAt },
+      });
+
+      await enqueueOutboxEvent(tx, {
+        routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_ARCHIVED,
+        payload: {
+          type: 'complaint_archived',
+          village_id: complaint.village_id,
+          complaint_id: complaint.complaint_id,
+          id: complaint.id,
+          archived_at: archivedAt.toISOString(),
+        },
+        entityType: 'complaint',
+        entityId: complaint.complaint_id,
+      });
     });
 
     invalidateStatsCache();
@@ -478,13 +493,6 @@ export async function handleSoftDeleteComplaint(req: Request, res: Response) {
       entity_label: complaint.complaint_id,
       metadata: { complaint_id: complaint.complaint_id, archived_at: archivedAt.toISOString() },
     }).catch((error: any) => logger.warn('Failed to record complaint archive audit log', { error: error.message, id: complaint.id }));
-    publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_ARCHIVED, {
-      type: 'complaint_archived',
-      village_id: complaint.village_id,
-      complaint_id: complaint.complaint_id,
-      id: complaint.id,
-      archived_at: archivedAt.toISOString(),
-    }).catch((error: any) => logger.warn('Failed to publish complaint archive event', { error: error.message, id: complaint.id }));
 
     return res.json({ success: true });
   } catch (error: any) {
@@ -512,12 +520,27 @@ export async function handleRestoreComplaint(req: Request, res: Response) {
       return res.status(404).json({ error: 'Deleted complaint not found' });
     }
 
-    await prisma.complaint.update({
-      where: { id: complaint.id },
-      data: { deleted_at: null },
+    const restoredAt = new Date();
+    await prisma.$transaction(async (tx) => {
+      await tx.complaint.update({
+        where: { id: complaint.id },
+        data: { deleted_at: null },
+      });
+
+      await enqueueOutboxEvent(tx, {
+        routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_RESTORED,
+        payload: {
+          type: 'complaint_restored',
+          village_id: complaint.village_id,
+          complaint_id: complaint.complaint_id,
+          id: complaint.id,
+          restored_at: restoredAt.toISOString(),
+        },
+        entityType: 'complaint',
+        entityId: complaint.complaint_id,
+      });
     });
 
-    const restoredAt = new Date();
     invalidateStatsCache();
     const audit = getAuditMetadata(req);
     recordAuditLog({
@@ -532,13 +555,6 @@ export async function handleRestoreComplaint(req: Request, res: Response) {
       entity_label: complaint.complaint_id,
       metadata: { complaint_id: complaint.complaint_id, restored_at: restoredAt.toISOString() },
     }).catch((error: any) => logger.warn('Failed to record complaint restore audit log', { error: error.message, id: complaint.id }));
-    publishEvent(RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_RESTORED, {
-      type: 'complaint_restored',
-      village_id: complaint.village_id,
-      complaint_id: complaint.complaint_id,
-      id: complaint.id,
-      restored_at: restoredAt.toISOString(),
-    }).catch((error: any) => logger.warn('Failed to publish complaint restore event', { error: error.message, id: complaint.id }));
 
     return res.json({ success: true });
   } catch (error: any) {

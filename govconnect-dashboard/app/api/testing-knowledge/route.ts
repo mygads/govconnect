@@ -18,6 +18,28 @@ async function getSession(request: NextRequest) {
   return session
 }
 
+function getTestingChatFailureStatus(result: any) {
+  const intent = result?.data?.intent
+
+  if (intent === 'WALLET_EXHAUSTED') {
+    return 503
+  }
+
+  if (intent === 'ERROR') {
+    return 502
+  }
+
+  return 422
+}
+
+function getTestingChatFailureMessage(result: any) {
+  const responseText = typeof result?.data?.response === 'string'
+    ? result.data.response.trim()
+    : ''
+
+  return responseText || result?.data?.error || result?.error || 'Gagal memproses pertanyaan'
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getSession(request) as any
@@ -26,11 +48,18 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { query } = body
+    const { query, conversationHistory } = body
 
     if (!query || typeof query !== 'string') {
       return NextResponse.json({ error: 'Query wajib diisi' }, { status: 400 })
     }
+
+    const safeConversationHistory = Array.isArray(conversationHistory)
+      ? conversationHistory
+          .filter((item) => item && (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string')
+          .map((item) => ({ role: item.role, content: item.content }))
+          .slice(-30)
+      : []
 
     const response = await fetch(buildUrl(ServicePath.AI, '/api/testing/chat'), {
       method: 'POST',
@@ -39,6 +68,7 @@ export async function POST(request: NextRequest) {
         message: query,
         village_id: session.admin?.village_id || undefined,
         user_id: session.admin?.id ? `admin_test_${session.admin.id}` : undefined,
+        conversationHistory: safeConversationHistory,
       }),
     })
 
@@ -50,22 +80,36 @@ export async function POST(request: NextRequest) {
     }
 
     if (!response.ok) {
-      if (response.status >= 500) {
-        return NextResponse.json({
+      const upstreamError = result?.error || result?.message || 'Gagal memproses pertanyaan'
+      return NextResponse.json(
+        {
           success: false,
-          error: result?.error || 'AI service unavailable',
-        })
-      }
+          error: response.status >= 500 ? `AI service error: ${upstreamError}` : upstreamError,
+        },
+        { status: response.status }
+      )
+    }
 
-      return NextResponse.json({ error: result?.error || 'Gagal memproses pertanyaan' }, { status: response.status })
+    if (result?.success === false) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: getTestingChatFailureMessage(result),
+          data: result?.data,
+        },
+        { status: getTestingChatFailureStatus(result) }
+      )
     }
 
     return NextResponse.json(result)
   } catch (error) {
     console.error('Testing knowledge error:', error)
-    return NextResponse.json({
-      success: false,
-      error: 'AI service unavailable',
-    })
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'AI service unavailable',
+      },
+      { status: 502 }
+    )
   }
 }

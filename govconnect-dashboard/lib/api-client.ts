@@ -35,7 +35,7 @@ let _internalApiKeyWarned = false;
 
 export function getInternalApiKey(): string {
   if (_internalApiKey !== null) return _internalApiKey;
-  
+
   const keyValue = process.env['INTERNAL_API_KEY']?.trim() || '';
   if (!keyValue) {
     if (process.env.NODE_ENV === 'production') {
@@ -48,6 +48,14 @@ export function getInternalApiKey(): string {
   }
   _internalApiKey = keyValue;
   return _internalApiKey;
+}
+
+export function requireInternalApiKey(): string {
+  const keyValue = getInternalApiKey().trim()
+  if (!keyValue) {
+    throw new Error('INTERNAL_API_KEY is required for public proxy routes')
+  }
+  return keyValue
 }
 
 // For backward compatibility - keep this as a plain runtime-read constant
@@ -195,7 +203,7 @@ export const caseService = {
   /**
    * Update laporan status
    */
-  async updateLaporanStatus(id: string, data: { status: string; notes?: string }, village_id?: string) {
+  async updateLaporanStatus(id: string, data: { status: string; admin_notes?: string }, village_id?: string) {
     const url = new URL(buildUrl(ServicePath.CASE, `/laporan/${id}/status`));
     if (village_id) {
       url.searchParams.set('village_id', village_id);
@@ -302,10 +310,22 @@ export const caseService = {
   },
 
   /**
-   * Update service request status
+   * Update service request status or editable admin fields
    */
-  async updateServiceRequestStatus(id: string, data: { status: string; admin_notes?: string }) {
-    return apiFetch(buildUrl(ServicePath.CASE, `/service-requests/${id}/status`), {
+  async updateServiceRequestStatus(
+    id: string,
+    data: {
+      status?: string;
+      admin_notes?: string | null;
+      result_file_url?: string | null;
+      result_file_name?: string | null;
+      result_description?: string | null;
+    },
+    village_id?: string,
+  ) {
+    const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}/status`));
+    if (village_id) url.searchParams.set('village_id', village_id);
+    return apiFetch(url.toString(), {
       method: 'PATCH',
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -450,7 +470,7 @@ export const ai = {
    * Get AI usage stats by model
    */
   async getUsageByModel(model: string) {
-    return apiFetch(buildUrl(ServicePath.AI, `/stats/usage/${model}`), {
+    return apiFetch(buildUrl(ServicePath.AI, `/stats/models/${encodeURIComponent(model)}`), {
       headers: getHeaders(),
     });
   },
@@ -1218,7 +1238,7 @@ export const apiClient = {
   },
   
   async updateComplaintStatus(id: string, data: { status: string; admin_notes?: string }) {
-    const response = await caseService.updateLaporanStatus(id, { status: data.status, notes: data.admin_notes });
+    const response = await caseService.updateLaporanStatus(id, { status: data.status, admin_notes: data.admin_notes });
     return response.json();
   },
   

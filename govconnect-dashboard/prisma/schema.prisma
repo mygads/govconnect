@@ -80,6 +80,7 @@ model village_behavior_configs {
   notice                      String?  @db.Text
   notification_enabled        Boolean? @default(true)
   notification_urgent_enabled Boolean? @default(true)
+  admin_notification_number   String?
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
 
@@ -356,6 +357,7 @@ model knowledge_categories {
   id         String   @id @default(cuid())
   village_id String
   name       String
+  name_key   String
   is_default Boolean  @default(false)
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
@@ -364,6 +366,7 @@ model knowledge_categories {
   documents  knowledge_documents[]
   knowledge_items knowledge_base[]
 
+  @@unique([village_id, name_key])
   @@index([village_id])
   @@index([name])
 }
@@ -374,12 +377,14 @@ model important_contact_categories {
   id         String   @id @default(cuid())
   village_id String
   name       String
+  name_key   String
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
   village    villages @relation(fields: [village_id], references: [id], onDelete: Cascade)
   contacts   important_contacts[]
 
+  @@unique([village_id, name_key])
   @@index([village_id])
   @@index([name])
 }

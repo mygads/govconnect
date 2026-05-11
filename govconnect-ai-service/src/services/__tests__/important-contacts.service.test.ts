@@ -9,6 +9,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('../../config/env', () => ({
+  config: {
+    dashboardServiceUrl: 'http://dashboard.local',
+    internalApiKey: 'test-key',
+  },
+}));
+
 vi.mock('axios', () => {
   const get = vi.fn();
   return {
@@ -20,9 +27,11 @@ vi.mock('axios', () => {
 import axios from 'axios';
 import {
   ImportantContact,
+  getImportantContacts,
   isContactDirectoryLookup,
   extractRoleHints,
   lookupImportantContacts,
+  normalizeImportantContactPhone,
 } from '../important-contacts.service';
 
 const MARGAHAYU_CONTACTS: ImportantContact[] = [
@@ -31,6 +40,13 @@ const MARGAHAYU_CONTACTS: ImportantContact[] = [
     name: 'Damkar Bola',
     phone: '+62 811-0000-1111',
     description: 'Pos Pemadam Kebakaran Bola, layanan 24 jam.',
+    category: { id: 'c1', name: 'Darurat' },
+  },
+  {
+    id: '1b',
+    name: 'Pos Damkar Bola',
+    phone: '6281100001111:24@s.whatsapp.net',
+    description: 'Kontak cadangan pemadam kebakaran Bola.',
     category: { id: 'c1', name: 'Darurat' },
   },
   {
@@ -84,6 +100,10 @@ describe('isContactDirectoryLookup', () => {
     expect(isContactDirectoryLookup('ada kecelakaan di depan sekolah tolong')).toBe(false);
   });
 
+  it('does NOT treat a detailed street address as a lookup', () => {
+    expect(isContactDirectoryLookup('Jalan Kenanga No 12 RT 03/RW 05')).toBe(false);
+  });
+
   it('returns false for empty input', () => {
     expect(isContactDirectoryLookup('')).toBe(false);
   });
@@ -109,10 +129,53 @@ describe('extractRoleHints', () => {
   });
 });
 
+describe('normalizeImportantContactPhone', () => {
+  it('normalizes WhatsApp JID variants to canonical 628 format', () => {
+    expect(normalizeImportantContactPhone('6281100001111:24@s.whatsapp.net')).toBe('6281100001111');
+    expect(normalizeImportantContactPhone('0811-0000-1111')).toBe('6281100001111');
+    expect(normalizeImportantContactPhone('+62 811-0000-1111')).toBe('6281100001111');
+  });
+
+  it('drops an accidental zero after country code', () => {
+    expect(normalizeImportantContactPhone('62081100001111')).toBe('6281100001111');
+  });
+});
+
 describe('lookupImportantContacts', () => {
   beforeEach(() => {
     (axios.get as any).mockReset();
     (axios.get as any).mockResolvedValue({ data: { data: MARGAHAYU_CONTACTS } });
+  });
+
+  it('preserves category-specific rows when the same normalized phone appears in different categories', async () => {
+    (axios.get as any).mockResolvedValueOnce({
+      data: {
+        data: [
+          {
+            id: 'emergency-1',
+            name: 'Damkar Bola',
+            phone: '0811-0000-9999',
+            description: 'Pemadam kebakaran siaga',
+            category_id: 'cat-emergency',
+            category: { id: 'cat-emergency', name: 'Darurat' },
+          },
+          {
+            id: 'gov-1',
+            name: 'Kantor Desa Bola',
+            phone: '6281100009999:12@s.whatsapp.net',
+            description: 'Nomor kantor desa',
+            category_id: 'cat-government',
+            category: { id: 'cat-government', name: 'Pemerintah Desa' },
+          },
+        ],
+      },
+    });
+
+    const result = await getImportantContacts('village-margahayu');
+
+    expect(result).toHaveLength(2);
+    expect(result.map((contact) => contact.category?.id)).toEqual(['cat-emergency', 'cat-government']);
+    expect(result.map((contact) => contact.phone)).toEqual(['6281100009999', '6281100009999']);
   });
 
   it('returns Damkar Bola for "ada nomor damkar?"', async () => {
@@ -127,6 +190,13 @@ describe('lookupImportantContacts', () => {
     expect(result.matches.length).toBeGreaterThan(0);
     const topHaystack = `${result.matches[0].contact.name} ${result.matches[0].contact.description}`.toLowerCase();
     expect(topHaystack).toMatch(/puskesmas|solo/);
+  });
+
+  it('falls back to health contacts for a broader medical query', async () => {
+    const result = await lookupImportantContacts('nomor medis', 'village-margahayu');
+    expect(result.category_hint).toBe('health');
+    expect(result.matches.length).toBeGreaterThan(0);
+    expect(result.matches[0].contact.description?.toLowerCase()).toContain('kesehatan');
   });
 
   it('returns empty matches for an unknown entity', async () => {
@@ -145,5 +215,12 @@ describe('lookupImportantContacts', () => {
     expect(result.matches.length).toBeGreaterThan(0);
     const top = result.matches[0];
     expect(top.contact.description?.toLowerCase()).toContain('kepala desa');
+  });
+
+  it('deduplicates contacts that share the same normalized phone number', async () => {
+    const result = await lookupImportantContacts('nomor damkar', 'village-margahayu');
+    const phones = result.matches.map((match) => match.contact.phone);
+    expect(phones.filter((phone) => phone === '6281100001111')).toHaveLength(1);
+    expect(new Set(phones).size).toBe(phones.length);
   });
 });

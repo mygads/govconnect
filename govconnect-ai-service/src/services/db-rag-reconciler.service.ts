@@ -38,15 +38,28 @@ export interface Mismatch {
     | 'operating_hour_mismatch'
     | 'office_address_mismatch'
     | 'service_cost_mismatch'
-    | 'service_duration_mismatch';
+    | 'service_duration_mismatch'
+    | 'service_mode_mismatch'
+    | 'service_availability_mismatch'
+    | 'service_requirement_mismatch';
   offending: string;
   dbValue?: string;
 }
 
 const PHONE_REGEX = /\b(?:\+?62|0)\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/g;
+const SHORT_PHONE_REGEX = /\b\d{3,4}\b/g;
+const SHORT_PHONE_CONTEXT_REGEX = /\b(hubungi|telepon|telpon|telp|hotline|call center|kontak|darurat|polisi|ambulans|ambulan|damkar|pemadam)\b/i;
+const OFFICE_CONTACT_CONTEXT_REGEX = /\b(nomor kantor|telepon kantor|kontak kantor|kantor desa|kantor kelurahan|balai desa|sekretariat desa|jam buka kantor|alamat kantor)\b/i;
 const ADDRESS_SIGNAL_REGEX = /\b(alamat|lokasi|berada di|terletak di|jl\.?|jalan|rt\s*\d|rw\s*\d|dusun|kecamatan|kabupaten)\b/i;
 const COST_SIGNAL_REGEX = /\b(gratis|tanpa biaya|rp\.?\s*\d|rupiah|biaya(?:nya)?|tarif(?:nya)?|harga(?:nya)?)\b/i;
 const DURATION_SIGNAL_REGEX = /\b(estimasi|proses(?:nya)?|hari kerja|\d+\s*(hari|minggu|bulan|jam))\b/i;
+const REQUIREMENT_SIGNAL_REGEX = /\b(syarat|persyaratan|berkas|dokumen)\b/i;
+const NO_REQUIREMENT_REGEX = /\b(tidak ada|tanpa)\s+(syarat|persyaratan|berkas|dokumen)\b|\bcukup datang saja\b/i;
+const REQUIREMENT_DOC_SIGNAL_REGEX = /\b(ktp|kk|akta|akte|pas foto|foto|surat pengantar|formulir|npwp|bpjs|sertifikat|rekening|buku nikah)\b/i;
+const SERVICE_ONLINE_POSITIVE_REGEX = /\b(bisa online|diajukan online|diproses online|via online|lewat formulir|link formulir|isi formulir|ajukan lewat form|via form)\b/i;
+const SERVICE_ONLINE_NEGATIVE_REGEX = /\b(tidak bisa online|belum bisa online|hanya offline|offline saja|harus ke kantor|harus datang ke kantor|diproses langsung di kantor|tidak ada link formulir)\b/i;
+const SERVICE_AVAILABLE_POSITIVE_REGEX = /\b(tersedia|masih tersedia|aktif|bisa diajukan|bisa diurus|bisa diproses|bisa dilayani)\b/i;
+const SERVICE_AVAILABLE_NEGATIVE_REGEX = /\b(belum tersedia|tidak tersedia|sedang tidak tersedia|nonaktif|tidak aktif|belum bisa diajukan|tidak bisa diajukan|tidak bisa diproses)\b/i;
 const ADDRESS_STOPWORDS = new Set(['alamat', 'lokasi', 'berada', 'terletak', 'di', 'desa', 'kantor']);
 
 function normalizePhone(raw: string): string {
@@ -72,13 +85,27 @@ function significantTokens(raw: string, stopwords: Set<string> = ADDRESS_STOPWOR
     .filter((token) => token.length >= 3 && !stopwords.has(token));
 }
 
-function extractPhones(text: string): string[] {
-  const matches = text.match(PHONE_REGEX) || [];
+function extractPhones(text: string, options?: { allowShortCodes?: boolean }): string[] {
+  const matches = [...(text.match(PHONE_REGEX) || [])];
+
+  if (options?.allowShortCodes) {
+    for (const match of text.matchAll(SHORT_PHONE_REGEX)) {
+      const raw = match[0];
+      const start = match.index ?? 0;
+      const contextStart = Math.max(0, start - 24);
+      const contextEnd = Math.min(text.length, start + raw.length + 24);
+      const contextWindow = text.slice(contextStart, contextEnd);
+      if (!SHORT_PHONE_CONTEXT_REGEX.test(contextWindow)) continue;
+      matches.push(raw);
+    }
+  }
+
   const seen = new Set<string>();
   const out: string[] = [];
   for (const m of matches) {
     const normalized = normalizePhone(m);
-    if (normalized.length < 7) continue;
+    const minimumLength = options?.allowShortCodes ? 3 : 7;
+    if (normalized.length < minimumLength) continue;
     if (seen.has(normalized)) continue;
     seen.add(normalized);
     out.push(m);
@@ -86,14 +113,19 @@ function extractPhones(text: string): string[] {
   return out;
 }
 
-async function collectKnownVillagePhones(villageId: string): Promise<Set<string>> {
+function isOfficeContact(contact: Awaited<ReturnType<typeof getImportantContacts>>[number]): boolean {
+  const haystack = `${contact.name || ''} ${contact.description || ''} ${contact.category?.name || ''}`.toLowerCase();
+  return /\b(kantor|sekretariat|balai|admin|petugas|kepala desa|kades|lurah|sekdes|sekretaris desa)\b/i.test(haystack);
+}
+
+async function collectKnownVillagePhones(villageId: string, options?: { officeOnly?: boolean }): Promise<Set<string>> {
   const contacts = await getImportantContacts(villageId).catch(() => []);
   const known = new Set<string>();
   for (const contact of contacts) {
     if (!contact.phone) continue;
+    if (options?.officeOnly && !isOfficeContact(contact)) continue;
     known.add(normalizePhone(contact.phone));
   }
-  for (const nat of ['110', '119', '113', '118', '115', '112']) known.add(nat);
   return known;
 }
 
@@ -185,6 +217,39 @@ function responseMatchesServiceDuration(responseText: string, dbValue: string): 
     .some((item) => normalizedResponseDurations.has(item));
 }
 
+function responseClaimsOnlineAvailability(responseText: string): boolean {
+  return SERVICE_ONLINE_POSITIVE_REGEX.test(responseText);
+}
+
+function responseClaimsOfflineOnly(responseText: string): boolean {
+  return SERVICE_ONLINE_NEGATIVE_REGEX.test(responseText);
+}
+
+function responseClaimsServiceAvailable(responseText: string): boolean {
+  return SERVICE_AVAILABLE_POSITIVE_REGEX.test(responseText);
+}
+
+function responseClaimsServiceUnavailable(responseText: string): boolean {
+  return SERVICE_AVAILABLE_NEGATIVE_REGEX.test(responseText);
+}
+
+function responseMentionsRequirementDocs(responseText: string): boolean {
+  return REQUIREMENT_DOC_SIGNAL_REGEX.test(responseText);
+}
+
+function responseMatchesServiceRequirements(
+  responseText: string,
+  requirements: Array<{ label?: string | null }>,
+): boolean {
+  const normalizedResponse = normalizeLooseText(responseText);
+  if (!normalizedResponse) return false;
+
+  return requirements.some((requirement) => {
+    const normalizedLabel = normalizeLooseText(requirement.label || '');
+    return normalizedLabel.length >= 3 && normalizedResponse.includes(normalizedLabel);
+  });
+}
+
 export async function reconcile(input: ReconcileInput): Promise<ReconcileDecision> {
   const { villageId, userMessage, result, toolsUsed } = input;
 
@@ -199,16 +264,22 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
 
   const mismatches: Mismatch[] = [];
 
-  const phonesInText = extractPhones(responseText);
+  const phonesInText = extractPhones(responseText, {
+    allowShortCodes: result.intent === 'EMERGENCY_CONTACTS' || toolsUsed.includes('get_emergency_contacts'),
+  });
   if (phonesInText.length > 0) {
-    const usedContactTool = toolsUsed.some((t) =>
+    const usedDirectoryContactTool = toolsUsed.some((t) =>
       t === 'get_important_contact'
-      || t === 'get_emergency_contacts'
-      || t === 'get_village_profile',
+      || t === 'get_emergency_contacts',
     );
+    const usedVillageProfileTool = toolsUsed.includes('get_village_profile');
+    const officeContactContext = OFFICE_CONTACT_CONTEXT_REGEX.test(`${userMessage || ''} ${responseText}`);
+    const usedContactTool = usedDirectoryContactTool || usedVillageProfileTool;
 
     if (usedContactTool) {
-      const known = await collectKnownVillagePhones(villageId);
+      const known = await collectKnownVillagePhones(villageId, {
+        officeOnly: usedVillageProfileTool && officeContactContext && !usedDirectoryContactTool,
+      });
       for (const raw of phonesInText) {
         const normalized = normalizePhone(raw);
         if (!known.has(normalized)) {
@@ -259,9 +330,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
   }
 
   const usedServiceTool = toolsUsed.includes('get_service_info');
-  if (usedServiceTool && (COST_SIGNAL_REGEX.test(responseText) || DURATION_SIGNAL_REGEX.test(responseText))) {
-    const services = (await getServiceCatalog(villageId).catch(() => []))
-      .filter((service) => service.is_active);
+  if (usedServiceTool) {
+    const services = await getServiceCatalog(villageId).catch(() => []);
     const matchedService = findUniqueServiceMention(services, [userMessage || '', responseText]);
 
     if (
@@ -286,6 +356,76 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
         offending: responseText,
         dbValue: matchedService.estimated_processing_time,
       });
+    }
+
+    if (matchedService?.mode) {
+      const mode = String(matchedService.mode).toLowerCase();
+      const claimsOnline = responseClaimsOnlineAvailability(responseText);
+      const claimsOfflineOnly = responseClaimsOfflineOnly(responseText);
+
+      if (mode === 'offline' && claimsOnline) {
+        mismatches.push({
+          kind: 'service_mode_mismatch',
+          offending: responseText,
+          dbValue: matchedService.mode,
+        });
+      }
+
+      if ((mode === 'online' || mode === 'both') && claimsOfflineOnly) {
+        mismatches.push({
+          kind: 'service_mode_mismatch',
+          offending: responseText,
+          dbValue: matchedService.mode,
+        });
+      }
+    }
+
+    if (matchedService) {
+      const claimsAvailable = responseClaimsServiceAvailable(responseText);
+      const claimsUnavailable = responseClaimsServiceUnavailable(responseText);
+
+      if (!matchedService.is_active && claimsAvailable) {
+        mismatches.push({
+          kind: 'service_availability_mismatch',
+          offending: responseText,
+          dbValue: 'inactive',
+        });
+      }
+
+      if (matchedService.is_active && claimsUnavailable) {
+        mismatches.push({
+          kind: 'service_availability_mismatch',
+          offending: responseText,
+          dbValue: 'active',
+        });
+      }
+
+      if (REQUIREMENT_SIGNAL_REGEX.test(responseText)) {
+        const requirements = Array.isArray(matchedService.requirements) ? matchedService.requirements : [];
+        const mentionsDocs = responseMentionsRequirementDocs(responseText);
+
+        if (requirements.length === 0) {
+          if (mentionsDocs) {
+            mismatches.push({
+              kind: 'service_requirement_mismatch',
+              offending: responseText,
+              dbValue: 'no documented requirements',
+            });
+          }
+        } else if (NO_REQUIREMENT_REGEX.test(responseText)) {
+          mismatches.push({
+            kind: 'service_requirement_mismatch',
+            offending: responseText,
+            dbValue: requirements.map((requirement) => requirement.label).filter(Boolean).join(', '),
+          });
+        } else if (mentionsDocs && !responseMatchesServiceRequirements(responseText, requirements)) {
+          mismatches.push({
+            kind: 'service_requirement_mismatch',
+            offending: responseText,
+            dbValue: requirements.map((requirement) => requirement.label).filter(Boolean).join(', '),
+          });
+        }
+      }
     }
   }
 
@@ -333,15 +473,18 @@ function buildHonestFallback(mismatches: Mismatch[]): string {
   const hasAddress = mismatches.some((m) => m.kind === 'office_address_mismatch');
   const hasServiceCost = mismatches.some((m) => m.kind === 'service_cost_mismatch');
   const hasServiceDuration = mismatches.some((m) => m.kind === 'service_duration_mismatch');
+  const hasServiceMode = mismatches.some((m) => m.kind === 'service_mode_mismatch');
+  const hasServiceAvailability = mismatches.some((m) => m.kind === 'service_availability_mismatch');
+  const hasServiceRequirement = mismatches.some((m) => m.kind === 'service_requirement_mismatch');
 
-  if (hasPhone && !hasHours && !hasAddress && !hasServiceCost && !hasServiceDuration) {
+  if (hasPhone && !hasHours && !hasAddress && !hasServiceCost && !hasServiceDuration && !hasServiceMode && !hasServiceAvailability && !hasServiceRequirement) {
     return 'Maaf Pak/Bu, nomor yang saya sebutkan belum cocok dengan daftar kontak resmi desa. Sebutkan nama atau jabatan yang dicari ya, nanti saya bantu cek ulang dari direktori desa.';
   }
-  if ((hasHours || hasAddress) && !hasPhone && !hasServiceCost && !hasServiceDuration) {
+  if ((hasHours || hasAddress) && !hasPhone && !hasServiceCost && !hasServiceDuration && !hasServiceMode && !hasServiceAvailability && !hasServiceRequirement) {
     return 'Maaf Pak/Bu, ada ketidaksesuaian dengan profil resmi desa. Biar tidak keliru, sebaiknya saya cek lagi dari data resmi kantor desa ya.';
   }
-  if ((hasServiceCost || hasServiceDuration) && !hasPhone && !hasHours && !hasAddress) {
-    return 'Maaf Pak/Bu, detail biaya atau estimasi layanan tadi belum cocok dengan katalog resmi desa. Biar tidak keliru, saya perlu cek lagi dari data layanan resmi ya.';
+  if ((hasServiceCost || hasServiceDuration || hasServiceMode || hasServiceAvailability || hasServiceRequirement) && !hasPhone && !hasHours && !hasAddress) {
+    return 'Maaf Pak/Bu, detail layanan tadi belum cocok dengan katalog resmi desa. Biar tidak keliru, saya perlu cek lagi dari data layanan resmi ya.';
   }
   return 'Maaf Pak/Bu, ada beberapa data yang belum cocok dengan catatan resmi desa. Biar tidak keliru, sebaiknya saya cek ulang dulu dari sumber resmi ya.';
 }

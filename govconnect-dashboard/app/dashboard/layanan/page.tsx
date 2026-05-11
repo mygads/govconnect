@@ -78,6 +78,20 @@ function orderedRequirementIds(items: ServiceRequirement[]) {
     .map((item) => item.id)
 }
 
+interface CitizenFieldDefinition {
+  key: string
+  label: string
+  field_type: "text" | "textarea" | "select" | "radio" | "date" | "number"
+  is_required: boolean
+  help_text?: string | null
+  options?: string[]
+  validation?: "nik" | "wa_phone" | null
+}
+
+interface SubmissionSchema {
+  citizenFields: CitizenFieldDefinition[]
+}
+
 interface Service {
   id: string
   name: string
@@ -86,6 +100,8 @@ interface Service {
   mode: string
   estimated_cost?: string | null
   estimated_processing_time?: string | null
+  citizen_fields_json?: CitizenFieldDefinition[] | null
+  submission_schema?: SubmissionSchema
   is_active: boolean
   category?: { name: string } | null
   requirements?: ServiceRequirement[]
@@ -131,10 +147,52 @@ const fieldTypeLabels: Record<string, string> = {
   file: "File Upload",
 }
 
+function cloneCitizenField(field: CitizenFieldDefinition): CitizenFieldDefinition {
+  return {
+    ...field,
+    options: field.options ? [...field.options] : undefined,
+  }
+}
+
+function sortCitizenFieldsByCatalog(
+  fields: CitizenFieldDefinition[],
+  catalog: CitizenFieldDefinition[],
+): CitizenFieldDefinition[] {
+  const order = new Map(catalog.map((field, index) => [field.key, index]))
+  return [...fields].sort((left, right) => (order.get(left.key) ?? 999) - (order.get(right.key) ?? 999))
+}
+
+function getDefaultCitizenFields(catalog: CitizenFieldDefinition[]): CitizenFieldDefinition[] {
+  return catalog.filter((field) => field.is_required).map(cloneCitizenField)
+}
+
+function normalizeSelectedCitizenFields(
+  catalog: CitizenFieldDefinition[],
+  selected: CitizenFieldDefinition[] | null | undefined,
+): CitizenFieldDefinition[] {
+  if (!catalog.length) return []
+
+  const selectedMap = new Map((selected || []).map((field) => [field.key, field]))
+
+  return sortCitizenFieldsByCatalog(
+    catalog
+      .filter((field) => selectedMap.has(field.key))
+      .map((field) => {
+        const existing = selectedMap.get(field.key)
+        return {
+          ...cloneCitizenField(field),
+          is_required: existing?.is_required ?? field.is_required,
+        }
+      }),
+    catalog,
+  )
+}
+
 export default function LayananPage() {
   const { toast } = useToast()
   const [services, setServices] = useState<Service[]>([])
   const [categories, setCategories] = useState<ServiceCategory[]>([])
+  const [citizenFieldCatalog, setCitizenFieldCatalog] = useState<CitizenFieldDefinition[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [villageSlug, setVillageSlug] = useState<string>("")
@@ -174,6 +232,7 @@ export default function LayananPage() {
     mode: "both",
     estimated_cost: "",
     estimated_processing_time: "",
+    citizen_fields_json: [] as CitizenFieldDefinition[],
     is_active: true,
   })
   const [serviceForm, setServiceForm] = useState({
@@ -184,6 +243,7 @@ export default function LayananPage() {
     mode: "both",
     estimated_cost: "",
     estimated_processing_time: "",
+    citizen_fields_json: [] as CitizenFieldDefinition[],
     is_active: true,
   })
   const [requirementFormInitial, setRequirementFormInitial] = useState({
@@ -210,6 +270,10 @@ export default function LayananPage() {
     name: categoryForm.name.trim(),
     description: categoryForm.description.trim(),
   }
+  const defaultCitizenFields = useMemo(
+    () => getDefaultCitizenFields(citizenFieldCatalog),
+    [citizenFieldCatalog],
+  )
   const normalizedServiceForm = {
     ...serviceForm,
     name: serviceForm.name.trim(),
@@ -217,6 +281,7 @@ export default function LayananPage() {
     slug: serviceForm.slug.trim(),
     estimated_cost: serviceForm.estimated_cost.trim(),
     estimated_processing_time: serviceForm.estimated_processing_time.trim(),
+    citizen_fields_json: normalizeSelectedCitizenFields(citizenFieldCatalog, serviceForm.citizen_fields_json),
   }
   const normalizedRequirementForm = {
     ...requirementForm,
@@ -257,6 +322,7 @@ export default function LayananPage() {
 
       setServices(servicesData.data || [])
       setCategories(categoriesData.data || [])
+      setCitizenFieldCatalog(servicesData.meta?.citizen_field_catalog || [])
       setError(null)
     } catch (err: any) {
       const message = err.message || "Gagal memuat data"
@@ -372,7 +438,7 @@ export default function LayananPage() {
   const requestDeleteCategory = (id: string) => {
     openConfirm({
       title: "Hapus kategori layanan?",
-      description: "Kategori akan dihapus dan layanan di dalam kategori ini akan kehilangan kategorinya.",
+      description: "Kategori hanya bisa dihapus jika belum dipakai oleh layanan mana pun.",
       actionLabel: "Hapus",
       variant: "destructive",
       onConfirm: () => handleDeleteCategory(id),
@@ -398,8 +464,38 @@ export default function LayananPage() {
   }
 
   // Service handlers
+  const updateCitizenFieldEnabled = (field: CitizenFieldDefinition, enabled: boolean) => {
+    setServiceForm((prev) => {
+      const existing = normalizeSelectedCitizenFields(citizenFieldCatalog, prev.citizen_fields_json)
+      const next = enabled
+        ? sortCitizenFieldsByCatalog(
+            [...existing.filter((item) => item.key !== field.key), cloneCitizenField(field)],
+            citizenFieldCatalog,
+          )
+        : existing.filter((item) => item.key !== field.key)
+
+      return {
+        ...prev,
+        citizen_fields_json: next,
+      }
+    })
+  }
+
+  const updateCitizenFieldRequired = (key: string, required: boolean) => {
+    setServiceForm((prev) => ({
+      ...prev,
+      citizen_fields_json: normalizeSelectedCitizenFields(citizenFieldCatalog, prev.citizen_fields_json).map((field) =>
+        field.key === key ? { ...field, is_required: required } : field,
+      ),
+    }))
+  }
+
   const openServiceModal = (service?: Service) => {
     if (service) {
+      const selectedCitizenFields = normalizeSelectedCitizenFields(
+        citizenFieldCatalog,
+        service.submission_schema?.citizenFields || service.citizen_fields_json,
+      )
       const next = {
         category_id: service.category ? categories.find(c => c.name === service.category?.name)?.id || "" : "",
         name: service.name,
@@ -408,6 +504,7 @@ export default function LayananPage() {
         mode: service.mode,
         estimated_cost: service.estimated_cost || "",
         estimated_processing_time: service.estimated_processing_time || "",
+        citizen_fields_json: selectedCitizenFields,
         is_active: service.is_active,
       }
       setEditingService(service)
@@ -419,6 +516,7 @@ export default function LayananPage() {
         slug: next.slug.trim(),
         estimated_cost: next.estimated_cost.trim(),
         estimated_processing_time: next.estimated_processing_time.trim(),
+        citizen_fields_json: normalizeSelectedCitizenFields(citizenFieldCatalog, next.citizen_fields_json),
       })
     } else {
       const next = {
@@ -429,18 +527,30 @@ export default function LayananPage() {
         mode: "both",
         estimated_cost: "",
         estimated_processing_time: "",
+        citizen_fields_json: defaultCitizenFields,
         is_active: true,
       }
       setEditingService(null)
       setServiceForm(next)
-      setServiceFormInitial(next)
+      setServiceFormInitial({
+        ...next,
+        citizen_fields_json: normalizeSelectedCitizenFields(citizenFieldCatalog, next.citizen_fields_json),
+      })
     }
     setServiceModalOpen(true)
   }
 
   const requestSaveService = () => {
+    if (!serviceForm.category_id) {
+      toast({ title: "Kategori layanan wajib dipilih", variant: "destructive" })
+      return
+    }
     if (!serviceForm.name.trim() || !serviceForm.description.trim()) {
       toast({ title: "Nama dan deskripsi layanan wajib diisi", variant: "destructive" })
+      return
+    }
+    if (!serviceForm.citizen_fields_json.length) {
+      toast({ title: "Pilih minimal satu field data warga", variant: "destructive" })
       return
     }
     if (!isServiceDirty) return
@@ -455,8 +565,8 @@ export default function LayananPage() {
   }
 
   const handleSaveService = async () => {
-    if (!serviceForm.name.trim() || !serviceForm.description.trim() || !isServiceDirty) return
-    
+    if (!serviceForm.category_id || !serviceForm.name.trim() || !serviceForm.description.trim() || !serviceForm.citizen_fields_json.length || !isServiceDirty) return
+
     try {
       setSaving(true)
       const computedSlug = serviceForm.slug.trim() || slugify(serviceForm.name)
@@ -465,6 +575,7 @@ export default function LayananPage() {
         slug: computedSlug,
         estimated_cost: serviceForm.estimated_cost.trim() || null,
         estimated_processing_time: serviceForm.estimated_processing_time.trim() || null,
+        citizen_fields_json: normalizeSelectedCitizenFields(citizenFieldCatalog, serviceForm.citizen_fields_json),
       }
       if (editingService) {
         await layanan.update(editingService.id, payload)
@@ -1182,6 +1293,69 @@ export default function LayananPage() {
               />
             </div>
 
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label>Field Data Warga</Label>
+                <p className="text-xs text-muted-foreground">
+                  Pilih field identitas warga yang wajib muncul di form publik untuk layanan ini.
+                </p>
+              </div>
+              <div className="space-y-2 rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>{serviceForm.citizen_fields_json.length} field dipilih</span>
+                  <span>Required bisa diatur per layanan</span>
+                </div>
+                <div className="space-y-2">
+                  {citizenFieldCatalog.map((field) => {
+                    const selectedField = serviceForm.citizen_fields_json.find((item) => item.key === field.key)
+                    const isSelected = !!selectedField
+                    const optionPreview = field.options?.length ? field.options.join(", ") : ""
+
+                    return (
+                      <div key={field.key} className="rounded-md border p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium text-sm">{field.label}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {fieldTypeLabels[field.field_type] || field.field_type}
+                              </Badge>
+                              {field.validation === "nik" && <Badge variant="secondary" className="text-xs">Validasi NIK</Badge>}
+                              {field.validation === "wa_phone" && <Badge variant="secondary" className="text-xs">Validasi WA</Badge>}
+                            </div>
+                            {field.help_text && (
+                              <p className="text-xs text-muted-foreground">{field.help_text}</p>
+                            )}
+                            {optionPreview && (
+                              <p className="text-xs text-muted-foreground">Opsi: {optionPreview}</p>
+                            )}
+                          </div>
+                          <Switch
+                            checked={isSelected}
+                            onCheckedChange={(checked) => updateCitizenFieldEnabled(field, checked)}
+                          />
+                        </div>
+                        {isSelected && (
+                          <div className="mt-3 flex items-center justify-between rounded-md bg-muted/40 px-3 py-2">
+                            <div>
+                              <p className="text-sm font-medium">Wajib diisi</p>
+                              <p className="text-xs text-muted-foreground">
+                                Nonaktifkan jika field ini opsional untuk layanan ini.
+                              </p>
+                            </div>
+                            <Switch
+                              checked={selectedField?.is_required ?? false}
+                              onCheckedChange={(checked) => updateCitizenFieldRequired(field.key, checked)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Estimasi Biaya</Label>
@@ -1225,9 +1399,9 @@ export default function LayananPage() {
               <X className="h-4 w-4 mr-2" />
               Tutup
             </Button>
-            <Button 
+            <Button
               onClick={requestSaveService}
-              disabled={saving || !serviceForm.name.trim() || !serviceForm.description.trim() || !isServiceDirty}
+              disabled={saving || !serviceForm.category_id || !serviceForm.name.trim() || !serviceForm.description.trim() || !serviceForm.citizen_fields_json.length || !isServiceDirty}
             >
               {saving ? "Menyimpan..." : editingService ? "Simpan Perubahan" : "Tambah Layanan"}
             </Button>

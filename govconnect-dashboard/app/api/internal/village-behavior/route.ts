@@ -14,6 +14,7 @@ type BehaviorConfig = {
   complaint_rules?: string[]
   service_rules?: string[]
   notice?: string
+  admin_notification_number?: string | null
 }
 
 
@@ -27,6 +28,7 @@ function defaultConfig(): Required<BehaviorConfig> {
     complaint_rules: [],
     service_rules: [],
     notice: 'Gunakan konfigurasi layanan, profil desa, kontak penting, dan knowledge base tenant sebagai sumber perilaku utama.',
+    admin_notification_number: null,
   }
 }
 
@@ -52,6 +54,7 @@ async function findDedicatedConfig(villageId: string): Promise<Required<Behavior
       complaint_rules: row.complaint_rules,
       service_rules: row.service_rules,
       notice: row.notice || undefined,
+      admin_notification_number: row.admin_notification_number || null,
     })
   } catch (error: any) {
     console.warn('Dedicated village behavior lookup unavailable, using fallback storage', {
@@ -106,6 +109,7 @@ export async function PUT(request: NextRequest) {
         complaint_rules: config.complaint_rules,
         service_rules: config.service_rules,
         notice: config.notice,
+        admin_notification_number: config.admin_notification_number,
       },
       create: {
         village_id: villageId,
@@ -117,6 +121,7 @@ export async function PUT(request: NextRequest) {
         complaint_rules: config.complaint_rules,
         service_rules: config.service_rules,
         notice: config.notice,
+        admin_notification_number: config.admin_notification_number,
       },
     })
 
@@ -129,6 +134,7 @@ export async function PUT(request: NextRequest) {
       complaint_rules: row.complaint_rules,
       service_rules: row.service_rules,
       notice: row.notice || undefined,
+      admin_notification_number: row.admin_notification_number || null,
     }) } })
   } catch (error: any) {
     console.warn('Dedicated village behavior storage unavailable, falling back to system_settings', {

@@ -211,8 +211,6 @@ export default function ImportantContactsPage() {
 
     // Fetch linked complaint types
     try {
-      const data = await contactsApi.getAll() // category detail endpoint
-      // Fetch linked complaint types from category detail
       const catRes = await fetch(`/api/important-contacts/categories/${category.id}`, {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem("token")}` },
       })

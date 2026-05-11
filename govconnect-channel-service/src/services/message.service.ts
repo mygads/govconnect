@@ -92,6 +92,14 @@ function statusTimestampFields(status: MessageDeliveryStatus, at: Date = new Dat
   };
 }
 
+function resolveOutgoingStatus(
+  channel: 'WHATSAPP' | 'WEBCHAT',
+  provided?: MessageDeliveryStatus
+): MessageDeliveryStatus {
+  if (provided) return provided;
+  return channel === 'WEBCHAT' ? 'delivered' : 'sent';
+}
+
 function shouldUpdateStatus(current: string | null | undefined, next: MessageDeliveryStatus): boolean {
   const rank: Record<MessageDeliveryStatus, number> = {
     received: 1,
@@ -102,7 +110,9 @@ function shouldUpdateStatus(current: string | null | undefined, next: MessageDel
   };
   if (!current || !(current in rank)) return true;
   if (current === 'failed') return next === 'failed';
-  if (next === 'failed') return true;
+  if (next === 'failed') {
+    return current === 'received' || current === 'sent';
+  }
   return rank[next] >= rank[current as MessageDeliveryStatus];
 }
 
@@ -170,6 +180,7 @@ export async function saveOutgoingMessage(
 ): Promise<any> {
   const villageId = resolveVillageId(data.village_id);
   const channel = data.channel || 'WHATSAPP';
+  const deliveryStatus = resolveOutgoingStatus(channel, data.delivery_status);
   const message = await prisma.message.create({
     data: {
       village_id: villageId,
@@ -178,12 +189,15 @@ export async function saveOutgoingMessage(
       channel_identifier: data.channel_identifier,
       message_id: data.message_id,
       message_text: data.message_text,
+      reference_number: data.reference_number || null,
+      notification_type: data.notification_type || null,
+      entity_status: data.entity_status || null,
       ...mediaFields(data),
       ...richFields(data),
       direction: 'OUT',
       source: data.source,
-      delivery_status: data.delivery_status || 'sent',
-      ...statusTimestampFields(data.delivery_status || 'sent', data.timestamp || new Date()),
+      delivery_status: deliveryStatus,
+      ...statusTimestampFields(deliveryStatus, data.timestamp || new Date()),
       status_error: data.status_error || null,
       timestamp: data.timestamp || new Date(),
     },
@@ -208,6 +222,7 @@ export async function replaceFailedOutgoingMessage(
 ): Promise<any> {
   const villageId = resolveVillageId(data.village_id);
   const channel = data.channel || 'WHATSAPP';
+  const deliveryStatus = resolveOutgoingStatus(channel, data.delivery_status);
   const message = await prisma.message.update({
     where: { id },
     data: {
@@ -217,16 +232,19 @@ export async function replaceFailedOutgoingMessage(
       channel_identifier: data.channel_identifier,
       message_id: data.message_id,
       message_text: data.message_text,
+      reference_number: data.reference_number || null,
+      notification_type: data.notification_type || null,
+      entity_status: data.entity_status || null,
       ...mediaFields(data),
       ...richFields(data),
       direction: 'OUT',
       source: data.source,
-      delivery_status: data.delivery_status || 'sent',
+      delivery_status: deliveryStatus,
       sent_at: null,
       delivered_at: null,
       read_at: null,
       failed_at: null,
-      ...statusTimestampFields(data.delivery_status || 'sent', data.timestamp || new Date()),
+      ...statusTimestampFields(deliveryStatus, data.timestamp || new Date()),
       status_error: data.status_error || null,
       timestamp: data.timestamp || new Date(),
     },
@@ -565,6 +583,9 @@ export async function logSentMessage(data: {
   channel?: 'WHATSAPP' | 'WEBCHAT';
   channel_identifier: string;
   message_text: string;
+  reference_number?: string | null;
+  notification_type?: string | null;
+  entity_status?: string | null;
   status: 'sent' | 'failed';
   error_msg?: string;
 }): Promise<any> {
@@ -576,6 +597,9 @@ export async function logSentMessage(data: {
       channel: data.channel || 'WHATSAPP',
       channel_identifier: data.channel_identifier,
       message_text: data.message_text,
+      reference_number: data.reference_number || null,
+      notification_type: data.notification_type || null,
+      entity_status: data.entity_status || null,
       status: data.status,
       error_msg: data.error_msg || null,
     },

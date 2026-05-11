@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -61,6 +62,16 @@ interface CacheStats {
   timestamp: string
 }
 
+function getApiErrorMessage(data: { error?: string; message?: string } | null, fallback: string) {
+  return data?.error || data?.message || fallback
+}
+
+function isSuperadminRole(role?: string | null): boolean {
+  if (!role) return false
+  const normalized = role.toLowerCase()
+  return normalized === 'superadmin' || normalized === 'super_admin'
+}
+
 export default function CacheManagementPage() {
     const { user } = useAuth()
 
@@ -69,10 +80,16 @@ export default function CacheManagementPage() {
   const [stats, setStats] = useState<CacheStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [clearing, setClearing] = useState(false)
+  const [togglingMode, setTogglingMode] = useState(false)
+  const [invalidatingVillage, setInvalidatingVillage] = useState(false)
+  const [villageIdInput, setVillageIdInput] = useState("")
+  const [invalidateRetrieval, setInvalidateRetrieval] = useState(true)
+  const [invalidateProfile, setInvalidateProfile] = useState(true)
+  const [intentsInput, setIntentsInput] = useState("")
   const [error, setError] = useState<string | null>(null)
 
   // Only super admin can access
-  if (user && user.role !== 'superadmin' && user.role !== 'SUPERADMIN' && user.role !== 'super_admin') {
+  if (user && !isSuperadminRole(user.role)) {
     router.replace('/dashboard')
   }
 
@@ -85,11 +102,11 @@ export default function CacheManagementPage() {
         },
       })
 
+      const data = await response.json().catch(() => null)
       if (!response.ok) {
-        throw new Error('Gagal mengambil data cache')
+        throw new Error(getApiErrorMessage(data, 'Gagal mengambil data cache'))
       }
 
-      const data = await response.json()
       setStats(data)
     } catch (err: any) {
       setError(err.message || 'Gagal menghubungi AI Service')
@@ -101,6 +118,12 @@ export default function CacheManagementPage() {
   useEffect(() => {
     fetchStats()
   }, [fetchStats])
+
+  useEffect(() => {
+    if (user?.village_id) {
+      setVillageIdInput(user.village_id)
+    }
+  }, [user?.village_id])
 
   const handleClearAll = async () => {
     setClearing(true)
@@ -114,9 +137,8 @@ export default function CacheManagementPage() {
         body: JSON.stringify({ action: 'clear-all' }),
       })
 
-      if (!response.ok) throw new Error('Gagal menghapus cache')
-
-      const data = await response.json()
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(getApiErrorMessage(data, 'Gagal menghapus cache'))
       toast({
         title: "Cache Dihapus",
         description: `${data.details?.umpCachesCleared || 0} cache berhasil dihapus. Data sekarang fresh.`,
@@ -132,6 +154,103 @@ export default function CacheManagementPage() {
       })
     } finally {
       setClearing(false)
+    }
+  }
+
+  const handleToggleCacheMode = async () => {
+    if (!stats) return
+
+    setTogglingMode(true)
+    try {
+      const response = await fetch('/api/cache', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ action: 'set-mode', enabled: !stats.cacheEnabled }),
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.error || 'Gagal mengubah mode cache')
+      }
+
+      toast({
+        title: !stats.cacheEnabled ? 'Cache Diaktifkan' : 'Cache Dimatikan',
+        description: data.message || 'Mode cache berhasil diperbarui.',
+      })
+
+      fetchStats()
+    } catch (err: any) {
+      toast({
+        title: 'Gagal',
+        description: err.message || 'Gagal mengubah mode cache',
+        variant: 'destructive',
+      })
+    } finally {
+      setTogglingMode(false)
+    }
+  }
+
+  const handleInvalidateVillage = async () => {
+    const villageId = villageIdInput.trim()
+    if (!villageId) {
+      toast({
+        title: 'Village ID wajib diisi',
+        description: 'Masukkan village ID yang ingin di-refresh cache-nya.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const intents = intentsInput
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+
+    setInvalidatingVillage(true)
+    try {
+      const response = await fetch('/api/cache', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({
+          action: 'invalidate-village',
+          villageId,
+          intents,
+          retrieval: invalidateRetrieval,
+          profile: invalidateProfile,
+        }),
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.error || 'Gagal menginvalidasi cache desa')
+      }
+
+      const scopeSummary = [
+        invalidateRetrieval ? 'retrieval' : null,
+        invalidateProfile ? 'profile' : null,
+        intents.length > 0 ? `${intents.length} intent response cache` : 'semua response cache desa',
+      ].filter(Boolean).join(', ')
+
+      toast({
+        title: 'Cache Desa Di-refresh',
+        description: `Village ${villageId} di-refresh untuk ${scopeSummary}.`,
+      })
+
+      fetchStats()
+    } catch (err: any) {
+      toast({
+        title: 'Gagal',
+        description: err.message || 'Gagal menginvalidasi cache desa',
+        variant: 'destructive',
+      })
+    } finally {
+      setInvalidatingVillage(false)
     }
   }
 
@@ -254,7 +373,7 @@ export default function CacheManagementPage() {
       </div>
 
       {/* Controls */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Apa fungsi cache ini?</CardTitle>
@@ -268,15 +387,77 @@ export default function CacheManagementPage() {
           </CardContent>
         </Card>
 
-        {/* Clear All Caches */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Hapus Semua Cache</CardTitle>
+            <CardTitle className="text-lg">Mode Cache</CardTitle>
             <CardDescription>
-              Hapus semua data cache agar data terbaru diambil dari database. Berguna setelah update data desa.
+              Aktifkan cache untuk mode produksi, atau matikan sementara saat investigasi agar semua data diambil fresh dari backend.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <p className="text-sm font-medium">Status saat ini</p>
+                <p className="text-sm text-muted-foreground">
+                  {stats?.cacheEnabled ? 'Aktif (production mode)' : 'Nonaktif (fresh mode)'}
+                </p>
+              </div>
+              <Badge variant={stats?.cacheEnabled ? 'default' : 'secondary'}>
+                {stats?.cacheEnabled ? 'ON' : 'OFF'}
+              </Badge>
+            </div>
+            <Button onClick={handleToggleCacheMode} disabled={togglingMode} className="w-full" variant="outline">
+              {togglingMode
+                ? 'Memperbarui...'
+                : stats?.cacheEnabled
+                  ? 'Matikan Cache Sementara'
+                  : 'Aktifkan Cache Lagi'}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Refresh Cache per Desa</CardTitle>
+            <CardDescription>
+              Lebih aman daripada clear-all saat hanya satu desa yang baru mengubah profil, knowledge, kontak, atau layanan.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Input
+              value={villageIdInput}
+              onChange={(e) => setVillageIdInput(e.target.value)}
+              placeholder="Masukkan village ID"
+            />
+            <Input
+              value={intentsInput}
+              onChange={(e) => setIntentsInput(e.target.value)}
+              placeholder="Intent opsional, pisahkan koma. Contoh: service_info, village_profile"
+            />
+            <div className="space-y-2 rounded-md border p-3 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={invalidateRetrieval}
+                  onChange={(e) => setInvalidateRetrieval(e.target.checked)}
+                />
+                <span>Bersihkan retrieval cache desa</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={invalidateProfile}
+                  onChange={(e) => setInvalidateProfile(e.target.checked)}
+                />
+                <span>Bersihkan profile cache desa</span>
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Jika intent diisi, hanya response cache intent tersebut yang dibersihkan. Jika kosong, semua response cache desa ikut dibersihkan.
+              </p>
+            </div>
+            <Button onClick={handleInvalidateVillage} disabled={invalidatingVillage} className="w-full">
+              {invalidatingVillage ? 'Merefresh...' : 'Refresh Cache Desa Ini'}
+            </Button>
             <Button
               onClick={handleClearAll}
               variant="destructive"

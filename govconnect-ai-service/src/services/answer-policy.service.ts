@@ -42,14 +42,27 @@ const CONTACT_GROUNDING_TOOLS = new Set([
   'get_village_profile',
 ]);
 
+const CONTACT_GROUNDING_SOURCE_KINDS = new Set([
+  'contact_directory_lookup',
+  'official_emergency_contacts',
+  'official_village_profile',
+]);
+
 const VILLAGE_PROFILE_GROUNDING_TOOLS = new Set([
   'get_village_profile',
+]);
+
+const VILLAGE_PROFILE_GROUNDING_SOURCE_KINDS = new Set([
+  'official_village_profile',
 ]);
 
 const SERVICE_DETAIL_GROUNDING_TOOLS = new Set([
   'get_service_info',
   'create_service_request',
-  'get_service_request_edit_link',
+]);
+
+const SERVICE_DETAIL_GROUNDING_SOURCE_KINDS = new Set([
+  'official_service_info',
 ]);
 
 const SERVICE_LISTING_QUERY_PATTERNS = [
@@ -108,7 +121,7 @@ function isExplicitUncertaintyReply(text: string): boolean {
 }
 
 function mentionsServiceFactClaim(text: string): boolean {
-  return /\b(syarat|persyaratan|berkas|dokumen|biaya(?:nya)?|tarif(?:nya)?|harga(?:nya)?|gratis|rp\s*\d|prosedur|cara|proses|alur|langkah|hari kerja|online|offline|formulir|link formulir)\b/i.test(text);
+  return /\b(syarat|persyaratan|berkas|dokumen|biaya(?:nya)?|tarif(?:nya)?|harga(?:nya)?|gratis|rp\s*\d|prosedur|cara|proses|alur|langkah|hari kerja|online|offline|formulir|link formulir|tersedia|belum tersedia|tidak tersedia|bisa diajukan|tidak bisa diajukan|harus ke kantor|datang ke kantor)\b/i.test(text);
 }
 
 function mentionsVillageProfileFactClaim(text: string): boolean {
@@ -226,6 +239,34 @@ function buildVillageProfileFallback(traceId: string, startTime: number): Proces
   };
 }
 
+function hasTrustedGrounding(
+  result: ProcessMessageResult,
+  toolsUsed: string[],
+  allowedTools: Set<string>,
+  allowedSourceKinds: Set<string>,
+): boolean {
+  if (toolsUsed.some((tool) => allowedTools.has(tool))) {
+    return true;
+  }
+
+  const grounding = result.metadata?.grounding;
+  if (grounding?.trustedTools?.some((tool) => allowedTools.has(tool))) {
+    return true;
+  }
+  if (grounding?.sourceKinds?.some((sourceKind) => allowedSourceKinds.has(sourceKind))) {
+    return true;
+  }
+
+  const toolTrace = Array.isArray(result.metadata?.toolTrace) ? result.metadata.toolTrace : [];
+  return toolTrace.some((trace) => {
+    if (!trace.success) return false;
+    if (trace.trustLevel !== 'trusted_fact' && trace.trustLevel !== 'trusted_record') {
+      return false;
+    }
+    return allowedTools.has(trace.tool) || (!!trace.sourceKind && allowedSourceKinds.has(trace.sourceKind));
+  });
+}
+
 /**
  * Main entry: verify an outgoing result against the answer policy.
  */
@@ -233,18 +274,70 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
   const { userMessage, result, toolsUsed, handledByGuard } = input;
   const kind = classify(userMessage, result);
   const responseText = `${result.response || ''}\n${result.guidanceText || ''}`;
+  const traceId = result.metadata?.traceId || 'unknown';
+  const startTime = Date.now() - (result.metadata?.processingTimeMs || 0);
+  const asksContact = isContactDirectoryLookup(userMessage);
+  const asksServiceDetail = asksForServiceDetail(userMessage);
+  const asksVillageProfile = asksForVillageProfile(userMessage);
+  const mentionsPhone = looksLikePhoneNumber(responseText);
+  const usedContactTool = hasTrustedGrounding(result, toolsUsed, CONTACT_GROUNDING_TOOLS, CONTACT_GROUNDING_SOURCE_KINDS);
+  const usedServiceTool = hasTrustedGrounding(result, toolsUsed, SERVICE_DETAIL_GROUNDING_TOOLS, SERVICE_DETAIL_GROUNDING_SOURCE_KINDS);
+  const usedProfileTool = hasTrustedGrounding(result, toolsUsed, VILLAGE_PROFILE_GROUNDING_TOOLS, VILLAGE_PROFILE_GROUNDING_SOURCE_KINDS);
 
   if (handledByGuard) {
     return { kind, ok: true, rewritten: false, reason: 'guard_prevalidated' };
   }
 
+  if (asksContact && mentionsPhone && !usedContactTool) {
+    logger.warn('🛡️ answer-policy: rejecting mixed or direct contact claim without grounding', {
+      traceId: result.metadata?.traceId,
+      toolsUsed,
+      intent: result.intent,
+    });
+    return {
+      kind: 'structured_fact_contact',
+      ok: false,
+      rewritten: true,
+      reason: 'contact_number_without_tool',
+      replacement: buildContactFallback(userMessage, traceId, startTime),
+    };
+  }
+
+  if (asksServiceDetail && mentionsServiceFactClaim(responseText) && !usedServiceTool) {
+    logger.warn('answer-policy: rejecting mixed or direct service detail without grounding', {
+      traceId: result.metadata?.traceId,
+      toolsUsed,
+      intent: result.intent,
+    });
+    return {
+      kind: 'structured_fact_service_detail',
+      ok: false,
+      rewritten: true,
+      reason: 'service_detail_without_tool',
+      replacement: buildServiceDetailFallback(userMessage, traceId, startTime),
+    };
+  }
+
+  if (asksVillageProfile && mentionsVillageProfileFactClaim(responseText) && !usedProfileTool) {
+    logger.warn('answer-policy: rejecting mixed or direct village profile without grounding', {
+      traceId: result.metadata?.traceId,
+      toolsUsed,
+      intent: result.intent,
+    });
+    return {
+      kind: 'structured_fact_village_profile',
+      ok: false,
+      rewritten: true,
+      reason: 'village_profile_without_tool',
+      replacement: buildVillageProfileFallback(traceId, startTime),
+    };
+  }
+
   if (kind === 'structured_fact_contact') {
-    const usedContactTool = toolsUsed.some((tool) => CONTACT_GROUNDING_TOOLS.has(tool));
     if (usedContactTool) {
       return { kind, ok: true, rewritten: false, reason: 'grounded_via_contact_tool' };
     }
 
-    const mentionsPhone = looksLikePhoneNumber(responseText);
     if (mentionsPhone) {
       logger.warn('🛡️ answer-policy: rejecting ungrounded contact response', {
         traceId: result.metadata?.traceId,
@@ -256,25 +349,17 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
         ok: false,
         rewritten: true,
         reason: 'contact_number_without_tool',
-        replacement: buildContactFallback(
-          userMessage,
-          result.metadata?.traceId || 'unknown',
-          Date.now() - (result.metadata?.processingTimeMs || 0),
-        ),
+        replacement: buildContactFallback(userMessage, traceId, startTime),
       };
     }
 
-    if (isContactDirectoryLookup(userMessage)) {
+    if (asksContact) {
       return {
         kind,
         ok: false,
         rewritten: true,
         reason: 'contact_directory_without_grounding',
-        replacement: buildContactFallback(
-          userMessage,
-          result.metadata?.traceId || 'unknown',
-          Date.now() - (result.metadata?.processingTimeMs || 0),
-        ),
+        replacement: buildContactFallback(userMessage, traceId, startTime),
       };
     }
 
@@ -282,7 +367,7 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
   }
 
   if (kind === 'structured_fact_service_listing') {
-    const usedServiceTool = toolsUsed.includes('get_service_info');
+    const usedServiceTool = hasTrustedGrounding(result, toolsUsed, new Set(['get_service_info']), SERVICE_DETAIL_GROUNDING_SOURCE_KINDS);
     if (usedServiceTool) {
       return { kind, ok: true, rewritten: false, reason: 'grounded_via_service_tool' };
     }
@@ -308,7 +393,7 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
   }
 
   if (kind === 'structured_fact_service_detail') {
-    const usedServiceTool = toolsUsed.some((tool) => SERVICE_DETAIL_GROUNDING_TOOLS.has(tool));
+    const usedServiceTool = hasTrustedGrounding(result, toolsUsed, SERVICE_DETAIL_GROUNDING_TOOLS, SERVICE_DETAIL_GROUNDING_SOURCE_KINDS);
     if (usedServiceTool) {
       return { kind, ok: true, rewritten: false, reason: 'grounded_via_service_tool' };
     }
@@ -335,7 +420,7 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
   }
 
   if (kind === 'structured_fact_village_profile') {
-    const usedProfileTool = toolsUsed.some((tool) => VILLAGE_PROFILE_GROUNDING_TOOLS.has(tool));
+    const usedProfileTool = hasTrustedGrounding(result, toolsUsed, VILLAGE_PROFILE_GROUNDING_TOOLS, VILLAGE_PROFILE_GROUNDING_SOURCE_KINDS);
     if (usedProfileTool) {
       return { kind, ok: true, rewritten: false, reason: 'grounded_via_profile_tool' };
     }

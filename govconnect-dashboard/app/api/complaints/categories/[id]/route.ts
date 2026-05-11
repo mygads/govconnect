@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -34,7 +35,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/categories/${id}`), {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
       body: JSON.stringify({ name, description: description || null }),
     })
 
@@ -43,6 +44,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       return NextResponse.json({ error: data.error || 'Failed to update category' }, { status: response.status })
     }
 
+    await invalidateVillageAiCacheSafely(session.admin.village_id)
     return NextResponse.json(data)
   } catch (error) {
     console.error('Error updating complaint category:', error)
@@ -61,7 +63,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/categories/${id}`), {
       method: 'DELETE',
-      headers: getHeaders(),
+      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
     })
 
     const data = await response.json().catch(() => ({}))
@@ -69,6 +71,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
       return NextResponse.json({ error: data.error || 'Failed to delete category' }, { status: response.status })
     }
 
+    await invalidateVillageAiCacheSafely(session.admin.village_id)
     return NextResponse.json(data)
   } catch (error) {
     console.error('Error deleting complaint category:', error)

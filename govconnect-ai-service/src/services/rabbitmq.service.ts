@@ -814,24 +814,21 @@ async function publishMessageStatusDirect(payload: MessageStatusEvent): Promise<
  * Publish AI reply event with retry support
  */
 export async function publishAIReply(payload: AIReplyEvent): Promise<void> {
-  // ALWAYS store AI reply in database first (both testing and production mode)
-  try {
-    await storeAIReplyInDatabase(payload);
-    logger.info('✅ AI reply stored in database', {
-      wa_user_id: payload.wa_user_id,
-      testing_mode: config.testingMode,
-    });
-  } catch (error: any) {
-    logger.error('❌ Failed to store AI reply in database', {
-      wa_user_id: payload.wa_user_id,
-      error: error.message,
-    });
-    // Continue with WhatsApp publishing even if database storage fails
-  }
-
-  // In testing mode, don't send to WhatsApp but still store in database
+  // In testing mode, don't send to WhatsApp but still store in database for observability.
   if (config.testingMode) {
-    logger.info('🧪 TESTING MODE: AI Reply stored in DB, not sent to WhatsApp', {
+    try {
+      await storeAIReplyInDatabase(payload);
+      logger.info('✅ AI reply stored in database for testing mode', {
+        wa_user_id: payload.wa_user_id,
+      });
+    } catch (error: any) {
+      logger.error('❌ Failed to store AI reply in database for testing mode', {
+        wa_user_id: payload.wa_user_id,
+        error: error.message,
+      });
+    }
+
+    logger.info('🧪 TESTING MODE: AI reply stored in DB, not sent to WhatsApp', {
       wa_user_id: payload.wa_user_id,
       reply_text: payload.reply_text.substring(0, 100) + (payload.reply_text.length > 100 ? '...' : ''),
       guidance_text: payload.guidance_text?.substring(0, 50) + (payload.guidance_text && payload.guidance_text.length > 50 ? '...' : ''),
@@ -1048,8 +1045,8 @@ export function isConnected(): boolean {
 
 
 /**
- * Store AI reply in database (for both testing and production mode)
- * This ensures complete conversation history is maintained
+ * Store AI reply in database for testing mode.
+ * Production WhatsApp replies are persisted by channel-service after send succeeds.
  */
 async function storeAIReplyInDatabase(payload: AIReplyEvent): Promise<void> {
   try {

@@ -7,6 +7,7 @@ export interface ImportantContact {
   name: string;
   phone: string;
   description?: string | null;
+  category_id?: string | null;
   category?: {
     id: string;
     name: string;
@@ -26,7 +27,8 @@ export type ContactMatchSource =
   | 'role_match'
   | 'token_overlap'
   | 'locality'
-  | 'alias_fallback';
+  | 'alias_fallback'
+  | 'category_fallback';
 
 export interface ImportantContactMatch {
   contact: ImportantContact;
@@ -46,6 +48,44 @@ export interface ContactLookupResult {
   total_candidates: number;
   category_hint: ContactCategoryHint;
   role_hint: ContactRoleHint;
+}
+
+export function normalizeImportantContactPhone(phone: string): string {
+  const cleaned = (phone || '')
+    .trim()
+    .replace(/@(?:s\.whatsapp\.net|c\.us|lid)$/i, '')
+    .replace(/:\d+$/, '');
+  const digits = cleaned.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('00')) return normalizeImportantContactPhone(digits.slice(2));
+  if (digits.startsWith('620')) return `62${digits.slice(3)}`;
+  if (digits.startsWith('0')) return `62${digits.slice(1)}`;
+  if (digits.startsWith('62')) return digits;
+  if (digits.startsWith('8')) return `62${digits}`;
+  return digits;
+}
+
+function choosePreferredContact(current: ImportantContact, candidate: ImportantContact): ImportantContact {
+  const currentScore = (current.description ? 2 : 0) + (current.category?.id ? 2 : 0) + (current.category?.name ? 1 : 0) + current.name.length;
+  const candidateScore = (candidate.description ? 2 : 0) + (candidate.category?.id ? 2 : 0) + (candidate.category?.name ? 1 : 0) + candidate.name.length;
+  return candidateScore > currentScore ? candidate : current;
+}
+
+function dedupeImportantContacts(contacts: ImportantContact[]): ImportantContact[] {
+  const deduped = new Map<string, ImportantContact>();
+
+  for (const contact of contacts) {
+    const normalizedPhone = normalizeImportantContactPhone(contact.phone);
+    const normalizedContact: ImportantContact = {
+      ...contact,
+      phone: normalizedPhone || contact.phone,
+    };
+    const key = `${contact.category_id || contact.category?.id || 'uncategorized'}:${normalizedPhone || `id:${contact.id}`}`;
+    const existing = deduped.get(key);
+    deduped.set(key, existing ? choosePreferredContact(existing, normalizedContact) : normalizedContact);
+  }
+
+  return Array.from(deduped.values());
 }
 
 export async function getImportantContacts(
@@ -82,14 +122,17 @@ export async function getImportantContacts(
     });
 
     const contacts = response.data.data || [];
+    const dedupedContacts = dedupeImportantContacts(contacts);
     logger.debug('📞 Important contacts fetched', {
       villageId,
       categoryName,
+      categoryId,
       count: contacts.length,
-      contactNames: contacts.slice(0, 3).map(c => c.name),
+      dedupedCount: dedupedContacts.length,
+      contactNames: dedupedContacts.slice(0, 3).map(c => c.name),
     });
 
-    return contacts;
+    return dedupedContacts;
   } catch (error: any) {
     logger.warn('Failed to fetch important contacts', {
       error: error.message,
@@ -153,11 +196,11 @@ const CATEGORY_HINT_BY_ROLE: Record<NonNullable<ContactRoleHint>, ContactCategor
  * Broad category hint keywords used when widening a search.
  */
 export const CATEGORY_HINT_KEYWORDS: Record<Exclude<NonNullable<ContactCategoryHint>, never>, string[]> = {
-  emergency: ['damkar', 'pemadam', 'kebakaran', 'polisi', 'polsek', 'ambulans', 'ambulan', 'darurat', 'bencana', 'sar', 'basarnas', 'kecelakaan'],
+  emergency: ['damkar', 'pemadam', 'kebakaran', 'polisi', 'polsek', 'ambulans', 'ambulan', 'darurat', 'gawat darurat', 'bencana', 'sar', 'basarnas', 'kecelakaan'],
   government: ['desa', 'kepala', 'kades', 'sekdes', 'sekretaris', 'kecamatan', 'camat', 'rt', 'rw'],
   utility: ['pln', 'pdam', 'listrik', 'air'],
   religion: ['masjid', 'mushola', 'pondok', 'dkm', 'takmir'],
-  health: ['puskesmas', 'pustu', 'bidan', 'posyandu', 'poliklinik', 'klinik'],
+  health: ['puskesmas', 'pustu', 'bidan', 'posyandu', 'poliklinik', 'klinik', 'kesehatan', 'medis', 'dokter'],
 };
 
 /**
@@ -211,6 +254,11 @@ export function isContactDirectoryLookup(message: string): boolean {
   if (/\b(k(?:tp|k)|nik|akta|sktm|skck)\b.*\b(hilang|rusak|baru|bikin|buat|perpanjang|perpanjangan|ganti|cetak|ubah)\b/i.test(message)) {
     return false;
   }
+  // Address lines can contain house numbers plus RT/RW ("Jalan X No 12 RT 03/RW 05")
+  // and should not be treated as a contact lookup just because they contain "no".
+  if (/\b(?:jl|jln|jalan|gang|gg|komplek|komp|perum(?:ahan)?|blok|kp|kampung)\b/i.test(message) && /\b(?:no\.?\s*\d+|rt\s*\.?\s*\d+\s*[\/\s]*rw\s*\.?\s*\d+)\b/i.test(message)) {
+    return false;
+  }
 
   const hasDirectoryVerb = DIRECTORY_VERB_PATTERN.test(message);
   const hasEntity = DIRECTORY_ENTITY_PATTERN.test(message);
@@ -261,6 +309,24 @@ const STOPWORDS = new Set([
  * Score a single contact against a query with transparent, bounded heuristics.
  * Returns raw score and a list of signals.
  */
+function inferCategoryHintFromQuery(rawQuery: string): ContactCategoryHint {
+  const query = normalizeEntityText(rawQuery);
+  if (!query) return null;
+
+  let bestHint: ContactCategoryHint = null;
+  let bestScore = 0;
+
+  for (const [hint, keywords] of Object.entries(CATEGORY_HINT_KEYWORDS) as [Exclude<NonNullable<ContactCategoryHint>, never>, string[]][]) {
+    const score = keywords.reduce((total, keyword) => total + (query.includes(keyword) ? keyword.split(' ').length : 0), 0);
+    if (score > bestScore) {
+      bestHint = hint;
+      bestScore = score;
+    }
+  }
+
+  return bestHint;
+}
+
 function scoreContact(contact: ImportantContact, rawQuery: string): {
   rawScore: number;
   signals: ContactMatchSource[];
@@ -313,14 +379,6 @@ function scoreContact(contact: ImportantContact, rawQuery: string): {
     signals.push('token_overlap');
   }
 
-  const localitySignals = ['solo', 'bola', 'margahayu', 'dusun'];
-  for (const signal of localitySignals) {
-    if (query.includes(signal) && haystack.includes(signal)) {
-      score += 1;
-      signals.push('locality');
-    }
-  }
-
   return { rawScore: score, signals };
 }
 
@@ -360,6 +418,9 @@ export async function lookupImportantContacts(
   let categoryHint: ContactCategoryHint = options.categoryHint ?? null;
   if (!categoryHint && roleHint) {
     categoryHint = CATEGORY_HINT_BY_ROLE[roleHint];
+  }
+  if (!categoryHint) {
+    categoryHint = inferCategoryHintFromQuery(trimmed);
   }
 
   const contacts = await getImportantContacts(villageId);
@@ -417,6 +478,23 @@ export async function lookupImportantContacts(
     final = fallback;
   }
 
+  if (final.length === 0 && categoryHintTerms.length > 0) {
+    const fallback = contacts
+      .map((contact) => {
+        const haystack = contactHaystack(contact);
+        const hit = categoryHintTerms.find((term) => haystack.includes(term));
+        if (!hit) return null;
+        return {
+          contact,
+          rawScore: 3,
+          signals: ['category_fallback' as ContactMatchSource],
+        } as Scored;
+      })
+      .filter((entry): entry is Scored => entry !== null)
+      .slice(0, limit);
+    final = fallback;
+  }
+
   // Normalize score to 0..1 relative to the strongest signal (useful for agent logging).
   const maxRaw = final.reduce((max, entry) => Math.max(max, entry.rawScore), 0);
   const matches: ImportantContactMatch[] = final.map((entry) => ({
@@ -434,7 +512,3 @@ export async function lookupImportantContacts(
   };
 }
 
-/**
- * Back-compat alias for any call-sites using the older name.
- */
-export const matchImportantContactByQuery = lookupImportantContacts;

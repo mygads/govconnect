@@ -185,11 +185,13 @@ export interface EditTokenResult {
 export interface ComplaintTypeInfo {
   id: string;
   name: string;
+  description?: string | null;
   category_id: string;
   is_urgent: boolean;
   require_address: boolean;
   send_important_contacts: boolean;
   important_contact_category: string | null;
+  important_contact_category_id?: string | null;
   category?: {
     id: string;
     name: string;

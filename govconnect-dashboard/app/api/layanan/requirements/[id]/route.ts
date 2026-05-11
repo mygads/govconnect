@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
 
 async function getSession(request: NextRequest) {
   const token =
@@ -36,11 +37,14 @@ export async function PUT(request: NextRequest, ctx: { params: Promise<{ id: str
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/requirements/${encodeURIComponent(id)}`), {
       method: 'PUT',
-      headers: getHeaders(),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
       body: JSON.stringify(body),
     })
 
     const data = await response.json().catch(() => null)
+    if (response.ok) {
+      await invalidateVillageAiCacheSafely(session.admin.village_id)
+    }
     return NextResponse.json(data ?? { error: 'Invalid response from case-service' }, { status: response.status })
   } catch (error) {
     console.error('Error updating layanan requirement:', error)
@@ -61,10 +65,13 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/requirements/${encodeURIComponent(id)}`), {
       method: 'DELETE',
-      headers: getHeaders(),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
     })
 
     const data = await response.json().catch(() => null)
+    if (response.ok) {
+      await invalidateVillageAiCacheSafely(session.admin.village_id)
+    }
     return NextResponse.json(data ?? { status: 'success' }, { status: response.status })
   } catch (error) {
     console.error('Error deleting layanan requirement:', error)

@@ -22,7 +22,7 @@ import { config } from '../config/env';
 import { processUnifiedMessage, ProcessMessageResult } from '../services/unified-message-processor.service';
 import {
   saveWebchatMessage,
-  updateWebchatConversation,
+  updateWebchatAIStatus,
   checkWebchatTakeover,
   getAdminMessages,
 } from '../services/webchat-sync.service';
@@ -78,7 +78,7 @@ async function processWebchatMessage(params: {
   logger.debug('Processing webchat with UNIFIED processor (same as WhatsApp)', {
     userId: params.userId,
   });
-  
+
   // Use SAME processor as WhatsApp for 100% consistency
   return processUnifiedMessage({
     userId: params.userId,
@@ -89,6 +89,36 @@ async function processWebchatMessage(params: {
     messageId: params.messageId,
     batchedMessageIds: params.batchedMessageIds,
   });
+}
+
+function resolveWebchatAIStatusAfterReply(params: {
+  intent: string;
+  replySynced: boolean;
+  hasGuidance: boolean;
+  guidanceSynced: boolean;
+}): {
+  action: 'clear' | 'error' | 'pending_balance';
+  error_message?: string;
+} {
+  if (params.intent === 'AI_BALANCE_EXHAUSTED') {
+    return { action: 'pending_balance' };
+  }
+
+  if (!params.replySynced) {
+    return {
+      action: 'error',
+      error_message: 'Balasan AI siap, tetapi sinkronisasi ke dashboard live chat gagal.',
+    };
+  }
+
+  if (params.hasGuidance && !params.guidanceSynced) {
+    return {
+      action: 'error',
+      error_message: 'Balasan AI siap, tetapi sinkronisasi pesan panduan ke dashboard live chat gagal.',
+    };
+  }
+
+  return { action: 'clear' };
 }
 
 const router = Router();
@@ -163,10 +193,15 @@ async function fetchWebchatHistory(params: {
  */
 router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
   const startTime = Date.now();
-  
+  let statusSessionId: string | undefined;
+  let statusVillageId: string | undefined;
+  let statusMessageId: string | undefined;
+
   try {
     const { session_id, message, channel } = req.body;
     const village_id: string | undefined = req.body.village_id || req.body.villageId;
+    statusSessionId = session_id;
+    statusVillageId = village_id;
     
     if (!session_id || !message) {
       res.status(400).json({
@@ -254,13 +289,14 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
     const sourceMessageId = `webmsg:${session_id}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
 
     // Save incoming message to Channel Service (for Live Chat dashboard)
-    saveWebchatMessage({
+    await saveWebchatMessage({
       session_id,
       village_id,
       message,
       direction: 'IN',
       source: 'USER',
-    }).catch(() => {}); // Don't block on sync failure
+      message_id: sourceMessageId,
+    });
     
     // Use message batching - wait for more messages within 3 seconds
     // This combines multiple rapid messages into one AI request
@@ -296,7 +332,15 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       });
       return;
     }
-    
+
+    statusMessageId = batchResult.primaryMessageId;
+    await updateWebchatAIStatus({
+      session_id,
+      village_id,
+      action: 'processing',
+      message_id: batchResult.primaryMessageId,
+    });
+
     // Process batched message using selected architecture
     // This ensures consistent NLU, intent detection, RAG, prompts, etc.
     // 25s timeout to prevent hanging requests
@@ -323,6 +367,13 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
     } catch (timeoutErr: any) {
       if (timeoutErr.message === 'WEBCHAT_TIMEOUT') {
         logger.warn('Webchat processing timed out', { session_id, timeout: WEBCHAT_TIMEOUT_MS });
+        await updateWebchatAIStatus({
+          session_id,
+          village_id,
+          action: 'error',
+          message_id: batchResult.primaryMessageId,
+          error_message: 'Pemrosesan webchat melebihi batas waktu.',
+        });
         res.json({
           success: true,
           response: 'Maaf, pemrosesan pesan memakan waktu terlalu lama. Silakan coba lagi.',
@@ -334,35 +385,52 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       throw timeoutErr;
     }
     
-    // Save AI response to Channel Service (for Live Chat dashboard)
-    saveWebchatMessage({
+    const guidanceText = result.guidanceText?.trim() ? result.guidanceText : '';
+    const hasGuidance = guidanceText.length > 0;
+    const replySynced = await saveWebchatMessage({
       session_id,
       village_id,
       message: result.response,
       direction: 'OUT',
       source: 'AI',
-    }).catch(() => {}); // Don't block on sync failure
+    });
 
-    if (result.guidanceText && result.guidanceText.trim()) {
-      saveWebchatMessage({
+    let guidanceSynced = true;
+    if (hasGuidance) {
+      guidanceSynced = await saveWebchatMessage({
         session_id,
         village_id,
-        message: result.guidanceText,
+        message: guidanceText,
         direction: 'OUT',
         source: 'AI',
-      }).catch(() => {});
+      });
     }
-    
-    // Update conversation in Channel Service
-    const latestMessage = result.guidanceText && result.guidanceText.trim()
-      ? result.guidanceText
-      : result.response;
-    updateWebchatConversation({
+
+    const nextAIStatus = resolveWebchatAIStatusAfterReply({
+      intent: result.intent,
+      replySynced,
+      hasGuidance,
+      guidanceSynced,
+    });
+
+    if (nextAIStatus.action === 'error') {
+      logger.warn('Webchat reply sync incomplete before clearing AI status', {
+        session_id,
+        village_id,
+        replySynced,
+        hasGuidance,
+        guidanceSynced,
+      });
+    }
+
+    await updateWebchatAIStatus({
       session_id,
-      last_message: latestMessage.substring(0, 100),
-      unread_count: 0,
-    }).catch(() => {}); // Don't block on sync failure
-    
+      village_id,
+      action: nextAIStatus.action,
+      message_id: nextAIStatus.action === 'clear' ? undefined : batchResult.primaryMessageId,
+      error_message: nextAIStatus.error_message,
+    });
+
     const processingTime = Date.now() - startTime;
     
     logger.info('✅ Web chat response sent', {
@@ -415,7 +483,17 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       error: error.message,
       stack: error.stack,
     });
-    
+
+    if (statusSessionId) {
+      await updateWebchatAIStatus({
+        session_id: statusSessionId,
+        village_id: statusVillageId,
+        action: 'error',
+        message_id: statusMessageId,
+        error_message: error.message || 'Terjadi kesalahan saat memproses webchat.',
+      });
+    }
+
     res.status(500).json({
       success: false,
       error: 'Terjadi kesalahan saat memproses pesan',
@@ -772,5 +850,9 @@ router.get('/:session_id/events', async (req: Request, res: Response) => {
     cleanup();
   });
 });
+
+export const __test_only__ = {
+  resolveWebchatAIStatusAfterReply,
+};
 
 export default router;

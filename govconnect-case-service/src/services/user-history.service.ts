@@ -8,6 +8,9 @@ export interface HistoryItem {
   display_id: string;
   description: string;
   status: string;
+  status_notified_at: Date | null;
+  status_delivered_at: Date | null;
+  last_delivery_message_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -29,11 +32,11 @@ export async function getUserHistory(params: {
     ? ChannelType.WEBCHAT
     : ChannelType.WHATSAPP;
   const complaintIdentity: Prisma.ComplaintWhereInput = channel === ChannelType.WEBCHAT
-    ? { channel: ChannelType.WEBCHAT, channel_identifier: params.channel_identifier ?? undefined }
-    : { wa_user_id: params.wa_user_id ?? undefined };
+    ? { channel: ChannelType.WEBCHAT, channel_identifier: params.channel_identifier ?? undefined, deleted_at: null }
+    : { wa_user_id: params.wa_user_id ?? undefined, deleted_at: null };
   const serviceIdentity: Prisma.ServiceRequestWhereInput = channel === ChannelType.WEBCHAT
-    ? { channel: ChannelType.WEBCHAT, channel_identifier: params.channel_identifier ?? undefined }
-    : { wa_user_id: params.wa_user_id ?? undefined };
+    ? { channel: ChannelType.WEBCHAT, channel_identifier: params.channel_identifier ?? undefined, deleted_at: null }
+    : { wa_user_id: params.wa_user_id ?? undefined, deleted_at: null };
 
   try {
     const [complaints, services] = await Promise.all([
@@ -47,6 +50,9 @@ export async function getUserHistory(params: {
           kategori: true,
           deskripsi: true,
           status: true,
+          status_notified_at: true,
+          status_delivered_at: true,
+          last_delivery_message_id: true,
           created_at: true,
           updated_at: true,
         },
@@ -59,6 +65,9 @@ export async function getUserHistory(params: {
           id: true,
           request_number: true,
           status: true,
+          status_notified_at: true,
+          status_delivered_at: true,
+          last_delivery_message_id: true,
           created_at: true,
           updated_at: true,
           service: {
@@ -77,6 +86,9 @@ export async function getUserHistory(params: {
         display_id: c.complaint_id,
         description: c.deskripsi || getKategoriLabel(c.kategori),
         status: c.status,
+        status_notified_at: c.status_notified_at,
+        status_delivered_at: c.status_delivered_at,
+        last_delivery_message_id: c.last_delivery_message_id,
         created_at: c.created_at,
         updated_at: c.updated_at,
       })),
@@ -86,6 +98,9 @@ export async function getUserHistory(params: {
         display_id: s.request_number,
         description: s.service?.name || 'Layanan',
         status: s.status,
+        status_notified_at: s.status_notified_at,
+        status_delivered_at: s.status_delivered_at,
+        last_delivery_message_id: s.last_delivery_message_id,
         created_at: s.created_at,
         updated_at: s.updated_at,
       })),

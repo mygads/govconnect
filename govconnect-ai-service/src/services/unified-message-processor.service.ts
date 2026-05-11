@@ -37,6 +37,27 @@ import { recordToolExecutionTraces } from './tool-execution-trace.service';
 import { verifyAnswer } from './answer-policy.service';
 import { reconcile as reconcileDbVsRag } from './db-rag-reconciler.service';
 import {
+  isCrossChannelEnabled,
+  getCrossChannelContextForLLM,
+  linkUserToPhone,
+  updateSharedData,
+  recordChannelActivity,
+} from './cross-channel-context.service';
+import {
+  recordUnhelpful,
+  recordHelpful,
+  isStuck,
+  buildStuckEscalationSuffix,
+  type UnhelpfulReason,
+} from './stuck-user-tracker.service';
+import {
+  extractAndRecordPromises,
+  resolvePromisesByKind,
+  buildOpenPromisesContext,
+  deriveFulfilledPromisesFromTools,
+  resolveForwardPromiseOnTakeover,
+} from './promise-tracker.service';
+import {
   analyzeSentimentWithLLM,
   getSentimentContext,
   needsHumanEscalation,
@@ -66,6 +87,7 @@ import {
   getPendingComplaintDataWithFallback,
   getPendingEmergencyComplaintOfferWithFallback,
   getPendingCancelConfirmationWithFallback,
+  withUserLock,
 } from './ump-state';
 import {
   fetchConversationHistoryFromChannel,
@@ -167,6 +189,13 @@ const CACHEABLE_AGENT_TOOLS = new Set([
   'search_documents',
 ]);
 
+const DEFAULT_GROUNDING_SOURCE_BY_TOOL: Partial<Record<string, string>> = {
+  get_village_profile: 'official_village_profile',
+  get_service_info: 'official_service_info',
+  get_important_contact: 'contact_directory_lookup',
+  get_emergency_contacts: 'official_emergency_contacts',
+};
+
 interface PendingStateSnapshot {
   serviceOffer?: any;
   emergencyOffer?: any;
@@ -188,8 +217,148 @@ interface RoutingOutcomeMeta {
   primaryIntent?: string;
 }
 
+/**
+ * Classify an outgoing result to decide whether it was "helpful" from
+ * the user's perspective (tool success, direct content) or "unhelpful"
+ * (guardrail rewrite, fallback template, tool error). Used by the stuck
+ * tracker to offer human escalation after repeated misfires.
+ */
 function hasPendingOrActiveState(snapshot: PendingStateSnapshot): boolean {
   return Object.values(snapshot).some(Boolean);
+}
+
+function classifyHelpfulnessForStuck(result: ProcessMessageResult): 'helpful' | UnhelpfulReason | null {
+  const guard = result.metadata?.guardrail;
+  if (guard) {
+    if (guard.stage === 'answer_policy') return 'answer_policy_rewrite';
+    if (guard.stage === 'db_rag_reconciler') return 'reconciler_rewrite';
+  }
+  if (result.intent === 'TAKEOVER') return 'helpful';
+  if (!result.success) return 'fallback_error';
+  const trustLevels = new Set((result.metadata?.toolTrace || []).map((t) => t.success));
+  if (trustLevels.size === 1 && trustLevels.has(false)) return 'tool_error';
+
+  const responseText = (result.response || '').trim();
+  const responseLength = responseText.length;
+  const hasClarifyingPrompt = /\?|\b(mohon|silakan|sebutkan|balas|pilih|tuliskan)\b/i.test(responseText);
+  const isStatefulClarificationIntent = ['QUESTION', 'SERVICE_INFO', 'CREATE_COMPLAINT', 'CREATE_SERVICE_REQUEST'].includes(result.intent);
+  if (!result.metadata?.toolsUsed?.length && responseLength < 80 && hasClarifyingPrompt && isStatefulClarificationIntent) {
+    return 'helpful';
+  }
+
+  // No tool usage + knowledge intent + very short response = often a generic fallback.
+  if (responseLength < 30 && !result.metadata?.toolsUsed?.length) return 'retrieval_empty';
+  return 'helpful';
+}
+
+/**
+ * Record an outcome against the stuck tracker and, when threshold is
+ * hit on an unhelpful result, append an escalation offer to the reply.
+ * Idempotent for helpful results.
+ */
+function applyStuckTracker(
+  userId: string,
+  villageId: string | undefined,
+  result: ProcessMessageResult,
+): ProcessMessageResult {
+  const kind = classifyHelpfulnessForStuck(result);
+  if (!kind) return result;
+
+  if (kind === 'helpful') {
+    recordHelpful(userId, villageId);
+    return result;
+  }
+
+  const consecutive = recordUnhelpful(userId, kind, villageId);
+  if (!isStuck(userId, villageId)) return result;
+
+  // Only inject the escalation suffix the first time threshold is hit
+  // and when there's not already a takeover offer in the text.
+  const alreadyOffered = /\b(petugas|takeover)\b/i.test(result.response || '');
+  if (alreadyOffered) return result;
+
+  logger.info('[StuckUser] Injecting human-takeover offer', {
+    userId,
+    villageId,
+    consecutive,
+    reason: kind,
+  });
+
+  return {
+    ...result,
+    response: `${result.response || ''}${buildStuckEscalationSuffix()}`,
+  };
+}
+
+/**
+ * Append cross-channel context block (if feature enabled) to the memory
+ * summary passed to the agent. No-op when the feature flag is off, so
+ * existing deployments stay byte-identical.
+ */
+function enrichMemoryWithCrossChannel(
+  userId: string,
+  memorySummary: string | undefined,
+): string | undefined {
+  if (!isCrossChannelEnabled()) return memorySummary;
+  try {
+    const block = getCrossChannelContextForLLM(userId);
+    if (!block) return memorySummary;
+    return memorySummary ? `${memorySummary}\n\n${block}` : block;
+  } catch {
+    return memorySummary;
+  }
+}
+
+/**
+ * Append open-promise reminder to the memory summary so the agent
+ * doesn't forget what it told the user last turn. Bounded by the
+ * promise tracker TTL (30 min).
+ */
+function enrichMemoryWithPromises(
+  userId: string,
+  villageId: string | undefined,
+  memorySummary: string | undefined,
+  currentMessage?: string,
+): string | undefined {
+  try {
+    const block = buildOpenPromisesContext(userId, villageId, currentMessage);
+    if (!block) return memorySummary;
+    return memorySummary ? `${memorySummary}\n\n${block}` : block;
+  } catch {
+    return memorySummary;
+  }
+}
+
+function syncCrossChannelContext(
+  userId: string,
+  channel: 'whatsapp' | 'webchat',
+  sideEffectMode: ProcessMessageInput['sideEffectMode'],
+  isEvaluation: boolean,
+  profile: { alamat?: string; rt_rw?: string; nama_lengkap?: string; nik?: string; no_hp?: string },
+): void {
+  if (!isCrossChannelEnabled() || sideEffectMode === 'knowledge_test' || isEvaluation) {
+    return;
+  }
+
+  try {
+    const phoneNumber = channel === 'whatsapp' ? userId : profile.no_hp;
+    if (phoneNumber) {
+      linkUserToPhone(userId, phoneNumber);
+    }
+
+    const address = [profile.alamat, profile.rt_rw].filter(Boolean).join(', ');
+    const sharedData: Record<string, string> = {};
+    if (profile.nama_lengkap) sharedData.name = profile.nama_lengkap;
+    if (profile.nik) sharedData.nik = profile.nik;
+    if (address) sharedData.address = address;
+    if (Object.keys(sharedData).length > 0) {
+      updateSharedData(userId, sharedData);
+    }
+
+    recordChannelActivity(userId);
+  } catch {
+    // no-op: cross-channel context must never affect primary message handling
+  }
 }
 
 function isShortContextualFollowUp(message: string): boolean {
@@ -393,6 +562,49 @@ function isCacheableAgentResult(result: ProcessMessageResult): boolean {
   }
 
   return toolsUsed.every((tool) => CACHEABLE_AGENT_TOOLS.has(tool));
+}
+
+function attachGroundingMetadata(result: ProcessMessageResult): ProcessMessageResult {
+  const existing = result.metadata?.grounding;
+  if (existing?.trustedTools?.length || existing?.sourceKinds?.length || existing?.hasTrustedFact || existing?.hasTrustedRecord) {
+    return result;
+  }
+
+  const toolTrace = Array.isArray(result.metadata?.toolTrace) ? result.metadata.toolTrace : [];
+  const trustedTrace = toolTrace.filter((trace) => trace.success && (trace.trustLevel === 'trusted_fact' || trace.trustLevel === 'trusted_record'));
+  const trustedTools = new Set<string>();
+  const sourceKinds = new Set<string>();
+
+  for (const trace of trustedTrace) {
+    if (trace.tool) trustedTools.add(trace.tool);
+    if (trace.sourceKind) sourceKinds.add(trace.sourceKind);
+  }
+
+  const toolsUsed = Array.isArray(result.metadata?.toolsUsed) ? result.metadata.toolsUsed : [];
+  for (const tool of toolsUsed) {
+    const sourceKind = DEFAULT_GROUNDING_SOURCE_BY_TOOL[tool];
+    if (sourceKind) {
+      trustedTools.add(tool);
+      sourceKinds.add(sourceKind);
+    }
+  }
+
+  if (trustedTools.size === 0 && sourceKinds.size === 0) {
+    return result;
+  }
+
+  return {
+    ...result,
+    metadata: {
+      ...result.metadata,
+      grounding: {
+        trustedTools: Array.from(trustedTools),
+        sourceKinds: Array.from(sourceKinds),
+        hasTrustedFact: trustedTrace.some((trace) => trace.trustLevel === 'trusted_fact') || trustedTools.size > 0,
+        hasTrustedRecord: trustedTrace.some((trace) => trace.trustLevel === 'trusted_record'),
+      },
+    },
+  };
 }
 
 function normalizeAssistantText(text?: string): string | undefined {
@@ -622,21 +834,17 @@ function deriveAnalyticsSource(result: ProcessMessageResult): string {
 }
 
 function isExplicitHumanHandoffRequest(message: string): boolean {
-  const text = (message || '').toLowerCase();
+  const text = (message || '').toLowerCase().trim();
   if (!text) return false;
 
   return [
-    /cs\s+manusia/,
-    /petugas\s+(asli|manusia|desa)/,
-    /admin\s+(asli|manusia)/,
-    /operator/,
-    /minta\s+(dibantu|disambungkan|dialihkan).*(petugas|admin|manusia)/,
-    /hubungkan?\s+saya.*(petugas|admin|manusia)/,
-    /saya\s+mau\s+orang/,
-    /tidak\s+membantu/,
-    /ga?k\s+membantu/,
-    /jelek/,
-    /komplain\s+cs/,
+    /\bcs\s+manusia\b/,
+    /\b(?:petugas|admin|operator)\s+(?:asli|manusia|desa)\b/,
+    /^operator[\s!.,?]*$/,
+    /\b(?:minta|mohon)\s+(?:petugas|admin|operator|manusia)\b/,
+    /\b(?:minta|mohon|tolong|ingin|mau|butuh|perlu)\b.*\b(?:dibantu|disambungkan|dialihkan|diteruskan|bicara|ngobrol|chat)\b.*\b(?:petugas|admin|operator|manusia)\b/,
+    /\b(?:hubungkan|sambungkan|disambungkan|alih(?:kan)?|dialihkan|teruskan|diteruskan)\b.*\b(?:petugas|admin|operator|manusia)\b/,
+    /\b(?:mau|ingin|butuh|perlu)\s+(?:orang|manusia|petugas|admin|operator)\b/,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -892,6 +1100,17 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
 }
 
 export async function processUnifiedMessage(input: ProcessMessageInput): Promise<ProcessMessageResult> {
+  // Per-user serialization: if the same user sends two messages in quick
+  // succession, process them in FIFO order so shared state (pending
+  // complaint address, active service offer, etc.) doesn't interleave.
+  // Different users still run in parallel.
+  if (input.userId && !input.isEvaluation) {
+    return withUserLock(input.userId, () => processUnifiedMessageInternal(input));
+  }
+  return processUnifiedMessageInternal(input);
+}
+
+async function processUnifiedMessageInternal(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   incrementActiveProcessing();
   const startTime = Date.now();
   const { userId, message, channel, conversationHistory, mediaUrl, villageId, isEvaluation, sideEffectMode, onStageChange, messageId, batchedMessageIds } = input;
@@ -901,11 +1120,39 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
   let finalResult: ProcessMessageResult | null = null;
   let routingOutcome: RoutingOutcomeMeta | undefined;
   const finish = (result: ProcessMessageResult) => {
+    result = attachGroundingMetadata(result);
+
     if (sideEffectMode) {
       result.metadata.sideEffectMode = sideEffectMode;
     }
     if (routingOutcome) {
       (result.metadata as any).routingOutcome = routingOutcome;
+    }
+
+    // Stuck-user tracker: injects a human-takeover offer if the user
+    // has hit several unhelpful outcomes in a row. No-op in evaluation
+    // mode because we don't want evaluation runs to mutate tracking.
+    if (!isEvaluation && sideEffectMode !== 'knowledge_test') {
+      result = applyStuckTracker(userId, villageId, result);
+
+      // Resolve promises that successful tool calls effectively
+      // fulfilled, then extract any NEW promises from the outgoing
+      // reply so we can remind the agent next turn.
+      try {
+        const fulfilled = deriveFulfilledPromisesFromTools(result.metadata?.toolsUsed || []);
+        if (fulfilled.length > 0) resolvePromisesByKind(userId, fulfilled, villageId);
+        // Takeover path always fulfills "will_forward" — the user is now
+        // with a human, so the forward promise is done.
+        if (result.intent === 'TAKEOVER') {
+          resolveForwardPromiseOnTakeover(userId, villageId);
+        }
+        extractAndRecordPromises(userId, result.response || '', {
+          villageId,
+          turnId: result.metadata?.traceId,
+        });
+      } catch (err: any) {
+        logger.debug('[PromiseTracker] skipped', { error: err?.message });
+      }
     }
 
     const normalizedResponse = normalizeAssistantText(result.response) || result.response;
@@ -1539,9 +1786,17 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     };
     routingOutcome = deferredRoutingOutcome;
     const pendingStateSummary = buildPendingStateSummary(postGuardStateSnapshot) || buildPendingStateSummary(preGuardStateSnapshot);
-    const lastDiscussedService = resolvedHistory?.length
-      ? deriveLastDiscussedServiceContext(resolvedHistory)
-      : {};
+
+    // Prefer structured active-service state over regex inference from history.
+    // Structured state is set by tools (setActiveServiceInfo) so the slug is
+    // authoritative. Regex over recent history is a fallback for cases where
+    // the state was evicted / not yet written (e.g., knowledge_test mode).
+    const lastDiscussedService = activeServiceInfo?.service_slug
+      ? {
+          serviceSlug: activeServiceInfo.service_slug,
+          serviceName: activeServiceInfo.service_name,
+        }
+      : (resolvedHistory?.length ? deriveLastDiscussedServiceContext(resolvedHistory) : {});
 
     // Step 3: Sanitize and correct typos
     let sanitizedMessage = sanitizeUserInput(workingMessage);
@@ -1675,6 +1930,24 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
           toolsUsed: cachedResponse.toolsUsed || [],
         });
         if (!reconciliation.ok && reconciliation.replacement) {
+          // Log guardrail so RCA can see that a cached answer was rewritten
+          // post-hoc by the reconciler (otherwise this rewrite was silent).
+          await recordGuardrail({
+            traceId,
+            waUserId: userId,
+            villageId: resolvedVillageId,
+            channel,
+            guardStage: 'db_rag_reconciler',
+            guardType: reconciliation.mismatches[0]?.kind || 'value_mismatch',
+            action: 'rewritten',
+            reason: 'value_not_in_official_db:cache_hit',
+            messagePreview: workingMessage,
+            metadata: {
+              origin: 'response_cache',
+              mismatches: reconciliation.mismatches,
+              toolsUsed: cachedResponse.toolsUsed || [],
+            },
+          });
           cacheResult = {
             ...reconciliation.replacement,
             metadata: { ...reconciliation.replacement.metadata, traceId },
@@ -1723,6 +1996,7 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       }),
       resolvedVillageId ? getVillageProfileSummary(resolvedVillageId) : Promise.resolve(null),
     ]);
+    syncCrossChannelContext(userId, agentChannel, sideEffectMode, !!isEvaluation, savedProfile);
     const sentimentContext = getSentimentContext(sentiment);
     let templateContext: { villageName?: string | null; villageShortName?: string | null } | undefined;
     villageTimezone = villageProfile?.timezone || null;
@@ -1747,7 +2021,12 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
       recentConversationHistory: conversationContext.recentMessages,
       activeServiceSlug: pendingServiceOffer?.service_slug || activeServiceInfo?.service_slug || lastDiscussedService.serviceSlug,
       activeServiceName: activeServiceInfo?.service_name || lastDiscussedService.serviceName,
-      memorySummary,
+      memorySummary: enrichMemoryWithPromises(
+        userId,
+        villageId,
+        enrichMemoryWithCrossChannel(userId, memorySummary),
+        sanitizedMessage,
+      ),
       routingDecision,
       pendingStateSummary,
       villageName: templateContext?.villageName ?? undefined,
@@ -2115,6 +2394,11 @@ export async function processUnifiedMessage(input: ProcessMessageInput): Promise
     decrementActiveProcessing();
   }
 }
+
+export const __test_only__ = {
+  isExplicitHumanHandoffRequest,
+  classifyHelpfulnessForStuck,
+};
 
 export default {
   processUnifiedMessage,

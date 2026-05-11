@@ -12,7 +12,25 @@
 
 import logger from '../utils/logger';
 
-const CROSS_CHANNEL_ENABLED = false;
+// Feature flag. Default OFF so existing deployments behave unchanged.
+// Enable by setting CROSS_CHANNEL_ENABLED=true.
+//
+// SAFETY NOTE: enabling this links a WhatsApp user to their Webchat
+// session by phone number. Only activate if:
+//   (1) warga sudah memberikan consent (via webchat onboarding),
+//   (2) webchat memang meminta nomor HP user di form awal,
+//   (3) ada kebijakan privasi tertulis yang mencakup cross-channel.
+// If any of those is uncertain, keep disabled.
+const CROSS_CHANNEL_ENABLED =
+  (process.env.CROSS_CHANNEL_ENABLED || '').toLowerCase() === 'true';
+
+export function isCrossChannelEnabled(): boolean {
+  return CROSS_CHANNEL_ENABLED;
+}
+
+if (CROSS_CHANNEL_ENABLED) {
+  logger.info('[CrossChannel] Enabled via CROSS_CHANNEL_ENABLED=true');
+}
 
 // ==================== TYPES ====================
 

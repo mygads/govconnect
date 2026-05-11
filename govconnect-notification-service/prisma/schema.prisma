@@ -19,16 +19,23 @@ model NotificationLog {
   wa_user_id         String?     // Legacy, deprecated - use channel_identifier
   village_id         String?     // Multi-tenancy: desa pemilik notifikasi
   message_text       String      @db.Text
+  message_id         String?
+  reference_number   String?
+  entity_status      String?
   notification_type  String      // "ai_reply" | "complaint_created" | "service_requested" | "status_updated" | "urgent_alert"
   status             String      // "sent" | "failed" | "skipped"
+  provider_status    String?
   error_msg          String?     @db.Text
+  provider_error     String?     @db.Text
   sent_at            DateTime    @default(now())
-  
+
   @@index([channel, channel_identifier])
   @@index([wa_user_id])
   @@index([village_id])
   @@index([status])
   @@index([notification_type])
+  @@index([message_id])
+  @@index([reference_number])
   @@index([sent_at])
   @@map("notification_logs")
 }

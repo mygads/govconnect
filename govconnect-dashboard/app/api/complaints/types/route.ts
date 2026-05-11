@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
+import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -15,6 +17,57 @@ async function getSession(request: NextRequest) {
   })
   if (!session || session.expires_at < new Date()) return null
   return session
+}
+
+async function resolveImportantContactCategory(villageId: string, categoryId?: string | null, categoryName?: string | null) {
+  if (categoryId) {
+    const category = await prisma.important_contact_categories.findFirst({
+      where: { id: categoryId, village_id: villageId },
+      select: { id: true, name: true },
+    })
+    if (category) return category
+  }
+
+  const normalizedCategoryName = normalizeScopedName(categoryName)
+  if (normalizedCategoryName) {
+    const category = await prisma.important_contact_categories.findFirst({
+      where: {
+        village_id: villageId,
+        name_key: buildScopedNameKey(normalizedCategoryName),
+      },
+      select: { id: true, name: true },
+    })
+    if (category) return category
+  }
+
+  return null
+}
+
+async function enrichImportantContactCategory<T extends {
+  important_contact_category?: string | null
+  important_contact_category_id?: string | null
+}>(rows: T[], villageId?: string) {
+  if (!villageId || rows.length === 0) return rows
+
+  const categoryIds = Array.from(new Set(rows.map((row) => row.important_contact_category_id).filter(Boolean))) as string[]
+  if (categoryIds.length === 0) return rows
+
+  const categories = await prisma.important_contact_categories.findMany({
+    where: {
+      village_id: villageId,
+      id: { in: categoryIds },
+    },
+    select: { id: true, name: true },
+  })
+
+  const byId = new Map(categories.map((category) => [category.id, category.name]))
+
+  return rows.map((row) => ({
+    ...row,
+    important_contact_category: row.important_contact_category_id
+      ? byId.get(row.important_contact_category_id) || row.important_contact_category || null
+      : row.important_contact_category || null,
+  }))
 }
 
 export async function GET(request: NextRequest) {
@@ -43,7 +96,8 @@ export async function GET(request: NextRequest) {
         const data = await response.json()
         const rows = Array.isArray(data?.data) ? data.data : []
         if (rows.length > 0 || !villageId) {
-          return NextResponse.json(data)
+          const enrichedRows = await enrichImportantContactCategory(rows, villageId)
+          return NextResponse.json({ ...data, data: enrichedRows })
         }
       }
     } catch {
@@ -60,6 +114,7 @@ export async function GET(request: NextRequest) {
           require_address: boolean
           send_important_contacts: boolean
           important_contact_category: string | null
+          important_contact_category_id: string | null
           created_at: Date
           updated_at: Date
           category: { id: string; name: string; description: string | null; village_id: string; is_active: boolean }
@@ -73,6 +128,7 @@ export async function GET(request: NextRequest) {
             t.require_address,
             t.send_important_contacts,
             t.important_contact_category,
+            t.important_contact_category_id,
             t.created_at,
             t.updated_at,
             json_build_object(
@@ -95,7 +151,8 @@ export async function GET(request: NextRequest) {
         `
       : []
 
-    return NextResponse.json({ data: rows })
+    const enrichedRows = await enrichImportantContactCategory(rows, villageId)
+    return NextResponse.json({ data: enrichedRows })
   } catch (error) {
     console.error('Error fetching complaint types:', error)
     return NextResponse.json({ error: 'Failed to fetch types' }, { status: 500 })
@@ -118,19 +175,28 @@ export async function POST(request: NextRequest) {
       require_address,
       send_important_contacts,
       important_contact_category,
+      important_contact_category_id,
     } = body
 
     if (!category_id || !name) {
       return NextResponse.json({ error: 'category_id and name are required' }, { status: 400 })
     }
 
-    if (send_important_contacts && !important_contact_category) {
-      return NextResponse.json({ error: 'important_contact_category is required' }, { status: 400 })
+    if (send_important_contacts && !important_contact_category && !important_contact_category_id) {
+      return NextResponse.json({ error: 'important contact category is required' }, { status: 400 })
+    }
+
+    const resolvedImportantContactCategory = !!send_important_contacts && session.admin.village_id
+      ? await resolveImportantContactCategory(session.admin.village_id, important_contact_category_id, important_contact_category)
+      : null
+
+    if (send_important_contacts && !resolvedImportantContactCategory) {
+      return NextResponse.json({ error: 'important contact category tidak valid untuk desa ini' }, { status: 400 })
     }
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, '/complaints/types'), {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
       body: JSON.stringify({
         category_id,
         name,
@@ -138,7 +204,8 @@ export async function POST(request: NextRequest) {
         is_urgent: !!is_urgent,
         require_address: !!require_address,
         send_important_contacts: !!send_important_contacts,
-        important_contact_category: send_important_contacts ? important_contact_category : null,
+        important_contact_category: null,
+        important_contact_category_id: send_important_contacts ? resolvedImportantContactCategory?.id ?? null : null,
       }),
     })
 
@@ -148,6 +215,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: data.error || 'Failed to create type' }, { status: response.status })
     }
 
+    await invalidateVillageAiCacheSafely(session.admin.village_id)
     return NextResponse.json(data, { status: 201 })
   } catch (error) {
     console.error('Error creating complaint type:', error)

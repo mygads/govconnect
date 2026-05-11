@@ -3,6 +3,7 @@ import app, { initializeApp } from './app';
 import { config } from './config/env';
 import { connectRabbitMQ, disconnectRabbitMQ, startRabbitMQReconnect } from './services/rabbitmq.service';
 import { startAutoPurgeScheduler, stopAutoPurgeScheduler } from './services/auto-purge.service';
+import { startOutboxWorker, stopOutboxWorker } from './services/outbox.service';
 import prisma from './config/database';
 import logger from './utils/logger';
 
@@ -30,7 +31,8 @@ async function startServer() {
     
     // Start auto-purge scheduler for soft-deleted records (30 days)
     startAutoPurgeScheduler();
-    
+    startOutboxWorker();
+
     // Start Express server
     const server = app.listen(PORT, () => {
       logger.info(`🚀 Case Service running on port ${PORT}`);
@@ -67,7 +69,8 @@ async function gracefulShutdown(signal: string, server?: any) {
     
     // Stop auto-purge scheduler
     stopAutoPurgeScheduler();
-    
+    stopOutboxWorker();
+
     // Disconnect database
     await prisma.$disconnect();
     logger.info('✅ Database disconnected');

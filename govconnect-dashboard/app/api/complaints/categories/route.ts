@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest) {
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, '/complaints/categories'), {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
       body: JSON.stringify({
         village_id: session.admin.village_id,
         name,
@@ -95,6 +96,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: data.error || 'Failed to create category' }, { status: response.status })
     }
 
+    await invalidateVillageAiCacheSafely(session.admin.village_id)
     return NextResponse.json(data, { status: 201 })
   } catch (error) {
     console.error('Error creating complaint category:', error)

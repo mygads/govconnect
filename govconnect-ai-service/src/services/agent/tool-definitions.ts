@@ -63,7 +63,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       name: 'get_complaint_categories',
       strict: true,
       description:
-        'Daftar kategori pengaduan resmi yang tersedia di desa ini, termasuk penanda kategori darurat bila ada.',
+        'Daftar jenis pengaduan resmi yang tersedia di desa ini. Gunakan hasil tool ini sebagai source of truth sebelum membuat pengaduan, termasuk type_id/category_id resmi dan penanda darurat bila ada.',
       parameters: {
         type: 'object',
         properties: {},
@@ -180,18 +180,26 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       name: 'create_complaint',
       strict: true,
       description:
-        'Buat pengaduan infrastruktur. Wajib ada kategori, alamat, dan deskripsi. ' +
-        'Nama pelapor dan nomor telepon bersifat opsional. Untuk kanal WhatsApp jangan meminta nomor HP lagi jika masalah sudah jelas. Jangan bilang laporan berhasil dibuat jika tool ini gagal.',
+        'Buat pengaduan resmi desa. Utamakan type_id resmi dari get_complaint_categories bila sudah tersedia. category_id boleh dipakai sebagai kategori induk, dan kategori string hanya fallback bila ID resmi belum ada. ' +
+        'Alamat hanya wajib untuk jenis pengaduan yang memang membutuhkan lokasi. Nama pelapor dan nomor telepon bersifat opsional. Untuk kanal WhatsApp jangan meminta nomor HP lagi jika masalah sudah jelas. Jangan bilang laporan berhasil dibuat jika tool ini gagal.',
       parameters: {
         type: 'object',
         properties: {
           kategori: {
-            type: 'string',
-            description: 'Kategori pengaduan. Contoh: "jalan_rusak", "lampu_mati", "sampah", "drainase".',
+            type: ['string', 'null'],
+            description: 'Nama jenis pengaduan resmi dari hasil get_complaint_categories bila agent belum punya type_id.',
+          },
+          type_id: {
+            type: ['string', 'null'],
+            description: 'ID resmi jenis pengaduan dari hasil get_complaint_categories bila tersedia.',
+          },
+          category_id: {
+            type: ['string', 'null'],
+            description: 'ID resmi kategori induk pengaduan dari hasil get_complaint_categories bila tersedia.',
           },
           alamat: {
-            type: 'string',
-            description: 'Alamat atau lokasi lengkap termasuk RT/RW jika ada.',
+            type: ['string', 'null'],
+            description: 'Alamat atau lokasi lengkap bila jenis pengaduan membutuhkan lokasi, termasuk RT/RW jika ada.',
           },
           deskripsi: {
             type: 'string',
@@ -210,7 +218,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
             description: 'Nomor HP pelapor, terutama untuk kanal webchat.',
           },
         },
-        required: ['kategori', 'alamat', 'deskripsi', 'rt_rw', 'nama_pelapor', 'no_hp'],
+        required: ['deskripsi'],
         additionalProperties: false,
       },
     },

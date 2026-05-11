@@ -16,7 +16,7 @@
     "db:migrate:resolve": "prisma migrate resolve",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "test": "echo \"Tests will be added\"",
+    "test": "tsx --test src/**/*.test.ts",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write \"src/**/*.ts\""
   },

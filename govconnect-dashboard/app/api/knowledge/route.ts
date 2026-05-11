@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { ai } from '@/lib/api-client'
+import { resolveVillageKnowledgeCategory } from '@/lib/knowledge-categories'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -135,36 +136,20 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    let resolvedCategoryId = category_id as string | undefined
-    let resolvedCategoryName = category as string | undefined
+    const resolvedCategory = await resolveVillageKnowledgeCategory({
+      villageId: session.admin.village_id,
+      categoryId: category_id,
+      categoryName: category,
+      createIfMissing: true,
+    })
+    const resolvedCategoryId = resolvedCategory.categoryId
+    const resolvedCategoryName = resolvedCategory.categoryName
 
-    if (!resolvedCategoryId) {
-      const existingCategory = await prisma.knowledge_categories.findFirst({
-        where: {
-          name: category,
-          village_id: session.admin.village_id || undefined,
-        }
-      })
-
-      if (existingCategory) {
-        resolvedCategoryId = existingCategory.id
-        resolvedCategoryName = existingCategory.name
-      } else if (session.admin.village_id) {
-        const created = await prisma.knowledge_categories.create({
-          data: {
-            village_id: session.admin.village_id,
-            name: category,
-            is_default: false,
-          }
-        })
-        resolvedCategoryId = created.id
-        resolvedCategoryName = created.name
-      }
-    } else {
-      const existingCategory = await prisma.knowledge_categories.findUnique({
-        where: { id: resolvedCategoryId }
-      })
-      resolvedCategoryName = existingCategory?.name || resolvedCategoryName
+    if (!resolvedCategoryName) {
+      return NextResponse.json(
+        { error: 'Kategori knowledge tidak valid' },
+        { status: 400 }
+      )
     }
 
     const processedKeywords = Array.isArray(keywords)

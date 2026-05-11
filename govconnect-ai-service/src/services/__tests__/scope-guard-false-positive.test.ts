@@ -21,6 +21,7 @@ describe('out-of-scope guard — villager phrasing must NOT be rejected', () => 
     'film dokumenter desa kami bisa diputar?',
     'artis wali datang ke acara 17-an kok',
     'mau urus surat pengantar untuk bpjs',
+    'cara urus paspor bagaimana?',
     'loop buat urus ktp gimana?',
     'rumus perhitungan pajak bumi desa',
     'ada pengajian malam ini pak lurah?',

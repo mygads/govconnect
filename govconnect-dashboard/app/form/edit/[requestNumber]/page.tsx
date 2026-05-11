@@ -15,7 +15,7 @@ import {
   User,
   CreditCard,
   Info,
-  MessageCircle,
+  CalendarDays,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +29,43 @@ interface ServiceRequirement {
   help_text?: string | null;
 }
 
+interface CitizenFieldDefinition {
+  key: string;
+  label: string;
+  field_type: "text" | "textarea" | "select" | "radio" | "date" | "number";
+  is_required: boolean;
+  help_text?: string | null;
+  options?: string[];
+  validation?: "nik" | "wa_phone" | null;
+}
+
+interface SubmissionSchema {
+  submissionPolicy: {
+    mode: string;
+    allowsPublicSubmission: boolean;
+  };
+  citizenFields: CitizenFieldDefinition[];
+  requirementFields: Array<{
+    key: string;
+    label: string;
+    field_type: ServiceRequirement["field_type"];
+    is_required: boolean;
+    help_text?: string | null;
+    options?: string[];
+  }>;
+}
+
+interface UploadedRequirementFile {
+  url: string;
+  internal_url?: string | null;
+  file_name?: string | null;
+  mime_type?: string | null;
+  size?: number | null;
+  storage_key?: string | null;
+}
+
+type RequirementValue = string | UploadedRequirementFile;
+
 interface ServiceItem {
   id: string;
   name: string;
@@ -40,6 +77,7 @@ interface ServiceItem {
   village_id?: string | null;
   requirements: ServiceRequirement[];
   category?: { name: string } | null;
+  submission_schema?: SubmissionSchema;
 }
 
 interface ServiceRequest {
@@ -54,6 +92,153 @@ interface ServiceRequest {
 
 interface PageProps {
   params: Promise<{ requestNumber: string }>;
+}
+
+const citizenFieldIcons: Record<string, typeof User> = {
+  nama_lengkap: User,
+  nik: CreditCard,
+  alamat: MapPin,
+  no_hp: Phone,
+  wa_user_id: Phone,
+  tempat_lahir: MapPin,
+  tanggal_lahir: CalendarDays,
+};
+
+function normalizeOptions(options: any): string[] {
+  if (!options) return [];
+  if (Array.isArray(options)) return options.map(String);
+  if (typeof options === "string") {
+    try {
+      const parsed = JSON.parse(options);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      return options.split(",").map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  if (typeof options === "object") {
+    return Object.values(options).map((value) => String(value));
+  }
+  return [];
+}
+
+function normalizeTo628(input: string): string {
+  const digits = (input || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("0")) return `62${digits.slice(1)}`;
+  if (digits.startsWith("62")) return digits;
+  if (digits.startsWith("8")) return `62${digits}`;
+  return digits;
+}
+
+function isValidWaNumber(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return /^(08\d{8,12}|628\d{8,12})$/.test(digits);
+}
+
+function formatServiceModeLabel(mode?: string | null) {
+  switch ((mode || "").trim().toLowerCase()) {
+    case "online":
+      return "Online";
+    case "offline":
+      return "Offline";
+    case "both":
+      return "Online & Offline";
+    default:
+      return "Belum diatur";
+  }
+}
+
+function getPhoneFieldKey(fields: CitizenFieldDefinition[]): string | null {
+  const phoneField = fields.find((field) => field.validation === "wa_phone" || field.key === "no_hp" || field.key === "wa_user_id");
+  return phoneField?.key || null;
+}
+
+function buildCitizenState(
+  fields: CitizenFieldDefinition[],
+  existing: Record<string, string>,
+  phonePrefill = "",
+): Record<string, string> {
+  const phoneFieldKey = getPhoneFieldKey(fields);
+  const next: Record<string, string> = {};
+
+  for (const field of fields) {
+    if (field.key === phoneFieldKey && phonePrefill) {
+      next[field.key] = existing[field.key] || phonePrefill;
+      continue;
+    }
+    next[field.key] = existing[field.key] || "";
+  }
+
+  return next;
+}
+
+function validateCitizenField(field: CitizenFieldDefinition, value: string): boolean {
+  if (!value.trim()) return !field.is_required;
+  if (field.validation === "nik") return /^\d{16}$/.test(value.trim());
+  if (field.validation === "wa_phone") return isValidWaNumber(value.trim());
+  if (field.field_type === "number") return !Number.isNaN(Number(value));
+  if (field.field_type === "date") return !Number.isNaN(Date.parse(value));
+  if ((field.field_type === "select" || field.field_type === "radio") && field.options?.length) {
+    return field.options.includes(value);
+  }
+  return true;
+}
+
+function isUploadedRequirementFile(value: unknown): value is UploadedRequirementFile {
+  return !!value && typeof value === "object" && !Array.isArray(value) && typeof (value as UploadedRequirementFile).url === "string";
+}
+
+function getRequirementFile(value: unknown): UploadedRequirementFile | null {
+  if (typeof value === "string") {
+    const url = value.trim();
+    return url ? { url } : null;
+  }
+  if (!isUploadedRequirementFile(value)) return null;
+  const url = value.url.trim();
+  if (!url) return null;
+  return {
+    url,
+    internal_url: typeof value.internal_url === "string" ? value.internal_url : null,
+    file_name: typeof value.file_name === "string" ? value.file_name : null,
+    mime_type: typeof value.mime_type === "string" ? value.mime_type : null,
+    size: typeof value.size === "number" ? value.size : null,
+    storage_key: typeof value.storage_key === "string" ? value.storage_key : null,
+  };
+}
+
+function hasRequirementValue(value: RequirementValue | undefined): boolean {
+  if (typeof value === "string") return !!value.trim();
+  return !!getRequirementFile(value);
+}
+
+function getRequirementInputValue(value: RequirementValue | undefined): string {
+  return typeof value === "string" ? value : "";
+}
+
+function buildRequirementState(
+  fields: ServiceRequirement[],
+  existing: Record<string, any>,
+): Record<string, RequirementValue> {
+  const next: Record<string, RequirementValue> = {};
+
+  for (const field of fields) {
+    const rawValue = existing[field.id];
+    if (field.field_type === "file") {
+      const file = getRequirementFile(rawValue);
+      if (file) {
+        next[field.id] = file;
+      }
+      continue;
+    }
+
+    next[field.id] = typeof rawValue === "string" ? rawValue : "";
+  }
+
+  return next;
+}
+
+function getStatusChannelLabel(isWebchatSession: boolean): string {
+  return isWebchatSession ? "percakapan ini" : "WhatsApp ini";
 }
 
 export default function ServiceRequestEditPage({ params }: PageProps) {
@@ -75,25 +260,20 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
   ];
   const ACCEPT_FILE_TYPES = ".pdf,.jpg,.jpeg,.png,.doc,.docx";
 
-  const [citizenData, setCitizenData] = useState({
-    nama_lengkap: "",
-    nik: "",
-    alamat: "",
-    wa_user_id: "",
-  });
-
-  function normalizeTo628(input: string): string {
-    const digits = (input || "").replace(/\D/g, "");
-    if (!digits) return "";
-    if (digits.startsWith("0")) return `62${digits.slice(1)}`;
-    if (digits.startsWith("62")) return digits;
-    if (digits.startsWith("8")) return `62${digits}`;
-    return digits;
-  }
-
-  const [requirementsData, setRequirementsData] = useState<Record<string, string>>({});
+  const [citizenData, setCitizenData] = useState<Record<string, string>>({});
+  const [requirementsData, setRequirementsData] = useState<Record<string, RequirementValue>>({});
   const [fileUploading, setFileUploading] = useState<Record<string, boolean>>({});
   const [fileErrors, setFileErrors] = useState<Record<string, string>>({});
+
+  const waParam = useMemo(() => searchParams.get("wa") || "", [searchParams]);
+  const waUserPrefill = useMemo(() => normalizeTo628(waParam), [waParam]);
+  const sessionId = useMemo(() => searchParams.get("session") || "", [searchParams]);
+
+  const submissionSchema = serviceRequest?.service?.submission_schema;
+  const citizenFields = submissionSchema?.citizenFields || [];
+  const requirementFields = serviceRequest?.service?.requirements || [];
+  const phoneFieldKey = useMemo(() => getPhoneFieldKey(citizenFields), [citizenFields]);
+  const isWaPrefilled = !!waUserPrefill && !!phoneFieldKey;
 
   useEffect(() => {
     params.then((p) => setRequestNumber(p.requestNumber));
@@ -101,8 +281,6 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
 
   useEffect(() => {
     const token = searchParams.get("token");
-    const waParam = searchParams.get("wa");
-    const sessionParam = searchParams.get("session");
     if (!token || !requestNumber) return;
 
     const loadRequest = async () => {
@@ -110,30 +288,17 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
         setLoading(true);
         const identityQuery = waParam
           ? `&wa=${encodeURIComponent(waParam)}`
-          : sessionParam
-            ? `&session_id=${encodeURIComponent(sessionParam)}`
+          : sessionId
+            ? `&session_id=${encodeURIComponent(sessionId)}`
             : "";
         const response = await fetch(`/api/public/service-requests/by-token?token=${encodeURIComponent(token)}${identityQuery}`);
         const result = await response.json();
         if (!response.ok) {
           throw new Error(result?.error || "Token tidak valid atau sudah kedaluwarsa");
         }
+
         const data = result.data as ServiceRequest;
         setServiceRequest(data);
-
-        const waFromData =
-          data.wa_user_id ||
-          data.citizen_data_json?.wa_user_id ||
-          data.citizen_data_json?.no_hp ||
-          "";
-
-        setCitizenData({
-          nama_lengkap: data.citizen_data_json?.nama_lengkap || "",
-          nik: data.citizen_data_json?.nik || "",
-          alamat: data.citizen_data_json?.alamat || "",
-          wa_user_id: normalizeTo628(waFromData),
-        });
-        setRequirementsData((data.requirement_data_json || {}) as Record<string, string>);
         setError(null);
       } catch (err: any) {
         setError(err.message || "Gagal memuat data layanan");
@@ -143,17 +308,32 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     };
 
     loadRequest();
-  }, [requestNumber, searchParams]);
+  }, [requestNumber, searchParams, sessionId, waParam]);
 
-  const normalizedRequirements = useMemo(() => {
-    return serviceRequest?.service?.requirements || [];
-  }, [serviceRequest]);
+  useEffect(() => {
+    if (!serviceRequest || !citizenFields.length) return;
 
-  function updateCitizenField(field: keyof typeof citizenData, value: string) {
+    const existingCitizenData = { ...(serviceRequest.citizen_data_json || {}) } as Record<string, string>;
+    const waFromData = serviceRequest.wa_user_id || existingCitizenData.wa_user_id || existingCitizenData.no_hp || "";
+    const normalizedPhonePrefill = waUserPrefill || normalizeTo628(waFromData);
+
+    setCitizenData(buildCitizenState(citizenFields, existingCitizenData, normalizedPhonePrefill));
+  }, [serviceRequest, citizenFields, waUserPrefill]);
+
+  useEffect(() => {
+    if (!serviceRequest) return;
+
+    setRequirementsData(buildRequirementState(
+      requirementFields,
+      (serviceRequest.requirement_data_json || {}) as Record<string, any>,
+    ));
+  }, [serviceRequest, requirementFields]);
+
+  function updateCitizenField(field: string, value: string) {
     setCitizenData((prev) => ({ ...prev, [field]: value }));
   }
 
-  function updateRequirementField(reqId: string, value: string) {
+  function updateRequirementField(reqId: string, value: RequirementValue) {
     setRequirementsData((prev) => ({ ...prev, [reqId]: value }));
   }
 
@@ -165,38 +345,20 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     setFileErrors((prev) => ({ ...prev, [reqId]: value }));
   }
 
-  function normalizeOptions(options: any): string[] {
-    if (!options) return [];
-    if (Array.isArray(options)) return options.map(String);
-    if (typeof options === "string") {
-      try {
-        const parsed = JSON.parse(options);
-        if (Array.isArray(parsed)) return parsed.map(String);
-      } catch {
-        return options.split(",").map((item) => item.trim()).filter(Boolean);
-      }
-    }
-    if (typeof options === "object") {
-      return Object.values(options).map((value) => String(value));
-    }
-    return [];
-  }
-
-  function isValidWaNumber(value: string) {
-    return /^628\d{8,12}$/.test(value);
-  }
-
   function isFormComplete() {
-    if (!serviceRequest) return false;
-    if (!citizenData.nama_lengkap || !citizenData.nik || !citizenData.alamat || !citizenData.wa_user_id) return false;
-    if (!isValidWaNumber(citizenData.wa_user_id)) return false;
-    if (citizenData.nik.length !== 16) return false;
+    if (!serviceRequest || !submissionSchema) return false;
+
+    for (const field of citizenFields) {
+      const value = citizenData[field.key] || "";
+      if (field.is_required && !value.trim()) return false;
+      if (!validateCitizenField(field, value)) return false;
+    }
 
     if (Object.values(fileUploading).some(Boolean)) return false;
     if (Object.values(fileErrors).some((value) => value)) return false;
 
-    for (const req of normalizedRequirements) {
-      if (req.is_required && !requirementsData[req.id]) return false;
+    for (const req of requirementFields) {
+      if (req.is_required && !hasRequirementValue(requirementsData[req.id])) return false;
     }
 
     return true;
@@ -236,15 +398,38 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
         body: formData,
       });
 
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Upload returned non-JSON:", text.substring(0, 200));
+        throw new Error("Gagal mengunggah file. Server tidak merespons dengan benar.");
+      }
+
       const result = await response.json();
       if (!response.ok) {
         throw new Error(result?.error || "Gagal mengunggah file");
       }
 
-      updateRequirementField(reqId, result?.data?.url || "");
+      const uploadedFile = getRequirementFile({
+        url: result?.data?.url,
+        internal_url: result?.data?.internal_url,
+        file_name: result?.data?.file_name || file.name,
+        mime_type: result?.data?.mime_type || file.type,
+        size: typeof result?.data?.size === "number" ? result.data.size : file.size,
+        storage_key: result?.data?.storage_key,
+      });
+
+      if (!uploadedFile) {
+        throw new Error("Gagal mengunggah file. URL file tidak tersedia.");
+      }
+
+      updateRequirementField(reqId, uploadedFile);
     } catch (err: any) {
       updateRequirementField(reqId, "");
-      updateFileError(reqId, err.message || "Gagal mengunggah file");
+      const errorMessage = err.message?.includes("JSON")
+        ? "Gagal mengunggah file. Silakan coba lagi."
+        : (err.message || "Gagal mengunggah file");
+      updateFileError(reqId, errorMessage);
     } finally {
       updateFileUploading(reqId, false);
     }
@@ -254,7 +439,7 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     e.preventDefault();
     setError(null);
 
-    if (!serviceRequest) return;
+    if (!serviceRequest || !submissionSchema) return;
     if (!isFormComplete()) {
       setError("Mohon lengkapi semua data wajib terlebih dahulu.");
       return;
@@ -271,34 +456,34 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     }
 
     const token = searchParams.get("token");
-    const waParam = searchParams.get("wa");
-    const sessionParam = searchParams.get("session");
     if (!token) {
-      setError("Token tidak ditemukan. Silakan minta link edit baru dari WhatsApp.");
+      setError(`Token tidak ditemukan. Silakan minta link edit baru melalui ${getStatusChannelLabel(!!sessionId)}.`);
       return;
     }
 
     setSubmitting(true);
 
     try {
-      // Derive no_hp from wa_user_id (628xxx -> 08xxx)
-      const derivedNoHp = citizenData.wa_user_id.startsWith("628")
-        ? `0${citizenData.wa_user_id.slice(2)}`
-        : citizenData.wa_user_id;
+      const rawPhoneValue = phoneFieldKey ? (citizenData[phoneFieldKey] || "") : "";
+      const normalizedWa = normalizeTo628(rawPhoneValue);
+      const derivedNoHp = normalizedWa.startsWith("628") ? `0${normalizedWa.slice(2)}` : normalizedWa;
+      const citizenPayload = { ...citizenData };
+
+      if (phoneFieldKey === "no_hp" && normalizedWa) {
+        citizenPayload.no_hp = derivedNoHp;
+      }
+      if (phoneFieldKey === "wa_user_id" && normalizedWa) {
+        citizenPayload.wa_user_id = normalizedWa;
+      }
 
       const response = await fetch(`/api/public/service-requests/${serviceRequest.request_number}/by-token`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           edit_token: token,
-          ...(sessionParam ? { session_id: sessionParam } : {}),
+          ...(sessionId ? { session_id: sessionId } : {}),
           ...(waParam ? { wa_user_id: normalizeTo628(waParam) } : {}),
-          citizen_data: {
-            nama_lengkap: citizenData.nama_lengkap,
-            nik: citizenData.nik,
-            alamat: citizenData.alamat,
-            no_hp: derivedNoHp,
-          },
+          citizen_data: citizenPayload,
           requirement_data: requirementsData,
         }),
       });
@@ -314,6 +499,124 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function renderCitizenField(field: CitizenFieldDefinition) {
+    const Icon = citizenFieldIcons[field.key] || User;
+    const value = citizenData[field.key] || "";
+    const options = field.options || [];
+    const isPhoneField = field.key === phoneFieldKey;
+
+    if (field.field_type === "textarea") {
+      return (
+        <div key={field.key} className="space-y-2 sm:col-span-2">
+          <label className="text-xs font-semibold flex items-center gap-1">
+            <Icon className="w-3.5 h-3.5" /> {field.label} {field.is_required && <span className="text-red-500">*</span>}
+          </label>
+          <textarea
+            value={value}
+            onChange={(e) => updateCitizenField(field.key, e.target.value)}
+            rows={3}
+            placeholder={field.help_text || `Isi ${field.label.toLowerCase()}`}
+            className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+          />
+          {field.help_text && <p className="text-[10px] text-muted-foreground">{field.help_text}</p>}
+        </div>
+      );
+    }
+
+    if (field.field_type === "select") {
+      return (
+        <div key={field.key} className="space-y-2">
+          <label className="text-xs font-semibold flex items-center gap-1">
+            <Icon className="w-3.5 h-3.5" /> {field.label} {field.is_required && <span className="text-red-500">*</span>}
+          </label>
+          <select
+            value={value}
+            onChange={(e) => updateCitizenField(field.key, e.target.value)}
+            className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+          >
+            <option value="">Pilih opsi</option>
+            {options.map((opt) => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </select>
+          {field.help_text && <p className="text-[10px] text-muted-foreground">{field.help_text}</p>}
+        </div>
+      );
+    }
+
+    if (field.field_type === "radio") {
+      return (
+        <div key={field.key} className="space-y-2 sm:col-span-2">
+          <label className="text-xs font-semibold flex items-center gap-1">
+            <Icon className="w-3.5 h-3.5" /> {field.label} {field.is_required && <span className="text-red-500">*</span>}
+          </label>
+          <div className="flex flex-wrap gap-3 rounded-xl border border-border/50 bg-card px-3 py-2">
+            {options.map((opt) => (
+              <label key={opt} className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  name={field.key}
+                  value={opt}
+                  checked={value === opt}
+                  onChange={(e) => updateCitizenField(field.key, e.target.value)}
+                />
+                {opt}
+              </label>
+            ))}
+          </div>
+          {field.help_text && <p className="text-[10px] text-muted-foreground">{field.help_text}</p>}
+        </div>
+      );
+    }
+
+    const inputType = field.field_type === "date"
+      ? "date"
+      : field.field_type === "number"
+        ? "number"
+        : "text";
+
+    return (
+      <div key={field.key} className="space-y-2">
+        <label className="text-xs font-semibold flex items-center gap-1">
+          <Icon className="w-3.5 h-3.5" /> {field.label} {field.is_required && <span className="text-red-500">*</span>}
+        </label>
+        <input
+          type={inputType}
+          value={value}
+          readOnly={isPhoneField && isWaPrefilled}
+          maxLength={field.validation === "nik" ? 16 : undefined}
+          onChange={(e) => {
+            if (isPhoneField && isWaPrefilled) return;
+            const nextValue = field.validation === "nik"
+              ? e.target.value.replace(/\D/g, "")
+              : e.target.value;
+            updateCitizenField(field.key, nextValue);
+          }}
+          onBlur={(e) => {
+            if (!isPhoneField || isWaPrefilled) return;
+            const normalized = normalizeTo628(e.target.value);
+            if (normalized && normalized !== value) {
+              updateCitizenField(field.key, normalized);
+            }
+          }}
+          placeholder={field.validation === "wa_phone"
+            ? "628xxxxxxxxxx"
+            : field.help_text || `Isi ${field.label.toLowerCase()}`}
+          className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
+        />
+        {isPhoneField ? (
+          isWaPrefilled ? (
+            <p className="text-[10px] text-muted-foreground">Nomor WhatsApp terisi otomatis dari tautan WhatsApp dan tidak bisa diubah.</p>
+          ) : (
+            <p className="text-[10px] text-muted-foreground">Format: 628xxxxxxxxxx atau 08xxxxxxxxxx.</p>
+          )
+        ) : field.help_text ? (
+          <p className="text-[10px] text-muted-foreground">{field.help_text}</p>
+        ) : null}
+      </div>
+    );
   }
 
   if (loading) {
@@ -360,7 +663,7 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
                 Perubahan Berhasil Disimpan!
               </h1>
               <p className="text-sm text-muted-foreground">
-                Data permohonan layanan telah diperbarui. Jika perlu edit lagi, minta link baru via WhatsApp.
+                Data permohonan layanan telah diperbarui. Jika perlu edit lagi, minta link baru melalui {getStatusChannelLabel(!!sessionId)}.
               </p>
             </div>
 
@@ -412,15 +715,15 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
         </div>
       </div>
 
-        <Card className="border-border/50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <Info className="w-4 h-4 text-secondary" />
-              Informasi Layanan
+      <Card className="border-border/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Info className="w-4 h-4 text-secondary" />
+            Informasi Layanan
           </CardTitle>
         </CardHeader>
         <CardContent className="text-xs text-muted-foreground space-y-1">
-          <p>Mode layanan: {serviceRequest.service?.mode === "online" ? "Online" : serviceRequest.service?.mode === "offline" ? "Offline" : "Online & Offline"}</p>
+          <p>Mode layanan: {formatServiceModeLabel(serviceRequest.service?.mode)}</p>
           <p>Kategori: {serviceRequest.service?.category?.name || "Layanan Administrasi"}</p>
           {serviceRequest.service?.estimated_cost && <p>Estimasi biaya: {serviceRequest.service.estimated_cost}</p>}
           {serviceRequest.service?.estimated_processing_time && <p>Estimasi waktu proses: {serviceRequest.service.estimated_processing_time}</p>}
@@ -432,78 +735,22 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold">Data Pemohon</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-xs font-semibold flex items-center gap-1">
-                  <User className="w-3.5 h-3.5" /> Nama Lengkap <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={citizenData.nama_lengkap}
-                  onChange={(e) => updateCitizenField("nama_lengkap", e.target.value)}
-                  placeholder="Nama sesuai KTP"
-                  className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-semibold flex items-center gap-1">
-                  <CreditCard className="w-3.5 h-3.5" /> NIK <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={citizenData.nik}
-                  onChange={(e) => updateCitizenField("nik", e.target.value.replace(/\D/g, ""))}
-                  placeholder="16 digit"
-                  maxLength={16}
-                  className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-xs font-semibold flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5" /> Alamat <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={citizenData.alamat}
-                  onChange={(e) => updateCitizenField("alamat", e.target.value)}
-                  placeholder="Alamat lengkap"
-                  className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-semibold flex items-center gap-1">
-                  <Phone className="w-3.5 h-3.5" /> Nomor WhatsApp <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={citizenData.wa_user_id}
-                  onChange={(e) => updateCitizenField("wa_user_id", e.target.value.replace(/\s+/g, ""))}
-                  placeholder="628xxxxxxxxxx"
-                  className="w-full px-3 py-2 rounded-xl border border-border/50 bg-card text-xs focus:outline-none focus:ring-2 focus:ring-secondary"
-                  required
-                />
-                <p className="text-[10px] text-muted-foreground">Format: 628xxxxxxxxxx (tanpa tanda + atau spasi)</p>
-              </div>
-            </div>
+          <CardContent className="grid sm:grid-cols-2 gap-4">
+            {citizenFields.map((field) => renderCitizenField(field))}
           </CardContent>
         </Card>
 
-        {normalizedRequirements.length > 0 && (
+        {requirementFields.length > 0 && (
           <Card className="border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold">Persyaratan</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {normalizedRequirements.map((req) => {
+              {requirementFields.map((req) => {
                 const options = normalizeOptions(req.options_json);
-                const value = requirementsData[req.id] || "";
+                const requirementValue = requirementsData[req.id];
+                const value = getRequirementInputValue(requirementValue);
+                const uploadedFile = getRequirementFile(requirementValue);
                 const labelText = `${req.label}${req.is_required ? " *" : ""}`;
 
                 return (
@@ -580,15 +827,15 @@ export default function ServiceRequestEditPage({ params }: PageProps) {
                         {fileUploading[req.id] && (
                           <p className="text-[10px] text-muted-foreground">Mengunggah file...</p>
                         )}
-                        {requirementsData[req.id] && !fileUploading[req.id] && (
+                        {uploadedFile && !fileUploading[req.id] && (
                           <p className="text-[10px] text-emerald-600">
-                            File terunggah. <a href={requirementsData[req.id]} target="_blank" rel="noreferrer" className="underline">Lihat file</a>
+                            File terunggah{uploadedFile.file_name ? `: ${uploadedFile.file_name}` : ""}. <a href={uploadedFile.url} target="_blank" rel="noreferrer" className="underline">Lihat file</a>
                           </p>
                         )}
                         {fileErrors[req.id] && (
                           <p className="text-[10px] text-red-600">{fileErrors[req.id]}</p>
                         )}
-                        <p className="text-[10px] text-muted-foreground">Tipe file: PDF/JPG/PNG/DOC/DOCX, maks 5MB.</p>
+                        <p className="text-[10px] text-muted-foreground">Tipe file: PDF/JPG/PNG/DOC/DOCX, maks 10MB.</p>
                       </div>
                     )}
 

@@ -4,8 +4,7 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { rabbitmqConfig } from '../config/rabbitmq';
 import { sendTextMessage, sendContactMessage } from './wa.service';
-// NOTE: saveOutgoingMessage removed - AI Service now handles database storage via storeAIReplyInDatabase()
-// This prevents duplicate messages in live chat dashboard
+import { saveOutgoingMessage } from './message.service';
 import { updateConversation, clearAIStatus, setAIError, setAIPendingBalance, isUserInTakeover } from './takeover.service';
 import { markMessagesAsCompleted, markMessageAsFailed } from './pending-message.service';
 import { clearUserBubble } from './spam-guard.service';
@@ -131,6 +130,29 @@ async function retryOrDlq(msg: any, routingKey: string, error: unknown): Promise
   });
   channel.ack(msg);
   logger.warn('Message republished for bounded channel retry', { routingKey, retryCount: retryCount + 1 });
+}
+
+async function persistSentAIMessage(
+  data: Parameters<typeof saveOutgoingMessage>[0],
+  context: {
+    wa_user_id: string;
+    village_id?: string;
+    kind: 'reply' | 'guidance';
+  }
+): Promise<boolean> {
+  try {
+    await saveOutgoingMessage(data);
+    return true;
+  } catch (error: any) {
+    logger.error('Failed to persist sent AI WhatsApp message; skipping retry to avoid duplicate delivery', {
+      wa_user_id: context.wa_user_id,
+      village_id: context.village_id,
+      kind: context.kind,
+      provider_message_id: data.message_id,
+      error: error.message,
+    });
+    return false;
+  }
 }
 
 /**
@@ -330,8 +352,12 @@ export function isConnected(): boolean {
 /**
  * AI Reply Event payload interface
  */
+type ChannelType = 'WHATSAPP' | 'WEBCHAT';
+
 interface AIReplyEvent {
   village_id?: string;
+  channel?: ChannelType;
+  channel_identifier?: string;
   wa_user_id: string;
   reply_text: string;
   guidance_text?: string;  // Optional second message for guidance/follow-up
@@ -346,6 +372,24 @@ interface AIReplyEvent {
     organization?: string;  // e.g., "Pemadam Kebakaran", "Puskesmas"
     title?: string;         // e.g., "Hotline Darurat", "Nomor Layanan"
   }>;
+}
+
+function resolveConversationTarget(payload: {
+  channel?: ChannelType;
+  channel_identifier?: string;
+  wa_user_id?: string;
+}): { channel: ChannelType; channelIdentifier: string } {
+  const targetChannel = payload.channel === 'WEBCHAT' ? 'WEBCHAT' : 'WHATSAPP';
+  const channelIdentifier = payload.channel_identifier || payload.wa_user_id;
+
+  if (!channelIdentifier) {
+    throw new Error('Missing channel identifier in AI event payload');
+  }
+
+  return {
+    channel: targetChannel,
+    channelIdentifier,
+  };
 }
 
 /**
@@ -382,7 +426,12 @@ export async function startConsumingAIReply(): Promise<void> {
 
       try {
         const payload: AIReplyEvent = JSON.parse(msg.content.toString());
-        
+        const { channel: targetChannel, channelIdentifier } = resolveConversationTarget(payload);
+
+        if (targetChannel !== 'WHATSAPP') {
+          throw new Error(`AI reply consumer only supports WHATSAPP but received ${targetChannel}`);
+        }
+
         // Normalize and format text for WhatsApp
         const formatText = (text: string): string => {
           if (!text) return text;
@@ -410,7 +459,7 @@ export async function startConsumingAIReply(): Promise<void> {
         
         logger.info('📨 AI reply event received', {
           village_id: payload.village_id,
-          wa_user_id: payload.wa_user_id,
+          wa_user_id: channelIdentifier,
           intent: payload.intent,
           messageLength: replyText?.length,
           hasGuidance: !!guidanceText,
@@ -418,7 +467,7 @@ export async function startConsumingAIReply(): Promise<void> {
         });
 
         const isBalanceExhausted = payload.intent === 'AI_BALANCE_EXHAUSTED';
-        const inTakeover = await isUserInTakeover(payload.wa_user_id, payload.village_id, 'WHATSAPP');
+        const inTakeover = await isUserInTakeover(channelIdentifier, payload.village_id, 'WHATSAPP');
         if (inTakeover && !isBalanceExhausted) {
           const messageIdsToComplete = [
             ...(payload.message_id ? [payload.message_id] : []),
@@ -427,51 +476,101 @@ export async function startConsumingAIReply(): Promise<void> {
           if (messageIdsToComplete.length > 0) {
             await markMessagesAsCompleted(messageIdsToComplete);
           }
-          await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
+          await clearAIStatus(channelIdentifier, payload.village_id, 'WHATSAPP');
           logger.info('Suppressed AI reply because takeover is active', {
-            wa_user_id: payload.wa_user_id,
+            wa_user_id: channelIdentifier,
             message_id: payload.message_id,
           });
           channel.ack(msg);
           return;
         }
 
-        // Send main reply message via WhatsApp
-        // NOTE: Message is already saved to database by AI Service via storeAIReplyInDatabase()
-        // We only need to send to WhatsApp here - DO NOT save again to avoid duplicates!
-        const result = await sendTextMessage(payload.wa_user_id, replyText, payload.village_id);
+        // Send main reply message via WhatsApp, then persist the provider-backed message id.
+        const result = await sendTextMessage(channelIdentifier, replyText, payload.village_id);
 
         if (result.success) {
           logger.info('✅ AI reply sent to WhatsApp successfully', {
-            wa_user_id: payload.wa_user_id,
+            wa_user_id: channelIdentifier,
             message_id: result.message_id,
           });
-          
-          // If there's a guidance message, send it as a separate bubble after a short delay
-          // NOTE: Guidance is also already saved by AI Service
+
+          let replyPersisted = true;
+          if (result.message_id) {
+            replyPersisted = await persistSentAIMessage(
+              {
+                village_id: payload.village_id,
+                wa_user_id: channelIdentifier,
+                channel: 'WHATSAPP',
+                channel_identifier: channelIdentifier,
+                message_id: result.message_id,
+                message_text: replyText,
+                source: 'AI',
+                delivery_status: 'sent',
+              },
+              {
+                wa_user_id: channelIdentifier,
+                village_id: payload.village_id,
+                kind: 'reply',
+              }
+            );
+          }
+
+          let guidancePersisted = true;
+
+          // If there's a guidance message, send it as a separate bubble after a short delay.
           if (guidanceText && guidanceText.trim()) {
             // Small delay to ensure messages appear in order
             await new Promise(resolve => setTimeout(resolve, 500));
-            
-            const guidanceResult = await sendTextMessage(payload.wa_user_id, guidanceText, payload.village_id);
-            
+
+            const guidanceResult = await sendTextMessage(channelIdentifier, guidanceText, payload.village_id);
+
             if (guidanceResult.success) {
               logger.info('✅ AI guidance message sent to WhatsApp successfully', {
-                wa_user_id: payload.wa_user_id,
+                wa_user_id: channelIdentifier,
                 message_id: guidanceResult.message_id,
               });
+
+              if (guidanceResult.message_id) {
+                guidancePersisted = await persistSentAIMessage(
+                  {
+                    village_id: payload.village_id,
+                    wa_user_id: channelIdentifier,
+                    channel: 'WHATSAPP',
+                    channel_identifier: channelIdentifier,
+                    message_id: guidanceResult.message_id,
+                    message_text: guidanceText,
+                    source: 'AI',
+                    delivery_status: 'sent',
+                  },
+                  {
+                    wa_user_id: channelIdentifier,
+                    village_id: payload.village_id,
+                    kind: 'guidance',
+                  }
+                );
+              }
             } else {
               logger.warn('⚠️ Failed to send AI guidance message to WhatsApp', {
-                wa_user_id: payload.wa_user_id,
+                wa_user_id: channelIdentifier,
                 error: guidanceResult.error,
               });
             }
           }
 
+          if (!replyPersisted || !guidancePersisted) {
+            logger.warn('AI WhatsApp reply delivered with incomplete local persistence', {
+              wa_user_id: channelIdentifier,
+              village_id: payload.village_id,
+              replyPersisted,
+              guidancePersisted,
+              message_id: payload.message_id,
+            });
+          }
+
           // Send contacts as separate vCard messages (WhatsApp only)
           if (payload.contacts && payload.contacts.length > 0) {
             logger.info('📇 Sending contacts as vCard messages', {
-              wa_user_id: payload.wa_user_id,
+              wa_user_id: channelIdentifier,
               contact_count: payload.contacts.length,
             });
             
@@ -480,7 +579,7 @@ export async function startConsumingAIReply(): Promise<void> {
               await new Promise(resolve => setTimeout(resolve, 300));
               
               const contactResult = await sendContactMessage(
-                payload.wa_user_id,
+                channelIdentifier,
                 {
                   name: contact.name,
                   phone: contact.phone,
@@ -492,13 +591,13 @@ export async function startConsumingAIReply(): Promise<void> {
               
               if (contactResult.success) {
                 logger.info('✅ Contact vCard sent successfully', {
-                  wa_user_id: payload.wa_user_id,
+                  wa_user_id: channelIdentifier,
                   contact_name: contact.name,
                   message_id: contactResult.message_id,
                 });
               } else {
                 logger.warn('⚠️ Failed to send contact vCard', {
-                  wa_user_id: payload.wa_user_id,
+                  wa_user_id: channelIdentifier,
                   contact_name: contact.name,
                   error: contactResult.error,
                 });
@@ -507,15 +606,15 @@ export async function startConsumingAIReply(): Promise<void> {
           }
 
           if (isBalanceExhausted) {
-            await updateConversation(payload.wa_user_id, replyText, undefined, false, payload.village_id, 'WHATSAPP');
-            await setAIPendingBalance(payload.wa_user_id, payload.message_id, payload.village_id, 'WHATSAPP');
+            await updateConversation(channelIdentifier, replyText, undefined, false, payload.village_id, 'WHATSAPP');
+            await setAIPendingBalance(channelIdentifier, payload.message_id, payload.village_id, 'WHATSAPP');
           } else {
             // Update conversation summary with AI response and reset unread count (AI handled it)
-            await updateConversation(payload.wa_user_id, replyText, undefined, 'reset', payload.village_id, 'WHATSAPP');
-            await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
+            await updateConversation(channelIdentifier, replyText, undefined, 'reset', payload.village_id, 'WHATSAPP');
+            await clearAIStatus(channelIdentifier, payload.village_id, 'WHATSAPP');
 
             // Clear bubble state so next messages start fresh (not superseded)
-            clearUserBubble(payload.village_id, payload.wa_user_id);
+            clearUserBubble(payload.village_id, channelIdentifier);
 
             // Mark messages as completed - handle both single and batched messages
             const messageIdsToComplete: string[] = [];
@@ -532,19 +631,19 @@ export async function startConsumingAIReply(): Promise<void> {
               try {
                 await markMessagesAsCompleted(messageIdsToComplete);
                 logger.info('✅ Messages marked as completed', {
-                  wa_user_id: payload.wa_user_id,
+                  wa_user_id: channelIdentifier,
                   count: messageIdsToComplete.length,
                   messageIds: messageIdsToComplete,
                 });
               } catch (e) {
                 // Ignore - might not have pending messages
-                logger.debug('No pending messages to mark complete', { wa_user_id: payload.wa_user_id });
+                logger.debug('No pending messages to mark complete', { wa_user_id: channelIdentifier });
               }
             }
           }
         } else {
           logger.error('❌ Failed to send AI reply', {
-            wa_user_id: payload.wa_user_id,
+            wa_user_id: channelIdentifier,
             error: result.error,
           });
           throw new Error(result.error || 'Failed to send AI reply');
@@ -572,9 +671,12 @@ export async function startConsumingAIReply(): Promise<void> {
  */
 interface AIErrorEvent {
   village_id?: string;
+  channel?: ChannelType;
+  channel_identifier?: string;
   wa_user_id: string;
   error_message: string;
   message_id?: string;
+  pending_message_id?: string;
   batched_message_ids?: string[];
 }
 
@@ -612,16 +714,20 @@ export async function startConsumingAIError(): Promise<void> {
 
       try {
         const payload: AIErrorEvent = JSON.parse(msg.content.toString());
-        
+        const { channel: targetChannel, channelIdentifier } = resolveConversationTarget(payload);
+        const pendingMessageId = payload.pending_message_id || payload.message_id;
+
         logger.info('📨 AI error event received', {
           village_id: payload.village_id,
-          wa_user_id: payload.wa_user_id,
+          channel: targetChannel,
+          channel_identifier: channelIdentifier,
           error_message: payload.error_message,
           batched_message_ids: payload.batched_message_ids,
+          pending_message_id: pendingMessageId,
         });
 
         // Set AI error status in conversation
-        await setAIError(payload.wa_user_id, payload.error_message, payload.message_id, payload.village_id, 'WHATSAPP');
+        await setAIError(channelIdentifier, payload.error_message, pendingMessageId, payload.village_id, targetChannel);
 
         // Mark batched messages as failed for retry
         if (payload.batched_message_ids && payload.batched_message_ids.length > 0) {
@@ -635,7 +741,8 @@ export async function startConsumingAIError(): Promise<void> {
         }
 
         logger.info('⚠️ AI error status set for conversation', {
-          wa_user_id: payload.wa_user_id,
+          channel: targetChannel,
+          channel_identifier: channelIdentifier,
         });
 
         // Acknowledge message
@@ -660,6 +767,8 @@ export async function startConsumingAIError(): Promise<void> {
  */
 interface MessageStatusEvent {
   village_id?: string;
+  channel?: ChannelType;
+  channel_identifier?: string;
   wa_user_id: string;
   message_ids: string[];
   status: 'processing' | 'completed' | 'failed';
@@ -700,10 +809,12 @@ export async function startConsumingMessageStatus(): Promise<void> {
 
       try {
         const payload: MessageStatusEvent = JSON.parse(msg.content.toString());
+        const { channel: targetChannel, channelIdentifier } = resolveConversationTarget(payload);
 
         logger.info('📨 Message status event received', {
           village_id: payload.village_id,
-          wa_user_id: payload.wa_user_id,
+          channel: targetChannel,
+          channel_identifier: channelIdentifier,
           status: payload.status,
           messageCount: payload.message_ids.length,
         });
@@ -713,7 +824,7 @@ export async function startConsumingMessageStatus(): Promise<void> {
           case 'completed':
             await markMessagesAsCompleted(payload.message_ids);
             // Clear AI processing status when completed
-            await clearAIStatus(payload.wa_user_id, payload.village_id, 'WHATSAPP');
+            await clearAIStatus(channelIdentifier, payload.village_id, targetChannel);
             logger.info('✅ Messages completed and removed from pending queue', {
               count: payload.message_ids.length,
               messageIds: payload.message_ids,
@@ -725,11 +836,11 @@ export async function startConsumingMessageStatus(): Promise<void> {
             }
             // Set AI error status when failed
             await setAIError(
-              payload.wa_user_id,
+              channelIdentifier,
               payload.error_message || 'Unknown error',
               payload.message_ids[0],
               payload.village_id,
-              'WHATSAPP'
+              targetChannel
             );
             break;
           case 'processing':

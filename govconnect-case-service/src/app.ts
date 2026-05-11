@@ -10,6 +10,7 @@ import healthRoutes from './routes/health.routes';
 import userRoutes from './routes/user.routes';
 import serviceCatalogRoutes from './routes/service-catalog.routes';
 import complaintMetaRoutes from './routes/complaint-meta.routes';
+import internalRoutes from './routes/internal.routes';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.middleware';
 import { config } from './config/env';
 import { swaggerSpec } from './config/swagger';
@@ -88,6 +89,7 @@ const writeRateLimit = rateLimit({
 
 // Register routes
 app.use('/health', healthRoutes);
+app.use('/internal', internalRoutes);
 app.use('/laporan', writeRateLimit, complaintRoutes);
 app.use('/', serviceCatalogRoutes);
 app.use('/', complaintMetaRoutes);

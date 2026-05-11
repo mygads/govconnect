@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { deleteKnowledgeVector } from '@/lib/ai-service'
+import { resolveVillageKnowledgeCategory } from '@/lib/knowledge-categories'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -78,37 +79,14 @@ export async function PUT(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    let resolvedCategoryId = category_id as string | undefined
-    let resolvedCategoryName = category as string | undefined
-
-    if (!resolvedCategoryId && category) {
-      const existingCategory = await prisma.knowledge_categories.findFirst({
-        where: {
-          name: category,
-          village_id: session.admin.village_id || undefined,
-        }
-      })
-
-      if (existingCategory) {
-        resolvedCategoryId = existingCategory.id
-        resolvedCategoryName = existingCategory.name
-      } else if (session.admin.village_id) {
-        const created = await prisma.knowledge_categories.create({
-          data: {
-            village_id: session.admin.village_id,
-            name: category,
-            is_default: false,
-          }
-        })
-        resolvedCategoryId = created.id
-        resolvedCategoryName = created.name
-      }
-    } else if (resolvedCategoryId) {
-      const categoryRef = await prisma.knowledge_categories.findUnique({
-        where: { id: resolvedCategoryId }
-      })
-      resolvedCategoryName = categoryRef?.name || resolvedCategoryName
-    }
+    const resolvedCategoryRef = await resolveVillageKnowledgeCategory({
+      villageId: existing.village_id || session.admin.village_id,
+      categoryId: category_id,
+      categoryName: category,
+      createIfMissing: true,
+    })
+    const resolvedCategoryId = resolvedCategoryRef.categoryId
+    const resolvedCategoryName = resolvedCategoryRef.categoryName
 
     const processedKeywords = keywords
       ? keywords.map((k: string) => k.toLowerCase().trim()).filter(Boolean)

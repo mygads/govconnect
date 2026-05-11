@@ -12,6 +12,12 @@ enum ChannelType {
   WEBCHAT
 }
 
+enum ServiceMode {
+  ONLINE
+  OFFLINE
+  BOTH
+}
+
 model Complaint {
   id           String   @id @default(cuid())
   complaint_id String   @unique
@@ -36,10 +42,21 @@ model Complaint {
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
 
+  // Delivery-confirmed lifecycle. Populated by callback from the
+  // notification/channel service AFTER the citizen actually received
+  // the status update. `status_delivered_at` is the source-of-truth
+  // timestamp that marks a status transition as "communicated".
+  status_notified_at DateTime?
+  status_delivered_at DateTime?
+  last_delivery_message_id String?
+  last_delivery_status String?
+  last_delivery_error String? @db.Text
+  last_delivery_attempt_at DateTime?
+
   category     ComplaintCategory? @relation(fields: [category_id], references: [id])
   type         ComplaintType? @relation(fields: [type_id], references: [id])
   updates      ComplaintUpdate[]
-  
+
   @@index([wa_user_id])
   @@index([channel, channel_identifier])
   @@index([status])
@@ -59,6 +76,7 @@ model ComplaintCategory {
   id          String   @id @default(cuid())
   village_id  String
   name        String
+  name_key    String
   description String?  @db.Text
   is_active   Boolean  @default(true)
   created_at  DateTime @default(now())
@@ -67,8 +85,10 @@ model ComplaintCategory {
   types       ComplaintType[]
   complaints  Complaint[]
 
+  @@unique([village_id, name_key])
   @@index([village_id])
   @@index([name])
+  @@index([name_key])
   @@map("complaint_categories")
 }
 
@@ -76,19 +96,24 @@ model ComplaintType {
   id            String   @id @default(cuid())
   category_id   String
   name          String
+  name_key      String
   description   String?  @db.Text
   is_urgent     Boolean  @default(false)
   require_address Boolean @default(false)
   send_important_contacts Boolean @default(false)
   important_contact_category String?
+  important_contact_category_id String?
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
   category      ComplaintCategory @relation(fields: [category_id], references: [id], onDelete: Cascade)
   complaints    Complaint[]
 
+  @@unique([category_id, name_key])
   @@index([category_id])
   @@index([name])
+  @@index([name_key])
+  @@index([important_contact_category_id])
   @@map("complaint_types")
 }
 
@@ -130,10 +155,11 @@ model ServiceItem {
   category_id String
   name        String
   description String   @db.Text
-  slug        String   @unique
-  mode        String   @default("both") // online|offline|both
+  slug        String
+  mode        ServiceMode @default(BOTH)
   estimated_cost            String?  @db.Text
   estimated_processing_time String?  @db.Text
+  citizen_fields_json Json?
   is_active   Boolean  @default(true)
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
@@ -142,6 +168,7 @@ model ServiceItem {
   requirements ServiceRequirement[]
   requests    ServiceRequest[]
 
+  @@unique([village_id, slug])
   @@index([village_id])
   @@index([category_id])
   @@index([mode])
@@ -184,13 +211,22 @@ model ServiceRequest {
   result_file_url       String?  // URL file hasil (surat, dokumen, dll)
   result_file_name      String?  // Nama file asli
   result_description    String?  @db.Text // Deskripsi hasil dari admin
-  
+  idempotency_key       String?
+
   edit_token            String?  @unique
   edit_token_expires_at DateTime?
   edit_token_used_at    DateTime?
   deleted_at            DateTime? // Soft delete: null = active, set = deleted
   created_at            DateTime @default(now())
   updated_at            DateTime @updatedAt
+
+  // Delivery-confirmed lifecycle (see Complaint for semantics).
+  status_notified_at DateTime?
+  status_delivered_at DateTime?
+  last_delivery_message_id String?
+  last_delivery_status String?
+  last_delivery_error String? @db.Text
+  last_delivery_attempt_at DateTime?
 
   service               ServiceItem @relation(fields: [service_id], references: [id])
 
@@ -201,7 +237,38 @@ model ServiceRequest {
   @@index([village_id])
   @@index([created_at])
   @@index([deleted_at])
+  @@unique([service_id, channel, channel_identifier, idempotency_key], map: "service_requests_idempotency_key")
   @@map("service_requests")
+}
+
+// ==================== EVENT OUTBOX ====================
+//
+// Transactional-outbox pattern so every status mutation publishes its
+// domain event atomically with the DB write. A background worker picks
+// pending rows, publishes to RabbitMQ/HTTP, and marks them sent. On
+// failure, attempt_count/next_retry_at drive exponential backoff; after
+// N retries the row is moved to status='dead' for admin replay.
+//
+// Replaces the previous best-effort "persist then publishEvent()" where
+// a crash between the two caused event loss.
+model EventOutbox {
+  id             String   @id @default(cuid())
+  routing_key    String   // e.g. "govconnect.status.updated"
+  payload_json   Json
+  correlation_id String?
+  entity_type    String?  // "complaint" | "service_request"
+  entity_id      String?
+  status         String   @default("pending") // "pending" | "sent" | "dead"
+  attempt_count  Int      @default(0)
+  last_error     String?  @db.Text
+  next_retry_at  DateTime?
+  sent_at        DateTime?
+  created_at     DateTime @default(now())
+
+  @@index([status, next_retry_at])
+  @@index([routing_key, created_at])
+  @@index([correlation_id])
+  @@map("event_outbox")
 }
 
 

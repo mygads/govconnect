@@ -185,7 +185,40 @@ Case Service mengelola **Laporan Warga** dan **Permohonan Layanan** dalam sistem
           description: 'Get complaint and service request history for a user',
           security: [{ InternalApiKey: [] }],
           parameters: [{ in: 'path', name: 'wa_user_id', required: true, schema: { type: 'string' } }],
-          responses: { '200': { description: 'User complaint and service request history' } },
+          responses: { '200': { description: 'User complaint and service request history with delivery tracking fields' } },
+        },
+      },
+
+      '/internal/delivery-callback': {
+        post: {
+          tags: ['Internal'],
+          summary: 'Update delivery lifecycle for case records',
+          description: 'Used by notification-service to mark status_notified_at/status_delivered_at based on normalized transport callbacks. Stale callbacks for superseded statuses are ignored.',
+          security: [{ InternalApiKey: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['reference_number', 'status', 'delivery_status'],
+                  properties: {
+                    reference_number: { type: 'string', example: 'LAP-20260511-001' },
+                    entity_type: { type: 'string', example: 'complaint' },
+                    status: { type: 'string', example: 'DONE' },
+                    delivery_status: { type: 'string', enum: ['sent', 'delivered', 'read', 'failed'] },
+                    message_id: { type: 'string', example: 'wamid.HBg...' },
+                    occurred_at: { type: 'string', format: 'date-time' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Delivery lifecycle updated or ignored as stale' },
+            '400': { description: 'Invalid payload' },
+            '404': { description: 'Referenced complaint or service request not found' },
+          },
         },
       },
 

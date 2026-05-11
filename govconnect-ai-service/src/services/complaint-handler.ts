@@ -12,7 +12,6 @@ import {
   updateComplaintByUser,
   getUserHistory,
 } from './case-client.service';
-import { getImportantContacts } from './important-contacts.service';
 import { rateLimiterService } from './rate-limiter.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { classifyConfirmation } from './confirmation-classifier.service';
@@ -20,14 +19,12 @@ import { analyzeAddress, classifyUpdateIntent } from './micro-llm-matcher.servic
 import { rememberMemoryEvent } from './hybrid-memory.service';
 import { saveDefaultAddress, getProfile, recordComplaintCreated } from './user-profile.service';
 import { recordCompletedAction, recordDataCollected } from './conversation-context.service';
-import type { ChannelType, HandlerResult, ContactInfo } from './ump-formatters';
+import type { ChannelType, HandlerResult } from './ump-formatters';
 import {
   buildChannelParams,
-  buildImportantContactsMessage,
   buildCancelSuccessResponse,
   buildCancelErrorResponse,
   buildHistoryResponse,
-  toVCardContacts,
 } from './ump-formatters';
 import {
   addPendingPhoto,
@@ -312,47 +309,17 @@ export async function handleComplaintCreation(
 
     // ==================== IMPORTANT CONTACTS ====================
     let importantContactsMessage = '';
-    let vcardContacts: ContactInfo[] = [];
 
-    if (complaintTypeConfig?.send_important_contacts && complaintTypeConfig?.important_contact_category) {
-      const contacts = await getImportantContacts(
+    if (
+      complaintTypeConfig?.send_important_contacts
+      && (complaintTypeConfig.important_contact_category_id || complaintTypeConfig.important_contact_category)
+    ) {
+      importantContactsMessage = '\n\n📞 Kontak penting terkait akan saya kirim terpisah setelah laporan dibuat.';
+    } else if (complaintTypeConfig?.send_important_contacts) {
+      logger.warn('Complaint type requests important-contact auto send without category config', {
+        userId,
         villageId,
-        complaintTypeConfig.important_contact_category,
-        undefined
-      );
-      importantContactsMessage = buildImportantContactsMessage(contacts, channel);
-      vcardContacts = toVCardContacts(contacts);
-    } else if (isEmergency) {
-      // Dynamic emergency contact resolution:
-      // Instead of a hardcoded kategori→category map, try the kategori label
-      // as a contact category name directly (case-insensitive match in Dashboard DB),
-      // then fall back to 'Darurat', then fall back to all contacts.
-      const kategoriLabel = String(kategori || '').replace(/_/g, ' ');
-      logger.info('Emergency complaint: searching contacts dynamically', { kategori, kategoriLabel });
-
-      // Step 1: Try matching by kategori label (e.g., 'banjir' → contact category 'Banjir' or 'Bencana')
-      let contacts = await getImportantContacts(villageId, kategoriLabel, undefined);
-
-      // Step 2: Fallback — try 'Darurat' category
-      if (!contacts || contacts.length === 0) {
-        contacts = await getImportantContacts(villageId, 'Darurat', undefined);
-      }
-
-      // Step 3: Fallback — try 'Bencana' category (common in village setups)
-      if (!contacts || contacts.length === 0) {
-        contacts = await getImportantContacts(villageId, 'Bencana', undefined);
-      }
-
-      // Step 4: Last resort — get ALL contacts
-      if (!contacts || contacts.length === 0) {
-        contacts = await getImportantContacts(villageId, undefined, undefined);
-      }
-
-      importantContactsMessage = buildImportantContactsMessage(contacts, channel);
-      vcardContacts = toVCardContacts(contacts);
-
-      logger.info('Emergency complaint: contacts resolved', {
-        userId, kategori, hasContacts: contacts.length > 0,
+        kategori,
       });
     }
 
@@ -367,10 +334,6 @@ export async function handleComplaintCreation(
     const multiComplaintHint = '\n\nJika ada laporan lain, silakan langsung sampaikan.';
     const replyText = `Terima kasih.\nLaporan telah kami terima dengan nomor ${complaintId}.${statusLine}${withPhotoNote}${photoReminder}${importantContactsMessage}${multiComplaintHint}`;
     
-    // Return structured result with vCard contacts if available
-    if (vcardContacts.length > 0) {
-      return { replyText, contacts: vcardContacts };
-    }
     return replyText;
   }
 

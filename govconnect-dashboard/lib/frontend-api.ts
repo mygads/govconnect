@@ -158,10 +158,6 @@ export const layanan = {
     return fetchApi<any>('/api/layanan');
   },
 
-  async getActive() {
-    return fetchApi<any>('/api/layanan/active');
-  },
-
   async create(data: any) {
     return fetchApi<any>('/api/layanan', {
       method: 'POST',
@@ -195,7 +191,7 @@ export const layanan = {
 
   async updateCategory(id: string, data: any) {
     return fetchApi<any>(`/api/layanan/categories/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   },
@@ -503,13 +499,6 @@ export const superadmin = {
   async getAdmins() {
     return fetchApi<any>('/api/superadmin/admins');
   },
-
-  async registerAdmin(data: any) {
-    return fetchApi<any>('/api/superadmin/register', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
 };
 
 // ==================== IMPORTANT CONTACTS ====================
@@ -527,7 +516,7 @@ export const importantContacts = {
 
   async update(id: string, data: any) {
     return fetchApi<any>(`/api/important-contacts/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   },
@@ -551,7 +540,7 @@ export const importantContacts = {
 
   async updateCategory(id: string, data: any) {
     return fetchApi<any>(`/api/important-contacts/categories/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   },
@@ -743,17 +732,15 @@ export const knowledgeAnalytics = {
     });
   },
 
-  async deleteGapsBatch(ids: string[]) {
-    return fetchApi<any>('/api/knowledge-gaps/batch', {
+  async deleteGapsBatch(scope: 'closed' | 'all' = 'closed') {
+    return fetchApi<any>(`/api/knowledge-gaps/batch?scope=${scope}`, {
       method: 'DELETE',
-      body: JSON.stringify({ ids }),
     });
   },
 
-  async deleteConflictsBatch(ids: string[]) {
-    return fetchApi<any>('/api/knowledge-conflicts/batch', {
+  async deleteConflictsBatch(scope: 'closed' | 'all' = 'closed') {
+    return fetchApi<any>(`/api/knowledge-conflicts/batch?scope=${scope}`, {
       method: 'DELETE',
-      body: JSON.stringify({ ids }),
     });
   },
 };
@@ -771,10 +758,17 @@ export const cache = {
     });
   },
 
-  async setMode(mode: string) {
+  async setMode(enabled: boolean) {
     return fetchApi<any>('/api/cache', {
       method: 'POST',
-      body: JSON.stringify({ action: 'set-mode', mode }),
+      body: JSON.stringify({ action: 'set-mode', enabled }),
+    });
+  },
+
+  async invalidateVillage(data: { villageId: string; intents?: string[]; retrieval?: boolean; profile?: boolean }) {
+    return fetchApi<any>('/api/cache', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'invalidate-village', ...data }),
     });
   },
 };
@@ -835,7 +829,6 @@ export const apiClient = {
   spamGuard,
   uploads,
   getServices: layanan.getAll,
-  getActiveServices: layanan.getActive,
 };
 
 export default apiClient;

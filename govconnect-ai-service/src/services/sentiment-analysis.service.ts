@@ -78,12 +78,52 @@ export function analyzeSentiment(message: string, _wa_user_id?: string): Sentime
  * 
  * Falls back to neutral if LLM is unavailable (graceful degradation).
  */
+// Pre-filter: lightweight heuristic to skip the LLM sentiment call for
+// messages that are clearly neutral. Saves ~1 LLM call per turn for the
+// vast majority of administration questions ("syarat KTP apa?", "jam
+// buka kapan?"). We ONLY skip when:
+//   - no emotion keyword (anger / sadness / urgency) is present
+//   - no excessive caps / punctuation (signal of yelling)
+//   - message length within a conversational range
+// False negatives here only cause a "neutral" tone, which is still safe
+// for administrative replies.
+const EMOTION_KEYWORD_REGEX = /\b(marah|kesal|kecewa|nggak\s+puas|tidak\s+puas|geram|benci|jengkel|dongkol|sedih|galau|panik|takut|cemas|khawatir|stress|stres|menangis|nangis|pusing|bingung|susah|sulit|kapok|bosan|muak|frustrasi|kekecewaan|sabar|keterlaluan|payah|parah|anjing|bangsat|goblok|tolol|brengsek|bajingan|tolol|cuih|malas|males|sebel|nyebelin|pecundang|buruk|jelek|jahat|cepat|segera|darurat|gawat|bahaya|tolong|help|emergency|please|mohon)\b/i;
+
+const URGENCY_PUNCTUATION_REGEX = /[!?]{2,}|\.\.\.{3,}/;
+
+function looksNeutral(message: string): boolean {
+  const trimmed = message.trim();
+  if (trimmed.length === 0) return true;
+  if (trimmed.length > 250) return false; // long messages often carry emotion
+  if (EMOTION_KEYWORD_REGEX.test(trimmed)) return false;
+  if (URGENCY_PUNCTUATION_REGEX.test(trimmed)) return false;
+  // Excessive caps ratio (>60% letters uppercase on a letter-heavy message).
+  const letters = trimmed.replace(/[^a-zA-Z]/g, '');
+  if (letters.length >= 10) {
+    const uppercase = trimmed.replace(/[^A-Z]/g, '').length;
+    if (uppercase / letters.length > 0.6) return false;
+  }
+  return true;
+}
+
 export async function analyzeSentimentWithLLM(
   message: string,
   wa_user_id?: string,
   context?: { village_id?: string; wa_user_id?: string; session_id?: string; channel?: string }
 ): Promise<SentimentResult> {
   if (!message || message.trim().length < 2) {
+    return {
+      level: 'neutral',
+      score: 0,
+      triggers: [],
+      isEscalationCandidate: false,
+      urgencyLevel: 0,
+      suggestedTone: TONE_SUGGESTIONS.neutral,
+    };
+  }
+
+  // Fast-path: skip LLM when message carries no emotion/urgency signal.
+  if (looksNeutral(message)) {
     return {
       level: 'neutral',
       score: 0,

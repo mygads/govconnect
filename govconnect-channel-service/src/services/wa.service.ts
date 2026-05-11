@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { randomBytes } from 'crypto';
 import logger from '../utils/logger';
 import { config } from '../config/env';
 import prisma from '../config/database';
@@ -2510,23 +2510,3 @@ export function normalizePhoneNumber(phone: string): string {
   return normalized;
 }
 
-/**
- * Validate webhook signature (optional, for production)
- */
-export function validateWebhookSignature(
-  signature: string,
-  body: string | Buffer,
-  secret: string
-): boolean {
-  if (!signature || !secret) return false;
-  const provided = signature.trim().startsWith('sha256=') ? signature.trim().slice(7) : signature.trim();
-  const expected = createHmac('sha256', secret).update(body).digest('hex');
-
-  try {
-    const expectedBuffer = Buffer.from(expected, 'hex');
-    const providedBuffer = Buffer.from(provided, 'hex');
-    return expectedBuffer.length === providedBuffer.length && timingSafeEqual(expectedBuffer, providedBuffer);
-  } catch {
-    return false;
-  }
-}

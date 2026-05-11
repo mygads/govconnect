@@ -97,6 +97,37 @@ describe('verifyAnswer — contact directory grounding', () => {
     expect(decision.reason).toBe('grounded_via_contact_tool');
   });
 
+  it('accepts a contact-directory answer when trusted toolTrace proves directory grounding', () => {
+    const result = baseResult({
+      intent: 'CONTACT_DIRECTORY',
+      response: '*Damkar Bola*\n0200-123456',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId: 'trace-test',
+        toolsUsed: [],
+        toolTrace: [{
+          tool: 'get_important_contact',
+          success: true,
+          durationMs: 10,
+          trustLevel: 'trusted_fact',
+          sourceKind: 'contact_directory_lookup',
+        }],
+      },
+    });
+
+    const decision = verifyAnswer({
+      userMessage: 'ada nomor damkar?',
+      result,
+      toolsUsed: [],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(true);
+    expect(decision.reason).toBe('grounded_via_contact_tool');
+  });
+
   it('accepts when emergency tool was used for an active-emergency reply', () => {
     const result = baseResult({
       intent: 'EMERGENCY_CONTACTS',
@@ -232,6 +263,61 @@ describe('verifyAnswer — non-structured passthrough', () => {
   });
 });
 
+describe('verifyAnswer — mixed structured grounding', () => {
+  it('rewrites mixed service-and-contact answers when contact grounding exists but service grounding is missing', () => {
+    const result = baseResult({
+      intent: 'QUESTION',
+      response: 'Syarat Surat Keterangan Domisili adalah KTP dan KK. Nomor puskesmas 081234567890.',
+    });
+
+    const decision = verifyAnswer({
+      userMessage: 'syarat surat domisili dan nomor puskesmas berapa?',
+      result,
+      toolsUsed: ['get_important_contact'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.kind).toBe('structured_fact_service_detail');
+    expect(decision.reason).toBe('service_detail_without_tool');
+  });
+
+  it('rewrites mixed village-profile-and-contact answers when contact grounding exists but profile grounding is missing', () => {
+    const result = baseResult({
+      intent: 'QUESTION',
+      response: 'Kantor desa buka jam 08:00-15:00. Nomor kantor desa 081234567890.',
+    });
+
+    const decision = verifyAnswer({
+      userMessage: 'jam buka kantor desa dan nomor kantor desa berapa?',
+      result,
+      toolsUsed: ['get_important_contact'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.kind).toBe('structured_fact_village_profile');
+    expect(decision.reason).toBe('village_profile_without_tool');
+  });
+
+  it('accepts mixed service-and-contact answers when both groundings are present', () => {
+    const result = baseResult({
+      intent: 'QUESTION',
+      response: 'Syarat Surat Keterangan Domisili adalah KTP dan KK. Nomor puskesmas 081234567890.',
+    });
+
+    const decision = verifyAnswer({
+      userMessage: 'syarat surat domisili dan nomor puskesmas berapa?',
+      result,
+      toolsUsed: ['get_service_info', 'get_important_contact'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(true);
+    expect(decision.rewritten).toBe(false);
+  });
+});
+
 describe('verifyAnswer — service detail grounding', () => {
   it('rewrites ungrounded service requirement list', () => {
     const result = baseResult({
@@ -269,6 +355,24 @@ describe('verifyAnswer — service detail grounding', () => {
     expect(decision.rewritten).toBe(true);
   });
 
+  it('rewrites ungrounded service availability or mode claim', () => {
+    const result = baseResult({
+      intent: 'SERVICE_INFO',
+      response: 'Surat domisili masih tersedia dan bisa diajukan online lewat link formulir.',
+    });
+
+    const decision = verifyAnswer({
+      userMessage: 'surat domisili bisa online kah?',
+      result,
+      toolsUsed: ['search_knowledge'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.kind).toBe('structured_fact_service_detail');
+    expect(decision.rewritten).toBe(true);
+  });
+
   it('accepts explicit uncertainty for service detail when no service fact is claimed', () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
@@ -285,6 +389,55 @@ describe('verifyAnswer — service detail grounding', () => {
     expect(decision.ok).toBe(true);
     expect(decision.kind).toBe('structured_fact_service_detail');
     expect(decision.reason).toBe('explicit_uncertainty_without_service_tool');
+  });
+
+  it('accepts service detail when trusted toolTrace proves official service grounding', () => {
+    const result = baseResult({
+      intent: 'SERVICE_INFO',
+      response: 'Untuk KTP, syarat utamanya KK dan formulir pengajuan.',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId: 'trace-test',
+        toolsUsed: [],
+        toolTrace: [{
+          tool: 'get_service_info',
+          success: true,
+          durationMs: 12,
+          trustLevel: 'trusted_fact',
+          sourceKind: 'official_service_info',
+        }],
+      },
+    });
+
+    const decision = verifyAnswer({
+      userMessage: 'syarat ktp apa?',
+      result,
+      toolsUsed: [],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(true);
+    expect(decision.reason).toBe('grounded_via_service_tool');
+  });
+
+  it('does not treat edit-link tools as sufficient grounding for service detail facts', () => {
+    const result = baseResult({
+      intent: 'SERVICE_INFO',
+      response: 'Untuk KTP biasanya gratis dan prosesnya 1 hari kerja.',
+    });
+
+    const decision = verifyAnswer({
+      userMessage: 'biaya ktp berapa?',
+      result,
+      toolsUsed: ['get_service_request_edit_link'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.kind).toBe('structured_fact_service_detail');
+    expect(decision.rewritten).toBe(true);
   });
 });
 
@@ -352,6 +505,36 @@ describe('verifyAnswer — village profile grounding', () => {
       userMessage: 'jam buka kantor desa?',
       result,
       toolsUsed: ['get_village_profile'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(true);
+    expect(decision.reason).toBe('grounded_via_profile_tool');
+  });
+
+  it('accepts village profile answer when grounding metadata is attached', () => {
+    const result = baseResult({
+      intent: 'VILLAGE_PROFILE',
+      response: 'Kantor desa buka Senin-Jumat jam 08:00-15:00.',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId: 'trace-test',
+        toolsUsed: [],
+        grounding: {
+          trustedTools: ['get_village_profile'],
+          sourceKinds: ['official_village_profile'],
+          hasTrustedFact: true,
+          hasTrustedRecord: false,
+        },
+      },
+    });
+
+    const decision = verifyAnswer({
+      userMessage: 'jam buka kantor desa?',
+      result,
+      toolsUsed: [],
       handledByGuard: false,
     });
 

@@ -60,6 +60,32 @@ function formatComplaintCategory(complaint: Complaint) {
   return complaint.kategori?.replace(/_/g, " ") || "Belum terkategori"
 }
 
+const COMPLAINT_STATUS_LABELS: Record<string, string> = {
+  OPEN: "Baru",
+  PROCESS: "Proses",
+  DONE: "Selesai",
+  CANCELED: "Dibatalkan",
+  REJECT: "Ditolak",
+}
+
+const VALID_COMPLAINT_TRANSITIONS: Record<string, string[]> = {
+  OPEN: ["PROCESS", "DONE", "CANCELED", "REJECT"],
+  PROCESS: ["DONE", "CANCELED", "REJECT"],
+  DONE: [],
+  CANCELED: [],
+  REJECT: [],
+}
+
+function getComplaintStatusOptions(currentStatus: string) {
+  const normalizedStatus = (currentStatus || "OPEN").toUpperCase()
+  const nextStatuses = VALID_COMPLAINT_TRANSITIONS[normalizedStatus] || []
+
+  return [normalizedStatus, ...nextStatuses].map((status) => ({
+    value: status,
+    label: COMPLAINT_STATUS_LABELS[status] || status,
+  }))
+}
+
 export default function LaporanDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -121,7 +147,8 @@ export default function LaporanDetailPage() {
   const handleUpdateStatus = async () => {
     if (!complaint || !newStatus) return
 
-    const requiresNotes = ["DONE", "CANCELED", "REJECT"].includes(newStatus)
+    const isStatusChange = newStatus !== complaint.status
+    const requiresNotes = isStatusChange && ["DONE", "CANCELED", "REJECT"].includes(newStatus)
     const trimmedNotes = adminNotes.trim()
     if (requiresNotes && !trimmedNotes) {
       toast({
@@ -203,6 +230,10 @@ export default function LaporanDetailPage() {
       </div>
     )
   }
+
+  const allowedStatusOptions = complaint ? getComplaintStatusOptions(complaint.status) : []
+  const isStatusChange = !!complaint && newStatus !== complaint.status
+  const requiresNotes = isStatusChange && ["DONE", "CANCELED", "REJECT"].includes(newStatus)
 
   if (error || !complaint) {
     return (
@@ -420,18 +451,16 @@ export default function LaporanDetailPage() {
                     <SelectValue placeholder="Pilih status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="OPEN">Baru</SelectItem>
-                    <SelectItem value="PROCESS">Proses</SelectItem>
-                    <SelectItem value="DONE">Selesai</SelectItem>
-                    <SelectItem value="CANCELED">Dibatalkan</SelectItem>
-                    <SelectItem value="REJECT">Ditolak</SelectItem>
+                    {allowedStatusOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="notes">
-                  Catatan Admin {["DONE", "CANCELED", "REJECT"].includes(newStatus) ? "(Wajib)" : "(Opsional)"}
+                  Catatan Admin {requiresNotes ? "(Wajib)" : "(Opsional)"}
                 </Label>
                 <Textarea
                   id="notes"
@@ -440,7 +469,7 @@ export default function LaporanDetailPage() {
                   onChange={(e) => setAdminNotes(e.target.value)}
                   rows={4}
                 />
-                {["DONE", "CANCELED", "REJECT"].includes(newStatus) && !adminNotes.trim() && (
+                {requiresNotes && !adminNotes.trim() && (
                   <p className="text-xs text-destructive">Catatan wajib diisi untuk status selesai, dibatalkan, atau ditolak.</p>
                 )}
               </div>

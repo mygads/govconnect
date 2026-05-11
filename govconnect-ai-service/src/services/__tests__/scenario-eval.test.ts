@@ -340,6 +340,43 @@ describe('Production audit scenarios', () => {
       expect(result?.response).toMatch(/(LAP-|mohon|sebutkan)/i);
       expect(result?.metadata.guardrail?.type).toBe('complaint_fsm_resume');
     });
+
+    it('emergency shortcut stores resolved complaint type and original description for follow-up', async () => {
+      const tracker = { preparing: vi.fn(), complete: vi.fn() };
+      const notifyStage = vi.fn();
+      const userId = 'user-emergency-state';
+      const ump = await import('../ump-state');
+      const umpUtils = await import('../ump-utils');
+
+      (umpUtils.resolveComplaintTypeConfig as any).mockResolvedValueOnce({
+        name: 'kecelakaan',
+        is_urgent: true,
+        require_address: true,
+        send_important_contacts: true,
+        category: { name: 'Darurat' },
+      });
+
+      const result = await tryHandleLatePreAgentState({
+        userId,
+        message: 'rumah saya kebakaran tolong',
+        channel: 'whatsapp',
+        villageId: 'village-margahayu',
+        traceId: 'trace-emergency-state',
+        startTime: Date.now(),
+        runWithMicroBudget: async (task: any, fallback: any) => {
+          try { return await task(); } catch { return fallback; }
+        },
+        tracker,
+        notifyStage,
+      });
+
+      const pendingEmergency = await (ump as any).getPendingEmergencyComplaintOfferWithFallback(userId);
+      expect(result).not.toBeNull();
+      expect(result?.intent).toBe('EMERGENCY_CONTACTS');
+      expect(pendingEmergency?.kategori).toBe('kecelakaan');
+      expect(pendingEmergency?.deskripsi).toBe('rumah saya kebakaran tolong');
+      expect(pendingEmergency?.contact_entity).toBe('rumah saya kebakaran tolong');
+    });
   });
 
   describe('D. Service listing deterministic', () => {

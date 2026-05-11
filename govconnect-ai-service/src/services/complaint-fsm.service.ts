@@ -157,17 +157,25 @@ export async function decideAddressResume(input: {
   }
 
   if (trimmed.length > 10) {
+    const hasSpecificAddressPattern =
+      /\brt\s*\.?\s*\d+\s*[\/\s]*rw\s*\.?\s*\d+/i.test(trimmed) ||
+      /\b(?:jl|jln|jalan)\.?\s+.+(?:no|nomor|blok)\.?\s*\d+/i.test(trimmed);
+
+    if (hasSpecificAddressPattern) {
+      return { action: 'resume', alamat: trimmed, reason: 'nlu_usable' };
+    }
+
     const addrAnalysis = await analyzeAddress(trimmed, {
       village_id: input.pendingAddr.village_id,
       is_complaint_context: true,
       kategori: input.pendingAddr.kategori,
     });
 
-    if (addrAnalysis?.quality === 'not_address') {
-      return { action: 'reprompt', reason: 'not_address' };
+    if (addrAnalysis?.has_address && addrAnalysis.address && addrAnalysis.quality === 'specific') {
+      return { action: 'resume', alamat: addrAnalysis.address, reason: 'nlu_usable' };
     }
 
-    return { action: 'resume', alamat: trimmed, reason: 'nlu_usable' };
+    return { action: 'reprompt', reason: 'not_address' };
   }
 
   return { action: 'reprompt', reason: 'too_short' };

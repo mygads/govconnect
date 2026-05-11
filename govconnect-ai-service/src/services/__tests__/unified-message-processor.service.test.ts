@@ -88,6 +88,14 @@ const testState = vi.hoisted(() => {
   return { guardrailEvents, services, prismaMock, conversationSessions };
 });
 
+const crossChannelState = vi.hoisted(() => ({
+  enabled: false,
+  block: '',
+  linkCalls: [] as Array<{ userId: string; phoneNumber: string }>,
+  updateCalls: [] as Array<{ userId: string; data: Record<string, unknown> }>,
+  activityCalls: [] as string[],
+}));
+
 vi.mock('../../lib/prisma', () => ({
   default: testState.prismaMock,
 }));
@@ -160,6 +168,20 @@ vi.mock('../fallback-response.service', () => ({
   getErrorFallback: vi.fn(() => 'fallback'),
 }));
 
+vi.mock('../cross-channel-context.service', () => ({
+  isCrossChannelEnabled: vi.fn(() => crossChannelState.enabled),
+  getCrossChannelContextForLLM: vi.fn(() => crossChannelState.block),
+  linkUserToPhone: vi.fn((userId: string, phoneNumber: string) => {
+    crossChannelState.linkCalls.push({ userId, phoneNumber });
+  }),
+  updateSharedData: vi.fn((userId: string, data: Record<string, unknown>) => {
+    crossChannelState.updateCalls.push({ userId, data });
+  }),
+  recordChannelActivity: vi.fn((userId: string) => {
+    crossChannelState.activityCalls.push(userId);
+  }),
+}));
+
 vi.mock('../response-cache.service', () => ({
   getCachedResponse: vi.fn(() => null),
   setCachedResponse: vi.fn(() => {}),
@@ -182,6 +204,23 @@ vi.mock('../sentiment-analysis.service', () => ({
   analyzeSentimentWithLLM: vi.fn(async () => ({ level: 'neutral' })),
   getSentimentContext: vi.fn(() => ''),
   needsHumanEscalation: vi.fn(() => false),
+}));
+
+vi.mock('../promise-tracker.service', () => ({
+  extractAndRecordPromises: vi.fn(() => []),
+  listOpenPromises: vi.fn(() => []),
+  resolvePromisesByKind: vi.fn(() => {}),
+  buildOpenPromisesContext: vi.fn(() => ''),
+  deriveFulfilledPromisesFromTools: vi.fn(() => []),
+  resolveForwardPromiseOnTakeover: vi.fn(() => {}),
+  _resetPromiseStoreForTests: vi.fn(() => {}),
+}));
+
+vi.mock('../stuck-user-tracker.service', () => ({
+  recordUnhelpful: vi.fn(() => 0),
+  recordHelpful: vi.fn(() => {}),
+  isStuck: vi.fn(() => false),
+  buildStuckEscalationSuffix: vi.fn(() => ''),
 }));
 
 vi.mock('../channel-client.service', () => ({
@@ -319,7 +358,17 @@ vi.mock('../case-client.service', () => ({
 import { runAgent } from '../agent';
 import { canProcessVillageAI } from '../ai-wallet.service';
 import { getCachedResponse } from '../response-cache.service';
-import { processUnifiedMessage } from '../unified-message-processor.service';
+import { buildHybridMemorySummary } from '../hybrid-memory.service';
+import {
+  getCrossChannelContextForLLM,
+  isCrossChannelEnabled,
+  linkUserToPhone,
+  recordChannelActivity,
+  updateSharedData,
+} from '../cross-channel-context.service';
+import { __test_only__, processUnifiedMessage } from '../unified-message-processor.service';
+import { getAutoFillSuggestionsWithFallback } from '../user-profile.service';
+import { deriveLastDiscussedServiceContext } from '../ump-utils';
 import {
   clearActiveServiceInfo,
   clearPendingServiceClarification,
@@ -329,6 +378,48 @@ import {
   setPendingServiceClarification,
   setPendingServiceFormOffer,
 } from '../ump-state';
+
+describe('isExplicitHumanHandoffRequest', () => {
+  it('treats a direct human handoff request as explicit', () => {
+    expect(__test_only__.isExplicitHumanHandoffRequest('minta disambungkan ke petugas')).toBe(true);
+    expect(__test_only__.isExplicitHumanHandoffRequest('cs manusia dong')).toBe(true);
+    expect(__test_only__.isExplicitHumanHandoffRequest('operator')).toBe(true);
+  });
+
+  it('does not escalate plain dissatisfaction by itself', () => {
+    expect(__test_only__.isExplicitHumanHandoffRequest('ini tidak membantu')).toBe(false);
+    expect(__test_only__.isExplicitHumanHandoffRequest('jawabannya jelek')).toBe(false);
+    expect(__test_only__.isExplicitHumanHandoffRequest('komplain cs')).toBe(false);
+  });
+});
+
+describe('classifyHelpfulnessForStuck', () => {
+  it('treats short clarifying prompts as helpful instead of retrieval-empty', () => {
+    expect(__test_only__.classifyHelpfulnessForStuck({
+      success: true,
+      response: 'Mohon sebutkan nama layanannya ya?',
+      intent: 'SERVICE_INFO',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        toolsUsed: [],
+      },
+    } as any)).toBe('helpful');
+  });
+
+  it('keeps very short unguided replies classified as retrieval-empty', () => {
+    expect(__test_only__.classifyHelpfulnessForStuck({
+      success: true,
+      response: 'Belum ada.',
+      intent: 'QUESTION',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        toolsUsed: [],
+      },
+    } as any)).toBe('retrieval_empty');
+  });
+});
 
 describe('processUnifiedMessage service clarification flow', () => {
   const userId = 'ump-clarification-user';
@@ -341,7 +432,15 @@ describe('processUnifiedMessage service clarification flow', () => {
     vi.mocked(canProcessVillageAI).mockResolvedValue({ allowed: true, balanceUsd: 10, status: 'ok' } as any);
     vi.mocked(getCachedResponse).mockClear();
     vi.mocked(getCachedResponse).mockReturnValue(null as any);
+    vi.mocked(buildHybridMemorySummary).mockResolvedValue(undefined as any);
+    vi.mocked(getAutoFillSuggestionsWithFallback).mockResolvedValue({ nama_lengkap: null } as any);
+    vi.mocked(deriveLastDiscussedServiceContext).mockReturnValue({});
     vi.mocked(runAgent).mockClear();
+    crossChannelState.enabled = false;
+    crossChannelState.block = '';
+    crossChannelState.linkCalls.length = 0;
+    crossChannelState.updateCalls.length = 0;
+    crossChannelState.activityCalls.length = 0;
     clearActiveServiceInfo(userId);
     clearPendingServiceClarification(userId);
     clearPendingServiceFormOffer(userId);
@@ -444,6 +543,60 @@ describe('processUnifiedMessage service clarification flow', () => {
     });
   });
 
+  it('prefers active service state over history-derived service context when both exist', async () => {
+    vi.mocked(deriveLastDiscussedServiceContext).mockReturnValue({
+      serviceName: 'Surat Pengantar KTP',
+      serviceSlug: 'surat-pengantar-ktp',
+    });
+
+    setPendingServiceClarification(userId, {
+      original_query: 'surat warga',
+      village_id: villageId,
+      source: 'handle_service_info',
+      timestamp: Date.now(),
+      alternatives: [
+        {
+          slug: 'surat-pengantar-ktp',
+          name: 'Surat Pengantar KTP',
+          mode: 'online',
+          is_online: true,
+          can_send_form_link: true,
+        },
+        {
+          slug: 'surat-domisili',
+          name: 'Surat Keterangan Domisili',
+          mode: 'offline',
+          is_online: false,
+          can_send_form_link: false,
+        },
+      ],
+    });
+
+    await processUnifiedMessage({
+      userId,
+      message: 'nomor 2',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: true,
+    });
+
+    await processUnifiedMessage({
+      userId,
+      message: 'bukan itu maksud saya',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [
+        { role: 'assistant', content: 'Untuk layanan *Surat Pengantar KTP*, pengajuannya online ya Pak/Bu.' },
+      ],
+      isEvaluation: true,
+    });
+
+    const conversationCtx = vi.mocked(runAgent).mock.calls.at(-1)?.[2] as any;
+    expect(conversationCtx.activeServiceSlug).toBe('surat-domisili');
+    expect(conversationCtx.activeServiceName).toBe('Surat Keterangan Domisili');
+  });
+
   it('defers ambiguous clarification replies to the agent instead of hard re-prompting', async () => {
     setPendingServiceClarification(userId, {
       original_query: 'surat warga',
@@ -541,7 +694,15 @@ describe('processUnifiedMessage pending service offer flow', () => {
     vi.mocked(canProcessVillageAI).mockResolvedValue({ allowed: true, balanceUsd: 10, status: 'ok' } as any);
     vi.mocked(getCachedResponse).mockClear();
     vi.mocked(getCachedResponse).mockReturnValue(null as any);
+    vi.mocked(buildHybridMemorySummary).mockResolvedValue(undefined as any);
+    vi.mocked(getAutoFillSuggestionsWithFallback).mockResolvedValue({ nama_lengkap: null } as any);
+    vi.mocked(deriveLastDiscussedServiceContext).mockReturnValue({});
     vi.mocked(runAgent).mockClear();
+    crossChannelState.enabled = false;
+    crossChannelState.block = '';
+    crossChannelState.linkCalls.length = 0;
+    crossChannelState.updateCalls.length = 0;
+    crossChannelState.activityCalls.length = 0;
     clearActiveServiceInfo(userId);
     clearPendingServiceClarification(userId);
     clearPendingServiceFormOffer(userId);
@@ -692,5 +853,72 @@ describe('processUnifiedMessage pending service offer flow', () => {
     const promptCtx = vi.mocked(runAgent).mock.calls.at(-1)?.[1] as any;
     expect(promptCtx.routingDecision).toMatchObject({ stateAffinity: 'switches_topic' });
     expect(promptCtx.pendingStateSummary).toContain('Pending tawaran link layanan');
+  });
+
+  it('keeps cross-channel memory enrichment disabled when the feature flag is off', async () => {
+    vi.mocked(buildHybridMemorySummary).mockResolvedValue('Riwayat penting user' as any);
+
+    setPendingServiceFormOffer(userId, {
+      service_slug: 'surat-pengantar-ktp',
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+
+    await processUnifiedMessage({
+      userId,
+      message: 'bukan itu maksud saya',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: false,
+    });
+
+    const promptCtx = vi.mocked(runAgent).mock.calls.at(-1)?.[1] as any;
+    expect(vi.mocked(isCrossChannelEnabled)).toHaveBeenCalled();
+    expect(promptCtx.memorySummary).toBe('Riwayat penting user');
+    expect(vi.mocked(linkUserToPhone)).not.toHaveBeenCalled();
+    expect(vi.mocked(updateSharedData)).not.toHaveBeenCalled();
+    expect(vi.mocked(recordChannelActivity)).not.toHaveBeenCalled();
+    expect(vi.mocked(getCrossChannelContextForLLM)).not.toHaveBeenCalled();
+  });
+
+  it('enriches memory and syncs shared profile data when cross-channel is enabled', async () => {
+    crossChannelState.enabled = true;
+    crossChannelState.block = '[CROSS-CHANNEL CONTEXT]\n[NAMA USER: Warga Test]';
+    vi.mocked(buildHybridMemorySummary).mockResolvedValue('Riwayat penting user' as any);
+    vi.mocked(getAutoFillSuggestionsWithFallback).mockResolvedValue({
+      nama_lengkap: 'Warga Test',
+      no_hp: '081234567890',
+      alamat: 'Jl. Melati 1',
+      rt_rw: 'RT 01 / RW 02',
+      nik: '1234567890123456',
+    } as any);
+
+    setPendingServiceFormOffer(userId, {
+      service_slug: 'surat-pengantar-ktp',
+      village_id: villageId,
+      timestamp: Date.now(),
+    });
+
+    await processUnifiedMessage({
+      userId,
+      message: 'bukan itu maksud saya',
+      channel: 'webchat',
+      villageId,
+      conversationHistory: [],
+      isEvaluation: false,
+    });
+
+    const promptCtx = vi.mocked(runAgent).mock.calls.at(-1)?.[1] as any;
+    expect(promptCtx.memorySummary).toContain('Riwayat penting user');
+    expect(promptCtx.memorySummary).toContain('[CROSS-CHANNEL CONTEXT]');
+    expect(vi.mocked(linkUserToPhone)).toHaveBeenCalledWith(userId, '081234567890');
+    expect(vi.mocked(updateSharedData)).toHaveBeenCalledWith(userId, {
+      name: 'Warga Test',
+      nik: '1234567890123456',
+      address: 'Jl. Melati 1, RT 01 / RW 02',
+    });
+    expect(vi.mocked(recordChannelActivity)).toHaveBeenCalledWith(userId);
+    expect(vi.mocked(getCrossChannelContextForLLM)).toHaveBeenCalledWith(userId);
   });
 });

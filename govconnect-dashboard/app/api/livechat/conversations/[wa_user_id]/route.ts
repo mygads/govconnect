@@ -35,7 +35,7 @@ export async function GET(
     const { wa_user_id } = await params
     const response = await livechat.getConversation(wa_user_id, session.admin.village_id || undefined)
     const data = await response.json()
-    return NextResponse.json(data)
+    return NextResponse.json(data, { status: response.status })
   } catch (error) {
     console.error('Error fetching conversation:', error)
     return NextResponse.json(
@@ -62,7 +62,7 @@ export async function DELETE(
     const { wa_user_id } = await params
     const response = await livechat.deleteConversation(wa_user_id, session.admin.village_id || undefined)
     const data = await response.json()
-    return NextResponse.json(data)
+    return NextResponse.json(data, { status: response.status })
   } catch (error) {
     console.error('Error deleting conversation:', error)
     return NextResponse.json(

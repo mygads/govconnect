@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -60,5 +61,6 @@ export async function POST(request: NextRequest) {
     }
   })
 
+  await invalidateVillageAiCacheSafely(session.admin.village_id)
   return NextResponse.json({ data: contact })
 }

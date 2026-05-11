@@ -8,8 +8,9 @@ const testState = vi.hoisted(() => {
   const prismaMock = {
     $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
       const sql = sqlText(strings);
+      const touchesHealth = /ai_provider_health/.test(sql);
 
-      if (sql.includes('INSERT INTO ai_provider_health')) {
+      if (touchesHealth && /INSERT INTO/i.test(sql)) {
         const [providerId, lane, failThreshold, demotedUntil] = values;
         const key = rowKey(providerId, lane);
         const existing = rows.get(key);
@@ -40,7 +41,7 @@ const testState = vi.hoisted(() => {
         return [];
       }
 
-      if (sql.includes('SELECT provider_id')) {
+      if (touchesHealth && /SELECT\s+provider_id/i.test(sql)) {
         const [providerId, lane] = values;
         const row = rows.get(rowKey(providerId, lane));
         return row ? [row] : [];
@@ -50,16 +51,11 @@ const testState = vi.hoisted(() => {
     }),
     $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
       const sql = sqlText(strings);
+      const touchesHealth = /ai_provider_health/.test(sql);
 
-      if (sql.includes('UPDATE ai_provider_health')) {
-        const [probeUntil, providerId, lane] = values;
-        const key = rowKey(providerId, lane);
-        const row = rows.get(key);
-        if (row) rows.set(key, { ...row, probe_in_flight_until: probeUntil });
-        return 1;
-      }
-
-      if (sql.includes('INSERT INTO ai_provider_health')) {
+      // IMPORTANT: check INSERT before UPDATE — INSERT ... DO UPDATE contains
+      // the word "UPDATE" inside its ON CONFLICT clause.
+      if (touchesHealth && /INSERT INTO/i.test(sql)) {
         const [providerId, lane, consecutiveFailures, demotedUntil, lastSuccessAt, lastFailureAt, probeInFlightUntil] = values;
         rows.set(rowKey(providerId, lane), {
           provider_id: providerId,
@@ -70,6 +66,14 @@ const testState = vi.hoisted(() => {
           last_failure_at: lastFailureAt,
           probe_in_flight_until: probeInFlightUntil,
         });
+        return 1;
+      }
+
+      if (touchesHealth && /^\s*UPDATE/i.test(sql.trim())) {
+        const [probeUntil, providerId, lane] = values;
+        const key = rowKey(providerId, lane);
+        const row = rows.get(key);
+        if (row) rows.set(key, { ...row, probe_in_flight_until: probeUntil });
         return 1;
       }
 

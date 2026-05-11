@@ -24,19 +24,31 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const status = searchParams.get('status') || undefined
+    const search = searchParams.get('search') || undefined
     const limit = searchParams.get('limit') || undefined
     const offset = searchParams.get('offset') || undefined
+    const requestedVillageId = searchParams.get('village_id')?.trim() || ''
+    const targetVillageId = session.admin.village_id || (session.admin.role === 'superadmin' ? requestedVillageId : '')
+
+    if (!targetVillageId) {
+      return NextResponse.json(
+        { error: 'village_id wajib dipilih untuk melihat daftar permohonan layanan.' },
+        { status: 400 },
+      )
+    }
 
     const url = new URL(buildUrl(ServicePath.CASE, '/service-requests'))
     if (status) url.searchParams.set('status', status)
+    if (search) url.searchParams.set('search', search)
     if (limit) url.searchParams.set('limit', limit)
     if (offset) url.searchParams.set('offset', offset)
-    if (session.admin.village_id) {
-      url.searchParams.set('village_id', session.admin.village_id)
-    }
+    url.searchParams.set('village_id', targetVillageId)
 
     const response = await apiFetch(url.toString(), {
-      headers: getHeaders(),
+      headers: getHeaders({
+        'x-village-id': targetVillageId,
+        'x-admin-role': session.admin.role,
+      }),
     })
 
     if (!response.ok) {

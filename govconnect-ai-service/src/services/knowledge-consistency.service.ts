@@ -358,7 +358,25 @@ export async function listInconsistencies(filters: ListFilters) {
 export async function updateInconsistencyStatus(
   id: string,
   patch: { status: InconsistencyStatus; resolvedBy?: string; resolutionNote?: string },
+  villageId?: string,
 ) {
+  const existing = await (prisma as any).ai_knowledge_inconsistencies.findUnique({
+    where: { id },
+    select: { id: true, village_id: true },
+  });
+
+  if (!existing) {
+    const error = new Error('Inconsistency not found') as Error & { code?: string };
+    error.code = 'NOT_FOUND';
+    throw error;
+  }
+
+  if (villageId && existing.village_id !== villageId) {
+    const error = new Error('Forbidden') as Error & { code?: string };
+    error.code = 'FORBIDDEN';
+    throw error;
+  }
+
   return (prisma as any).ai_knowledge_inconsistencies.update({
     where: { id },
     data: {

@@ -114,11 +114,19 @@ export function deriveLastDiscussedServiceContext(
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
 ): LastDiscussedServiceContext {
   const recent = history.slice(-8);
+  const patterns = [
+    /layanan\s+\*([^*\n]+)\*/i,
+    /layanan\s+([^*\n]+?)(?=\s+(?:saat ini|persyaratannya|pengajuannya|belum|bisa|siap|diproses|secara)\b|[.!?\n]|$)/i,
+  ];
+
   for (let index = recent.length - 1; index >= 0; index -= 1) {
     const content = recent[index]?.content || '';
-    const slugMatch = content.match(/layanan\s+\*?([^*\n]+)\*?/i);
-    if (slugMatch?.[1]) {
-      return { serviceName: slugMatch[1].trim() };
+    for (const pattern of patterns) {
+      const match = content.match(pattern);
+      const candidate = match?.[1]?.trim().replace(/[.:,;!?]+$/, '');
+      if (!candidate) continue;
+      if (/^(?:LAY|LAP)-\d/i.test(candidate)) continue;
+      return { serviceName: candidate };
     }
   }
   return {};

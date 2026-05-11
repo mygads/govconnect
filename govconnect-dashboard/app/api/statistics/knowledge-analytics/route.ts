@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSession, resolveVillageId } from '@/lib/auth'
-import { ai } from '@/lib/api-client'
+import { ai, apiFetch, buildUrl, getHeaders, ServicePath } from '@/lib/api-client'
 import prisma from '@/lib/prisma'
 
 async function safeJson(fetcher: () => Promise<Response>) {
@@ -26,6 +26,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Village ID required' }, { status: 400 })
     }
 
+    const consistencySummaryQs = `?villageId=${encodeURIComponent(villageId)}`
+    const consistencyListQs = `?villageId=${encodeURIComponent(villageId)}&status=open&limit=10`
+
     const [
       analyticsData,
       intentData,
@@ -35,6 +38,8 @@ export async function GET(request: NextRequest) {
       memoryData,
       guardrailData,
       toolPolicyData,
+      consistencySummaryData,
+      consistencyListData,
     ] = await Promise.all([
       safeJson(() => ai.getAnalytics({ village_id: villageId })),
       safeJson(() => ai.getAnalyticsIntents({ village_id: villageId })),
@@ -44,6 +49,14 @@ export async function GET(request: NextRequest) {
       safeJson(() => ai.getAnalyticsMemory({ village_id: villageId })),
       safeJson(() => ai.getAnalyticsGuardrails({ village_id: villageId })),
       safeJson(() => ai.getAnalyticsToolPolicy({ village_id: villageId })),
+      safeJson(() => apiFetch(buildUrl(ServicePath.AI, `/api/knowledge-consistency/summary${consistencySummaryQs}`), {
+        headers: getHeaders(),
+        timeout: 15000,
+      })),
+      safeJson(() => apiFetch(buildUrl(ServicePath.AI, `/api/knowledge-consistency${consistencyListQs}`), {
+        headers: getHeaders(),
+        timeout: 15000,
+      })),
     ])
 
     // Build analytics response
@@ -76,6 +89,7 @@ export async function GET(request: NextRequest) {
         firstSeen: g.first_seen_at,
         lastSeen: g.last_seen_at,
         channel: g.channel,
+        resolutionKbId: g.resolution_kb_id,
       }))
       for (const sc of statusCounts) {
         gapStatusCounts[sc.status] = sc._count
@@ -87,6 +101,7 @@ export async function GET(request: NextRequest) {
     let topConflicts: any[] = []
     let conflictStatusCounts: Record<string, number> = { open: 0, resolved: 0, auto_resolved: 0, ignored: 0 }
     let conflictsAvailable = false
+    let conflictSource: 'database' | 'knowledge_consistency' | 'unavailable' = 'unavailable'
     try {
       const [conflicts, conflictCounts] = await Promise.all([
         prisma.knowledge_conflicts.findMany({
@@ -112,11 +127,13 @@ export async function GET(request: NextRequest) {
         firstSeen: c.first_seen_at,
         lastSeen: c.last_seen_at,
         query: c.query_text,
+        resolutionNote: c.resolution_note,
       }))
       for (const sc of conflictCounts) {
         conflictStatusCounts[sc.status] = sc._count
       }
       conflictsAvailable = true
+      conflictSource = 'database'
     } catch (e) { console.log('Knowledge conflicts DB unavailable') }
 
     let latestEvalRun: any = null
@@ -205,6 +222,41 @@ export async function GET(request: NextRequest) {
     const missRate = overviewSource === 'runtime' && totalQueries > 0
       ? ((knowledgeMisses / totalQueries) * 100).toFixed(1)
       : null
+    const knowledgeConsistencySummary = consistencySummaryData?.summary || {
+      total: 0,
+      byKind: {},
+      bySeverity: {},
+      byStatus: {},
+    }
+    const knowledgeConsistencyItems = Array.isArray(consistencyListData?.items)
+      ? consistencyListData.items.map((item: any) => ({
+          id: item.id,
+          kind: item.kind,
+          severity: item.severity,
+          status: item.status,
+          topicHint: item.topic_hint,
+          sourceATitle: item.source_a_title,
+          sourceBTitle: item.source_b_title,
+          snippetA: item.snippet_a,
+          snippetB: item.snippet_b,
+          similarityScore: item.similarity_score,
+          detectedAt: item.detected_at,
+          resolutionNote: item.resolution_note,
+        }))
+      : []
+    const openKnowledgeConsistencyCount = knowledgeConsistencySummary.byStatus.open || 0
+    const useCanonicalConflictView = openKnowledgeConsistencyCount > 0 || knowledgeConsistencyItems.length > 0
+
+    if (useCanonicalConflictView) {
+      conflictStatusCounts = {
+        open: openKnowledgeConsistencyCount,
+        resolved: knowledgeConsistencySummary.byStatus.resolved || 0,
+        auto_resolved: 0,
+        ignored: knowledgeConsistencySummary.byStatus.ignored || 0,
+      }
+      topConflicts = []
+      conflictSource = 'knowledge_consistency'
+    }
 
     return NextResponse.json({
       overview: {
@@ -225,7 +277,7 @@ export async function GET(request: NextRequest) {
       metricSources: {
         overview: overviewSource,
         gaps: gapsAvailable ? 'database' : 'unavailable',
-        conflicts: conflictsAvailable ? 'database' : 'unavailable',
+        conflicts: conflictSource,
         evaluation: evaluationAvailable ? 'database' : 'unavailable',
         retrievalObservability: retrievalData ? 'ai-service' : 'unavailable',
         memoryObservability: memoryData ? 'ai-service' : 'unavailable',
@@ -238,6 +290,7 @@ export async function GET(request: NextRequest) {
         persistentGapsAvailable: gapsAvailable,
         persistentConflictsAvailable: conflictsAvailable,
         latestEvalAvailable: !!latestEvalRun,
+        knowledgeConsistencyAvailable: knowledgeConsistencySummary.total > 0 || knowledgeConsistencyItems.length > 0,
       },
       intents: Array.isArray(intents)
         ? intents.slice(0, 20).map((i: any) => ({
@@ -253,10 +306,15 @@ export async function GET(request: NextRequest) {
         totalOpen: gapStatusCounts.open,
       },
       knowledgeConflicts: {
+        source: conflictSource,
         topConflicts,
         statusCounts: conflictStatusCounts,
         totalOpen: conflictStatusCounts.open,
         totalAutoResolved: conflictStatusCounts.auto_resolved,
+      },
+      knowledgeConsistency: {
+        summary: knowledgeConsistencySummary,
+        items: knowledgeConsistencyItems,
       },
       retrievalObservability: retrievalData,
       memoryObservability: memoryData,

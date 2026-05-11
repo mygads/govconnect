@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { addKnowledgeVector, updateKnowledgeVector } from '@/lib/ai-service'
+import { findVillageKnowledgeCategoryByName, resolveVillageKnowledgeCategory } from '@/lib/knowledge-categories'
 import { getVillageTimezoneLabel, resolveVillageTimezone } from '@/lib/utils'
 
 const PROFILE_CATEGORY_NAME = 'Profil Desa'
@@ -83,21 +84,19 @@ async function upsertProfileKnowledge(villageId: string, adminId: string | null,
   longitude?: number | null
   operating_hours?: Record<string, { open?: string; close?: string }> | null
 }) {
-  let category = await prisma.knowledge_categories.findFirst({
-    where: { village_id: villageId, name: PROFILE_CATEGORY_NAME },
+  const resolvedCategory = await resolveVillageKnowledgeCategory({
+    villageId,
+    categoryName: PROFILE_CATEGORY_NAME,
+    createIfMissing: true,
+    isDefaultOnCreate: true,
   })
 
-  if (!category) {
-    category = await prisma.knowledge_categories.create({
-      data: {
-        village_id: villageId,
-        name: PROFILE_CATEGORY_NAME,
-        is_default: true,
-      },
-    })
-  }
+  if (!resolvedCategory.categoryId || !resolvedCategory.categoryName) return null
 
-  if (!category) return null
+  const category = {
+    id: resolvedCategory.categoryId,
+    name: resolvedCategory.categoryName,
+  }
 
   const content = buildProfileKnowledgeContent(profile)
   const keywords = buildProfileKeywords(profile)
@@ -229,9 +228,7 @@ export async function GET(request: NextRequest) {
     prisma.village_profiles.findFirst({
       where: { village_id: session.admin.village_id }
     }),
-    prisma.knowledge_categories.findFirst({
-      where: { village_id: session.admin.village_id, name: PROFILE_CATEGORY_NAME },
-    }),
+    findVillageKnowledgeCategoryByName(session.admin.village_id, PROFILE_CATEGORY_NAME),
   ])
 
   // Get knowledge if category exists

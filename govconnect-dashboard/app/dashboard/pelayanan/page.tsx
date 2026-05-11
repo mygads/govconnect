@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useAuth } from "@/components/auth/AuthContext"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
+import { serviceRequests } from "@/lib/frontend-api"
 import { formatDateTime } from "@/lib/utils"
 
 interface ServiceRequest {
@@ -56,6 +57,7 @@ export default function ServiceRequestsPage() {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
+  const [pagination, setPagination] = useState({ total: 0, limit: 20, offset: 0 })
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [showDeletedModal, setShowDeletedModal] = useState(false)
   const [deletedItems, setDeletedItems] = useState<ServiceRequest[]>([])
@@ -68,16 +70,21 @@ export default function ServiceRequestsPage() {
   const fetchRequests = async () => {
     try {
       setLoading(true)
-      const query = statusFilter !== "all" ? `?status=${statusFilter}` : ""
-      const response = await fetch(`/api/service-requests${query}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.error || "Gagal memuat permohonan layanan")
+      const params: Record<string, string> = {
+        limit: String(pagination.limit),
+        offset: String(pagination.offset),
       }
-      const data = await response.json()
+      if (statusFilter !== "all") params.status = statusFilter
+      if (search.trim()) params.search = search.trim()
+
+      const data = await serviceRequests.getAll(params)
       setRequests(data.data || [])
+      setPagination((prev) => ({
+        ...prev,
+        total: data.pagination?.total ?? 0,
+        limit: data.pagination?.limit ?? prev.limit,
+        offset: data.pagination?.offset ?? prev.offset,
+      }))
       setError(null)
     } catch (err: any) {
       setError(err.message || "Gagal memuat permohonan layanan")
@@ -87,26 +94,13 @@ export default function ServiceRequestsPage() {
   }
 
   useEffect(() => {
-    fetchRequests()
-  }, [statusFilter])
+    const timer = setTimeout(() => {
+      fetchRequests()
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [search, statusFilter, pagination.offset])
 
-  const filteredRequests = useMemo(() => {
-    if (!search) return requests
-    const keyword = search.toLowerCase()
-    return requests.filter((item) => {
-      const citizenName = (item.citizen_data_json?.nama_lengkap || '').toLowerCase()
-      const citizenNik = (item.citizen_data_json?.nik || '').toLowerCase()
-      const citizenPhone = (item.citizen_data_json?.no_hp || '').toLowerCase()
-      return (
-        item.request_number.toLowerCase().includes(keyword) ||
-        item.wa_user_id.includes(search) ||
-        item.service?.name?.toLowerCase().includes(keyword) ||
-        citizenName.includes(keyword) ||
-        citizenNik.includes(keyword) ||
-        citizenPhone.includes(keyword)
-      )
-    })
-  }, [requests, search])
+  const filteredRequests = requests
 
   const getStatusBadge = (status: string) => {
     const map: Record<string, string> = {
@@ -230,8 +224,11 @@ export default function ServiceRequestsPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Cari nomor, nama layanan, atau WA"
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  setPagination((prev) => ({ ...prev, offset: 0 }))
+                }}
+                placeholder="Cari nomor, nama layanan, nama warga, NIK, atau WA"
                 className="pl-9"
               />
             </div>
@@ -241,7 +238,10 @@ export default function ServiceRequestsPage() {
                   key={opt.value}
                   variant={statusFilter === opt.value ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setStatusFilter(opt.value)}
+                  onClick={() => {
+                    setPagination((prev) => ({ ...prev, offset: 0 }))
+                    setStatusFilter(opt.value)
+                  }}
                 >
                   {opt.label}
                 </Button>
@@ -256,70 +256,95 @@ export default function ServiceRequestsPage() {
               Belum ada permohonan layanan.
             </div>
           ) : (
-            <div className="space-y-3">
-              {filteredRequests.map((item) => {
-                const nama = item.citizen_data_json?.nama_lengkap || '-'
-                const nik = item.citizen_data_json?.nik || ''
-                const noHp = item.citizen_data_json?.no_hp || item.wa_user_id
-                return (
-                  <div
-                    key={item.id}
-                    className="border rounded-lg p-4 hover:bg-muted/30 transition-colors"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="space-y-2 flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold text-foreground">{item.request_number}</p>
-                          <Badge className={getStatusBadge(item.status)}>{item.status}</Badge>
-                        </div>
-                        <p className="text-sm text-muted-foreground">{item.service?.name}</p>
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                          <span className="inline-flex items-center gap-1.5 text-foreground">
-                            <User className="h-3.5 w-3.5 text-muted-foreground" />
-                            {nama}
-                          </span>
-                          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                            <Phone className="h-3.5 w-3.5" />
-                            {noHp}
-                          </span>
-                          {nik && (
-                            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                              <CreditCard className="h-3.5 w-3.5" />
-                              {nik}
+            <>
+              <div className="space-y-3">
+                {filteredRequests.map((item) => {
+                  const nama = item.citizen_data_json?.nama_lengkap || '-'
+                  const nik = item.citizen_data_json?.nik || ''
+                  const noHp = item.citizen_data_json?.no_hp || item.wa_user_id
+                  return (
+                    <div
+                      key={item.id}
+                      className="border rounded-lg p-4 hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-2 flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-foreground">{item.request_number}</p>
+                            <Badge className={getStatusBadge(item.status)}>{item.status}</Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground">{item.service?.name}</p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                            <span className="inline-flex items-center gap-1.5 text-foreground">
+                              <User className="h-3.5 w-3.5 text-muted-foreground" />
+                              {nama}
                             </span>
-                          )}
+                            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                              <Phone className="h-3.5 w-3.5" />
+                              {noHp}
+                            </span>
+                            {nik && (
+                              <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                                <CreditCard className="h-3.5 w-3.5" />
+                                {nik}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {formatDateTime(item.created_at, user?.village_timezone)}
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {formatDateTime(item.created_at, user?.village_timezone)}
-                        </p>
-                      </div>
-                      <div className="flex flex-col gap-2 shrink-0">
-                        <Link href={`/dashboard/pelayanan/${item.id}`}>
-                          <Button variant="outline" size="sm" className="gap-1.5 w-full">
-                            Lihat Detail
-                            <ChevronRight className="h-4 w-4" />
+                        <div className="flex flex-col gap-2 shrink-0">
+                          <Link href={`/dashboard/pelayanan/${item.id}`}>
+                            <Button variant="outline" size="sm" className="gap-1.5 w-full">
+                              Lihat Detail
+                              <ChevronRight className="h-4 w-4" />
+                            </Button>
+                          </Link>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSoftDelete(item.id)}
+                            disabled={deletingId === item.id}
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5 w-full"
+                          >
+                            {deletingId === item.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                            Hapus
                           </Button>
-                        </Link>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleSoftDelete(item.id)}
-                          disabled={deletingId === item.id}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5 w-full"
-                        >
-                          {deletingId === item.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                          Hapus
-                        </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+              <div className="flex flex-col gap-3 pt-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  Menampilkan {pagination.offset + 1}-{pagination.offset + filteredRequests.length} dari {pagination.total} permohonan
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pagination.offset === 0 || loading}
+                    onClick={() => setPagination((prev) => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }))}
+                  >
+                    Sebelumnya
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pagination.offset + pagination.limit >= pagination.total || loading}
+                    onClick={() => setPagination((prev) => ({ ...prev, offset: prev.offset + prev.limit }))}
+                  >
+                    Berikutnya
+                  </Button>
+                </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

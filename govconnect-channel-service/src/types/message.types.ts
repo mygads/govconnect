@@ -8,6 +8,9 @@ export interface MessageData {
   channel_identifier: string;
   message_id: string;
   message_text: string;
+  reference_number?: string | null;
+  notification_type?: string | null;
+  entity_status?: string | null;
   media_type?: string | null;
   media_url?: string | null;
   media_public_url?: string | null;

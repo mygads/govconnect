@@ -6,8 +6,17 @@ import {
   logSentMessage,
   checkDuplicateMessage,
 } from '../services/message.service';
-import { updateConversation, updateConversationUserProfile, isUserInTakeover } from '../services/takeover.service';
+import {
+  updateConversation,
+  updateConversationUserProfile,
+  isUserInTakeover,
+  setAIProcessing,
+  clearAIStatus,
+  setAIError,
+  setAIPendingBalance,
+} from '../services/takeover.service';
 import { sendTextMessage, sendTypingIndicator, markMessageAsRead } from '../services/wa.service';
+import { publishLivechatEvent } from '../services/livechat-events.service';
 import logger from '../utils/logger';
 import { getQuery } from '../utils/http';
 
@@ -75,7 +84,7 @@ export async function getMessages(req: Request, res: Response): Promise<void> {
  */
 export async function sendMessage(req: Request, res: Response): Promise<void> {
   try {
-    const { village_id, wa_user_id, message } = req.body;
+    const { village_id, wa_user_id, message, notification_type, reference_number, entity_status } = req.body;
 
     const result = await sendTextMessage(wa_user_id, message, village_id);
     const messageId = result.message_id || `system-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -87,6 +96,9 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
       channel_identifier: wa_user_id,
       message_id: messageId,
       message_text: message,
+      reference_number: reference_number || null,
+      notification_type: notification_type || null,
+      entity_status: entity_status || null,
       source: 'SYSTEM',
       delivery_status: result.success ? 'sent' : 'failed',
       status_error: result.success ? undefined : result.error,
@@ -98,6 +110,9 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
       channel: 'WHATSAPP',
       channel_identifier: wa_user_id,
       message_text: message,
+      reference_number: reference_number || null,
+      notification_type: notification_type || null,
+      entity_status: entity_status || null,
       status: result.success ? 'sent' : 'failed',
       error_msg: result.success ? undefined : result.error,
     });
@@ -125,6 +140,161 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
   } catch (error: any) {
     logger.error('Send message error', { error: error.message });
     res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * Deliver a lifecycle / system notification to a webchat user.
+ *
+ * POST /internal/webchat-notification
+ * Body: {
+ *   village_id: string,
+ *   channel_identifier: string,   // webchat user id / session id
+ *   message: string,
+ *   notification_type?: string,   // e.g. "status_updated", "service_approved"
+ *   reference_number?: string,    // LAP-xxx / LAY-xxx for context
+ * }
+ *
+ * Unlike WhatsApp where we push a message via the provider, webchat
+ * lifecycle notifications are delivered by:
+ *   (1) persisting a SYSTEM-origin message to conversation history, and
+ *   (2) publishing a livechat SSE event so an active webchat UI sees it
+ *       immediately, or picks it up on next session fetch.
+ *
+ * notification-service calls this instead of skipping webchat events.
+ */
+export async function sendWebchatSystemNotification(req: Request, res: Response): Promise<void> {
+  try {
+    const {
+      village_id,
+      channel_identifier,
+      message,
+      notification_type,
+      reference_number,
+      entity_status,
+    } = req.body || {};
+
+    if (!channel_identifier || typeof channel_identifier !== 'string') {
+      res.status(400).json({ status: 'error', error: 'channel_identifier required' });
+      return;
+    }
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      res.status(400).json({ status: 'error', error: 'message required' });
+      return;
+    }
+
+    const messageId = `sysnotif-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+    await saveOutgoingMessage({
+      village_id,
+      wa_user_id: undefined,
+      channel: 'WEBCHAT',
+      channel_identifier,
+      message_id: messageId,
+      message_text: message,
+      reference_number: reference_number || null,
+      notification_type: notification_type || null,
+      entity_status: entity_status || null,
+      source: 'SYSTEM',
+      delivery_status: 'delivered',
+    });
+
+    await logSentMessage({
+      village_id,
+      wa_user_id: null as any,
+      channel: 'WEBCHAT',
+      channel_identifier,
+      message_text: message,
+      reference_number: reference_number || null,
+      notification_type: notification_type || null,
+      entity_status: entity_status || null,
+      status: 'sent',
+    });
+
+    try {
+      publishLivechatEvent({
+        type: 'webchat_system_notification',
+        village_id,
+        channel: 'WEBCHAT',
+        channel_identifier,
+        message,
+        message_id: messageId,
+        notification_type: notification_type || 'system',
+        reference_number: reference_number || null,
+      });
+    } catch (sseErr: any) {
+      logger.warn('Failed to publish livechat SSE for webchat notification', {
+        error: sseErr.message,
+        channel_identifier,
+      });
+    }
+
+    res.json({
+      status: 'delivered',
+      channel: 'WEBCHAT',
+      message_id: messageId,
+    });
+  } catch (error: any) {
+    logger.error('Webchat system notification error', { error: error.message });
+    res.status(500).json({ status: 'error', error: 'Internal server error' });
+  }
+}
+
+export async function updateAIStatus(req: Request, res: Response): Promise<void> {
+  try {
+    const {
+      village_id,
+      channel,
+      channel_identifier,
+      wa_user_id,
+      action,
+      message_id,
+      error_message,
+    } = req.body || {};
+
+    const resolvedChannel = String(channel || 'WHATSAPP').toUpperCase() === 'WEBCHAT' ? 'WEBCHAT' : 'WHATSAPP';
+    const resolvedIdentifier = channel_identifier || wa_user_id;
+
+    if (!resolvedIdentifier || typeof resolvedIdentifier !== 'string') {
+      res.status(400).json({ status: 'error', error: 'channel_identifier or wa_user_id is required' });
+      return;
+    }
+
+    switch (action) {
+      case 'processing':
+        if (!message_id || typeof message_id !== 'string') {
+          res.status(400).json({ status: 'error', error: 'message_id is required for processing status' });
+          return;
+        }
+        await setAIProcessing(resolvedIdentifier, message_id, village_id, resolvedChannel);
+        break;
+      case 'clear':
+        await clearAIStatus(resolvedIdentifier, village_id, resolvedChannel);
+        break;
+      case 'error':
+        if (!error_message || typeof error_message !== 'string') {
+          res.status(400).json({ status: 'error', error: 'error_message is required for error status' });
+          return;
+        }
+        await setAIError(resolvedIdentifier, error_message, typeof message_id === 'string' ? message_id : undefined, village_id, resolvedChannel);
+        break;
+      case 'pending_balance':
+        await setAIPendingBalance(resolvedIdentifier, typeof message_id === 'string' ? message_id : undefined, village_id, resolvedChannel);
+        break;
+      default:
+        res.status(400).json({ status: 'error', error: 'Invalid action' });
+        return;
+    }
+
+    res.json({
+      status: 'ok',
+      action,
+      channel: resolvedChannel,
+      channel_identifier: resolvedIdentifier,
+    });
+  } catch (error: any) {
+    logger.error('Update AI status error', { error: error.message });
+    res.status(500).json({ status: 'error', error: 'Internal server error' });
   }
 }
 

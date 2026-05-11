@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAdminSession } from '@/lib/auth'
+import { getAdminSession, isSuperadminRole } from '@/lib/auth'
 import { buildUrl, getHeaders, apiFetch, ServicePath } from '@/lib/api-client'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+async function readUpstreamError(response: Response, fallback: string) {
+  const raw = await response.text().catch(() => '')
+  if (!raw) return fallback
+
+  try {
+    const payload = JSON.parse(raw)
+    return payload?.error || payload?.message || payload?.detail || fallback
+  } catch {
+    return raw
+  }
+}
 
 /**
  * GET /api/cache — Get cache stats from AI service
@@ -11,7 +23,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     const session = await getAdminSession(request)
-    if (!session || session.role !== 'superadmin') {
+    if (!session || !isSuperadminRole(session.role)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -22,9 +34,9 @@ export async function GET(request: NextRequest) {
     })
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => 'Unknown error')
+      const upstreamError = await readUpstreamError(response, 'Failed to fetch cache stats')
       return NextResponse.json(
-        { error: 'Failed to fetch cache stats', detail: errText },
+        { error: upstreamError },
         { status: response.status }
       )
     }
@@ -42,17 +54,20 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/cache — Cache management actions
- * Body: { action: 'clear-all' | 'set-mode', enabled?: boolean }
+ * Body:
+ * - { action: 'clear-all' }
+ * - { action: 'set-mode', enabled: boolean }
+ * - { action: 'invalidate-village', villageId: string, intents?: string[], retrieval?: boolean, profile?: boolean }
  */
 export async function POST(request: NextRequest) {
   try {
     const session = await getAdminSession(request)
-    if (!session || session.role !== 'superadmin') {
+    if (!session || !isSuperadminRole(session.role)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const body = await request.json()
-    const { action, enabled } = body
+    const { action, enabled, villageId, intents, retrieval, profile } = body
 
     if (action === 'clear-all') {
       const url = buildUrl(ServicePath.AI, '/admin/cache/clear-all')
@@ -63,7 +78,8 @@ export async function POST(request: NextRequest) {
       })
 
       if (!response.ok) {
-        return NextResponse.json({ error: 'Failed to clear caches' }, { status: response.status })
+        const upstreamError = await readUpstreamError(response, 'Failed to clear caches')
+        return NextResponse.json({ error: upstreamError }, { status: response.status })
       }
 
       const data = await response.json()
@@ -84,14 +100,46 @@ export async function POST(request: NextRequest) {
       })
 
       if (!response.ok) {
-        return NextResponse.json({ error: 'Failed to set cache mode' }, { status: response.status })
+        const upstreamError = await readUpstreamError(response, 'Failed to set cache mode')
+        return NextResponse.json({ error: upstreamError }, { status: response.status })
       }
 
       const data = await response.json()
       return NextResponse.json(data)
     }
 
-    return NextResponse.json({ error: 'Invalid action. Use "clear-all" or "set-mode"' }, { status: 400 })
+    if (action === 'invalidate-village') {
+      if (!villageId || typeof villageId !== 'string') {
+        return NextResponse.json({ error: 'villageId is required' }, { status: 400 })
+      }
+
+      const safeIntents = Array.isArray(intents)
+        ? intents.filter((intent): intent is string => typeof intent === 'string' && intent.trim().length > 0)
+        : undefined
+
+      const url = buildUrl(ServicePath.AI, '/admin/cache/invalidate-village')
+      const response = await apiFetch(url, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          villageId,
+          intents: safeIntents,
+          retrieval: retrieval !== false,
+          profile: profile !== false,
+        }),
+        timeout: 10000,
+      })
+
+      if (!response.ok) {
+        const upstreamError = await readUpstreamError(response, 'Failed to invalidate village cache')
+        return NextResponse.json({ error: upstreamError }, { status: response.status })
+      }
+
+      const data = await response.json()
+      return NextResponse.json(data)
+    }
+
+    return NextResponse.json({ error: 'Invalid action. Use "clear-all", "set-mode", or "invalidate-village"' }, { status: 400 })
   } catch (error: any) {
     console.error('Cache API POST error:', error.message)
     return NextResponse.json(

@@ -6,10 +6,13 @@ import { validate } from '../middleware/validation.middleware';
 import {
   handleGetServiceCategories,
   handleCreateServiceCategory,
+  handleUpdateServiceCategory,
+  handleDeleteServiceCategory,
   handleGetServices,
   handleSearchServices,
   handleCreateService,
   handleUpdateService,
+  handleDeleteService,
   handleGetServiceById,
   handleGetServiceBySlug,
   handleGetRequirements,
@@ -37,6 +40,8 @@ const router: ExpressRouter = Router();
 // Service categories
 router.get('/service-categories', handleGetServiceCategories);
 router.post('/service-categories', internalAuth, handleCreateServiceCategory);
+router.patch('/service-categories/:id', internalAuth, handleUpdateServiceCategory);
+router.delete('/service-categories/:id', internalAuth, handleDeleteServiceCategory);
 
 // Services
 router.get(
@@ -53,6 +58,7 @@ router.get('/services/by-slug', handleGetServiceBySlug);
 router.post('/services', internalAuth, handleCreateService);
 router.get('/services/:id', handleGetServiceById);
 router.put('/services/:id', internalAuth, handleUpdateService);
+router.delete('/services/:id', internalAuth, handleDeleteService);
 
 // Requirements
 router.get('/services/:id/requirements', handleGetRequirements);
@@ -65,13 +71,27 @@ router.get(
   '/service-requests',
   internalAuth,
   [
-    query('take').optional().isInt().toInt(),
-    query('skip').optional().isInt().toInt(),
+    query('search').optional().isString().trim(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    query('offset').optional().isInt({ min: 0 }).toInt(),
   ],
   validate,
   handleGetServiceRequests
 );
-router.post('/service-requests', handleCreateServiceRequest);
+router.post(
+  '/service-requests',
+  [
+    body('service_id').isString().trim().notEmpty().withMessage('service_id is required'),
+    body('village_id').optional().isString().trim(),
+    body('wa_user_id').optional().isString().trim(),
+    body('session_id').optional().isString().trim(),
+    body('channel_identifier').optional().isString().trim(),
+    body('citizen_data_json').optional().isObject(),
+    body('requirement_data_json').optional().isObject(),
+  ],
+  validate,
+  handleCreateServiceRequest
+);
 router.get('/service-requests/deleted', internalAuth, handleGetDeletedServiceRequests);
 router.get('/service-requests/by-token', handleGetServiceRequestByToken);
 router.get('/service-requests/:id', internalAuth, handleGetServiceRequestById);
@@ -98,7 +118,19 @@ router.post(
   handleCancelServiceRequest
 );
 router.post('/service-requests/:id/edit-token', internalAuth, handleGenerateServiceRequestEditToken);
-router.patch('/service-requests/:id/by-token', handleUpdateServiceRequestByToken);
+router.patch(
+  '/service-requests/:id/by-token',
+  [
+    body('edit_token').isString().trim().notEmpty().withMessage('edit_token is required'),
+    body('wa_user_id').optional().isString().trim(),
+    body('session_id').optional().isString().trim(),
+    body('channel_identifier').optional().isString().trim(),
+    body('citizen_data_json').optional().isObject(),
+    body('requirement_data_json').optional().isObject(),
+  ],
+  validate,
+  handleUpdateServiceRequestByToken
+);
 router.delete('/service-requests/:id', internalAuth, handleDeleteServiceRequest);
 router.get(
   '/service-requests/history/:wa_user_id',

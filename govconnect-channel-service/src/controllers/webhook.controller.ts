@@ -21,6 +21,7 @@ import { logWaActivity } from '../services/wa-activity-log.service';
 import { enrichConversationProfile } from '../services/wa-profile.service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
+import { config } from '../config/env';
 import { getQuery } from '../utils/http';
 import { parseWebhookBody, webhookCandidateFromBody } from '../utils/webhook-payload';
 import {
@@ -37,6 +38,38 @@ function eventTimestamp(payload: GenfityWebhookPayload): Date {
   const raw = payload.event?.Info?.Timestamp || (payload.event as any)?.Timestamp || (payload as any).timestamp;
   const parsed = raw ? new Date(raw) : new Date();
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+async function notifyNotificationServiceDeliveryStatus(params: {
+  messageId: string;
+  deliveryStatus: 'sent' | 'delivered' | 'read' | 'failed';
+  occurredAt: Date;
+  providerStatus?: string;
+  providerError?: string;
+}) {
+  try {
+    await fetch(`${config.NOTIFICATION_SERVICE_URL.replace(/\/$/, '')}/internal/delivery-status`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-api-key': config.INTERNAL_API_KEY,
+      },
+      body: JSON.stringify({
+        message_id: params.messageId,
+        delivery_status: params.deliveryStatus,
+        occurred_at: params.occurredAt.toISOString(),
+        provider_status: params.providerStatus || params.deliveryStatus,
+        provider_error: params.providerError || null,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (error: any) {
+    logger.warn('Failed to notify notification-service delivery status', {
+      message_id: params.messageId,
+      delivery_status: params.deliveryStatus,
+      error: error.message,
+    });
+  }
 }
 
 function resolveWebhookMessageId(payload: GenfityWebhookPayload): string | null {
@@ -332,9 +365,18 @@ async function handleNonMessageWebhook(payload: GenfityWebhookPayload, villageId
     const status: 'sent' | 'delivered' | 'read' | 'failed' = failed ? 'failed' : read ? 'read' : delivered ? 'delivered' : 'sent';
     const error = failed ? JSON.stringify((payload.event as any)?.Error || (payload as any).error || 'Delivery failed').slice(0, 500) : undefined;
 
+    const occurredAt = eventTimestamp(payload);
     await updateMessageDeliveryStatus(messageId, status, {
-      at: eventTimestamp(payload),
+      at: occurredAt,
       error,
+    });
+
+    await notifyNotificationServiceDeliveryStatus({
+      messageId,
+      deliveryStatus: status,
+      occurredAt,
+      providerStatus: rawState,
+      providerError: error,
     });
 
     if (villageId) {

@@ -37,6 +37,12 @@ export interface AdminSession {
   token: string
 }
 
+export function isSuperadminRole(role?: string | null): boolean {
+  if (!role) return false
+  const normalized = role.toLowerCase()
+  return normalized === 'superadmin' || normalized === 'super_admin'
+}
+
 export async function generateToken(payload: JWTPayload): Promise<string> {
   return await new SignJWT({ ...payload })
     .setProtectedHeader({ alg: 'HS256' })

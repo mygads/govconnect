@@ -1,6 +1,6 @@
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import logger from '../utils/logger';
-import { sendNotification, sendAdminUrgentAlert } from '../services/notification.service';
+import { sendNotification, sendAdminUrgentAlert, sendComplaintImportantContactsNotification } from '../services/notification.service';
 import {
   buildComplaintCreatedMessage,
   buildServiceRequestedMessage,
@@ -9,6 +9,7 @@ import {
 } from '../services/template.service';
 import {
   ComplaintCreatedEvent,
+  ComplaintImportantContactsEvent,
   ServiceRequestedEvent,
   StatusUpdatedEvent,
   UrgentAlertEvent
@@ -51,6 +52,10 @@ export async function handleEvent(routingKey: string, data: any): Promise<void> 
       // AI Service sends the response directly via publishAIReply.
       // Keeping this handler for backward compatibility if event is ever re-enabled.
       await handleComplaintCreated(data as ComplaintCreatedEvent);
+      break;
+
+    case RABBITMQ_CONFIG.routingKeys.complaintImportantContacts:
+      await handleComplaintImportantContacts(data as ComplaintImportantContactsEvent);
       break;
 
     case RABBITMQ_CONFIG.routingKeys.serviceRequested:
@@ -110,8 +115,21 @@ async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<voi
     channel,
     channel_identifier,
     message,
-    notificationType: 'complaint_created'
+    notificationType: 'complaint_created',
+    reference_number: event.complaint_id ?? null,
   });
+}
+
+async function handleComplaintImportantContacts(event: ComplaintImportantContactsEvent): Promise<void> {
+  logger.info('Handling complaint important-contact event', {
+    complaint_id: event.complaint_id,
+    village_id: event.village_id,
+    channel: event.channel,
+    channel_identifier: event.channel_identifier,
+    important_contact_category_id: event.important_contact_category_id,
+  });
+
+  await sendComplaintImportantContactsNotification(event);
 }
 
 async function handleServiceRequested(event: ServiceRequestedEvent): Promise<void> {
@@ -127,6 +145,7 @@ async function handleServiceRequested(event: ServiceRequestedEvent): Promise<voi
   const message = buildServiceRequestedMessage({
     request_number: event.request_number,
     service_name: event.service_name,
+    channel,
   });
 
   await sendNotification({
@@ -134,7 +153,8 @@ async function handleServiceRequested(event: ServiceRequestedEvent): Promise<voi
     channel,
     channel_identifier,
     message,
-    notificationType: 'service_requested'
+    notificationType: 'service_requested',
+    reference_number: event.request_number ?? null,
   });
 }
 
@@ -173,7 +193,9 @@ async function handleStatusUpdated(event: StatusUpdatedEvent): Promise<void> {
     channel,
     channel_identifier,
     message,
-    notificationType: 'status_updated'
+    notificationType: 'status_updated',
+    reference_number: event.complaint_id || event.request_number || null,
+    entity_status: event.status,
   });
 }
 

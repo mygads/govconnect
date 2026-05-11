@@ -14,6 +14,7 @@ import {
   Info,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -205,6 +206,32 @@ export default function NotificationSettingsPage() {
                 </Button>
               )}
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-orange-500" />
+              Tujuan WA Darurat
+            </CardTitle>
+            <CardDescription>
+              Nomor WhatsApp admin desa untuk menerima alert pengaduan darurat. Jika kosong, sistem memakai fallback global dari environment.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="adminNotificationNumber">Nomor WhatsApp</Label>
+              <Input
+                id="adminNotificationNumber"
+                value={settings.adminNotificationNumber}
+                onChange={(event) => setSettings({ ...settings, adminNotificationNumber: event.target.value })}
+                placeholder="contoh: 6281234567890"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Simpan nomor khusus desa di sini agar alert darurat tidak jatuh ke nomor global yang sama untuk semua tenant.
+            </p>
           </CardContent>
         </Card>
 

@@ -88,6 +88,12 @@ export interface ProcessMessageResult {
       trustLevel: 'trusted_fact' | 'trusted_record' | 'untrusted_retrieval' | 'action_result';
       sourceKind?: string;
     }>;
+    grounding?: {
+      trustedTools?: string[];
+      sourceKinds?: string[];
+      hasTrustedFact?: boolean;
+      hasTrustedRecord?: boolean;
+    };
     guardrail?: {
       stage: string;
       type: string;

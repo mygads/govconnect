@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { buildUrl, getInternalApiKey, ServicePath } from '@/lib/api-client';
+import { buildUrl, requireInternalApiKey, ServicePath } from '@/lib/api-client';
 
 type ChannelAccountListItem = {
   village_id: string;
@@ -9,6 +9,8 @@ type ChannelAccountListItem = {
 
 export async function GET() {
   try {
+    const internalApiKey = requireInternalApiKey();
+
     if (!process.env['CHANNEL_SERVICE_URL']?.trim() && !process.env['API_BASE_URL']?.trim()) {
       return NextResponse.json(
         { success: false, error: 'CHANNEL_SERVICE_URL is not configured', code: 'SERVICE_URL_MISSING' },
@@ -19,7 +21,7 @@ export async function GET() {
     const channelUrl = buildUrl(ServicePath.CHANNEL, '/internal/channel-accounts?enabled_webchat=true');
     const channelResp = await fetch(channelUrl, {
       headers: {
-        'x-internal-api-key': getInternalApiKey(),
+        'x-internal-api-key': internalApiKey,
       },
       cache: 'no-store',
     });

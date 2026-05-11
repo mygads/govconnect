@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireInternalApiKey } from "@/lib/api-client";
 import prisma from "@/lib/prisma";
 
 const CASE_SERVICE_URL = process.env.CASE_SERVICE_URL || "http://localhost:3003";
 const CHANNEL_SERVICE_URL = process.env.CHANNEL_SERVICE_URL || "http://localhost:3001";
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || "";
 
 async function safeReadJson(response: Response): Promise<any | null> {
     try {
@@ -15,6 +15,7 @@ async function safeReadJson(response: Response): Promise<any | null> {
 
 export async function GET(request: NextRequest) {
     try {
+        const internalApiKey = requireInternalApiKey();
         const { searchParams } = new URL(request.url);
         const villageSlug = searchParams.get("village_slug");
         const serviceSlug = searchParams.get("service_slug");
@@ -37,53 +38,39 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const profile = await prisma.village_profiles.findFirst({
-            where: { village_id: village.id },
-            select: { short_name: true },
+        const villageId = village.id;
+
+        const url = new URL(`${CASE_SERVICE_URL}/services/by-slug`);
+        url.searchParams.set("village_id", villageId);
+        url.searchParams.set("slug", serviceSlug);
+
+        const response = await fetch(url.toString(), {
+            headers: {
+                "x-internal-api-key": internalApiKey,
+            },
         });
 
-        const villageCandidates = Array.from(
-            new Set(
-                [village.id, village.slug, profile?.short_name]
-                    .map((value) => value?.trim())
-                    .filter((value): value is string => Boolean(value))
-            )
-        );
+        const responseText = await response.text();
+        let payload: any = null;
 
-        let result: any = null;
-        let lastErrorStatus = 404;
-        let lastErrorDetail = "{\"error\":\"Service not found\"}";
-
-        for (const candidateVillageId of villageCandidates) {
-            const url = new URL(`${CASE_SERVICE_URL}/services/by-slug`);
-            url.searchParams.set("village_id", candidateVillageId);
-            url.searchParams.set("slug", serviceSlug);
-
-            const response = await fetch(url.toString(), {
-                headers: {
-                    "x-internal-api-key": INTERNAL_API_KEY,
-                },
-            });
-
-            if (response.ok) {
-                result = await response.json();
-                break;
-            }
-
-            lastErrorStatus = response.status;
-            lastErrorDetail = await response.text();
+        try {
+            payload = JSON.parse(responseText);
+        } catch {
+            payload = null;
         }
 
-        if (!result) {
+        if (!response.ok || !payload) {
             return NextResponse.json(
                 {
-                    error: "Gagal memuat layanan",
-                    detail: lastErrorDetail,
-                    village_candidates: villageCandidates,
+                    error: payload?.error || "Gagal memuat layanan",
+                    detail: payload?.detail || (!response.ok ? responseText.substring(0, 200) : null),
+                    village_id: villageId,
                 },
-                { status: lastErrorStatus }
+                { status: response.status }
             );
         }
+
+        const result = payload;
 
         // Bot WA number is owned by channel-service (per village). Best-effort: do not fail page.
         let villageWaNumber: string | null = null;
@@ -92,7 +79,7 @@ export async function GET(request: NextRequest) {
                 `${CHANNEL_SERVICE_URL}/internal/whatsapp/status?village_id=${encodeURIComponent(village.id)}`,
                 {
                     headers: {
-                        "x-internal-api-key": INTERNAL_API_KEY,
+                        "x-internal-api-key": internalApiKey,
                     },
                 }
             );
@@ -105,7 +92,7 @@ export async function GET(request: NextRequest) {
                     `${CHANNEL_SERVICE_URL}/internal/channel-accounts/${encodeURIComponent(village.id)}`,
                     {
                         headers: {
-                            "x-internal-api-key": INTERNAL_API_KEY,
+                            "x-internal-api-key": internalApiKey,
                         },
                     }
                 );

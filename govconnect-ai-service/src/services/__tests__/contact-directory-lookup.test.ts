@@ -94,6 +94,10 @@ describe('isContactDirectoryLookup', () => {
   it('does NOT treat plain infrastructure complaints as directory lookups', () => {
     expect(isContactDirectoryLookup('jalan rusak parah')).toBe(false);
   });
+
+  it('does NOT treat a detailed street address as a directory lookup', () => {
+    expect(isContactDirectoryLookup('Jalan Kenanga No 12 RT 03/RW 05')).toBe(false);
+  });
 });
 
 describe('extractRoleHints', () => {
@@ -152,6 +156,13 @@ describe('lookupImportantContacts', () => {
   it('returns an empty result for an empty query', async () => {
     const result = await lookupImportantContacts('', 'village-1');
     expect(result.matches).toEqual([]);
+  });
+
+  it('falls back to health contacts for a broader medical query', async () => {
+    const result = await lookupImportantContacts('kontak medis', 'village-1');
+    expect(result.category_hint).toBe('health');
+    expect(result.matches.length).toBeGreaterThan(0);
+    expect(result.matches[0].contact.description || '').toMatch(/dokter|puskesmas/i);
   });
 
   it('returns empty matches when query has no known role/alias', async () => {

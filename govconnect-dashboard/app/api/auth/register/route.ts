@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { hashPassword, requireRole } from '@/lib/auth'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
-import { DEFAULT_VILLAGE_TIME_ZONE, isSupportedVillageTimezone, resolveVillageTimezone } from '@/lib/utils'
+import { DEFAULT_VILLAGE_TIME_ZONE, buildScopedNameKey, isSupportedVillageTimezone, resolveVillageTimezone } from '@/lib/utils'
 
 const DEFAULT_KB_CATEGORIES = [
   'Profil Desa',
@@ -80,6 +80,7 @@ export async function POST(request: NextRequest) {
       data: DEFAULT_KB_CATEGORIES.map((c) => ({
         village_id: village.id,
         name: c,
+        name_key: buildScopedNameKey(c),
         is_default: true,
       })),
       skipDuplicates: true,

@@ -1,30 +1,16 @@
 import { NextRequest } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import prisma from '@/lib/prisma'
+import { getAdminSession } from '@/lib/auth'
 import { buildUrl, getInternalApiKey, ServicePath } from '@/lib/api-client'
 
-async function getSession(request: NextRequest) {
-  const token = request.cookies.get('token')?.value
-  if (!token) return null
-  const payload = await verifyToken(token)
-  if (!payload) return null
-  const session = await prisma.admin_sessions.findUnique({
-    where: { token },
-    include: { admin: true },
-  })
-  if (!session || session.expires_at < new Date()) return null
-  return session
-}
-
 export async function GET(request: NextRequest) {
-  const session = await getSession(request)
+  const session = await getAdminSession(request)
   if (!session) {
     return new Response('Unauthorized', { status: 401 })
   }
 
   const url = new URL(buildUrl(ServicePath.CHANNEL, '/internal/livechat/events'))
-  if (session.admin.village_id) {
-    url.searchParams.set('village_id', session.admin.village_id)
+  if (session.villageId) {
+    url.searchParams.set('village_id', session.villageId)
   }
 
   const upstream = await fetch(url.toString(), {

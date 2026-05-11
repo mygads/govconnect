@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { ai } from '@/lib/api-client'
 import { verifyToken } from '@/lib/auth'
+import { resolveVillageKnowledgeCategory } from '@/lib/knowledge-categories'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -96,23 +97,14 @@ export async function PUT(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    let resolvedCategoryId = category_id as string | undefined
-    let resolvedCategoryName = category as string | undefined
-
-    if (!resolvedCategoryId && category && session.admin.village_id) {
-      const existingCategory = await prisma.knowledge_categories.findFirst({
-        where: { name: category, village_id: session.admin.village_id }
-      })
-      if (existingCategory) {
-        resolvedCategoryId = existingCategory.id
-        resolvedCategoryName = existingCategory.name
-      }
-    } else if (resolvedCategoryId) {
-      const categoryRef = await prisma.knowledge_categories.findUnique({
-        where: { id: resolvedCategoryId }
-      })
-      resolvedCategoryName = categoryRef?.name || resolvedCategoryName
-    }
+    const resolvedCategory = await resolveVillageKnowledgeCategory({
+      villageId: existing.village_id || session.admin.village_id,
+      categoryId: category_id,
+      categoryName: category,
+      createIfMissing: true,
+    })
+    const resolvedCategoryId = resolvedCategory.categoryId
+    const resolvedCategoryName = resolvedCategory.categoryName
 
     const document = await prisma.knowledge_documents.update({
       where: { id },

@@ -13,8 +13,9 @@ import logger from '../../utils/logger';
 import { callAIGatewayPrompt, type GatewayChatMessage } from '../ai-gateway.service';
 import { AGENT_TOOLS, type AgentToolName } from './tool-definitions';
 import { resolveLearnedToolPolicy } from './tool-policy.service';
-import { executeToolCall, type ToolCallResult, type ToolExecutionTrace } from './tool-executor';
+import { executeToolCall, type ToolCallResult, type ToolExecutionTrace, type ToolTrustLevel } from './tool-executor';
 import { buildAgentSystemPrompt, buildAgentDynamicContext, type AgentPromptContext } from './agent-prompt';
+import { isContactDirectoryLookup } from '../important-contacts.service';
 
 const MAX_TOOL_ITERATIONS = 5;
 
@@ -103,31 +104,146 @@ function readStringField(record: Record<string, unknown>, key: string): string |
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function derivePreferredToolReply(
-  toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
-): { replyText?: string; guidanceText?: string } {
-  for (let index = toolResults.length - 1; index >= 0; index -= 1) {
-    const result = toolResults[index]?.result;
-    const payload = result?.data;
-    const data = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-    const resultData = result as unknown as Record<string, unknown>;
+interface PreferredToolReplyCandidate {
+  toolName: AgentToolName;
+  replyText?: string;
+  guidanceText?: string;
+  score: number;
+  index: number;
+}
 
-    const replyText =
+const ACTION_PRIORITY_TOOLS = new Set<AgentToolName>([
+  'create_complaint',
+  'create_service_request',
+  'update_complaint',
+  'get_service_request_edit_link',
+  'cancel_request',
+]);
+
+const TOOL_REPLY_BASE_PRIORITY: Partial<Record<AgentToolName, number>> = {
+  create_service_request: 5000,
+  get_service_request_edit_link: 5000,
+  create_complaint: 4900,
+  update_complaint: 4850,
+  cancel_request: 4800,
+  check_status: 4600,
+  get_my_history: 4500,
+  get_service_info: 4200,
+  get_important_contact: 4180,
+  get_emergency_contacts: 4160,
+  get_village_profile: 4140,
+  get_complaint_categories: 4100,
+  search_user_memory: 3400,
+  search_knowledge: 1400,
+  search_documents: 1300,
+};
+
+const TOOL_REPLY_TRUST_PRIORITY: Record<ToolTrustLevel, number> = {
+  trusted_fact: 400,
+  trusted_record: 320,
+  action_result: 220,
+  untrusted_retrieval: 80,
+};
+
+const TOOL_REPLY_SOURCE_PRIORITY: Record<string, number> = {
+  official_service_info: 180,
+  contact_directory_lookup: 175,
+  official_emergency_contacts: 170,
+  official_village_profile: 165,
+  status_lookup: 160,
+  user_history: 150,
+  official_complaint_categories: 145,
+  service_request_link: 190,
+  service_request_edit_link: 190,
+  complaint_creation: 185,
+  complaint_update: 180,
+  request_cancellation: 175,
+  complaint_creation_pending: 170,
+  request_cancellation_pending: 165,
+  user_memory: 140,
+  system_reference_explainer: 110,
+  knowledge_retrieval: 30,
+  document_retrieval: 25,
+  tool_error: 20,
+  tool_argument_error: 15,
+  tool_deduplication: 10,
+};
+
+function readToolReplyFields(result: ToolCallResult): { replyText?: string; guidanceText?: string } {
+  const payload = result?.data;
+  const data = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const resultData = result as unknown as Record<string, unknown>;
+
+  return {
+    replyText:
       readStringField(data, 'suggested_response')
       || readStringField(resultData, 'suggested_response')
       || readStringField(data, 'reply_text')
-      || readStringField(data, 'replyText');
-    const guidanceText =
+      || readStringField(data, 'replyText'),
+    guidanceText:
       readStringField(data, 'guidance_text')
       || readStringField(resultData, 'guidance_text')
-      || readStringField(data, 'guidanceText');
+      || readStringField(data, 'guidanceText'),
+  };
+}
 
-    if (replyText || guidanceText) {
-      return { replyText, guidanceText };
+function derivePreferredToolReplyScore(
+  toolName: AgentToolName,
+  result: ToolCallResult,
+  index: number,
+): number {
+  const trustLevel = result.meta?.trustLevel || 'action_result';
+  const sourceKind = result.meta?.sourceKind || '';
+  const basePriority = TOOL_REPLY_BASE_PRIORITY[toolName] || 0;
+  const trustPriority = TOOL_REPLY_TRUST_PRIORITY[trustLevel] || 0;
+  const sourcePriority = TOOL_REPLY_SOURCE_PRIORITY[sourceKind] || 0;
+  const successPriority = result.success ? 40 : ACTION_PRIORITY_TOOLS.has(toolName) ? 10 : -20;
+
+  return basePriority + trustPriority + sourcePriority + successPriority + index;
+}
+
+function isBetterPreferredToolReplyCandidate(
+  candidate: PreferredToolReplyCandidate,
+  current?: PreferredToolReplyCandidate,
+): boolean {
+  if (!current) return true;
+  if (candidate.score !== current.score) return candidate.score > current.score;
+  return candidate.index > current.index;
+}
+
+function derivePreferredToolReply(
+  toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
+): { replyText?: string; guidanceText?: string } {
+  let bestReply: PreferredToolReplyCandidate | undefined;
+  let bestGuidance: PreferredToolReplyCandidate | undefined;
+
+  toolResults.forEach(({ toolName, result }, index) => {
+    const { replyText, guidanceText } = readToolReplyFields(result);
+    if (!replyText && !guidanceText) {
+      return;
     }
-  }
 
-  return {};
+    const candidate: PreferredToolReplyCandidate = {
+      toolName,
+      replyText,
+      guidanceText,
+      score: derivePreferredToolReplyScore(toolName, result, index),
+      index,
+    };
+
+    if (replyText && isBetterPreferredToolReplyCandidate(candidate, bestReply)) {
+      bestReply = candidate;
+    }
+
+    if (guidanceText && isBetterPreferredToolReplyCandidate(candidate, bestGuidance)) {
+      bestGuidance = candidate;
+    }
+  });
+
+  return {
+    replyText: bestReply?.replyText,
+    guidanceText: bestGuidance?.guidanceText,
+  };
 }
 
 function isExplicitServiceActionRequest(userMessage: string): boolean {
@@ -141,11 +257,221 @@ function isExplicitServiceActionRequest(userMessage: string): boolean {
   ].some((pattern) => pattern.test(normalized));
 }
 
+type IntentFamily = 'complaint' | 'service' | 'village_profile' | 'contact' | 'status' | 'knowledge';
+
+const MIXED_INTENT_CONNECTOR_PATTERN = /\b(dan|juga|sekalian|sama|trus|terus|lalu|kemudian|serta|plus|sambil)\b/i;
+const MIXED_INTENT_FAMILY_LABELS: Record<IntentFamily, string> = {
+  complaint: 'pengaduan',
+  service: 'layanan',
+  village_profile: 'profil desa',
+  contact: 'kontak',
+  status: 'status',
+  knowledge: 'informasi umum',
+};
+const MIXED_INTENT_FAMILY_TOOLS: Record<IntentFamily, AgentToolName[]> = {
+  complaint: ['create_complaint', 'get_complaint_categories', 'update_complaint'],
+  service: ['get_service_info', 'create_service_request', 'get_service_request_edit_link'],
+  village_profile: ['get_village_profile'],
+  contact: ['get_important_contact', 'get_emergency_contacts'],
+  status: ['check_status', 'get_my_history', 'cancel_request'],
+  knowledge: ['search_knowledge'],
+};
+
+const NON_OFFICE_LOCAL_ENTITY_PATTERN = /\b(puskesmas|pustu|klinik|poliklinik|posyandu|bidan(?:\s+desa)?|pasar|lapangan|sekolah|paud|tk|sd|smp|sma|masjid|mushola|bumdes|pkh|blt|bansos)\b/i;
+const LOCAL_KNOWLEDGE_QUERY_PATTERN = /\b(jadwal|kapan|jam\s+(buka|operasional|pelayanan|tutup)|alamat|lokasi|dimana|di\s+mana|maps?|google\s*maps?|info(?:rmasi)?)\b/i;
+
+function isNonOfficeLocalKnowledgeQueryText(userMessage: string): boolean {
+  const normalized = (userMessage || '').toLowerCase().trim();
+  if (!normalized) return false;
+  if (isContactDirectoryLookup(userMessage)) return false;
+  if (!NON_OFFICE_LOCAL_ENTITY_PATTERN.test(normalized)) return false;
+  if (/\b(kantor\s+desa|kantor\s+kelurahan|balai\s+desa|sekretariat\s+desa)\b/i.test(normalized)) return false;
+  return LOCAL_KNOWLEDGE_QUERY_PATTERN.test(normalized);
+}
+
+function isOfficeContactProfileQueryText(userMessage: string): boolean {
+  const normalized = (userMessage || '').toLowerCase();
+  if (isNonOfficeLocalKnowledgeQueryText(userMessage)) return false;
+  return /\b(jam buka|jam operasional|nomor kantor|telepon kantor|kontak kantor|kantor desa|kantor kelurahan|balai desa|sekretariat desa)\b/i.test(normalized)
+    || (/\b(alamat|lokasi|maps|gmaps|jadwal)\b/i.test(normalized) && /\b(desa|kelurahan|kantor|balai|sekretariat)\b/i.test(normalized));
+}
+
+function detectIntentFamilies(userMessage: string): Set<IntentFamily> {
+  const normalized = (userMessage || '').toLowerCase();
+  const families = new Set<IntentFamily>();
+  const hasContactCue = /\b(nomor|kontak|telp|telepon|hubungi|whatsapp|wa|hp)\b/i.test(normalized);
+  const hasContactTarget = /\b(kepala\s+desa|kades|sekdes|rt|rw|puskesmas|damkar|polsek|polres|bidan|ambulans|ambulan|pln|pdam|kantor)\b/i.test(normalized);
+  const isOfficeContactProfileQuery = isOfficeContactProfileQueryText(userMessage);
+  const isLocalKnowledgeQuery = isNonOfficeLocalKnowledgeQueryText(userMessage);
+
+  if (/\b(lapor|pengaduan|aduan|keluhan|jalan rusak|jalan berlubang|lampu mati|sampah|banjir|drainase|selokan|pohon tumbang|fasilitas rusak)\b/i.test(normalized)) {
+    families.add('complaint');
+  }
+  if (/\b(ktp|kk|akta|domisili|sktm|skck|pindah|nikah|layanan|surat|dokumen|syarat|persyaratan|biaya|proses)\b/i.test(normalized)) {
+    families.add('service');
+  }
+  if (isOfficeContactProfileQuery) {
+    families.add('village_profile');
+  }
+  if (isLocalKnowledgeQuery) {
+    families.add('knowledge');
+  }
+  if (hasContactCue && hasContactTarget && !isOfficeContactProfileQuery) {
+    families.add('contact');
+  }
+  if (/\b(status|cek\s+status|tracking|lacak|riwayat|lap-[\w-]+|lay-[\w-]+|lyn-[\w-]+|rpt-[\w-]+)\b/i.test(normalized)) {
+    families.add('status');
+  }
+
+  return families;
+}
+
+function mapToolsToIntentFamilies(toolsUsed: string[]): Set<IntentFamily> {
+  const toolFamilies = new Set<IntentFamily>();
+
+  for (const tool of toolsUsed) {
+    if (tool === 'create_complaint' || tool === 'get_complaint_categories' || tool === 'update_complaint') {
+      toolFamilies.add('complaint');
+    }
+    if (tool === 'get_service_info' || tool === 'create_service_request' || tool === 'get_service_request_edit_link') {
+      toolFamilies.add('service');
+    }
+    if (tool === 'get_village_profile') {
+      toolFamilies.add('village_profile');
+    }
+    if (tool === 'get_important_contact' || tool === 'get_emergency_contacts') {
+      toolFamilies.add('contact');
+    }
+    if (tool === 'check_status' || tool === 'get_my_history' || tool === 'cancel_request') {
+      toolFamilies.add('status');
+    }
+    if (tool === 'search_knowledge') {
+      toolFamilies.add('knowledge');
+    }
+  }
+
+  return toolFamilies;
+}
+
+function hasMixedIntentRequest(userMessage: string): boolean {
+  const requestedFamilies = detectIntentFamilies(userMessage);
+  if (requestedFamilies.size < 2) {
+    return false;
+  }
+
+  const normalized = (userMessage || '').toLowerCase();
+  return MIXED_INTENT_CONNECTOR_PATTERN.test(normalized) || normalized.includes('?');
+}
+
+function getUncoveredMixedIntentFamilies(userMessage: string, toolsUsed: string[]): IntentFamily[] {
+  if (!hasMixedIntentRequest(userMessage)) {
+    return [];
+  }
+
+  const requestedFamilies = detectIntentFamilies(userMessage);
+  const coveredFamilies = mapToolsToIntentFamilies(toolsUsed);
+  return Array.from(requestedFamilies).filter((family) => !coveredFamilies.has(family));
+}
+
+/**
+ * Detect user messages that combine two distinct intents in one turn.
+ * When true, the agent loop must NOT early-terminate on a single tool
+ * result — the second intent has to be addressed first.
+ */
+function isMixedIntentMessage(userMessage: string, toolsUsed: string[]): boolean {
+  return getUncoveredMixedIntentFamilies(userMessage, toolsUsed).length > 0;
+}
+
+function getRemainingMixedIntentTools(
+  userMessage: string,
+  toolsUsed: string[],
+  allowedToolNames: AgentToolName[],
+): AgentToolName[] {
+  const usedTools = new Set(toolsUsed);
+  const allowedTools = new Set(allowedToolNames);
+
+  return Array.from(new Set(
+    getUncoveredMixedIntentFamilies(userMessage, toolsUsed)
+      .flatMap((family) => MIXED_INTENT_FAMILY_TOOLS[family])
+      .filter((tool) => allowedTools.has(tool) && !usedTools.has(tool)),
+  ));
+}
+
+function shouldForceMixedIntentContinuation(
+  userMessage: string,
+  toolsUsed: string[],
+  allowedToolNames: AgentToolName[],
+): boolean {
+  return getRemainingMixedIntentTools(userMessage, toolsUsed, allowedToolNames).length > 0;
+}
+
+function buildMixedIntentContinuationPrompt(
+  userMessage: string,
+  toolsUsed: string[],
+  allowedToolNames: AgentToolName[],
+): string | null {
+  const uncoveredFamilies = getUncoveredMixedIntentFamilies(userMessage, toolsUsed);
+  const remainingTools = getRemainingMixedIntentTools(userMessage, toolsUsed, allowedToolNames);
+  if (uncoveredFamilies.length === 0 || remainingTools.length === 0) {
+    return null;
+  }
+
+  const uncoveredLabels = uncoveredFamilies.map((family) => MIXED_INTENT_FAMILY_LABELS[family]).join(', ');
+  return `[INSTRUKSI INTERNAL] Permintaan user masih punya bagian yang belum terjawab: ${uncoveredLabels}. Jangan akhiri jawaban dulu. Gunakan tool yang masih relevan bila perlu (${remainingTools.join(', ')}), lalu beri satu jawaban final yang merangkum semua bagian.`;
+}
+
+function buildMixedIntentSynthesisPrompt(userMessage: string, toolsUsed: string[]): string | null {
+  if (!hasMixedIntentRequest(userMessage)) {
+    return null;
+  }
+
+  const uncoveredFamilies = getUncoveredMixedIntentFamilies(userMessage, toolsUsed);
+  if (uncoveredFamilies.length > 0) {
+    return null;
+  }
+
+  const coveredFamilies = Array.from(mapToolsToIntentFamilies(toolsUsed));
+  if (coveredFamilies.length < 2) {
+    return null;
+  }
+
+  const coveredLabels = coveredFamilies.map((family) => MIXED_INTENT_FAMILY_LABELS[family]).join(', ');
+  return `[INSTRUKSI INTERNAL] Semua bagian permintaan user sekarang sudah punya grounding (${coveredLabels}). Susun satu jawaban final yang natural, ringkas, dan menjawab semua bagian sekaligus. Jangan tampilkan proses internal atau nama tool.`;
+}
+
+function buildMixedIntentLoopExhaustedReply(
+  userMessage: string,
+  toolsUsed: string[],
+  allowedToolNames: AgentToolName[],
+  preferredReplyText?: string,
+): string {
+  const uncoveredFamilies = getUncoveredMixedIntentFamilies(userMessage, toolsUsed);
+  if (uncoveredFamilies.length === 0) {
+    return buildAgentFallbackReply(userMessage, toolsUsed);
+  }
+
+  const unresolvedLabels = uncoveredFamilies.map((family) => MIXED_INTENT_FAMILY_LABELS[family]).join(', ');
+  const unresolvedToolHint = getRemainingMixedIntentTools(userMessage, toolsUsed, allowedToolNames);
+  const partialReply = preferredReplyText ? validateFinalAgentReply(preferredReplyText, toolsUsed, userMessage) : '';
+  const suffix = unresolvedToolHint.length > 0
+    ? ` Bagian ${unresolvedLabels} belum berhasil saya pastikan sekarang.`
+    : ` Saya belum berhasil memastikan bagian ${unresolvedLabels} sekarang.`;
+  const retryHint = 'Kalau mau, kirim ulang bagian yang belum itu satu per satu ya, nanti saya bantu lanjutkan.';
+
+  return partialReply
+    ? `${partialReply}\n\nMaaf Pak/Bu,${suffix} ${retryHint}`
+    : `Maaf Pak/Bu, permintaan tadi terdiri dari beberapa bagian dan ${unresolvedLabels} belum berhasil saya pastikan sekarang. ${retryHint}`;
+}
+
 function getSufficientServiceInfoStopReason(
   userMessage: string,
   toolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }>,
 ): { trigger: 'found' | 'needs_clarification' | 'suggested_response'; toolName: AgentToolName; sourceKind?: string } | null {
   const wantsImmediateAction = isExplicitServiceActionRequest(userMessage);
+  const toolsUsed = toolResults.map(({ toolName }) => toolName);
+  if (hasMixedIntentRequest(userMessage)) {
+    return null;
+  }
 
   for (const { toolName, result } of toolResults) {
     if (toolName !== 'get_service_info' || result?.success !== true || result.meta?.sourceKind !== 'official_service_info') {
@@ -338,6 +664,22 @@ function resolveFirstTurnToolChoice(
 
   const normalized = (userMessage || '').toLowerCase().trim();
 
+  if (isMixedIntentMessage(userMessage, []) && allowedToolNames.some((tool) => [
+    'get_service_info',
+    'get_village_profile',
+    'get_important_contact',
+    'get_emergency_contacts',
+    'check_status',
+    'get_my_history',
+    'create_complaint',
+    'get_complaint_categories',
+  ].includes(tool))) {
+    return {
+      choice: 'required',
+      reason: 'mixed_intent_grounding_requires_tool',
+    };
+  }
+
   if (requiredTools.includes('get_important_contact')) {
     return {
       choice: 'required',
@@ -451,10 +793,6 @@ export async function runAgent(
   const dynamicContext = buildAgentDynamicContext(promptCtx);
   if (dynamicContext) {
     messages.push({ role: 'user', content: dynamicContext });
-    messages.push({
-      role: 'assistant',
-      content: 'Baik, saya siapkan sesuai konteks tersebut.',
-    });
   }
 
   if (conversationCtx.summary) {
@@ -476,6 +814,7 @@ export async function runAgent(
   const toolsUsed: string[] = [];
   const toolTrace: ToolExecutionTrace[] = [];
   const executedToolSignatures = new Set<string>();
+  const preferredToolResults: Array<{ toolName: AgentToolName; result: ToolCallResult }> = [];
   let totalTokens = 0;
   let iterations = 0;
   let model = '';
@@ -501,7 +840,7 @@ export async function runAgent(
     });
     if (!response) {
       return {
-        replyText: buildAgentFallbackReply(userMessage, toolsUsed),
+        replyText: buildMixedIntentLoopExhaustedReply(userMessage, toolsUsed, allowedToolNames, preferredReplyText),
         toolsUsed,
         heuristicTools,
         learnedTools,
@@ -544,6 +883,35 @@ export async function runAgent(
         content: string;
       }> = [];
 
+      // Tool execution strategy:
+      // - Parse + dedup all tool calls first into a plan.
+      // - Read-only tools (no side effects on DB/case) run in parallel.
+      // - Mutation tools (create/update/cancel, service form link) run
+      //   sequentially in the order the model emitted them so ordering
+      //   semantics stay intact.
+      const READ_ONLY_TOOLS = new Set<AgentToolName>([
+        'get_village_profile',
+        'get_service_info',
+        'get_complaint_categories',
+        'get_emergency_contacts',
+        'get_important_contact',
+        'search_knowledge',
+        'search_documents',
+        'search_user_memory',
+        'get_my_history',
+        'check_status',
+      ]);
+
+      type ExecutableTask = {
+        tc: ToolCall;
+        toolName: AgentToolName;
+        args: Record<string, unknown>;
+        kind: 'read' | 'mutation';
+      };
+
+      const parallelTasks: ExecutableTask[] = [];
+      const serialTasks: ExecutableTask[] = [];
+
       for (const tc of assistantMsg.tool_calls as ToolCall[]) {
         const toolName = tc.function.name as AgentToolName;
         let args: Record<string, unknown>;
@@ -575,7 +943,6 @@ export async function runAgent(
           continue;
         }
 
-        // Tool deduplication: skip if same tool with same args already executed
         const toolSignature = `${toolName}:${JSON.stringify(args)}`;
         if (executedToolSignatures.has(toolSignature)) {
           logger.info('Skipping duplicate tool call', { toolName, args, iteration: i + 1 });
@@ -594,30 +961,53 @@ export async function runAgent(
           continue;
         }
         executedToolSignatures.add(toolSignature);
-
         toolsUsed.push(toolName);
-        const result = await executeToolCall(toolName, args, { ...toolCtx, userMessage });
-        toolTrace.push(result.trace);
 
+        const kind: 'read' | 'mutation' = READ_ONLY_TOOLS.has(toolName) ? 'read' : 'mutation';
+        (kind === 'read' ? parallelTasks : serialTasks).push({ tc, toolName, args, kind });
+      }
+
+      // Run read-only tools in parallel.
+      const parallelResults = await Promise.all(
+        parallelTasks.map((task) =>
+          executeToolCall(task.toolName, task.args, { ...toolCtx, userMessage }),
+        ),
+      );
+      for (let pIdx = 0; pIdx < parallelTasks.length; pIdx += 1) {
+        const task = parallelTasks[pIdx];
+        const result = parallelResults[pIdx];
+        toolTrace.push(result.trace);
         toolResults.push({
-          toolName,
+          toolName: task.toolName,
           result: result.result,
           role: 'tool',
-          tool_call_id: tc.id,
-          name: toolName,
+          tool_call_id: task.tc.id,
+          name: task.toolName,
+          content: result.content,
+        });
+      }
+
+      // Run mutation tools sequentially to preserve ordering semantics.
+      for (const task of serialTasks) {
+        const result = await executeToolCall(task.toolName, task.args, { ...toolCtx, userMessage });
+        toolTrace.push(result.trace);
+        toolResults.push({
+          toolName: task.toolName,
+          result: result.result,
+          role: 'tool',
+          tool_call_id: task.tc.id,
+          name: task.toolName,
           content: result.content,
         });
       }
 
 
+      preferredToolResults.push(...toolResults.map(({ toolName, result }) => ({ toolName, result })));
+      const preferredFromTools = derivePreferredToolReply(preferredToolResults);
+      preferredReplyText = preferredFromTools.replyText;
+      preferredGuidanceText = preferredFromTools.guidanceText;
+
       for (const tr of toolResults) {
-        const preferredFromTool = derivePreferredToolReply([{ toolName: tr.toolName, result: tr.result }]);
-        if (preferredFromTool.replyText) {
-          preferredReplyText = preferredFromTool.replyText;
-        }
-        if (preferredFromTool.guidanceText) {
-          preferredGuidanceText = preferredFromTool.guidanceText;
-        }
         messages.push(tr);
       }
 
@@ -659,8 +1049,12 @@ export async function runAgent(
       }
 
       // Early termination: if multiple tools returned "not found" and we have a suggested response,
-      // return immediately instead of continuing to loop
-      if (i >= 1 && preferredReplyText) {
+      // return immediately instead of continuing to loop.
+      //
+      // Mixed-intent turns are excluded even after all parts are grounded,
+      // because the model still needs one synthesis pass to merge the answers
+      // into a single natural reply.
+      if (i >= 1 && preferredReplyText && !hasMixedIntentRequest(userMessage)) {
         const notFoundCount = toolResults.filter(tr => {
           const data = tr.result?.data;
           return tr.result?.success === true &&
@@ -696,6 +1090,11 @@ export async function runAgent(
         }
       }
 
+      const mixedIntentSynthesisPrompt = buildMixedIntentSynthesisPrompt(userMessage, toolsUsed);
+      if (mixedIntentSynthesisPrompt) {
+        messages.push({ role: 'user', content: mixedIntentSynthesisPrompt });
+      }
+
       continue;
     }
 
@@ -706,13 +1105,10 @@ export async function runAgent(
       const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage });
       toolTrace.push(result.trace);
 
-      const preferredFromTool = derivePreferredToolReply([{ toolName: textToolCall.toolName, result: result.result }]);
-      if (preferredFromTool.replyText) {
-        preferredReplyText = preferredFromTool.replyText;
-      }
-      if (preferredFromTool.guidanceText) {
-        preferredGuidanceText = preferredFromTool.guidanceText;
-      }
+      preferredToolResults.push({ toolName: textToolCall.toolName, result: result.result });
+      const preferredFromTools = derivePreferredToolReply(preferredToolResults);
+      preferredReplyText = preferredFromTools.replyText;
+      preferredGuidanceText = preferredFromTools.guidanceText;
 
       messages.push({ role: 'assistant', content: finalText });
       messages.push({
@@ -725,6 +1121,19 @@ export async function runAgent(
     }
 
     if (finalText) {
+      const mixedIntentContinuationPrompt = buildMixedIntentContinuationPrompt(userMessage, toolsUsed, allowedToolNames);
+      if (mixedIntentContinuationPrompt) {
+        logger.info('Agent continuation required: mixed intent still partially uncovered', {
+          iterations,
+          toolsUsed,
+          allowedToolNames,
+          uncoveredFamilies: getUncoveredMixedIntentFamilies(userMessage, toolsUsed),
+        });
+        messages.push({ role: 'assistant', content: finalText });
+        messages.push({ role: 'user', content: mixedIntentContinuationPrompt });
+        continue;
+      }
+
       const durationMs = Date.now() - startTime;
 
       logger.info('Agent completed', {
@@ -779,7 +1188,7 @@ export async function runAgent(
   });
 
   return {
-    replyText: buildAgentFallbackReply(userMessage, toolsUsed),
+    replyText: buildMixedIntentLoopExhaustedReply(userMessage, toolsUsed, allowedToolNames, preferredReplyText),
     toolsUsed,
     heuristicTools,
     learnedTools,
@@ -957,15 +1366,21 @@ async function selectAllowedTools(
   const isActiveEmergencySituation =
     /\b(kebakaran|terbakar|api\s+besar|kecelakaan|tabrakan|pingsan|kejang|tenggelam|pencurian|perampokan|penjambretan|banjir mendadak|tanah longsor|gempa|ledakan|orang\s+(sakit\s+keras|meninggal))\b/i.test(normalized)
     || /\b(tolong|bantu|gawat)\b.*\b(sekarang|segera|barusan|di\s+depan|di\s+rumah)\b/i.test(normalized);
-  const isVillageProfileQuery = /\b(alamat|lokasi|maps|gmaps|jam buka|jam operasional|kontak|nomor kantor|telepon kantor|kantor desa)\b/i.test(normalized);
+  const isOfficeContactProfileQuery = isOfficeContactProfileQueryText(userMessage);
+  const isVillageProfileQuery = isOfficeContactProfileQuery;
+  const isLocalKnowledgeQuery = isNonOfficeLocalKnowledgeQueryText(userMessage);
   const isMemoryQuery = /\b(sebelumnya|tadi|terakhir|alamat saya|preferensi saya|yang pernah saya|saya pernah)\b/i.test(normalized);
   const isStatusByReference = hasReference && /\b(status|cek|periksa|tracking|lacak)\b/i.test(normalized);
   const isCancelIntent = /\b(batal|batalkan|cancel)\b/i.test(normalized);
   const isContactDirectoryLookupIntent =
     !hasReference
+    && !isOfficeContactProfileQuery
     && /\b(nomor|nomer|no|kontak|telp|telepon|hp|wa|whatsapp)\b/i.test(normalized)
     && /\b(kepala desa|kades|lurah|sekdes|sekretaris desa|damkar|pemadam|polisi|polsek|polres|babinsa|bhabinkamtibmas|puskesmas|pustu|klinik|bidan|rumah sakit|\brs\b|rsud|ambulans|ambulan|kecamatan|camat|rt|rw|bpd|pln|pdam|basarnas|sar|bpbd|admin|petugas|kantor)\b/i.test(normalized)
     && !/\b(kebakaran|terbakar|kecelakaan|tabrakan|pingsan|sakit keras|pencurian|perampokan|banjir mendadak|longsor|gempa|ledakan|tenggelam)\b/i.test(normalized);
+  const requestedIntentFamilies = detectIntentFamilies(userMessage);
+  const hasMixedIntentFamilies = isMixedIntentMessage(userMessage, []);
+  const hasKnowledgeMixedIntent = requestedIntentFamilies.has('knowledge');
   const shouldPreferAuthoritativeDbTools =
     isShortServiceFollowUp
     || isServiceInfoRequest
@@ -1036,18 +1451,24 @@ async function selectAllowedTools(
     add('get_emergency_contacts');
   }
 
+  if (isLocalKnowledgeQuery) {
+    add('search_knowledge');
+  }
+
   if (isContactDirectoryLookupIntent) {
     requireTool('get_important_contact');
     add('get_important_contact');
-    deny(
-      'get_emergency_contacts',
-      'get_service_info',
-      'create_service_request',
-      'search_knowledge',
-      'search_documents',
-      'create_complaint',
-      'get_complaint_categories',
-    );
+    if (!hasMixedIntentFamilies) {
+      deny(
+        'get_emergency_contacts',
+        'get_service_info',
+        'create_service_request',
+        'search_knowledge',
+        'search_documents',
+        'create_complaint',
+        'get_complaint_categories',
+      );
+    }
   }
 
   if (isActiveEmergencySituation) {
@@ -1418,9 +1839,19 @@ async function selectAllowedTools(
 
   if (routingDecision?.mixedSignals || routingDecision?.confidence === 'medium') {
     if (routingDecision.primaryIntent !== 'contact_lookup') {
-      add('get_village_profile', 'get_service_info');
-      if (!shouldPreferAuthoritativeDbTools) {
+      if (hasKnowledgeMixedIntent) {
+        if (requestedIntentFamilies.has('service')) {
+          add('get_service_info');
+        }
+        if (requestedIntentFamilies.has('village_profile')) {
+          add('get_village_profile');
+        }
         add('search_knowledge');
+      } else {
+        add('get_village_profile', 'get_service_info');
+        if (!shouldPreferAuthoritativeDbTools) {
+          add('search_knowledge');
+        }
       }
     }
     if (routingDecision.primaryIntent === 'complaint_creation' || routingDecision.primaryIntent === 'emergency_contact') {
@@ -1428,7 +1859,28 @@ async function selectAllowedTools(
     }
   }
 
-  if (shouldPreferAuthoritativeDbTools) {
+  if (hasMixedIntentFamilies) {
+    if (requestedIntentFamilies.has('service')) {
+      add('get_service_info');
+    }
+    if (requestedIntentFamilies.has('village_profile')) {
+      add('get_village_profile');
+    }
+    if (requestedIntentFamilies.has('contact')) {
+      add('get_important_contact');
+    }
+    if (requestedIntentFamilies.has('status')) {
+      add('check_status', 'get_my_history');
+    }
+    if (requestedIntentFamilies.has('complaint')) {
+      add('create_complaint', 'get_complaint_categories');
+    }
+    if (requestedIntentFamilies.has('knowledge')) {
+      add('search_knowledge');
+    }
+  }
+
+  if (shouldPreferAuthoritativeDbTools && !hasKnowledgeMixedIntent) {
     heuristicSet.delete('search_knowledge');
     heuristicSet.delete('search_documents');
   }
@@ -1442,7 +1894,47 @@ async function selectAllowedTools(
     );
   }
 
-  if (isContactDirectoryLookupIntent) {
+  if (isVillageProfileQuery && !hasMixedIntentFamilies) {
+    add('get_village_profile');
+    deny(
+      'get_important_contact',
+      'get_emergency_contacts',
+      'get_service_info',
+      'create_service_request',
+      'search_knowledge',
+      'search_documents',
+      'create_complaint',
+      'get_complaint_categories',
+      'get_my_history',
+      'search_user_memory',
+      'check_status',
+      'cancel_request',
+      'get_service_request_edit_link',
+      'update_complaint',
+    );
+  }
+
+  if (isLocalKnowledgeQuery && !hasMixedIntentFamilies) {
+    add('search_knowledge');
+    deny(
+      'get_village_profile',
+      'get_important_contact',
+      'get_emergency_contacts',
+      'get_service_info',
+      'create_service_request',
+      'search_documents',
+      'create_complaint',
+      'get_complaint_categories',
+      'get_my_history',
+      'search_user_memory',
+      'check_status',
+      'cancel_request',
+      'get_service_request_edit_link',
+      'update_complaint',
+    );
+  }
+
+  if (isContactDirectoryLookupIntent && !hasMixedIntentFamilies) {
     add('get_important_contact');
     [
       'get_emergency_contacts',
@@ -1502,5 +1994,9 @@ export const __test_only__ = {
   selectAllowedTools,
   detectAmbiguousIntent,
   resolveFirstTurnToolChoice,
+  derivePreferredToolReply,
   shouldStopAfterSufficientServiceInfo,
+  getUncoveredMixedIntentFamilies,
+  shouldForceMixedIntentContinuation,
+  buildMixedIntentLoopExhaustedReply,
 };

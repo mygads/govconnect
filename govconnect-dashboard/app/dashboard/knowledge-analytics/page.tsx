@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Brain, RefreshCcw, TrendingUp, TrendingDown, AlertTriangle,
   CheckCircle, XCircle, HelpCircle, BarChart3, Target, MessageSquareWarning, Trash2, Loader2,
@@ -45,8 +47,18 @@ type ConfirmAction = {
   title: string
   description: string
   actionLabel: string
-  onConfirm: () => Promise<void> | void
+  destructive?: boolean
+  input?: {
+    label: string
+    placeholder?: string
+    defaultValue?: string
+    multiline?: boolean
+  }
+  onConfirm: (inputValue?: string) => Promise<void> | void
 }
+
+type GapStatus = "open" | "resolved" | "ignored"
+type ConflictStatus = "open" | "resolved" | "ignored" | "auto_resolved"
 
 interface OverviewStats {
   totalQueries: number
@@ -75,6 +87,7 @@ interface KnowledgeGapItem {
   firstSeen: string
   lastSeen: string
   channel: string
+  resolutionKbId?: string | null
 }
 
 interface KnowledgeGapsData {
@@ -95,13 +108,42 @@ interface KnowledgeConflictItem {
   firstSeen: string
   lastSeen: string
   query: string | null
+  resolutionNote?: string | null
 }
 
 interface KnowledgeConflictsData {
+  source?: "database" | "knowledge_consistency" | "unavailable"
   topConflicts: KnowledgeConflictItem[]
   statusCounts: Record<string, number>
   totalOpen: number
   totalAutoResolved: number
+}
+
+interface KnowledgeConsistencySummary {
+  total: number
+  byKind: Record<string, number>
+  bySeverity: Record<string, number>
+  byStatus: Record<string, number>
+}
+
+interface KnowledgeConsistencyItem {
+  id: string
+  kind: string
+  severity: string
+  status: string
+  topicHint?: string | null
+  sourceATitle?: string | null
+  sourceBTitle?: string | null
+  snippetA?: string | null
+  snippetB?: string | null
+  similarityScore?: number | null
+  detectedAt: string
+  resolutionNote?: string | null
+}
+
+interface KnowledgeConsistencyData {
+  summary: KnowledgeConsistencySummary
+  items: KnowledgeConsistencyItem[]
 }
 
 interface RetrievalModeItem {
@@ -314,6 +356,7 @@ interface AnalyticsData {
   flow: Record<string, any>
   knowledgeGaps?: KnowledgeGapsData
   knowledgeConflicts?: KnowledgeConflictsData
+  knowledgeConsistency?: KnowledgeConsistencyData
   retrievalObservability?: RetrievalObservabilityData | null
   memoryObservability?: MemoryObservabilityData | null
   guardrailObservability?: GuardrailObservabilityData | null
@@ -326,6 +369,7 @@ interface AnalyticsData {
     persistentGapsAvailable: boolean
     persistentConflictsAvailable: boolean
     latestEvalAvailable: boolean
+    knowledgeConsistencyAvailable?: boolean
   }
   rawAnalytics: any
 }
@@ -379,10 +423,14 @@ export default function KnowledgeAnalyticsPage() {
   const [selectedMemoryTraceIndex, setSelectedMemoryTraceIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [deletingGapId, setDeletingGapId] = useState<string | null>(null)
-  const [deletingAllGaps, setDeletingAllGaps] = useState(false)
-  const [deletingAllConflicts, setDeletingAllConflicts] = useState(false)
+  const [gapActionId, setGapActionId] = useState<string | null>(null)
+  const [conflictActionId, setConflictActionId] = useState<string | null>(null)
+  const [consistencyActionId, setConsistencyActionId] = useState<string | null>(null)
+  const [consistencyScanning, setConsistencyScanning] = useState(false)
+  const [gapBatchAction, setGapBatchAction] = useState<"resolved" | "ignored" | "delete" | null>(null)
+  const [conflictBatchAction, setConflictBatchAction] = useState<"resolved" | "ignored" | "delete" | null>(null)
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
+  const [pendingConfirmInput, setPendingConfirmInput] = useState("")
   const { toast } = useToast()
 
   // Only village admin can access this page
@@ -405,11 +453,14 @@ export default function KnowledgeAnalyticsPage() {
       headers,
     })
 
+    const contentType = res.headers.get("content-type") || ""
+    const payload = contentType.includes("application/json") ? await res.json() : null
+
     if (!res.ok) {
-      throw new Error("Request dashboard gagal")
+      throw new Error(payload?.error || payload?.message || "Request dashboard gagal")
     }
 
-    return res.json() as Promise<T>
+    return payload as T
   }, [getAuthHeaders])
 
   const fetchData = useCallback(async () => {
@@ -427,6 +478,9 @@ export default function KnowledgeAnalyticsPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
   useEffect(() => {
+    setPendingConfirmInput(pendingConfirm?.input?.defaultValue || "")
+  }, [pendingConfirm])
+  useEffect(() => {
     setSelectedTraceIndex(0)
   }, [data?.retrievalObservability?.recentTraces?.length])
   useEffect(() => {
@@ -437,88 +491,318 @@ export default function KnowledgeAnalyticsPage() {
     window.open(`/api/statistics/knowledge-analytics/export?kind=all&format=${format}`, "_blank")
   }
 
-  const requestDeleteGap = (id: string) => {
-    setPendingConfirm({
-      title: "Hapus pertanyaan belum terjawab?",
-      description: "Data pertanyaan ini akan dihapus dari analytics.",
-      actionLabel: "Hapus",
-      onConfirm: () => handleDeleteGap(id),
-    })
-  }
-
-  const handleDeleteGap = async (id: string) => {
+  const handleUpdateGapStatus = async (gap: KnowledgeGapItem, status: Exclude<GapStatus, "open">, resolutionKbId?: string) => {
     try {
-      setDeletingGapId(id)
-      await fetchDashboardJson(`/api/knowledge-gaps/${id}`, {
-        method: 'DELETE',
+      setGapActionId(gap.id)
+      await fetchDashboardJson(`/api/knowledge-gaps/${gap.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status,
+          ...(resolutionKbId ? { resolution_kb_id: resolutionKbId } : {}),
+        }),
       })
-      toast({ title: "Berhasil", description: "Pertanyaan berhasil dihapus" })
+      toast({
+        title: "Berhasil",
+        description: status === "resolved"
+          ? "Pertanyaan ditandai sudah terjawab tanpa menghapus evidensi"
+          : "Pertanyaan ditandai diabaikan tanpa menghapus evidensi",
+      })
       fetchData()
     } catch (err: any) {
       toast({
         title: "Gagal",
-        description: err.message === "Request dashboard gagal" ? "Gagal menghapus" : err.message,
+        description: err.message || "Gagal memperbarui status pertanyaan",
         variant: "destructive",
       })
     } finally {
-      setDeletingGapId(null)
+      setGapActionId(null)
+    }
+  }
+
+  const requestUpdateGapStatus = (gap: KnowledgeGapItem, status: Exclude<GapStatus, "open">) => {
+    if (status !== "resolved") {
+      handleUpdateGapStatus(gap, status)
+      return
+    }
+
+    setPendingConfirm({
+      title: "Tandai pertanyaan sudah terjawab?",
+      description: "Bila sudah ada artikel/entri knowledge yang menutup gap ini, isi ID knowledge base sebagai jejak resolusi. Kosongkan bila belum ada ID yang perlu dicatat.",
+      actionLabel: "Tandai Selesai",
+      input: {
+        label: "ID knowledge base resolusi (opsional)",
+        placeholder: "Mis. kb_123 atau doc-456",
+        defaultValue: gap.resolutionKbId || "",
+      },
+      onConfirm: (inputValue) => handleUpdateGapStatus(gap, status, inputValue?.trim()),
+    })
+  }
+
+  const requestUpdateAllGaps = (status: Exclude<GapStatus, "open">) => {
+    setPendingConfirm({
+      title: status === "resolved" ? "Tandai semua pertanyaan sudah terjawab?" : "Abaikan semua pertanyaan belum terjawab?",
+      description: status === "resolved"
+        ? "Semua gap akan dipindahkan ke status selesai tanpa menghapus data analytics."
+        : "Semua gap akan dipindahkan ke status diabaikan tanpa menghapus data analytics.",
+      actionLabel: status === "resolved" ? "Tandai Selesai" : "Abaikan Semua",
+      onConfirm: () => handleUpdateAllGaps(status),
+    })
+  }
+
+  const handleUpdateAllGaps = async (status: Exclude<GapStatus, "open">) => {
+    try {
+      setGapBatchAction(status)
+      const response = await fetchDashboardJson<{ updated: number }>("/api/knowledge-gaps/batch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      })
+      toast({
+        title: "Berhasil",
+        description: status === "resolved"
+          ? `${response.updated} pertanyaan ditandai sudah terjawab`
+          : `${response.updated} pertanyaan ditandai diabaikan`,
+      })
+      fetchData()
+    } catch (err: any) {
+      toast({
+        title: "Gagal",
+        description: err.message || "Gagal memperbarui status pertanyaan",
+        variant: "destructive",
+      })
+    } finally {
+      setGapBatchAction(null)
     }
   }
 
   const requestDeleteAllGaps = () => {
     setPendingConfirm({
-      title: "Hapus semua pertanyaan belum terjawab?",
-      description: "Data analytics pertanyaan belum terjawab akan di-reset.",
-      actionLabel: "Hapus Semua",
+      title: "Hapus arsip pertanyaan yang sudah selesai/diabaikan?",
+      description: "Aksi ini hanya membersihkan gap yang sudah tidak open lagi. Evidensi open akan tetap dipertahankan.",
+      actionLabel: "Hapus Arsip",
+      destructive: true,
       onConfirm: handleDeleteAllGaps,
     })
   }
 
   const handleDeleteAllGaps = async () => {
     try {
-      setDeletingAllGaps(true)
-      const response = await fetchDashboardJson<{ deleted: number }>('/api/knowledge-gaps/batch', {
-        method: 'DELETE',
+      setGapBatchAction("delete")
+      const response = await fetchDashboardJson<{ deleted: number }>("/api/knowledge-gaps/batch?scope=closed", {
+        method: "DELETE",
       })
-      toast({ title: "Berhasil", description: `${response.deleted} pertanyaan berhasil dihapus` })
+      toast({ title: "Berhasil", description: `${response.deleted} pertanyaan selesai/diabaikan berhasil dihapus permanen` })
       fetchData()
     } catch (err: any) {
       toast({
         title: "Gagal",
-        description: err.message === "Request dashboard gagal" ? "Gagal menghapus" : err.message,
+        description: err.message || "Gagal menghapus arsip pertanyaan",
         variant: "destructive",
       })
     } finally {
-      setDeletingAllGaps(false)
+      setGapBatchAction(null)
+    }
+  }
+
+  const handleUpdateConflictStatus = async (conflict: KnowledgeConflictItem, status: Exclude<ConflictStatus, "auto_resolved">, resolutionNote?: string) => {
+    try {
+      setConflictActionId(conflict.id)
+      await fetchDashboardJson(`/api/knowledge-conflicts/${conflict.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status,
+          ...(resolutionNote ? { resolution_note: resolutionNote } : {}),
+        }),
+      })
+      toast({
+        title: "Berhasil",
+        description: status === "resolved"
+          ? "Konflik ditandai selesai tanpa menghapus evidensi"
+          : status === "ignored"
+            ? "Konflik ditandai diabaikan tanpa menghapus evidensi"
+            : "Konflik dibuka kembali",
+      })
+      fetchData()
+    } catch (err: any) {
+      toast({
+        title: "Gagal",
+        description: err.message || "Gagal memperbarui status konflik",
+        variant: "destructive",
+      })
+    } finally {
+      setConflictActionId(null)
+    }
+  }
+
+  const requestUpdateConflictStatus = (conflict: KnowledgeConflictItem, status: Exclude<ConflictStatus, "auto_resolved">) => {
+    if (status === "open") {
+      handleUpdateConflictStatus(conflict, status)
+      return
+    }
+
+    setPendingConfirm({
+      title: status === "resolved" ? "Tandai konflik selesai?" : "Abaikan konflik ini?",
+      description: status === "resolved"
+        ? "Catatan resolusi opsional akan membantu jejak audit tentang sumber mana yang dipakai atau perbaikan apa yang dilakukan."
+        : "Catatan opsional bisa dipakai untuk menjelaskan kenapa konflik ini sengaja diabaikan tanpa menghapus evidensi.",
+      actionLabel: status === "resolved" ? "Tandai Selesai" : "Abaikan",
+      input: {
+        label: "Catatan resolusi (opsional)",
+        placeholder: status === "resolved" ? "Mis. pakai sumber A karena lebih baru dan sudah diverifikasi" : "Mis. false positive dari deteksi kemiripan ringkasan",
+        defaultValue: conflict.resolutionNote || "",
+        multiline: true,
+      },
+      onConfirm: (inputValue) => handleUpdateConflictStatus(conflict, status, inputValue?.trim()),
+    })
+  }
+
+  const requestUpdateAllConflicts = (status: "resolved" | "ignored") => {
+    setPendingConfirm({
+      title: status === "resolved" ? "Tandai semua konflik selesai?" : "Abaikan semua konflik?",
+      description: status === "resolved"
+        ? "Semua konflik akan dipindahkan ke status selesai tanpa menghapus data analytics."
+        : "Semua konflik akan dipindahkan ke status diabaikan tanpa menghapus data analytics.",
+      actionLabel: status === "resolved" ? "Tandai Selesai" : "Abaikan Semua",
+      onConfirm: () => handleUpdateAllConflicts(status),
+    })
+  }
+
+  const handleUpdateAllConflicts = async (status: "resolved" | "ignored") => {
+    try {
+      setConflictBatchAction(status)
+      const response = await fetchDashboardJson<{ updated: number }>("/api/knowledge-conflicts/batch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      })
+      toast({
+        title: "Berhasil",
+        description: status === "resolved"
+          ? `${response.updated} konflik ditandai selesai`
+          : `${response.updated} konflik ditandai diabaikan`,
+      })
+      fetchData()
+    } catch (err: any) {
+      toast({
+        title: "Gagal",
+        description: err.message || "Gagal memperbarui status konflik",
+        variant: "destructive",
+      })
+    } finally {
+      setConflictBatchAction(null)
     }
   }
 
   const requestDeleteAllConflicts = () => {
     setPendingConfirm({
-      title: "Hapus semua data konflik?",
-      description: "Data analytics konflik knowledge akan di-reset.",
-      actionLabel: "Hapus Semua",
+      title: "Hapus arsip konflik yang sudah selesai/diabaikan?",
+      description: "Aksi ini hanya membersihkan konflik non-open. Konflik yang masih open tetap dipertahankan sebagai evidensi aktif.",
+      actionLabel: "Hapus Arsip",
+      destructive: true,
       onConfirm: handleDeleteAllConflicts,
     })
   }
 
   const handleDeleteAllConflicts = async () => {
     try {
-      setDeletingAllConflicts(true)
-      const response = await fetchDashboardJson<{ deleted: number }>('/api/knowledge-conflicts/batch', {
-        method: 'DELETE',
+      setConflictBatchAction("delete")
+      const response = await fetchDashboardJson<{ deleted: number }>("/api/knowledge-conflicts/batch?scope=closed", {
+        method: "DELETE",
       })
-      toast({ title: "Berhasil", description: `${response.deleted} konflik berhasil dihapus` })
+      toast({ title: "Berhasil", description: `${response.deleted} konflik selesai/diabaikan berhasil dihapus permanen` })
       fetchData()
     } catch (err: any) {
       toast({
         title: "Gagal",
-        description: err.message === "Request dashboard gagal" ? "Gagal menghapus" : err.message,
+        description: err.message || "Gagal menghapus arsip konflik",
         variant: "destructive",
       })
     } finally {
-      setDeletingAllConflicts(false)
+      setConflictBatchAction(null)
     }
+  }
+
+  const handleScanKnowledgeConsistency = async () => {
+    try {
+      setConsistencyScanning(true)
+      const response = await fetchDashboardJson<{
+        recorded?: { doc_vs_doc?: number; doc_vs_db?: number; kb_vs_kb?: number }
+        scannedDocuments?: number
+      }>("/api/knowledge-consistency/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ includeKbSweep: true }),
+      })
+      const recorded = response.recorded || {}
+      toast({
+        title: "Scan konsistensi selesai",
+        description: `${response.scannedDocuments || 0} dokumen dipindai. Temuan baru: doc-vs-doc ${recorded.doc_vs_doc || 0}, doc-vs-db ${recorded.doc_vs_db || 0}, kb-vs-kb ${recorded.kb_vs_kb || 0}.`,
+      })
+      fetchData()
+    } catch (err: any) {
+      toast({
+        title: "Gagal",
+        description: err.message || "Gagal menjalankan scan konsistensi",
+        variant: "destructive",
+      })
+    } finally {
+      setConsistencyScanning(false)
+    }
+  }
+
+  const handleUpdateConsistencyStatus = async (item: KnowledgeConsistencyItem, status: "open" | "resolved" | "ignored", resolutionNote?: string) => {
+    try {
+      setConsistencyActionId(item.id)
+      await fetchDashboardJson(`/api/knowledge-consistency/${item.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status,
+          ...(resolutionNote ? { resolutionNote } : {}),
+        }),
+      })
+      toast({
+        title: "Berhasil",
+        description: status === "resolved"
+          ? "Temuan konsistensi ditandai selesai"
+          : status === "ignored"
+            ? "Temuan konsistensi ditandai diabaikan"
+            : "Temuan konsistensi dibuka kembali",
+      })
+      fetchData()
+    } catch (err: any) {
+      toast({
+        title: "Gagal",
+        description: err.message || "Gagal memperbarui status konsistensi",
+        variant: "destructive",
+      })
+    } finally {
+      setConsistencyActionId(null)
+    }
+  }
+
+  const requestUpdateConsistencyStatus = (item: KnowledgeConsistencyItem, status: "open" | "resolved" | "ignored") => {
+    if (status === "open") {
+      handleUpdateConsistencyStatus(item, status)
+      return
+    }
+
+    setPendingConfirm({
+      title: status === "resolved" ? "Tandai temuan konsistensi selesai?" : "Abaikan temuan konsistensi ini?",
+      description: status === "resolved"
+        ? "Catatan resolusi opsional akan membantu audit tentang keputusan sumber yang dipilih atau perbaikan yang dilakukan."
+        : "Catatan opsional bisa dipakai untuk menjelaskan kenapa temuan ini sengaja diabaikan.",
+      actionLabel: status === "resolved" ? "Tandai Selesai" : "Abaikan",
+      input: {
+        label: "Catatan resolusi (opsional)",
+        placeholder: status === "resolved" ? "Mis. sumber A dipertahankan karena dokumen paling baru" : "Mis. false positive dari pipeline similarity",
+        defaultValue: item.resolutionNote || "",
+        multiline: true,
+      },
+      onConfirm: (inputValue) => handleUpdateConsistencyStatus(item, status, inputValue?.trim()),
+    })
   }
 
   if (loading) {
@@ -565,8 +849,12 @@ export default function KnowledgeAnalyticsPage() {
   const topGaps = knowledgeGaps?.topGaps || []
   const gapStatusCounts = knowledgeGaps?.statusCounts || { open: 0, resolved: 0, ignored: 0 }
   const knowledgeConflicts = data?.knowledgeConflicts
+  const conflictsSource = knowledgeConflicts?.source || "database"
   const topConflicts = knowledgeConflicts?.topConflicts || []
   const conflictStatusCounts = knowledgeConflicts?.statusCounts || { open: 0, resolved: 0, auto_resolved: 0, ignored: 0 }
+  const knowledgeConsistency = data?.knowledgeConsistency
+  const consistencySummary = knowledgeConsistency?.summary || { total: 0, byKind: {}, bySeverity: {}, byStatus: {} }
+  const consistencyItems = knowledgeConsistency?.items || []
   const retrievalObservability = data?.retrievalObservability
   const retrievalSummary = retrievalObservability?.summary
   const retrievalModes = retrievalObservability?.byMode || []
@@ -615,14 +903,35 @@ export default function KnowledgeAnalyticsPage() {
             <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
             <AlertDialogDescription>{pendingConfirm?.description}</AlertDialogDescription>
           </AlertDialogHeader>
+          {pendingConfirm?.input ? (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{pendingConfirm.input.label}</label>
+              {pendingConfirm.input.multiline ? (
+                <Textarea
+                  value={pendingConfirmInput}
+                  onChange={(event) => setPendingConfirmInput(event.target.value)}
+                  placeholder={pendingConfirm.input.placeholder}
+                  rows={4}
+                />
+              ) : (
+                <Input
+                  value={pendingConfirmInput}
+                  onChange={(event) => setPendingConfirmInput(event.target.value)}
+                  placeholder={pendingConfirm.input.placeholder}
+                />
+              )}
+            </div>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel>Batal</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className={pendingConfirm?.destructive ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
               onClick={async () => {
                 const action = pendingConfirm
+                const inputValue = pendingConfirmInput
                 setPendingConfirm(null)
-                await action?.onConfirm()
+                setPendingConfirmInput("")
+                await action?.onConfirm(inputValue)
               }}
             >
               {pendingConfirm?.actionLabel || "Hapus"}
@@ -658,14 +967,18 @@ export default function KnowledgeAnalyticsPage() {
               <AlertTriangle className="h-6 w-6 text-orange-600 shrink-0" />
               <div className="flex-1">
                 <p className="font-semibold text-orange-800 dark:text-orange-300">
-                  Ada {conflictStatusCounts.open} data berkonflik di knowledge base
+                  {conflictsSource === "knowledge_consistency"
+                    ? `Ada ${conflictStatusCounts.open} temuan konsistensi knowledge yang perlu ditinjau`
+                    : `Ada ${conflictStatusCounts.open} data berkonflik di knowledge base`}
                 </p>
                 <p className="text-sm text-orange-700 dark:text-orange-400 mt-0.5">
-                  AI mendeteksi informasi yang saling bertentangan dari sumber berbeda. Periksa dan selesaikan di tabel konflik di bawah.
+                  {conflictsSource === "knowledge_consistency"
+                    ? "Backend canonical AI service mendeteksi inkonsistensi antar sumber. Periksa dan selesaikan di tabel Knowledge Consistency di bawah."
+                    : "AI mendeteksi informasi yang saling bertentangan dari sumber berbeda. Periksa dan selesaikan di tabel konflik di bawah."}
                 </p>
               </div>
               <Badge className="bg-orange-200 text-orange-800 shrink-0">
-                {conflictStatusCounts.open} Konflik
+                {conflictStatusCounts.open} {conflictsSource === "knowledge_consistency" ? "Temuan" : "Konflik"}
               </Badge>
             </div>
           </CardContent>
@@ -1576,10 +1889,16 @@ export default function KnowledgeAnalyticsPage() {
               <li className="flex items-start gap-2">
                 <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5 shrink-0" />
                 <div>
-                  <p className="font-medium text-sm">Ada {conflictStatusCounts.open} data berkonflik di knowledge base</p>
+                  <p className="font-medium text-sm">
+                    {conflictsSource === "knowledge_consistency"
+                      ? `Ada ${conflictStatusCounts.open} temuan konsistensi knowledge`
+                      : `Ada ${conflictStatusCounts.open} data berkonflik di knowledge base`}
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    AI mendeteksi informasi yang saling bertentangan dari sumber berbeda. Periksa tabel &quot;Data Berkonflik&quot; di bawah dan perbaiki knowledge yang tidak akurat.
-                    {conflictStatusCounts.auto_resolved > 0 && ` (${conflictStatusCounts.auto_resolved} konflik sudah otomatis di-resolve karena ada data resmi di database)`}
+                    {conflictsSource === "knowledge_consistency"
+                      ? "Backend canonical AI service mendeteksi inkonsistensi antar dokumen, database, atau KB. Periksa tabel Knowledge Consistency di bawah dan selesaikan item yang masih open."
+                      : "AI mendeteksi informasi yang saling bertentangan dari sumber berbeda. Periksa tabel \"Data Berkonflik\" di bawah dan perbaiki knowledge yang tidak akurat."}
+                    {conflictsSource !== "knowledge_consistency" && conflictStatusCounts.auto_resolved > 0 && ` (${conflictStatusCounts.auto_resolved} konflik sudah otomatis di-resolve karena ada data resmi di database)`}
                   </p>
                 </div>
               </li>
@@ -1600,7 +1919,8 @@ export default function KnowledgeAnalyticsPage() {
       </Card>
 
       {/* Knowledge Conflicts Table */}
-      <Card>
+      {conflictsSource !== "knowledge_consistency" && (
+        <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
@@ -1609,23 +1929,51 @@ export default function KnowledgeAnalyticsPage() {
               </CardTitle>
               <CardDescription className="mt-1.5">
                 AI mendeteksi informasi yang saling bertentangan dari sumber knowledge yang berbeda.
-                Periksa dan perbaiki knowledge yang tidak akurat agar AI memberikan jawaban konsisten.
+                Selesaikan atau abaikan dulu agar evidensi tetap tersimpan; reset data hanya untuk cleanup analytics.
               </CardDescription>
             </div>
             {topConflicts.length > 0 && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={requestDeleteAllConflicts}
-                disabled={deletingAllConflicts}
-              >
-                {deletingAllConflicts ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Trash2 className="h-4 w-4 mr-2" />
-                )}
-                Hapus Semua
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => requestUpdateAllConflicts("resolved")}
+                  disabled={conflictBatchAction !== null}
+                >
+                  {conflictBatchAction === "resolved" ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                  )}
+                  Selesaikan Semua
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => requestUpdateAllConflicts("ignored")}
+                  disabled={conflictBatchAction !== null}
+                >
+                  {conflictBatchAction === "ignored" ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <XCircle className="h-4 w-4 mr-2" />
+                  )}
+                  Abaikan Semua
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={requestDeleteAllConflicts}
+                  disabled={conflictBatchAction !== null}
+                >
+                  {conflictBatchAction === "delete" ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Trash2 className="h-4 w-4 mr-2" />
+                  )}
+                  Hapus Arsip
+                </Button>
+              </div>
             )}
           </div>
           {(conflictStatusCounts.open > 0 || conflictStatusCounts.resolved > 0 || conflictStatusCounts.auto_resolved > 0) && (
@@ -1657,6 +2005,7 @@ export default function KnowledgeAnalyticsPage() {
                   <TableHead>Frekuensi</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Terakhir</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1694,6 +2043,173 @@ export default function KnowledgeAnalyticsPage() {
                         )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{relativeTime}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          {conflict.status === "open" ? (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => requestUpdateConflictStatus(conflict, "resolved")}
+                                disabled={conflictActionId === conflict.id || conflictBatchAction !== null}
+                              >
+                                {conflictActionId === conflict.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CheckCircle className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => requestUpdateConflictStatus(conflict, "ignored")}
+                                disabled={conflictActionId === conflict.id || conflictBatchAction !== null}
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => requestUpdateConflictStatus(conflict, "open")}
+                              disabled={conflictActionId === conflict.id || conflictBatchAction !== null}
+                            >
+                              {conflictActionId === conflict.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                "Buka Lagi"
+                              )}
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <GitBranch className="h-5 w-5 text-indigo-600" /> Knowledge Consistency
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                Surface admin untuk temuan inkonsistensi doc-vs-doc, doc-vs-db, dan kb-vs-kb yang sebelumnya hanya tersedia di backend AI.
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleScanKnowledgeConsistency}
+              disabled={consistencyScanning}
+            >
+              {consistencyScanning ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <RefreshCcw className="h-4 w-4 mr-2" />
+              )}
+              Scan Ulang Konsistensi
+            </Button>
+          </div>
+          {consistencySummary.total > 0 && (
+            <div className="flex gap-2 mt-2 flex-wrap">
+              <Badge className="bg-orange-100 text-orange-800">{consistencySummary.byStatus.open || 0} Open</Badge>
+              <Badge className="bg-green-100 text-green-800">{consistencySummary.byStatus.resolved || 0} Resolved</Badge>
+              <Badge className="bg-gray-100 text-gray-700">{consistencySummary.byStatus.ignored || 0} Ignored</Badge>
+              <Badge className="bg-indigo-100 text-indigo-800">{consistencySummary.byKind.doc_vs_doc || 0} Doc vs Doc</Badge>
+              <Badge className="bg-sky-100 text-sky-800">{consistencySummary.byKind.doc_vs_db || 0} Doc vs DB</Badge>
+              <Badge className="bg-purple-100 text-purple-800">{consistencySummary.byKind.kb_vs_kb || 0} KB vs KB</Badge>
+            </div>
+          )}
+        </CardHeader>
+        <CardContent>
+          {consistencyItems.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <CheckCircle className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>Tidak ada temuan konsistensi yang masih open</p>
+              <p className="text-xs mt-1">Gunakan scan ulang untuk menarik temuan terbaru dari pipeline backend.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>#</TableHead>
+                  <TableHead>Jenis</TableHead>
+                  <TableHead>Severity</TableHead>
+                  <TableHead>Topik / Sumber</TableHead>
+                  <TableHead>Terdeteksi</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {consistencyItems.map((item, idx) => {
+                  const detectedAt = item.detectedAt ? new Date(item.detectedAt) : null
+                  const relativeTime = detectedAt ? formatRelativeTime(detectedAt) : "-"
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-mono text-sm">{idx + 1}</TableCell>
+                      <TableCell className="text-xs font-medium uppercase">{item.kind.replace(/_/g, " ")}</TableCell>
+                      <TableCell>
+                        <Badge className={`${confidenceBadgeClass(item.severity)} text-xs`}>{item.severity}</Badge>
+                      </TableCell>
+                      <TableCell className="max-w-md">
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium truncate" title={item.topicHint || undefined}>{item.topicHint || "Tanpa topic hint"}</p>
+                          <p className="text-xs text-muted-foreground truncate" title={`${item.sourceATitle || "-"} ↔ ${item.sourceBTitle || "-"}`}>
+                            {item.sourceATitle || "-"} ↔ {item.sourceBTitle || "-"}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{relativeTime}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          {item.status === "open" ? (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => requestUpdateConsistencyStatus(item, "resolved")}
+                                disabled={consistencyActionId === item.id || consistencyScanning}
+                              >
+                                {consistencyActionId === item.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CheckCircle className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => requestUpdateConsistencyStatus(item, "ignored")}
+                                disabled={consistencyActionId === item.id || consistencyScanning}
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => requestUpdateConsistencyStatus(item, "open")}
+                              disabled={consistencyActionId === item.id || consistencyScanning}
+                            >
+                              {consistencyActionId === item.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                "Buka Lagi"
+                              )}
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
                     </TableRow>
                   )
                 })}
@@ -1712,24 +2228,52 @@ export default function KnowledgeAnalyticsPage() {
                 <MessageSquareWarning className="h-5 w-5 text-orange-600" /> Pertanyaan Belum Terjawab
               </CardTitle>
               <CardDescription className="mt-1.5">
-                Pertanyaan warga yang tidak ditemukan jawabannya di knowledge base — tambahkan
-                knowledge untuk topik ini agar AI dapat menjawab dengan lebih baik.
+                Pertanyaan warga yang tidak ditemukan jawabannya di knowledge base.
+                Tandai sudah dijawab atau abaikan dulu agar evidensi tetap ada; reset data hanya untuk cleanup analytics.
               </CardDescription>
             </div>
             {topGaps.length > 0 && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={requestDeleteAllGaps}
-                disabled={deletingAllGaps}
-              >
-                {deletingAllGaps ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Trash2 className="h-4 w-4 mr-2" />
-                )}
-                Hapus Semua
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => requestUpdateAllGaps("resolved")}
+                  disabled={gapBatchAction !== null}
+                >
+                  {gapBatchAction === "resolved" ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                  )}
+                  Tandai Sudah Dijawab
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => requestUpdateAllGaps("ignored")}
+                  disabled={gapBatchAction !== null}
+                >
+                  {gapBatchAction === "ignored" ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <XCircle className="h-4 w-4 mr-2" />
+                  )}
+                  Abaikan Semua
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={requestDeleteAllGaps}
+                  disabled={gapBatchAction !== null}
+                >
+                  {gapBatchAction === "delete" ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Trash2 className="h-4 w-4 mr-2" />
+                  )}
+                  Hapus Arsip
+                </Button>
+              </div>
             )}
           </div>
           {(gapStatusCounts.open > 0 || gapStatusCounts.resolved > 0) && (
@@ -1781,19 +2325,32 @@ export default function KnowledgeAnalyticsPage() {
                       <TableCell className="capitalize text-xs">{gap.channel}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{relativeTime}</TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => requestDeleteGap(gap.id)}
-                          disabled={deletingGapId === gap.id}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        >
-                          {deletingGapId === gap.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => requestUpdateGapStatus(gap, "resolved")}
+                            disabled={gapActionId === gap.id || gapBatchAction !== null}
+                          >
+                            {gapActionId === gap.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <CheckCircle className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => requestUpdateGapStatus(gap, "ignored")}
+                            disabled={gapActionId === gap.id || gapBatchAction !== null}
+                          >
+                            {gapActionId === gap.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <XCircle className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )

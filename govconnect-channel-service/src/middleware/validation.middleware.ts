@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { body, query, validationResult } from 'express-validator';
-import { createHmac, timingSafeEqual } from 'crypto';
 import logger from '../utils/logger';
 import prisma from '../config/database';
 import { config } from '../config/env';
+import { validateWebhookSignature } from '../utils/webhook-signature';
 import { webhookCandidateFromBody } from '../utils/webhook-payload';
 
 // ==================== WEBHOOK ORIGIN VERIFICATION (Temuan 10) ====================
@@ -55,19 +55,6 @@ export function verifyWebhookOrigin(
   next();
 }
 
-function verifySignature(rawBody: Buffer, signature: string, secret: string): boolean {
-  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-  const provided = signature.startsWith('sha256=') ? signature.slice(7) : signature;
-
-  try {
-    const a = Buffer.from(expected, 'hex');
-    const b = Buffer.from(provided, 'hex');
-    return a.length === b.length && timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
-}
-
 export async function verifyWebhookHmac(
   req: Request,
   res: Response,
@@ -107,7 +94,7 @@ export async function verifyWebhookHmac(
         select: { id: true, webhook_secret: true },
       });
 
-      if (session?.webhook_secret && verifySignature(rawBody, signature, session.webhook_secret)) {
+      if (session?.webhook_secret && validateWebhookSignature(signature, rawBody, session.webhook_secret)) {
         return next();
       }
 
@@ -122,7 +109,7 @@ export async function verifyWebhookHmac(
       where: { webhook_secret: { not: null } },
       select: { id: true, village_id: true, webhook_secret: true },
     });
-    const matches = signedSessions.filter(session => session.webhook_secret && verifySignature(rawBody, signature, session.webhook_secret));
+    const matches = signedSessions.filter(session => session.webhook_secret && validateWebhookSignature(signature, rawBody, session.webhook_secret));
 
     if (matches.length === 1) return next();
 

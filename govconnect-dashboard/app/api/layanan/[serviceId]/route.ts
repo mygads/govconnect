@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -29,9 +30,14 @@ export async function GET(
     }
 
     const { serviceId } = await params
+    const requestedVillageId = request.nextUrl.searchParams.get('village_id')?.trim() || ''
+    const targetVillageId = session.admin.village_id || (session.admin.role === 'superadmin' ? requestedVillageId : '')
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/${serviceId}`), {
-      headers: getHeaders(),
+      headers: getHeaders({
+        ...(targetVillageId ? { 'x-village-id': targetVillageId } : {}),
+        'x-admin-role': session.admin.role,
+      }),
     })
 
     if (!response.ok) {
@@ -59,8 +65,10 @@ export async function PUT(
     }
 
     const { serviceId } = await params
+    const requestedVillageId = request.nextUrl.searchParams.get('village_id')?.trim() || ''
+    const targetVillageId = session.admin.village_id || (session.admin.role === 'superadmin' ? requestedVillageId : '')
     const body = await request.json().catch(() => null)
-    
+
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
@@ -77,11 +85,17 @@ export async function PUT(
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/${serviceId}`), {
       method: 'PUT',
-      headers: getHeaders(),
+      headers: getHeaders({
+        ...(targetVillageId ? { 'x-village-id': targetVillageId } : {}),
+        'x-admin-role': session.admin.role,
+      }),
       body: JSON.stringify(payload),
     })
 
     const data = await response.json().catch(() => null)
+    if (response.ok) {
+      await invalidateVillageAiCacheSafely(targetVillageId)
+    }
     return NextResponse.json(data ?? { error: 'Invalid response from case-service' }, { status: response.status })
   } catch (error) {
     console.error('Error updating service:', error)
@@ -101,17 +115,26 @@ export async function DELETE(
     }
 
     const { serviceId } = await params
+    const requestedVillageId = request.nextUrl.searchParams.get('village_id')?.trim() || ''
+    const targetVillageId = session.admin.village_id || (session.admin.role === 'superadmin' ? requestedVillageId : '')
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/${serviceId}`), {
       method: 'DELETE',
-      headers: getHeaders(),
+      headers: getHeaders({
+        ...(targetVillageId ? { 'x-village-id': targetVillageId } : {}),
+        'x-admin-role': session.admin.role,
+      }),
     })
 
     if (response.status === 204) {
+      await invalidateVillageAiCacheSafely(targetVillageId)
       return NextResponse.json({ success: true })
     }
 
     const data = await response.json().catch(() => null)
+    if (response.ok) {
+      await invalidateVillageAiCacheSafely(targetVillageId)
+    }
     return NextResponse.json(data ?? { error: 'Invalid response from case-service' }, { status: response.status })
   } catch (error) {
     console.error('Error deleting service:', error)

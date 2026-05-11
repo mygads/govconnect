@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
+import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
+import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -15,6 +17,30 @@ async function getSession(request: NextRequest) {
   })
   if (!session || session.expires_at < new Date()) return null
   return session
+}
+
+async function resolveImportantContactCategory(villageId: string, categoryId?: string | null, categoryName?: string | null) {
+  if (categoryId) {
+    const category = await prisma.important_contact_categories.findFirst({
+      where: { id: categoryId, village_id: villageId },
+      select: { id: true, name: true },
+    })
+    if (category) return category
+  }
+
+  const normalizedCategoryName = normalizeScopedName(categoryName)
+  if (normalizedCategoryName) {
+    const category = await prisma.important_contact_categories.findFirst({
+      where: {
+        village_id: villageId,
+        name_key: buildScopedNameKey(normalizedCategoryName),
+      },
+      select: { id: true, name: true },
+    })
+    if (category) return category
+  }
+
+  return null
 }
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -34,22 +60,32 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       require_address,
       send_important_contacts,
       important_contact_category,
+      important_contact_category_id,
     } = body
 
     if (!name) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 })
     }
 
+    const resolvedImportantContactCategory = !!send_important_contacts && session.admin.village_id
+      ? await resolveImportantContactCategory(session.admin.village_id, important_contact_category_id, important_contact_category)
+      : null
+
+    if (send_important_contacts && !resolvedImportantContactCategory) {
+      return NextResponse.json({ error: 'important contact category tidak valid untuk desa ini' }, { status: 400 })
+    }
+
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${id}`), {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
       body: JSON.stringify({
         name,
         description: description || null,
         is_urgent: !!is_urgent,
         require_address: !!require_address,
         send_important_contacts: !!send_important_contacts,
-        important_contact_category: send_important_contacts ? important_contact_category : null,
+        important_contact_category: null,
+        important_contact_category_id: send_important_contacts ? resolvedImportantContactCategory?.id ?? null : null,
       }),
     })
 
@@ -58,6 +94,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       return NextResponse.json({ error: data.error || 'Failed to update type' }, { status: response.status })
     }
 
+    await invalidateVillageAiCacheSafely(session.admin.village_id)
     return NextResponse.json(data)
   } catch (error) {
     console.error('Error updating complaint type:', error)
@@ -76,7 +113,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${id}`), {
       method: 'DELETE',
-      headers: getHeaders(),
+      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
     })
 
     const data = await response.json().catch(() => ({}))
@@ -84,6 +121,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
       return NextResponse.json({ error: data.error || 'Failed to delete type' }, { status: response.status })
     }
 
+    await invalidateVillageAiCacheSafely(session.admin.village_id)
     return NextResponse.json(data)
   } catch (error) {
     console.error('Error deleting complaint type:', error)
