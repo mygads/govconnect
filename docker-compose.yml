@@ -28,6 +28,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL_CHANNEL}
+      - DIRECT_URL=${DIRECT_URL_CHANNEL:-${DATABASE_URL_CHANNEL}}
     volumes:
       - channel-uploads:/app/uploads
     extra_hosts:
@@ -62,6 +63,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL_AI}
+      - DIRECT_URL=${DIRECT_URL_AI:-${DATABASE_URL_AI}}
       - PROFILE_ENCRYPTION_KEY=${PROFILE_ENCRYPTION_KEY:?PROFILE_ENCRYPTION_KEY is required for ai-service}
       - AI_PROVIDER_ENCRYPTION_KEY=${AI_PROVIDER_ENCRYPTION_KEY:?AI_PROVIDER_ENCRYPTION_KEY is required for ai-service}
     volumes:
@@ -99,6 +101,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL_CASE}
+      - DIRECT_URL=${DIRECT_URL_CASE:-${DATABASE_URL_CASE}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -131,6 +134,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL_NOTIFICATION}
+      - DIRECT_URL=${DIRECT_URL_NOTIFICATION:-${DATABASE_URL_NOTIFICATION}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -163,6 +167,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL_DASHBOARD}
+      - DIRECT_URL=${DIRECT_URL_DASHBOARD:-${DATABASE_URL_DASHBOARD}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
