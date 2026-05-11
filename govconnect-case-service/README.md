@@ -1,6 +1,6 @@
 # Tanggapin AI Case Service
 
-<!-- CI/CD Trigger: 2026-05-06-v2 - GovConnect full rebuild retry -->
+<!-- CI/CD Trigger: 2026-05-11-v1 - GovConnect fresh redeploy -->
 
 <!-- CI/CD Trigger: 2026-02-01-v2 - Prisma client fix -->
 
