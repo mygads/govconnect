@@ -555,6 +555,41 @@ function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { t
   return { toolName, args };
 }
 
+function shouldAllowTextToolFallback(input: {
+  userMessage: string;
+  toolName: AgentToolName;
+  allowedToolNames: AgentToolName[];
+  heuristicTools: AgentToolName[];
+  requiredTools: AgentToolName[];
+  toolsUsed: string[];
+}): { allowed: boolean; reason: string } {
+  if (input.toolsUsed.length > 0) {
+    return { allowed: false, reason: 'tools_already_used' };
+  }
+
+  if (!READ_ONLY_TOOLS.has(input.toolName)) {
+    return { allowed: false, reason: 'tool_not_read_only' };
+  }
+
+  if (input.allowedToolNames.length !== 1 || input.allowedToolNames[0] !== input.toolName) {
+    return { allowed: false, reason: 'multiple_allowed_tools' };
+  }
+
+  if (input.requiredTools.length > 0 && !input.requiredTools.includes(input.toolName)) {
+    return { allowed: false, reason: 'tool_not_required' };
+  }
+
+  if (hasMixedIntentRequest(input.userMessage)) {
+    return { allowed: false, reason: 'mixed_intent_request' };
+  }
+
+  if (detectAmbiguousIntent(input.userMessage, input.heuristicTools, input.allowedToolNames)) {
+    return { allowed: false, reason: 'ambiguous_intent' };
+  }
+
+  return { allowed: true, reason: 'single_read_only_grounding_tool' };
+}
+
 function validateFinalAgentReply(text: string, toolsUsed: string[], userMessage?: string): string {
   const normalized = text.toLowerCase();
   if (/<tool_call>|<function=|<parameter=/i.test(text)) {
@@ -1106,38 +1141,60 @@ export async function runAgent(
     const finalText = extractText(assistantMsg?.content);
     const textToolCall = finalText ? parseTextToolCall(finalText, allowedToolNames) : null;
     if (textToolCall) {
-      logger.warn('Executing text-tool fallback', {
+      const textToolFallbackDecision = shouldAllowTextToolFallback({
+        userMessage,
+        toolName: textToolCall.toolName,
+        allowedToolNames,
+        heuristicTools,
+        requiredTools,
+        toolsUsed,
+      });
+
+      if (textToolFallbackDecision.allowed) {
+        logger.warn('Executing text-tool fallback', {
+          toolName: textToolCall.toolName,
+          iteration: i + 1,
+          userId: toolCtx.userId,
+          villageId: toolCtx.villageId,
+          matchedPolicyKey,
+          matchedPolicySource,
+          fallbackReason: textToolFallbackDecision.reason,
+        });
+
+        toolsUsed.push(textToolCall.toolName);
+        const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage });
+        result.trace = {
+          ...result.trace,
+          sourceKind: result.trace.sourceKind
+            ? `${result.trace.sourceKind}|text_tool_fallback`
+            : 'text_tool_fallback',
+        };
+        toolTrace.push(result.trace);
+
+        preferredToolResults.push({ toolName: textToolCall.toolName, result: result.result });
+        const preferredFromTools = derivePreferredToolReply(preferredToolResults);
+        preferredReplyText = preferredFromTools.replyText;
+        preferredGuidanceText = preferredFromTools.guidanceText;
+
+        messages.push({ role: 'assistant', content: finalText });
+        messages.push({
+          role: 'tool',
+          tool_call_id: `text_tool_${i}`,
+          name: textToolCall.toolName,
+          content: result.content,
+        });
+        continue;
+      }
+
+      logger.warn('Ignoring text-tool fallback', {
         toolName: textToolCall.toolName,
         iteration: i + 1,
         userId: toolCtx.userId,
         villageId: toolCtx.villageId,
         matchedPolicyKey,
         matchedPolicySource,
+        fallbackReason: textToolFallbackDecision.reason,
       });
-
-      toolsUsed.push(textToolCall.toolName);
-      const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage });
-      result.trace = {
-        ...result.trace,
-        sourceKind: result.trace.sourceKind
-          ? `${result.trace.sourceKind}|text_tool_fallback`
-          : 'text_tool_fallback',
-      };
-      toolTrace.push(result.trace);
-
-      preferredToolResults.push({ toolName: textToolCall.toolName, result: result.result });
-      const preferredFromTools = derivePreferredToolReply(preferredToolResults);
-      preferredReplyText = preferredFromTools.replyText;
-      preferredGuidanceText = preferredFromTools.guidanceText;
-
-      messages.push({ role: 'assistant', content: finalText });
-      messages.push({
-        role: 'tool',
-        tool_call_id: `text_tool_${i}`,
-        name: textToolCall.toolName,
-        content: result.content,
-      });
-      continue;
     }
 
     if (finalText) {
@@ -2014,6 +2071,8 @@ export const __test_only__ = {
   selectAllowedTools,
   detectAmbiguousIntent,
   resolveFirstTurnToolChoice,
+  parseTextToolCall,
+  shouldAllowTextToolFallback,
   derivePreferredToolReply,
   shouldStopAfterSufficientServiceInfo,
   getUncoveredMixedIntentFamilies,

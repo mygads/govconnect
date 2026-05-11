@@ -130,8 +130,9 @@ export async function handleStatusCheck(
 
     let requirementDefs: ServiceRequirementDefinition[] = [];
     const serviceId: string | undefined = result.data?.service_id || result.data?.serviceId;
+    const villageId: string | undefined = result.data?.village_id || result.data?.villageId || result.data?.service?.village_id || result.data?.service?.villageId;
     if (serviceId) {
-      requirementDefs = await getServiceRequirements(String(serviceId));
+      requirementDefs = await getServiceRequirements(String(serviceId), villageId);
     }
 
     return buildServiceRequestDetailResponse(result.data, requirementDefs);

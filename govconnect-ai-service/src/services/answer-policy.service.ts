@@ -281,9 +281,15 @@ function hasTrustedGrounding(
   allowedTools: Set<string>,
   allowedSourceKinds: Set<string>,
 ): boolean {
-  if (toolsUsed.some((tool) => allowedTools.has(tool))) {
-    return true;
-  }
+  const toolTrace = Array.isArray(result.metadata?.toolTrace) ? result.metadata.toolTrace : [];
+  const groundedByTrace = toolTrace.some((trace) => {
+    if (!trace.success) return false;
+    if (trace.trustLevel !== 'trusted_fact' && trace.trustLevel !== 'trusted_record') {
+      return false;
+    }
+    return allowedTools.has(trace.tool) || (!!trace.sourceKind && allowedSourceKinds.has(trace.sourceKind));
+  });
+  if (groundedByTrace) return true;
 
   const grounding = result.metadata?.grounding;
   if (grounding?.trustedTools?.some((tool) => allowedTools.has(tool))) {
@@ -293,14 +299,33 @@ function hasTrustedGrounding(
     return true;
   }
 
+  // Legacy fallback only: a tool name alone is not enough when trace data says
+  // it failed or returned weak/empty retrieval. This prevents failed tools from
+  // being counted as authoritative grounding.
+  if (toolTrace.length > 0) return false;
+  return toolsUsed.some((tool) => allowedTools.has(tool));
+}
+
+function hasReliableRetrievalGrounding(
+  result: ProcessMessageResult,
+  toolsUsed: string[],
+): boolean {
+  const allowedTools = KNOWLEDGE_GROUNDING_TOOLS;
+  const allowedSourceKinds = KNOWLEDGE_GROUNDING_SOURCE_KINDS;
   const toolTrace = Array.isArray(result.metadata?.toolTrace) ? result.metadata.toolTrace : [];
-  return toolTrace.some((trace) => {
+
+  const groundedByTrace = toolTrace.some((trace) => {
     if (!trace.success) return false;
-    if (trace.trustLevel !== 'trusted_fact' && trace.trustLevel !== 'trusted_record') {
-      return false;
-    }
-    return allowedTools.has(trace.tool) || (!!trace.sourceKind && allowedSourceKinds.has(trace.sourceKind));
+    if (trace.trustLevel !== 'untrusted_retrieval') return false;
+    if (!allowedTools.has(trace.tool) && !(trace.sourceKind && allowedSourceKinds.has(trace.sourceKind))) return false;
+    if (trace.found === false) return false;
+    const confidence = String(trace.confidenceLevel || '').toLowerCase();
+    return confidence !== 'low' && confidence !== 'none';
   });
+  if (groundedByTrace) return true;
+
+  if (toolTrace.length > 0) return false;
+  return toolsUsed.some((tool) => allowedTools.has(tool));
 }
 
 /**
@@ -482,7 +507,7 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
   }
 
   if (kind === 'knowledge_answer') {
-    const usedKnowledgeTool = hasTrustedGrounding(result, toolsUsed, KNOWLEDGE_GROUNDING_TOOLS, KNOWLEDGE_GROUNDING_SOURCE_KINDS);
+    const usedKnowledgeTool = hasReliableRetrievalGrounding(result, toolsUsed);
     const usedStructuredTool = usedContactTool || usedServiceTool || usedProfileTool;
 
     if (usedKnowledgeTool || usedStructuredTool || isExplicitUncertaintyReply(responseText)) {

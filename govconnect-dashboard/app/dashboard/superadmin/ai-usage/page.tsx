@@ -34,6 +34,8 @@ type ChartComponent = ComponentType<{ data: any; options?: any }>
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/components/auth/AuthContext"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { formatIDRFromUSD, formatJakartaDate, formatUSD as formatMoneyUSD } from "@/lib/utils"
 
 // ==================== Types ====================
@@ -217,15 +219,7 @@ const MODEL_COLORS = [
 
 async function fetchData<T>(slug: string, params?: Record<string, string>): Promise<T> {
   const qs = params ? "?" + new URLSearchParams(params).toString() : ""
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-  const res = await fetch(`/api/statistics/token-usage/${slug}${qs}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  const payload = await res.json().catch(() => null)
-  if (!res.ok) {
-    throw new Error(payload?.error || `Gagal memuat token usage: ${slug} (${res.status})`)
-  }
-  return payload as T
+  return fetchApi<T>(`/api/statistics/token-usage/${slug}${qs}`)
 }
 
 const chartOptions = {
@@ -298,7 +292,7 @@ export default function AITokenUsagePage() {
   }, [])
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   // Load summary data on mount
@@ -356,18 +350,11 @@ export default function AITokenUsagePage() {
     setVillageLoading(true)
     setUsageError(null)
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
       const [bv, rbv, md, villagesRes] = await Promise.all([
         fetchData<VillageUsage[]>("by-village"),
         fetchData<VillageResponse[]>("responses-by-village"),
         fetchData<VillageModelDetail[]>("village-model-detail"),
-        fetch("/api/superadmin/villages", {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        }).then(async (r) => {
-          const payload = await r.json().catch(() => null)
-          if (!r.ok) throw new Error(payload?.error || `Gagal memuat daftar desa (${r.status})`)
-          return payload
-        }),
+        fetchApi<any>("/api/superadmin/villages"),
       ])
       setByVillage(bv)
       setResponsesByVillage(rbv)
@@ -441,21 +428,10 @@ export default function AITokenUsagePage() {
     try {
       setResetting(true)
       setResetError(null)
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-      const res = await fetch("/api/superadmin/reset-token-usage", {
+      await fetchApi<any>("/api/superadmin/reset-token-usage", {
         method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({ password: resetPassword }),
       })
-
-      const payload = await res.json().catch(() => null)
-      if (!res.ok) {
-        setResetError(payload?.error || "Gagal menghapus data AI usage")
-        return
-      }
 
       setSummary(null)
       setByModel([])

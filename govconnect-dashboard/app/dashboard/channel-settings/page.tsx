@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useToast } from "@/hooks/use-toast"
 import { auth as authApi, superadmin as superadminApi, fetchApiRaw } from "@/lib/frontend-api"
+import { isSuperadmin as hasSuperadminAccess } from "@/lib/rbac"
 import { 
   Wifi, 
   Save, 
@@ -254,7 +255,7 @@ export default function ChannelSettingsPage() {
           return
         }
 
-        if (meJson.user.role === "superadmin") {
+        if (hasSuperadminAccess(meJson.user.role)) {
           const vJson = await superadminApi.getVillages()
           const list = (vJson.data || []) as VillageItem[]
           setVillages(list)
@@ -1305,7 +1306,7 @@ export default function ChannelSettingsPage() {
     )
   }
 
-  const isSuperadmin = auth?.role === "superadmin"
+  const isSuperadmin = hasSuperadminAccess(auth?.role)
   const sessionDisplay = getSessionDisplay()
   const lifecycleStatus = getLifecycleStatus()
   const isActiveConnection = sessionStatus?.loggedIn === true && sessionStatus?.connected === true

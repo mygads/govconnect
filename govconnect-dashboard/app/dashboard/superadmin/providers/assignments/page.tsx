@@ -6,6 +6,8 @@ import { Brain, Database, Loader2, Save, Search, Waypoints } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -83,25 +85,18 @@ export default function SuperadminLaneAssignmentsPage() {
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
 
-      const [modelsRes, assignmentsRes] = await Promise.all([
-        fetch("/api/superadmin/ai-models", { headers }),
-        fetch("/api/superadmin/ai-lane-assignments", { headers }),
+      const [modelsPayload, assignmentsPayload] = await Promise.all([
+        fetchApi<any>("/api/superadmin/ai-models"),
+        fetchApi<any>("/api/superadmin/ai-lane-assignments"),
       ])
-
-      const modelsPayload = await modelsRes.json()
-      const assignmentsPayload = await assignmentsRes.json()
-      if (!modelsRes.ok) throw new Error(modelsPayload?.error || "Gagal memuat model AI")
-      if (!assignmentsRes.ok) throw new Error(assignmentsPayload?.error || "Gagal memuat assignment lane")
 
       const modelRows = Array.isArray(modelsPayload?.data) ? modelsPayload.data : []
       const assignmentRows = Array.isArray(assignmentsPayload?.data) ? assignmentsPayload.data : []
@@ -174,13 +169,8 @@ export default function SuperadminLaneAssignmentsPage() {
     try {
       setSavingLane(lane)
       setError(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch("/api/superadmin/ai-lane-assignments", {
+      const payload = await fetchApi<any>("/api/superadmin/ai-lane-assignments", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           lane_type: lane,
           primary_model_id: draft.primary_model_id,
@@ -189,8 +179,6 @@ export default function SuperadminLaneAssignmentsPage() {
           is_active: true,
         }),
       })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload?.error || "Gagal menyimpan lane assignment")
 
       toast({ title: "Berhasil", description: `Assignment ${lane.toUpperCase()} berhasil disimpan.` })
       setDrafts((current) => ({

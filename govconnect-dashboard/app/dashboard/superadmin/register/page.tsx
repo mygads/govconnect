@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAuth } from "@/components/auth/AuthContext"
+import { isSuperadmin } from "@/lib/rbac"
 import { getVillageTimezoneOptions } from "@/lib/utils"
 import { UserPlus, CheckCircle2, AlertCircle } from "lucide-react"
 
@@ -46,7 +47,7 @@ export default function SuperadminRegisterPage() {
   })
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") {
+    if (user && !isSuperadmin(user.role)) {
       router.replace("/dashboard")
     }
   }, [user, router])

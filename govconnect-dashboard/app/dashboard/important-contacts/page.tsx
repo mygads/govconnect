@@ -34,7 +34,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Phone, PlusCircle, X, Pencil, Trash2, AlertTriangle, Folder, FolderOpen } from "lucide-react"
-import { importantContacts as contactsApi } from "@/lib/frontend-api"
+import { fetchApi, importantContacts as contactsApi } from "@/lib/frontend-api"
 
 interface ContactCategory {
   id: string
@@ -209,17 +209,12 @@ export default function ImportantContactsPage() {
     setLoadingLinkedTypes(true)
     setDeleteCategoryDialogOpen(true)
 
-    // Fetch linked complaint types
     try {
-      const catRes = await fetch(`/api/important-contacts/categories/${category.id}`, {
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (catRes.ok) {
-        const catData = await catRes.json()
-        setLinkedComplaintTypes(catData.linkedComplaintTypes || [])
-      }
+      const catData = await fetchApi<{ linkedComplaintTypes?: LinkedComplaintType[] }>(`/api/important-contacts/categories/${category.id}`)
+      setLinkedComplaintTypes(catData.linkedComplaintTypes || [])
     } catch (error) {
       console.error("Failed to fetch linked types:", error)
+      setLinkedComplaintTypes([])
     } finally {
       setLoadingLinkedTypes(false)
     }

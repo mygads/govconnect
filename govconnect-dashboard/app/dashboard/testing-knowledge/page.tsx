@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
 
 interface TestResult {
   success: boolean
@@ -64,18 +65,9 @@ export default function TestingKnowledgePage() {
   const handleResetContext = async () => {
     setResetting(true)
     try {
-      const response = await fetch('/api/testing-knowledge/reset', {
+      await fetchApi('/api/testing-knowledge/reset', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
       })
-
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(data.error || 'Gagal mereset konteks server-side')
-      }
 
       setHistory([])
       setResult(null)
@@ -101,20 +93,15 @@ export default function TestingKnowledgePage() {
 
     setLoading(true)
     try {
-      const response = await fetch("/api/testing-knowledge", {
+      const data = await fetchApi<TestResult>("/api/testing-knowledge", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
         body: JSON.stringify({
           query,
           conversationHistory: [...history, { role: "user", content: query.trim() }],
         }),
       })
 
-      const data = (await response.json().catch(() => null)) as TestResult | null
-      if (!response.ok || data?.success === false) {
+      if (data?.success === false) {
         throw new Error(getTestErrorMessage(data))
       }
 

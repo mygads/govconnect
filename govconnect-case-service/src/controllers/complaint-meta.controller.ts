@@ -29,6 +29,11 @@ function requireVillageScopeForScopedAdmin(req: Request, res: Response): string 
     return null;
   }
 
+  if (!adminRole) {
+    res.status(400).json({ error: 'x-admin-role is required for admin metadata requests' });
+    return null;
+  }
+
   return villageId;
 }
 
@@ -55,7 +60,8 @@ function resolveAdminCollectionVillageScope(req: Request, res: Response): string
     return null;
   }
 
-  return queryVillageId;
+  res.status(400).json({ error: 'x-admin-role is required for admin metadata requests' });
+  return null;
 }
 
 function resolveAdminWriteVillageScope(req: Request, res: Response, requestedVillageId?: string): string | undefined | null {
@@ -79,7 +85,8 @@ function resolveAdminWriteVillageScope(req: Request, res: Response, requestedVil
     return requestedVillageId;
   }
 
-  return requestedVillageId;
+  res.status(400).json({ error: 'x-admin-role is required for admin metadata requests' });
+  return null;
 }
 
 function normalizeComplaintMetaName(name: unknown): string {

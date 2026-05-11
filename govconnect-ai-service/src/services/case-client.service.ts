@@ -206,6 +206,7 @@ export async function getComplaintTypes(villageId?: string): Promise<ComplaintTy
       headers: {
         'x-internal-api-key': config.internalApiKey,
         'Content-Type': 'application/json',
+        ...(villageId ? { 'x-admin-role': 'village_admin', 'x-village-id': villageId } : {}),
       },
       params: villageId ? { village_id: villageId } : undefined,
       timeout: 10000,
@@ -802,6 +803,7 @@ async function fetchServiceCatalogFromCaseService(villageId?: string): Promise<S
     headers: {
       'x-internal-api-key': config.internalApiKey,
       'Content-Type': 'application/json',
+      ...(villageId ? { 'x-admin-role': 'village_admin', 'x-village-id': villageId } : {}),
     },
     timeout: 10000,
   });
@@ -923,10 +925,10 @@ function formatServiceRequirements(requirements: ServiceRequirementDefinition[])
     .join('\n');
 }
 
-export async function getServiceRequirements(serviceId: string): Promise<ServiceRequirementDefinition[]> {
+export async function getServiceRequirements(serviceId: string, villageId?: string): Promise<ServiceRequirementDefinition[]> {
   if (!serviceId) return [];
 
-  const cacheKey = serviceId.trim();
+  const cacheKey = `${villageId || '__unknown__'}:${serviceId.trim()}`;
   const now = Date.now();
   const cached = serviceRequirementsCacheMap.get(cacheKey);
   if (cached && (now - cached.time) < SERVICE_REQUIREMENTS_TTL) {
@@ -939,6 +941,7 @@ export async function getServiceRequirements(serviceId: string): Promise<Service
       headers: {
         'x-internal-api-key': config.internalApiKey,
         'Content-Type': 'application/json',
+        ...(villageId ? { 'x-admin-role': 'village_admin', 'x-village-id': villageId } : {}),
       },
       timeout: 10000,
     });
@@ -976,7 +979,7 @@ export async function buildServiceInfoContext(
 ): Promise<BuiltServiceInfoContext> {
   const requirements = Array.isArray(service.requirements) && service.requirements.length > 0
     ? [...service.requirements]
-    : await getServiceRequirements(service.id || service.slug);
+    : await getServiceRequirements(service.id || service.slug, options.villageId || service.village_id || service.villageId);
   const sortedRequirements = requirements
     .slice()
     .sort((left, right) => (left.order_index || 0) - (right.order_index || 0));

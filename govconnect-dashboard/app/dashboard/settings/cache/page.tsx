@@ -25,6 +25,8 @@ import {
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { useRouter } from "next/navigation"
 
 interface CacheEntry {
@@ -66,12 +68,6 @@ function getApiErrorMessage(data: { error?: string; message?: string } | null, f
   return data?.error || data?.message || fallback
 }
 
-function isSuperadminRole(role?: string | null): boolean {
-  if (!role) return false
-  const normalized = role.toLowerCase()
-  return normalized === 'superadmin' || normalized === 'super_admin'
-}
-
 export default function CacheManagementPage() {
     const { user } = useAuth()
 
@@ -88,25 +84,20 @@ export default function CacheManagementPage() {
   const [intentsInput, setIntentsInput] = useState("")
   const [error, setError] = useState<string | null>(null)
 
-  // Only super admin can access
-  if (user && !isSuperadminRole(user.role)) {
-    router.replace('/dashboard')
+  useEffect(() => {
+    if (user && !isSuperadmin(user.role)) {
+      router.replace('/dashboard')
+    }
+  }, [user, router])
+
+  if (user && !isSuperadmin(user.role)) {
+    return null
   }
 
   const fetchStats = useCallback(async () => {
     try {
       setError(null)
-      const response = await fetch('/api/cache', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-      })
-
-      const data = await response.json().catch(() => null)
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Gagal mengambil data cache'))
-      }
-
+      const data = await fetchApi<CacheStats>('/api/cache')
       setStats(data)
     } catch (err: any) {
       setError(err.message || 'Gagal menghubungi AI Service')
@@ -128,17 +119,10 @@ export default function CacheManagementPage() {
   const handleClearAll = async () => {
     setClearing(true)
     try {
-      const response = await fetch('/api/cache', {
+      const data = await fetchApi<any>('/api/cache', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
         body: JSON.stringify({ action: 'clear-all' }),
       })
-
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(getApiErrorMessage(data, 'Gagal menghapus cache'))
       toast({
         title: "Cache Dihapus",
         description: `${data.details?.umpCachesCleared || 0} cache berhasil dihapus. Data sekarang fresh.`,
@@ -162,19 +146,10 @@ export default function CacheManagementPage() {
 
     setTogglingMode(true)
     try {
-      const response = await fetch('/api/cache', {
+      const data = await fetchApi<any>('/api/cache', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
         body: JSON.stringify({ action: 'set-mode', enabled: !stats.cacheEnabled }),
       })
-
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(data.error || 'Gagal mengubah mode cache')
-      }
 
       toast({
         title: !stats.cacheEnabled ? 'Cache Diaktifkan' : 'Cache Dimatikan',
@@ -211,12 +186,8 @@ export default function CacheManagementPage() {
 
     setInvalidatingVillage(true)
     try {
-      const response = await fetch('/api/cache', {
+      await fetchApi('/api/cache', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
         body: JSON.stringify({
           action: 'invalidate-village',
           villageId,
@@ -225,11 +196,6 @@ export default function CacheManagementPage() {
           profile: invalidateProfile,
         }),
       })
-
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(data.error || 'Gagal menginvalidasi cache desa')
-      }
 
       const scopeSummary = [
         invalidateRetrieval ? 'retrieval' : null,

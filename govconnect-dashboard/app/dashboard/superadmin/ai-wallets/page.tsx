@@ -6,6 +6,8 @@ import { CheckCircle2, Loader2, Minus, Plus, Search, Ticket, Wallet } from "luci
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -163,35 +165,19 @@ export default function SuperadminAIWalletsPage() {
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
 
-      const [walletsRes, vouchersRes, villagesRes] = await Promise.all([
-        fetch("/api/superadmin/ai-wallets", { headers }),
-        fetch("/api/superadmin/vouchers", { headers }),
-        fetch("/api/superadmin/villages", { headers }),
+      const [walletsPayload, vouchersPayload, villagesPayload] = await Promise.all([
+        fetchApi<any>("/api/superadmin/ai-wallets"),
+        fetchApi<any>("/api/superadmin/vouchers"),
+        fetchApi<any>("/api/superadmin/villages"),
       ])
-
-      const walletsPayload = await walletsRes.json()
-      const vouchersPayload = await vouchersRes.json()
-      const villagesPayload = await villagesRes.json()
-
-      if (!walletsRes.ok) {
-        throw new Error(walletsPayload?.error || "Gagal memuat AI wallets")
-      }
-      if (!vouchersRes.ok) {
-        throw new Error(vouchersPayload?.error || "Gagal memuat AI vouchers")
-      }
-      if (!villagesRes.ok) {
-        throw new Error(villagesPayload?.error || "Gagal memuat daftar desa")
-      }
 
       setWallets(Array.isArray(walletsPayload?.data) ? walletsPayload.data : [])
       setVouchers(Array.isArray(vouchersPayload?.data) ? vouchersPayload.data : [])
@@ -330,13 +316,8 @@ export default function SuperadminAIWalletsPage() {
     try {
       setSubmitting(true)
       setError(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/superadmin/ai-wallets/${encodeURIComponent(topupVillageId.trim())}/adjust`, {
+      await fetchApi<any>(`/api/superadmin/ai-wallets/${encodeURIComponent(topupVillageId.trim())}/adjust`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           amount_usd: topupAmountNumber,
           direction: "credit",
@@ -344,10 +325,6 @@ export default function SuperadminAIWalletsPage() {
           metadata: topupReason.trim() ? { reason: topupReason.trim() } : undefined,
         }),
       })
-      const payload = await response.json()
-      if (!response.ok) {
-        throw new Error(payload?.error || "Gagal topup saldo")
-      }
 
       toast({ title: "Berhasil", description: `Topup saldo ${villageLabel(selectedVillage)} berhasil disimpan.` })
       resetTopupForm()
@@ -369,13 +346,8 @@ export default function SuperadminAIWalletsPage() {
     try {
       setSubmitting(true)
       setError(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/superadmin/ai-wallets/${encodeURIComponent(reduceWallet.village_id)}/adjust`, {
+      await fetchApi<any>(`/api/superadmin/ai-wallets/${encodeURIComponent(reduceWallet.village_id)}/adjust`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           amount_usd: reduceAmountNumber,
           direction: "debit",
@@ -383,10 +355,6 @@ export default function SuperadminAIWalletsPage() {
           metadata: reduceReason.trim() ? { reason: reduceReason.trim() } : undefined,
         }),
       })
-      const payload = await response.json()
-      if (!response.ok) {
-        throw new Error(payload?.error || "Gagal mengurangi saldo")
-      }
 
       toast({ title: "Berhasil", description: `Saldo ${villageLabel(reduceVillage)} berhasil dikurangi.` })
       resetReduceForm()
@@ -407,19 +375,10 @@ export default function SuperadminAIWalletsPage() {
     try {
       setSubmitting(true)
       setError(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch("/api/superadmin/vouchers", {
+      await fetchApi<any>("/api/superadmin/vouchers", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({ code: voucherCode.trim(), amount_usd: voucherAmountNumber }),
       })
-      const payload = await response.json()
-      if (!response.ok) {
-        throw new Error(payload?.error || "Gagal membuat voucher")
-      }
 
       toast({ title: "Berhasil", description: "Voucher topup berhasil dibuat." })
       resetVoucherForm()

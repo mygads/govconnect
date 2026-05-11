@@ -20,6 +20,25 @@ function buildServiceCategoryNameKey(name: string): string {
   return normalizeServiceCategoryName(name).toLocaleLowerCase('id-ID');
 }
 
+type ImportantContactCategoryRow = {
+  id: string;
+};
+
+async function findImportantContactCategoryId(villageId: string, categoryName: string): Promise<string | null> {
+  const normalizedName = categoryName.trim().replace(/\s+/g, ' ');
+  if (!normalizedName) return null;
+
+  const rows = await prisma.$queryRaw<ImportantContactCategoryRow[]>`
+    SELECT id
+    FROM important_contact_categories
+    WHERE village_id = ${villageId}
+      AND lower(trim(name)) = lower(${normalizedName})
+    LIMIT 1
+  `;
+
+  return rows[0]?.id ?? null;
+}
+
 const SERVICE_SEEDS = [
   {
     category: 'Administrasi Kependudukan',
@@ -339,7 +358,7 @@ const COMPLAINT_SEEDS = [
     types: [
       { name: 'Jalan Rusak', is_urgent: false, require_address: true, send_important_contacts: false },
       { name: 'Lampu Jalan Mati', is_urgent: false, require_address: true, send_important_contacts: false },
-      { name: 'Jembatan Rusak', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Darurat' },
+      { name: 'Jembatan Rusak', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category_name: 'Darurat' },
       { name: 'Drainase Tersumbat', is_urgent: false, require_address: true, send_important_contacts: false },
     ],
   },
@@ -348,26 +367,26 @@ const COMPLAINT_SEEDS = [
     description: 'Kebersihan dan lingkungan sekitar.',
     types: [
       { name: 'Sampah Menumpuk', is_urgent: false, require_address: true, send_important_contacts: false },
-      { name: 'Pohon Tumbang', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Darurat' },
-      { name: 'Banjir Lokal', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Darurat' },
+      { name: 'Pohon Tumbang', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category_name: 'Darurat' },
+      { name: 'Banjir Lokal', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category_name: 'Darurat' },
     ],
   },
   {
     category: 'Kesehatan & Sosial',
     description: 'Masalah kesehatan masyarakat dan bantuan sosial.',
     types: [
-      { name: 'Butuh Ambulans', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Kesehatan' },
+      { name: 'Butuh Ambulans', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category_name: 'Kesehatan' },
       { name: 'Bantuan Sosial', is_urgent: false, require_address: false, send_important_contacts: false },
-      { name: 'Kejadian Gawat Darurat', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Kesehatan' },
+      { name: 'Kejadian Gawat Darurat', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category_name: 'Kesehatan' },
     ],
   },
   {
     category: 'Keamanan',
     description: 'Keamanan dan ketertiban umum.',
     types: [
-      { name: 'Pencurian', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Keamanan' },
-      { name: 'Keributan', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Keamanan' },
-      { name: 'Laporan Orang Hilang', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category: 'Keamanan' },
+      { name: 'Pencurian', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category_name: 'Keamanan' },
+      { name: 'Keributan', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category_name: 'Keamanan' },
+      { name: 'Laporan Orang Hilang', is_urgent: true, require_address: true, send_important_contacts: true, important_contact_category_name: 'Keamanan' },
     ],
   },
   {
@@ -506,6 +525,13 @@ async function main() {
     for (const type of category.types) {
       const typeKey = `${complaintCategory.id}-${slugify(type.name)}`;
       const typeDescription = (type as { description?: string }).description ?? null;
+      const importantContactCategoryId = type.important_contact_category_name
+        ? await findImportantContactCategoryId(villageId, type.important_contact_category_name)
+        : null;
+
+      if ((type.send_important_contacts ?? false) && !importantContactCategoryId) {
+        throw new Error(`Important contact category not found for complaint type ${type.name}: ${type.important_contact_category_name}`);
+      }
 
       await prisma.complaintType.upsert({
         where: { id: typeKey },
@@ -516,7 +542,8 @@ async function main() {
           is_urgent: type.is_urgent,
           require_address: type.require_address,
           send_important_contacts: type.send_important_contacts ?? false,
-          important_contact_category: type.important_contact_category ?? null,
+          important_contact_category: null,
+          important_contact_category_id: importantContactCategoryId,
         },
         create: {
           id: typeKey,
@@ -526,7 +553,8 @@ async function main() {
           is_urgent: type.is_urgent,
           require_address: type.require_address,
           send_important_contacts: type.send_important_contacts ?? false,
-          important_contact_category: type.important_contact_category ?? null,
+          important_contact_category: null,
+          important_contact_category_id: importantContactCategoryId,
         },
       });
     }

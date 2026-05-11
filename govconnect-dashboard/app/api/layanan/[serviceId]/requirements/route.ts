@@ -31,7 +31,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ service
     if (!serviceId) return NextResponse.json({ error: 'serviceId diperlukan' }, { status: 400 })
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/${encodeURIComponent(serviceId)}/requirements`), {
-      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id, 'x-admin-role': session.admin.role }),
     })
 
     const data = await response.json().catch(() => null)
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ servic
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/${encodeURIComponent(serviceId)}/requirements`), {
       method: 'POST',
-      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id, 'x-admin-role': session.admin.role }),
       body: JSON.stringify(body),
     })
 

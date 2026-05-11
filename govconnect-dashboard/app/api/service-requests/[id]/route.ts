@@ -1,35 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import prisma from '@/lib/prisma'
+import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
-
-async function getSession(request: NextRequest) {
-  const token = request.cookies.get('token')?.value ||
-    request.headers.get('authorization')?.replace('Bearer ', '')
-  if (!token) return null
-  const payload = await verifyToken(token)
-  if (!payload) return null
-  const session = await prisma.admin_sessions.findUnique({
-    where: { token },
-    include: { admin: true }
-  })
-  if (!session || session.expires_at < new Date()) return null
-  return session
-}
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    const session = await getSession(request)
+    const session = await getAdminSession(request)
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+    const villageId = resolveVillageId(request, session)
     const { id } = await context.params
     const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}`))
-    if (session.admin.village_id) {
-      url.searchParams.set('village_id', session.admin.village_id)
+    if (villageId) {
+      url.searchParams.set('village_id', villageId)
     }
 
     const response = await apiFetch(url.toString(), {
-      headers: getHeaders(),
+      headers: getHeaders(villageId ? { 'x-village-id': villageId } : undefined),
     })
 
     if (!response.ok) {
@@ -39,7 +25,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
 
     const data = await response.json()
     const serviceVillageId = data?.data?.service?.village_id
-    if (session.admin.village_id && serviceVillageId && serviceVillageId !== session.admin.village_id) {
+    if (session.villageId && serviceVillageId && serviceVillageId !== session.villageId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

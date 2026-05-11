@@ -37,7 +37,7 @@ export async function PUT(request: NextRequest, ctx: { params: Promise<{ id: str
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/requirements/${encodeURIComponent(id)}`), {
       method: 'PUT',
-      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id, 'x-admin-role': session.admin.role }),
       body: JSON.stringify(body),
     })
 
@@ -65,7 +65,7 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/services/requirements/${encodeURIComponent(id)}`), {
       method: 'DELETE',
-      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
+      headers: getHeaders({ 'x-village-id': session.admin.village_id, 'x-admin-role': session.admin.role }),
     })
 
     const data = await response.json().catch(() => null)

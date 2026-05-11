@@ -5,7 +5,6 @@ import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
 import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
 import {
   findVillageImportantContactCategoryById,
-  findVillageImportantContactCategoryByName,
 } from '@/lib/important-contact-categories'
 
 async function getSession(request: NextRequest) {
@@ -22,18 +21,13 @@ async function getSession(request: NextRequest) {
   return session
 }
 
-async function resolveImportantContactCategory(villageId: string, categoryId?: string | null, categoryName?: string | null) {
-  if (categoryId) {
-    const category = await findVillageImportantContactCategoryById(villageId, categoryId)
-    if (category) return { id: category.id, name: category.name }
-  }
+async function resolveImportantContactCategory(villageId: string, categoryId?: string | null) {
+  if (!categoryId) return null
 
-  if (categoryName) {
-    const category = await findVillageImportantContactCategoryByName(villageId, categoryName)
-    if (category) return { id: category.id, name: category.name }
-  }
+  const category = await findVillageImportantContactCategoryById(villageId, categoryId)
+  if (!category) return null
 
-  return null
+  return { id: category.id, name: category.name }
 }
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -60,8 +54,12 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       return NextResponse.json({ error: 'name is required' }, { status: 400 })
     }
 
+    if (send_important_contacts && !important_contact_category_id) {
+      return NextResponse.json({ error: 'important contact category id is required' }, { status: 400 })
+    }
+
     const resolvedImportantContactCategory = !!send_important_contacts && session.admin.village_id
-      ? await resolveImportantContactCategory(session.admin.village_id, important_contact_category_id, important_contact_category)
+      ? await resolveImportantContactCategory(session.admin.village_id, important_contact_category_id)
       : null
 
     if (send_important_contacts && !resolvedImportantContactCategory) {

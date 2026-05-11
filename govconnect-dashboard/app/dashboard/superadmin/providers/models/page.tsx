@@ -6,6 +6,8 @@ import { AlertTriangle, Brain, Database, Edit2, Eye, Loader2, Mic, Play, Plus, S
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -281,25 +283,18 @@ export default function SuperadminAIModelsPage() {
   })
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
 
-      const [providersRes, modelsRes] = await Promise.all([
-        fetch("/api/superadmin/providers", { headers }),
-        fetch("/api/superadmin/ai-models", { headers }),
+      const [providersPayload, modelsPayload] = await Promise.all([
+        fetchApi<any>("/api/superadmin/providers"),
+        fetchApi<any>("/api/superadmin/ai-models"),
       ])
-
-      const providersPayload = await providersRes.json()
-      const modelsPayload = await modelsRes.json()
-      if (!providersRes.ok) throw new Error(providersPayload?.error || "Gagal memuat provider AI")
-      if (!modelsRes.ok) throw new Error(modelsPayload?.error || "Gagal memuat model AI")
 
       const providerRows = Array.isArray(providersPayload?.data) ? providersPayload.data : []
       const editableProviders = providerRows.filter((provider: ProviderRow) => !provider.is_read_only)
@@ -496,18 +491,12 @@ export default function SuperadminAIModelsPage() {
     try {
       setTestingModelIds((current) => new Set(current).add(modelId))
       setError(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch("/api/superadmin/ai-models/test", {
+      const payload = await fetchApi<any>("/api/superadmin/ai-models/test", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({ model_id: modelId }),
       })
-      const payload = await response.json()
       setTestResults((current) => ({ ...current, [modelId]: payload }))
-      if (!response.ok || payload?.success === false) throw new Error(payload?.error || "Model test gagal")
+      if (payload?.success === false) throw new Error(payload?.error || "Model test gagal")
     } catch (err: any) {
       setTestResults((current) => ({ ...current, [modelId]: { success: false, error: err?.message || "Model test gagal" } }))
     } finally {
@@ -569,13 +558,8 @@ export default function SuperadminAIModelsPage() {
     try {
       setTestingDraft(true)
       setDraftTestResult(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch("/api/superadmin/ai-models/test", {
+      const payload = await fetchApi<any>("/api/superadmin/ai-models/test", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({
           draft: {
             provider_id: providerId,
@@ -588,9 +572,8 @@ export default function SuperadminAIModelsPage() {
           },
         }),
       })
-      const payload = await response.json()
       setDraftTestResult(payload)
-      if (!response.ok || payload?.success === false) throw new Error(payload?.error || "Endpoint test gagal")
+      if (payload?.success === false) throw new Error(payload?.error || "Endpoint test gagal")
     } catch (err: any) {
       setDraftTestResult({ success: false, error: err?.message || "Endpoint test gagal" })
     } finally {
@@ -618,17 +601,10 @@ export default function SuperadminAIModelsPage() {
     try {
       setSavingPriorityId(model.id)
       setError(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/superadmin/ai-models/${encodeURIComponent(model.id)}`, {
+      await fetchApi<any>(`/api/superadmin/ai-models/${encodeURIComponent(model.id)}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({ priority: nextPriority }),
       })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload?.error || "Gagal menyimpan priority")
       toast({ title: "Berhasil", description: "Priority model berhasil disimpan." })
       await loadData()
     } catch (err: any) {
@@ -687,7 +663,6 @@ export default function SuperadminAIModelsPage() {
       const nextPriority = Number(priority)
       if (!Number.isInteger(nextPriority)) throw new Error("Priority harus angka bulat")
 
-      const token = localStorage.getItem("token")
       const body = {
         provider_id: providerId,
         lane_type: laneType,
@@ -708,16 +683,11 @@ export default function SuperadminAIModelsPage() {
         priority: nextPriority,
         notes: notes.trim() || null,
       }
-      const response = await fetch(editingModelId ? `/api/superadmin/ai-models/${encodeURIComponent(editingModelId)}` : "/api/superadmin/ai-models", {
+
+      await fetchApi<any>(editingModelId ? `/api/superadmin/ai-models/${encodeURIComponent(editingModelId)}` : "/api/superadmin/ai-models", {
         method: editingModelId ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify(body),
       })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload?.error || (editingModelId ? "Gagal mengubah model AI" : "Gagal membuat model AI"))
 
       toast({ title: "Berhasil", description: editingModelId ? "Model AI berhasil diubah." : "Model AI berhasil ditambahkan." })
       resetForm()
@@ -744,13 +714,9 @@ export default function SuperadminAIModelsPage() {
     try {
       setDeletingModelId(model.id)
       setError(null)
-        const token = localStorage.getItem("token")
-      const response = await fetch(`/api/superadmin/ai-models/${encodeURIComponent(model.id)}`, {
+      await fetchApi<any>(`/api/superadmin/ai-models/${encodeURIComponent(model.id)}`, {
         method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload?.error || "Gagal menghapus model AI")
 
       if (editingModelId === model.id) {
         resetForm()

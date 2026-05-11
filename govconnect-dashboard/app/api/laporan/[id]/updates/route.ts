@@ -1,35 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/auth"
-import prisma from "@/lib/prisma"
+import { getAdminSession, resolveVillageId } from "@/lib/auth"
 import { apiFetch, buildUrl, getHeaders, ServicePath } from "@/lib/api-client"
-
-async function getSession(request: NextRequest) {
-  const token = request.cookies.get("token")?.value ||
-    request.headers.get("authorization")?.replace("Bearer ", "")
-  if (!token) return null
-
-  const payload = await verifyToken(token)
-  if (!payload) return null
-
-  const session = await prisma.admin_sessions.findUnique({
-    where: { token },
-    include: { admin: true },
-  })
-  if (!session || session.expires_at < new Date()) return null
-
-  return session
-}
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSession(request)
+    const session = await getAdminSession(request)
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const villageId = resolveVillageId(request, session)
     const { id } = await params
     const body = await request.json()
     const { note_text, image_url } = body as { note_text?: string; image_url?: string }
@@ -39,15 +22,15 @@ export async function POST(
     }
 
     const url = new URL(buildUrl(ServicePath.CASE, `/complaints/${id}/updates`))
-    if (session.admin.village_id) {
-      url.searchParams.set("village_id", session.admin.village_id)
+    if (villageId) {
+      url.searchParams.set("village_id", villageId)
     }
 
     const response = await apiFetch(url.toString(), {
       method: "POST",
       headers: getHeaders({
-        ...(session.admin.village_id ? { "x-village-id": session.admin.village_id } : {}),
-        "x-admin-role": session.admin.role,
+        ...(villageId ? { "x-village-id": villageId } : {}),
+        "x-admin-role": session.role,
       }),
       body: JSON.stringify({
         note_text,

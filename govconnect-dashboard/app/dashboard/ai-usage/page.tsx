@@ -14,6 +14,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useAuth } from "@/components/auth/AuthContext"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { formatIDRFromUSD, formatJakartaDateTime, formatUSD as formatMoneyUSD } from "@/lib/utils"
 
 export const dynamic = "force-dynamic"
@@ -237,11 +239,7 @@ function endOfDay(value: string) {
 
 async function fetchJson<T>(path: string, params?: Record<string, string>) {
   const qs = params ? `?${new URLSearchParams(params).toString()}` : ""
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-  const res = await fetch(`${path}${qs}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-  const payload = await res.json().catch(() => null)
-  if (!res.ok) throw new Error(payload?.error || "Gagal memuat statistik AI")
-  return payload as T
+  return fetchApi<T>(`${path}${qs}`)
 }
 
 
@@ -266,7 +264,7 @@ export default function VillageAIUsagePage() {
   const [detail, setDetail] = useState<MessageDetail | null>(null)
 
   useEffect(() => {
-    if (user && user.role === "superadmin") router.replace("/dashboard/superadmin/ai-usage")
+    if (user && isSuperadmin(user.role)) router.replace("/dashboard/superadmin/ai-usage")
   }, [user, router])
 
   useEffect(() => {
@@ -322,7 +320,7 @@ export default function VillageAIUsagePage() {
   }, [params, selectedUser, start, end])
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") loadData()
+    if (user && !isSuperadmin(user.role)) loadData()
   }, [user, loadData])
 
   const openDetail = async (billing: MessageBilling) => {
@@ -373,7 +371,7 @@ export default function VillageAIUsagePage() {
   const callBarData = { labels: callTotals.slice(0, 10).map(c => callTypeLabel(c.call_type)), datasets: [{ label: "Jumlah panggilan", data: callTotals.slice(0, 10).map(c => c.call_count), backgroundColor: "#8b5cf6" }, { label: "Token", data: callTotals.slice(0, 10).map(c => c.total_tokens), backgroundColor: "#06b6d4" }] }
   const layerBarData = { labels: [...new Set(periodLayer.map(p => new Date(p.period_start).toLocaleDateString("id-ID", { day: "numeric", month: "short" })))], datasets: layerTotals.slice(0, 5).map(layer => ({ label: LAYER_LABELS[layer.layer_type] || layer.layer_type, data: [...new Set(periodLayer.map(p => new Date(p.period_start).toLocaleDateString("id-ID", { day: "numeric", month: "short" })))].map(label => periodLayer.filter(p => p.layer_type === layer.layer_type && new Date(p.period_start).toLocaleDateString("id-ID", { day: "numeric", month: "short" }) === label).reduce((sum, row) => sum + row.cost_usd, 0)), backgroundColor: LAYER_COLORS[layer.layer_type] || "#94a3b8" })) }
 
-  if (user?.role === "superadmin") return null
+  if (isSuperadmin(user?.role)) return null
 
   return (
     <div className="space-y-6">

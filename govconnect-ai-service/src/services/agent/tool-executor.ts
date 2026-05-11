@@ -74,6 +74,8 @@ export interface ToolCallResult {
   meta?: {
     trustLevel: ToolTrustLevel;
     sourceKind: string;
+    found?: boolean;
+    confidenceLevel?: 'high' | 'medium' | 'low' | 'none' | string;
   };
 }
 
@@ -83,6 +85,8 @@ export interface ToolExecutionTrace {
   durationMs: number;
   trustLevel: ToolTrustLevel;
   sourceKind?: string;
+  found?: boolean;
+  confidenceLevel?: string;
   /**
    * Redacted request payload for mutation tools only. Persisted to
    * `ai_tool_execution_traces.metadata_json.payload` so post-incident RCA
@@ -252,6 +256,8 @@ export async function executeToolCall(
       durationMs,
       trustLevel: result.meta?.trustLevel || 'action_result',
       sourceKind: result.meta?.sourceKind,
+      found: result.meta?.found,
+      confidenceLevel: result.meta?.confidenceLevel,
     };
 
     if (MUTATION_TOOLS.has(toolName)) {
@@ -850,6 +856,8 @@ async function toolSearchKnowledge(
       meta: {
         trustLevel: 'untrusted_retrieval',
         sourceKind: 'knowledge_retrieval',
+        found: false,
+        confidenceLevel: 'none',
       },
     };
   }
@@ -941,6 +949,8 @@ async function toolSearchKnowledge(
     meta: {
       trustLevel: 'untrusted_retrieval',
       sourceKind: 'knowledge_retrieval',
+      found: true,
+      confidenceLevel: result.confidenceLevel || 'medium',
     },
   };
 }
@@ -960,6 +970,8 @@ async function toolSearchDocuments(
       meta: {
         trustLevel: 'untrusted_retrieval',
         sourceKind: 'document_retrieval',
+        found: false,
+        confidenceLevel: 'none',
       },
     };
   }
@@ -1012,6 +1024,8 @@ async function toolSearchDocuments(
     meta: {
       trustLevel: 'untrusted_retrieval',
       sourceKind: 'document_retrieval',
+      found: true,
+      confidenceLevel: result.confidenceLevel || 'medium',
     },
   };
 }

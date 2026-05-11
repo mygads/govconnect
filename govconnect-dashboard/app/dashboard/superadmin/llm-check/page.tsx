@@ -16,6 +16,8 @@ import {
 } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -106,7 +108,7 @@ export default function LLMCheckPage() {
   const [errorLogs, setErrorLogs] = useState<ErrorLogEntry[]>([])
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const appendErrorLog = useCallback((label: string, message: string) => {
@@ -124,17 +126,10 @@ export default function LLMCheckPage() {
   const loadCatalog = useCallback(async () => {
     try {
       setLoadingCatalog(true)
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
-      const [providersRes, modelsRes] = await Promise.all([
-        fetch("/api/superadmin/providers", { headers }),
-        fetch("/api/superadmin/ai-models", { headers }),
+      const [providersPayload, modelsPayload] = await Promise.all([
+        fetchApi<any>("/api/superadmin/providers"),
+        fetchApi<any>("/api/superadmin/ai-models"),
       ])
-      const providersPayload = await providersRes.json().catch(() => ({}))
-      const modelsPayload = await modelsRes.json().catch(() => ({}))
-
-      if (!providersRes.ok) throw new Error(providersPayload?.error || "Gagal memuat provider")
-      if (!modelsRes.ok) throw new Error(modelsPayload?.error || "Gagal memuat model")
 
       setProviders(Array.isArray(providersPayload?.data) ? providersPayload.data : [])
       setAdminModels(Array.isArray(modelsPayload?.data) ? modelsPayload.data : [])
@@ -165,20 +160,18 @@ export default function LLMCheckPage() {
   }, [selectableModels])
 
   const runModelTest = useCallback(async (model: ModelRow): Promise<ModelTestResult> => {
-    const token = localStorage.getItem("token")
-    const response = await fetch("/api/superadmin/ai-models/test", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ model_id: model.id }),
-    })
-    const payload = await response.json().catch(() => ({ success: false, error: `HTTP ${response.status}` }))
-    if (!response.ok || payload?.success === false) {
-      return { ...payload, success: false, error: payload?.error || `HTTP ${response.status}` }
+    try {
+      const payload = await fetchApi<ModelTestResult>("/api/superadmin/ai-models/test", {
+        method: "POST",
+        body: JSON.stringify({ model_id: model.id }),
+      })
+      if (payload?.success === false) {
+        return { ...payload, success: false, error: payload?.error || "Model test gagal" }
+      }
+      return payload
+    } catch (error: any) {
+      return { success: false, error: error?.message || "Model test gagal" }
     }
-    return payload
   }, [])
 
   const testModels = useCallback(async (models: ModelRow[], label: string) => {

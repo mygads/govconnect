@@ -29,6 +29,8 @@ const {
 
 const {
   selectAllowedTools,
+  parseTextToolCall,
+  shouldAllowTextToolFallback,
   derivePreferredToolReply,
   shouldStopAfterSufficientServiceInfo,
   getUncoveredMixedIntentFamilies,
@@ -661,6 +663,58 @@ describe('agent mixed-intent continuation guards', () => {
 
     expect(reply).toContain('Biayanya gratis.');
     expect(reply).toContain('Bagian kontak belum berhasil');
+  });
+});
+
+describe('agent text-tool fallback guardrails', () => {
+  it('parses text-form tool markup only for allowed read tools', () => {
+    expect(parseTextToolCall('<function=get_village_profile><parameter=query>jam buka</parameter>', ['get_village_profile'] as any))
+      .toMatchObject({
+        toolName: 'get_village_profile',
+        args: { query: 'jam buka' },
+      });
+  });
+
+  it('rejects text-tool fallback when multiple tools are allowed for the turn', () => {
+    expect(shouldAllowTextToolFallback({
+      userMessage: 'biaya surat domisili dan nomor puskesmas berapa?',
+      toolName: 'get_important_contact',
+      allowedToolNames: ['get_service_info', 'get_important_contact'],
+      heuristicTools: ['get_service_info', 'get_important_contact'],
+      requiredTools: ['get_important_contact'],
+      toolsUsed: [],
+    })).toMatchObject({
+      allowed: false,
+      reason: 'multiple_allowed_tools',
+    });
+  });
+
+  it('rejects text-tool fallback for ambiguous short requests', () => {
+    expect(shouldAllowTextToolFallback({
+      userMessage: 'tolong bantu',
+      toolName: 'get_service_info',
+      allowedToolNames: ['get_service_info'],
+      heuristicTools: ['get_service_info'],
+      requiredTools: ['get_service_info'],
+      toolsUsed: [],
+    })).toMatchObject({
+      allowed: false,
+      reason: 'ambiguous_intent',
+    });
+  });
+
+  it('allows text-tool fallback only for a single required read-only grounding tool', () => {
+    expect(shouldAllowTextToolFallback({
+      userMessage: 'kantor desa buka jam berapa?',
+      toolName: 'get_village_profile',
+      allowedToolNames: ['get_village_profile'],
+      heuristicTools: ['get_village_profile'],
+      requiredTools: ['get_village_profile'],
+      toolsUsed: [],
+    })).toMatchObject({
+      allowed: true,
+      reason: 'single_read_only_grounding_tool',
+    });
   });
 });
 

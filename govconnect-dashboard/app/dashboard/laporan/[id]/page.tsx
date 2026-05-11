@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { AlertCircle, ArrowLeft, CheckCircle, Loader2, MapPin, MessageSquare, Phone, Calendar, Image, Printer, Globe, User } from "lucide-react"
-import { laporan } from "@/lib/frontend-api"
+import { fetchApi, laporan } from "@/lib/frontend-api"
 import { formatDate, formatStatus, getStatusColor } from "@/lib/utils"
 import { printReceipt } from "@/lib/export-utils"
 import { useToast } from "@/hooks/use-toast"
@@ -125,20 +125,11 @@ export default function LaporanDetailPage() {
     const formData = new FormData()
     formData.append("file", file)
 
-    const response = await fetch("/api/uploads", {
+    const data = await fetchApi<any>("/api/uploads", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("token")}`,
-      },
       body: formData,
     })
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => null)
-      throw new Error(err?.error || "Gagal mengunggah foto")
-    }
-
-    const data = await response.json()
     const url = data?.data?.url
     if (!url) throw new Error("Gagal mengunggah foto")
     return url as string
@@ -186,22 +177,13 @@ export default function LaporanDetailPage() {
 
     try {
       setSavingUpdate(true)
-      const response = await fetch(`/api/laporan/${complaint.id}/updates`, {
+      await fetchApi(`/api/laporan/${complaint.id}/updates`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
         body: JSON.stringify({
           note_text: updateNote.trim(),
           image_url: updateImageUrl.trim() || null,
         }),
       })
-
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.error || "Gagal menambahkan update")
-      }
 
       await fetchComplaintDetail(complaint.id)
       setUpdateNote("")

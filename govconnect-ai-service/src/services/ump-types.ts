@@ -87,6 +87,8 @@ export interface ProcessMessageResult {
       durationMs: number;
       trustLevel: 'trusted_fact' | 'trusted_record' | 'untrusted_retrieval' | 'action_result';
       sourceKind?: string;
+      found?: boolean;
+      confidenceLevel?: string;
     }>;
     grounding?: {
       trustedTools?: string[];

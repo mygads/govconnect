@@ -125,6 +125,11 @@ async function fetchComplaintImportantContacts(event: ComplaintImportantContacts
   if (event.important_contact_category_id) {
     searchParams.set('category_id', event.important_contact_category_id);
   } else if (event.important_contact_category) {
+    logger.warn('Falling back to legacy important-contact category name lookup', {
+      complaint_id: event.complaint_id,
+      village_id: event.village_id,
+      important_contact_category: event.important_contact_category,
+    });
     searchParams.set('category_name', event.important_contact_category);
   }
 

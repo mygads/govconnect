@@ -1,27 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import prisma from '@/lib/prisma'
+import { getAdminSession, resolveVillageId } from '@/lib/auth'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
-
-async function getSession(request: NextRequest) {
-  const token = request.cookies.get('token')?.value ||
-    request.headers.get('authorization')?.replace('Bearer ', '')
-  if (!token) return null
-  const payload = await verifyToken(token)
-  if (!payload) return null
-  const session = await prisma.admin_sessions.findUnique({
-    where: { token },
-    include: { admin: true }
-  })
-  if (!session || session.expires_at < new Date()) return null
-  return session
-}
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    const session = await getSession(request)
+    const session = await getAdminSession(request)
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+    const villageId = resolveVillageId(request, session)
     const { id } = await context.params
     const body = await request.json()
     const { status, admin_notes, result_file_url, result_file_name, result_description } = body
@@ -32,17 +18,16 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       return NextResponse.json({ error: 'Tidak ada perubahan yang dikirim' }, { status: 400 })
     }
 
-    // Build URL with village_id for multi-tenancy validation
     const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}/status`))
-    if (session.admin.village_id) {
-      url.searchParams.set('village_id', session.admin.village_id)
+    if (villageId) {
+      url.searchParams.set('village_id', villageId)
     }
 
     const response = await apiFetch(url.toString(), {
       method: 'PATCH',
-      headers: getHeaders(),
-      body: JSON.stringify({ 
-        status, 
+      headers: getHeaders(villageId ? { 'x-village-id': villageId } : undefined),
+      body: JSON.stringify({
+        status,
         admin_notes,
         result_file_url,
         result_file_name,

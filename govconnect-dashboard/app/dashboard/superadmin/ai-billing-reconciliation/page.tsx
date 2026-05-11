@@ -12,6 +12,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { formatJakartaDateTime, formatUSD } from "@/lib/utils"
 
 interface BillingRow {
@@ -325,10 +327,8 @@ export default function AIBillingReconciliationPage() {
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch("/api/superadmin/ai-billing/reconciliation", { cache: "no-store" })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal memuat rekonsiliasi billing AI")
-      setData(payload.data)
+      const payload = await fetchApi<any>("/api/superadmin/ai-billing/reconciliation", { cache: "no-store" })
+      setData(payload?.data || null)
     } catch (err: any) {
       setError(err?.message || "Gagal memuat rekonsiliasi billing AI")
     } finally {
@@ -341,10 +341,8 @@ export default function AIBillingReconciliationPage() {
     setDetailLoading(true)
     setError(null)
     try {
-      const response = await fetch(`/api/superadmin/ai-billing/reconciliation/${encodeURIComponent(billingId)}`, { cache: "no-store" })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal memuat detail billing")
-      setBillingDetail(payload.data)
+      const payload = await fetchApi<any>(`/api/superadmin/ai-billing/reconciliation/${encodeURIComponent(billingId)}`, { cache: "no-store" })
+      setBillingDetail(payload?.data || null)
     } catch (err: any) {
       setBillingDetail(null)
       setError(err?.message || "Gagal memuat detail billing")
@@ -358,10 +356,8 @@ export default function AIBillingReconciliationPage() {
     setTraceLoading(true)
     setError(null)
     try {
-      const response = await fetch(`/api/superadmin/ai-billing/trace/${encodeURIComponent(traceId)}`, { cache: "no-store" })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal memuat trace AI")
-      setAiTrace(payload.data)
+      const payload = await fetchApi<any>(`/api/superadmin/ai-billing/trace/${encodeURIComponent(traceId)}`, { cache: "no-store" })
+      setAiTrace(payload?.data || null)
     } catch (err: any) {
       setAiTrace(null)
       setError(err?.message || "Gagal memuat trace AI")
@@ -380,15 +376,12 @@ export default function AIBillingReconciliationPage() {
     setRetryResult(null)
     setError(null)
     try {
-      const response = await fetch(`/api/superadmin/ai-wallets/${encodeURIComponent(targetVillageId)}/retry-pending`, {
+      const payload = await fetchApi<any>(`/api/superadmin/ai-wallets/${encodeURIComponent(targetVillageId)}/retry-pending`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ limit: 100 }),
       })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal retry billing pending")
       setRetryVillageId(targetVillageId)
-      setRetryResult(payload.data)
+      setRetryResult(payload?.data || null)
       await loadData()
       if (selectedBillingId) await loadBillingDetail(selectedBillingId)
       if (aiTrace?.trace_id) await loadAITrace(aiTrace.trace_id)
@@ -399,13 +392,16 @@ export default function AIBillingReconciliationPage() {
     }
   }, [aiTrace?.trace_id, loadAITrace, loadBillingDetail, loadData, retryVillageId, selectedBillingId])
 
+  useEffect(() => {
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
+  }, [user, router])
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
   if (!user) return null
-  if (user.role !== "superadmin") router.replace("/dashboard")
+  if (!isSuperadmin(user.role)) return null
 
   const mismatchRows = Object.entries(data?.mismatches || {})
   const countRows = Object.entries(data?.counts || {})

@@ -17,6 +17,8 @@ import {
 } from "lucide-react"
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -435,33 +437,12 @@ export default function KnowledgeAnalyticsPage() {
 
   // Only village admin can access this page
   useEffect(() => {
-    if (user && user.role === "superadmin") router.replace("/dashboard")
+    if (user && isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
-  const getAuthHeaders = useCallback(() => {
-    const token = localStorage.getItem("token")
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  }, [])
-
   const fetchDashboardJson = useCallback(async <T,>(url: string, init?: RequestInit): Promise<T> => {
-    const headers = new Headers(init?.headers)
-    const authHeaders = getAuthHeaders()
-    Object.entries(authHeaders).forEach(([key, value]) => headers.set(key, value))
-
-    const res = await fetch(url, {
-      ...init,
-      headers,
-    })
-
-    const contentType = res.headers.get("content-type") || ""
-    const payload = contentType.includes("application/json") ? await res.json() : null
-
-    if (!res.ok) {
-      throw new Error(payload?.error || payload?.message || "Request dashboard gagal")
-    }
-
-    return payload as T
-  }, [getAuthHeaders])
+    return fetchApi<T>(url, init)
+  }, [])
 
   const fetchData = useCallback(async () => {
     try {
@@ -470,7 +451,7 @@ export default function KnowledgeAnalyticsPage() {
       const analytics = await fetchDashboardJson<AnalyticsData>("/api/statistics/knowledge-analytics")
       setData(analytics)
     } catch (err: any) {
-      setError(err.message === "Request dashboard gagal" ? "Gagal memuat data analytics" : err.message)
+      setError(err?.message || "Gagal memuat data analytics")
     } finally {
       setLoading(false)
     }

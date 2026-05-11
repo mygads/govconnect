@@ -6,6 +6,8 @@ import { Edit2, Loader2, Plus, Save, Server, Trash2, X } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -103,19 +105,14 @@ export default function SuperadminProvidersPage() {
   })
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-      const response = await fetch("/api/superadmin/providers", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload?.error || "Gagal memuat provider")
+      const payload = await fetchApi<any>("/api/superadmin/providers")
       setProviders(Array.isArray(payload?.data) ? payload.data : [])
     } catch (err: any) {
       setError(err?.message || "Gagal memuat provider")
@@ -208,7 +205,6 @@ export default function SuperadminProvidersPage() {
     try {
       setSubmitting(true)
       setError(null)
-        const token = localStorage.getItem("token")
       const parsedHeaders = headersJson.trim() ? JSON.parse(headersJson) : {}
       const body: Record<string, any> = {
         name: name.trim(),
@@ -219,16 +215,10 @@ export default function SuperadminProvidersPage() {
       if (!editingProviderId) body.slug = slugify(`${name}-${kind}`)
       if (apiKey.trim()) body.api_key = apiKey.trim()
 
-      const response = await fetch(editingProviderId ? `/api/superadmin/providers/${encodeURIComponent(editingProviderId)}` : "/api/superadmin/providers", {
+      await fetchApi<any>(editingProviderId ? `/api/superadmin/providers/${encodeURIComponent(editingProviderId)}` : "/api/superadmin/providers", {
         method: editingProviderId ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify(body),
       })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload?.error || (editingProviderId ? "Gagal mengubah provider" : "Gagal membuat provider"))
 
       toast({ title: "Berhasil", description: editingProviderId ? "Provider AI berhasil diubah." : "Provider AI berhasil ditambahkan." })
       resetForm()
@@ -255,13 +245,9 @@ export default function SuperadminProvidersPage() {
     try {
       setDeletingProviderId(provider.id)
       setError(null)
-        const token = localStorage.getItem("token")
-      const response = await fetch(`/api/superadmin/providers/${encodeURIComponent(provider.id)}`, {
+      await fetchApi<any>(`/api/superadmin/providers/${encodeURIComponent(provider.id)}`, {
         method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload?.error || "Gagal menghapus provider")
 
       if (editingProviderId === provider.id) {
         resetForm()

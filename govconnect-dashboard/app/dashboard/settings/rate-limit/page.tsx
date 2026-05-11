@@ -50,6 +50,7 @@ import {
   MessageSquareWarning,
   Timer,
 } from "lucide-react"
+import { fetchApi } from "@/lib/frontend-api"
 
 interface RateLimitConfig {
   enabled: boolean
@@ -139,33 +140,19 @@ export default function RateLimitPage() {
       setBlacklist(null)
       setSpamGuard(null)
 
-      const token = localStorage.getItem('token')
-      const headers = { 'Authorization': `Bearer ${token}` }
-
-      const [rateLimitRes, blacklistRes, spamGuardRes] = await Promise.all([
-        fetch('/api/rate-limit', { headers }),
-        fetch('/api/rate-limit/blacklist', { headers }),
-        fetch('/api/spam-guard', { headers }),
+      const [rateLimitPayload, blacklistPayload, spamGuardResult] = await Promise.all([
+        fetchApi<RateLimitData>('/api/rate-limit'),
+        fetchApi<{ total: number; entries: BlacklistEntry[] }>('/api/rate-limit/blacklist'),
+        fetchApi<SpamGuardData>('/api/spam-guard').then((data) => ({ ok: true as const, data })).catch((error: any) => ({ ok: false as const, error })),
       ])
-
-      const rateLimitPayload = await rateLimitRes.json().catch(() => null)
-      const blacklistPayload = await blacklistRes.json().catch(() => null)
-      const spamGuardPayload = await spamGuardRes.json().catch(() => null)
-
-      if (!rateLimitRes.ok) {
-        throw new Error(rateLimitPayload?.error || `Gagal memuat konfigurasi rate limit (${rateLimitRes.status})`)
-      }
-      if (!blacklistRes.ok) {
-        throw new Error(blacklistPayload?.error || `Gagal memuat blacklist (${blacklistRes.status})`)
-      }
 
       setData(rateLimitPayload)
       setBlacklist(blacklistPayload)
 
-      if (spamGuardRes.ok) {
-        setSpamGuard(spamGuardPayload)
+      if (spamGuardResult.ok) {
+        setSpamGuard(spamGuardResult.data)
       } else {
-        setSpamGuardWarning(spamGuardPayload?.error || `Spam Guard tidak dapat dimuat (${spamGuardRes.status})`)
+        setSpamGuardWarning(spamGuardResult.error?.message || 'Spam Guard tidak dapat dimuat')
       }
     } catch (err: any) {
       setError(err.message || 'Gagal memuat data')
@@ -198,25 +185,14 @@ export default function RateLimitPage() {
 
     try {
       setSubmitting(true)
-      const token = localStorage.getItem('token')
-      
-      const response = await fetch('/api/rate-limit/blacklist', {
+      await fetchApi('/api/rate-limit/blacklist', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           wa_user_id: newBlacklist.wa_user_id.trim(),
           reason: newBlacklist.reason.trim(),
           expiresInDays: newBlacklist.expiresInDays ? parseInt(newBlacklist.expiresInDays) : undefined,
         }),
       })
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}))
-        throw new Error(payload?.error || 'Gagal menambah blacklist')
-      }
 
       toast({ title: "Berhasil", description: "Nomor berhasil ditambahkan ke blacklist." })
       setAddDialogOpen(false)
@@ -241,17 +217,9 @@ export default function RateLimitPage() {
 
   const handleRemoveFromBlacklist = async (wa_user_id: string) => {
     try {
-      const token = localStorage.getItem('token')
-      
-      const response = await fetch(`/api/rate-limit/blacklist?wa_user_id=${wa_user_id}`, {
+      await fetchApi(`/api/rate-limit/blacklist?wa_user_id=${wa_user_id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
       })
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}))
-        throw new Error(payload?.error || 'Gagal menghapus blacklist')
-      }
 
       toast({ title: "Berhasil", description: "Nomor berhasil dihapus dari blacklist." })
       fetchData()
@@ -272,17 +240,9 @@ export default function RateLimitPage() {
 
   const handleRemoveSpamBan = async (wa_user_id: string) => {
     try {
-      const token = localStorage.getItem('token')
-      
-      const response = await fetch(`/api/spam-guard?wa_user_id=${wa_user_id}`, {
+      await fetchApi(`/api/spam-guard?wa_user_id=${wa_user_id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
       })
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}))
-        throw new Error(payload?.error || 'Gagal menghapus spam ban')
-      }
 
       toast({ title: "Berhasil", description: "Spam ban berhasil dihapus." })
       fetchData()

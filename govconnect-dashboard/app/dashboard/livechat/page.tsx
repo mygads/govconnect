@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
 import { formatDateOnly, formatDateTime, formatTimeOnly } from "@/lib/utils"
 import {
   MessageCircle,
@@ -577,19 +578,7 @@ export default function LiveChatPage() {
   // Fetch processing statuses for all active conversations
   const fetchProcessingStatuses = useCallback(async () => {
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch('/api/livechat/processing-status', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-
-      if (!response.ok) {
-        setProcessingStatuses({})
-        return
-      }
-
-      const data = await response.json()
+      const data = await fetchApi<any>('/api/livechat/processing-status')
       if (data.success && data.data?.statuses) {
         const statusMap: Record<string, ProcessingStatus> = {}
         for (const status of data.data.statuses) {
@@ -610,28 +599,21 @@ export default function LiveChatPage() {
       }
     } catch (error) {
       console.error("Error fetching processing statuses:", error)
+      setProcessingStatuses({})
     }
   }, [])
 
   // Fetch conversations silently (no loading state)
   const fetchConversationsSilent = useCallback(async () => {
     try {
-      const token = localStorage.getItem("token")
       const params = new URLSearchParams({
         status: activeTab,
         limit: String(conversationPagination.limit),
         offset: String(conversationPagination.offset),
       })
       if (searchQuery.trim()) params.set('search', searchQuery.trim())
-      const response = await fetch(`/api/livechat/conversations?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
+      const data = await fetchApi<any>(`/api/livechat/conversations?${params.toString()}`)
 
-      if (!response.ok) throw new Error(`Gagal memuat percakapan (${response.status})`)
-
-      const data = await response.json()
       if (data.success) {
         setConversationError(null)
         setConversations(data.data || [])
@@ -642,7 +624,6 @@ export default function LiveChatPage() {
           offset: data.pagination?.offset ?? current.offset,
         }))
 
-        // Update selected conversation if it exists in the new data
         if (selectedConversationRef.current) {
           const updated = (data.data || []).find(
             (c: Conversation) => getConversationKey(c) === getConversationKey(selectedConversationRef.current)
@@ -661,19 +642,7 @@ export default function LiveChatPage() {
   // Fetch messages silently (no loading state for polling)
   const fetchMessagesSilent = useCallback(async (conversationKey: string) => {
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-
-      const data = await response.json().catch(() => null)
-      if (!response.ok) {
-        setMessageError(data?.error || `Gagal memuat pesan (${response.status})`)
-        return
-      }
-
+      const data = await fetchApi<any>(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}`)
       if (data?.success) {
         setMessageError(null)
         setMessages(normalizeMessages(data.data?.messages || []))
@@ -689,34 +658,19 @@ export default function LiveChatPage() {
   const fetchMessagesWithLoading = useCallback(async (conversationKey: string) => {
     setIsInitialMessagesLoading(true)
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-
-      const data = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(data?.error || "Gagal mengambil pesan")
+      const data = await fetchApi<any>(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}`)
 
       if (data?.success) {
         setMessageError(null)
         setMessages(normalizeMessages(data.data?.messages || []))
         setCurrentTakeover(data.data?.takeover_session || null)
-        previousMessagesLengthRef.current = 0 // Reset so it scrolls
+        previousMessagesLengthRef.current = 0
 
-        // Mark as read
-        await fetch(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}/read`, {
+        await fetchApi(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}/read`, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
         })
 
-        // Refresh conversations to update unread count
         fetchConversationsSilent()
-
-        // Force scroll to bottom on initial load
         setTimeout(() => scrollToBottom(true), 100)
       }
     } catch (error: any) {
@@ -750,15 +704,7 @@ export default function LiveChatPage() {
   useEffect(() => {
     const loadVillageProfileLocation = async () => {
       try {
-        const response = await fetch('/api/village-profile', {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        })
-        const data = await response.json().catch(() => null)
-        if (!response.ok) {
-          setVillageProfileError(data?.error || `Gagal memuat profil desa (${response.status})`)
-          setVillageProfileLocation(null)
-          return
-        }
+        const data = await fetchApi<any>('/api/village-profile')
         setVillageProfileError(null)
         setVillageProfileLocation(data?.data || null)
       } catch (error: any) {
@@ -771,15 +717,7 @@ export default function LiveChatPage() {
 
   const loadImportantContacts = useCallback(async () => {
     try {
-      const response = await fetch('/api/important-contacts', {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      const data = await response.json().catch(() => null)
-      if (!response.ok) {
-        setImportantContactsError(data?.error || `Gagal memuat kontak penting (${response.status})`)
-        setImportantContacts([])
-        return
-      }
+      const data = await fetchApi<any>('/api/important-contacts')
       setImportantContactsError(null)
       setImportantContacts(Array.isArray(data?.data) ? data.data : [])
     } catch (error: any) {
@@ -925,12 +863,8 @@ export default function LiveChatPage() {
     lastPresenceStateRef.current = state
 
     try {
-      await fetch('/api/whatsapp/presence', {
+      await fetchApi('/api/whatsapp/presence', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ state }),
       })
     } catch {
@@ -976,13 +910,8 @@ export default function LiveChatPage() {
     typingInFlightRef.current = true
 
     try {
-      const token = localStorage.getItem("token")
-      await fetch(`/api/livechat/conversations/${encodeURIComponent(getConversationKey(conversation))}/typing`, {
+      await fetchApi(`/api/livechat/conversations/${encodeURIComponent(getConversationKey(conversation))}/typing`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({ state, actor: 'admin' }),
       })
     } catch {
@@ -1043,19 +972,10 @@ export default function LiveChatPage() {
 
   const sendLivechatPayload = async (payload: Record<string, unknown>) => {
     if (!selectedConversation) return null
-    const token = localStorage.getItem("token")
-    const response = await fetch(
-      `/api/livechat/conversations/${encodeURIComponent(getConversationKey(selectedConversation))}/send`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      }
-    )
-    return response.json()
+    return fetchApi<any>(`/api/livechat/conversations/${encodeURIComponent(getConversationKey(selectedConversation))}/send`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
   }
 
   const handleSendMessage = async () => {
@@ -1281,12 +1201,10 @@ export default function LiveChatPage() {
     if (!selectedConversation || !msg.message_id) return
     setRetryingMediaMessageId(msg.message_id)
     try {
-      const response = await fetch(`/api/whatsapp/media/${encodeURIComponent(msg.message_id)}/retry`, {
+      const data = await fetchApi<any>(`/api/whatsapp/media/${encodeURIComponent(msg.message_id)}/retry`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
-      const data = await response.json().catch(() => null)
-      if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal download ulang media')
+      if (!data?.success) throw new Error(data?.error || 'Gagal download ulang media')
       setFailedMedia({})
       await fetchMessagesSilent(getConversationKey(selectedConversation))
       toast({ title: 'Media Diperbarui', description: 'Media WhatsApp berhasil didownload ulang.' })
@@ -1298,12 +1216,10 @@ export default function LiveChatPage() {
   }
 
   const loadWaProviderContacts = async (sync = false) => {
-    const response = await fetch(sync ? '/api/whatsapp/contacts/sync' : '/api/whatsapp/contacts', {
+    const data = await fetchApi<any>(sync ? '/api/whatsapp/contacts/sync' : '/api/whatsapp/contacts', {
       method: sync ? 'POST' : 'GET',
-      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
     })
-    const data = await response.json().catch(() => null)
-    if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal memuat kontak WhatsApp')
+    if (!data?.success) throw new Error(data?.error || 'Gagal memuat kontak WhatsApp')
     const rawContacts = Array.isArray(data.data?.contacts) ? data.data.contacts : []
     const contacts = rawContacts
       .map((contact: any, index: number) => normalizeWaProviderContact(contact, index))
@@ -1328,16 +1244,11 @@ export default function LiveChatPage() {
     if (!selectedConversation || isWebchatConversation(selectedConversation)) return
     setIsRefreshingProfile(true)
     try {
-      const response = await fetch('/api/whatsapp/profile-refresh', {
+      const data = await fetchApi<any>('/api/whatsapp/profile-refresh', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ phone: getConversationKey(selectedConversation) }),
       })
-      const data = await response.json().catch(() => null)
-      if (!response.ok || !data?.success) throw new Error(data?.error || 'Gagal refresh profil WhatsApp')
+      if (!data?.success) throw new Error(data?.error || 'Gagal refresh profil WhatsApp')
       await fetchConversationsSilent()
       toast({ title: 'Profil Diperbarui', description: 'Profil WhatsApp dicoba disinkronkan ulang.' })
     } catch (error: any) {
@@ -1427,7 +1338,7 @@ export default function LiveChatPage() {
     return 'document'
   }
 
-  const uploadLivechatMedia = (file: File, token: string | null): Promise<any> => {
+  const uploadLivechatMedia = (file: File): Promise<any> => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       const formData = new FormData()
@@ -1453,7 +1364,7 @@ export default function LiveChatPage() {
       }
       xhr.onerror = () => reject(new Error('Koneksi upload media gagal'))
       xhr.open('POST', '/api/uploads')
-      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.withCredentials = true
       xhr.send(formData)
     })
   }
@@ -1464,8 +1375,7 @@ export default function LiveChatPage() {
     setIsUploadingMedia(true)
     setMediaUploadProgress(0)
     try {
-      const token = localStorage.getItem("token")
-      const result = await uploadLivechatMedia(file, token)
+      const result = await uploadLivechatMedia(file)
 
       if (!result.data?.url) {
         throw new Error('Upload berhasil tetapi URL media kosong')
@@ -1499,20 +1409,11 @@ export default function LiveChatPage() {
 
     setIsTogglingTakeover(true)
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(
-        `/api/livechat/takeover/${encodeURIComponent(getConversationKey(selectedConversation))}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ reason: takeoverReason }),
-        }
-      )
+      const data = await fetchApi<any>(`/api/livechat/takeover/${encodeURIComponent(getConversationKey(selectedConversation))}`, {
+        method: "POST",
+        body: JSON.stringify({ reason: takeoverReason }),
+      })
 
-      const data = await response.json()
       if (data.success) {
         setShowTakeoverDialog(false)
         setTakeoverReason("")
@@ -1550,18 +1451,10 @@ export default function LiveChatPage() {
 
     setIsTogglingTakeover(true)
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(
-        `/api/livechat/takeover/${encodeURIComponent(getConversationKey(selectedConversation))}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      )
+      const data = await fetchApi<any>(`/api/livechat/takeover/${encodeURIComponent(getConversationKey(selectedConversation))}`, {
+        method: "DELETE",
+      })
 
-      const data = await response.json()
       if (data.success) {
         // Update selected conversation immediately
         setSelectedConversation(prev => prev ? { ...prev, is_takeover: false } : null)
@@ -1595,18 +1488,10 @@ export default function LiveChatPage() {
 
     setIsDeleting(true)
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(
-        `/api/livechat/conversations/${encodeURIComponent(getConversationKey(selectedConversation))}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      )
+      const data = await fetchApi<any>(`/api/livechat/conversations/${encodeURIComponent(getConversationKey(selectedConversation))}`, {
+        method: "DELETE",
+      })
 
-      const data = await response.json()
       if (data.success) {
         setShowDeleteDialog(false)
         setSelectedConversation(null)
@@ -1638,18 +1523,10 @@ export default function LiveChatPage() {
   const handleRetryAI = async (conversationKey: string) => {
     setIsRetryingAI(true)
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(
-        `/api/livechat/conversations/${encodeURIComponent(conversationKey)}/retry`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      )
+      const data = await fetchApi<any>(`/api/livechat/conversations/${encodeURIComponent(conversationKey)}/retry`, {
+        method: "POST",
+      })
 
-      const data = await response.json()
       if (data.success) {
         toast({
           title: "Proses Ulang AI",

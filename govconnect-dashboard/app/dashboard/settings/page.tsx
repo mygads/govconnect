@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { fetchApi } from "@/lib/frontend-api"
 import { User, Lock, Save } from "lucide-react"
 
 export default function SettingsPage() {
@@ -48,21 +49,12 @@ export default function SettingsPage() {
     setLoading(true)
 
     try {
-      const response = await fetch('/api/auth/profile', {
+      await fetchApi('/api/auth/profile', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
         body: JSON.stringify({
           name: profile.name,
         }),
       })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Gagal memperbarui profil')
-      }
 
       toast({
         title: "Berhasil",
@@ -103,22 +95,13 @@ export default function SettingsPage() {
     setPasswordLoading(true)
 
     try {
-      const response = await fetch('/api/auth/password', {
+      await fetchApi('/api/auth/password', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
         body: JSON.stringify({
           currentPassword: passwords.currentPassword,
           newPassword: passwords.newPassword,
         }),
       })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Gagal mengganti password')
-      }
 
       toast({
         title: "Berhasil",

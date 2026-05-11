@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { fetchApi } from "@/lib/frontend-api"
 import { isSuperadmin } from "@/lib/rbac"
 import { formatJakartaDateTime, formatUSD } from "@/lib/utils"
 
@@ -167,27 +168,20 @@ export default function AIBalancePageContent() {
       setLoading(true)
       setError(null)
       setLedgerError(null)
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
 
-      const [summaryRes, ledgerRes] = await Promise.all([
-        fetch("/api/ai-balance", { headers }),
-        fetch("/api/ai-balance/ledger?limit=50", { headers }),
+      const [summaryPayload, ledgerPayload] = await Promise.all([
+        fetchApi<WalletSummaryPayload>("/api/ai-balance"),
+        fetchApi<{ data?: LedgerEntry[] }>("/api/ai-balance/ledger?limit=50").catch((error: any) => {
+          setLedgerError(error?.message || "Riwayat ledger gagal dimuat")
+          return null
+        }),
       ])
 
-      const summaryPayload: WalletSummaryPayload = await summaryRes.json()
-      const ledgerPayload = await ledgerRes.json()
-
-      if (!summaryRes.ok) {
-        throw new Error(summaryPayload?.error || "Gagal memuat saldo AI")
-      }
-
       setSummary(summaryPayload.data ?? null)
-      if (ledgerRes.ok) {
+      if (ledgerPayload) {
         setLedger(Array.isArray(ledgerPayload?.data) ? ledgerPayload.data : [])
       } else {
         setLedger(Array.isArray(summaryPayload?.data?.recentLedger) ? summaryPayload.data.recentLedger : [])
-        setLedgerError(ledgerPayload?.error || "Riwayat ledger gagal dimuat")
       }
     } catch (err: any) {
       console.error("Failed to load AI balance page:", err)
@@ -219,19 +213,10 @@ export default function AIBalancePageContent() {
       setSubmitting(true)
       setError(null)
       setMessage(null)
-      const token = localStorage.getItem("token")
-      const response = await fetch("/api/ai-balance/redeem", {
+      await fetchApi("/api/ai-balance/redeem", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify({ code: redeemCode.trim() }),
       })
-      const payload = await response.json()
-      if (!response.ok) {
-        throw new Error(payload?.error || payload?.message || "Gagal redeem voucher")
-      }
 
       setMessage("Voucher berhasil diredeem dan saldo sudah diperbarui.")
       setRedeemCode("")

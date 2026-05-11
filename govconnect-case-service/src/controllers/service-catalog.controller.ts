@@ -126,6 +126,11 @@ function requireVillageScopeForScopedAdmin(req: Request, res: Response): string 
     return null;
   }
 
+  if (!adminRole) {
+    res.status(400).json({ error: 'x-admin-role is required for admin service catalog requests' });
+    return null;
+  }
+
   return villageId;
 }
 
@@ -152,7 +157,8 @@ function resolveAdminCollectionVillageScope(req: Request, res: Response): string
     return null;
   }
 
-  return queryVillageId;
+  res.status(400).json({ error: 'x-admin-role is required for admin service catalog requests' });
+  return null;
 }
 
 async function findServiceForVillage(id: string, villageId?: string) {
