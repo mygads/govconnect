@@ -37,14 +37,18 @@ export interface AdminSession {
   token: string
 }
 
-export function isSuperadminRole(role?: string | null): boolean {
-  if (!role) return false
+export function normalizeAdminRole(role?: string | null): string | null {
+  if (!role) return role ?? null
   const normalized = role.toLowerCase()
-  return normalized === 'superadmin' || normalized === 'super_admin'
+  return normalized === 'superadmin' || normalized === 'super_admin' ? 'superadmin' : role
+}
+
+export function isSuperadminRole(role?: string | null): boolean {
+  return normalizeAdminRole(role) === 'superadmin'
 }
 
 export async function generateToken(payload: JWTPayload): Promise<string> {
-  return await new SignJWT({ ...payload })
+  return await new SignJWT({ ...payload, role: normalizeAdminRole(payload.role) ?? payload.role })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('24h')
@@ -54,7 +58,11 @@ export async function generateToken(payload: JWTPayload): Promise<string> {
 export async function verifyToken(token: string): Promise<JWTPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getJwtSecret())
-    return payload as unknown as JWTPayload
+    const verifiedPayload = payload as unknown as JWTPayload
+    return {
+      ...verifiedPayload,
+      role: normalizeAdminRole(verifiedPayload.role) ?? verifiedPayload.role,
+    }
   } catch (error) {
     return null
   }
@@ -101,7 +109,7 @@ export async function getAdminSession(request: NextRequest): Promise<AdminSessio
       adminId: session.admin.id,
       username: session.admin.username,
       name: session.admin.name,
-      role: session.admin.role,
+      role: normalizeAdminRole(session.admin.role) ?? session.admin.role,
       villageId: session.admin.village_id,
       token: session.token,
     }

@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/components/auth/AuthContext"
 import { formatDate, formatStatus, getStatusColor, getVillageTimezoneLabel, getVillageTimezoneOptions } from "@/lib/utils"
 import { ArrowLeft, FileText, Settings2, Brain, Users, AlertCircle, BookOpen, Loader2, Power, PowerOff, Phone, ListChecks } from "lucide-react"
+import { superadmin } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 
 interface VillageDetail {
   village: {
@@ -59,18 +61,14 @@ export default function SuperadminVillageDetailPage() {
   const timezoneOptions = getVillageTimezoneOptions()
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const fetchData = async () => {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch(`/api/superadmin/villages/${params.id}/detail`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!res.ok) throw new Error("Gagal memuat data desa")
-      setData(await res.json())
+      setData(await superadmin.getVillageDetail(String(params.id)))
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -88,12 +86,7 @@ export default function SuperadminVillageDetailPage() {
 
     try {
       setUpdatingStatus(true)
-      const res = await fetch(`/api/superadmin/villages/${params.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
-        body: JSON.stringify({ is_active: isActive }),
-      })
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Gagal memperbarui status desa")
+      await superadmin.updateVillage(String(params.id), { is_active: isActive })
       await fetchData()
     } catch (err: any) {
       setError(err.message)
@@ -107,12 +100,7 @@ export default function SuperadminVillageDetailPage() {
 
     try {
       setUpdatingTimezone(true)
-      const res = await fetch(`/api/superadmin/villages/${params.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
-        body: JSON.stringify({ timezone }),
-      })
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Gagal memperbarui timezone desa")
+      await superadmin.updateVillage(String(params.id), { timezone })
       await fetchData()
     } catch (err: any) {
       setError(err.message)

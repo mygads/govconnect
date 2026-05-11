@@ -92,6 +92,23 @@ function isValidServiceRequestStatusTransition(currentStatus: string, nextStatus
   return allowed.includes(nextStatus);
 }
 
+function normalizeServiceCategoryName(name: unknown): string {
+  return typeof name === 'string' ? name.trim().replace(/\s+/g, ' ') : '';
+}
+
+function buildServiceCategoryNameKey(name: string): string {
+  return normalizeServiceCategoryName(name).toLocaleLowerCase('id-ID');
+}
+
+function isServiceCategoryDuplicateError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+    return false;
+  }
+
+  const targets = Array.isArray(error.meta?.target) ? error.meta.target.map(String) : [];
+  return targets.includes('village_id') && targets.includes('name_key');
+}
+
 function getHeaderVillageId(req: Request): string | undefined {
   return (req.headers['x-village-id'] as string) || undefined;
 }
@@ -230,7 +247,8 @@ export async function handleGetServiceCategories(req: Request, res: Response) {
 export async function handleCreateServiceCategory(req: Request, res: Response) {
   try {
     const { village_id, name, description } = req.body;
-    if (!village_id || !name) {
+    const normalizedName = normalizeServiceCategoryName(name);
+    if (!village_id || !normalizedName) {
       return res.status(400).json({ error: 'village_id and name are required' });
     }
 
@@ -241,10 +259,18 @@ export async function handleCreateServiceCategory(req: Request, res: Response) {
     }
 
     const category = await prisma.serviceCategory.create({
-      data: { village_id, name, description }
+      data: {
+        village_id,
+        name: normalizedName,
+        name_key: buildServiceCategoryNameKey(normalizedName),
+        description,
+      }
     });
     return res.status(201).json({ data: category });
   } catch (error: any) {
+    if (isServiceCategoryDuplicateError(error)) {
+      return res.status(409).json({ error: 'Nama kategori layanan sudah dipakai di desa ini.' });
+    }
     logger.error('Create service category error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -265,7 +291,7 @@ export async function handleUpdateServiceCategory(req: Request, res: Response) {
       return res.status(404).json({ error: 'Category not found' });
     }
 
-    const rawName = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+    const rawName = req.body?.name !== undefined ? normalizeServiceCategoryName(req.body.name) : undefined;
     const description = typeof req.body?.description === 'string'
       ? (req.body.description.trim() || null)
       : req.body?.description;
@@ -279,6 +305,7 @@ export async function handleUpdateServiceCategory(req: Request, res: Response) {
       where: { id },
       data: {
         name: rawName ?? undefined,
+        name_key: rawName ? buildServiceCategoryNameKey(rawName) : undefined,
         description: description ?? undefined,
         is_active,
       },
@@ -286,6 +313,9 @@ export async function handleUpdateServiceCategory(req: Request, res: Response) {
 
     return res.json({ data: category });
   } catch (error: any) {
+    if (isServiceCategoryDuplicateError(error)) {
+      return res.status(409).json({ error: 'Nama kategori layanan sudah dipakai di desa ini.' });
+    }
     logger.error('Update service category error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -802,7 +832,7 @@ export async function handleGetServiceRequests(req: Request, res: Response) {
       ...(request_number ? { request_number } : {}),
       deleted_at: null,
       AND: [
-        { service: { village_id } },
+        { village_id },
         ...(search
           ? [{
               OR: [
@@ -987,7 +1017,7 @@ export async function handleCreateServiceRequest(req: Request, res: Response) {
       await enqueueOutboxEvent(tx, {
         routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.SERVICE_REQUESTED,
         payload: {
-          village_id: createdRequest.service?.village_id,
+          village_id: createdRequest.village_id,
           wa_user_id: normalizedWaUserId,
           channel,
           channel_identifier: resolvedChannelIdentifier,
@@ -1060,7 +1090,7 @@ export async function handleGetServiceRequestById(req: Request, res: Response) {
         }
       },
     });
-    if (!data || data.service?.village_id !== village_id) return res.status(404).json({ error: 'Request not found' });
+    if (!data || data.village_id !== village_id) return res.status(404).json({ error: 'Request not found' });
     return res.json({ data: serializeServiceRequest(data) });
   } catch (error: any) {
     logger.error('Get service request by id error', { error: error.message });
@@ -1136,7 +1166,7 @@ export async function handleUpdateServiceRequestStatus(req: Request, res: Respon
       where: { OR: [{ id }, { request_number: id }] },
       include: { service: true },
     });
-    if (!existingRequest || existingRequest.service?.village_id !== village_id) {
+    if (!existingRequest || existingRequest.village_id !== village_id) {
       return res.status(404).json({ error: 'Service request not found' });
     }
     
@@ -1190,14 +1220,30 @@ export async function handleUpdateServiceRequestStatus(req: Request, res: Respon
       const updated = await tx.serviceRequest.update({
         where: { id: existingRequest.id },
         data: updateData,
-        include: { service: true },
+        include: { service: true, updates: { orderBy: { created_at: 'asc' } } },
+      });
+
+      const auditMetadata = getAuditMetadata(req);
+      await tx.serviceRequestUpdate.create({
+        data: {
+          service_request_id: existingRequest.id,
+          admin_id: auditMetadata.admin_id,
+          admin_name: auditMetadata.admin_name,
+          admin_role: auditMetadata.admin_role,
+          old_status: normalizedStatus ? existingRequest.status : null,
+          new_status: normalizedStatus || null,
+          note_text: hasAdminNotes ? admin_notes ?? null : auditMetadata.reason ?? null,
+          result_file_url: hasResultFileUrl ? result_file_url ?? null : null,
+          result_file_name: hasResultFileName ? result_file_name ?? null : null,
+          result_description: hasResultDescription ? result_description ?? null : null,
+        },
       });
 
       if (normalizedStatus) {
         await enqueueOutboxEvent(tx, {
           routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED,
           payload: {
-            village_id: updated.service?.village_id,
+            village_id: updated.village_id,
             wa_user_id: updated.wa_user_id,
             channel: updated.channel || 'WHATSAPP',
             channel_identifier: updated.channel_identifier || updated.wa_user_id,
@@ -1488,7 +1534,7 @@ export async function handleCancelServiceRequest(req: Request, res: Response) {
       await enqueueOutboxEvent(tx, {
         routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.STATUS_UPDATED,
         payload: {
-          village_id: existing.service?.village_id,
+          village_id: existing.village_id,
           wa_user_id: existing.wa_user_id,
           channel: existing.channel || 'WHATSAPP',
           channel_identifier: existing.channel_identifier || existing.wa_user_id,
@@ -1545,7 +1591,7 @@ export async function handleGetServiceHistory(req: Request, res: Response) {
         ...(wa_user_id ? { wa_user_id } : {}),
         ...(channelIdentifier ? { channel, channel_identifier: String(channelIdentifier) } : {}),
         deleted_at: null,
-        service: { village_id },
+        village_id,
       },
       include: { service: true },
       orderBy: { created_at: 'desc' }
@@ -1573,7 +1619,7 @@ export async function handleSoftDeleteServiceRequest(req: Request, res: Response
       where: { OR: [{ id }, { request_number: id }] },
       include: { service: true },
     });
-    if (!sr || sr.service?.village_id !== village_id) {
+    if (!sr || sr.village_id !== village_id) {
       return res.status(404).json({ error: 'Service request not found' });
     }
 
@@ -1636,7 +1682,7 @@ export async function handleRestoreServiceRequest(req: Request, res: Response) {
       where: { OR: [{ id }, { request_number: id }], deleted_at: { not: null } },
       include: { service: true },
     });
-    if (!sr || sr.service?.village_id !== village_id) {
+    if (!sr || sr.village_id !== village_id) {
       return res.status(404).json({ error: 'Deleted service request not found' });
     }
 
@@ -1695,7 +1741,7 @@ export async function handleGetDeletedServiceRequests(req: Request, res: Respons
     const data = await prisma.serviceRequest.findMany({
       where: {
         deleted_at: { not: null },
-        service: { village_id },
+        village_id,
       },
       include: { service: true },
       orderBy: { deleted_at: 'desc' },

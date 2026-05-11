@@ -304,6 +304,48 @@ describe('Production audit scenarios', () => {
         expect(result.intent).not.toBe('EMERGENCY_CONTACTS');
       }
     });
+
+    it('keeps emergency shortcut honest when the emergency role lookup is ambiguous', async () => {
+      const result = await tryHandleLatePreAgentState({
+        userId: 'user-generic-emergency',
+        message: 'tolong damkar polisi sekarang',
+        channel: 'whatsapp',
+        villageId: 'village-margahayu',
+        traceId: 'trace-generic-emergency',
+        startTime: Date.now(),
+        runWithMicroBudget: async (task: any, fallback: any) => {
+          try { return await task(); } catch { return fallback; }
+        },
+        tracker: { preparing: vi.fn(), complete: vi.fn() },
+        notifyStage: vi.fn(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.intent).toBe('EMERGENCY_CONTACTS');
+      expect(result?.response).toMatch(/belum bisa memastikan kontak darurat/i);
+      expect(result?.contacts?.length ?? 0).toBe(0);
+    });
+
+    it('asks for clarification when report intent is still generic', async () => {
+      const result = await tryHandleLatePreAgentState({
+        userId: 'user-generic-report',
+        message: 'saya mau lapor nih',
+        channel: 'whatsapp',
+        villageId: 'village-margahayu',
+        traceId: 'trace-generic-report',
+        startTime: Date.now(),
+        runWithMicroBudget: async (task: any, fallback: any) => {
+          try { return await task(); } catch { return fallback; }
+        },
+        tracker: { preparing: vi.fn(), complete: vi.fn() },
+        notifyStage: vi.fn(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.intent).toBe('QUESTION');
+      expect(result?.response).toMatch(/jalan rusak/i);
+      expect(result?.response).toMatch(/lapor kematian/i);
+    });
   });
 
   describe('C. Complaint FSM resume', () => {

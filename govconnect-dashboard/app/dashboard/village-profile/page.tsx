@@ -11,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { formatDateTime, getVillageTimezoneLabel } from "@/lib/utils"
 import { MapPin, Save, Building2, Clock, AlertCircle, RefreshCw, Info, Loader2 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { knowledge, villageProfile } from "@/lib/frontend-api"
 
 const DAYS = [
   { key: "senin", label: "Senin" },
@@ -73,36 +74,33 @@ export default function VillageProfilePage() {
 
   const [operatingHours, setOperatingHours] = useState<OperatingHours>({})
 
+  const refreshProfile = async () => {
+    const data = await villageProfile.get() as ProfileResponse
+    const profile = data?.data
+    if (profile) {
+      setForm({
+        name: profile.name || "",
+        slug: profile.slug || "",
+        timezone: profile.timezone || "Asia/Jakarta",
+        timezone_label: profile.timezone_label || getVillageTimezoneLabel(profile.timezone),
+        address: profile.address || "",
+        gmaps_url: profile.gmaps_url || "",
+        latitude: profile.latitude != null ? String(profile.latitude) : "",
+        longitude: profile.longitude != null ? String(profile.longitude) : "",
+        short_name: profile.short_name || "",
+      })
+      setOperatingHours(profile.operating_hours || {})
+    }
+    if (data?.embedding_status) {
+      setEmbeddingStatus(data.embedding_status)
+    }
+  }
+
   useEffect(() => {
     const fetchProfile = async () => {
       try {
         setLoading(true)
-        const response = await fetch("/api/village-profile", {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-        })
-        if (response.ok) {
-          const data: ProfileResponse = await response.json()
-          const profile = data?.data
-          if (profile) {
-            setForm({
-              name: profile.name || "",
-              slug: profile.slug || "",
-              timezone: profile.timezone || "Asia/Jakarta",
-              timezone_label: profile.timezone_label || getVillageTimezoneLabel(profile.timezone),
-              address: profile.address || "",
-              gmaps_url: profile.gmaps_url || "",
-              latitude: profile.latitude != null ? String(profile.latitude) : "",
-              longitude: profile.longitude != null ? String(profile.longitude) : "",
-              short_name: profile.short_name || "",
-            })
-            setOperatingHours(profile.operating_hours || {})
-          }
-          if (data?.embedding_status) {
-            setEmbeddingStatus(data.embedding_status)
-          }
-        }
+        await refreshProfile()
       } catch (error) {
         console.error("Failed to load village profile:", error)
       } finally {
@@ -127,37 +125,16 @@ export default function VillageProfilePage() {
     setSaving(true)
 
     try {
-      const response = await fetch("/api/village-profile", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
-          address: form.address,
-          gmaps_url: form.gmaps_url,
-          latitude: form.latitude,
-          longitude: form.longitude,
-          short_name: form.short_name,
-          operating_hours: operatingHours,
-        }),
+      await villageProfile.update({
+        address: form.address,
+        gmaps_url: form.gmaps_url,
+        latitude: form.latitude,
+        longitude: form.longitude,
+        short_name: form.short_name,
+        operating_hours: operatingHours,
       })
 
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menyimpan profil desa")
-      }
-
-      // Refresh embedding status after save
-      const refreshResponse = await fetch("/api/village-profile", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (refreshResponse.ok) {
-        const data = await refreshResponse.json()
-        if (data?.embedding_status) {
-          setEmbeddingStatus(data.embedding_status)
-        }
-      }
+      await refreshProfile()
 
       toast({
         title: "Profil Desa Tersimpan",
@@ -179,27 +156,8 @@ export default function VillageProfilePage() {
     
     setReembedding(true)
     try {
-      const response = await fetch(`/api/knowledge/${embeddingStatus.knowledge_id}/embed`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error("Gagal melakukan re-embed")
-      }
-
-      // Refresh embedding status
-      const refreshResponse = await fetch("/api/village-profile", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (refreshResponse.ok) {
-        const data = await refreshResponse.json()
-        if (data?.embedding_status) {
-          setEmbeddingStatus(data.embedding_status)
-        }
-      }
+      await knowledge.embed(embeddingStatus.knowledge_id)
+      await refreshProfile()
 
       toast({
         title: "Re-embed Berhasil",

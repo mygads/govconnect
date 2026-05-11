@@ -303,8 +303,10 @@ export const caseService = {
   /**
    * Get service request by ID
    */
-  async getServiceRequestById(id: string) {
-    return apiFetch(buildUrl(ServicePath.CASE, `/service-requests/${id}`), {
+  async getServiceRequestById(id: string, village_id?: string) {
+    const url = new URL(buildUrl(ServicePath.CASE, `/service-requests/${id}`));
+    if (village_id) url.searchParams.set('village_id', village_id);
+    return apiFetch(url.toString(), {
       headers: getHeaders(),
     });
   },

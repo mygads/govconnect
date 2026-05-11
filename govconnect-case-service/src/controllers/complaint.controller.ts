@@ -133,6 +133,13 @@ export async function handleCreateComplaint(req: Request, res: Response) {
       data: responseData,
     });
   } catch (error: any) {
+    if (
+      error.message === 'alamat is required for this complaint type' ||
+      error.message === 'category_id does not match the selected complaint type' ||
+      error.message === 'village_id is required for creating complaints'
+    ) {
+      return res.status(400).json({ error: error.message });
+    }
     logger.error('Create complaint error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -331,6 +338,9 @@ export async function handleUpdateComplaintStatus(req: Request, res: Response) {
       data: complaint,
     });
   } catch (error: any) {
+    if (typeof error.message === 'string' && error.message.startsWith('Transisi status tidak valid:')) {
+      return res.status(400).json({ error: error.message });
+    }
     logger.error('Update status error', { error: error.message });
     return res.status(500).json({ error: 'Internal server error' });
   }

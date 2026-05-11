@@ -52,6 +52,7 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { formatDateTime } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
+import { serviceRequests, uploads } from "@/lib/frontend-api"
 
 interface ServiceRequirement {
   id: string
@@ -324,14 +325,7 @@ export default function ServiceRequestDetailPage() {
   const fetchRequest = async (id: string) => {
     try {
       setLoading(true)
-      const response = await fetch(`/api/service-requests/${id}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.error || "Permohonan tidak ditemukan")
-      }
-      const data = await response.json()
+      const data = await serviceRequests.getById(id)
       const payload = data.data || data
       setRequest(payload)
       setStatus(payload.status || "OPEN")
@@ -359,17 +353,7 @@ export default function ServiceRequestDetailPage() {
       const formData = new FormData()
       formData.append("file", file)
 
-      const response = await fetch("/api/uploads", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        body: formData,
-      })
-
-      if (!response.ok) {
-        throw new Error("Gagal upload file")
-      }
-
-      const data = await response.json()
+      const data = await uploads.upload(formData)
       const fileUrl = data?.data?.url || data?.url || data?.file_url
       if (!fileUrl) {
         throw new Error("URL file tidak ditemukan dalam response")
@@ -418,19 +402,7 @@ export default function ServiceRequestDetailPage() {
         payload.status = status
       }
 
-      const response = await fetch(`/api/service-requests/${request.id}/status`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify(payload),
-      })
-
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.error || "Gagal menyimpan status")
-      }
+      await serviceRequests.updateStatus(request.id, payload)
 
       toast({
         title: "Perubahan disimpan",

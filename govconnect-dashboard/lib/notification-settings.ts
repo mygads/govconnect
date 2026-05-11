@@ -7,6 +7,7 @@ export interface NotificationSettings {
   soundEnabled: boolean;
   urgentCategories: string[];
   adminNotificationNumber: string;
+  urgentWaAutoSendEnabled?: boolean | null;
   villageId?: string;
 }
 
@@ -16,6 +17,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   soundEnabled: true,
   urgentCategories: [],
   adminNotificationNumber: '',
+  urgentWaAutoSendEnabled: null,
 };
 
 function getLocalStorageKey(villageId?: string | null): string {

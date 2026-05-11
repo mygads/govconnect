@@ -893,7 +893,6 @@ export async function startConsumingComplaintEvents(): Promise<void> {
   try {
     const queueName = rabbitmqConfig.QUEUES.CHANNEL_COMPLAINT_EVENTS;
     const routingKeys = [
-      rabbitmqConfig.ROUTING_KEYS.COMPLAINT_CREATED,
       rabbitmqConfig.ROUTING_KEYS.COMPLAINT_STATUS_UPDATED,
       rabbitmqConfig.ROUTING_KEYS.COMPLAINT_URGENT_ALERT,
     ];
@@ -931,12 +930,9 @@ export async function startConsumingComplaintEvents(): Promise<void> {
         });
 
         // Determine event type from routing key
-        let eventType: 'complaint_created' | 'complaint_updated' | 'urgent_alert' = 'complaint_updated';
-        if (routingKey === rabbitmqConfig.ROUTING_KEYS.COMPLAINT_CREATED) {
-          eventType = 'complaint_created';
-        } else if (routingKey === rabbitmqConfig.ROUTING_KEYS.COMPLAINT_URGENT_ALERT) {
-          eventType = 'urgent_alert';
-        }
+        const eventType: 'complaint_updated' | 'urgent_alert' = routingKey === rabbitmqConfig.ROUTING_KEYS.COMPLAINT_URGENT_ALERT
+          ? 'urgent_alert'
+          : 'complaint_updated';
 
         // Publish to SSE stream for dashboard clients
         publishLivechatEvent({

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { comparePassword, generateToken } from '@/lib/auth'
+import { comparePassword, generateToken, normalizeAdminRole } from '@/lib/auth'
 import { verifyCsrf } from '@/lib/csrf'
 
 // Simple in-memory rate limiter for login attempts
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
         id: admin.id,
         username: admin.username,
         name: admin.name,
-        role: admin.role
+        role: normalizeAdminRole(admin.role) ?? admin.role
       }
     })
 

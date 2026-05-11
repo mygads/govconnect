@@ -35,7 +35,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/categories/${id}`), {
       method: 'PATCH',
-      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
+      headers: getHeaders({
+        'x-admin-role': session.admin.role,
+        ...(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : {}),
+      }),
       body: JSON.stringify({ name, description: description || null }),
     })
 
@@ -63,7 +66,10 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/categories/${id}`), {
       method: 'DELETE',
-      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
+      headers: getHeaders({
+        'x-admin-role': session.admin.role,
+        ...(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : {}),
+      }),
     })
 
     const data = await response.json().catch(() => ({}))

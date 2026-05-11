@@ -4,7 +4,11 @@ import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
 import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
-import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
+import {
+  findVillageImportantContactCategoryByName,
+  updateVillageImportantContactCategory,
+} from '@/lib/important-contact-categories'
+import { normalizeScopedName } from '@/lib/utils'
 
 function isDuplicateCategoryError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
@@ -41,46 +45,53 @@ async function getSession(request: NextRequest) {
   return session
 }
 
+const categorySelect = {
+  id: true,
+  village_id: true,
+  name: true,
+  created_at: true,
+  updated_at: true,
+  contacts: true,
+} as const
+
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  
+
   const { id } = await context.params
-  
+
   const category = await prisma.important_contact_categories.findUnique({
     where: { id },
-    include: { contacts: true }
+    select: categorySelect,
   })
-  
+
   if (!category) {
     return NextResponse.json({ error: 'Category not found' }, { status: 404 })
   }
-  
+
   if (category.village_id !== session.admin.village_id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
   }
-  
-  // Check if this category is linked to any complaint types
-  // The complaint_types table uses the category NAME to link, not ID
+
   let linkedComplaintTypes: any[] = []
   try {
     const response = await apiFetch(buildComplaintTypesUrl(category.village_id), {
       method: 'GET',
       headers: getHeaders({ 'x-village-id': category.village_id }),
     })
-    
+
     if (response.ok) {
       const data = await response.json()
       const allTypes = data.data || []
-      linkedComplaintTypes = allTypes.filter((type: any) => 
+      linkedComplaintTypes = allTypes.filter((type: any) =>
         isLinkedToImportantCategory(type, category)
       )
     }
   } catch (error) {
     console.error('Error fetching complaint types:', error)
   }
-  
-  return NextResponse.json({ 
+
+  return NextResponse.json({
     data: category,
     linkedComplaintTypes: linkedComplaintTypes.map((t: any) => ({
       id: t.id,
@@ -93,21 +104,22 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  
+
   const { id } = await context.params
-  
+
   const existingCategory = await prisma.important_contact_categories.findUnique({
-    where: { id }
+    where: { id },
+    select: categorySelect,
   })
-  
+
   if (!existingCategory) {
     return NextResponse.json({ error: 'Category not found' }, { status: 404 })
   }
-  
+
   if (existingCategory.village_id !== session.admin.village_id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
   }
-  
+
   const body = await request.json()
   const normalizedName = normalizeScopedName(body?.name)
 
@@ -115,17 +127,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     return NextResponse.json({ error: 'name is required' }, { status: 400 })
   }
 
-  const nameKey = buildScopedNameKey(normalizedName)
-  const duplicate = await prisma.important_contact_categories.findFirst({
-    where: {
-      village_id: existingCategory.village_id,
-      name_key: nameKey,
-      NOT: { id },
-    },
-    select: { id: true },
-  })
-
-  if (duplicate) {
+  const duplicate = await findVillageImportantContactCategoryByName(existingCategory.village_id, normalizedName)
+  if (duplicate && duplicate.id !== id) {
     return NextResponse.json({ error: 'Nama kategori kontak penting sudah dipakai di desa ini.' }, { status: 409 })
   }
 
@@ -133,14 +136,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
   let category
   try {
-    category = await prisma.important_contact_categories.update({
-      where: { id },
-      data: {
-        name: normalizedName,
-        name_key: nameKey,
-      },
-      include: { contacts: true }
-    })
+    category = await updateVillageImportantContactCategory(id, existingCategory.village_id, normalizedName)
   } catch (error) {
     if (isDuplicateCategoryError(error)) {
       return NextResponse.json({ error: 'Nama kategori kontak penting sudah dipakai di desa ini.' }, { status: 409 })
@@ -148,14 +144,17 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     throw error
   }
 
-  // If name changed, update all complaint types that reference the old name
+  if (!category) {
+    return NextResponse.json({ error: 'Category not found' }, { status: 404 })
+  }
+
   if (oldName !== normalizedName) {
     try {
       const response = await apiFetch(buildComplaintTypesUrl(existingCategory.village_id), {
         method: 'GET',
         headers: getHeaders({ 'x-village-id': existingCategory.village_id }),
       })
-      
+
       if (response.ok) {
         const data = await response.json()
         const allTypes = data.data || []
@@ -172,8 +171,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
               is_urgent: type.is_urgent,
               require_address: type.require_address,
               send_important_contacts: true,
-              important_contact_category: normalizedName,
-              important_contact_category_id: null,
+              important_contact_category: null,
+              important_contact_category_id: category.id,
             }),
           })
         }
@@ -190,30 +189,29 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  
+
   const { id } = await context.params
-  
+
   const existingCategory = await prisma.important_contact_categories.findUnique({
     where: { id },
-    include: { contacts: true }
+    select: categorySelect,
   })
-  
+
   if (!existingCategory) {
     return NextResponse.json({ error: 'Category not found' }, { status: 404 })
   }
-  
+
   if (existingCategory.village_id !== session.admin.village_id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
   }
-  
-  // Check for linked complaint types
+
   let linkedComplaintTypes: any[] = []
   try {
     const response = await apiFetch(buildComplaintTypesUrl(existingCategory.village_id), {
       method: 'GET',
       headers: getHeaders({ 'x-village-id': existingCategory.village_id }),
     })
-    
+
     if (response.ok) {
       const data = await response.json()
       const allTypes = data.data || []
@@ -222,8 +220,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   } catch (error) {
     console.error('Error fetching complaint types:', error)
   }
-  
-  // If there are linked complaint types, clear their important_contact_category
+
   if (linkedComplaintTypes.length > 0) {
     for (const type of linkedComplaintTypes) {
       try {
@@ -245,8 +242,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
       }
     }
   }
-  
-  // Delete the category (this will cascade delete all contacts in this category)
+
   await prisma.important_contact_categories.delete({
     where: { id }
   })

@@ -47,6 +47,15 @@ function resolveVillageId(req: Request): string | undefined {
   return queryVillageId || headerVillageId;
 }
 
+function requireVillageId(req: Request, res: Response): string | null {
+  const villageId = resolveVillageId(req)?.trim();
+  if (!villageId) {
+    res.status(400).json({ error: 'village_id is required for multi-tenancy isolation' });
+    return null;
+  }
+  return villageId;
+}
+
 function resolveChannel(req: Request, identifier?: string): 'WHATSAPP' | 'WEBCHAT' {
   const queryChannel = (getQuery(req, 'channel') || req.body?.channel) as string | undefined;
   if (queryChannel && queryChannel.toUpperCase() === 'WEBCHAT') return 'WEBCHAT';
@@ -67,7 +76,7 @@ function typingThrottleKey(params: {
   channelIdentifier: string;
   actor: TypingActor;
 }) {
-  return `${params.villageId || 'unknown'}:${params.channel}:${params.channelIdentifier}:${params.actor}`;
+  return `${params.villageId}:${params.channel}:${params.channelIdentifier}:${params.actor}`;
 }
 
 function shouldSendTyping(key: string, state: TypingState) {
@@ -93,7 +102,8 @@ function shouldSendTyping(key: string, state: TypingState) {
 }
 
 export function handleLivechatEvents(req: Request, res: Response): void {
-  const villageId = resolveVillageId(req);
+  const villageId = requireVillageId(req, res);
+  if (!villageId) return;
   const channelIdentifier = getQuery(req, 'channel_identifier') || getQuery(req, 'wa_user_id');
   const channel = (getQuery(req, 'channel') || '').toUpperCase();
 
@@ -142,8 +152,20 @@ interface LivechatMediaPayload {
 }
 
 function mediaLabel(media: LivechatMediaPayload): string {
-  if (media.type === 'document') return media.file_name ? `[Document] ${media.file_name}` : '[Document]';
-  return `[${media.type.charAt(0).toUpperCase()}${media.type.slice(1)}]`;
+  const fileNameSuffix = media.file_name ? ` ${media.file_name}` : '';
+
+  switch (media.type) {
+    case 'image':
+      return `[Image] Gambar${fileNameSuffix}`;
+    case 'video':
+      return `[Video] Video${fileNameSuffix}`;
+    case 'audio':
+      return `[Audio] Audio${fileNameSuffix}`;
+    case 'document':
+      return media.file_name ? `[Document] ${media.file_name}` : '[Document] Dokumen';
+    default:
+      return '[Media]';
+  }
 }
 
 function normalizeMediaPayload(value: any): LivechatMediaPayload | null {
@@ -332,7 +354,8 @@ export async function handleStartTakeover(req: Request, res: Response): Promise<
     const wa_user_id = getParam(req, 'wa_user_id');
     const { admin_id, admin_name, reason } = req.body;
     const enrichment = req.body?.enrichment;
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id || !admin_id) {
@@ -375,7 +398,8 @@ export async function handleStartTakeover(req: Request, res: Response): Promise<
 export async function handleEndTakeover(req: Request, res: Response): Promise<void> {
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
@@ -402,7 +426,8 @@ export async function handleEndTakeover(req: Request, res: Response): Promise<vo
  */
 export async function handleGetActiveTakeovers(req: Request, res: Response): Promise<void> {
   try {
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const sessions = await getActiveTakeovers(villageId);
 
     res.json({
@@ -423,7 +448,8 @@ export async function handleGetActiveTakeovers(req: Request, res: Response): Pro
 export async function handleCheckTakeover(req: Request, res: Response): Promise<void> {
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
@@ -458,7 +484,8 @@ export async function handleGetConversations(req: Request, res: Response): Promi
     const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
     const offset = offsetRaw ? parseInt(offsetRaw, 10) : 0;
     const search = getQuery(req, 'search') || getQuery(req, 'q') || undefined;
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
 
     const result = await getConversations(status, limit, villageId, search, offset);
 
@@ -492,7 +519,8 @@ export async function handleGetConversation(req: Request, res: Response): Promis
 
     const limitRaw = getQuery(req, 'limit');
     const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const channel = resolveChannel(req, wa_user_id);
 
     const conversation = await getConversation(wa_user_id, villageId, channel);
@@ -528,6 +556,8 @@ export async function handleGetConversation(req: Request, res: Response): Promis
 export async function handleAdminSendMessage(req: Request, res: Response): Promise<void> {
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const { message, admin_id, admin_name } = req.body;
     const media = normalizeMediaPayload(req.body?.media);
     const location = normalizeLocationPayload(req.body?.location);
@@ -539,7 +569,6 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
     const replyToMessageId = typeof req.body?.reply_to_message_id === 'string' ? req.body.reply_to_message_id.trim() : undefined;
     const retryMessageId = typeof req.body?.retry_message_id === 'string' ? req.body.retry_message_id.trim() : undefined;
     const messageText = typeof message === 'string' ? message.trim() : '';
-    const villageId = resolveVillageId(req);
     const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
@@ -588,7 +617,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       retryMessage = await prisma.message.findFirst({
         where: {
           id: retryMessageId,
-          village_id: villageId || 'unknown',
+          village_id: villageId,
           channel,
           channel_identifier: wa_user_id,
           direction: 'OUT',
@@ -617,7 +646,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
       (contact ? `Contact: ${contact.name}` : '') ||
       (interactive?.type === 'buttons' ? interactive.body : '') ||
       (interactive?.type === 'list' ? interactive.body : '') ||
-      (sticker ? '[Sticker]' : '') ||
+      (sticker ? '[Sticker] Stiker' : '') ||
       (poll ? `Poll: ${poll.header}` : '') ||
       (action?.type === 'reaction' ? `Reaction: ${action.emoji}` : '') ||
       (action?.type === 'edit' ? `Edit: ${action.body}` : '') ||
@@ -856,7 +885,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
 
         await sendTypingIndicator(wa_user_id, 'paused', villageId).catch(() => false);
         await logWaActivity({
-          villageId: villageId || 'unknown',
+          villageId: villageId,
           waUserId: wa_user_id,
           channelIdentifier: wa_user_id,
           type: 'message_send',
@@ -928,7 +957,7 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
         });
 
         await logWaActivity({
-          villageId: villageId || 'unknown',
+          villageId: villageId,
           waUserId: wa_user_id,
           channelIdentifier: wa_user_id,
           type: 'message_send',
@@ -961,7 +990,8 @@ export async function handleAdminSendMessage(req: Request, res: Response): Promi
 export async function handleConversationTyping(req: Request, res: Response): Promise<void> {
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const channel = resolveChannel(req, wa_user_id || undefined);
     const state: TypingState = req.body?.state === 'paused' ? 'paused' : 'composing';
     const actor: TypingActor = req.body?.actor === 'ai' ? 'ai' : req.body?.actor === 'user' ? 'user' : 'admin';
@@ -1009,7 +1039,8 @@ export async function handleMarkAsRead(req: Request, res: Response): Promise<voi
       res.status(400).json({ error: 'wa_user_id is required' });
       return;
     }
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const channel = resolveChannel(req, wa_user_id);
 
     await markConversationAsRead(wa_user_id, villageId, channel);
@@ -1038,7 +1069,8 @@ export async function handleMarkAsRead(req: Request, res: Response): Promise<voi
 export async function handleDeleteConversation(req: Request, res: Response): Promise<void> {
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
     const channel = resolveChannel(req, wa_user_id || undefined);
 
     if (!wa_user_id) {
@@ -1085,7 +1117,8 @@ export async function handleRetryAI(req: Request, res: Response): Promise<void> 
   try {
     const wa_user_id = getParam(req, 'wa_user_id');
     const channel = resolveChannel(req, wa_user_id || undefined);
-    const villageId = resolveVillageId(req);
+    const villageId = requireVillageId(req, res);
+    if (!villageId) return;
 
     if (!wa_user_id) {
       res.status(400).json({ error: 'wa_user_id is required' });

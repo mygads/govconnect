@@ -56,6 +56,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { complaints, importantContacts } from "@/lib/frontend-api"
 
 interface ComplaintCategory {
   id: string
@@ -152,35 +153,25 @@ export default function ComplaintMetaPage() {
     return match?.id || ""
   }
 
+  const hasLegacyImportantContactCategoryDrift = (type?: ComplaintType | null) => {
+    if (!type?.send_important_contacts) return false
+    if (type.important_contact_category_id) return false
+    if (!type.important_contact_category) return false
+    return !resolveImportantContactCategoryId(type)
+  }
+
   const fetchAll = async () => {
     try {
       setLoading(true)
-      const [categoriesRes, typesRes, importantRes] = await Promise.all([
-        fetch("/api/complaints/categories", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }),
-        fetch("/api/complaints/types", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }),
-        fetch("/api/important-contacts/categories", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }),
+      const [categoriesData, typesData, importantData] = await Promise.all([
+        complaints.getCategories(),
+        complaints.getTypes(),
+        importantContacts.getCategories(),
       ])
 
-      if (categoriesRes.ok) {
-        const data = await categoriesRes.json()
-        setCategories(data.data || [])
-      }
-
-      if (typesRes.ok) {
-        const data = await typesRes.json()
-        setTypes(data.data || [])
-      }
-
-      if (importantRes.ok) {
-        const data = await importantRes.json()
-        setImportantCategories(data.data || [])
-      }
+      setCategories(categoriesData.data || [])
+      setTypes(typesData.data || [])
+      setImportantCategories(importantData.data || [])
     } catch (error) {
       console.error("Failed to load complaint meta", error)
       toast({
@@ -240,18 +231,10 @@ export default function ComplaintMetaPage() {
         : "/api/complaints/categories"
       const method = editingCategory ? "PATCH" : "POST"
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify(categoryForm),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menyimpan kategori")
+      if (editingCategory) {
+        await complaints.updateCategory(editingCategory.id, categoryForm)
+      } else {
+        await complaints.createCategory(categoryForm)
       }
 
       toast({
@@ -285,15 +268,7 @@ export default function ComplaintMetaPage() {
 
   const handleDeleteCategory = async (id: string) => {
     try {
-      const response = await fetch(`/api/complaints/categories/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menghapus kategori")
-      }
+      await complaints.deleteCategory(id)
 
       toast({
         title: "Kategori dihapus",
@@ -392,23 +367,17 @@ export default function ComplaintMetaPage() {
         : "/api/complaints/types"
       const method = editingType ? "PATCH" : "POST"
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
-          ...typeForm,
-          important_contact_category_id: typeForm.send_important_contacts
-            ? typeForm.important_contact_category_id || null
-            : null,
-        }),
-      })
+      const payload = {
+        ...typeForm,
+        important_contact_category_id: typeForm.send_important_contacts
+          ? typeForm.important_contact_category_id || null
+          : null,
+      }
 
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menyimpan jenis")
+      if (editingType) {
+        await complaints.updateType(editingType.id, payload)
+      } else {
+        await complaints.createType(payload)
       }
 
       toast({
@@ -442,15 +411,7 @@ export default function ComplaintMetaPage() {
 
   const handleDeleteType = async (id: string) => {
     try {
-      const response = await fetch(`/api/complaints/types/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Gagal menghapus jenis")
-      }
+      await complaints.deleteType(id)
 
       toast({
         title: "Jenis dihapus",
@@ -943,6 +904,11 @@ export default function ComplaintMetaPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {hasLegacyImportantContactCategoryDrift(editingType) && !typeForm.important_contact_category_id && (
+                    <p className="text-xs text-amber-600">
+                      Link kategori nomor penting lama tidak lagi cocok. Pilih ulang kategori yang benar sebelum menyimpan.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

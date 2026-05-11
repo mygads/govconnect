@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalApiKey } from "@/lib/api-client";
-import { normalizePhoneNumber } from "@/lib/whatsapp";
+import {
+  normalizePublicComplaintVillageId,
+  resolvePublicComplaintIdentity,
+} from "./_shared/request-utils";
 
 const CASE_SERVICE_URL = process.env.CASE_SERVICE_URL || "http://localhost:3003";
-
-function isValidWaNumber(value: string) {
-  return /^628\d{8,12}$/.test(value);
-}
-
-function normalizeChannel(value?: string): "WHATSAPP" | "WEBCHAT" | null {
-  if (value === "WHATSAPP" || value === "WEBCHAT") return value;
-  return null;
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,33 +45,21 @@ export async function POST(request: NextRequest) {
       reporter_phone?: string;
     };
 
-    const explicitChannel = normalizeChannel(channel);
-    const resolvedChannelIdentifier = [channel_identifier, session_id, sessionId].find(
-      (value): value is string => typeof value === "string" && value.trim().length > 0,
-    ) || "";
-    const normalizedWaUserId = wa_user_id ? normalizePhoneNumber(wa_user_id) : "";
-    const hasWebchatIdentifier = !!resolvedChannelIdentifier;
-    const hasWhatsAppIdentity = !!normalizedWaUserId;
-
-    if (explicitChannel === "WHATSAPP" && hasWebchatIdentifier) {
-      return NextResponse.json(
-        { error: "channel WHATSAPP tidak boleh dikirim bersama session/channel_identifier webchat" },
-        { status: 400 },
-      );
+    const identityResult = resolvePublicComplaintIdentity({
+      wa_user_id,
+      channel,
+      channel_identifier,
+      session_id,
+      sessionId,
+    });
+    if (identityResult.error || !identityResult.identity) {
+      return NextResponse.json({ error: identityResult.error || "Identitas pengirim tidak valid" }, { status: 400 });
     }
 
-    if (explicitChannel === "WEBCHAT" && !hasWebchatIdentifier) {
-      return NextResponse.json(
-        { error: "channel_identifier atau session_id wajib diisi untuk channel Webchat" },
-        { status: 400 },
-      );
-    }
+    const identity = identityResult.identity;
+    const villageId = normalizePublicComplaintVillageId(village_id);
 
-    const normalizedChannel = explicitChannel
-      || (hasWebchatIdentifier ? "WEBCHAT" : null)
-      || (hasWhatsAppIdentity ? "WHATSAPP" : null);
-
-    if (!village_id) {
+    if (!villageId) {
       return NextResponse.json({ error: "village_id wajib diisi" }, { status: 400 });
     }
 
@@ -89,30 +71,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "deskripsi minimal 10 karakter" }, { status: 400 });
     }
 
-    if (!normalizedChannel) {
-      return NextResponse.json(
-        { error: "channel tidak dapat ditentukan; kirim wa_user_id untuk WhatsApp atau session/channel_identifier untuk Webchat" },
-        { status: 400 },
-      );
-    }
-
-    if (normalizedChannel === "WHATSAPP") {
-      if (!normalizedWaUserId) {
-        return NextResponse.json({ error: "wa_user_id wajib diisi untuk channel WhatsApp" }, { status: 400 });
-      }
-
-      if (!isValidWaNumber(normalizedWaUserId)) {
-        return NextResponse.json({ error: "Format nomor WhatsApp harus 628xxxxxxxxxx" }, { status: 400 });
-      }
-    }
-
-    if (normalizedChannel === "WEBCHAT" && !resolvedChannelIdentifier) {
-      return NextResponse.json(
-        { error: "channel_identifier atau session_id wajib diisi untuk channel Webchat" },
-        { status: 400 }
-      );
-    }
-
     const response = await fetch(`${CASE_SERVICE_URL}/laporan/create`, {
       method: "POST",
       headers: {
@@ -120,7 +78,7 @@ export async function POST(request: NextRequest) {
         "x-internal-api-key": internalApiKey,
       },
       body: JSON.stringify({
-        village_id,
+        village_id: villageId,
         kategori,
         deskripsi,
         alamat,
@@ -130,12 +88,12 @@ export async function POST(request: NextRequest) {
         category_id,
         reporter_name,
         reporter_phone,
-        ...(normalizedWaUserId ? { wa_user_id: normalizedWaUserId } : {}),
-        channel: normalizedChannel,
-        ...(resolvedChannelIdentifier
+        ...(identity.waUserId ? { wa_user_id: identity.waUserId } : {}),
+        channel: identity.channel,
+        ...(identity.channelIdentifier
           ? {
-              session_id: resolvedChannelIdentifier,
-              channel_identifier: resolvedChannelIdentifier,
+              session_id: identity.channelIdentifier,
+              channel_identifier: identity.channelIdentifier,
             }
           : {}),
       }),

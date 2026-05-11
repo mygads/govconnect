@@ -14,7 +14,7 @@ import {
   retryAllFailedMessages,
   clearFailedMessages,
 } from './services/rabbitmq.service';
-import { checkCaseServiceHealth } from './services/case-client.service';
+import { checkCaseServiceHealth, clearServiceCatalogCache } from './services/case-client.service';
 import { modelStatsService } from './services/model-stats.service';
 import { rateLimiterService } from './services/rate-limiter.service';
 import { getSpamGuardStats as getAISpamGuardStats } from './services/spam-guard.service';
@@ -60,6 +60,7 @@ import {
   resetAllTokenUsage,
 } from './services/token-usage.service';
 import { clearAllUMPCaches, clearUserCaches, getUMPCacheStats, getActiveProcessingCount } from './services/unified-message-processor.service';
+import { clearComplaintTypeCache } from './services/ump-state';
 import { clearVillageProfileCache, getVillageProfileCacheStats } from './services/knowledge.service';
 import { getEmbeddingCacheStats as getEmbCacheDetailStats } from './services/embedding.service';
 import { getAllAIGatewayInfoAsync } from './services/ai-gateway.service';
@@ -486,10 +487,10 @@ app.post('/admin/cache/mode', internalAuthMiddleware, (req: Request, res: Respon
  * POST /admin/cache/invalidate-village — Admin webhook: dashboard calls this
  * after editing kontak, layanan, or profil desa so cached AI answers don't
  * serve stale values.
- * Body: { villageId: string, intents?: string[], retrieval?: boolean, profile?: boolean }
+ * Body: { villageId: string, intents?: string[], retrieval?: boolean, profile?: boolean, complaintTypes?: boolean, services?: boolean }
  */
 app.post('/admin/cache/invalidate-village', internalAuthMiddleware, async (req: Request, res: Response) => {
-  const { villageId, intents, retrieval = true, profile = true } = req.body || {};
+  const { villageId, intents, retrieval = true, profile = true, complaintTypes = true, services = true } = req.body || {};
   if (!villageId || typeof villageId !== 'string') {
     res.status(400).json({ status: 'error', message: 'villageId required' });
     return;
@@ -509,10 +510,17 @@ app.post('/admin/cache/invalidate-village', internalAuthMiddleware, async (req: 
     clearVillageProfileCache();
   }
 
+  const complaintTypeCacheRemoved = complaintTypes ? clearComplaintTypeCache(villageId) : 0;
+  const serviceCacheRemoved = services
+    ? clearServiceCatalogCache()
+    : { serviceCatalogCleared: 0, serviceRequirementsCleared: 0 };
+
   logger.info('Village cache invalidated via admin webhook', {
     villageId,
     responseRemoved,
     retrievalRemoved,
+    complaintTypeCacheRemoved,
+    serviceCacheRemoved,
     intents,
   });
 
@@ -522,6 +530,9 @@ app.post('/admin/cache/invalidate-village', internalAuthMiddleware, async (req: 
     responseRemoved,
     retrievalRemoved,
     profileCacheCleared: profile,
+    complaintTypeCacheRemoved,
+    serviceCatalogCacheRemoved: serviceCacheRemoved.serviceCatalogCleared,
+    serviceRequirementsCacheRemoved: serviceCacheRemoved.serviceRequirementsCleared,
     timestamp: new Date().toISOString(),
   });
 });

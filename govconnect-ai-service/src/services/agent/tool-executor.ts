@@ -6,7 +6,12 @@
  */
 
 import logger from '../../utils/logger';
-import { getImportantContacts, lookupImportantContacts } from '../important-contacts.service';
+import {
+  getImportantContacts,
+  isConfidentContactLookupResult,
+  lookupImportantContacts,
+  shouldAttachEmergencyLookupContacts,
+} from '../important-contacts.service';
 import {
   cancelComplaint,
   cancelServiceRequest,
@@ -173,25 +178,6 @@ function deriveMutationOutcome(result: ToolCallResult): string {
   if (data.needs_input) return `awaiting_input:${String(data.needs_input)}`;
   return 'success';
 }
-
-const EMERGENCY_CONTACT_HINTS = [
-  'darurat',
-  'ambulans',
-  'ambulan',
-  'pemadam',
-  'damkar',
-  'polisi',
-  'puskesmas',
-  'rumah sakit',
-  'rs',
-  'bidan',
-  'kebakaran',
-  'bencana',
-  'banjir',
-  'longsor',
-  'evakuasi',
-  'kesehatan',
-];
 
 const OFFICE_CONTACT_HINTS = [
   'kantor',
@@ -671,15 +657,22 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
     };
   }
 
-  const contacts = await getImportantContacts(ctx.villageId);
-  const finalContacts = contacts
-    .filter((contact) => matchContactHints(contact, EMERGENCY_CONTACT_HINTS))
-    .slice(0, 8);
+  const fallbackQuery = (ctx.userMessage || '').trim() || 'kontak darurat desa';
+  const lookup = await lookupImportantContacts(fallbackQuery, ctx.villageId, {
+    limit: 8,
+    categoryHint: 'emergency',
+  });
+  const finalContacts = shouldAttachEmergencyLookupContacts(lookup)
+    ? lookup.matches.map((match) => match.contact)
+    : [];
 
   if (finalContacts.length === 0) {
-    const suggestedResponse = contacts.length > 0
-      ? 'Saya belum menemukan kontak darurat resmi yang cocok untuk desa ini di database saat ini. Kalau situasinya mendesak sekarang, mohon segera cari bantuan terdekat di sekitar lokasi sambil saya bantu catat kejadian untuk petugas desa.'
-      : 'Kontak darurat untuk desa ini belum tersedia di database saat ini. Jika perlu, saya bisa bantu catat kejadian atau laporan agar segera diteruskan ke petugas desa.';
+    const hasSomeEmergencyCandidates = lookup.matches.length > 0;
+    const suggestedResponse = hasSomeEmergencyCandidates
+      ? 'Saya belum bisa memastikan kontak darurat desa yang paling tepat dari pesan ini. Kalau situasinya mendesak sekarang, mohon segera cari bantuan terdekat di sekitar lokasi sambil saya bantu catat kejadian untuk petugas desa.'
+      : lookup.total_candidates > 0
+        ? 'Saya belum menemukan kontak darurat resmi yang cocok untuk desa ini di database saat ini. Kalau situasinya mendesak sekarang, mohon segera cari bantuan terdekat di sekitar lokasi sambil saya bantu catat kejadian untuk petugas desa.'
+        : 'Kontak darurat untuk desa ini belum tersedia di database saat ini. Jika perlu, saya bisa bantu catat kejadian atau laporan agar segera diteruskan ke petugas desa.';
 
     return {
       success: true,
@@ -687,6 +680,8 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
         contacts: [],
         total: 0,
         has_local_contacts: false,
+        category_hint: lookup.category_hint,
+        role_hint: lookup.role_hint,
         suggested_response: suggestedResponse,
       },
       meta: {
@@ -707,6 +702,8 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
       })),
       total: finalContacts.length,
       has_local_contacts: true,
+      category_hint: lookup.category_hint,
+      role_hint: lookup.role_hint,
       suggested_response: 'Berikut kontak darurat yang tercatat untuk desa ini dan bisa segera dihubungi.',
     },
     meta: {
@@ -776,9 +773,7 @@ async function toolGetImportantContact(
   }
 
   const topMatch = lookup.matches[0];
-  const isConfident =
-    topMatch.score >= 0.75
-    && (lookup.matches.length === 1 || topMatch.score - lookup.matches[1].score >= 0.15);
+  const isConfident = isConfidentContactLookupResult(lookup);
 
   const matchesPayload = lookup.matches.map((match) => ({
     name: match.contact.name,
@@ -1267,7 +1262,7 @@ async function toolCreateComplaint(
 
   if (
     categoryConfig?.send_important_contacts
-    && (categoryConfig.important_contact_category_id || categoryConfig.important_contact_category)
+    && categoryConfig.important_contact_category_id
   ) {
     importantContactsNotice = '\n\n📞 Kontak penting terkait akan saya kirim terpisah setelah laporan dibuat.';
   } else if (categoryConfig?.send_important_contacts) {

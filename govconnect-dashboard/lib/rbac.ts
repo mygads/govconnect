@@ -1,5 +1,5 @@
 export type { AdminRole } from "@/lib/auth"
-import type { AdminRole } from "@/lib/auth"
+import { isSuperadminRole, type AdminRole } from "@/lib/auth"
 
 export type RouteRule = {
   path: string
@@ -46,7 +46,7 @@ const matchPath = (pathname: string, path: string) =>
   pathname === path || pathname.startsWith(`${path}/`)
 
 export function isSuperadmin(role: AdminRole | string | undefined): boolean {
-  return role === 'superadmin'
+  return isSuperadminRole(role)
 }
 
 export function isRouteAllowed(role: AdminRole | undefined, pathname: string): boolean {
@@ -60,7 +60,7 @@ export function isRouteAllowed(role: AdminRole | undefined, pathname: string): b
   }
 
   // Superadmin cannot access village-specific routes
-  if (role === 'superadmin') {
+  if (isSuperadmin(role)) {
     const isVillageRoute = VILLAGE_ONLY_ROUTES.some((route) => matchPath(pathname, route))
     if (isVillageRoute) return false
   }

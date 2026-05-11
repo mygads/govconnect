@@ -833,7 +833,8 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
     const serviceGroups = await Promise.all(
       candidateIds.map((candidateVillageId) => fetchServiceCatalogFromCaseService(candidateVillageId))
     );
-    const services = dedupeServiceCatalog(serviceGroups.flat());
+    const services = dedupeServiceCatalog(serviceGroups.flat())
+      .filter((service) => service.is_active !== false);
 
     // Evict oldest entry if cache is full
     if (serviceCatalogCacheMap.size >= SERVICE_CATALOG_CACHE_MAX_ENTRIES) {
@@ -863,9 +864,12 @@ export async function getServiceCatalog(villageId?: string): Promise<ServiceCata
 /**
  * Clear the service catalog cache (called from periodic cleanup)
  */
-export function clearServiceCatalogCache(): void {
+export function clearServiceCatalogCache(): { serviceCatalogCleared: number; serviceRequirementsCleared: number } {
+  const serviceCatalogCleared = serviceCatalogCacheMap.size;
+  const serviceRequirementsCleared = serviceRequirementsCacheMap.size;
   serviceCatalogCacheMap.clear();
   serviceRequirementsCacheMap.clear();
+  return { serviceCatalogCleared, serviceRequirementsCleared };
 }
 
 export interface ServiceRequirementDefinition {

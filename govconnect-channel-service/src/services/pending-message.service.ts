@@ -25,8 +25,12 @@ export interface PendingMessage {
   updated_at: Date;
 }
 
-function resolveVillageId(villageId?: string): string {
-  return villageId || 'unknown';
+function requireVillageId(villageId?: string): string {
+  const normalizedVillageId = typeof villageId === 'string' ? villageId.trim() : '';
+  if (!normalizedVillageId) {
+    throw new Error('village_id is required for multi-tenancy isolation');
+  }
+  return normalizedVillageId;
 }
 
 /**
@@ -34,7 +38,7 @@ function resolveVillageId(villageId?: string): string {
  */
 export async function addPendingMessage(data: PendingMessageData): Promise<PendingMessage> {
   try {
-    const villageId = resolveVillageId(data.village_id);
+    const villageId = requireVillageId(data.village_id);
     const channel = data.channel || 'WHATSAPP';
     const pending = await prisma.pendingMessage.create({
       data: {

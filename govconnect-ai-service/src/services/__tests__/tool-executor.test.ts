@@ -11,7 +11,26 @@ vi.mock('../../utils/logger', () => ({
 
 vi.mock('../important-contacts.service', () => ({
   getImportantContacts: vi.fn(async () => []),
-  lookupImportantContacts: vi.fn(async () => []),
+  lookupImportantContacts: vi.fn(async () => ({
+    matches: [],
+    total_candidates: 0,
+    category_hint: null,
+    role_hint: null,
+  })),
+  isConfidentContactLookupResult: (lookup: any) => {
+    const topMatch = lookup?.matches?.[0];
+    return !!topMatch && topMatch.score >= 0.75 && (lookup.matches.length === 1 || topMatch.score - lookup.matches[1].score >= 0.15);
+  },
+  shouldAttachEmergencyLookupContacts: (lookup: any) => {
+    if (!lookup?.matches?.length) return false;
+    if (lookup.role_hint) {
+      const topMatch = lookup.matches[0];
+      return !!topMatch && topMatch.score >= 0.75 && (lookup.matches.length === 1 || topMatch.score - lookup.matches[1].score >= 0.15);
+    }
+    return lookup.matches.some((match: any) =>
+      (match.matchedBy || []).some((signal: string) => signal !== 'alias_fallback' && signal !== 'category_fallback'),
+    );
+  },
 }));
 
 vi.mock('../case-client.service', () => ({
@@ -94,9 +113,10 @@ vi.mock('../channel-client.service', () => ({
   updateConversationUserProfile: vi.fn(async () => true),
 }));
 
-import { createComplaint, getComplaintTypes } from '../case-client.service';
-import { getImportantContacts } from '../important-contacts.service';
+import { createComplaint, getComplaintTypes, updateComplaintByUser } from '../case-client.service';
+import { getImportantContacts, lookupImportantContacts } from '../important-contacts.service';
 import { searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
+import { AGENT_TOOLS } from '../agent/tool-definitions';
 import { executeToolCall } from '../agent/tool-executor';
 
 const ctx = {
@@ -122,6 +142,12 @@ describe('executeToolCall user-facing errors', () => {
     vi.mocked(searchKnowledge).mockResolvedValue([] as any);
     vi.mocked(getVillageProfileSummary).mockResolvedValue(null as any);
     vi.mocked(getImportantContacts).mockResolvedValue([] as any);
+    vi.mocked(lookupImportantContacts).mockResolvedValue({
+      matches: [],
+      total_candidates: 0,
+      category_hint: null,
+      role_hint: null,
+    } as any);
   });
 
   it('sanitizes retrieval tool failures before they reach the user', async () => {
@@ -348,23 +374,26 @@ describe('executeToolCall user-facing errors', () => {
     expect((executed.result.data as any).suggested_response).toContain('Kontak penting terkait akan saya kirim terpisah setelah laporan dibuat.');
   });
 
-  it('returns only emergency-tagged contacts from get_emergency_contacts', async () => {
-    vi.mocked(getImportantContacts).mockResolvedValue([
-      {
-        id: '1',
-        name: 'Admin Pelayanan Desa',
-        phone: '0822222222',
-        description: 'Nomor kantor utama',
-        category: { id: 'gov', name: 'Pemerintah' },
-      },
-      {
-        id: '2',
-        name: 'Damkar Bola',
-        phone: '0811111111',
-        description: 'Pemadam kebakaran siaga 24 jam',
-        category: { id: 'emergency', name: 'Darurat' },
-      },
-    ] as any);
+  it('returns only grounded emergency contacts from get_emergency_contacts', async () => {
+    vi.mocked(lookupImportantContacts).mockResolvedValue({
+      matches: [
+        {
+          contact: {
+            id: '2',
+            name: 'Damkar Bola',
+            phone: '0811111111',
+            description: 'Pemadam kebakaran siaga 24 jam',
+            category: { id: 'emergency', name: 'Darurat' },
+          },
+          score: 0.84,
+          rawScore: 8,
+          matchedBy: ['alias_name', 'token_overlap'],
+        },
+      ],
+      total_candidates: 2,
+      category_hint: 'emergency',
+      role_hint: 'damkar',
+    } as any);
 
     const executed = await executeToolCall('get_emergency_contacts', {}, ctx);
     const data = executed.result.data as any;
@@ -380,22 +409,12 @@ describe('executeToolCall user-facing errors', () => {
   });
 
   it('does not fall back to non-emergency contacts when no emergency contact matches', async () => {
-    vi.mocked(getImportantContacts).mockResolvedValue([
-      {
-        id: '1',
-        name: 'Admin Pelayanan Desa',
-        phone: '0822222222',
-        description: 'Nomor kantor utama',
-        category: { id: 'gov', name: 'Pemerintah' },
-      },
-      {
-        id: '2',
-        name: 'Ketua RT 03',
-        phone: '0833333333',
-        description: 'Wilayah RT 03',
-        category: { id: 'gov', name: 'Pemerintah' },
-      },
-    ] as any);
+    vi.mocked(lookupImportantContacts).mockResolvedValue({
+      matches: [],
+      total_candidates: 2,
+      category_hint: 'emergency',
+      role_hint: null,
+    } as any);
 
     const executed = await executeToolCall('get_emergency_contacts', {}, ctx);
     const data = executed.result.data as any;
@@ -405,6 +424,52 @@ describe('executeToolCall user-facing errors', () => {
     expect(data.total).toBe(0);
     expect(data.has_local_contacts).toBe(false);
     expect(data.suggested_response).toContain('belum menemukan kontak darurat resmi');
+  });
+
+  it('keeps emergency contact tool honest when the top emergency matches are ambiguous', async () => {
+    vi.mocked(lookupImportantContacts).mockResolvedValue({
+      matches: [
+        {
+          contact: {
+            id: '1',
+            name: 'Damkar Bola',
+            phone: '0811111111',
+            description: 'Pemadam kebakaran siaga 24 jam',
+            category: { id: 'emergency', name: 'Darurat' },
+          },
+          score: 0.81,
+          rawScore: 8,
+          matchedBy: ['role_match'],
+        },
+        {
+          contact: {
+            id: '2',
+            name: 'Polsek Bola',
+            phone: '0822222222',
+            description: 'Kepolisian sektor siaga',
+            category: { id: 'emergency', name: 'Darurat' },
+          },
+          score: 0.74,
+          rawScore: 7,
+          matchedBy: ['role_match'],
+        },
+      ],
+      total_candidates: 3,
+      category_hint: 'emergency',
+      role_hint: 'damkar',
+    } as any);
+
+    const executed = await executeToolCall('get_emergency_contacts', {}, {
+      ...ctx,
+      userMessage: 'tolong damkar polisi sekarang',
+    });
+    const data = executed.result.data as any;
+
+    expect(executed.result.success).toBe(true);
+    expect(data.contacts).toEqual([]);
+    expect(data.total).toBe(0);
+    expect(data.has_local_contacts).toBe(false);
+    expect(data.suggested_response).toContain('belum bisa memastikan kontak darurat desa yang paling tepat');
   });
 
   it('prioritizes official office contacts first in village profile output', async () => {
@@ -445,5 +510,50 @@ describe('executeToolCall user-facing errors', () => {
       'Sekretariat Desa Margahayu',
       'Kepala Desa Margahayu',
     ]);
+  });
+
+  it('requires only reference_number in update_complaint tool schema', () => {
+    const definition = AGENT_TOOLS.find((tool) => tool.function.name === 'update_complaint');
+
+    expect(definition?.function.parameters).toMatchObject({
+      required: ['reference_number'],
+    });
+  });
+
+  it('accepts partial complaint updates with only one changed field', async () => {
+    vi.mocked(updateComplaintByUser).mockResolvedValue({
+      success: true,
+      message: 'Laporan berhasil diperbarui.',
+      data: { status: 'OPEN' },
+    } as any);
+
+    const executed = await executeToolCall('update_complaint', {
+      reference_number: 'lap-20260101-001',
+      deskripsi: 'Lokasi tepatnya di depan sekolah dasar.',
+    }, ctx);
+
+    expect(executed.result.success).toBe(true);
+    expect(updateComplaintByUser).toHaveBeenCalledWith(
+      'LAP-20260101-001',
+      expect.objectContaining({
+        wa_user_id: '6281234567890',
+        channel: 'WHATSAPP',
+      }),
+      {
+        alamat: undefined,
+        deskripsi: '[Update] Lokasi tepatnya di depan sekolah dasar.',
+        rt_rw: undefined,
+      },
+    );
+  });
+
+  it('still rejects update_complaint when no patch field is provided', async () => {
+    const executed = await executeToolCall('update_complaint', {
+      reference_number: 'LAP-20260101-001',
+    }, ctx);
+
+    expect(executed.result.success).toBe(false);
+    expect(executed.result.error).toContain('minimal satu perubahan');
+    expect(updateComplaintByUser).not.toHaveBeenCalled();
   });
 });

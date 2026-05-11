@@ -12,6 +12,8 @@ import {
   RefreshCcw, CheckCircle2, XCircle, Wifi, WifiOff, MessageSquare,
   Users, Activity, AlertTriangle
 } from "lucide-react"
+import { superadmin } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 
 interface WaSupportUser {
   id: string
@@ -61,28 +63,19 @@ export default function WaSupportPage() {
   const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const fetchData = useCallback(async () => {
     try {
       setRefreshing(true)
-      const token = localStorage.getItem("token")
-      const headers = { Authorization: `Bearer ${token}` }
-
-      const [summaryRes, healthRes] = await Promise.all([
-        fetch("/api/superadmin/whatsapp/summary", { headers }),
-        fetch("/api/superadmin/whatsapp/health", { headers }),
+      const [summaryData, healthData] = await Promise.all([
+        superadmin.getWhatsappSummary(),
+        superadmin.getWhatsappHealth(),
       ])
 
-      if (summaryRes.ok) {
-        const data = await summaryRes.json()
-        setSummary(data.data)
-      }
-      if (healthRes.ok) {
-        const data = await healthRes.json()
-        setHealth(data.data)
-      }
+      setSummary(summaryData.data)
+      setHealth(healthData.data)
     } catch (e) {
       console.error("Failed to fetch WA Support data:", e)
     } finally {

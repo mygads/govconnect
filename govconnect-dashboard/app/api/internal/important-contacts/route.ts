@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAuthorizedInternalRequest } from '@/lib/internal-api-auth'
 import prisma from '@/lib/prisma'
-import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
+import { findVillageImportantContactCategoryByName } from '@/lib/important-contact-categories'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -44,9 +44,27 @@ function normalizeAndDedupeContacts(contacts: any[]) {
   return Array.from(deduped.values())
 }
 
+const contactSelect = {
+  id: true,
+  category_id: true,
+  name: true,
+  phone: true,
+  description: true,
+  created_at: true,
+  updated_at: true,
+  category: {
+    select: {
+      id: true,
+      village_id: true,
+      name: true,
+      created_at: true,
+      updated_at: true,
+    },
+  },
+} as const
+
 export async function GET(request: NextRequest) {
   try {
-    const db = prisma as any
     if (!isAuthorizedInternalRequest(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -63,28 +81,18 @@ export async function GET(request: NextRequest) {
     let resolvedCategoryId = categoryId
 
     if (!resolvedCategoryId && categoryName) {
-      const normalizedCategoryName = normalizeScopedName(categoryName)
-      if (normalizedCategoryName) {
-        const category = await db.important_contact_categories.findFirst({
-          where: {
-            village_id: villageId,
-            name_key: buildScopedNameKey(normalizedCategoryName),
-          },
-          select: { id: true },
-        })
-
-        resolvedCategoryId = category?.id || null
-      }
+      const category = await findVillageImportantContactCategoryByName(villageId, categoryName)
+      resolvedCategoryId = category?.id || null
     }
 
-    const contacts = await db.important_contacts.findMany({
+    const contacts = await prisma.important_contacts.findMany({
       where: {
         category: {
           village_id: villageId,
           ...(resolvedCategoryId ? { id: resolvedCategoryId } : {}),
         },
       },
-      include: { category: true },
+      select: contactSelect,
       orderBy: { created_at: 'asc' },
     })
 

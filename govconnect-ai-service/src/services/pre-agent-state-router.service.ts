@@ -55,7 +55,12 @@ import {
   resolveComplaintTypeConfig,
 } from './ump-utils';
 import { getAutoFillSuggestionsWithFallback, updateProfile } from './user-profile.service';
-import { isContactDirectoryLookup, lookupImportantContacts } from './important-contacts.service';
+import {
+  isConfidentContactLookupResult as isConfidentContactLookupResultFromLookup,
+  isContactDirectoryLookup,
+  lookupImportantContacts,
+  shouldAttachEmergencyLookupContacts,
+} from './important-contacts.service';
 import logger from '../utils/logger';
 
 type MicroBudgetRunner = <T>(task: () => Promise<T>, fallback: T) => Promise<T>;
@@ -204,15 +209,15 @@ const INFORMATION_QUERY_SIGNAL = /\b(apa|apakah|bagaimana|gimana|kenapa|kapan|di
  * an explicit-report phrase. "Program edukasi sampah" will NOT trigger.
  */
 function matchesComplaintIncident(normalized: string): boolean {
-  if (EXPLICIT_REPORT_PATTERN.test(normalized)) return true;
+  const explicitReport = EXPLICIT_REPORT_PATTERN.test(normalized);
   if (!COMPLAINT_INCIDENT_KEYWORDS.test(normalized)) return false;
   // Guard: if the query is clearly informational, it's a knowledge question.
-  if (INFORMATION_QUERY_SIGNAL.test(normalized) && !ACTIVE_EVENT_SIGNAL.test(normalized)) {
+  if (INFORMATION_QUERY_SIGNAL.test(normalized) && !ACTIVE_EVENT_SIGNAL.test(normalized) && !explicitReport) {
     return false;
   }
   // Guard: if the user is asking for a contact number, not reporting.
   if (CONTACT_DIRECTORY_SIGNAL.test(normalized)) return false;
-  return ACTIVE_EVENT_SIGNAL.test(normalized);
+  return explicitReport || ACTIVE_EVENT_SIGNAL.test(normalized);
 }
 
 /**
@@ -304,6 +309,17 @@ function isNonOfficeLocalKnowledgeQuery(message: string): boolean {
   if (!NON_OFFICE_LOCAL_ENTITY_PATTERN.test(normalized)) return false;
   if (/\b(kantor\s+desa|kantor\s+kelurahan|balai\s+desa|sekretariat\s+desa)\b/i.test(normalized)) return false;
   return LOCAL_KNOWLEDGE_QUERY_PATTERN.test(normalized);
+}
+
+function isGenericReportIntent(message: string): boolean {
+  const normalized = (message || '').toLowerCase().trim();
+  if (!normalized) return false;
+  if (!EXPLICIT_REPORT_PATTERN.test(normalized) && !/^\s*lapor(?:\s+\w+){0,3}\s*$/i.test(normalized)) return false;
+  if (COMPLAINT_INCIDENT_KEYWORDS.test(normalized)) return false;
+  if (EMERGENCY_KEYWORDS.test(normalized)) return false;
+  if (SERVICE_EVENT_PATTERN.test(normalized) || SERVICE_ADMIN_PATTERN.test(normalized)) return false;
+  if (CONTACT_DIRECTORY_SIGNAL.test(normalized) || STATUS_CANCEL_EDIT_TOPIC_PATTERN.test(normalized)) return false;
+  return true;
 }
 
 function isClearlyDifferentIntent(message: string): boolean {
@@ -759,6 +775,9 @@ function buildServiceListingResponse(
   lines.push('Kalau mau tahu syarat atau cara mengajukan salah satunya, tinggal sebut nama layanannya ya.');
   return lines.join('\n');
 }
+
+export const shouldAttachEmergencyShortcutContacts = shouldAttachEmergencyLookupContacts;
+export const isConfidentContactLookupResult = isConfidentContactLookupResultFromLookup;
 
 export async function tryHandleServiceListingShortcut(input: {
   message: string;
@@ -1672,6 +1691,7 @@ export async function tryHandleLatePreAgentState(
   const isServiceLikeReportMessage =
     /\blapor\b/i.test(message)
     && SERVICE_EVENT_PATTERN.test(message);
+  const hasGenericReportIntent = isGenericReportIntent(message);
   const hasComplaintLocationPhrase = /\b(rt\s*\d+|rw\s*\d+|dekat|depan|samping|belakang|dusun|lorong|gang|pertigaan|perempatan|patokan|pos ronda|nomor\s*rumah|jalan\s+[a-z0-9]|jl\.?\s+[a-z0-9]|di\s+(jalan|jl\.?|pertigaan|perempatan|depan|samping|belakang|dekat|dusun|gang|kantor|pasar|sekolah|masjid|pos|balai|desa|kelurahan|kecamatan))\b/i.test(message);
   const isLocationRichComplaintIncident =
     COMPLAINT_INCIDENT_PATTERN.test(message)
@@ -1681,6 +1701,7 @@ export async function tryHandleLatePreAgentState(
     !/\b(lap|lay)-\d{8}-\d{3}\b/i.test(message)
     && !isComplaintInfoQuestion
     && !isServiceLikeReportMessage
+    && !hasGenericReportIntent
     && !SERVICE_ADMIN_PATTERN.test(message)
     && (
       COMPLAINT_INCIDENT_PATTERN.test(message)
@@ -1708,29 +1729,22 @@ export async function tryHandleLatePreAgentState(
 
     if (lookup.matches.length > 0) {
       const topMatch = lookup.matches[0];
-      const isConfident =
-        topMatch.score >= 0.75
-        && (lookup.matches.length === 1 || topMatch.score - lookup.matches[1].score >= 0.15);
+      const isConfident = isConfidentContactLookupResult(lookup);
+      if (!isConfident) {
+        return null;
+      }
 
-      const formatLine = (match: typeof lookup.matches[number], index?: number) => {
-        const prefix = typeof index === 'number' ? `${index + 1}. ` : '';
-        const descriptor = match.contact.category?.name ? ` (${match.contact.category.name})` : '';
-        const desc = match.contact.description ? `\n   ${match.contact.description}` : '';
-        return `${prefix}*${match.contact.name}*${descriptor}\n   ${match.contact.phone}${desc}`;
-      };
-
-      const vcardContacts = toVCardContacts(
-        lookup.matches.map((match) => ({
-          name: match.contact.name,
-          phone: match.contact.phone,
-          description: match.contact.description,
-          category: match.contact.category?.name ? { name: match.contact.category.name } : null,
-        })),
-      );
-
-      const response = isConfident
-        ? formatLine(lookup.matches[0])
-        : `Beberapa kontak yang cocok:\n\n${lookup.matches.map((match, index) => formatLine(match, index)).join('\n\n')}\n\nKalau belum sesuai, sebutkan nama atau jabatan yang lebih spesifik ya.`;
+      const descriptor = topMatch.contact.category?.name ? ` (${topMatch.contact.category.name})` : '';
+      const desc = topMatch.contact.description ? `\n${topMatch.contact.description}` : '';
+      const response = `*${topMatch.contact.name}*${descriptor}\n${topMatch.contact.phone}${desc}`;
+      const vcardContacts = toVCardContacts([
+        {
+          name: topMatch.contact.name,
+          phone: topMatch.contact.phone,
+          description: topMatch.contact.description,
+          category: topMatch.contact.category?.name ? { name: topMatch.contact.category.name } : null,
+        },
+      ]);
 
       return buildGuardResult({
         startTime,
@@ -1742,7 +1756,7 @@ export async function tryHandleLatePreAgentState(
           stage: 'pre_agent_contact_directory',
           type: 'contact_directory_lookup',
           action: 'handled',
-          reason: isConfident ? 'confident_match' : 'multiple_matches',
+          reason: 'confident_match',
           details: {
             matchCount: lookup.matches.length,
             topScore: topMatch.score,
@@ -1763,14 +1777,17 @@ export async function tryHandleLatePreAgentState(
       limit: 3,
       categoryHint: 'emergency',
     });
-    const contacts = emergencyLookup.matches.map((match) => match.contact);
+    const canAttachContacts = shouldAttachEmergencyShortcutContacts(emergencyLookup);
+    const contacts = canAttachContacts ? emergencyLookup.matches.map((match) => match.contact) : [];
     const contactsMessage = buildImportantContactsMessage(contacts, channel);
-    const vcardContacts = toVCardContacts(
-      contacts.map((contact) => ({
-        ...contact,
-        category: contact.category?.name ? { name: contact.category.name } : null,
-      })),
-    );
+    const vcardContacts = canAttachContacts
+      ? toVCardContacts(
+        contacts.map((contact) => ({
+          ...contact,
+          category: contact.category?.name ? { name: contact.category.name } : null,
+        })),
+      )
+      : undefined;
 
     const complaintTypeConfig = await resolveComplaintTypeConfig(message, villageId);
 
@@ -1787,13 +1804,15 @@ export async function tryHandleLatePreAgentState(
       traceId,
       response: contacts.length > 0
         ? `Situasi ini darurat, mohon segera hubungi sekarang juga.${contactsMessage}\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.`
-        : 'Situasi ini darurat. Saya belum menemukan kontak darurat desa yang tercatat saat ini. Mohon segera hubungi pihak darurat atau medis terdekat di lokasi Bapak/Ibu.\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.',
+        : emergencyLookup.matches.length > 0
+          ? 'Situasi ini darurat. Saya belum bisa memastikan kontak darurat desa yang paling tepat dari pesan ini. Mohon segera hubungi pihak darurat atau medis terdekat di lokasi Bapak/Ibu.\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.'
+          : 'Situasi ini darurat. Saya belum menemukan kontak darurat desa yang tercatat saat ini. Mohon segera hubungi pihak darurat atau medis terdekat di lokasi Bapak/Ibu.\n\nKalau perlu, saya juga bisa bantu buatkan laporan kejadian ini agar langsung tercatat ke petugas desa. Balas *iya* jika mau saya lanjutkan.',
       contacts: vcardContacts,
       intent: 'EMERGENCY_CONTACTS',
     });
   }
 
-  if (/^\s*(mau\s+lapor|lapor)\s*$/i.test(message)) {
+  if (hasGenericReportIntent) {
     return buildGuardResult({
       startTime,
       traceId,

@@ -158,9 +158,10 @@ export function deleteState(waUserId: string, sessionKey: string): void {
   dropBufferedState(buildPersistKey(waUserId, sessionKey));
 
   prisma.conversation_sessions
-    .delete({
+    .deleteMany({
       where: {
-        wa_user_id_session_key: { wa_user_id: waUserId, session_key: sessionKey },
+        wa_user_id: waUserId,
+        session_key: sessionKey,
       },
     })
     .catch(() => {});

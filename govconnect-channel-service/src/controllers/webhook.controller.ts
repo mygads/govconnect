@@ -120,6 +120,21 @@ function resolveProviderEventPayload(payload: GenfityWebhookPayload): any {
   return event.Message || event.message || event.Data || event.data || event;
 }
 
+function compactSystemActivityIdPart(value?: string | null): string {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized) return 'unknown';
+  return normalized.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/-+/g, '-').slice(0, 80) || 'unknown';
+}
+
+function buildSystemActivityMessageId(namespace: string, providerMessageId?: string | null, targetMessageId?: string | null): string {
+  return [
+    'system',
+    compactSystemActivityIdPart(namespace),
+    compactSystemActivityIdPart(providerMessageId),
+    targetMessageId ? compactSystemActivityIdPart(targetMessageId) : null,
+  ].filter(Boolean).join('-');
+}
+
 async function saveLivechatSystemActivity(params: {
   villageId: string;
   channelIdentifier: string;
@@ -214,6 +229,30 @@ function extractInteractiveResponseText(response: any): string | null {
   }
 
   return null;
+}
+
+function formatMediaOnlyMessage(params: {
+  type: 'image' | 'video' | 'audio' | 'document' | 'sticker';
+  fileName?: string | null;
+  mimeType?: string | null;
+  isVoiceNote?: boolean;
+}): string {
+  const fileNameSuffix = params.fileName ? ` ${params.fileName}` : '';
+
+  switch (params.type) {
+    case 'image':
+      return `[Image] Gambar${fileNameSuffix}`;
+    case 'video':
+      return `[Video] Video${fileNameSuffix}`;
+    case 'audio':
+      return params.isVoiceNote ? '[Audio] Pesan suara' : `[Audio] Audio${fileNameSuffix}`;
+    case 'document':
+      return params.fileName ? `[Document] ${params.fileName}` : '[Document] Dokumen';
+    case 'sticker':
+      return '[Sticker] Stiker';
+    default:
+      return '[Media]';
+  }
 }
 
 function extractTextFromMessageObject(message: any): string | null {
@@ -712,8 +751,15 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     if (messageAction && from && messageId) {
       const waUserId = extractPhoneFromJID(from);
       if (/^[\d]+$/.test(waUserId)) {
-        const isDuplicate = await checkDuplicateMessage(messageId);
-        if (!isDuplicate && villageId) {
+        const systemActivityMessageId = buildSystemActivityMessageId(
+          `action-${messageAction.kind}`,
+          messageId,
+          messageAction.targetMessageId || null,
+        );
+        const isProviderDuplicate = await checkDuplicateMessage(messageId);
+        const isSystemActivityDuplicate = await checkDuplicateMessage(systemActivityMessageId);
+
+        if (!isProviderDuplicate && !isSystemActivityDuplicate && villageId) {
           let attached = false;
           if (messageAction.kind === 'reaction' && messageAction.targetMessageId) {
             const metadata = messageAction.metadata as any;
@@ -733,13 +779,14 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
             await saveLivechatSystemActivity({
               villageId,
               channelIdentifier: waUserId,
-              messageId,
+              messageId: systemActivityMessageId,
               messageText: messageAction.text,
               timestamp,
               status: messageAction.status,
               providerEvent: payload.type,
               metadata: {
                 kind: messageAction.kind,
+                providerMessageId: messageId,
                 targetMessageId: messageAction.targetMessageId || null,
                 action: messageAction.metadata,
               },
@@ -756,7 +803,11 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
             message: messageAction.text,
             providerEvent: payload.type,
             providerMessageId: messageId,
-            metadata: { targetMessageId: messageAction.targetMessageId || null, action: messageAction.metadata },
+            metadata: {
+              systemActivityMessageId,
+              targetMessageId: messageAction.targetMessageId || null,
+              action: messageAction.metadata,
+            },
           });
         }
         res.json({ status: 'ok', message_id: messageId, mode: 'message_action' });
@@ -1152,21 +1203,40 @@ function parseGenfityPayload(payload: GenfityWebhookPayload): {
         }
         // Media-only messages
         else if (msgObj.imageMessage || msgObj.ImageMessage) {
-          messageText = '[Image]';
+          const imageMessage = msgObj.imageMessage || msgObj.ImageMessage;
+          messageText = formatMediaOnlyMessage({
+            type: 'image',
+            fileName: imageMessage.fileName || imageMessage.FileName || null,
+            mimeType: imageMessage.mimetype || imageMessage.Mimetype || null,
+          });
         }
         else if (msgObj.videoMessage || msgObj.VideoMessage) {
-          messageText = '[Video]';
+          const videoMessage = msgObj.videoMessage || msgObj.VideoMessage;
+          messageText = formatMediaOnlyMessage({
+            type: 'video',
+            fileName: videoMessage.fileName || videoMessage.FileName || null,
+            mimeType: videoMessage.mimetype || videoMessage.Mimetype || null,
+          });
         }
         else if (msgObj.audioMessage || msgObj.AudioMessage) {
-          messageText = '[Audio]';
+          const audioMessage = msgObj.audioMessage || msgObj.AudioMessage;
+          messageText = formatMediaOnlyMessage({
+            type: 'audio',
+            fileName: audioMessage.fileName || audioMessage.FileName || null,
+            mimeType: audioMessage.mimetype || audioMessage.Mimetype || null,
+            isVoiceNote: Boolean(audioMessage.PTT || audioMessage.ptt),
+          });
         }
         else if (msgObj.documentMessage || msgObj.DocumentMessage) {
           const documentMessage = msgObj.documentMessage || msgObj.DocumentMessage;
-          const fileName = documentMessage.fileName || documentMessage.FileName;
-          messageText = fileName ? `[Document] ${fileName}` : '[Document]';
+          messageText = formatMediaOnlyMessage({
+            type: 'document',
+            fileName: documentMessage.fileName || documentMessage.FileName || null,
+            mimeType: documentMessage.mimetype || documentMessage.Mimetype || null,
+          });
         }
         else if (msgObj.stickerMessage || msgObj.StickerMessage) {
-          messageText = '[Sticker]';
+          messageText = formatMediaOnlyMessage({ type: 'sticker' });
         }
         // Location
         else if (msgObj.locationMessage) {

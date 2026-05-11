@@ -50,6 +50,25 @@ export interface ContactLookupResult {
   role_hint: ContactRoleHint;
 }
 
+export function isConfidentContactLookupResult(lookup: {
+  matches: Array<{ score: number }>;
+}): boolean {
+  const topMatch = lookup.matches[0];
+  if (!topMatch) return false;
+
+  return topMatch.score >= 0.75
+    && (lookup.matches.length === 1 || topMatch.score - lookup.matches[1].score >= 0.15);
+}
+
+export function shouldAttachEmergencyLookupContacts(lookup: ContactLookupResult): boolean {
+  if (lookup.matches.length === 0) return false;
+  if (lookup.role_hint) return isConfidentContactLookupResult(lookup);
+
+  return lookup.matches.some((match) =>
+    match.matchedBy.some((signal) => signal !== 'alias_fallback' && signal !== 'category_fallback'),
+  );
+}
+
 export function normalizeImportantContactPhone(phone: string): string {
   const cleaned = (phone || '')
     .trim()

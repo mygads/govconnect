@@ -20,6 +20,8 @@ import {
   MessageCircle,
   Activity,
 } from "lucide-react"
+import { superadmin } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 
 type HealthStatus = "healthy" | "unhealthy" | "unknown"
 
@@ -65,16 +67,13 @@ export default function SystemHealthPage() {
   const [checking, setChecking] = useState(false)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const fetchHealth = useCallback(async () => {
     try {
       setChecking(true)
-      const res = await fetch("/api/superadmin/system-health", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (res.ok) setData(await res.json())
+      setData(await superadmin.getSystemHealth())
     } catch (e) {
       console.error("Failed to fetch health:", e)
     } finally {

@@ -152,6 +152,17 @@ export const complaintTypeCache = new LRUCache<string, { data: any[]; timestamp:
   maxSize: 100, ttlMs: 5 * 60 * 1000, name: 'complaintTypeCache',
 });
 
+export function clearComplaintTypeCache(villageId?: string): number {
+  if (!villageId) {
+    const cleared = complaintTypeCache.size;
+    complaintTypeCache.clear();
+    return cleared;
+  }
+
+  const cacheKey = `complaint-types:${villageId}`;
+  return complaintTypeCache.delete(cacheKey) ? 1 : 0;
+}
+
 /** Conversation history cache — avoids HTTP round-trip per message */
 export const conversationHistoryCache = new LRUCache<string, {
   history: Array<{ role: 'user' | 'assistant'; content: string }>;

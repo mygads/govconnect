@@ -20,13 +20,30 @@ import { publishLivechatEvent } from '../services/livechat-events.service';
 import logger from '../utils/logger';
 import { getQuery } from '../utils/http';
 
+function resolveVillageId(req: Request): string | undefined {
+  const bodyVillageId = typeof req.body?.village_id === 'string' ? req.body.village_id : undefined;
+  const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
+  const queryVillageId = getQuery(req, 'village_id');
+  return bodyVillageId || headerVillageId || queryVillageId || undefined;
+}
+
+function requireVillageId(req: Request, res: Response): string | null {
+  const villageId = resolveVillageId(req)?.trim();
+  if (!villageId) {
+    res.status(400).json({ error: 'village_id is required for multi-tenancy isolation' });
+    return null;
+  }
+  return villageId;
+}
+
 /**
  * Get message history
  * GET /internal/messages?wa_user_id=xxx&limit=30
  */
 export async function getMessages(req: Request, res: Response): Promise<void> {
   try {
-    const village_id = getQuery(req, 'village_id');
+    const village_id = requireVillageId(req, res);
+    if (!village_id) return;
     const wa_user_id = getQuery(req, 'wa_user_id');
     const channel_identifier = getQuery(req, 'channel_identifier');
     const channel = (getQuery(req, 'channel') || 'WHATSAPP').toUpperCase() as 'WHATSAPP' | 'WEBCHAT';
@@ -84,7 +101,9 @@ export async function getMessages(req: Request, res: Response): Promise<void> {
  */
 export async function sendMessage(req: Request, res: Response): Promise<void> {
   try {
-    const { village_id, wa_user_id, message, notification_type, reference_number, entity_status } = req.body;
+    const village_id = requireVillageId(req, res);
+    if (!village_id) return;
+    const { wa_user_id, message, notification_type, reference_number, entity_status } = req.body;
 
     const result = await sendTextMessage(wa_user_id, message, village_id);
     const messageId = result.message_id || `system-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -165,8 +184,9 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
  */
 export async function sendWebchatSystemNotification(req: Request, res: Response): Promise<void> {
   try {
+    const village_id = requireVillageId(req, res);
+    if (!village_id) return;
     const {
-      village_id,
       channel_identifier,
       message,
       notification_type,
@@ -242,8 +262,9 @@ export async function sendWebchatSystemNotification(req: Request, res: Response)
 
 export async function updateAIStatus(req: Request, res: Response): Promise<void> {
   try {
+    const village_id = requireVillageId(req, res);
+    if (!village_id) return;
     const {
-      village_id,
       channel,
       channel_identifier,
       wa_user_id,
@@ -305,10 +326,10 @@ export async function updateAIStatus(req: Request, res: Response): Promise<void>
  */
 export async function setTyping(req: Request, res: Response): Promise<void> {
   try {
-    const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
-    const { village_id: bodyVillageId, wa_user_id, state = 'composing' } = req.body;
-    const village_id = bodyVillageId || headerVillageId;
-    
+    const village_id = requireVillageId(req, res);
+    if (!village_id) return;
+    const { wa_user_id, state = 'composing' } = req.body;
+
     // Map 'stop' to 'paused' since WA API doesn't have 'stop'
     const waState = state === 'stop' ? 'paused' : state;
 
@@ -338,9 +359,9 @@ export async function setTyping(req: Request, res: Response): Promise<void> {
  */
 export async function storeMessage(req: Request, res: Response): Promise<void> {
   try {
-    const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
-    const { village_id: bodyVillageId, wa_user_id, channel_identifier, channel, message_id, message_text, direction, source, metadata } = req.body;
-    const village_id = bodyVillageId || headerVillageId;
+    const village_id = requireVillageId(req, res);
+    if (!village_id) return;
+    const { wa_user_id, channel_identifier, channel, message_id, message_text, direction, source, metadata } = req.body;
     const resolvedChannel = (channel || metadata?.channel || 'WHATSAPP') as 'WHATSAPP' | 'WEBCHAT';
     const resolvedIdentifier = channel_identifier || wa_user_id;
     
@@ -455,10 +476,10 @@ export async function storeMessage(req: Request, res: Response): Promise<void> {
  */
 export async function markMessagesRead(req: Request, res: Response): Promise<void> {
   try {
-    const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
-    const { village_id: bodyVillageId, wa_user_id, message_ids } = req.body;
-    const village_id = bodyVillageId || headerVillageId;
-    
+    const village_id = requireVillageId(req, res);
+    if (!village_id) return;
+    const { wa_user_id, message_ids } = req.body;
+
     if (!wa_user_id || !message_ids || !Array.isArray(message_ids)) {
       res.status(400).json({ 
         error: 'wa_user_id and message_ids array are required' 
@@ -494,17 +515,15 @@ export async function markMessagesRead(req: Request, res: Response): Promise<voi
  */
 export async function updateUserProfile(req: Request, res: Response): Promise<void> {
   try {
-    const headerVillageId = typeof req.headers['x-village-id'] === 'string' ? req.headers['x-village-id'] : undefined;
-    const { 
-      channel_identifier, 
-      channel = 'WHATSAPP', 
-      user_name, 
-      user_phone,
-      village_id: bodyVillageId 
+    const village_id = requireVillageId(req, res);
+    if (!village_id) return;
+    const {
+      channel_identifier,
+      channel = 'WHATSAPP',
+      user_name,
+      user_phone
     } = req.body;
-    
-    const village_id = bodyVillageId || headerVillageId;
-    
+
     if (!channel_identifier) {
       res.status(400).json({ error: 'channel_identifier is required' });
       return;

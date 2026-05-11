@@ -11,6 +11,14 @@ function slugify(input: string): string {
     .replace(/(^-|-$)/g, '');
 }
 
+function normalizeServiceCategoryName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ');
+}
+
+function buildServiceCategoryNameKey(name: string): string {
+  return normalizeServiceCategoryName(name).toLocaleLowerCase('id-ID');
+}
+
 async function main() {
   console.log('🌱 Seeding government services...\n');
 
@@ -19,12 +27,14 @@ async function main() {
     throw new Error('SEED_VILLAGE_ID environment variable is required for seeding. Example: SEED_VILLAGE_ID=cml65fa1m0000mj01ee31edeh npx prisma db seed');
   }
 
-  // Ensure categories exist (by village + name)
+  // Ensure categories exist (by village + normalized name key)
   const categoryIdByName = new Map<string, string>();
   const categories = Array.from(new Set(GOVERNMENT_SERVICES.map((s) => s.category)));
   for (const categoryName of categories) {
+    const normalizedCategoryName = normalizeServiceCategoryName(categoryName);
+    const nameKey = buildServiceCategoryNameKey(normalizedCategoryName);
     const existingCategory = await prisma.serviceCategory.findFirst({
-      where: { village_id: villageId, name: categoryName },
+      where: { village_id: villageId, name_key: nameKey },
     });
 
     const category =
@@ -32,8 +42,9 @@ async function main() {
       (await prisma.serviceCategory.create({
         data: {
           village_id: villageId,
-          name: categoryName,
-          description: `Kategori layanan: ${categoryName}`,
+          name: normalizedCategoryName,
+          name_key: nameKey,
+          description: `Kategori layanan: ${normalizedCategoryName}`,
           is_active: true,
         },
       }));

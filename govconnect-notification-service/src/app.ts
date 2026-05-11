@@ -150,6 +150,14 @@ app.post('/internal/delivery-status', internalAuthGuard, async (req: Request, re
   }
 });
 
+app.get('/internal/urgent-alert-config', internalAuthGuard, (_req: Request, res: Response) => {
+  const urgentWaAutoSendEnabled = process.env.ENABLE_URGENT_WA_ALERT === 'true';
+
+  return res.json(successResponse({
+    urgent_wa_auto_send_enabled: urgentWaAutoSendEnabled,
+  }));
+});
+
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     service: 'govconnect-notification-service',

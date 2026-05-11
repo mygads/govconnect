@@ -65,6 +65,16 @@ const SERVICE_DETAIL_GROUNDING_SOURCE_KINDS = new Set([
   'official_service_info',
 ]);
 
+const KNOWLEDGE_GROUNDING_TOOLS = new Set([
+  'search_knowledge',
+  'search_documents',
+]);
+
+const KNOWLEDGE_GROUNDING_SOURCE_KINDS = new Set([
+  'knowledge_retrieval',
+  'document_retrieval',
+]);
+
 const SERVICE_LISTING_QUERY_PATTERNS = [
   /^\s*(apa\s+(aja|saja)\s+(layanan|pelayanan|surat)(\s+desa)?|layanan\s+(desa|yang\s+ada)|pelayanan\s+desa\s+apa\s+(aja|saja)|list\s+layanan|daftar\s+layanan|bisa\s+(urus|ngurus|mengurus|diurus)\s+apa\s+(aja|saja)(\s+di\s+(sini|desa))?)\s*\??\s*$/i,
   /\b(layanan|pelayanan|surat(?:\s+menyurat)?)(?:\s+desa)?\s+(apa|apa\s+(aja|saja)|yang\s+(ada|tersedia)|tersedia|bisa\s+(diurus|dilayani))\b/i,
@@ -128,6 +138,12 @@ function mentionsVillageProfileFactClaim(text: string): boolean {
   return /\b\d{1,2}[:.]\d{2}\b/.test(text)
     || /\b(senin|selasa|rabu|kamis|jumat|sabtu|minggu|operasional|hari kerja)\b/i.test(text)
     || /\b(jl\.|jalan|rt\s*\d|rw\s*\d|berada di|terletak di|google maps|gmaps|telepon kantor|nomor kantor)\b/i.test(text);
+}
+
+function mentionsStructuredFactClaim(text: string): boolean {
+  return looksLikePhoneNumber(text)
+    || mentionsServiceFactClaim(text)
+    || mentionsVillageProfileFactClaim(text);
 }
 
 function classify(message: string, result: ProcessMessageResult): AnswerPolicyKind {
@@ -234,6 +250,26 @@ function buildVillageProfileFallback(traceId: string, startTime: number): Proces
         type: 'village_profile_ungrounded',
         action: 'rewritten',
         reason: 'no_village_profile_tool_used',
+      },
+    },
+  };
+}
+
+function buildKnowledgeFallback(traceId: string, startTime: number): ProcessMessageResult {
+  return {
+    success: true,
+    response: 'Maaf Pak/Bu, saya belum menemukan informasi yang cukup akurat dari data desa untuk menjawab itu. Bisa sebutkan detail yang ingin dicek, misalnya nama layanan, nomor laporan, atau topik dokumennya?',
+    intent: 'KNOWLEDGE_QUERY',
+    metadata: {
+      processingTimeMs: Date.now() - startTime,
+      hasKnowledge: false,
+      agentMode: 'answer_policy_verifier',
+      traceId,
+      guardrail: {
+        stage: 'answer_policy',
+        type: 'knowledge_ungrounded',
+        action: 'rewritten',
+        reason: 'knowledge_answer_without_retrieval_grounding',
       },
     },
   };
@@ -443,6 +479,30 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
         Date.now() - (result.metadata?.processingTimeMs || 0),
       ),
     };
+  }
+
+  if (kind === 'knowledge_answer') {
+    const usedKnowledgeTool = hasTrustedGrounding(result, toolsUsed, KNOWLEDGE_GROUNDING_TOOLS, KNOWLEDGE_GROUNDING_SOURCE_KINDS);
+    const usedStructuredTool = usedContactTool || usedServiceTool || usedProfileTool;
+
+    if (usedKnowledgeTool || usedStructuredTool || isExplicitUncertaintyReply(responseText)) {
+      return { kind, ok: true, rewritten: false, reason: 'knowledge_answer_grounded_or_uncertain' };
+    }
+
+    if (mentionsStructuredFactClaim(responseText)) {
+      logger.warn('answer-policy: rejecting ungrounded knowledge answer with structured fact claim', {
+        traceId: result.metadata?.traceId,
+        toolsUsed,
+        intent: result.intent,
+      });
+      return {
+        kind,
+        ok: false,
+        rewritten: true,
+        reason: 'knowledge_structured_fact_without_grounding',
+        replacement: buildKnowledgeFallback(traceId, startTime),
+      };
+    }
   }
 
   return { kind, ok: true, rewritten: false, reason: 'passthrough' };

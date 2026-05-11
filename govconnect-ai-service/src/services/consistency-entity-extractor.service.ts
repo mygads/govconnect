@@ -3,31 +3,32 @@
  *
  * Hybrid: regex-first, LLM fallback when regex returns ambiguous results.
  * Pulls structured facts (phone numbers, operating hours, addresses,
- * role holders, service requirements) out of a document chunk so the
- * doc-vs-db pipeline can cross-check them against DB ground truth.
- *
- * Regex is free and deterministic — it handles "kepala desa: Bapak Heru"
- * or "0271-123456" directly. LLM is only invoked when regex finds a
- * partial match that needs disambiguation (e.g., multi-role paragraphs
- * or implied entities).
+ * role holders, service facts, and service requirements) out of a document
+ * chunk so the doc-vs-db pipeline can cross-check them against DB ground truth.
  */
 
 import logger from '../utils/logger';
 import { buildPromptMessages, callAIGatewayPrompt, isAIGatewayEnabledAsync } from './ai-gateway.service';
+import {
+  REQUIREMENT_DOC_SIGNAL_REGEX,
+  SERVICE_ONLINE_NEGATIVE_REGEX,
+  SERVICE_ONLINE_POSITIVE_REGEX,
+} from './service-grounding.utils';
 
 export type ExtractedEntityKind =
   | 'phone_number'
   | 'operating_hours'
   | 'address'
   | 'office_role_holder'
+  | 'service_cost'
+  | 'service_duration'
+  | 'service_mode'
   | 'service_requirement_item';
 
 export interface ExtractedEntity {
   kind: ExtractedEntityKind;
   value: string;
-  /** For role holders: the role (e.g., "kepala desa"). For phones: the entity the number belongs to. */
   subject?: string;
-  /** 0..1 how confident we are in this extraction. */
   confidence: number;
   source: 'regex' | 'llm';
 }
@@ -35,11 +36,102 @@ export interface ExtractedEntity {
 const PHONE_REGEX = /\b(?:\+?62|0)\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/g;
 const TIME_REGEX = /\b\d{1,2}[:.]\d{2}(?:\s*(?:s[.]?d[.]?|sampai|sd|-|–)\s*\d{1,2}[:.]\d{2})?\b/gi;
 const ADDRESS_REGEX = /\b(?:jl|jalan)\.?\s+[A-Za-z0-9.\-\s]{3,}(?:no\.?\s*\d+)?(?:\s*,\s*rt\s*\d+(?:\/\d+)?)?\b/gi;
-
 const ROLE_REGEX = /\b(kepala\s+desa|kades|lurah|sekretaris\s+desa|sekdes|ketua\s+rt(?:\s*\d+)?|ketua\s+rw(?:\s*\d+)?|camat)\b[^.\n]*?[:\-]\s*([A-Z][a-zA-Z\s.]{3,50})/gi;
+const COST_VALUE_REGEX = /\b(?:gratis|tanpa biaya|(?:rp\.?|rupiah)\s*[\d.]+)\b/gi;
+const DURATION_VALUE_REGEX = /\b\d+(?:\s*-\s*\d+)?\s*(?:hari|minggu|bulan|jam)(?:\s+kerja)?\b/gi;
+const REQUIREMENT_SECTION_REGEX = /\b(syarat|persyaratan|berkas|dokumen(?:\s+yang\s+diperlukan)?)\b/i;
+const REQUIREMENT_SPLIT_REGEX = /\s*(?:,|;|\/|\bdan\b)\s*/i;
+const BULLET_PREFIX_REGEX = /^(?:[-*•]|\d+[.)])\s*(.+)$/;
+const REQUIREMENT_GENERIC_SIGNAL_REGEX = /\b(surat|fotokopi|formulir|berkas|dokumen)\b/i;
+const BOTH_MODE_REGEX = /\b(?:online\s+dan\s+offline|offline\s+dan\s+online|baik\s+online\s+maupun\s+offline|secara\s+online\s+maupun\s+offline)\b/i;
 
 function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
+}
+
+function pushEntity(out: ExtractedEntity[], seen: Set<string>, entity: ExtractedEntity) {
+  const key = `${entity.kind}:${entity.value.toLowerCase()}:${(entity.subject || '').toLowerCase()}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  out.push(entity);
+}
+
+function normalizeRequirementValue(value: string): string {
+  return normalizeWhitespace(value)
+    .replace(/^[\-–—:•\d.)\s]+/, '')
+    .replace(/[.]+$/, '')
+    .trim();
+}
+
+function shouldKeepRequirementCandidate(value: string): boolean {
+  if (!value) return false;
+  if (value.length < 3 || value.length > 120) return false;
+  return REQUIREMENT_DOC_SIGNAL_REGEX.test(value) || REQUIREMENT_GENERIC_SIGNAL_REGEX.test(value);
+}
+
+function splitRequirementInlineList(value: string): string[] {
+  return value
+    .split(REQUIREMENT_SPLIT_REGEX)
+    .map((item) => normalizeRequirementValue(item))
+    .filter(shouldKeepRequirementCandidate);
+}
+
+function extractRequirementItems(content: string): string[] {
+  const items: string[] = [];
+  let inRequirementSection = false;
+  let sectionLines = 0;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = normalizeWhitespace(rawLine);
+    if (!line) {
+      inRequirementSection = false;
+      sectionLines = 0;
+      continue;
+    }
+
+    const sectionMatch = line.match(REQUIREMENT_SECTION_REGEX);
+    if (sectionMatch) {
+      inRequirementSection = true;
+      sectionLines = 0;
+      const afterHeading = normalizeRequirementValue(
+        line.slice((sectionMatch.index ?? 0) + sectionMatch[0].length).replace(/^[\s:.-]+/, ''),
+      );
+      for (const item of splitRequirementInlineList(afterHeading)) {
+        items.push(item);
+      }
+      continue;
+    }
+
+    if (!inRequirementSection) continue;
+
+    const bulletMatch = line.match(BULLET_PREFIX_REGEX);
+    if (bulletMatch) {
+      const item = normalizeRequirementValue(bulletMatch[1]);
+      if (shouldKeepRequirementCandidate(item)) {
+        items.push(item);
+      }
+      sectionLines++;
+      continue;
+    }
+
+    if (sectionLines === 0) {
+      for (const item of splitRequirementInlineList(line)) {
+        items.push(item);
+      }
+      continue;
+    }
+
+    if (shouldKeepRequirementCandidate(line) && sectionLines < 6) {
+      items.push(line);
+      sectionLines++;
+      continue;
+    }
+
+    inRequirementSection = false;
+    sectionLines = 0;
+  }
+
+  return items;
 }
 
 function extractRegex(content: string): ExtractedEntity[] {
@@ -48,12 +140,9 @@ function extractRegex(content: string): ExtractedEntity[] {
 
   for (const match of content.matchAll(PHONE_REGEX)) {
     const value = match[0];
-    const key = `phone_number:${value}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
     const subjectWindow = content.substring(Math.max(0, match.index! - 60), match.index!).trim();
     const subjectMatch = subjectWindow.match(/([A-Z][a-zA-Z\s]{2,40})\s*[:\-]?\s*$/);
-    out.push({
+    pushEntity(out, seen, {
       kind: 'phone_number',
       value,
       subject: subjectMatch ? normalizeWhitespace(subjectMatch[1]) : undefined,
@@ -64,10 +153,7 @@ function extractRegex(content: string): ExtractedEntity[] {
 
   for (const match of content.matchAll(TIME_REGEX)) {
     const value = normalizeWhitespace(match[0]);
-    const key = `operating_hours:${value}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
+    pushEntity(out, seen, {
       kind: 'operating_hours',
       value,
       confidence: value.includes('-') || /s[.]?d[.]?/i.test(value) ? 0.85 : 0.6,
@@ -77,10 +163,7 @@ function extractRegex(content: string): ExtractedEntity[] {
 
   for (const match of content.matchAll(ADDRESS_REGEX)) {
     const value = normalizeWhitespace(match[0]);
-    const key = `address:${value.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
+    pushEntity(out, seen, {
       kind: 'address',
       value,
       confidence: 0.7,
@@ -91,14 +174,74 @@ function extractRegex(content: string): ExtractedEntity[] {
   for (const match of content.matchAll(ROLE_REGEX)) {
     const role = normalizeWhitespace(match[1]);
     const holder = normalizeWhitespace(match[2]);
-    const key = `role:${role.toLowerCase()}:${holder.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
+    pushEntity(out, seen, {
       kind: 'office_role_holder',
       value: holder,
       subject: role,
       confidence: 0.75,
+      source: 'regex',
+    });
+  }
+
+  for (const match of content.matchAll(COST_VALUE_REGEX)) {
+    const value = normalizeWhitespace(match[0]);
+    pushEntity(out, seen, {
+      kind: 'service_cost',
+      value,
+      confidence: /gratis|tanpa biaya/i.test(value) ? 0.9 : 0.85,
+      source: 'regex',
+    });
+  }
+
+  for (const match of content.matchAll(DURATION_VALUE_REGEX)) {
+    const value = normalizeWhitespace(match[0]);
+    pushEntity(out, seen, {
+      kind: 'service_duration',
+      value,
+      confidence: 0.85,
+      source: 'regex',
+    });
+  }
+
+  for (const sentence of content.split(/[.\n]+/)) {
+    const value = normalizeWhitespace(sentence);
+    if (!value) continue;
+
+    if (BOTH_MODE_REGEX.test(value)) {
+      pushEntity(out, seen, {
+        kind: 'service_mode',
+        value: 'both',
+        confidence: 0.9,
+        source: 'regex',
+      });
+      continue;
+    }
+
+    if (SERVICE_ONLINE_NEGATIVE_REGEX.test(value)) {
+      pushEntity(out, seen, {
+        kind: 'service_mode',
+        value: 'offline',
+        confidence: 0.85,
+        source: 'regex',
+      });
+      continue;
+    }
+
+    if (SERVICE_ONLINE_POSITIVE_REGEX.test(value)) {
+      pushEntity(out, seen, {
+        kind: 'service_mode',
+        value: 'online',
+        confidence: 0.8,
+        source: 'regex',
+      });
+    }
+  }
+
+  for (const requirement of extractRequirementItems(content)) {
+    pushEntity(out, seen, {
+      kind: 'service_requirement_item',
+      value: requirement,
+      confidence: 0.8,
       source: 'regex',
     });
   }
@@ -110,14 +253,17 @@ const LLM_EXTRACT_PROMPT = `Kamu adalah entity extractor untuk dokumen layanan d
 Ekstrak fakta terstruktur berikut dari TEKS di bawah. Hanya ekstrak yang JELAS tertulis. JANGAN tebak.
 
 Kembalikan JSON array dengan item berbentuk:
-{"kind": "<phone_number|operating_hours|address|office_role_holder|service_requirement_item>", "value": "<nilai>", "subject": "<opsional, mis. nama peran atau entitas pemilik>", "confidence": <0..1>}
+{"kind": "<phone_number|operating_hours|address|office_role_holder|service_cost|service_duration|service_mode|service_requirement_item>", "value": "<nilai>", "subject": "<opsional, mis. nama layanan atau nama peran>", "confidence": <0..1>}
 
 Aturan:
 - phone_number: nomor telepon dengan entitas pemiliknya di subject jika jelas.
 - operating_hours: jam operasional (mis. "08:00-15:00" atau "Senin-Jumat 08:00-15:00").
 - address: alamat kantor atau fasilitas.
 - office_role_holder: subject = peran (kepala desa, ketua RT, dll), value = nama orangnya.
-- service_requirement_item: satu item syarat layanan (mis. "fotokopi KK").
+- service_cost: biaya layanan yang tertulis (mis. "Gratis" atau "Rp 10.000"). subject = nama layanan jika jelas.
+- service_duration: estimasi waktu proses layanan (mis. "2 hari kerja"). subject = nama layanan jika jelas.
+- service_mode: value harus salah satu dari "online", "offline", atau "both". subject = nama layanan jika jelas.
+- service_requirement_item: satu item syarat layanan (mis. "fotokopi KK"). subject = nama layanan jika jelas.
 - Kembalikan [] jika tidak ada fakta yang jelas.
 
 TEKS:
@@ -151,7 +297,6 @@ export async function extractEntitiesLLM(
     const text = result?.text?.trim();
     if (!text) return [];
 
-    // The gateway returns JSON with either a raw array or an object wrapping one.
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
@@ -171,6 +316,9 @@ export async function extractEntitiesLLM(
       'operating_hours',
       'address',
       'office_role_holder',
+      'service_cost',
+      'service_duration',
+      'service_mode',
       'service_requirement_item',
     ]);
 
@@ -199,11 +347,6 @@ export async function extractEntitiesLLM(
   }
 }
 
-/**
- * Main entry. Runs regex first, then escalates to LLM when the content
- * clearly contains structured facts but regex didn't catch them (or when
- * regex-only would miss the subject).
- */
 export async function extractEntities(
   content: string,
   opts: { allowLlm?: boolean; villageId?: string } = {},
@@ -212,25 +355,21 @@ export async function extractEntities(
 
   const regexEntities = extractRegex(content);
 
-  // Heuristics: when to call the LLM.
-  // - Content contains a phone but regex didn't attach a subject.
-  // - Content mentions role keywords but no role holder was extracted.
-  // - Regex found nothing but content looks non-trivial (>200 chars + has
-  //   a number or "jalan"/"kepala" signal).
   const needsLlm = (() => {
     if (opts.allowLlm === false) return false;
     const phonesWithoutSubject = regexEntities.filter(
-      (e) => e.kind === 'phone_number' && !e.subject,
+      (entity) => entity.kind === 'phone_number' && !entity.subject,
     );
     if (phonesWithoutSubject.length > 0) return true;
 
     const mentionsRole = /\b(kepala\s+desa|kades|lurah|sekdes|sekretaris\s+desa|rt|rw|camat)\b/i.test(content);
-    const hasRoleHolder = regexEntities.some((e) => e.kind === 'office_role_holder');
+    const hasRoleHolder = regexEntities.some((entity) => entity.kind === 'office_role_holder');
     if (mentionsRole && !hasRoleHolder) return true;
 
     if (regexEntities.length === 0 && content.length > 200) {
-      return /\b(jalan|jl\.|kepala|jam|buka|telepon|telp|kontak|syarat|biaya)\b/i.test(content);
+      return /\b(jalan|jl\.|kepala|jam|buka|telepon|telp|kontak|syarat|biaya|estimasi|online|offline|layanan)\b/i.test(content);
     }
+
     return false;
   })();
 
@@ -242,19 +381,18 @@ export async function extractEntities(
 
 function mergeEntities(regex: ExtractedEntity[], llm: ExtractedEntity[]): ExtractedEntity[] {
   const byKey = new Map<string, ExtractedEntity>();
-  const keyOf = (e: ExtractedEntity) =>
-    `${e.kind}::${e.value.toLowerCase()}::${(e.subject || '').toLowerCase()}`;
+  const keyOf = (entity: ExtractedEntity) =>
+    `${entity.kind}::${entity.value.toLowerCase()}::${(entity.subject || '').toLowerCase()}`;
 
-  for (const e of regex) byKey.set(keyOf(e), e);
-  for (const e of llm) {
-    const key = keyOf(e);
+  for (const entity of regex) byKey.set(keyOf(entity), entity);
+  for (const entity of llm) {
+    const key = keyOf(entity);
     const existing = byKey.get(key);
-    // Prefer regex when it exists; but if regex lacks a subject and LLM has one, enrich.
     if (existing) {
-      if (!existing.subject && e.subject) existing.subject = e.subject;
-      existing.confidence = Math.max(existing.confidence, e.confidence);
+      if (!existing.subject && entity.subject) existing.subject = entity.subject;
+      existing.confidence = Math.max(existing.confidence, entity.confidence);
     } else {
-      byKey.set(key, e);
+      byKey.set(key, entity);
     }
   }
   return Array.from(byKey.values());

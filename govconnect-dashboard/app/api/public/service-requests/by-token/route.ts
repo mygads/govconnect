@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 
     const url = new URL(`${CASE_SERVICE_URL}/service-requests/by-token`);
     url.searchParams.set("token", token);
-    if (wa) url.searchParams.set("wa", wa);
+    if (wa) url.searchParams.set("wa_user_id", wa);
     if (sessionId) url.searchParams.set("session_id", sessionId);
 
     const response = await fetch(url.toString(), {

@@ -29,7 +29,7 @@ async function getCsrfHeaders(method?: string): Promise<Record<string, string>> 
 }
 
 // Fetch wrapper with error handling
-async function fetchApi<T>(url: string, options: RequestInit = {}): Promise<T> {
+export async function fetchApi<T>(url: string, options: RequestInit = {}): Promise<T> {
   const csrfHeaders = await getCsrfHeaders(options.method);
   const response = await fetch(url, {
     ...options,
@@ -496,8 +496,70 @@ export const superadmin = {
     return fetchApi<any>('/api/superadmin/villages');
   },
 
+  async getVillageDetail(id: string) {
+    return fetchApi<any>(`/api/superadmin/villages/${encodeURIComponent(id)}/detail`);
+  },
+
+  async updateVillage(id: string, data: { is_active?: boolean; timezone?: string }) {
+    return fetchApi<any>(`/api/superadmin/villages/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
   async getAdmins() {
     return fetchApi<any>('/api/superadmin/admins');
+  },
+
+  async updateAdmin(id: string, data: { is_active?: boolean }) {
+    return fetchApi<any>(`/api/superadmin/admins/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async getVillageAdmins(villageId?: string) {
+    const query = villageId ? `?village_id=${encodeURIComponent(villageId)}` : '';
+    return fetchApi<any>(`/api/superadmin/village-admins${query}`);
+  },
+
+  async createVillageAdmin(data: { village_id: string; name: string; username: string; password: string; role: string }) {
+    return fetchApi<any>('/api/superadmin/village-admins', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateVillageAdmin(id: string, data: { name?: string; username?: string; role?: string; is_active?: boolean }) {
+    return fetchApi<any>(`/api/superadmin/village-admins/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteVillageAdmin(id: string) {
+    return fetchApi<any>(`/api/superadmin/village-admins/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async resetVillageAdminPassword(id: string, newPassword: string) {
+    return fetchApi<any>(`/api/superadmin/village-admins/${encodeURIComponent(id)}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ new_password: newPassword }),
+    });
+  },
+
+  async getSystemHealth() {
+    return fetchApi<any>('/api/superadmin/system-health');
+  },
+
+  async getWhatsappSummary() {
+    return fetchApi<any>('/api/superadmin/whatsapp/summary');
+  },
+
+  async getWhatsappHealth() {
+    return fetchApi<any>('/api/superadmin/whatsapp/health');
   },
 };
 
@@ -802,33 +864,3 @@ export const uploads = {
   },
 };
 
-// ==================== BACKWARD COMPATIBLE EXPORTS ====================
-// Untuk kompatibilitas dengan kode yang sudah ada
-export const apiClient = {
-  ...auth,
-  getComplaints: laporan.getAll,
-  getComplaintById: laporan.getById,
-  updateComplaintStatus: laporan.updateStatus,
-  getStatistics: statistics.getOverview,
-  getTrends: statistics.getTrends,
-  livechat,
-  knowledge,
-  documents,
-  rateLimit,
-  settings,
-  superadmin,
-  importantContacts,
-  whatsapp,
-  channelSettings,
-  complaints,
-  villageProfile,
-  villages,
-  serviceRequests,
-  knowledgeAnalytics,
-  cache,
-  spamGuard,
-  uploads,
-  getServices: layanan.getAll,
-};
-
-export default apiClient;

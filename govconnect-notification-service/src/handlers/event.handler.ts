@@ -2,13 +2,11 @@ import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import logger from '../utils/logger';
 import { sendNotification, sendAdminUrgentAlert, sendComplaintImportantContactsNotification } from '../services/notification.service';
 import {
-  buildComplaintCreatedMessage,
   buildServiceRequestedMessage,
   buildStatusUpdatedMessage,
   buildUrgentAlertMessage
 } from '../services/template.service';
 import {
-  ComplaintCreatedEvent,
   ComplaintImportantContactsEvent,
   ServiceRequestedEvent,
   StatusUpdatedEvent,
@@ -46,13 +44,6 @@ export async function handleEvent(routingKey: string, data: any): Promise<void> 
   switch (routingKey) {
     // NOTE: aiReply is handled by Channel Service directly, not here
     // This prevents double response to user
-
-    case RABBITMQ_CONFIG.routingKeys.complaintCreated:
-      // NOTE: This event is intentionally NOT published by case-service anymore.
-      // AI Service sends the response directly via publishAIReply.
-      // Keeping this handler for backward compatibility if event is ever re-enabled.
-      await handleComplaintCreated(data as ComplaintCreatedEvent);
-      break;
 
     case RABBITMQ_CONFIG.routingKeys.complaintImportantContacts:
       await handleComplaintImportantContacts(data as ComplaintImportantContactsEvent);
@@ -92,31 +83,6 @@ async function handleDirectNotification(event: any): Promise<void> {
     channel_identifier: String(target),
     message: String(event.message),
     notificationType: String(event.type || 'direct'),
-  });
-}
-
-async function handleComplaintCreated(event: ComplaintCreatedEvent): Promise<void> {
-  const { village_id, channel, channel_identifier } = resolveChannel(event);
-  
-  logger.info('Handling complaint created event', {
-    village_id,
-    channel,
-    channel_identifier,
-    complaint_id: event.complaint_id
-  });
-
-  const message = buildComplaintCreatedMessage({
-    complaint_id: event.complaint_id,
-    kategori: event.kategori
-  });
-
-  await sendNotification({
-    village_id,
-    channel,
-    channel_identifier,
-    message,
-    notificationType: 'complaint_created',
-    reference_number: event.complaint_id ?? null,
   });
 }
 

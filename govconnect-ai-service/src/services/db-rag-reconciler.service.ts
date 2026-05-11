@@ -16,6 +16,30 @@ import logger from '../utils/logger';
 import { getServiceCatalog, type ServiceCatalogItem } from './case-client.service';
 import { getImportantContacts } from './important-contacts.service';
 import { getVillageProfileSummary } from './knowledge.service';
+import { recordRuntimeGroundingMismatches } from './runtime-grounding-mismatch.service';
+import {
+  COST_SIGNAL_REGEX,
+  DURATION_SIGNAL_REGEX,
+  NO_REQUIREMENT_REGEX,
+  REQUIREMENT_DOC_SIGNAL_REGEX,
+  REQUIREMENT_SIGNAL_REGEX,
+  SERVICE_AVAILABLE_NEGATIVE_REGEX,
+  SERVICE_AVAILABLE_POSITIVE_REGEX,
+  SERVICE_ONLINE_NEGATIVE_REGEX,
+  SERVICE_ONLINE_POSITIVE_REGEX,
+  findUniqueServiceMention,
+  normalizeLooseText,
+  responseClaimsOfflineOnly,
+  responseClaimsOnlineAvailability,
+  responseClaimsServiceAvailable,
+  responseClaimsServiceUnavailable,
+  responseMatchesDbValue,
+  responseMentionsRequirementDocs,
+  responseMatchesServiceCost,
+  responseMatchesServiceDuration,
+  responseMatchesServiceRequirements,
+  significantTokens,
+} from './service-grounding.utils';
 import type { ProcessMessageResult } from './ump-types';
 
 export interface ReconcileInput {
@@ -44,6 +68,8 @@ export interface Mismatch {
     | 'service_requirement_mismatch';
   offending: string;
   dbValue?: string;
+  entityType?: 'important_contact' | 'village_profile' | 'service';
+  entityId?: string;
 }
 
 const PHONE_REGEX = /\b(?:\+?62|0)\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/g;
@@ -51,15 +77,6 @@ const SHORT_PHONE_REGEX = /\b\d{3,4}\b/g;
 const SHORT_PHONE_CONTEXT_REGEX = /\b(hubungi|telepon|telpon|telp|hotline|call center|kontak|darurat|polisi|ambulans|ambulan|damkar|pemadam)\b/i;
 const OFFICE_CONTACT_CONTEXT_REGEX = /\b(nomor kantor|telepon kantor|kontak kantor|kantor desa|kantor kelurahan|balai desa|sekretariat desa|jam buka kantor|alamat kantor)\b/i;
 const ADDRESS_SIGNAL_REGEX = /\b(alamat|lokasi|berada di|terletak di|jl\.?|jalan|rt\s*\d|rw\s*\d|dusun|kecamatan|kabupaten)\b/i;
-const COST_SIGNAL_REGEX = /\b(gratis|tanpa biaya|rp\.?\s*\d|rupiah|biaya(?:nya)?|tarif(?:nya)?|harga(?:nya)?)\b/i;
-const DURATION_SIGNAL_REGEX = /\b(estimasi|proses(?:nya)?|hari kerja|\d+\s*(hari|minggu|bulan|jam))\b/i;
-const REQUIREMENT_SIGNAL_REGEX = /\b(syarat|persyaratan|berkas|dokumen)\b/i;
-const NO_REQUIREMENT_REGEX = /\b(tidak ada|tanpa)\s+(syarat|persyaratan|berkas|dokumen)\b|\bcukup datang saja\b/i;
-const REQUIREMENT_DOC_SIGNAL_REGEX = /\b(ktp|kk|akta|akte|pas foto|foto|surat pengantar|formulir|npwp|bpjs|sertifikat|rekening|buku nikah)\b/i;
-const SERVICE_ONLINE_POSITIVE_REGEX = /\b(bisa online|diajukan online|diproses online|via online|lewat formulir|link formulir|isi formulir|ajukan lewat form|via form)\b/i;
-const SERVICE_ONLINE_NEGATIVE_REGEX = /\b(tidak bisa online|belum bisa online|hanya offline|offline saja|harus ke kantor|harus datang ke kantor|diproses langsung di kantor|tidak ada link formulir)\b/i;
-const SERVICE_AVAILABLE_POSITIVE_REGEX = /\b(tersedia|masih tersedia|aktif|bisa diajukan|bisa diurus|bisa diproses|bisa dilayani)\b/i;
-const SERVICE_AVAILABLE_NEGATIVE_REGEX = /\b(belum tersedia|tidak tersedia|sedang tidak tersedia|nonaktif|tidak aktif|belum bisa diajukan|tidak bisa diajukan|tidak bisa diproses)\b/i;
 const ADDRESS_STOPWORDS = new Set(['alamat', 'lokasi', 'berada', 'terletak', 'di', 'desa', 'kantor']);
 
 function normalizePhone(raw: string): string {
@@ -68,21 +85,8 @@ function normalizePhone(raw: string): string {
   return digits;
 }
 
-function normalizeLooseText(raw: string): string {
-  return (raw || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\b(tanpa biaya)\b/g, 'gratis')
-    .replace(/\bsekitar\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function significantTokens(raw: string, stopwords: Set<string> = ADDRESS_STOPWORDS): string[] {
-  return normalizeLooseText(raw)
-    .split(' ')
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 3 && !stopwords.has(token));
+function addressTokens(raw: string): string[] {
+  return significantTokens(raw, ADDRESS_STOPWORDS);
 }
 
 function extractPhones(text: string, options?: { allowShortCodes?: boolean }): string[] {
@@ -130,10 +134,10 @@ async function collectKnownVillagePhones(villageId: string, options?: { officeOn
 }
 
 function responseMatchesAddress(responseText: string, dbAddress: string): boolean {
-  const dbTokens = significantTokens(dbAddress);
+  const dbTokens = addressTokens(dbAddress);
   if (dbTokens.length === 0) return true;
 
-  const responseTokenSet = new Set(significantTokens(responseText));
+  const responseTokenSet = new Set(addressTokens(responseText));
   const overlap = dbTokens.filter((token) => responseTokenSet.has(token)).length;
 
   if (dbTokens.length <= 2) {
@@ -143,111 +147,31 @@ function responseMatchesAddress(responseText: string, dbAddress: string): boolea
   return overlap >= Math.min(2, dbTokens.length);
 }
 
-function findUniqueServiceMention(
-  services: ServiceCatalogItem[],
-  texts: string[],
-): ServiceCatalogItem | null {
-  if (services.length === 1) {
-    return services[0];
-  }
+async function persistRuntimeMismatchRecords(params: {
+  villageId: string;
+  traceId?: string;
+  userMessage?: string;
+  responseText: string;
+  toolsUsed: string[];
+  mismatches: Mismatch[];
+}) {
+  const { villageId, traceId, userMessage, responseText, toolsUsed, mismatches } = params;
+  if (mismatches.length === 0) return;
 
-  const haystack = normalizeLooseText(texts.filter(Boolean).join(' '));
-  if (!haystack) return null;
-
-  const matches = services.filter((service) => {
-    const normalizedName = normalizeLooseText(service.name || '');
-    if (!normalizedName || normalizedName.length < 4) return false;
-    if (haystack.includes(normalizedName)) return true;
-
-    const nameTokens = significantTokens(service.name || '', new Set());
-    const matchedTokens = nameTokens.filter((token) => haystack.includes(token));
-    return matchedTokens.length >= Math.min(2, nameTokens.length);
-  });
-
-  return matches.length === 1 ? matches[0] : null;
-}
-
-function responseMatchesDbValue(responseText: string, dbValue: string): boolean {
-  const normalizedResponse = normalizeLooseText(responseText);
-  const normalizedDbValue = normalizeLooseText(dbValue);
-  if (!normalizedDbValue) return true;
-  return normalizedResponse.includes(normalizedDbValue);
-}
-
-function normalizeDigits(raw: string): string {
-  return (raw || '').replace(/[^\d]/g, '');
-}
-
-function responseMatchesServiceCost(responseText: string, dbValue: string): boolean {
-  const normalizedDbValue = normalizeLooseText(dbValue);
-  if (!normalizedDbValue) return true;
-
-  const mentionsGratis = /\b(gratis|tanpa biaya)\b/i.test(responseText);
-  const mentionedAmounts = Array.from(responseText.matchAll(/\b(?:rp\.?|rupiah)\s*([\d.]+)/gi))
-    .map((match) => normalizeDigits(match[1] || ''))
-    .filter(Boolean);
-
-  if (normalizedDbValue.includes('gratis')) {
-    return mentionsGratis && mentionedAmounts.length === 0;
-  }
-
-  const dbDigits = normalizeDigits(dbValue);
-  if (dbDigits) {
-    return mentionedAmounts.includes(dbDigits);
-  }
-
-  return responseMatchesDbValue(responseText, dbValue);
-}
-
-function responseMatchesServiceDuration(responseText: string, dbValue: string): boolean {
-  const normalizedDbValue = normalizeLooseText(dbValue);
-  if (!normalizedDbValue) return true;
-
-  const normalizedResponse = normalizeLooseText(responseText);
-  if (normalizedResponse.includes(normalizedDbValue)) return true;
-
-  const dbDurationTokens = dbValue.match(/\d+\s*(?:hari|minggu|bulan|jam)(?:\s+kerja)?/gi) || [];
-  if (dbDurationTokens.length === 0) return false;
-
-  const responseDurationTokens = responseText.match(/\d+\s*(?:hari|minggu|bulan|jam)(?:\s+kerja)?/gi) || [];
-  const normalizedResponseDurations = new Set(responseDurationTokens.map((item) => normalizeLooseText(item)));
-
-  return dbDurationTokens
-    .map((item) => normalizeLooseText(item))
-    .some((item) => normalizedResponseDurations.has(item));
-}
-
-function responseClaimsOnlineAvailability(responseText: string): boolean {
-  return SERVICE_ONLINE_POSITIVE_REGEX.test(responseText);
-}
-
-function responseClaimsOfflineOnly(responseText: string): boolean {
-  return SERVICE_ONLINE_NEGATIVE_REGEX.test(responseText);
-}
-
-function responseClaimsServiceAvailable(responseText: string): boolean {
-  return SERVICE_AVAILABLE_POSITIVE_REGEX.test(responseText);
-}
-
-function responseClaimsServiceUnavailable(responseText: string): boolean {
-  return SERVICE_AVAILABLE_NEGATIVE_REGEX.test(responseText);
-}
-
-function responseMentionsRequirementDocs(responseText: string): boolean {
-  return REQUIREMENT_DOC_SIGNAL_REGEX.test(responseText);
-}
-
-function responseMatchesServiceRequirements(
-  responseText: string,
-  requirements: Array<{ label?: string | null }>,
-): boolean {
-  const normalizedResponse = normalizeLooseText(responseText);
-  if (!normalizedResponse) return false;
-
-  return requirements.some((requirement) => {
-    const normalizedLabel = normalizeLooseText(requirement.label || '');
-    return normalizedLabel.length >= 3 && normalizedResponse.includes(normalizedLabel);
-  });
+  await recordRuntimeGroundingMismatches(
+    mismatches.map((mismatch) => ({
+      villageId,
+      traceId,
+      userQuery: userMessage || null,
+      responseExcerpt: responseText,
+      toolsUsed,
+      mismatchKind: mismatch.kind,
+      offendingValue: mismatch.offending,
+      authoritativeValue: mismatch.dbValue ?? null,
+      entityType: mismatch.entityType ?? null,
+      entityId: mismatch.entityId ?? null,
+    })),
+  );
 }
 
 export async function reconcile(input: ReconcileInput): Promise<ReconcileDecision> {
@@ -277,15 +201,18 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
     const usedContactTool = usedDirectoryContactTool || usedVillageProfileTool;
 
     if (usedContactTool) {
-      const known = await collectKnownVillagePhones(villageId, {
-        officeOnly: usedVillageProfileTool && officeContactContext && !usedDirectoryContactTool,
-      });
+      const officeOnly = usedVillageProfileTool && officeContactContext && !usedDirectoryContactTool;
+      const known = await collectKnownVillagePhones(villageId, { officeOnly });
+      const authoritativePhones = Array.from(known).slice(0, 5).join(', ') || undefined;
       for (const raw of phonesInText) {
         const normalized = normalizePhone(raw);
         if (!known.has(normalized)) {
           mismatches.push({
             kind: 'phone_not_in_db',
             offending: raw,
+            dbValue: authoritativePhones,
+            entityType: officeOnly ? 'village_profile' : 'important_contact',
+            entityId: officeOnly ? villageId : undefined,
           });
         }
       }
@@ -315,6 +242,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
             kind: 'operating_hour_mismatch',
             offending: t,
             dbValue: dbHoursText,
+            entityType: 'village_profile',
+            entityId: villageId,
           });
         }
       }
@@ -325,6 +254,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
         kind: 'office_address_mismatch',
         offending: responseText,
         dbValue: profile.address,
+        entityType: 'village_profile',
+        entityId: villageId,
       });
     }
   }
@@ -343,6 +274,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
         kind: 'service_cost_mismatch',
         offending: responseText,
         dbValue: matchedService.estimated_cost,
+        entityType: 'service',
+        entityId: matchedService.id,
       });
     }
 
@@ -355,6 +288,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
         kind: 'service_duration_mismatch',
         offending: responseText,
         dbValue: matchedService.estimated_processing_time,
+        entityType: 'service',
+        entityId: matchedService.id,
       });
     }
 
@@ -368,6 +303,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
           kind: 'service_mode_mismatch',
           offending: responseText,
           dbValue: matchedService.mode,
+          entityType: 'service',
+          entityId: matchedService.id,
         });
       }
 
@@ -376,6 +313,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
           kind: 'service_mode_mismatch',
           offending: responseText,
           dbValue: matchedService.mode,
+          entityType: 'service',
+          entityId: matchedService.id,
         });
       }
     }
@@ -389,6 +328,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
           kind: 'service_availability_mismatch',
           offending: responseText,
           dbValue: 'inactive',
+          entityType: 'service',
+          entityId: matchedService.id,
         });
       }
 
@@ -397,6 +338,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
           kind: 'service_availability_mismatch',
           offending: responseText,
           dbValue: 'active',
+          entityType: 'service',
+          entityId: matchedService.id,
         });
       }
 
@@ -410,6 +353,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
               kind: 'service_requirement_mismatch',
               offending: responseText,
               dbValue: 'no documented requirements',
+              entityType: 'service',
+              entityId: matchedService.id,
             });
           }
         } else if (NO_REQUIREMENT_REGEX.test(responseText)) {
@@ -417,12 +362,16 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
             kind: 'service_requirement_mismatch',
             offending: responseText,
             dbValue: requirements.map((requirement) => requirement.label).filter(Boolean).join(', '),
+            entityType: 'service',
+            entityId: matchedService.id,
           });
         } else if (mentionsDocs && !responseMatchesServiceRequirements(responseText, requirements)) {
           mismatches.push({
             kind: 'service_requirement_mismatch',
             offending: responseText,
             dbValue: requirements.map((requirement) => requirement.label).filter(Boolean).join(', '),
+            entityType: 'service',
+            entityId: matchedService.id,
           });
         }
       }
@@ -435,6 +384,15 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileDecisio
 
   logger.warn('db-rag-reconciler: mismatch detected — rewriting response', {
     traceId: result.metadata?.traceId,
+    mismatches,
+  });
+
+  await persistRuntimeMismatchRecords({
+    villageId,
+    traceId: result.metadata?.traceId,
+    userMessage,
+    responseText,
+    toolsUsed,
     mismatches,
   });
 

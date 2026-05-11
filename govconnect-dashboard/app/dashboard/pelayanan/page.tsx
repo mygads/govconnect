@@ -121,11 +121,7 @@ export default function ServiceRequestsPage() {
   const handleSoftDelete = async (id: string) => {
     try {
       setDeletingId(id)
-      const res = await fetch(`/api/service-requests/${id}/soft-delete`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!res.ok) throw new Error("Gagal menghapus")
+      await serviceRequests.softDelete(id)
       toast({ title: "Berhasil", description: "Permohonan dipindahkan ke sampah" })
       fetchRequests()
     } catch (err: any) {
@@ -138,11 +134,7 @@ export default function ServiceRequestsPage() {
   const fetchDeletedItems = async () => {
     try {
       setLoadingDeleted(true)
-      const res = await fetch('/api/service-requests/deleted', {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!res.ok) throw new Error("Gagal memuat data")
-      const data = await res.json()
+      const data = await serviceRequests.getDeleted()
       setDeletedItems(data.data || [])
     } catch (err: any) {
       toast({ title: "Gagal", description: err.message, variant: "destructive" })
@@ -154,11 +146,7 @@ export default function ServiceRequestsPage() {
   const handleRestore = async (id: string) => {
     try {
       setRestoringId(id)
-      const res = await fetch(`/api/service-requests/${id}/restore`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      if (!res.ok) throw new Error("Gagal memulihkan")
+      await serviceRequests.restore(id)
       toast({ title: "Berhasil", description: "Permohonan berhasil dipulihkan" })
       setDeletedItems(prev => prev.filter(item => item.id !== id))
       if (selectedDeletedItem?.id === id) setSelectedDeletedItem(null)

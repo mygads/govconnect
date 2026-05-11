@@ -17,7 +17,7 @@ router.get('/overview', internalAuth, async (req: Request, res: Response) => {
   try {
     const village_id = getQuery(req, 'village_id') || undefined;
     const complaintWhere: any = village_id ? { village_id, deleted_at: null } : { deleted_at: null };
-    const serviceWhere: any = village_id ? { service: { village_id }, deleted_at: null } : { deleted_at: null };
+    const serviceWhere: any = village_id ? { village_id, deleted_at: null } : { deleted_at: null };
 
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -132,7 +132,7 @@ router.get('/by-status', internalAuth, async (req: Request, res: Response) => {
   try {
     const village_id = getQuery(req, 'village_id') || undefined;
     const complaintWhere = village_id ? { village_id, deleted_at: null } : { deleted_at: null };
-    const serviceWhere = village_id ? { service: { village_id }, deleted_at: null } : { deleted_at: null };
+    const serviceWhere = village_id ? { village_id, deleted_at: null } : { deleted_at: null };
 
     const [complaintsByStatus, servicesByStatus] = await Promise.all([
       prisma.complaint.groupBy({
@@ -188,8 +188,7 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
     // Using raw SQL for optimized aggregation with parameterized queries
     const truncType = period === 'monthly' ? 'month' : 'week';
     const villageFilter = village_id ? Prisma.sql`AND village_id = ${village_id}` : Prisma.empty;
-    const serviceVillageJoin = village_id ? Prisma.sql`JOIN cases.services_dynamic s ON sr.service_id = s.id` : Prisma.empty;
-    const serviceVillageFilter = village_id ? Prisma.sql`AND s.village_id = ${village_id}` : Prisma.empty;
+    const serviceVillageFilter = village_id ? Prisma.sql`AND sr.village_id = ${village_id}` : Prisma.empty;
 
     // 1. Complaint Trends (parameterized to prevent SQL injection)
     const complaintTrendRaw = await prisma.$queryRaw<any[]>`
@@ -204,7 +203,6 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
     const serviceTrendRaw = await prisma.$queryRaw<any[]>`
       SELECT DATE_TRUNC(${truncType}, sr.created_at) as date, COUNT(*)::int as count
       FROM cases.service_requests sr
-      ${serviceVillageJoin}
       WHERE sr.created_at >= ${startDate} ${serviceVillageFilter} AND sr.deleted_at IS NULL
       GROUP BY 1 ORDER BY 1
     `;
@@ -228,7 +226,6 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
     const hourlyService = await prisma.$queryRaw<any[]>`
       SELECT EXTRACT(HOUR FROM sr.created_at) as hour, COUNT(*)::int as count
       FROM cases.service_requests sr
-      ${serviceVillageJoin}
       WHERE sr.created_at >= ${startDate} ${serviceVillageFilter} AND sr.deleted_at IS NULL
       GROUP BY 1
     `;
@@ -244,7 +241,6 @@ router.get('/trends', internalAuth, async (req: Request, res: Response) => {
     const dailyService = await prisma.$queryRaw<any[]>`
       SELECT EXTRACT(DOW FROM sr.created_at) as day, COUNT(*)::int as count
       FROM cases.service_requests sr
-      ${serviceVillageJoin}
       WHERE sr.created_at >= ${startDate} ${serviceVillageFilter} AND sr.deleted_at IS NULL
       GROUP BY 1
     `;

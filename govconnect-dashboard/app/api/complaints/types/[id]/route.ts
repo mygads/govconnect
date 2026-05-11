@@ -3,7 +3,10 @@ import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
 import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
-import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
+import {
+  findVillageImportantContactCategoryById,
+  findVillageImportantContactCategoryByName,
+} from '@/lib/important-contact-categories'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -21,23 +24,13 @@ async function getSession(request: NextRequest) {
 
 async function resolveImportantContactCategory(villageId: string, categoryId?: string | null, categoryName?: string | null) {
   if (categoryId) {
-    const category = await prisma.important_contact_categories.findFirst({
-      where: { id: categoryId, village_id: villageId },
-      select: { id: true, name: true },
-    })
-    if (category) return category
+    const category = await findVillageImportantContactCategoryById(villageId, categoryId)
+    if (category) return { id: category.id, name: category.name }
   }
 
-  const normalizedCategoryName = normalizeScopedName(categoryName)
-  if (normalizedCategoryName) {
-    const category = await prisma.important_contact_categories.findFirst({
-      where: {
-        village_id: villageId,
-        name_key: buildScopedNameKey(normalizedCategoryName),
-      },
-      select: { id: true, name: true },
-    })
-    if (category) return category
+  if (categoryName) {
+    const category = await findVillageImportantContactCategoryByName(villageId, categoryName)
+    if (category) return { id: category.id, name: category.name }
   }
 
   return null
@@ -77,7 +70,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${id}`), {
       method: 'PATCH',
-      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
+      headers: getHeaders({
+        'x-admin-role': session.admin.role,
+        ...(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : {}),
+      }),
       body: JSON.stringify({
         name,
         description: description || null,
@@ -113,7 +109,10 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, `/complaints/types/${id}`), {
       method: 'DELETE',
-      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
+      headers: getHeaders({
+        'x-admin-role': session.admin.role,
+        ...(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : {}),
+      }),
     })
 
     const data = await response.json().catch(() => ({}))

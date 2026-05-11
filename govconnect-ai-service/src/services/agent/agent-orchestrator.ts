@@ -112,6 +112,19 @@ interface PreferredToolReplyCandidate {
   index: number;
 }
 
+const READ_ONLY_TOOLS = new Set<AgentToolName>([
+  'get_village_profile',
+  'get_service_info',
+  'get_complaint_categories',
+  'get_emergency_contacts',
+  'get_important_contact',
+  'search_knowledge',
+  'search_documents',
+  'search_user_memory',
+  'get_my_history',
+  'check_status',
+]);
+
 const ACTION_PRIORITY_TOOLS = new Set<AgentToolName>([
   'create_complaint',
   'create_service_request',
@@ -119,6 +132,10 @@ const ACTION_PRIORITY_TOOLS = new Set<AgentToolName>([
   'get_service_request_edit_link',
   'cancel_request',
 ]);
+
+function isMutationTool(toolName: AgentToolName): boolean {
+  return !READ_ONLY_TOOLS.has(toolName);
+}
 
 const TOOL_REPLY_BASE_PRIORITY: Partial<Record<AgentToolName, number>> = {
   create_service_request: 5000,
@@ -526,6 +543,7 @@ function parseTextToolCall(text: string, allowedToolNames: AgentToolName[]): { t
 
   const toolName = functionMatch[1] as AgentToolName;
   if (!allowedToolNames.includes(toolName)) return null;
+  if (isMutationTool(toolName)) return null;
 
   const args: Record<string, unknown> = {};
   const parameterPattern = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/gi;
@@ -889,19 +907,6 @@ export async function runAgent(
       // - Mutation tools (create/update/cancel, service form link) run
       //   sequentially in the order the model emitted them so ordering
       //   semantics stay intact.
-      const READ_ONLY_TOOLS = new Set<AgentToolName>([
-        'get_village_profile',
-        'get_service_info',
-        'get_complaint_categories',
-        'get_emergency_contacts',
-        'get_important_contact',
-        'search_knowledge',
-        'search_documents',
-        'search_user_memory',
-        'get_my_history',
-        'check_status',
-      ]);
-
       type ExecutableTask = {
         tc: ToolCall;
         toolName: AgentToolName;
@@ -1101,8 +1106,23 @@ export async function runAgent(
     const finalText = extractText(assistantMsg?.content);
     const textToolCall = finalText ? parseTextToolCall(finalText, allowedToolNames) : null;
     if (textToolCall) {
+      logger.warn('Executing text-tool fallback', {
+        toolName: textToolCall.toolName,
+        iteration: i + 1,
+        userId: toolCtx.userId,
+        villageId: toolCtx.villageId,
+        matchedPolicyKey,
+        matchedPolicySource,
+      });
+
       toolsUsed.push(textToolCall.toolName);
       const result = await executeToolCall(textToolCall.toolName, textToolCall.args, { ...toolCtx, userMessage });
+      result.trace = {
+        ...result.trace,
+        sourceKind: result.trace.sourceKind
+          ? `${result.trace.sourceKind}|text_tool_fallback`
+          : 'text_tool_fallback',
+      };
       toolTrace.push(result.trace);
 
       preferredToolResults.push({ toolName: textToolCall.toolName, result: result.result });
@@ -1961,7 +1981,7 @@ async function selectAllowedTools(
   const learnedTools = (isContactDirectoryLookupIntent
     ? (learnedPolicy.tools || []).filter((tool) => tool === 'get_important_contact')
     : learnedPolicy.tools || []
-  ).filter((tool) => !hardDeniedSet.has(tool));
+  ).filter((tool) => !hardDeniedSet.has(tool) && (!isMutationTool(tool) || heuristicSet.has(tool)));
   const allowedToolNames = Array.from(new Set<AgentToolName>([
     ...heuristicTools,
     ...learnedTools,

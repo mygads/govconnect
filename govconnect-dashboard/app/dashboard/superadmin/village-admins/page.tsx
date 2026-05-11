@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation"
 import { Edit2, KeyRound, Loader2, Plus, Trash2 } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
+import { superadmin } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -76,17 +78,13 @@ export default function SuperadminVillageAdminsPage() {
   const [newPassword, setNewPassword] = useState("")
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") router.replace("/dashboard")
+    if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
 
   const loadVillages = async () => {
     try {
       setLoadingVillages(true)
-      const response = await fetch("/api/superadmin/villages", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal memuat desa")
+      const payload = await superadmin.getVillages()
       const rows = Array.isArray(payload?.data) ? payload.data : []
       setVillages(rows)
     } catch (error: any) {
@@ -99,12 +97,7 @@ export default function SuperadminVillageAdminsPage() {
   const loadAdmins = async (villageId?: string) => {
     try {
       setLoadingAdmins(true)
-      const params = villageId ? `?village_id=${encodeURIComponent(villageId)}` : ""
-      const response = await fetch(`/api/superadmin/village-admins${params}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal memuat admin desa")
+      const payload = await superadmin.getVillageAdmins(villageId)
       setAdmins(Array.isArray(payload?.data) ? payload.data : [])
     } catch (error: any) {
       toast({ title: "Gagal", description: error?.message || "Gagal memuat admin desa", variant: "destructive" })
@@ -114,7 +107,7 @@ export default function SuperadminVillageAdminsPage() {
   }
 
   useEffect(() => {
-    if (user?.role === "superadmin") void loadVillages()
+    if (isSuperadmin(user?.role)) void loadVillages()
   }, [user, router])
 
   useEffect(() => {
@@ -152,26 +145,21 @@ export default function SuperadminVillageAdminsPage() {
 
     try {
       setSubmitting(true)
-      const response = await fetch(editingAdmin ? `/api/superadmin/village-admins/${encodeURIComponent(editingAdmin.id)}` : "/api/superadmin/village-admins", {
-        method: editingAdmin ? "PUT" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify(editingAdmin ? {
+      if (editingAdmin) {
+        await superadmin.updateVillageAdmin(editingAdmin.id, {
           name: form.name.trim(),
           username: form.username.trim(),
           role: form.role,
-        } : {
+        })
+      } else {
+        await superadmin.createVillageAdmin({
           village_id: selectedVillageId,
           name: form.name.trim(),
           username: form.username.trim(),
           password: form.password,
           role: form.role,
-        }),
-      })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal menyimpan admin")
+        })
+      }
 
       toast({ title: "Berhasil", description: editingAdmin ? "Admin berhasil diubah." : "Admin berhasil ditambahkan." })
       setFormOpen(false)
@@ -189,16 +177,7 @@ export default function SuperadminVillageAdminsPage() {
     if (!pendingToggle) return
     try {
       setProcessingId(pendingToggle.admin.id)
-      const response = await fetch(`/api/superadmin/village-admins/${encodeURIComponent(pendingToggle.admin.id)}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({ is_active: pendingToggle.nextValue }),
-      })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal memperbarui status admin")
+      await superadmin.updateVillageAdmin(pendingToggle.admin.id, { is_active: pendingToggle.nextValue })
       toast({ title: "Berhasil", description: pendingToggle.nextValue ? "Admin diaktifkan." : "Admin dinonaktifkan." })
       await loadAdmins(selectedVillageId || undefined)
     } catch (error: any) {
@@ -213,12 +192,7 @@ export default function SuperadminVillageAdminsPage() {
     if (!pendingDelete) return
     try {
       setProcessingId(pendingDelete.id)
-      const response = await fetch(`/api/superadmin/village-admins/${encodeURIComponent(pendingDelete.id)}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal menghapus admin")
+      await superadmin.deleteVillageAdmin(pendingDelete.id)
       toast({ title: "Berhasil", description: "Admin berhasil dihapus." })
       await loadAdmins(selectedVillageId || undefined)
     } catch (error: any) {
@@ -238,16 +212,7 @@ export default function SuperadminVillageAdminsPage() {
 
     try {
       setProcessingId(resetTarget.id)
-      const response = await fetch(`/api/superadmin/village-admins/${encodeURIComponent(resetTarget.id)}/reset-password`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({ new_password: newPassword }),
-      })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload?.error || "Gagal reset password")
+      await superadmin.resetVillageAdminPassword(resetTarget.id, newPassword)
       toast({ title: "Berhasil", description: "Password admin berhasil direset." })
       setResetTarget(null)
       setNewPassword("")
@@ -258,7 +223,7 @@ export default function SuperadminVillageAdminsPage() {
     }
   }
 
-  if (user?.role !== "superadmin") return null
+  if (!isSuperadmin(user?.role)) return null
 
   return (
     <div className="space-y-6">

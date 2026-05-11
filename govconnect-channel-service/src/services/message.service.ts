@@ -79,8 +79,12 @@ function richFields(data: MessageRichFields & Pick<MessageData, 'media_type'>) {
 const fifoCounter = new Map<string, number>();
 const FIFO_CHECK_INTERVAL = 5; // Only run FIFO every 5th message per conversation
 
-function resolveVillageId(villageId?: string): string {
-  return villageId || 'unknown';
+function requireVillageId(villageId?: string): string {
+  const normalizedVillageId = typeof villageId === 'string' ? villageId.trim() : '';
+  if (!normalizedVillageId) {
+    throw new Error('village_id is required for multi-tenancy isolation');
+  }
+  return normalizedVillageId;
 }
 
 function statusTimestampFields(status: MessageDeliveryStatus, at: Date = new Date()) {
@@ -127,7 +131,7 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
     message_id: data.message_id,
   });
 
-  const villageId = resolveVillageId(data.village_id);
+  const villageId = requireVillageId(data.village_id);
   const channel = data.channel || 'WHATSAPP';
 
   // Check duplicate
@@ -178,7 +182,7 @@ export async function saveIncomingMessage(data: MessageData): Promise<any> {
 export async function saveOutgoingMessage(
   data: MessageData & { source: 'AI' | 'SYSTEM' | 'ADMIN' }
 ): Promise<any> {
-  const villageId = resolveVillageId(data.village_id);
+  const villageId = requireVillageId(data.village_id);
   const channel = data.channel || 'WHATSAPP';
   const deliveryStatus = resolveOutgoingStatus(channel, data.delivery_status);
   const message = await prisma.message.create({
@@ -220,7 +224,7 @@ export async function replaceFailedOutgoingMessage(
   id: string,
   data: MessageData & { source: 'AI' | 'SYSTEM' | 'ADMIN' }
 ): Promise<any> {
-  const villageId = resolveVillageId(data.village_id);
+  const villageId = requireVillageId(data.village_id);
   const channel = data.channel || 'WHATSAPP';
   const deliveryStatus = resolveOutgoingStatus(channel, data.delivery_status);
   const message = await prisma.message.update({
@@ -320,13 +324,9 @@ export async function getMessageHistory(
   village_id?: string,
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<any[]> {
-  const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
-  const where: any = { channel, channel_identifier };
-  if (resolvedVillageId) {
-    where.village_id = resolvedVillageId;
-  }
+  const resolvedVillageId = requireVillageId(village_id);
   const messages = await prisma.message.findMany({
-    where,
+    where: { channel, channel_identifier, village_id: resolvedVillageId },
     orderBy: [
       { createdAt: 'desc' },
       { timestamp: 'desc' },
@@ -422,7 +422,7 @@ export async function applyMessageReaction(params: {
   from?: string | null;
   timestamp?: Date;
 }): Promise<boolean> {
-  const villageId = resolveVillageId(params.village_id);
+  const villageId = requireVillageId(params.village_id);
   const channel = params.channel || 'WHATSAPP';
   const existing = await prisma.message.findFirst({
     where: {
@@ -520,17 +520,16 @@ export async function markConversationMessagesAdminRead(
   village_id?: string,
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<string[]> {
-  const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
-  const where: any = {
-    channel,
-    channel_identifier,
-    direction: 'IN',
-    admin_read_at: null,
-  };
-  if (resolvedVillageId) where.village_id = resolvedVillageId;
+  const resolvedVillageId = requireVillageId(village_id);
 
   const unreadMessages = await prisma.message.findMany({
-    where,
+    where: {
+      channel,
+      channel_identifier,
+      village_id: resolvedVillageId,
+      direction: 'IN',
+      admin_read_at: null,
+    },
     select: { message_id: true, village_id: true },
     orderBy: [{ createdAt: 'asc' }, { timestamp: 'asc' }],
     take: 100,
@@ -546,7 +545,7 @@ export async function markConversationMessagesAdminRead(
   for (const message of unreadMessages) {
     publishLivechatEvent({
       type: 'message_status',
-      village_id: resolvedVillageId || message.village_id,
+      village_id: resolvedVillageId,
       channel,
       channel_identifier,
       message_id: message.message_id,
@@ -589,7 +588,7 @@ export async function logSentMessage(data: {
   status: 'sent' | 'failed';
   error_msg?: string;
 }): Promise<any> {
-  const villageId = resolveVillageId(data.village_id);
+  const villageId = requireVillageId(data.village_id);
   return prisma.sendLog.create({
     data: {
       village_id: villageId,

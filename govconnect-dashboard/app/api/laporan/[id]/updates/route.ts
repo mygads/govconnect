@@ -1,21 +1,33 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/auth"
+import prisma from "@/lib/prisma"
 import { apiFetch, buildUrl, getHeaders, ServicePath } from "@/lib/api-client"
+
+async function getSession(request: NextRequest) {
+  const token = request.cookies.get("token")?.value ||
+    request.headers.get("authorization")?.replace("Bearer ", "")
+  if (!token) return null
+
+  const payload = await verifyToken(token)
+  if (!payload) return null
+
+  const session = await prisma.admin_sessions.findUnique({
+    where: { token },
+    include: { admin: true },
+  })
+  if (!session || session.expires_at < new Date()) return null
+
+  return session
+}
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const authHeader = request.headers.get("authorization")
-    if (!authHeader) {
+    const session = await getSession(request)
+    if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
-    const token = authHeader.replace("Bearer ", "")
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json({ error: "Invalid token" }, { status: 401 })
     }
 
     const { id } = await params
@@ -26,17 +38,22 @@ export async function POST(
       return NextResponse.json({ error: "note_text wajib diisi" }, { status: 400 })
     }
 
-    const response = await apiFetch(
-      buildUrl(ServicePath.CASE, `/complaints/${id}/updates`),
-      {
-        method: "POST",
-        headers: getHeaders(),
-        body: JSON.stringify({
-          note_text,
-          image_url: image_url || null,
-        }),
-      }
-    )
+    const url = new URL(buildUrl(ServicePath.CASE, `/complaints/${id}/updates`))
+    if (session.admin.village_id) {
+      url.searchParams.set("village_id", session.admin.village_id)
+    }
+
+    const response = await apiFetch(url.toString(), {
+      method: "POST",
+      headers: getHeaders({
+        ...(session.admin.village_id ? { "x-village-id": session.admin.village_id } : {}),
+        "x-admin-role": session.admin.role,
+      }),
+      body: JSON.stringify({
+        note_text,
+        image_url: image_url || null,
+      }),
+    })
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: "Gagal menyimpan update" }))

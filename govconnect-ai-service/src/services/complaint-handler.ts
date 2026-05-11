@@ -312,7 +312,7 @@ export async function handleComplaintCreation(
 
     if (
       complaintTypeConfig?.send_important_contacts
-      && (complaintTypeConfig.important_contact_category_id || complaintTypeConfig.important_contact_category)
+      && complaintTypeConfig.important_contact_category_id
     ) {
       importantContactsMessage = '\n\n📞 Kontak penting terkait akan saya kirim terpisah setelah laporan dibuat.';
     } else if (complaintTypeConfig?.send_important_contacts) {

@@ -3,7 +3,10 @@ import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { buildUrl, ServicePath, getHeaders, apiFetch } from '@/lib/api-client'
 import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
-import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
+import {
+  findVillageImportantContactCategoryById,
+  findVillageImportantContactCategoryByName,
+} from '@/lib/important-contact-categories'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -21,23 +24,13 @@ async function getSession(request: NextRequest) {
 
 async function resolveImportantContactCategory(villageId: string, categoryId?: string | null, categoryName?: string | null) {
   if (categoryId) {
-    const category = await prisma.important_contact_categories.findFirst({
-      where: { id: categoryId, village_id: villageId },
-      select: { id: true, name: true },
-    })
-    if (category) return category
+    const category = await findVillageImportantContactCategoryById(villageId, categoryId)
+    if (category) return { id: category.id, name: category.name }
   }
 
-  const normalizedCategoryName = normalizeScopedName(categoryName)
-  if (normalizedCategoryName) {
-    const category = await prisma.important_contact_categories.findFirst({
-      where: {
-        village_id: villageId,
-        name_key: buildScopedNameKey(normalizedCategoryName),
-      },
-      select: { id: true, name: true },
-    })
-    if (category) return category
+  if (categoryName) {
+    const category = await findVillageImportantContactCategoryByName(villageId, categoryName)
+    if (category) return { id: category.id, name: category.name }
   }
 
   return null
@@ -86,10 +79,14 @@ export async function GET(request: NextRequest) {
     if (categoryId) url.searchParams.set('category_id', categoryId)
     if (isUrgent) url.searchParams.set('is_urgent', isUrgent)
     if (villageId) url.searchParams.set('village_id', villageId)
+    else if (session.admin.role === 'superadmin') url.searchParams.set('scope', 'all')
 
     try {
       const response = await apiFetch(url.toString(), {
-        headers: getHeaders(),
+        headers: getHeaders({
+          'x-admin-role': session.admin.role,
+          ...(villageId ? { 'x-village-id': villageId } : {}),
+        }),
       })
 
       if (response.ok) {
@@ -128,7 +125,7 @@ export async function GET(request: NextRequest) {
             t.require_address,
             t.send_important_contacts,
             t.important_contact_category,
-            t.important_contact_category_id,
+            NULL::text AS important_contact_category_id,
             t.created_at,
             t.updated_at,
             json_build_object(
@@ -196,7 +193,10 @@ export async function POST(request: NextRequest) {
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, '/complaints/types'), {
       method: 'POST',
-      headers: getHeaders(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : undefined),
+      headers: getHeaders({
+        'x-admin-role': session.admin.role,
+        ...(session.admin.village_id ? { 'x-village-id': session.admin.village_id } : {}),
+      }),
       body: JSON.stringify({
         category_id,
         name,

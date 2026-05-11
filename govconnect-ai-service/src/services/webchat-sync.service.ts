@@ -68,26 +68,6 @@ export async function saveWebchatMessage(data: {
   }
 }
 
-/**
- * Update webchat conversation in Channel Service
- * Note: This is now handled automatically by storeMessage in internal.controller.ts
- * This function is kept for explicit conversation updates if needed
- */
-export async function updateWebchatConversation(data: {
-  session_id: string;
-  last_message?: string;
-  unread_count?: number;
-  resetUnread?: boolean;
-}): Promise<boolean> {
-  // Conversation is automatically updated when messages are stored via /internal/messages
-  // This function is now a no-op but kept for API compatibility
-  logger.debug('Webchat conversation update (handled by message storage)', {
-    session_id: data.session_id,
-    resetUnread: data.resetUnread,
-  });
-  return true;
-}
-
 export async function updateWebchatAIStatus(data: {
   session_id: string;
   village_id?: string;
@@ -258,7 +238,6 @@ export async function getAdminMessages(
 
 export default {
   saveWebchatMessage,
-  updateWebchatConversation,
   updateWebchatAIStatus,
   checkWebchatTakeover,
   getAdminMessages,

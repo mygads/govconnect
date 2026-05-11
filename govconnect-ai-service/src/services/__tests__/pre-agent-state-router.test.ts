@@ -25,7 +25,9 @@ vi.mock('../case-client.service', () => ({
 }));
 
 import {
+  isConfidentContactLookupResult,
   isServiceListingQuery,
+  shouldAttachEmergencyShortcutContacts,
   tryHandleServiceListingShortcut,
 } from '../pre-agent-state-router.service';
 import { getServiceCatalog } from '../case-client.service';
@@ -61,6 +63,52 @@ describe('isServiceListingQuery', () => {
 
   it('does NOT match a complaint', () => {
     expect(isServiceListingQuery('lapor jalan rusak')).toBe(false);
+  });
+});
+
+describe('isConfidentContactLookupResult', () => {
+  it('accepts a single high-score match', () => {
+    expect(isConfidentContactLookupResult({
+      matches: [{ score: 0.82 }],
+    })).toBe(true);
+  });
+
+  it('rejects close multi-match results so they can be clarified by the agent', () => {
+    expect(isConfidentContactLookupResult({
+      matches: [{ score: 0.83 }, { score: 0.75 }],
+    })).toBe(false);
+  });
+});
+
+describe('shouldAttachEmergencyShortcutContacts', () => {
+  it('rejects category-only fallback matches for generic emergency messages', () => {
+    expect(shouldAttachEmergencyShortcutContacts({
+      matches: [{ score: 0.3, matchedBy: ['category_fallback'] } as any],
+      total_candidates: 3,
+      category_hint: 'emergency',
+      role_hint: null,
+    })).toBe(false);
+  });
+
+  it('accepts grounded emergency matches without a role hint', () => {
+    expect(shouldAttachEmergencyShortcutContacts({
+      matches: [{ score: 0.7, matchedBy: ['alias_description', 'token_overlap'] } as any],
+      total_candidates: 3,
+      category_hint: 'emergency',
+      role_hint: null,
+    })).toBe(true);
+  });
+
+  it('requires confidence when a specific emergency role was inferred', () => {
+    expect(shouldAttachEmergencyShortcutContacts({
+      matches: [
+        { score: 0.81, matchedBy: ['role_match'] } as any,
+        { score: 0.73, matchedBy: ['role_match'] } as any,
+      ],
+      total_candidates: 3,
+      category_hint: 'emergency',
+      role_hint: 'damkar',
+    })).toBe(false);
   });
 });
 

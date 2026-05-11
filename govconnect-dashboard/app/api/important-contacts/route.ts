@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
 import { invalidateVillageAiCacheSafely } from '@/lib/ai-cache-invalidation'
+import { findVillageImportantContactCategoryById } from '@/lib/important-contact-categories'
 
 async function getSession(request: NextRequest) {
   const token = request.cookies.get('token')?.value ||
@@ -17,6 +18,25 @@ async function getSession(request: NextRequest) {
   return session
 }
 
+const contactSelect = {
+  id: true,
+  category_id: true,
+  name: true,
+  phone: true,
+  description: true,
+  created_at: true,
+  updated_at: true,
+  category: {
+    select: {
+      id: true,
+      village_id: true,
+      name: true,
+      created_at: true,
+      updated_at: true,
+    },
+  },
+} as const
+
 export async function GET(request: NextRequest) {
   const session = await getSession(request)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -26,7 +46,7 @@ export async function GET(request: NextRequest) {
     where: {
       category: { village_id: session.admin.village_id }
     },
-    include: { category: true },
+    select: contactSelect,
     orderBy: { created_at: 'asc' }
   })
 
@@ -44,11 +64,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'category_id, name, phone are required' }, { status: 400 })
   }
 
-  // Validate category belongs to admin's village (multi-tenancy security)
-  const category = await prisma.important_contact_categories.findUnique({
-    where: { id: category_id },
-  })
-  if (!category || category.village_id !== session.admin.village_id) {
+  const category = await findVillageImportantContactCategoryById(session.admin.village_id, category_id)
+  if (!category) {
     return NextResponse.json({ error: 'Kategori tidak ditemukan atau bukan milik desa Anda' }, { status: 403 })
   }
 

@@ -29,11 +29,16 @@ export async function GET(request: NextRequest) {
     const url = new URL(buildUrl(ServicePath.CASE, '/complaints/categories'))
     if (villageId) {
       url.searchParams.set('village_id', villageId)
+    } else if (session.admin.role === 'superadmin') {
+      url.searchParams.set('scope', 'all')
     }
 
     try {
       const response = await apiFetch(url.toString(), {
-        headers: getHeaders(),
+        headers: getHeaders({
+          'x-admin-role': session.admin.role,
+          ...(villageId ? { 'x-village-id': villageId } : {}),
+        }),
       })
 
       if (response.ok) {
@@ -82,7 +87,7 @@ export async function POST(request: NextRequest) {
 
     const response = await apiFetch(buildUrl(ServicePath.CASE, '/complaints/categories'), {
       method: 'POST',
-      headers: getHeaders({ 'x-village-id': session.admin.village_id }),
+      headers: getHeaders({ 'x-admin-role': session.admin.role, 'x-village-id': session.admin.village_id }),
       body: JSON.stringify({
         village_id: session.admin.village_id,
         name,

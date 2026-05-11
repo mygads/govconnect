@@ -94,7 +94,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
     const resolvedTitle = title ?? existing.title
     const resolvedContent = content ?? existing.content
-    const resolvedCategory = resolvedCategoryName ?? existing.category
+    const resolvedCategoryLabel = resolvedCategoryName ?? existing.category
     const resolvedCategoryIdFinal = resolvedCategoryId ?? existing.category_id ?? undefined
     const resolvedKeywords = processedKeywords ?? existing.keywords
     const resolvedScope = session.admin.role === 'superadmin' && body.scope === 'global' ? 'global' : existing.scope || 'village'
@@ -106,7 +106,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const hasEmbeddingChanges =
       resolvedTitle !== existing.title ||
       resolvedContent !== existing.content ||
-      resolvedCategory !== existing.category ||
+      resolvedCategoryLabel !== existing.category ||
       resolvedCategoryIdFinal !== existing.category_id ||
       JSON.stringify(resolvedKeywords ?? []) !== JSON.stringify(existing.keywords ?? [])
 
@@ -115,7 +115,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       data: {
         title: resolvedTitle,
         content: resolvedContent,
-        category: resolvedCategory,
+        category: resolvedCategoryLabel,
         category_id: resolvedCategoryIdFinal,
         village_id: resolvedIsGlobal ? null : existing.village_id || session.admin.village_id,
         scope: resolvedScope,

@@ -12,10 +12,15 @@ vi.mock('../case-client.service', () => ({
   getServiceCatalog: vi.fn(async () => []),
 }));
 
+vi.mock('../runtime-grounding-mismatch.service', () => ({
+  recordRuntimeGroundingMismatches: vi.fn(async () => 0),
+}));
+
 import { reconcile } from '../db-rag-reconciler.service';
 import { getImportantContacts } from '../important-contacts.service';
 import { getVillageProfileSummary } from '../knowledge.service';
 import { getServiceCatalog } from '../case-client.service';
+import { recordRuntimeGroundingMismatches } from '../runtime-grounding-mismatch.service';
 
 function baseResult(overrides: any = {}) {
   return {
@@ -38,9 +43,11 @@ describe('db-rag reconciler', () => {
     vi.mocked(getImportantContacts).mockReset();
     vi.mocked(getVillageProfileSummary).mockReset();
     vi.mocked(getServiceCatalog).mockReset();
+    vi.mocked(recordRuntimeGroundingMismatches).mockReset();
     vi.mocked(getImportantContacts).mockResolvedValue([] as any);
     vi.mocked(getVillageProfileSummary).mockResolvedValue(null as any);
     vi.mocked(getServiceCatalog).mockResolvedValue([] as any);
+    vi.mocked(recordRuntimeGroundingMismatches).mockResolvedValue(0);
   });
 
   it('rewrites phone numbers that do not exist in the official directory', async () => {
@@ -60,6 +67,37 @@ describe('db-rag reconciler', () => {
     expect(decision.ok).toBe(false);
     expect(decision.mismatches[0]?.kind).toBe('phone_not_in_db');
     expect(decision.replacement?.response || '').toMatch(/daftar kontak resmi desa/i);
+  });
+
+  it('persists runtime mismatch records when a response is rewritten', async () => {
+    vi.mocked(getImportantContacts).mockResolvedValue([
+      { id: '1', name: 'Damkar', phone: '08110001111' },
+    ] as any);
+
+    const decision = await reconcile({
+      villageId: 'village-1',
+      userMessage: 'nomor damkar berapa?',
+      result: baseResult({
+        intent: 'CONTACT_DIRECTORY',
+        response: 'Silakan hubungi 08110002222.',
+      }),
+      toolsUsed: ['get_important_contact'],
+    });
+
+    expect(decision.rewritten).toBe(true);
+    expect(recordRuntimeGroundingMismatches).toHaveBeenCalledWith([
+      expect.objectContaining({
+        villageId: 'village-1',
+        traceId: 'trace-test',
+        userQuery: 'nomor damkar berapa?',
+        responseExcerpt: 'Silakan hubungi 08110002222.',
+        toolsUsed: ['get_important_contact'],
+        mismatchKind: 'phone_not_in_db',
+        offendingValue: '08110002222',
+        authoritativeValue: '08110001111',
+        entityType: 'important_contact',
+      }),
+    ]);
   });
 
   it('flags emergency numbers that are not present in the village directory', async () => {

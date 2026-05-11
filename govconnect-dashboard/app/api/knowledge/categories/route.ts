@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client'
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import prisma from '@/lib/prisma'
-import { buildScopedNameKey, normalizeScopedName } from '@/lib/utils'
+import {
+  createVillageKnowledgeCategory,
+  findVillageKnowledgeCategoryByName,
+  listVillageKnowledgeCategories,
+} from '@/lib/knowledge-categories'
+import { normalizeScopedName } from '@/lib/utils'
 
 function isDuplicateCategoryError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
@@ -27,11 +32,7 @@ export async function GET(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!session.admin.village_id) return NextResponse.json({ data: [] })
 
-  const categories = await prisma.knowledge_categories.findMany({
-    where: { village_id: session.admin.village_id },
-    orderBy: { created_at: 'asc' }
-  })
-
+  const categories = await listVillageKnowledgeCategories(session.admin.village_id)
   return NextResponse.json({ data: categories })
 }
 
@@ -46,29 +47,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Name is required' }, { status: 400 })
   }
 
-  const nameKey = buildScopedNameKey(normalizedName)
-  const existing = await prisma.knowledge_categories.findFirst({
-    where: {
-      village_id: session.admin.village_id,
-      name_key: nameKey,
-    },
-    select: { id: true },
-  })
-
+  const existing = await findVillageKnowledgeCategoryByName(session.admin.village_id, normalizedName)
   if (existing) {
     return NextResponse.json({ error: 'Nama kategori knowledge sudah dipakai di desa ini.' }, { status: 409 })
   }
 
   try {
-    const category = await prisma.knowledge_categories.create({
-      data: {
-        village_id: session.admin.village_id,
-        name: normalizedName,
-        name_key: nameKey,
-        is_default: false,
-      }
-    })
-
+    const category = await createVillageKnowledgeCategory(session.admin.village_id, normalizedName, false)
     return NextResponse.json({ data: category })
   } catch (error) {
     if (isDuplicateCategoryError(error)) {

@@ -8,7 +8,6 @@ export const RABBITMQ_CONFIG = {
   routingKeys: {
     // NOTE: aiReply is NOT included here because Channel Service handles it directly
     // Including it here would cause double response to user
-    complaintCreated: 'govconnect.complaint.created',
     complaintImportantContacts: 'govconnect.complaint.important_contacts',
     serviceRequested: 'govconnect.service.requested',
     statusUpdated: 'govconnect.status.updated',

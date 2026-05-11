@@ -780,3 +780,27 @@ model ai_knowledge_inconsistencies {
   @@index([kind, detected_at])
   @@index([severity, status])
 }
+
+model ai_runtime_grounding_mismatches {
+  id                  String   @id @default(cuid())
+  village_id          String?
+  trace_id            String?
+  user_query          String?  @db.Text
+  response_excerpt    String?  @db.Text
+  tools_used_json     Json?
+  mismatch_kind       String
+  offending_value     String?  @db.Text
+  authoritative_value String?  @db.Text
+  entity_type         String?
+  entity_id           String?
+  status              String   @default("open")
+  resolved_at         DateTime?
+  resolved_by         String?
+  resolution_note     String?  @db.Text
+  detected_at         DateTime @default(now())
+
+  @@index([village_id, status, detected_at])
+  @@index([mismatch_kind, detected_at])
+  @@index([entity_type, detected_at])
+  @@index([trace_id])
+}

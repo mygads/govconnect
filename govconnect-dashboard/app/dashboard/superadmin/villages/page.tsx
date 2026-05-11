@@ -11,6 +11,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useAuth } from "@/components/auth/AuthContext"
 import { Eye, Loader2, Power, PowerOff } from "lucide-react"
 import Link from "next/link"
+import { superadmin } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 
 interface AdminUser {
   id: string
@@ -46,7 +48,7 @@ export default function SuperadminVillagesPage() {
   const [updatingVillageId, setUpdatingVillageId] = useState<string | null>(null)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") {
+    if (user && !isSuperadmin(user.role)) {
       router.replace("/dashboard")
     }
   }, [user, router])
@@ -55,17 +57,7 @@ export default function SuperadminVillagesPage() {
     try {
       setLoading(true)
       setError(null)
-      const response = await fetch("/api/superadmin/villages", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error("Gagal memuat data desa")
-      }
-
-      const result = await response.json()
+      const result = await superadmin.getVillages()
       setVillages(result.data || [])
     } catch (err: any) {
       setError(err?.message || "Gagal memuat data desa")
@@ -76,7 +68,7 @@ export default function SuperadminVillagesPage() {
   }
 
   useEffect(() => {
-    if (user?.role === "superadmin") {
+    if (isSuperadmin(user?.role)) {
       fetchVillages()
     }
   }, [user, router])
@@ -86,20 +78,7 @@ export default function SuperadminVillagesPage() {
 
     try {
       setUpdatingVillageId(village.id)
-      const response = await fetch(`/api/superadmin/villages/${encodeURIComponent(village.id)}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({ is_active: isActive }),
-      })
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}))
-        throw new Error(payload?.error || "Gagal memperbarui status desa")
-      }
-
+      await superadmin.updateVillage(village.id, { is_active: isActive })
       await fetchVillages()
     } catch (err: any) {
       setError(err?.message || "Gagal memperbarui status desa")
@@ -109,7 +88,7 @@ export default function SuperadminVillagesPage() {
     }
   }
 
-  if (user?.role !== "superadmin") {
+  if (!isSuperadmin(user?.role)) {
     return null
   }
 

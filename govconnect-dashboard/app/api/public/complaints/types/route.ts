@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalApiKey } from "@/lib/api-client";
+import { getPublicComplaintVillageIdFromQuery } from "../_shared/request-utils";
 
 const CASE_SERVICE_URL = process.env.CASE_SERVICE_URL || "http://localhost:3003";
 
 export async function GET(request: NextRequest) {
   try {
     const internalApiKey = requireInternalApiKey();
-    const villageId = request.nextUrl.searchParams.get("village_id")?.trim();
+    const villageId = getPublicComplaintVillageIdFromQuery(request);
     const categoryId = request.nextUrl.searchParams.get("category_id")?.trim();
     const isUrgent = request.nextUrl.searchParams.get("is_urgent")?.trim();
 

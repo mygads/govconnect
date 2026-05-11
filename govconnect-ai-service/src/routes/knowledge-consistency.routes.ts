@@ -27,12 +27,30 @@ import {
   type InconsistencyStatus,
 } from '../services/knowledge-consistency.service';
 import { runDocVsDbForDocument } from '../services/doc-vs-db-pipeline.service';
+import {
+  listRuntimeGroundingMismatches,
+  summarizeRuntimeGroundingMismatches,
+  updateRuntimeGroundingMismatchStatus,
+  type RuntimeGroundingMismatchKind,
+  type RuntimeGroundingMismatchStatus,
+} from '../services/runtime-grounding-mismatch.service';
 
 const router = Router();
 
 const VALID_KINDS: ReadonlySet<InconsistencyKind> = new Set(['doc_vs_doc', 'doc_vs_db', 'kb_vs_kb']);
 const VALID_SEVERITIES: ReadonlySet<InconsistencySeverity> = new Set(['low', 'medium', 'high']);
 const VALID_STATUSES: ReadonlySet<InconsistencyStatus> = new Set(['open', 'resolved', 'ignored']);
+const VALID_RUNTIME_KINDS: ReadonlySet<RuntimeGroundingMismatchKind> = new Set([
+  'phone_not_in_db',
+  'operating_hour_mismatch',
+  'office_address_mismatch',
+  'service_cost_mismatch',
+  'service_duration_mismatch',
+  'service_mode_mismatch',
+  'service_availability_mismatch',
+  'service_requirement_mismatch',
+]);
+const VALID_RUNTIME_STATUSES: ReadonlySet<RuntimeGroundingMismatchStatus> = new Set(['open', 'resolved', 'ignored']);
 
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -152,6 +170,76 @@ router.post('/scan/doc', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     logger.error('knowledge-consistency scan doc failed', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/runtime', async (req: Request, res: Response) => {
+  try {
+    const { villageId, kind, status, entityType, traceId } = req.query as Record<string, string | undefined>;
+    const limit = parseInt((req.query.limit as string) || '50', 10);
+    const offset = parseInt((req.query.offset as string) || '0', 10);
+
+    const result = await listRuntimeGroundingMismatches({
+      villageId,
+      kind: kind && VALID_RUNTIME_KINDS.has(kind as RuntimeGroundingMismatchKind)
+        ? (kind as RuntimeGroundingMismatchKind)
+        : undefined,
+      status: status && VALID_RUNTIME_STATUSES.has(status as RuntimeGroundingMismatchStatus)
+        ? (status as RuntimeGroundingMismatchStatus)
+        : undefined,
+      entityType,
+      traceId,
+      limit: Number.isFinite(limit) ? limit : 50,
+      offset: Number.isFinite(offset) ? offset : 0,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    logger.error('runtime grounding mismatch list failed', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/runtime/summary', async (req: Request, res: Response) => {
+  try {
+    const { villageId } = req.query as Record<string, string | undefined>;
+    const summary = await summarizeRuntimeGroundingMismatches(villageId);
+    res.json({ success: true, summary });
+  } catch (error: any) {
+    logger.error('runtime grounding mismatch summary failed', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/runtime/:id/resolve', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status, resolvedBy, resolutionNote, villageId } = req.body || {};
+    if (!VALID_RUNTIME_STATUSES.has(status)) {
+      res.status(400).json({ success: false, error: 'status must be open|resolved|ignored' });
+      return;
+    }
+    const item = await updateRuntimeGroundingMismatchStatus(
+      id,
+      {
+        status,
+        resolvedBy,
+        resolutionNote,
+      },
+      typeof villageId === 'string' && villageId.trim() ? villageId.trim() : undefined,
+    );
+    res.json({ success: true, item });
+  } catch (error: any) {
+    logger.error('runtime grounding mismatch resolve failed', { error: error.message, code: error.code });
+    if (error?.code === 'NOT_FOUND') {
+      res.status(404).json({ success: false, error: 'Runtime mismatch not found' });
+      return;
+    }
+    if (error?.code === 'FORBIDDEN') {
+      res.status(403).json({ success: false, error: 'Forbidden' });
+      return;
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });

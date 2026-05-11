@@ -21,6 +21,14 @@ import { type SpamCheckResult } from './spam-guard.service';
 
 const PUBLISH_RETRY_DELAY_MS = parseInt(process.env.MESSAGE_BATCH_PUBLISH_RETRY_DELAY_MS || '5000', 10);
 
+function requireVillageId(villageId?: string): string {
+  const normalizedVillageId = typeof villageId === 'string' ? villageId.trim() : '';
+  if (!normalizedVillageId) {
+    throw new Error('village_id is required for multi-tenancy isolation');
+  }
+  return normalizedVillageId;
+}
+
 // Track pending publishes for retry
 const pendingRetries = new Map<string, NodeJS.Timeout>();
 
@@ -44,7 +52,7 @@ export function addMessageToBatch(
   },
   spamResult?: SpamCheckResult,
 ): { spamResult?: SpamCheckResult } {
-  const resolvedVillageId = village_id || 'unknown';
+  const resolvedVillageId = requireVillageId(village_id);
 
   // If no spamResult provided, create a simple pass-through
   const result: SpamCheckResult = spamResult || {
@@ -198,7 +206,7 @@ function scheduleRetry(
  * Cancel batch for a user (e.g., when takeover starts)
  */
 export function cancelBatch(wa_user_id: string, village_id?: string): void {
-  const resolvedVillageId = village_id || 'unknown';
+  const resolvedVillageId = requireVillageId(village_id);
   
   // Cancel any pending retries for this user
   for (const [key, timer] of pendingRetries.entries()) {

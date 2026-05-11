@@ -9,6 +9,8 @@ import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth/AuthContext"
+import { superadmin } from "@/lib/frontend-api"
+import { isSuperadmin } from "@/lib/rbac"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,7 +47,7 @@ export default function SuperadminAdminsPage() {
   const [pendingToggle, setPendingToggle] = useState<{ admin: AdminItem; nextValue: boolean } | null>(null)
 
   useEffect(() => {
-    if (user && user.role !== "superadmin") {
+    if (user && !isSuperadmin(user.role)) {
       router.replace("/dashboard")
     }
   }, [user, router])
@@ -53,17 +55,7 @@ export default function SuperadminAdminsPage() {
   const fetchAdmins = async () => {
     try {
       setLoading(true)
-      const response = await fetch("/api/superadmin/admins", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error("Gagal memuat data admin")
-      }
-
-      const result = await response.json()
+      const result = await superadmin.getAdmins()
       setAdmins(result.data || [])
     } catch (error) {
       console.error("Failed to load admins:", error)
@@ -78,7 +70,7 @@ export default function SuperadminAdminsPage() {
   }
 
   useEffect(() => {
-    if (user?.role === "superadmin") {
+    if (isSuperadmin(user?.role)) {
       fetchAdmins()
     }
   }, [user, router])
@@ -90,19 +82,7 @@ export default function SuperadminAdminsPage() {
   const handleToggle = async (adminId: string, nextValue: boolean) => {
     try {
       setUpdating(adminId)
-      const response = await fetch(`/api/superadmin/admins/${adminId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({ is_active: nextValue }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.error || "Gagal memperbarui status admin")
-      }
+      await superadmin.updateAdmin(adminId, { is_active: nextValue })
 
       setAdmins((prev) =>
         prev.map((admin) =>
@@ -125,7 +105,7 @@ export default function SuperadminAdminsPage() {
     }
   }
 
-  if (user?.role !== "superadmin") {
+  if (!isSuperadmin(user?.role)) {
     return null
   }
 
@@ -201,8 +181,8 @@ export default function SuperadminAdminsPage() {
                         <div className="text-xs text-muted-foreground">{admin.village?.slug || ""}</div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={admin.role === "superadmin" ? "default" : "secondary"}>
-                          {admin.role === "superadmin" ? "Super Admin" : "Admin Desa"}
+                        <Badge variant={isSuperadmin(admin.role) ? "default" : "secondary"}>
+                          {isSuperadmin(admin.role) ? "Super Admin" : "Admin Desa"}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -210,7 +190,7 @@ export default function SuperadminAdminsPage() {
                           <Switch
                             checked={admin.is_active}
                             onCheckedChange={(value: boolean) => requestToggle(admin, value)}
-                            disabled={updating === admin.id || admin.role === "superadmin"}
+                            disabled={updating === admin.id || isSuperadmin(admin.role)}
                           />
                           <span className="text-xs text-muted-foreground">
                             {admin.is_active ? "Aktif" : "Nonaktif"}

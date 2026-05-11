@@ -229,6 +229,10 @@ export async function createComplaint(data: CreateComplaintData) {
   }
 
   if (resolved) {
+    if (data.category_id && data.category_id !== resolved.category_id) {
+      throw new Error('category_id does not match the selected complaint type');
+    }
+
     const merged = mergeComplaintClassification(
       {
         type_id: resolvedTypeId,
@@ -266,6 +270,10 @@ export async function createComplaint(data: CreateComplaintData) {
       village_id: data.village_id,
     });
   }
+
+  if (resolvedRequireAddress && !data.alamat?.trim()) {
+    throw new Error('alamat is required for this complaint type');
+  }
   
   const complaint = await prisma.$transaction(async (tx) => {
     const createdComplaint = await tx.complaint.create({
@@ -290,7 +298,7 @@ export async function createComplaint(data: CreateComplaintData) {
       },
     });
 
-    if (resolved?.send_important_contacts && (resolved.important_contact_category_id || resolved.important_contact_category)) {
+    if (resolved?.send_important_contacts && resolved.important_contact_category_id) {
       await enqueueOutboxEvent(tx, {
         routingKey: RABBITMQ_CONFIG.ROUTING_KEYS.COMPLAINT_IMPORTANT_CONTACTS,
         payload: {

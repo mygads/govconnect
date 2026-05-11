@@ -270,7 +270,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
             description: 'RT/RW terbaru bila user menyebutkannya.',
           },
         },
-        required: ['reference_number', 'alamat', 'deskripsi', 'rt_rw'],
+        required: ['reference_number'],
         additionalProperties: false,
       },
     },

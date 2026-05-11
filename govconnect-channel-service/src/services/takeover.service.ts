@@ -2,8 +2,12 @@ import prisma from '../config/database';
 import logger from '../utils/logger';
 import { publishLivechatEvent } from './livechat-events.service';
 
-function resolveVillageId(villageId?: string): string {
-  return villageId || 'unknown';
+function requireVillageId(villageId?: string): string {
+  const normalizedVillageId = typeof villageId === 'string' ? villageId.trim() : '';
+  if (!normalizedVillageId) {
+    throw new Error('village_id is required for multi-tenancy isolation');
+  }
+  return normalizedVillageId;
 }
 
 export class TakeoverConflictError extends Error {
@@ -56,7 +60,7 @@ export async function isUserInTakeover(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<boolean> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     const session = await prisma.takeoverSession.findFirst({
       where: {
         village_id: resolvedVillageId,
@@ -81,7 +85,7 @@ export async function getActiveTakeover(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<TakeoverSession | null> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     const session = await prisma.takeoverSession.findFirst({
       where: {
         village_id: resolvedVillageId,
@@ -109,7 +113,7 @@ export async function startTakeover(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP',
   enrichment?: Record<string, unknown>,
 ): Promise<TakeoverSession> {
-  const resolvedVillageId = resolveVillageId(village_id);
+  const resolvedVillageId = requireVillageId(village_id);
   const existingSession = await getActiveTakeover(channel_identifier, resolvedVillageId, channel);
   if (existingSession) {
     if (existingSession.admin_id !== admin_id) {
@@ -176,7 +180,7 @@ export async function endTakeover(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<boolean> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     const result = await prisma.takeoverSession.updateMany({
       where: {
         village_id: resolvedVillageId,
@@ -217,12 +221,12 @@ export async function endTakeover(
  * Get all active takeover sessions (filtered by village_id for multi-tenancy)
  */
 export async function getActiveTakeovers(village_id?: string): Promise<TakeoverSession[]> {
-  const where: any = { ended_at: null };
-  if (village_id) {
-    where.village_id = village_id;
-  }
+  const resolvedVillageId = requireVillageId(village_id);
   return prisma.takeoverSession.findMany({
-    where,
+    where: {
+      village_id: resolvedVillageId,
+      ended_at: null,
+    },
     orderBy: {
       started_at: 'desc',
     },
@@ -244,7 +248,7 @@ export async function updateConversation(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     const existingConv = await prisma.conversation.findUnique({
       where: {
         village_id_channel_channel_identifier: {
@@ -307,25 +311,18 @@ export async function markConversationAsRead(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
-    const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
+    const resolvedVillageId = requireVillageId(village_id);
 
-    if (resolvedVillageId) {
-      await prisma.conversation.update({
-        where: {
-          village_id_channel_channel_identifier: {
-            village_id: resolvedVillageId,
-            channel,
-            channel_identifier,
-          },
+    await prisma.conversation.update({
+      where: {
+        village_id_channel_channel_identifier: {
+          village_id: resolvedVillageId,
+          channel,
+          channel_identifier,
         },
-        data: { unread_count: 0 },
-      });
-    } else {
-      await prisma.conversation.updateMany({
-        where: { channel, channel_identifier },
-        data: { unread_count: 0 },
-      });
-    }
+      },
+      data: { unread_count: 0 },
+    });
   } catch (error: any) {
     // Conversation might not exist
     logger.debug('Could not mark conversation as read', { channel, channel_identifier });
@@ -343,7 +340,7 @@ export async function updateConversationUserProfile(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     
     const updateData: { user_name?: string; user_phone?: string } = {};
     if (updates.user_name) updateData.user_name = updates.user_name;
@@ -382,16 +379,15 @@ export async function getConversations(
   search?: string,
   offset: number = 0
 ): Promise<{ data: ConversationSummary[]; total: number; limit: number; offset: number }> {
-  const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
-  const where: any = filter === 'all'
-    ? {}
-    : filter === 'takeover'
-      ? { is_takeover: true }
-      : { is_takeover: false };
-
-  if (resolvedVillageId) {
-    Object.assign(where, { village_id: resolvedVillageId });
-  }
+  const resolvedVillageId = requireVillageId(village_id);
+  const where: any = {
+    village_id: resolvedVillageId,
+    ...(filter === 'all'
+      ? {}
+      : filter === 'takeover'
+        ? { is_takeover: true }
+        : { is_takeover: false }),
+  };
 
   if (search?.trim()) {
     const query = search.trim();
@@ -430,23 +426,16 @@ export async function getConversation(
   village_id?: string,
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<ConversationSummary | null> {
-  const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
+  const resolvedVillageId = requireVillageId(village_id);
 
-  if (resolvedVillageId) {
-    return prisma.conversation.findUnique({
-      where: {
-        village_id_channel_channel_identifier: {
-          village_id: resolvedVillageId,
-          channel,
-          channel_identifier,
-        },
+  return prisma.conversation.findUnique({
+    where: {
+      village_id_channel_channel_identifier: {
+        village_id: resolvedVillageId,
+        channel,
+        channel_identifier,
       },
-    });
-  }
-
-  return prisma.conversation.findFirst({
-    where: { channel, channel_identifier },
-    orderBy: { last_message_at: 'desc' },
+    },
   });
 }
 
@@ -459,47 +448,19 @@ export async function deleteConversationHistory(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
-    const resolvedVillageId = village_id ? resolveVillageId(village_id) : undefined;
-    const where: any = { channel, channel_identifier };
-    if (resolvedVillageId) {
-      where.village_id = resolvedVillageId;
-    }
-    // Delete all messages for this user
+    const resolvedVillageId = requireVillageId(village_id);
+    const where = { village_id: resolvedVillageId, channel, channel_identifier };
+
     await prisma.message.deleteMany({
       where,
     });
 
-    // Delete all takeover sessions and conversations for this user
-    // Use Prisma methods instead of raw queries to avoid enum type casting issues
-    if (resolvedVillageId) {
-      await prisma.takeoverSession.deleteMany({
-        where: {
-          village_id: resolvedVillageId,
-          channel,
-          channel_identifier,
-        },
-      });
-      await prisma.conversation.deleteMany({
-        where: {
-          village_id: resolvedVillageId,
-          channel,
-          channel_identifier,
-        },
-      });
-    } else {
-      await prisma.takeoverSession.deleteMany({
-        where: {
-          channel,
-          channel_identifier,
-        },
-      });
-      await prisma.conversation.deleteMany({
-        where: {
-          channel,
-          channel_identifier,
-        },
-      });
-    }
+    await prisma.takeoverSession.deleteMany({
+      where,
+    });
+    await prisma.conversation.deleteMany({
+      where,
+    });
 
     publishLivechatEvent({ type: 'delete', village_id: resolvedVillageId, channel, channel_identifier });
     logger.info('Deleted conversation history', { channel, channel_identifier });
@@ -519,7 +480,7 @@ export async function setAIProcessing(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     await prisma.conversation.upsert({
       where: {
         village_id_channel_channel_identifier: {
@@ -558,7 +519,7 @@ export async function clearAIStatus(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     await prisma.conversation.update({
       where: {
         village_id_channel_channel_identifier: {
@@ -591,7 +552,7 @@ export async function setAIError(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     await prisma.conversation.update({
       where: {
         village_id_channel_channel_identifier: {
@@ -620,7 +581,7 @@ export async function setAIPendingBalance(
   channel: 'WHATSAPP' | 'WEBCHAT' = 'WHATSAPP'
 ): Promise<void> {
   try {
-    const resolvedVillageId = resolveVillageId(village_id);
+    const resolvedVillageId = requireVillageId(village_id);
     await prisma.conversation.update({
       where: {
         village_id_channel_channel_identifier: {
@@ -651,26 +612,16 @@ export async function getPendingMessage(
   village_id?: string
 ): Promise<{ message_id: string; message_text: string; village_id: string } | null> {
   try {
-    // Try with provided village_id first, then search across all villages
-    let conversation;
-    if (village_id) {
-      conversation = await prisma.conversation.findUnique({
-        where: {
-          village_id_channel_channel_identifier: {
-            village_id,
-            channel,
-            channel_identifier,
-          },
+    const resolvedVillageId = requireVillageId(village_id);
+    const conversation = await prisma.conversation.findUnique({
+      where: {
+        village_id_channel_channel_identifier: {
+          village_id: resolvedVillageId,
+          channel,
+          channel_identifier,
         },
-      });
-    }
-    // Fallback: find any conversation for this user
-    if (!conversation) {
-      conversation = await prisma.conversation.findFirst({
-        where: { channel, channel_identifier, pending_message_id: { not: null } },
-        orderBy: { updated_at: 'desc' },
-      });
-    }
+      },
+    });
 
     if (!conversation?.pending_message_id) {
       return null;
@@ -678,7 +629,7 @@ export async function getPendingMessage(
 
     const message = await prisma.message.findFirst({
       where: {
-        village_id: conversation.village_id,
+        village_id: resolvedVillageId,
         channel,
         channel_identifier,
         message_id: conversation.pending_message_id,

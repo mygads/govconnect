@@ -37,7 +37,10 @@ export async function GET(request: NextRequest) {
     }
 
     const response = await apiFetch(url.toString(), {
-      headers: getHeaders({ 'x-admin-role': session.admin.role }),
+      headers: getHeaders({
+        'x-admin-role': session.admin.role,
+        ...(targetVillageId ? { 'x-village-id': targetVillageId } : {}),
+      }),
     })
 
     const data = await response.json().catch(() => null)

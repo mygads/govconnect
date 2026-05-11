@@ -43,6 +43,12 @@ export default function NotificationSettingsPage() {
   const [hasPermission, setHasPermission] = useState(false)
   const { toast } = useToast()
 
+  const urgentWaStatusText = settings.urgentWaAutoSendEnabled === true
+    ? 'Auto-send WA admin aktif di notification-service.'
+    : settings.urgentWaAutoSendEnabled === false
+      ? 'Auto-send WA admin sedang nonaktif di notification-service. Laporan darurat tetap tercatat, tetapi sistem tidak boleh overclaim seolah WA admin pasti terkirim.'
+      : 'Status auto-send WA admin belum bisa dipastikan dari notification-service saat ini.'
+
   useEffect(() => {
     if ('Notification' in window) {
       setHasPermission(Notification.permission === 'granted')
@@ -216,7 +222,7 @@ export default function NotificationSettingsPage() {
               Tujuan WA Darurat
             </CardTitle>
             <CardDescription>
-              Nomor WhatsApp admin desa untuk menerima alert pengaduan darurat. Jika kosong, sistem memakai fallback global dari environment.
+              Nomor ini menjadi target WA admin saat auto-send darurat aktif. Jika kosong, sistem mencoba fallback global dari environment notification-service.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -230,7 +236,10 @@ export default function NotificationSettingsPage() {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Simpan nomor khusus desa di sini agar alert darurat tidak jatuh ke nomor global yang sama untuk semua tenant.
+              {urgentWaStatusText}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Simpan nomor khusus desa di sini agar target WA darurat tidak jatuh ke nomor global yang sama untuk semua tenant.
             </p>
           </CardContent>
         </Card>

@@ -12,6 +12,14 @@ function slugify(input: string): string {
     .replace(/(^-|-$)+/g, '');
 }
 
+function normalizeServiceCategoryName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ');
+}
+
+function buildServiceCategoryNameKey(name: string): string {
+  return normalizeServiceCategoryName(name).toLocaleLowerCase('id-ID');
+}
+
 const SERVICE_SEEDS = [
   {
     category: 'Administrasi Kependudukan',
@@ -407,19 +415,23 @@ async function main() {
 
   const categoryIdByName = new Map<string, string>();
   for (const categoryName of Array.from(new Set(SERVICE_SEEDS.map((s) => s.category)))) {
+    const normalizedCategoryName = normalizeServiceCategoryName(categoryName);
+    const nameKey = buildServiceCategoryNameKey(normalizedCategoryName);
     const category = await prisma.serviceCategory.upsert({
       where: { id: `${villageId}-${slugify(categoryName)}` },
       update: {
         village_id: villageId,
-        name: categoryName,
-        description: `Kategori layanan: ${categoryName}`,
+        name: normalizedCategoryName,
+        name_key: nameKey,
+        description: `Kategori layanan: ${normalizedCategoryName}`,
         is_active: true,
       },
       create: {
         id: `${villageId}-${slugify(categoryName)}`,
         village_id: villageId,
-        name: categoryName,
-        description: `Kategori layanan: ${categoryName}`,
+        name: normalizedCategoryName,
+        name_key: nameKey,
+        description: `Kategori layanan: ${normalizedCategoryName}`,
         is_active: true,
       },
     });

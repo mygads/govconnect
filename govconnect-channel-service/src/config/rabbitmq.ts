@@ -7,7 +7,6 @@ export const rabbitmqConfig = {
     AI_REPLY: 'govconnect.ai.reply',
     AI_ERROR: 'govconnect.ai.error',
     MESSAGE_STATUS: 'govconnect.message.status',
-    COMPLAINT_CREATED: 'govconnect.complaint.created',
     COMPLAINT_STATUS_UPDATED: 'govconnect.status.updated',
     COMPLAINT_URGENT_ALERT: 'govconnect.urgent.alert',
   },

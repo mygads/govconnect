@@ -137,6 +137,7 @@ model ServiceCategory {
   id          String   @id @default(cuid())
   village_id  String
   name        String
+  name_key    String
   description String?  @db.Text
   is_active   Boolean  @default(true)
   created_at  DateTime @default(now())
@@ -144,8 +145,10 @@ model ServiceCategory {
 
   services    ServiceItem[]
 
+  @@unique([village_id, name_key])
   @@index([village_id])
   @@index([name])
+  @@index([name_key])
   @@map("service_categories")
 }
 
@@ -198,7 +201,7 @@ model ServiceRequest {
   id                    String   @id @default(cuid())
   request_number        String   @unique
   service_id            String
-  village_id            String?  // Multi-tenancy: village that this request belongs to
+  village_id            String   // Multi-tenancy: village that this request belongs to
   wa_user_id            String?
   channel               ChannelType @default(WHATSAPP)
   channel_identifier    String?
@@ -229,6 +232,7 @@ model ServiceRequest {
   last_delivery_attempt_at DateTime?
 
   service               ServiceItem @relation(fields: [service_id], references: [id])
+  updates               ServiceRequestUpdate[]
 
   @@index([wa_user_id])
   @@index([channel, channel_identifier])
@@ -239,6 +243,28 @@ model ServiceRequest {
   @@index([deleted_at])
   @@unique([service_id, channel, channel_identifier, idempotency_key], map: "service_requests_idempotency_key")
   @@map("service_requests")
+}
+
+model ServiceRequestUpdate {
+  id                 String   @id @default(cuid())
+  service_request_id String
+  admin_id           String?
+  admin_name         String?
+  admin_role         String?
+  old_status         String?
+  new_status         String?
+  note_text          String?  @db.Text
+  result_file_url    String?
+  result_file_name   String?
+  result_description String?  @db.Text
+  created_at         DateTime @default(now())
+
+  service_request    ServiceRequest @relation(fields: [service_request_id], references: [id], onDelete: Cascade)
+
+  @@index([service_request_id])
+  @@index([new_status])
+  @@index([created_at])
+  @@map("service_request_updates")
 }
 
 // ==================== EVENT OUTBOX ====================
