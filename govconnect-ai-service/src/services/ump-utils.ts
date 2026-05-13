@@ -48,11 +48,12 @@ export function getLastAssistantMessage(history?: Array<{ role: 'user' | 'assist
 
 export async function fetchConversationHistoryFromChannel(
   wa_user_id: string,
-  village_id?: string
+  village_id?: string,
+  forceRefresh = false
 ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
   // Check cache first — avoids HTTP round-trip per message
   const cached = conversationHistoryCache.get(wa_user_id);
-  if (cached) {
+  if (cached && !forceRefresh) {
     logger.debug('Conversation history served from cache', { wa_user_id, count: cached.history.length });
     return cached.history;
   }
@@ -66,8 +67,8 @@ export async function fetchConversationHistoryFromChannel(
 
     const messages = Array.isArray(response.data?.messages) ? response.data.messages : [];
     const ordered = [...messages].sort((a: any, b: any) => {
-      const aTime = new Date(a.timestamp || a.created_at || 0).getTime();
-      const bTime = new Date(b.timestamp || b.created_at || 0).getTime();
+      const aTime = new Date(a.timestamp || a.created_at || a.createdAt || 0).getTime();
+      const bTime = new Date(b.timestamp || b.created_at || b.createdAt || 0).getTime();
       return aTime - bTime;
     });
 

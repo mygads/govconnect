@@ -12,7 +12,7 @@ import { LRUCache } from '../utils/lru-cache';
 import { registerInterval } from '../utils/timer-registry';
 import { updateConversationUserProfile } from './channel-client.service';
 import { deleteProfile } from './user-profile.service';
-import { persistState, deleteState, loadState, deleteAllUserStates } from './state-persistence.service';
+import { persistState, persistStateImmediate, deleteState, loadState, deleteAllUserStates } from './state-persistence.service';
 import type { ChannelType } from './ump-formatters';
 
 // ==================== LRU CACHES ====================
@@ -469,7 +469,7 @@ export function setPendingCancelConfirmation(userId: string, data: {
   timestamp: number;
 }) {
   pendingCancelConfirmation.set(userId, data);
-  persistState(userId, 'pendingCancelConfirmation', data);
+  persistStateImmediate(userId, 'pendingCancelConfirmation', data);
 }
 
 // --- Service Form Offer ---

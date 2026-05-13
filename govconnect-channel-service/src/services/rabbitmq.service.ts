@@ -485,6 +485,49 @@ export async function startConsumingAIReply(): Promise<void> {
           return;
         }
 
+        // Persist AI reply to DB first (before sending to WA provider)
+        // This ensures local dev testing works even without a WA provider session
+        const localMsgId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await persistSentAIMessage(
+          {
+            village_id: payload.village_id,
+            wa_user_id: channelIdentifier,
+            channel: 'WHATSAPP',
+            channel_identifier: channelIdentifier,
+            message_id: localMsgId,
+            message_text: replyText,
+            source: 'AI',
+            delivery_status: 'sent',
+          },
+          {
+            wa_user_id: channelIdentifier,
+            village_id: payload.village_id,
+            kind: 'reply',
+          }
+        );
+
+        let guidancePersisted = true;
+        if (guidanceText && guidanceText.trim()) {
+          const localGuidanceMsgId = `local-guidance-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          guidancePersisted = await persistSentAIMessage(
+            {
+              village_id: payload.village_id,
+              wa_user_id: channelIdentifier,
+              channel: 'WHATSAPP',
+              channel_identifier: channelIdentifier,
+              message_id: localGuidanceMsgId,
+              message_text: guidanceText,
+              source: 'AI',
+              delivery_status: 'sent',
+            },
+            {
+              wa_user_id: channelIdentifier,
+              village_id: payload.village_id,
+              kind: 'guidance',
+            }
+          );
+        }
+
         // Send main reply message via WhatsApp, then persist the provider-backed message id.
         const result = await sendTextMessage(channelIdentifier, replyText, payload.village_id);
 
@@ -514,8 +557,6 @@ export async function startConsumingAIReply(): Promise<void> {
               }
             );
           }
-
-          let guidancePersisted = true;
 
           // If there's a guidance message, send it as a separate bubble after a short delay.
           if (guidanceText && guidanceText.trim()) {
@@ -646,6 +687,15 @@ export async function startConsumingAIReply(): Promise<void> {
             wa_user_id: channelIdentifier,
             error: result.error,
           });
+          // In local dev, WA provider may be disconnected ("no session").
+          // We already persisted the AI reply locally, so do not retry and duplicate it.
+          if (result.error?.includes('no session') || result.error?.includes('Session not connected')) {
+            logger.warn('Skipping retry because WA session is not connected; local AI message already persisted', {
+              wa_user_id: channelIdentifier,
+            });
+            channel.ack(msg);
+            return;
+          }
           throw new Error(result.error || 'Failed to send AI reply');
         }
 

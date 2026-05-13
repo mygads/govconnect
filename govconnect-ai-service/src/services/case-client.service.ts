@@ -418,6 +418,8 @@ export async function getServiceRequestStatusWithOwnership(
 
 /**
  * Cancel complaint by user (with owner validation)
+ * Uses direct axios (bypasses circuit breaker) — cancel is a critical user action
+ * and a breaker fallback would show a false failure even when the cancel succeeded.
  */
 export async function cancelComplaint(
   complaintId: string,
@@ -432,10 +434,10 @@ export async function cancelComplaint(
     channel,
     channel_identifier: params.channel_identifier,
   });
-  
+
   try {
     const url = `${config.caseServiceUrl}/laporan/${complaintId}/cancel`;
-    const response = await resilientHttp.post<CancelResponse>(
+    const response = await axios.post<CancelResponse>(
       url,
       {
         wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
@@ -448,19 +450,15 @@ export async function cancelComplaint(
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
         },
-        timeout: 10000,
+        timeout: 15000,
       }
     );
 
-    if (resilientHttp.isFallbackResponse(response)) {
-      return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
-    }
-    
     logger.info('✅ Complaint cancelled successfully', {
       complaint_id: complaintId,
       message: response.data.data?.message,
     });
-    
+
     return {
       success: true,
       complaint_id: response.data.data?.complaint_id,
@@ -469,14 +467,14 @@ export async function cancelComplaint(
   } catch (error: any) {
     const errorCode = error.response?.data?.error as CancelResult['error'];
     const errorMessage = error.response?.data?.message || 'Gagal membatalkan laporan';
-    
+
     logger.error('❌ Failed to cancel complaint', {
       complaint_id: complaintId,
       error: error.message,
       status: error.response?.status,
       errorCode,
     });
-    
+
     return {
       success: false,
       error: errorCode || 'INTERNAL_ERROR',
@@ -487,6 +485,8 @@ export async function cancelComplaint(
 
 /**
  * Cancel service request by user (with owner validation)
+ * Uses direct axios (bypasses circuit breaker) — cancel is a critical user action
+ * and a breaker fallback would show a false failure even when the cancel succeeded.
  */
 export async function cancelServiceRequest(
   requestNumber: string,
@@ -504,7 +504,7 @@ export async function cancelServiceRequest(
 
   try {
     const url = `${config.caseServiceUrl}/service-requests/${requestNumber}/cancel`;
-    const response = await resilientHttp.post<CancelResponse>(
+    const response = await axios.post<CancelResponse>(
       url,
       {
         wa_user_id: channel === 'WHATSAPP' ? normalizedWaUserId : undefined,
@@ -517,13 +517,9 @@ export async function cancelServiceRequest(
           'x-internal-api-key': config.internalApiKey,
           'Content-Type': 'application/json',
         },
-        timeout: 10000,
+        timeout: 15000,
       }
     );
-
-    if (resilientHttp.isFallbackResponse(response)) {
-      return { success: false, error: 'INTERNAL_ERROR', message: 'Layanan sedang tidak tersedia, coba lagi nanti' };
-    }
 
     return {
       success: true,

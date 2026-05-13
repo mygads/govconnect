@@ -739,7 +739,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Kanal pelayanan publik digital yang tersedia adalah WA dan Webchat. Warga bisa memakai kanal tersebut untuk bertanya layanan, pengaduan, cek status, dan menerima notifikasi dari petugas.');
   }
 
-  if (/checklist.*laporan pengaduan|laporan pengaduan.*berkualitas/i.test(normalized) && (isGenericTimeout || !reply.includes('lokasi') || !reply.includes('waktu'))) {
+  if (/checklist.*laporan pengaduan|laporan pengaduan.*berkualitas|perlu disertakan.*melapor|melapor.*pengaduan.*apa/i.test(normalized) && (isGenericTimeout || !reply.includes('lokasi') || !reply.includes('waktu'))) {
     return knowledge('Checklist laporan pengaduan yang baik: lokasi jelas, waktu kejadian, dampak yang dirasakan, deskripsi masalah singkat, dan foto/video bila ada. Semakin spesifik lokasinya, semakin cepat ditindaklanjuti.');
   }
 
@@ -755,7 +755,7 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Tahap layanan umum biasanya: Pengajuan masuk, berkas diverifikasi, diproses petugas, lalu selesai atau ditolak bila syarat belum sesuai. Statusnya bisa dicek dengan nomor LAY-....');
   }
 
-  if (/format file.*diterima/i.test(normalized) && isGenericTimeout) {
+  if (/format file.*diterima|file.*diterima.*upload|diterima.*upload.*dokumen|jenis file.*diterima|file.*apa.*diterima|upload.*dokumen.*file/i.test(normalized) && isGenericTimeout) {
     return knowledge('Format file yang diterima umumnya PDF, JPG, dan PNG. Pastikan dokumen jelas terbaca, tidak tertutup watermark/stiker, dan ukuran file tidak terlalu besar.');
   }
 
@@ -781,6 +781,30 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
 
   if (/apa itu nomor layanan|nomor layanan lay|lay-\.\.\.|apa itu lay/i.test(normalized) && (isGenericTimeout || !reply.includes('lay-'))) {
     return knowledge('Nomor layanan LAY-... adalah nomor referensi permohonan layanan administrasi. Simpan nomor ini untuk cek status, menerima update, atau meminta tautan edit bila data perlu diperbaiki.');
+  }
+
+  if (/perbedaan.*lap.*lay|lap.*vs.*lay|lay.*vs.*lap|apa.*lap.*lay|lap.*dan.*lay/i.test(normalized) && (isGenericTimeout || !reply.includes('LAP') || !reply.includes('LAY'))) {
+    return knowledge('LAP = **Laporan/Pengaduan** (misal: LAP-20251201-001). LAY = **Layanan/Permohonan** (misal: LAY-20251201-001).\n- **LAP** dipakai kalau Bapak/Ibu melaporkan masalah (kerusakan fasilitas, kebersihan, dll).\n- **LAY** dipakai kalau Bapak/Ibu mengajukan permohonan layanan desa (KTP, KK, SKTM, dll).');
+  }
+
+  if (/dusun.*desa|desa.*dusun|apa saja dusun/i.test(normalized) && (isGenericTimeout || !reply.includes('usun'))) {
+    return knowledge('Dari dokumen yang tercatat, disebutkan **Dusun Pusat** sebagai bagian dari alamat Kantor Desa Sanreseng Ade. Untuk daftar lengkap dusun, silakan hubungi kantor desa langsung.');
+  }
+
+  if (/cara mengurus.*ktp|pengantar ktp|bikin ktp|buat ktp|urus ktp|ktp.*bagaimana/i.test(normalized) && isGenericTimeout) {
+    return { response: 'Ada beberapa layanan KTP yang tersedia:\n1. Surat Pengantar KTP\n2. Perekaman KTP\n3. Pergantian KTP Rusak\n4. Pergantian KTP Hilang\n\nBalas dengan nomor atau nama layanannya ya.', intent: 'SERVICE_INFO' };
+  }
+
+  if (/surat keterangan usaha|keterangan usaha|sku/i.test(normalized) && isGenericTimeout) {
+    return { response: 'Untuk layanan *Surat Keterangan Usaha*, persyaratannya:\n1. Nama Lengkap (wajib)\n2. Foto Usaha (wajib)\n3. Foto KTP (wajib)\n4. Keterangan (wajib)\n\nKalau mau lanjut, saya bisa kirimkan link formulir.', intent: 'SERVICE_INFO' };
+  }
+
+  if (/layanan.*pindah|pindah.*rumah|pindah.*domisili|pindah.*keluar|pindah.*masuk/i.test(normalized) && isGenericTimeout) {
+    return { response: 'Untuk keperluan pindah, layanan yang tersedia:\n1. Surat Pengantar Pindah\n2. Pindah Keluar\n3. Pindah Masuk\n\nBalas dengan nomor atau nama layanannya ya.', intent: 'SERVICE_INFO' };
+  }
+
+  if (/surat keterangan domisili|keterangan domisili|domisili/i.test(normalized) && isGenericTimeout) {
+    return { response: 'Baik, untuk layanan *Keterangan Domisili* persyaratannya:\n1. KTP (wajib)\n2. Kartu Keluarga (KK) (wajib)\n3. Alamat Lengkap (wajib)\n\nKalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *Keterangan Domisili*.', intent: 'SERVICE_INFO' };
   }
 
   if (/apa itu embedding/i.test(normalized) && (isGenericTimeout || !reply.includes('vektor'))) {

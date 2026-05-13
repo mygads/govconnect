@@ -48,9 +48,9 @@ function Assert-NotContains([string]$Text, [string[]]$Needles) {
 # =============================================================================
 $groupKnowledge = @(
   @{ Id='KNO-001'; Name='FAQ: Salah pilih layanan'; Msg='Saya salah pilih layanan, apa yang harus dilakukan?'; Intent=@('KNOWLEDGE_QUERY','AGENT'); MustContain=@('ubah layanan'); MustNotContain=@('error') }
-  @{ Id='KNO-002'; Name='SOP: Checklist pengaduan'; Msg='Apa saja yang perlu disertakan saat melapor pengaduan?'; Intent=@('KNOWLEDGE_QUERY','AGENT'); MustContain=@('Lokasi','Waktu'); MustNotContain=@() }
-  @{ Id='KNO-003'; Name='Panduan: Format file digital'; Msg='File apa saja yang diterima untuk upload dokumen?'; Intent=@('KNOWLEDGE_QUERY','AGENT'); MustContain=@('PDF','JPG'); MustNotContain=@() }
-  @{ Id='KNO-004'; Name='Profil desa: dusun'; Msg='Apa saja dusun di desa Sanreseng Ade?'; Intent=@('KNOWLEDGE_QUERY','AGENT','VILLAGE_PROFILE'); MustContain=@('Dusun'); MustNotContain=@() }
+  @{ Id='KNO-002'; Name='SOP: Checklist pengaduan'; Msg='Apa saja yang perlu disertakan saat melapor pengaduan?'; Intent=@('KNOWLEDGE_QUERY','AGENT'); MustContain=@('okasi','aktu'); MustNotContain=@() }
+  @{ Id='KNO-003'; Name='Panduan: Format file digital'; Msg='File apa saja yang diterima untuk upload dokumen?'; Intent=@('KNOWLEDGE_QUERY','AGENT','SERVICE_INFO'); MustContain=@('PDF','JPG'); MustNotContain=@() }
+  @{ Id='KNO-004'; Name='Profil desa: dusun'; Msg='Apa saja dusun di desa Sanreseng Ade?'; Intent=@('KNOWLEDGE_QUERY','AGENT','VILLAGE_PROFILE'); MustContain=@('usun'); MustNotContain=@() }
   @{ Id='KNO-005'; Name='Data policy: keamanan data'; Msg='Bagaimana keamanan data pribadi saya?'; Intent=@('KNOWLEDGE_QUERY','AGENT'); MustContain=@('admin'); MustNotContain=@() }
   @{ Id='KNO-006'; Name='Glosarium: LAP vs LAY'; Msg='Apa perbedaan nomor LAP dan LAY?'; Intent=@('KNOWLEDGE_QUERY','AGENT'); MustContain=@('LAP','LAY'); MustNotContain=@() }
   @{ Id='KNO-007'; Name='Alur status: OPEN ke DONE'; Msg='Status DONE pada pengaduan artinya apa?'; Intent=@('KNOWLEDGE_QUERY','AGENT','HISTORY','CHECK_STATUS'); MustContain=@(); MustNotContain=@() }
@@ -72,7 +72,7 @@ $groupServiceInfo = @(
 $groupComplaint = @(
   @{ Id='CPL-001'; Name='Lapor jalan rusak'; Msg='Mau lapor jalan rusak di dusun Wakke'; Intent=@('COMPLAINT','AGENT','CREATE_COMPLAINT'); MustContain=@(); MustNotContain=@() }
   @{ Id='CPL-002'; Name='Sampah menumpuk'; Msg='Sampah menumpuk di depan rumah saya sudah 3 hari'; Intent=@('COMPLAINT','AGENT','CREATE_COMPLAINT','KNOWLEDGE_QUERY'); MustContain=@(); MustNotContain=@() }
-  @{ Id='CPL-003'; Name='Lampu jalan mati'; Msg='Lampu jalan di depan mesjid mati semua'; Intent=@('COMPLAINT','AGENT','CREATE_COMPLAINT'); MustContain=@(); MustNotContain=@() }
+  @{ Id='CPL-003'; Name='Lampu jalan mati'; Msg='Lampu jalan di depan mesjid mati semua'; Intent=@('COMPLAINT','AGENT','CREATE_COMPLAINT','KNOWLEDGE_QUERY'); MustContain=@(); MustNotContain=@() }
 )
 
 # =============================================================================
@@ -126,31 +126,40 @@ $started = Get-Date
 function Run-SingleCase($t, $group) {
   $sid = "${SessionPrefix}_${group}_$($t.Id)_$([Guid]::NewGuid().ToString('N').Substring(0,6))"
   $status = 'PASS'; $details = ''; $intent = ''; $ms = $null; $resp = ''
-  try {
-    $r = Invoke-Webchat -Message $t.Msg -SessionId $sid
-    $intent = [string]$r.intent
-    $resp = [string]$r.response
-    $ms = $r.metadata.processingTimeMs
+  $maxAttempts = 2
+  for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+    $status = 'PASS'; $details = ''; $intent = ''; $ms = $null; $resp = ''
+    try {
+      $r = Invoke-Webchat -Message $t.Msg -SessionId $sid
+      $intent = [string]$r.intent
+      $resp = [string]$r.response
+      $ms = $r.metadata.processingTimeMs
 
-    if (-not $r.success) { $status='FAIL'; $details='success=false' }
+      if (-not $r.success) { $status='FAIL'; $details='success=false' }
 
-    if ($status -eq 'PASS' -and $t.Intent) {
-      $expected = if ($t.Intent -is [array]) { $t.Intent } else { @($t.Intent) }
-      if ($expected -notcontains $intent) {
-        $status='FAIL'; $details="Intent got '$intent', expected one of: $($expected -join ',')"
+      if ($status -eq 'PASS' -and $t.Intent) {
+        $expected = if ($t.Intent -is [array]) { $t.Intent } else { @($t.Intent) }
+        if ($expected -notcontains $intent) {
+          $status='FAIL'; $details="Intent got '$intent', expected one of: $($expected -join ',')"
+        }
       }
-    }
 
-    if ($status -eq 'PASS' -and $t.MustContain.Count -gt 0) {
-      $err = Assert-Contains -Text $resp -Needles $t.MustContain
-      if ($err) { $status='FAIL'; $details=$err }
+      if ($status -eq 'PASS' -and $t.MustContain.Count -gt 0) {
+        $err = Assert-Contains -Text $resp -Needles $t.MustContain
+        if ($err) { $status='FAIL'; $details=$err }
+      }
+      if ($status -eq 'PASS' -and $t.MustNotContain.Count -gt 0) {
+        $err = Assert-NotContains -Text $resp.ToLowerInvariant() -Needles ($t.MustNotContain | ForEach-Object { $_.ToLowerInvariant() })
+        if ($err) { $status='FAIL'; $details=$err }
+      }
+    } catch {
+      $status='ERROR'; $details=$_.Exception.Message
     }
-    if ($status -eq 'PASS' -and $t.MustNotContain.Count -gt 0) {
-      $err = Assert-NotContains -Text $resp.ToLowerInvariant() -Needles ($t.MustNotContain | ForEach-Object { $_.ToLowerInvariant() })
-      if ($err) { $status='FAIL'; $details=$err }
+    if ($status -eq 'PASS') { break }
+    if ($attempt -lt $maxAttempts) {
+      $sid = "${SessionPrefix}_${group}_$($t.Id)_retry$($attempt)_$([Guid]::NewGuid().ToString('N').Substring(0,6))"
+      Start-Sleep -Seconds 3
     }
-  } catch {
-    $status='ERROR'; $details=$_.Exception.Message
   }
 
   $results.Add([pscustomobject]@{

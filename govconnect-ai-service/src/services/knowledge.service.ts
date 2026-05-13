@@ -183,7 +183,7 @@ export async function searchDocuments(
 
     const ragContext = await retrieveContext(query, {
       topK: 5,
-      minScore: 0.55,
+      minScore: 0.45,
       categories: categories && categories.length > 0 ? categories : undefined,
       villageId,
       waUserId: searchContext.waUserId,
@@ -655,7 +655,24 @@ function formatProfileAsContext(profile: VillageProfileSummary): string {
   if (profile.address) dataFields.push(`Alamat: ${profile.address}`);
   if (profile.gmaps_url) dataFields.push(`Google Maps: ${profile.gmaps_url}`);
   if (profile.operating_hours) {
-    dataFields.push(`Jam Operasional: ${typeof profile.operating_hours === 'string' ? profile.operating_hours : JSON.stringify(profile.operating_hours)}`);
+    const hours = profile.operating_hours;
+    if (typeof hours === 'string') {
+      dataFields.push(`Jam Operasional: ${hours}`);
+    } else if (typeof hours === 'object') {
+      const DAY_LABELS: Record<string, string> = {
+        senin: 'Senin', selasa: 'Selasa', rabu: 'Rabu', kamis: 'Kamis',
+        jumat: 'Jumat', sabtu: 'Sabtu', minggu: 'Minggu',
+      };
+      const ORDER = ['senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'minggu'];
+      const lines = ORDER
+        .filter((day) => (hours as any)[day])
+        .map((day) => {
+          const h = (hours as any)[day];
+          if (!h?.open && !h?.close) return `  ${DAY_LABELS[day] || day}: Tutup`;
+          return `  ${DAY_LABELS[day] || day}: ${h.open || '?'} - ${h.close || '?'}`;
+        });
+      dataFields.push(`Jam Operasional:\n${lines.join('\n')}`);
+    }
   }
   
   // If no meaningful data, don't generate DB context block

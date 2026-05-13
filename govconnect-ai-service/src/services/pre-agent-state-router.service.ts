@@ -40,6 +40,7 @@ import {
   getPendingServiceFormOfferWithFallback,
   setActiveServiceInfo,
   setPendingAddressRequest,
+  setPendingCancelConfirmation,
   setPendingComplaintData,
   setPendingEmergencyComplaintOffer,
   setPendingServiceClarification,
@@ -185,14 +186,14 @@ function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncer
 // Audit (2026-05-10): previously a bare "polisi" or "banjir" was enough to
 // route to emergency/complaint; this misrouted asks like "nomor polsek",
 // "program edukasi sampah", or "nomor KTP hilang".
-const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|jalan berlubang|lampu mati|sampah menumpuk|sampah berserakan|drainase|selokan mampet|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|kecelaka+an|kebakaran|orang pingsan|ledakan)\b/i;
+const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|jalan berlubang|lampu mati|sampah menumpuk|sampah berserakan|drainase|selokan mampet|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|amblas|kecelaka+an|kebakaran|orang pingsan|ledakan)\b/i;
 const COMPLAINT_INFO_QUERY_PATTERN = /\b(pengaduan|keluhan|laporan)\b/i;
 const COMPLAINT_INFO_HINT_PATTERN = /\b(apa|bagaimana|gimana|jelaskan|contoh|format|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i;
 const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengantar)\b/i;
 const EMERGENCY_KEYWORDS = /\b(kebakaran|damkar|pemadam|ambulans|ambulan|orang sakit keras|kecelakaan|pencurian|darurat|bencana|longsor|gempa|tsunami|evakuasi|ledakan)\b/i;
 
 /** Active-event signal: user is *reporting* something happening now. */
-const ACTIVE_EVENT_SIGNAL = /\b(tolong|segera|help|help\s*me|bantu|bantuin|terjadi|sedang\s+terjadi|barusan|baru\s+saja|lagi|ada\s+(?:yang|yg)|di\s*sini\s+ada|telah\s+terjadi|baru\s+terjadi|kejadian|ya\s*allah|ya\s*tuhan|astaga|gawat|bahaya)\b/i;
+const ACTIVE_EVENT_SIGNAL = /\b(tolong|segera|help|help\s*me|bantu|bantuin|terjadi|sedang\s+terjadi|barusan|baru\s+saja|lagi|ada\s+(?:yang|yg)|di\s*sini\s+ada|telah\s+terjadi|baru\s+terjadi|kejadian|ya\s*allah|ya\s*tuhan|astaga|gawat|bahaya|amblas)\b/i;
 
 /** Explicit "I want to report" — this alone is enough to enter complaint flow. */
 const EXPLICIT_REPORT_PATTERN = /\b(ingin lapor|mau lapor|saya lapor|saya mau lapor|buat laporan|buat pengaduan|laporkan|aduan)\b/i;
@@ -736,6 +737,8 @@ const SERVICE_LISTING_SHORT_PATTERN = /^\s*(apa\s+(aja|saja)\s+(layanan|pelayana
 export function isServiceListingQuery(message: string): boolean {
   const normalized = (message || '').toLowerCase().trim();
   if (!normalized) return false;
+  // Exclude file/format/upload queries — these are knowledge queries, not service listings
+  if (/\b(file|format|upload|dokumen\s+apa|berkas|ekstensi|pdf|jpg|png)\b/i.test(normalized)) return false;
   if (SERVICE_LISTING_SHORT_PATTERN.test(normalized)) return true;
   if (SERVICE_LISTING_PATTERN.test(normalized) && !/\b(ktp|kk|akta|domisili|sktm|pindah|kematian|kelahiran|nikah)\b/i.test(normalized)) {
     return true;
@@ -1239,8 +1242,65 @@ export async function tryHandlePendingOffers(
     runWithMicroBudget,
   } = input;
 
+  const pendingCancel = await getPendingCancelConfirmationWithFallback(userId);
   const pendingOffer = await getPendingServiceFormOfferWithFallback(userId);
+
+  if (!pendingCancel && detectExplicitConfirmationReply(message) === 'yes' && channel === 'whatsapp' && pendingOffer) {
+    const history = await fetchConversationHistoryFromChannel(userId, villageId, true);
+    const recentCancelMessage = history
+      .filter((item) => item.role === 'user')
+      .map((item) => item.content || '')
+      .reverse()
+      .find((content) => /\b(batal|batalkan|cancel)\b/i.test(content) && /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(content));
+
+    const recentCode = recentCancelMessage?.match(/\b(LAP|LAY)-\d{8}-\d{3}\b/i)?.[0]?.toUpperCase();
+    if (recentCode) {
+      const recoveredCancel = {
+        type: recentCode.startsWith('LAP-') ? 'laporan' as const : 'layanan' as const,
+        id: recentCode,
+        reason: undefined,
+        timestamp: Date.now(),
+      };
+      setPendingCancelConfirmation(userId, recoveredCancel);
+
+      if (recoveredCancel.type === 'laporan') {
+        const result = await cancelComplaint(
+          recoveredCancel.id,
+          buildChannelParams(channel, userId),
+          recoveredCancel.reason,
+        );
+        clearPendingCancelConfirmation(userId);
+        return buildGuardResult({
+          startTime,
+          traceId,
+          response: result.success
+            ? buildCancelSuccessResponse('laporan', recoveredCancel.id, result.message)
+            : buildCancelErrorResponse('laporan', recoveredCancel.id, result.error, result.message),
+          intent: 'CANCEL_COMPLAINT',
+        });
+      }
+
+      const serviceResult = await cancelServiceRequest(
+        recoveredCancel.id,
+        buildChannelParams(channel, userId),
+        recoveredCancel.reason,
+      );
+      clearPendingCancelConfirmation(userId);
+      return buildGuardResult({
+        startTime,
+        traceId,
+        response: serviceResult.success
+          ? buildCancelSuccessResponse('layanan', recoveredCancel.id, serviceResult.message)
+          : buildCancelErrorResponse('layanan', recoveredCancel.id, serviceResult.error, serviceResult.message),
+        intent: 'CANCEL_SERVICE_REQUEST',
+      });
+    }
+  }
+
   if (pendingOffer) {
+    if (pendingCancel) {
+      return null;
+    }
     const hasLapLayCode = /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(message);
     // Escape hatch: if the user clearly switched topic to a contact lookup or
     // a complaint incident, release the pending service form offer instead of
@@ -1447,6 +1507,54 @@ export async function tryHandleLatePreAgentState(
 
   const lapMatch = message.match(/\b(LAP[-\s]?\d{8}[-\s]?\d{3})\b/i);
   const layMatch = message.match(/\b(LAY[-\s]?\d{8}[-\s]?\d{3})\b/i);
+  // Extract the latest user turn from a potentially batched/timestamped message
+  const latestTurn = message.split(/\n/).pop()?.trim().replace(/^\[\d{2}[.:]\d{2}[.:]\d{2}\]\s*/, '').trim() || message.trim();
+
+  // Early cancel-confirmation shortcut: if user sends bare YA on WA and there's
+  // a recent cancel request in history, execute the cancellation immediately
+  // before any other routing can intercept it.
+  if (channel === 'whatsapp' && !lapMatch && !layMatch && detectExplicitConfirmationReply(latestTurn) === 'yes') {
+    const history = await fetchConversationHistoryFromChannel(userId, villageId, true);
+    const recentAssistantCancel = history
+      .filter((item) => item.role === 'assistant')
+      .map((item) => item.content || '')
+      .reverse()
+      .find((content) => /yakin ingin membatalkan/i.test(content) && /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(content));
+    const recentUserCancel = history
+      .filter((item) => item.role === 'user')
+      .map((item) => item.content || '')
+      .reverse()
+      .find((content) => /\b(batal|batalkan|cancel)\b/i.test(content) && /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(content));
+    const recentCode = (recentAssistantCancel || recentUserCancel)?.match(/\b(LAP|LAY)-\d{8}-\d{3}\b/i)?.[0]?.toUpperCase();
+
+    if (recentCode) {
+      clearPendingCancelConfirmation(userId);
+      tracker.preparing();
+      notifyStage('preparing', 80);
+
+      if (recentCode.startsWith('LAP-')) {
+        const result = await cancelComplaint(recentCode, buildChannelParams(channel, userId), undefined);
+        tracker.complete();
+        return buildGuardResult({
+          startTime, traceId,
+          response: result.success
+            ? buildCancelSuccessResponse('laporan', recentCode, result.message)
+            : buildCancelErrorResponse('laporan', recentCode, result.error, result.message),
+          intent: 'CANCEL_COMPLAINT',
+        });
+      }
+
+      const serviceResult = await cancelServiceRequest(recentCode, buildChannelParams(channel, userId), undefined);
+      tracker.complete();
+      return buildGuardResult({
+        startTime, traceId,
+        response: serviceResult.success
+          ? buildCancelSuccessResponse('layanan', recentCode, serviceResult.message)
+          : buildCancelErrorResponse('layanan', recentCode, serviceResult.error, serviceResult.message),
+        intent: 'CANCEL_SERVICE_REQUEST',
+      });
+    }
+  }
 
   if (
     (lapMatch || layMatch)
@@ -1903,20 +2011,22 @@ export async function tryHandleLatePreAgentState(
 
   let pendingCancel = await getPendingCancelConfirmationWithFallback(userId);
   if (!pendingCancel && detectExplicitConfirmationReply(message) === 'yes' && channel === 'whatsapp') {
-    const history = await fetchConversationHistoryFromChannel(userId, villageId);
-    const recentAssistant = history
-      .filter((item) => item.role === 'assistant')
+    const history = await fetchConversationHistoryFromChannel(userId, villageId, true);
+    const recentUserCancel = history
+      .filter((item) => item.role === 'user')
       .map((item) => item.content || '')
       .reverse()
-      .find((content) => /yakin ingin membatalkan/i.test(content) && /balas\s+ya\s+untuk\s+konfirmasi/i.test(content));
-    const recentCode = recentAssistant?.match(/\b(LAP|LAY)-\d{8}-\d{3}\b/i)?.[0]?.toUpperCase();
-    if (recentCode) {
+      .find((content) => /\b(batal|batalkan|cancel)\b/i.test(content) && /\b(LAP|LAY)-\d{8}-\d{3}\b/i.test(content));
+    const recentUserCode = recentUserCancel?.match(/\b(LAP|LAY)-\d{8}-\d{3}\b/i)?.[0]?.toUpperCase();
+
+    if (recentUserCode) {
       pendingCancel = {
-        type: recentCode.startsWith('LAP-') ? 'laporan' as const : 'layanan' as const,
-        id: recentCode,
+        type: recentUserCode.startsWith('LAP-') ? 'laporan' as const : 'layanan' as const,
+        id: recentUserCode,
         reason: undefined,
         timestamp: Date.now(),
       };
+      setPendingCancelConfirmation(userId, pendingCancel);
     }
   }
   if (!pendingCancel && /\bya\b/i.test(message) && channel === 'whatsapp') {
@@ -1932,16 +2042,24 @@ export async function tryHandleLatePreAgentState(
   }
   if (pendingCancel) {
     const normalizedMessage = message.trim();
-    const isFreshCancelRequest = /\b(LAP|LAY)-?\d{8}-?\d{3}\b/i.test(normalizedMessage)
-      && /\b(batal|batalkan|cancel)\b/i.test(normalizedMessage);
+    // Strip leading timestamp prefix like "[13.47.09] " that the batcher may prepend
+    const rawLatest = message.split(/\n/).pop()?.trim() || normalizedMessage;
+    const latestUserTurn = rawLatest.replace(/^\[\d{2}[.:]\d{2}[.:]\d{2}\]\s*/, '').trim();
+    const isFreshCancelRequest = /\b(LAP|LAY)-?\d{8}-?\d{3}\b/i.test(latestUserTurn)
+      && /\b(batal|batalkan|cancel)\b/i.test(latestUserTurn);
 
     if (isFreshCancelRequest) {
       clearPendingCancelConfirmation(userId);
     } else {
-    let decision = detectExplicitConfirmationReply(message);
+    let decision = detectExplicitConfirmationReply(latestUserTurn);
+    // For cancel confirmation, skip LLM classifier — it's tuned for service form offers.
+    // If regex is uncertain but message is a short bare affirmative, treat as yes.
+    if (decision === 'uncertain' && /^(ya|iya|y|yes|oke|ok|siap|lanjut|setuju|betul|benar|confirm|konfirmasi)[\s!.]*$/i.test(latestUserTurn.trim())) {
+      decision = 'yes';
+    }
     if (decision === 'uncertain') {
       const cancelResult = await runWithMicroBudget(
-        () => classifyConfirmation(message.trim(), {
+        () => classifyConfirmation(latestUserTurn, {
           village_id: villageId,
           wa_user_id: userId,
           session_id: userId,
@@ -1951,7 +2069,6 @@ export async function tryHandleLatePreAgentState(
       );
       decision = toConfirmationDecision(cancelResult);
     }
-
     if (decision === 'yes') {
       clearPendingCancelConfirmation(userId);
       if (pendingCancel.type === 'laporan') {

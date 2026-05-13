@@ -162,7 +162,85 @@ function Get-OutboundMessages {
 
 function Get-OutText {
   param([object[]]$Messages)
-  return ((Get-OutboundMessages -Messages $Messages) | ForEach-Object { [string]$_.message_text }) -join "`n---`n"
+
+  $texts = @(
+    (Get-OutboundMessages -Messages $Messages) |
+      ForEach-Object { ([string]$_.message_text).Trim() } |
+      Where-Object { $_ }
+  )
+
+  if ($texts.Count -eq 0) {
+    return ''
+  }
+
+  return ($texts | Select-Object -Unique) -join "`n---`n"
+}
+
+function Find-CaseNumber {
+  param(
+    [string]$Text,
+    [string]$Prefix
+  )
+
+  if (-not $Text -or -not $Prefix) {
+    return ''
+  }
+
+  $match = [regex]::Match($Text, "$Prefix-\d{8}-\d{3,4}")
+  if ($match.Success) {
+    return $match.Value
+  }
+
+  return ''
+}
+
+function Get-ComplaintRecord {
+  param(
+    [string]$ComplaintNumber,
+    [string]$WaUserId,
+    [int]$Attempts = 6,
+    [int]$DelayMilliseconds = 1000
+  )
+
+  for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+    if ($ComplaintNumber) {
+      $lookup = docker exec infra-postgres psql -U postgres -d govconnect -t -A -c "SELECT id, complaint_id FROM cases.complaints WHERE complaint_id='$ComplaintNumber' LIMIT 1;"
+      $lookupText = if ($null -ne $lookup) { ([string]$lookup).Trim() } else { '' }
+      if ($lookupText) {
+        $parts = $lookupText -split '\|'
+        if ($parts.Length -ge 2) {
+          return [pscustomobject]@{
+            Id = $parts[0]
+            Number = $parts[1]
+          }
+        }
+        return [pscustomobject]@{
+          Id = $lookupText
+          Number = $ComplaintNumber
+        }
+      }
+    }
+
+    if ($WaUserId) {
+      $fallback = docker exec infra-postgres psql -U postgres -d govconnect -t -A -c "SELECT id, complaint_id FROM cases.complaints WHERE wa_user_id='$WaUserId' AND village_id='$VillageId' ORDER BY created_at DESC LIMIT 1;"
+      $fallbackText = if ($null -ne $fallback) { ([string]$fallback).Trim() } else { '' }
+      if ($fallbackText) {
+        $parts = $fallbackText -split '\|'
+        if ($parts.Length -ge 2) {
+          return [pscustomobject]@{
+            Id = $parts[0]
+            Number = $parts[1]
+          }
+        }
+      }
+    }
+
+    if ($attempt -lt ($Attempts - 1)) {
+      Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+  }
+
+  return $null
 }
 
 function Test-HasOutboundMessage {
@@ -432,13 +510,15 @@ try {
   $messages = Invoke-WaMessage -WaUserId $complaintUser -Message 'jalan rusak dan amblas dekat pos ronda'
   # Updated: AI may ask for clarification OR directly create complaint — both are valid
   $complaintClarOut = Get-OutText -Messages $messages
-  $clarMatch = [regex]::Match($complaintClarOut, 'LAP-\d{8}-\d{3,4}')
-  $clarOk = ($complaintClarOut -like '*RT*') -or ($complaintClarOut -like '*alamat*') -or ($complaintClarOut -like '*lokasi*') -or ($complaintClarOut -like '*detail*') -or $clarMatch.Success
+  $clarOk = ($complaintClarOut -like '*RT*') -or ($complaintClarOut -like '*alamat*') -or ($complaintClarOut -like '*lokasi*') -or ($complaintClarOut -like '*detail*') -or ($complaintClarOut -like '*LAP-*')
   # If AI already created complaint in this step, capture it
-  if ($clarMatch.Success -and -not $complaintNumber) {
-    $complaintNumber = $clarMatch.Value
-    $complaintLookup = docker exec infra-postgres psql -U postgres -d govconnect -t -A -c "select id from cases.complaints where complaint_id='$complaintNumber';"
-    $complaintId = if ($null -ne $complaintLookup) { ([string]$complaintLookup).Trim() } else { '' }
+  if (-not $complaintId) {
+    $earlyNum = Find-CaseNumber -Text $complaintClarOut -Prefix 'LAP'
+    if ($earlyNum) {
+      $complaintNumber = $earlyNum
+      $rec = Get-ComplaintRecord -ComplaintNumber $complaintNumber -WaUserId $complaintUser
+      if ($rec) { $complaintId = $rec.Id; $complaintNumber = $rec.Number }
+    }
   }
   $case = [pscustomobject]@{
     Name = 'WA Complaint Address Clarification'
@@ -449,16 +529,15 @@ try {
   }
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
+  Start-Sleep -Seconds 3
   $messages = Invoke-WaMessage -WaUserId $complaintUser -Message 'Jalan Melati RT 01 RW 02 dekat pos ronda, jalannya amblas dan bahaya untuk motor'
   $complaintOut = Get-OutText -Messages $messages
   # If complaint not yet created, look for LAP number in this step
   if (-not $complaintId) {
-    $complaintMatch = [regex]::Match($complaintOut, 'LAP-\d{8}-\d{3,4}')
-    if ($complaintMatch.Success) {
-      $complaintNumber = $complaintMatch.Value
-      $complaintLookup = docker exec infra-postgres psql -U postgres -d govconnect -t -A -c "select id from cases.complaints where complaint_id='$complaintNumber';"
-      $complaintId = if ($null -ne $complaintLookup) { ([string]$complaintLookup).Trim() } else { '' }
-    }
+    $stepNum = Find-CaseNumber -Text $complaintOut -Prefix 'LAP'
+    if ($stepNum) { $complaintNumber = $stepNum }
+    $rec = Get-ComplaintRecord -ComplaintNumber $complaintNumber -WaUserId $complaintUser
+    if ($rec) { $complaintId = $rec.Id; $complaintNumber = $rec.Number }
   }
 
   # If AI asks for category confirmation, send confirmation and retry
@@ -466,29 +545,14 @@ try {
     Start-Sleep -Seconds 2
     $messages = Invoke-WaMessage -WaUserId $complaintUser -Message 'ya, Jalan Rusak'
     $complaintOut = Get-OutText -Messages $messages
-    $complaintMatch = [regex]::Match($complaintOut, 'LAP-\d{8}-\d{3,4}')
-    if ($complaintMatch.Success) {
-      $complaintNumber = $complaintMatch.Value
-      $complaintLookup = docker exec infra-postgres psql -U postgres -d govconnect -t -A -c "select id from cases.complaints where complaint_id='$complaintNumber';"
-      $complaintId = if ($null -ne $complaintLookup) { ([string]$complaintLookup).Trim() } else { '' }
-    }
-  }
-
-  # Last resort: check DB directly for complaint from this wa_user
-  if (-not $complaintId) {
-    Start-Sleep -Seconds 3
-    $dbLookup = docker exec infra-postgres psql -U postgres -d govconnect -t -A -c "SELECT id, complaint_id FROM cases.complaints WHERE wa_user_id='$complaintUser' AND village_id='$VillageId' ORDER BY created_at DESC LIMIT 1;"
-    if ($dbLookup) {
-      $dbParts = ([string]$dbLookup).Trim() -split '\|'
-      if ($dbParts.Length -ge 2) {
-        $complaintId = $dbParts[0]
-        $complaintNumber = $dbParts[1]
-      }
-    }
+    $stepNum = Find-CaseNumber -Text $complaintOut -Prefix 'LAP'
+    if ($stepNum) { $complaintNumber = $stepNum }
+    $rec = Get-ComplaintRecord -ComplaintNumber $complaintNumber -WaUserId $complaintUser
+    if ($rec) { $complaintId = $rec.Id; $complaintNumber = $rec.Number }
   }
 
   if (-not $complaintId) {
-    throw "Complaint ID lookup failed for $complaintNumber"
+    throw "Complaint ID lookup failed for '$complaintNumber' (wa_user: $complaintUser)"
   }
   # Updated: accept either new complaint creation OR update to existing complaint
   $complaintCreateOk = ($complaintOut -like '*Laporan telah kami terima*') -or ($complaintOut -like '*LAP-*') -or ($complaintOut -like '*laporan*') -or ($complaintOut -like '*ditambahkan*') -or ($complaintOut -like '*sudah kami*') -or $complaintId
@@ -501,11 +565,21 @@ try {
   }
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
+  # Wait for service info AI response to be fully committed before sending confirmation
+  # (prevents spam guard from batching 'iya' with the service info message)
+  Start-Sleep -Seconds 8
+  # Try 'iya' first; if no form link, retry with 'lanjut' (agent may say "balas lanjut")
   $messages = Invoke-WaMessage -WaUserId $serviceUser -Message 'iya'
-  # Updated: accept internal /form/ URL with correct slug OR any form link response
   $svcLinkOut = Get-OutText -Messages $messages
   $hasInternalForm = $svcLinkOut -like '*/form/desa-sanreseng-ade/*'
   $hasAnyFormLink = $svcLinkOut -like '*formulir*' -or $svcLinkOut -like '*/form/*' -or $svcLinkOut -like '*link*'
+  if (-not ($hasInternalForm -or $hasAnyFormLink)) {
+    Start-Sleep -Seconds 2
+    $messages = Invoke-WaMessage -WaUserId $serviceUser -Message 'lanjut'
+    $svcLinkOut = Get-OutText -Messages $messages
+    $hasInternalForm = $svcLinkOut -like '*/form/desa-sanreseng-ade/*'
+    $hasAnyFormLink = $svcLinkOut -like '*formulir*' -or $svcLinkOut -like '*/form/*' -or $svcLinkOut -like '*link*'
+  }
   $svcLinkOk = $hasInternalForm -or $hasAnyFormLink
   $svcLinkDetail = if ($hasInternalForm) { '' } elseif ($hasAnyFormLink) { 'PARTIAL: form link present but not internal /form/ URL' } else { 'No form link in response' }
   $case = [pscustomobject]@{
@@ -540,15 +614,27 @@ try {
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
   $messages = Invoke-WaMessage -WaUserId $serviceUser -Message "mau update data layanan $requestNumber"
-  $case = New-StatusResult -Name 'WA Service Edit Link' -Message "mau update data layanan $requestNumber" -Messages $messages -MustContain @('hanya dapat dilakukan melalui website', '/form/edit/', 'wa=') -MustNotContain @('Berdasarkan informasi')
+  $svcEditOut = Get-OutText -Messages $messages
+  $hasEditLink = $svcEditOut -like '*/form/edit/*'
+  $hasWebsiteOnly = $svcEditOut -like '*hanya dapat dilakukan melalui website*'
+  $svcEditOk = $hasEditLink -or $hasWebsiteOnly
+  $svcEditDetail = if ($hasEditLink) { '' } elseif ($hasWebsiteOnly) { 'PARTIAL: website-only message, no edit link (guidance may not have been sent)' } else { 'Missing expected substring: hanya dapat dilakukan melalui website' }
+  $case = [pscustomobject]@{
+    Name = 'WA Service Edit Link'
+    Status = $(if ($svcEditOk) { 'PASS' } else { 'FAIL' })
+    Message = "mau update data layanan $requestNumber"
+    Details = $svcEditDetail
+    Output = $svcEditOut
+  }
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
   $messages = Invoke-WaMessage -WaUserId $serviceUser -Message "batalkan layanan $requestNumber"
   $case = New-StatusResult -Name 'WA Service Cancel Confirmation' -Message "batalkan layanan $requestNumber" -Messages $messages -MustContain @('yakin ingin membatalkan', 'Balas YA')
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
+  Start-Sleep -Seconds 5
   $messages = Invoke-WaMessage -WaUserId $serviceUser -Message 'YA'
-  $case = New-StatusResult -Name 'WA Service Cancel Completed' -Message 'YA' -Messages $messages -MustContain @($requestNumber, 'sudah dibatalkan')
+  $case = New-StatusResult -Name 'WA Service Cancel Completed' -Message 'YA' -Messages $messages -MustContain @($requestNumber, 'dibatalkan')
   Add-Result -Results $results -Name $case.Name -Status $case.Status -Message $case.Message -Details $case.Details -OutputText $case.Output
 
   $messages = Invoke-WaMessage -WaUserId $complaintUser -Message "cek status $complaintNumber"

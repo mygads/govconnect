@@ -1480,7 +1480,7 @@ async function selectAllowedTools(
     && !isServiceEditRequest
     && !isComplaintUpdateRequest
     && !isComplaintActionQuestion
-    && /\b(govconnect|kanal|whatsapp|webchat|5w1h|embedding|kebijakan data|penggunaan data|keamanan data|privasi|notifikasi|tahap layanan|layanan umum|pelayanan publik|alur layanan|format file|file terlalu besar|penamaan file|update data|memperbarui data|salah pilih layanan|nomor layanan|lay-)\b/i.test(normalized);
+    && /\b(govconnect|kanal|whatsapp|webchat|5w1h|embedding|kebijakan data|penggunaan data|keamanan data|privasi|notifikasi|tahap layanan|layanan umum|pelayanan publik|alur layanan|format file|file terlalu besar|penamaan file|update data|memperbarui data|salah pilih layanan|nomor layanan|lay-|upload dokumen|berkas digital|jenis file|tipe file|ekstensi file|format berkas|diterima untuk upload|file.*diterima|diterima.*upload)\b/i.test(normalized);
 
   if (isMyHistoryRequest) {
     add('get_my_history', 'search_user_memory');

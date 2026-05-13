@@ -116,6 +116,18 @@ export function persistState(waUserId: string, sessionKey: string, data: unknown
   scheduleStatePersist(key);
 }
 
+export function persistStateImmediate(waUserId: string, sessionKey: string, data: unknown): void {
+  const key = buildPersistKey(waUserId, sessionKey);
+  pendingStateWrites.set(key, {
+    waUserId,
+    sessionKey,
+    data,
+    expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+    sequence: ++nextPendingStateSequence,
+  });
+  void flushPendingState(key);
+}
+
 export async function loadState<T>(waUserId: string, sessionKey: string): Promise<T | null> {
   const key = buildPersistKey(waUserId, sessionKey);
   const pending = pendingStateWrites.get(key);

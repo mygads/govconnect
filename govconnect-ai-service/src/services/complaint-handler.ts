@@ -29,6 +29,7 @@ import {
 import {
   addPendingPhoto,
   clearPendingAddressConfirmation,
+  clearPendingServiceFormOffer,
   consumePendingPhotos,
   getPendingPhotoCount,
   MAX_PHOTOS_PER_COMPLAINT,
@@ -433,6 +434,7 @@ export async function handleCancellationRequest(
     reason: cancel_reason,
     timestamp: Date.now(),
   });
+  clearPendingServiceFormOffer(userId);
 
   const label = type === 'laporan' ? 'laporan' : 'layanan';
   return `Apakah Bapak/Ibu yakin ingin membatalkan ${label} ${targetId}?\nBalas YA untuk konfirmasi.`;

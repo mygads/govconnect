@@ -199,6 +199,15 @@ const OBVIOUS_SKIP_PATTERNS = [
   /^(terima\s*kasih|makasih|thanks?)\s*[.!?]*$/i,
 ];
 
+// Queries that always need RAG — override micro-LLM skip decision.
+const OBVIOUS_REQUIRE_PATTERNS = [
+  /\b(checklist|sop|panduan|prosedur|alur|syarat|persyaratan|ketentuan)\b/i,
+  /\b(perlu\s+disertakan|harus\s+disertakan|apa\s+saja\s+yang\s+perlu|apa\s+yang\s+perlu)\b/i,
+  /\b(perbedaan|bedanya|apa\s+itu|artinya|maksudnya|definisi|glosarium)\b/i,
+  /\b(kebijakan\s+data|keamanan\s+data|privasi|data\s+pribadi)\b/i,
+  /\b(jam\s+kerja|jam\s+buka|alamat\s+kantor|kontak\s+desa|nomor\s+telepon\s+desa)\b/i,
+];
+
 // Spam/malicious content patterns - skip processing entirely.
 // URLs are intentionally NOT in this list: villagers often paste official
 // portal links (e.g., "dukcapil.go.id/...") or ask about a link the admin
@@ -273,6 +282,13 @@ async function classifyQueryIntent(
   for (const pattern of OBVIOUS_SKIP_PATTERNS) {
     if (pattern.test(normalizedQuery)) {
       return { intent: 'skip' };
+    }
+  }
+
+  // Fast pre-filter: force RAG for knowledge-seeking queries
+  for (const pattern of OBVIOUS_REQUIRE_PATTERNS) {
+    if (pattern.test(normalizedQuery)) {
+      return { intent: 'required' };
     }
   }
 
