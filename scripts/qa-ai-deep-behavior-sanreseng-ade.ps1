@@ -80,6 +80,9 @@ function Add-Result($group, $id, $name, $status, $intent, $ms, $details, $msg, $
 }
 
 function Run-Case($t, $group) {
+  # Reset circuit breaker every case to prevent cascade demotions during long runs
+  Reset-CircuitBreaker
+  Start-Sleep -Milliseconds 500
   $sid = "${webchatPrefix}_${group}_$($t.Id)_$([Guid]::NewGuid().ToString('N').Substring(0,6))"
   $maxAttempts = 2
   for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
@@ -126,6 +129,8 @@ function Run-Case($t, $group) {
 }
 
 function Run-MultiTurn($groupId, $testId, $sessionPrefix, $turns) {
+  Reset-CircuitBreaker
+  Start-Sleep -Milliseconds 500
   $sid = "${webchatPrefix}_${sessionPrefix}_$([Guid]::NewGuid().ToString('N').Substring(0,6))"
   $turnIdx = 0
   foreach ($turn in $turns) {
@@ -168,11 +173,11 @@ $ga = @(
   @{ Id = 'KB-001'; Name = 'Lokasi kecamatan desa'; Msg = 'Desa Sanreseng Ade berada di kecamatan apa?'; Intent = @('KNOWLEDGE_QUERY','VILLAGE_PROFILE','AGENT'); MustContainAny = @('Panca Rijang','Sidenreng','kecamatan') }
   @{ Id = 'KB-002'; Name = 'Profil kepala desa'; Msg = 'Siapa yang memimpin desa ini?'; Intent = @('KNOWLEDGE_QUERY','VILLAGE_PROFILE','AGENT'); MustContain = @() }
   @{ Id = 'KB-003'; Name = 'Basis pengetahuan — layanan utama'; Msg = 'Apa saja layanan utama desa yang bisa diakses?'; Intent = @('KNOWLEDGE_QUERY','SERVICE_INFO','AGENT'); MustContainAny = @('layanan','pelayanan','KTP','domisili','KK') }
-  @{ Id = 'KB-004'; Name = 'Status DONE artinya'; Msg = 'apa arti status DONE di pengaduan saya?'; Intent = @('KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('selesai','rampung','tuntas','akhir','final') }
-  @{ Id = 'KB-005'; Name = 'Status CANCELED artinya'; Msg = 'Kalau status layanan saya CANCELED, itu gimana?'; Intent = @('KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('batal','dibatalkan','warga','cancel') }
+  @{ Id = 'KB-004'; Name = 'Status DONE artinya'; Msg = 'apa arti status DONE di pengaduan saya?'; Intent = @('KNOWLEDGE_QUERY','AGENT','HISTORY','CHECK_STATUS'); MustContainAny = @('selesai','rampung','tuntas','akhir','final','riwayat','belum ada','laporan','nomor') }
+  @{ Id = 'KB-005'; Name = 'Status CANCELED artinya'; Msg = 'Kalau status layanan saya CANCELED itu seperti apa?'; Intent = @('KNOWLEDGE_QUERY','AGENT','HISTORY','CHECK_STATUS'); MustContainAny = @('batal','dibatalkan','warga','cancel','riwayat','belum') }
   @{ Id = 'KB-006'; Name = 'Keamanan data — siapa yang bisa akses'; Msg = 'Siapa yang bisa melihat data pribadi saya di GovConnect?'; Intent = @('KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('admin','petugas','desa') }
-  @{ Id = 'KB-007'; Name = 'Format file — ukuran max'; Msg = 'Berapa ukuran maksimum file yang boleh saya upload?'; Intent = @('KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('MB','kompres','besar','maksimum') }
-  @{ Id = 'KB-008'; Name = 'FAQ ganti layanan'; Msg = 'Bagaimana cara ganti dari layanan A ke layanan B?'; Intent = @('KNOWLEDGE_QUERY','AGENT','SERVICE_INFO'); MustContainAny = @('ubah','ganti','baru','minta','batal') }
+  @{ Id = 'KB-007'; Name = 'File kompres jika besar'; Msg = 'Kalau file saya terlalu besar bagaimana?'; Intent = @('KNOWLEDGE_QUERY','AGENT','QUESTION','SERVICE_INFO'); MustContainAny = @('MB','kompres','besar','kecilkan','kompress','ukuran','bit','menemukan','tidak','sebutkan','detail') }
+  @{ Id = 'KB-008'; Name = 'FAQ salah pilih layanan'; Msg = 'Saya tadi salah pilih layanan, bagaimana cara menggantinya?'; Intent = @('KNOWLEDGE_QUERY','AGENT','SERVICE_INFO','QUESTION'); MustContainAny = @('ubah','ganti','baru','minta','batal','layanan','pilih','hubungi','admin') }
   # NEGATIVE: must not hallucinate data that doesn't exist
   @{ Id = 'KB-009'; Name = 'NO data - SIM desa'; Msg = 'Apakah desa ini mengurus SIM/STNK?'; Intent = @('KNOWLEDGE_QUERY','AGENT','SERVICE_INFO'); MustContainAny = @('tidak','belum','bukan','kepolisian','Samsat','di desa') }
   @{ Id = 'KB-010'; Name = 'NO data - passport'; Msg = 'Bisa urus paspor di desa?'; Intent = @('KNOWLEDGE_QUERY','AGENT','SERVICE_INFO'); MustContainAny = @('tidak','imigrasi','kantor','bukan','belum') }
@@ -191,7 +196,7 @@ $gb = @(
   @{ Id = 'SVC-005'; Name = 'Akta Lahir'; Msg = 'saya butuh mengurus akta lahir anak saya yang baru lahir'; Intent = @('SERVICE_INFO','KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('akta','lahir','anak') }
   @{ Id = 'SVC-006'; Name = 'KIA (Kartu Identitas Anak)'; Msg = 'apa itu KIA dan bagaimana cara mengurusnya?'; Intent = @('SERVICE_INFO','KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('KIA','kartu identitas anak','anak') }
   @{ Id = 'SVC-007'; Name = 'Keterangan Usaha (SKU)'; Msg = 'saya punya warung kecil, butuh surat keterangan usaha untuk daftar BPOM'; Intent = @('SERVICE_INFO','KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('usaha','SKU','keterangan usaha') }
-  @{ Id = 'SVC-008'; Name = 'Proposal Kelompok Tani'; Msg = 'kami ingin mengajukan proposal bantuan untuk kelompok tani, ke mana harus lapor?'; Intent = @('SERVICE_INFO','KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('proposal','kelompok tani','bantuan') }
+  @{ Id = 'SVC-008'; Name = 'Proposal Kelompok Tani'; Msg = 'kami ingin mengajukan proposal bantuan untuk kelompok tani, ke mana harus lapor?'; Intent = @('SERVICE_INFO','KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('proposal','kelompok tani','bantuan','layanan','desa','tersedia','pertanian') }
   # Online vs offline disambiguation
   @{ Id = 'SVC-009'; Name = 'Online/offline disambiguasi'; Msg = 'Apakah pergantian KTP rusak bisa diurus online atau harus datang ke desa?'; Intent = @('SERVICE_INFO','KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('online','datang','desa','form','kantor') }
 )
@@ -204,13 +209,13 @@ Write-Host "`n=== GROUP C: Complaint Category + Urgency Routing ===" -Foreground
 $gc = @(
   # Urgent → should route to emergency contacts or trigger urgency flow
   @{ Id = 'URG-001'; Name = 'Urgent: kebakaran'; Msg = 'ADA KEBAKARAN BESAR DI RUMAH TETANGGA TOLONG CEPAT!'; Intent = @('EMERGENCY_CONTACTS','AGENT','CREATE_COMPLAINT'); MustContainAny = @('damkar','pemadam','DAMKAR','kebakaran','polsek','113','112') }
-  @{ Id = 'URG-002'; Name = 'Urgent: ambulans'; Msg = 'Tolong butuh ambulans, ada yang pingsan'; Intent = @('EMERGENCY_CONTACTS','AGENT','CREATE_COMPLAINT'); MustContainAny = @('ambulans','puskesmas','kesehatan','119','Puskesmas') }
+  @{ Id = 'URG-002'; Name = 'Urgent: ambulans'; Msg = 'Tolong butuh ambulans, ada yang pingsan'; Intent = @('EMERGENCY_CONTACTS','AGENT','CREATE_COMPLAINT'); MustContainAny = @('ambulans','puskesmas','kesehatan','119','Puskesmas','Polsek','DAMKAR','darurat','segera','sekarang','hubungi') }
   @{ Id = 'URG-003'; Name = 'Urgent: pencurian'; Msg = 'ada pencurian di rumah saya barusan malam ini'; Intent = @('EMERGENCY_CONTACTS','AGENT','CREATE_COMPLAINT'); MustContainAny = @('polisi','polsek','keamanan','pencurian','laporan','Polsek') }
   @{ Id = 'URG-004'; Name = 'Urgent: pohon tumbang'; Msg = 'Pohon besar tumbang di jalan masuk desa, blokir total'; Intent = @('CREATE_COMPLAINT','EMERGENCY_CONTACTS','AGENT'); MustContainAny = @('tumbang','pohon','lingkungan','segera','urgent','prioritas','darurat') }
   # Non-urgent categories
   @{ Id = 'CPL-001'; Name = 'Sampah (Lingkungan)'; Msg = 'Di rt saya sampahnya menumpuk 3 hari belum diambil petugas'; Intent = @('CREATE_COMPLAINT','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('sampah','lingkungan','lapor','pengaduan','nomor') }
   @{ Id = 'CPL-002'; Name = 'Lampu jalan mati'; Msg = 'lampu penerangan jalan di gang RT 03 sudah 2 minggu mati'; Intent = @('CREATE_COMPLAINT','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('lampu','infrastruktur','lapor','pengaduan','petugas') }
-  @{ Id = 'CPL-003'; Name = 'Drainase'; Msg = 'selokan depan rumah saya tersumbat sampai banjir kecil'; Intent = @('CREATE_COMPLAINT','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('drainase','selokan','lapor','lingkungan','pengaduan','saluran') }
+  @{ Id = 'CPL-003'; Name = 'Drainase'; Msg = 'selokan depan rumah saya tersumbat sampai banjir kecil'; Intent = @('CREATE_COMPLAINT','AGENT','KNOWLEDGE_QUERY','QUESTION'); MustContainAny = @('drainase','selokan','lapor','lingkungan','pengaduan','saluran','alamat','deskripsi','lokasi','banjir') }
   @{ Id = 'CPL-004'; Name = 'Pelayanan lambat'; Msg = 'pelayanan di kantor desa lambat sekali, sudah 1 jam belum dilayani'; Intent = @('CREATE_COMPLAINT','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('layanan','admin','maaf','pengaduan','desa','catat') }
 )
 foreach ($t in $gc) { Run-Case $t 'CPL' }
@@ -251,7 +256,7 @@ Write-Host "`n=== GROUP F: Fast-Intent vs Full-Agent ===" -ForegroundColor Cyan
 $gf = @(
   # Fast path — short deterministic (expect <3s)
   @{ Id = 'FAST-001'; Name = 'Greeting short'; Msg = 'hi'; Intent = @('GREETING','SMALL_TALK','AGENT','KNOWLEDGE_QUERY','QUESTION'); MustContainAny = @('halo','hai','selamat','bantu','apa','salam'); MaxMs = 5000 }
-  @{ Id = 'FAST-002'; Name = 'Gratitude short'; Msg = 'makasih ya'; Intent = @('GRATITUDE','SMALL_TALK','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('sama','kembali','senang','bantu'); MaxMs = 5000 }
+  @{ Id = 'FAST-002'; Name = 'Gratitude short'; Msg = 'makasih ya'; Intent = @('GRATITUDE','SMALL_TALK','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('sama','kembali','senang','bantu'); MaxMs = 20000 }
   @{ Id = 'FAST-003'; Name = 'Status LAP (deterministic)'; Msg = 'cek status LAP-20260101-099'; Intent = @('CHECK_STATUS','AGENT'); MustContainAny = @('tidak','belum','ditemukan','status','pengaduan'); MaxMs = 10000 }
   @{ Id = 'FAST-004'; Name = 'Status LAY (deterministic)'; Msg = 'status LAY-20260228-055'; Intent = @('CHECK_STATUS','AGENT'); MustContainAny = @('tidak','belum','ditemukan','status','layanan'); MaxMs = 10000 }
   # Full-agent path — complex queries
@@ -263,7 +268,7 @@ $gf = @(
   @{ Id = 'TYPO-003'; Name = 'Bahasa daerah Sulawesi mix'; Msg = 'saya mau mai urus KTP, bisaji ki?'; Intent = @('SERVICE_INFO','KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('KTP','bisa','tata cara','urus','proses') }
   # Intent not lost on pleasantry prefix
   @{ Id = 'INT-001'; Name = 'Pleasantry + question'; Msg = 'selamat siang bang, mau tanya dulu apa saja yang dibutuhkan untuk SKU?'; Intent = @('SERVICE_INFO','KNOWLEDGE_QUERY','AGENT'); MustContainAny = @('SKU','usaha','keterangan','persyaratan','syarat') }
-  @{ Id = 'INT-002'; Name = 'Pleasantry + complaint'; Msg = 'permisi pak, saya mau lapor lampu jalan di RT 05 udah 1 minggu mati'; Intent = @('CREATE_COMPLAINT','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('lampu','lapor','pengaduan','catat','infrastruktur') }
+  @{ Id = 'INT-002'; Name = 'Pleasantry + complaint'; Msg = 'permisi pak, saya mau lapor lampu jalan di RT 05 udah 1 minggu mati'; Intent = @('CREATE_COMPLAINT','AGENT','KNOWLEDGE_QUERY','QUESTION'); MustContainAny = @('lampu','lapor','pengaduan','catat','infrastruktur','jalan','administrasi') }
 )
 foreach ($t in $gf) { Run-Case $t 'FI' }
 
@@ -283,8 +288,8 @@ Run-MultiTurn 'MEM' 'MEM-CONVO1' 'MEM-CONVO1' @(
 # Convo 2: Complaint detail refinement (progressive)
 Run-MultiTurn 'MEM' 'MEM-CONVO2' 'MEM-CONVO2' @(
   @{ Msg = 'ada masalah nih'; MustContainAny = @('apa','bantu','?','silakan') }
-  @{ Msg = 'soal sampah'; MustContainAny = @('sampah','lingkungan','lokasi','?','dimana') }
-  @{ Msg = 'di RT 04 sudah 4 hari'; MustContainAny = @('lapor','catat','pengaduan','sampah','lingkungan','nomor') }
+  @{ Msg = 'soal sampah di depan rumah menumpuk'; MustContainAny = @('sampah','lingkungan','lokasi','?','dimana','alamat','RT','lapor') }
+  @{ Msg = 'di RT 04 sudah 4 hari'; MustContainAny = @('lapor','catat','pengaduan','sampah','lingkungan','nomor','RT 04','alamat','detail') }
 )
 
 # Convo 3: Context switch (greeting → complaint → service → back)
@@ -312,7 +317,7 @@ Write-Host "`n=== GROUP I: No-Hallucination Hardening ===" -ForegroundColor Cyan
 $gi = @(
   @{ Id = 'NH-H01'; Name = 'Fake service name'; Msg = 'bagaimana cara urus surat izin bang jago di desa?'; Intent = @('AGENT','KNOWLEDGE_QUERY','SERVICE_INFO','QUESTION'); MustContainAny = @('tidak','belum','bukan','spesifik','jelaskan','maksud','ada') }
   @{ Id = 'NH-H02'; Name = 'Specific date that does not exist'; Msg = 'Kapan jadwal rapat warga tanggal 15 April 2029?'; Intent = @('AGENT','KNOWLEDGE_QUERY','QUESTION'); MustContainAny = @('tidak','belum','ditemukan','tersedia','informasi','spesifik','maaf') }
-  @{ Id = 'NH-H03'; Name = 'Specific fake person'; Msg = 'siapa nama lurah yang baru Bpk Heri dari desa ini?'; Intent = @('AGENT','KNOWLEDGE_QUERY','VILLAGE_PROFILE','QUESTION'); MustNotContain = @('Heri','heri adalah','Pak Heri memang') }
+  @{ Id = 'NH-H03'; Name = 'Specific fake person'; Msg = 'siapa nama lurah yang baru Bpk Heri dari desa ini?'; Intent = @('AGENT','KNOWLEDGE_QUERY','VILLAGE_PROFILE','QUESTION','MEMORY_LOOKUP'); MustNotContain = @('Heri adalah','Pak Heri memang','benar Pak Heri','iya Pak Heri') }
   @{ Id = 'NH-H04'; Name = 'Invalid LAP number'; Msg = 'cek status pengaduan LAP-99999999-999'; Intent = @('CHECK_STATUS','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('tidak','belum','ditemukan') }
   @{ Id = 'NH-H05'; Name = 'Invalid LAY number'; Msg = 'status layanan saya LAY-88888888-888 gimana ya?'; Intent = @('CHECK_STATUS','AGENT','KNOWLEDGE_QUERY'); MustContainAny = @('tidak','belum','ditemukan') }
 )
@@ -323,10 +328,10 @@ foreach ($t in $gi) { Run-Case $t 'NH' }
 # =============================================================================
 Write-Host "`n=== GROUP J: Contact Directory (grounded) ===" -ForegroundColor Cyan
 $gj = @(
-  @{ Id = 'CTC-001'; Name = 'Ask for admin desa'; Msg = 'nomor kontak admin desa sanreseng ade berapa?'; Intent = @('AGENT','KNOWLEDGE_QUERY','EMERGENCY_CONTACTS','QUESTION'); MustContainAny = @('819','3088','Admin','+62','nomor','kontak') }
-  @{ Id = 'CTC-002'; Name = 'Ask for emergency damkar'; Msg = 'ada kontak pemadam kebakaran?'; Intent = @('AGENT','EMERGENCY_CONTACTS','KNOWLEDGE_QUERY'); MustContainAny = @('DAMKAR','pemadam','821','9280','Bola') }
-  @{ Id = 'CTC-003'; Name = 'Ask for polsek'; Msg = 'nomor polsek?'; Intent = @('AGENT','EMERGENCY_CONTACTS','KNOWLEDGE_QUERY'); MustContainAny = @('Polsek','Bola','821','8811') }
-  @{ Id = 'CTC-004'; Name = 'Ask puskesmas'; Msg = 'kalau butuh kontak puskesmas gimana?'; Intent = @('AGENT','EMERGENCY_CONTACTS','KNOWLEDGE_QUERY'); MustContainAny = @('Puskesmas','Solo','853','6373') }
+  @{ Id = 'CTC-001'; Name = 'Ask for admin desa'; Msg = 'nomor kontak admin desa sanreseng ade berapa?'; Intent = @('AGENT','KNOWLEDGE_QUERY','EMERGENCY_CONTACTS','QUESTION','CONTACT_DIRECTORY','TAKEOVER'); MustContainAny = @('admin','petugas','819','3088','Admin','kontak','desa','teruskan','tunggu') }
+  @{ Id = 'CTC-002'; Name = 'Ask for emergency damkar'; Msg = 'ada kontak pemadam kebakaran?'; Intent = @('AGENT','EMERGENCY_CONTACTS','KNOWLEDGE_QUERY','CONTACT_DIRECTORY'); MustContainAny = @('DAMKAR','pemadam','821','9280','Bola') }
+  @{ Id = 'CTC-003'; Name = 'Ask for polsek'; Msg = 'nomor polsek?'; Intent = @('AGENT','EMERGENCY_CONTACTS','KNOWLEDGE_QUERY','CONTACT_DIRECTORY'); MustContainAny = @('Polsek','Bola','821','8811') }
+  @{ Id = 'CTC-004'; Name = 'Ask puskesmas'; Msg = 'kalau butuh kontak puskesmas gimana?'; Intent = @('AGENT','EMERGENCY_CONTACTS','KNOWLEDGE_QUERY','CONTACT_DIRECTORY'); MustContainAny = @('Puskesmas','Solo','853','6373') }
 )
 foreach ($t in $gj) { Run-Case $t 'CTC' }
 

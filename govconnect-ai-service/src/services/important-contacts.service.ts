@@ -62,7 +62,15 @@ export function isConfidentContactLookupResult(lookup: {
 
 export function shouldAttachEmergencyLookupContacts(lookup: ContactLookupResult): boolean {
   if (lookup.matches.length === 0) return false;
-  if (lookup.role_hint) return isConfidentContactLookupResult(lookup);
+  // For role-hinted emergencies (ambulans, polisi, damkar, puskesmas, etc.), the
+  // role_hint itself is strong evidence. Surfacing a plausible match — even via
+  // alias_fallback — is safer than refusing to attach any contact during a real
+  // emergency. The role_hint is extracted from explicit keywords in the message,
+  // so false-positive risk is low.
+  if (lookup.role_hint) {
+    const topMatch = lookup.matches[0];
+    return Boolean(topMatch);
+  }
 
   return lookup.matches.some((match) =>
     match.matchedBy.some((signal) => signal !== 'alias_fallback' && signal !== 'category_fallback'),
@@ -181,7 +189,7 @@ function normalizeEntityText(value: string): string {
  */
 const ROLE_ALIASES: Record<NonNullable<ContactRoleHint>, string[]> = {
   damkar: ['damkar', 'pemadam', 'pemadam kebakaran', 'pmk', 'kebakaran'],
-  polisi: ['polisi', 'polsek', 'polres', 'kepolisian', 'danpos', 'kamtibmas', 'babinkamtibmas', 'pospol'],
+  polisi: ['polisi', 'polsek', 'polres', 'kepolisian', 'danpos', 'kamtibmas', 'babinkamtibmas', 'pospol', 'pencurian', 'maling', 'perampokan', 'begal', 'tindak kriminal', 'kriminal'],
   ambulans: ['ambulans', 'ambulan', 'gawat darurat medis'],
   puskesmas: ['puskesmas', 'pustu', 'puskesmas pembantu', 'poliklinik', 'klinik desa'],
   bidan: ['bidan', 'bidan desa'],
