@@ -128,6 +128,8 @@ export interface VectorSearchOptions {
   sessionId?: string;
   channel?: string;
   retrievalMode?: RetrievalMode;
+  useHybridSearch?: boolean;
+  useQueryExpansion?: boolean;
 }
 
 /**

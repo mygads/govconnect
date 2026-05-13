@@ -409,6 +409,21 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
     });
   }
 
+  // Final fallback: bypass hybrid/rerank and use raw vector retrieval.
+  if (ragContext.totalResults === 0) {
+    ragContext = await retrieveContext(query, {
+      topK: 5,
+      minScore: 0.35,
+      categories: undefined,
+      sourceTypes: ['knowledge'],
+      villageId,
+      waUserId: searchContext.waUserId,
+      sessionId: searchContext.sessionId,
+      channel: searchContext.channel,
+      useHybridSearch: false,
+    });
+  }
+
   if (ragContext.totalResults === 0) {
     return {
       data: [],
