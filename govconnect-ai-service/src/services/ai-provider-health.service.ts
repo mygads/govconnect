@@ -14,7 +14,7 @@ import logger from '../utils/logger';
 
 export type LaneKind = 'llm' | 'embed' | 'rewrite' | 'rerank';
 
-const FAIL_THRESHOLD = 3;
+const FAIL_THRESHOLD = 6;
 const COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 const PROBE_WINDOW_MS = 60_000;
 const CACHE_TTL_MS = 30_000;

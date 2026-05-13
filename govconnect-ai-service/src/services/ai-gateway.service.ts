@@ -643,6 +643,13 @@ async function selectAttempts(lane: GatewayLaneKind, allAttempts: RuntimeGateway
       });
       return [head];
     }
+
+    logger.warn('All providers demoted; forcing highest-priority attempt', {
+      lane,
+      providerId: head.providerId,
+      modelId: head.modelId,
+    });
+    return [head];
   }
   return [];
 }

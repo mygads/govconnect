@@ -596,7 +596,7 @@ function validateFinalAgentReply(text: string, toolsUsed: string[], userMessage?
     return buildAgentFallbackReply('', toolsUsed);
   }
 
-  if (/\b(ai|bot|llm|tool|prompt|retrieval|basis pengetahuan|dokumen internal)\b/i.test(text)) {
+  if (/\b(ai|bot|llm|prompt)\b|\b(tool|retrieval|basis pengetahuan|dokumen internal)\b\s+(yang saya|saya (panggil|gunakan)|untuk mencari)/i.test(text)) {
     return 'Maaf Pak/Bu, saya bantu jawab dari informasi layanan yang tersedia. Bisa sebutkan kebutuhan atau detail yang ingin dicek?';
   }
 
@@ -779,7 +779,7 @@ function resolveFirstTurnToolChoice(
   const singleGroundingTool = allowedToolNames.length === 1
     ? allowedToolNames[0]
     : null;
-  if (singleGroundingTool && ['get_service_info', 'get_village_profile', 'get_emergency_contacts'].includes(singleGroundingTool)) {
+  if (singleGroundingTool && ['get_service_info', 'get_village_profile', 'get_emergency_contacts', 'search_knowledge', 'search_documents'].includes(singleGroundingTool)) {
     return {
       choice: 'required',
       reason: 'single_grounding_tool_available',
@@ -1429,9 +1429,12 @@ async function selectAllowedTools(
     && !isMyStatusLookup
     && !/\b(tahap layanan umum|layanan umum|pelayanan publik|kanal pelayanan|status layanan\/pengaduan|notifikasi|salah pilih layanan|update data|memperbarui data|penamaan file|format file|file terlalu besar|penggunaan data|keamanan data)\b/i.test(normalized)
     && /\b(surat|layanan|dokumen|syarat|persyaratan|biaya|proses|ktp|kk|sktm|domisili|akta|pindah|kelahiran|kematian)\b/i.test(normalized);
-  const isGeneralKnowledgeQuestion = /\b(apa|bagaimana|kenapa|mengapa|kebijakan|prosedur|aturan|faq|panduan)\b/i.test(normalized);
+  const isGeneralKnowledgeQuestion = /\b(apa|bagaimana|kenapa|mengapa|kapan|dimana|di\s+mana|berapa|siapa|kebijakan|prosedur|aturan|faq|panduan)\b/i.test(normalized);
   const isComplaintKnowledgeRequest =
     hasComplaintGenericTerm && /\b(contoh|prioritas|checklist|sop|panduan|prosedur|alur|status|jelaskan|apa|bagaimana)\b/i.test(normalized);
+  const isSemanticExplanationQuery =
+    !hasReference
+    && /\b(artinya|maksudnya|apa\s+itu|definisi|glosarium|perbedaan|bedanya)\b/i.test(normalized);
   const isGenericKnowledgeStatusQuestion =
     !hasReference
     && !isMyStatusLookup
@@ -2029,6 +2032,12 @@ async function selectAllowedTools(
       'update_complaint',
       'get_village_profile',
     ].forEach((tool) => heuristicSet.delete(tool as AgentToolName));
+  }
+
+  if (isSemanticExplanationQuery) {
+    heuristicSet.delete('get_my_history');
+    heuristicSet.delete('search_user_memory');
+    heuristicSet.delete('check_status');
   }
 
   const heuristicTools = Array.from(heuristicSet);

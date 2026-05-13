@@ -542,28 +542,7 @@ export async function enqueueDocumentOcrJob(input: ProcessDocumentInput, reason:
   `;
 }
 
-async function runOcrProvider(fileBuffer: Buffer, mimeType: string): Promise<{ text: string; mode: 'ocr_provider'; provider: string }> {
-  const endpoint = process.env.OCR_PROVIDER_URL?.trim();
-  if (!endpoint) throw new Error('OCR_PROVIDER_URL is not configured');
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(process.env.OCR_PROVIDER_API_KEY ? { authorization: `Bearer ${process.env.OCR_PROVIDER_API_KEY}` } : {}),
-    },
-    body: JSON.stringify({ mimeType, fileBase64: fileBuffer.toString('base64') }),
-    signal: AbortSignal.timeout(Number(process.env.OCR_PROVIDER_TIMEOUT_MS || 120000)),
-  });
-
-  const payload = await response.json().catch(() => null) as any;
-  if (!response.ok) throw new Error(payload?.error || `OCR provider failed with ${response.status}`);
-  const text = payload?.text || payload?.data?.text || payload?.result?.text || '';
-  if (!String(text).trim()) throw new Error('OCR provider returned empty text');
-  return { text: String(text), mode: 'ocr_provider', provider: endpoint };
-}
-
-async function runVisionFallback(fileBuffer: Buffer, mimeType: string, originalName: string, villageId?: string | null): Promise<{ text: string; mode: 'vision_llm'; provider?: string; model?: string }> {
+async function runVisionExtraction(fileBuffer: Buffer, mimeType: string, originalName: string, villageId?: string | null): Promise<{ text: string; mode: 'vision_llm'; provider?: string; model?: string }> {
   const result = await callAIGatewayPrompt({
     lane: 'llm',
     modelPriority: [],
@@ -595,26 +574,18 @@ async function runVisionFallback(fileBuffer: Buffer, mimeType: string, originalN
 
 async function extractWithOcrOrVision(input: { fileBuffer: Buffer; mimeType: string; originalName: string; villageId?: string | null }): Promise<ExtractedDocument & { provider?: string; model?: string }> {
   try {
-    const ocr = await runOcrProvider(input.fileBuffer, input.mimeType);
+    const vision = await runVisionExtraction(input.fileBuffer, input.mimeType, input.originalName, input.villageId);
     return {
-      units: [{ content: ocr.text, sourceKind: 'ocr', sectionTitle: input.originalName }],
-      extractionMode: ocr.mode,
-      provider: ocr.provider,
+      units: [{ content: vision.text, sourceKind: 'image', sectionTitle: input.originalName }],
+      extractionMode: vision.mode,
+      provider: vision.provider,
+      model: vision.model,
     };
-  } catch (ocrError: any) {
-    logger.warn('OCR provider failed, trying vision fallback', { originalName: input.originalName, error: ocrError.message });
-    try {
-      const vision = await runVisionFallback(input.fileBuffer, input.mimeType, input.originalName, input.villageId);
-      return {
-        units: [{ content: vision.text, sourceKind: 'image', sectionTitle: input.originalName }],
-        extractionMode: vision.mode,
-        provider: vision.provider,
-        model: vision.model,
-      };
-    } catch (visionError: any) {
-      if (visionError instanceof NoCapableGatewayModelError) throw ocrError;
-      throw new Error(`OCR/vision extraction failed: ${ocrError.message}; vision fallback: ${visionError.message}`);
+  } catch (visionError: any) {
+    if (visionError instanceof NoCapableGatewayModelError) {
+      throw new Error('No vision-capable LLM is configured for OCR extraction.');
     }
+    throw new Error(`Vision extraction failed: ${visionError.message}`);
   }
 }
 

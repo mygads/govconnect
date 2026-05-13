@@ -30,6 +30,7 @@ import {
 import { firstHeader, getParam } from '../utils/http';
 import { internalApiKeyMatches } from '../utils/internal-auth';
 import { clearRetrievalCache } from '../services/rag.service';
+import { clearCache, invalidateVillageCache } from '../services/response-cache.service';
 import { withAiBillingTurn } from '../services/ai-turn-billing.service';
 
 const router = Router();
@@ -196,6 +197,7 @@ router.post('/', async (req: Request, res: Response) => {
         isGlobal: resolvedScope.isGlobal,
       });
       clearRetrievalCache(resolvedScope.villageId);
+      if (resolvedScope.villageId) invalidateVillageCache(resolvedScope.villageId);
 
       return {
         statusCode: 201,
@@ -273,6 +275,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         isGlobal: resolvedScope.isGlobal,
       });
       clearRetrievalCache(resolvedScope.villageId);
+      if (resolvedScope.villageId) invalidateVillageCache(resolvedScope.villageId);
 
       return {
         statusCode: 200,
@@ -325,6 +328,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
     deleteVariants(id).catch(() => {});
 
     clearRetrievalCache();
+    clearCache();
 
     res.json({ status: 'success', deleted: true });
   } catch (error: any) {

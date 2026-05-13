@@ -93,26 +93,27 @@ export function validateResponse(response: string): string {
   if (!response || response.trim().length === 0) {
     return 'Ada yang bisa saya bantu lagi?';
   }
-  
+
   let cleaned = response;
+  cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
   for (const pattern of PROFANITY_PATTERNS) {
     cleaned = cleaned.replace(pattern, '***');
   }
-  
+
   if (cleaned.length > 4000) {
     cleaned = cleaned.substring(0, 3950) + '...\n\nPesan terpotong karena terlalu panjang.';
   }
-  
+
   if (cleaned.includes('```') || cleaned.includes('{"')) {
     cleaned = cleaned.replace(/```[\s\S]*?```/g, '');
     cleaned = cleaned.replace(/\{\"[\s\S]*?\}/g, '');
     cleaned = cleaned.trim();
-    
+
     if (cleaned.length < 10) {
       return 'Maaf, terjadi kesalahan. Silakan ulangi pertanyaan Anda.';
     }
   }
-  
+
   return cleaned;
 }
 

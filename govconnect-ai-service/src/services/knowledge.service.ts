@@ -385,7 +385,21 @@ async function searchKnowledgeWithRAG(query: string, categories?: string[], cont
 
     ragContext = await retrieveContext(query, {
       topK: 5,
-      minScore: 0.55,
+      minScore: 0.45,
+      categories: undefined,
+      sourceTypes: ['knowledge'],
+      villageId,
+      waUserId: searchContext.waUserId,
+      sessionId: searchContext.sessionId,
+      channel: searchContext.channel,
+    });
+  }
+
+  // Second fallback: if still no results, retry with even lower threshold (broad recall).
+  if (ragContext.totalResults === 0) {
+    ragContext = await retrieveContext(query, {
+      topK: 5,
+      minScore: 0.35,
       categories: undefined,
       sourceTypes: ['knowledge'],
       villageId,

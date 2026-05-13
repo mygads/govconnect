@@ -206,6 +206,8 @@ const OBVIOUS_REQUIRE_PATTERNS = [
   /\b(perbedaan|bedanya|apa\s+itu|artinya|maksudnya|definisi|glosarium)\b/i,
   /\b(kebijakan\s+data|keamanan\s+data|privasi|data\s+pribadi)\b/i,
   /\b(jam\s+kerja|jam\s+buka|alamat\s+kantor|kontak\s+desa|nomor\s+telepon\s+desa)\b/i,
+  /\b(jadwal|kapan|dimana|di\s+mana|berapa\s+(lama|biaya|hari|jam))\b/i,
+  /\b(posyandu|puskesmas|pustu|poliklinik|bidan|pasar|bumdes|pkh|blt|bansos|paud|tk\b|sekolah)\b/i,
 ];
 
 // Spam/malicious content patterns - skip processing entirely.
@@ -997,11 +999,11 @@ function calculateConfidence(
     level = 'high';
     reason = `Strong match found (${(topScore * 100).toFixed(0)}% relevance)`;
     suggestFallback = false;
-  } else if (score >= 0.6 && topScore >= 0.7) {
+  } else if (score >= 0.5 && topScore >= 0.55) {
     level = 'medium';
     reason = `Relevant knowledge found (${(topScore * 100).toFixed(0)}% relevance)`;
     suggestFallback = false;
-  } else if (score >= 0.4 || topScore >= 0.6) {
+  } else if (score >= 0.35 || topScore >= 0.45) {
     level = 'low';
     reason = `Partial match found (${(topScore * 100).toFixed(0)}% relevance)`;
     suggestFallback = true;
