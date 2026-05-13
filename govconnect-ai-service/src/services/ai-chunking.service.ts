@@ -467,7 +467,7 @@ export async function smartChunkKnowledge(
   const prompt = buildKnowledgeChunkingPrompt(numbered, title, paragraphs.length, validCategories);
 
   try {
-    const chunkDefs = await callLLMForChunking(prompt, 30_000, validCategories, villageId);
+    const chunkDefs = await callLLMForChunking(prompt, 45_000, validCategories, villageId);
     const validated = validateCoverage(chunkDefs, paragraphs.length);
     return reconstructChunks(paragraphs, validated);
   } catch (err: any) {
@@ -524,7 +524,7 @@ Jawab HANYA JSON (tanpa markdown):
       messages: buildPromptMessages(prompt),
       temperature: 0,
       maxTokens: 200,
-      timeoutMs: 10_000,
+      timeoutMs: 25_000,
       jsonMode: true,
       layerType: 'full_nlu',
       callType: 'smart_chunking',

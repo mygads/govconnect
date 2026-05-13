@@ -305,6 +305,7 @@ export async function resolveVillageSlugForPublicForm(villageId?: string): Promi
   if (!villageId) return 'desa';
   try {
     const profile = await getVillageProfileSummary(villageId);
+    if (profile?.slug) return profile.slug;
     if (profile?.short_name) return profile.short_name;
   } catch {
     // ignore

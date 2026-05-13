@@ -1,0 +1,16 @@
+SOP Pengaduan Desa Sanreseng Ade (Dummy)
+
+1. Warga menyampaikan laporan dan kategori.
+2. Warga memberikan alamat/lokasi (wajib untuk infrastruktur & keamanan).
+3. Admin memverifikasi laporan.
+4. Status laporan: baru → proses → selesai/ditolak.
+5. Untuk kasus urgent, admin dapat memberikan nomor penting terkait.
+
+Kriteria Urgent (contoh):
+- Pohon tumbang menghalangi jalan
+- Banjir lokal
+- Kecelakaan lalu lintas
+- Kejadian gawat darurat
+
+Catatan:
+Dokumen ini disiapkan sebagai contoh upload dokumen pengaduan.

@@ -1339,7 +1339,7 @@ async function callLLMWithTools(
     messages: messages as GatewayChatMessage[],
     temperature,
     maxTokens,
-    timeoutMs: 30_000,
+    timeoutMs: 20_000,
     layerType: 'agent',
     callType: 'agent_orchestrator',
     context: tokenContext,

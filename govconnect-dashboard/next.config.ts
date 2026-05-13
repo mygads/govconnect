@@ -1,9 +1,12 @@
-import type { NextConfig } from "next";
+import path from "path"
+import { fileURLToPath } from "url"
+import type { NextConfig } from "next"
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url))
 
 const nextConfig: NextConfig = {
-  /* config options here */
   turbopack: {
-    root: process.cwd(),
+    root: rootDir,
   },
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   reactCompiler: false,

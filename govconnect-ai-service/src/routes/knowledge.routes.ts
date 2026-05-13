@@ -334,6 +334,23 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/knowledge/stats
+ * Get vector DB statistics
+ *
+ * NOTE: Must be defined BEFORE `/:id` to avoid Express matching
+ * "stats" as an id parameter.
+ */
+router.get('/stats', async (_req: Request, res: Response) => {
+  try {
+    const stats = await getVectorDbStats();
+    res.json({ data: stats });
+  } catch (error: any) {
+    logger.error('Failed to get stats', { error: error.message });
+    res.status(500).json({ error: 'Failed to get stats' });
+  }
+});
+
+/**
  * GET /api/knowledge/:id
  * Get knowledge vector by ID
  */
@@ -397,20 +414,6 @@ router.post('/search', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Knowledge search failed', { error: error.message });
     res.status(500).json({ error: 'Search failed' });
-  }
-});
-
-/**
- * GET /api/knowledge/stats
- * Get vector DB statistics
- */
-router.get('/stats', async (_req: Request, res: Response) => {
-  try {
-    const stats = await getVectorDbStats();
-    res.json({ data: stats });
-  } catch (error: any) {
-    logger.error('Failed to get stats', { error: error.message });
-    res.status(500).json({ error: 'Failed to get stats' });
   }
 });
 

@@ -1,0 +1,22 @@
+Panduan Layanan Administrasi Desa Sanreseng Ade (Dummy)
+
+Tujuan:
+Dokumen ini menjadi panduan ringkas layanan administrasi yang tersedia di Desa Sanreseng Ade.
+
+Daftar Layanan Utama:
+1) Keterangan Domisili
+   - KTP, KK, dan alamat lengkap.
+2) Keterangan Usaha
+   - KTP, foto usaha, nama usaha, alamat usaha.
+3) Keterangan Tidak Mampu
+   - KTP, KK, tujuan penggunaan; DTKS opsional.
+4) Pengantar Pindah
+   - KTP, KK, alamat tujuan.
+5) Pengantar Nikah
+   - KTP, KK, surat pengantar RT/RW.
+
+Estimasi Waktu:
+- 1–3 hari kerja (tergantung kelengkapan berkas).
+
+Catatan:
+Dokumen ini untuk contoh upload dokumen layanan, bukan basis pengetahuan teks.

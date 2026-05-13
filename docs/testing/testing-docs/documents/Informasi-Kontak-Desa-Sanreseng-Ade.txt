@@ -1,0 +1,27 @@
+Informasi Kontak & Nomor Pengaduan (Ringkasan)
+
+Nomor Pelayanan
+- +62 852-5582-9256 : Kecamatan Bola
+- +62 853-3295-0944 : Kelurahan Solo
+- +62 821-2999-5145 : Desa Pasir Putih
+- +62 822-6181-5145 : Desa Pattanga
+- +62 821-3400-9525 : Desa Sanreseng Ade
+- +62 853-4972-3275 : Desa Lattimu
+- +62 821-2424-1303 : Desa Ujung Tanah
+- +62 813-5353-2832 : Desa Rajamawellang
+- +62 823-3545-1792 : Desa Bola
+- +62 853-9423-4648 : Desa Lempong
+- +62 823-4645-4449 : Desa Balielo
+- +62 821-9364-5087 : Desa Manurung
+
+Nomor Pengaduan
+- +62 852-4061-9726 : Kecamatan Bola
+- +62 821-8811-8778 : Polsek Bola
+- +62 853-9963-9869 : Danpos Bola
+- +62 853-6373-2235 : Puskesmas Solo
+- +62 821-9280-0935 : DAMKAR Sektor Bola
+- +62 819-3088-1342 : Admin Desa Sanreseng Ade
+
+Template Chat Awal (Contoh)
+- Halo, Saya mau Pesan Layanan Desa Sanreseng Ade
+- Halo, Saya mau melakukan Pengaduan ke Polsek Bola

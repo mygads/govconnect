@@ -32,6 +32,7 @@ import {
   cancelWebchatBatch,
 } from '../services/webchat-batcher.service';
 import { getParam, getQuery } from '../utils/http';
+import { internalApiKeyMatches } from '../utils/internal-auth';
 
 // Using same unified processor as WhatsApp for consistency
 logger.info('🏗️ Webchat architecture: Unified Processor (same as WhatsApp)');
@@ -127,6 +128,7 @@ const router = Router();
 const webchatRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 15,
+  skip: (req: Request) => internalApiKeyMatches(req.headers['x-internal-api-key']),
   keyGenerator: (req: Request) => {
     // Prioritize IP to prevent client-controlled bypass (Temuan 9)
     const forwardedIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim();
@@ -343,8 +345,8 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
 
     // Process batched message using selected architecture
     // This ensures consistent NLU, intent detection, RAG, prompts, etc.
-    // 25s timeout to prevent hanging requests
-    const WEBCHAT_TIMEOUT_MS = 25_000;
+    // 90s timeout to accommodate fallback chain + retry from slow free-tier models
+    const WEBCHAT_TIMEOUT_MS = 90_000;
     const resultPromise = processWebchatMessage({
       userId: session_id,
       message: batchResult.combinedMessage, // Use combined message from batch
@@ -503,6 +505,20 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
 });
 
 /**
+ * Get session stats
+ * GET /api/webchat/stats
+ *
+ * NOTE: Must be defined BEFORE `/:session_id` to avoid Express matching
+ * "stats" as a session_id parameter.
+ */
+router.get('/stats', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    activeSessions: 0,
+  });
+});
+
+/**
  * Get session history
  * GET /api/webchat/:session_id
  */
@@ -588,17 +604,6 @@ router.delete('/:session_id', (req: Request, res: Response) => {
         error: error.message || 'Gagal menghapus sesi',
       });
     });
-});
-
-/**
- * Get session stats
- * GET /api/webchat/stats
- */
-router.get('/stats', (_req: Request, res: Response) => {
-  res.json({
-    success: true,
-    activeSessions: 0,
-  });
 });
 
 /**

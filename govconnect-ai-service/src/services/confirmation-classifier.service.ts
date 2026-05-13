@@ -11,8 +11,8 @@ export interface ConfirmationResult {
 
 const CONFIRMATION_MODEL_PRIORITY: string[] = [];
 
-// Timeout for micro LLM calls (10 seconds)
-const MICRO_LLM_TIMEOUT_MS = 10_000;
+// Timeout for micro LLM calls (25 seconds to accommodate slower free-tier models)
+const MICRO_LLM_TIMEOUT_MS = 25_000;
 
 const CONFIRMATION_SYSTEM_PROMPT = `Anda adalah classifier konfirmasi untuk layanan publik.
 

@@ -35,7 +35,7 @@ async function callMicroLLM(
     messages: buildPromptMessages(prompt),
     temperature: 0.1,
     maxTokens: call_type === 'summarize' ? 250 : 300,
-    timeoutMs: 10_000,
+    timeoutMs: 25_000,
     jsonMode: call_type !== 'summarize',
     layerType: 'micro_nlu',
     callType: call_type,

@@ -69,6 +69,7 @@ function resolveKnowledgeRetrievalMode(
 interface VillageProfileSummary {
   id?: string;
   name?: string | null;
+  slug?: string | null;
   short_name?: string | null;
   address?: string | null;
   gmaps_url?: string | null;

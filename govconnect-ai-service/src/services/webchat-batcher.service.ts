@@ -16,7 +16,10 @@
 import logger from '../utils/logger';
 
 // Configuration - unified with Channel Service (BATCH_DELAY_MS)
-const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || process.env.WEBCHAT_BATCH_DELAY_MS || '3000', 10); // 3 seconds
+// Lazy-evaluated so dotenv has time to load before first use
+function getBatchDelayMs(): number {
+  return parseInt(process.env.WEBCHAT_BATCH_DELAY_MS || process.env.BATCH_DELAY_MS || '500', 10);
+}
 const MAX_BATCH_SIZE = parseInt(process.env.MAX_BATCH_SIZE || '10', 10); // Max messages per batch
 
 interface BatchedMessage {
@@ -77,7 +80,7 @@ export function addWebchatMessageToBatch(
       
       logger.info('📦 [Webchat] New message batch started', {
         session_id,
-        batch_delay_ms: BATCH_DELAY_MS,
+        batch_delay_ms: getBatchDelayMs(),
       });
     }
     
@@ -113,12 +116,12 @@ export function addWebchatMessageToBatch(
     // Set new timer
     batch.timer = setTimeout(() => {
       processBatch(session_id);
-    }, BATCH_DELAY_MS);
-    
+    }, getBatchDelayMs());
+
     logger.info('📨 [Webchat] Message added to batch', {
       session_id,
       batch_size: batch.messages.length,
-      waiting_ms: BATCH_DELAY_MS,
+      waiting_ms: getBatchDelayMs(),
     });
   });
 }

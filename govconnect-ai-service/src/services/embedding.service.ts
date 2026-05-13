@@ -20,7 +20,7 @@ import {
   EmbeddingConfig,
   EmbeddingStats,
 } from '../types/embedding.types';
-import { callAIGatewayEmbeddings } from './ai-gateway.service';
+import { callAIGatewayEmbeddings, isAIGatewayEnabledAsync } from './ai-gateway.service';
 import { getCurrentBillingContext } from './ai-turn-billing.service';
 import { registerInterval } from '../utils/timer-registry';
 
@@ -229,7 +229,10 @@ async function requestGatewayEmbeddings(
   layerCall: 'embedding_single' | 'embedding_batch',
   context?: EmbeddingConfig['context'],
 ): Promise<{ embeddings: number[][]; model: string; durationMs: number }> {
-  if (!config.embeddingGateway.enabled) {
+  // DB-backed lane check (env-based `config.embeddingGateway.enabled` is stale
+  // when lanes are configured via the superadmin dashboard / DB).
+  const dbEnabled = await isAIGatewayEnabledAsync('embed', context?.village_id ?? null);
+  if (!dbEnabled && !config.embeddingGateway.enabled) {
     throw new Error('EMBED lane is not configured');
   }
 
