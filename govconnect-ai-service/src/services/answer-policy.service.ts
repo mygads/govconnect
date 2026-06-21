@@ -70,6 +70,7 @@ const TRANSACTIONAL_GROUNDING_TOOLS = new Set([
   'update_complaint',
   'check_status',
   'cancel_request',
+  'get_my_history',
 ]);
 
 const TRANSACTIONAL_GROUNDING_SOURCE_KINDS = new Set([
@@ -78,6 +79,7 @@ const TRANSACTIONAL_GROUNDING_SOURCE_KINDS = new Set([
   'complaint_update',
   'status_lookup',
   'request_cancellation',
+  'user_history',
 ]);
 
 const CONTACT_GROUNDING_SOURCE_KINDS = new Set([

@@ -647,4 +647,34 @@ describe('verifyAnswer — phantom transaction guard', () => {
 
     expect(decision.reason).not.toBe('transaction_success_without_tool');
   });
+
+  it('accepts a history/status reply describing an existing complaint (grounded by get_my_history)', async () => {
+    const result = baseResult({
+      intent: 'HISTORY',
+      response: 'Laporan LAP-20260621-001 sudah kami terima dan tercatat, statusnya menunggu diproses.',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId: 'trace-test',
+        toolsUsed: ['get_my_history'],
+        toolTrace: [{
+          tool: 'get_my_history',
+          success: true,
+          durationMs: 10,
+          trustLevel: 'action_result',
+          sourceKind: 'user_history',
+        }],
+      },
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'riwayat laporan saya',
+      result,
+      toolsUsed: ['get_my_history'],
+      handledByGuard: false,
+    });
+
+    expect(decision.reason).not.toBe('transaction_success_without_tool');
+  });
 });
