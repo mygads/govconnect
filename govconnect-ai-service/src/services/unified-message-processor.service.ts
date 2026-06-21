@@ -792,21 +792,13 @@ function getResidentKnowledgeFallback(message: string, currentReply?: string): {
     return knowledge('Dari dokumen yang tercatat, disebutkan **Dusun Pusat** sebagai bagian dari alamat Kantor Desa Sanreseng Ade. Untuk daftar lengkap dusun, silakan hubungi kantor desa langsung.');
   }
 
-  if (/cara mengurus.*ktp|pengantar ktp|bikin ktp|buat ktp|urus ktp|ktp.*bagaimana/i.test(normalized) && isGenericTimeout) {
-    return { response: 'Ada beberapa layanan KTP yang tersedia:\n1. Surat Pengantar KTP\n2. Perekaman KTP\n3. Pergantian KTP Rusak\n4. Pergantian KTP Hilang\n\nBalas dengan nomor atau nama layanannya ya.', intent: 'SERVICE_INFO' };
-  }
-
-  if (/surat keterangan usaha|keterangan usaha|sku/i.test(normalized) && isGenericTimeout) {
-    return { response: 'Untuk layanan *Surat Keterangan Usaha*, persyaratannya:\n1. Nama Lengkap (wajib)\n2. Foto Usaha (wajib)\n3. Foto KTP (wajib)\n4. Keterangan (wajib)\n\nKalau mau lanjut, saya bisa kirimkan link formulir.', intent: 'SERVICE_INFO' };
-  }
-
-  if (/layanan.*pindah|pindah.*rumah|pindah.*domisili|pindah.*keluar|pindah.*masuk/i.test(normalized) && isGenericTimeout) {
-    return { response: 'Untuk keperluan pindah, layanan yang tersedia:\n1. Surat Pengantar Pindah\n2. Pindah Keluar\n3. Pindah Masuk\n\nBalas dengan nomor atau nama layanannya ya.', intent: 'SERVICE_INFO' };
-  }
-
-  if (/surat keterangan domisili|keterangan domisili|domisili/i.test(normalized) && isGenericTimeout) {
-    return { response: 'Baik, untuk layanan *Keterangan Domisili* persyaratannya:\n1. KTP (wajib)\n2. Kartu Keluarga (KK) (wajib)\n3. Alamat Lengkap (wajib)\n\nKalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *Keterangan Domisili*.', intent: 'SERVICE_INFO' };
-  }
+  // NOTE: Service-specific queries (KTP, surat keterangan usaha, pindah,
+  // domisili, etc.) and their requirements (syarat/persyaratan) are authoritative
+  // structured data in the DB and are admin-editable per village. They must NEVER
+  // be hardcoded here — doing so served stale/fabricated requirements that bypassed
+  // get_service_info (e.g. "Surat Keterangan Usaha" once returned 4 fake fields
+  // vs the DB's real 2). These queries are intentionally NOT matched here so they
+  // fall through to the agent + get_service_info tool path.
 
   if (/apa itu embedding/i.test(normalized) && (isGenericTimeout || !reply.includes('vektor'))) {
     return knowledge('Embedding adalah cara mengubah teks atau data menjadi angka vektor agar sistem bisa membandingkan kemiripan makna. Biasanya dipakai untuk pencarian informasi yang lebih relevan.');
