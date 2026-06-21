@@ -560,3 +560,91 @@ describe('verifyAnswer — village profile grounding', () => {
     expect(decision.reason).toBe('grounded_via_profile_tool');
   });
 });
+
+describe('verifyAnswer — phantom transaction guard', () => {
+  it('rewrites a "laporan sudah masuk" claim when no create tool ran (intent AGENT)', async () => {
+    const result = baseResult({
+      intent: 'AGENT',
+      response: 'Terima kasih Pak Andi. Saya catat laporannya. Laporan masuk ya, nanti kami teruskan ke petugas desa untuk ditindaklanjuti.',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId: 'trace-test',
+        toolsUsed: ['search_knowledge'],
+        toolTrace: [{
+          tool: 'search_knowledge',
+          success: true,
+          durationMs: 10,
+          trustLevel: 'untrusted_retrieval',
+          sourceKind: 'knowledge_retrieval',
+        }],
+      },
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'ya betul, proses ya',
+      result,
+      toolsUsed: ['search_knowledge'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.kind).toBe('transactional_update');
+    expect(decision.reason).toBe('transaction_success_without_tool');
+    expect(decision.rewritten).toBe(true);
+  });
+
+  it('accepts a transaction-success claim grounded by create_complaint', async () => {
+    const result = baseResult({
+      intent: 'CREATE_COMPLAINT',
+      response: 'Laporan berhasil dibuat dengan nomor LAP-2026-0001. Akan kami tindak lanjuti ya Pak.',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId: 'trace-test',
+        toolsUsed: ['create_complaint'],
+        toolTrace: [{
+          tool: 'create_complaint',
+          success: true,
+          durationMs: 10,
+          trustLevel: 'action_result',
+          sourceKind: 'complaint_creation',
+        }],
+      },
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'ya betul, proses ya',
+      result,
+      toolsUsed: ['create_complaint'],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(true);
+  });
+
+  it('does not flag a future-tense offer to help record the report', async () => {
+    const result = baseResult({
+      intent: 'CREATE_COMPLAINT',
+      response: 'Baik Pak, nanti saya bantu catat laporannya. Boleh sebutkan lokasi dan nama Bapak dulu?',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId: 'trace-test',
+        toolsUsed: [],
+      },
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'mau lapor jalan rusak',
+      result,
+      toolsUsed: [],
+      handledByGuard: false,
+    });
+
+    expect(decision.reason).not.toBe('transaction_success_without_tool');
+  });
+});

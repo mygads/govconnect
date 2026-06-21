@@ -64,6 +64,22 @@ const CONTACT_GROUNDING_TOOLS = new Set([
   'get_village_profile',
 ]);
 
+const TRANSACTIONAL_GROUNDING_TOOLS = new Set([
+  'create_complaint',
+  'create_service_request',
+  'update_complaint',
+  'check_status',
+  'cancel_request',
+]);
+
+const TRANSACTIONAL_GROUNDING_SOURCE_KINDS = new Set([
+  'complaint_creation',
+  'service_request_link',
+  'complaint_update',
+  'status_lookup',
+  'request_cancellation',
+]);
+
 const CONTACT_GROUNDING_SOURCE_KINDS = new Set([
   'contact_directory_lookup',
   'official_emergency_contacts',
@@ -172,6 +188,22 @@ function mentionsStructuredFactClaim(text: string): boolean {
   return looksLikePhoneNumber(text)
     || mentionsServiceFactClaim(text)
     || mentionsVillageProfileFactClaim(text);
+}
+
+// Detects a claim that a complaint / service request was actually FILED or
+// recorded — the exact phantom-confirmation we must never emit without the
+// create tool having run. Kept deliberately broad on the "recorded" verbs but
+// excludes mere offers to help ("saya bantu catat laporannya") which are future
+// tense, not a success claim.
+function mentionsTransactionSuccessClaim(text: string): boolean {
+  const t = (text || '').toLowerCase();
+  if (!t) return false;
+  // Explicit reference number is the strongest success signal.
+  if (/\b(lap|lay)-\s?\d/i.test(t)) return true;
+  // "laporan/pengaduan/permohonan (sudah/berhasil/telah) ... masuk/tercatat/dibuat/kami catat/kami terima/diteruskan"
+  const recorded = /(laporan|pengaduan|permohonan|laporannya|aduan)\b[\s\S]{0,40}\b(sudah|telah|berhasil|saya|kami)?\s*(masuk|tercatat|dicatat|kami catat|saya catat|kami terima|kami terima|terkirim|dibuat|dibuatkan|diteruskan|kami teruskan|diproses|kami proses|tersimpan)\b/i;
+  const recordedAlt = /\b(masuk ya|sudah masuk|berhasil dibuat|berhasil dicatat|sudah saya catat|sudah kami catat|sudah dicatat|sudah tercatat|sudah diteruskan|sudah kami teruskan)\b/i;
+  return recorded.test(t) || recordedAlt.test(t);
 }
 
 function classify(message: string, result: ProcessMessageResult): AnswerPolicyKind {
@@ -328,6 +360,26 @@ async function buildVillageProfileFallback(
   };
 }
 
+function buildTransactionFallback(traceId: string, startTime: number): ProcessMessageResult {
+  return {
+    success: true,
+    response: 'Maaf Pak/Bu, laporannya belum sempat kami catat resmi tadi. Boleh tolong ulangi singkat: jenis masalahnya, lokasi (RT/RW atau patokan), dan nama Bapak/Ibu — biar langsung saya buatkan laporannya dengan nomor pelacakan ya.',
+    intent: 'CREATE_COMPLAINT',
+    metadata: {
+      processingTimeMs: Date.now() - startTime,
+      hasKnowledge: false,
+      agentMode: 'answer_policy_verifier',
+      traceId,
+      guardrail: {
+        stage: 'answer_policy',
+        type: 'transactional_claim_ungrounded',
+        action: 'rewritten',
+        reason: 'transaction_success_without_tool',
+      },
+    },
+  };
+}
+
 function buildKnowledgeFallback(traceId: string, startTime: number): ProcessMessageResult {
   return {
     success: true,
@@ -379,6 +431,35 @@ function hasTrustedGrounding(
   return toolsUsed.some((tool) => allowedTools.has(tool));
 }
 
+/**
+ * Transactional tools (create_complaint, create_service_request, etc.) emit an
+ * `action_result` trust level, not the `trusted_fact`/`trusted_record` levels
+ * that hasTrustedGrounding requires — so they need their own check. A pending /
+ * failed action (e.g. sourceKind `complaint_creation_pending`, or a trace with
+ * success:false) does NOT count as a completed transaction.
+ */
+function hasTransactionGrounding(result: ProcessMessageResult, toolsUsed: string[]): boolean {
+  const toolTrace = Array.isArray(result.metadata?.toolTrace) ? result.metadata.toolTrace : [];
+  const groundedByTrace = toolTrace.some((trace) => {
+    if (!trace.success) return false;
+    if (!TRANSACTIONAL_GROUNDING_TOOLS.has(trace.tool)
+      && !(trace.sourceKind && TRANSACTIONAL_GROUNDING_SOURCE_KINDS.has(trace.sourceKind))) {
+      return false;
+    }
+    return true;
+  });
+  if (groundedByTrace) return true;
+
+  const grounding = result.metadata?.grounding;
+  if (grounding?.sourceKinds?.some((s) => TRANSACTIONAL_GROUNDING_SOURCE_KINDS.has(s))) {
+    return true;
+  }
+
+  // Legacy fallback: tool name alone, only when no trace data is available.
+  if (toolTrace.length > 0) return false;
+  return toolsUsed.some((tool) => TRANSACTIONAL_GROUNDING_TOOLS.has(tool));
+}
+
 function hasReliableRetrievalGrounding(
   result: ProcessMessageResult,
   toolsUsed: string[],
@@ -417,9 +498,29 @@ export async function verifyAnswer(input: VerifyInput): Promise<AnswerPolicyDeci
   const usedContactTool = hasTrustedGrounding(result, toolsUsed, CONTACT_GROUNDING_TOOLS, CONTACT_GROUNDING_SOURCE_KINDS);
   const usedServiceTool = hasTrustedGrounding(result, toolsUsed, SERVICE_DETAIL_GROUNDING_TOOLS, SERVICE_DETAIL_GROUNDING_SOURCE_KINDS);
   const usedProfileTool = hasTrustedGrounding(result, toolsUsed, VILLAGE_PROFILE_GROUNDING_TOOLS, VILLAGE_PROFILE_GROUNDING_SOURCE_KINDS);
+  const usedTransactionTool = hasTransactionGrounding(result, toolsUsed);
 
   if (handledByGuard) {
     return { kind, ok: true, rewritten: false, reason: 'guard_prevalidated' };
+  }
+
+  // Phantom-transaction guard: never tell a resident their complaint/request was
+  // filed unless a create/update tool actually ran. This fires regardless of the
+  // declared intent because the failure mode is the model emitting a polished
+  // "laporan sudah masuk" with intent AGENT after only searching knowledge.
+  if (mentionsTransactionSuccessClaim(responseText) && !usedTransactionTool) {
+    logger.warn('🛡️ answer-policy: rejecting phantom transaction-success claim without create/update tool', {
+      traceId: result.metadata?.traceId,
+      toolsUsed,
+      intent: result.intent,
+    });
+    return {
+      kind: 'transactional_update',
+      ok: false,
+      rewritten: true,
+      reason: 'transaction_success_without_tool',
+      replacement: buildTransactionFallback(traceId, startTime),
+    };
   }
 
   if (asksContact && mentionsPhone && !usedContactTool) {
