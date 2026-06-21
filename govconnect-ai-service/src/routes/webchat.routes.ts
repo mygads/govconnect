@@ -387,6 +387,34 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       throw timeoutErr;
     }
     
+    // Wallet exhausted: message was silently held for later flush.
+    // Don't save an AI reply or show rejection text. Mark pending_balance;
+    // the real answer is delivered via SSE after the admin flushes post-topup.
+    if (result.intent === 'AI_BALANCE_HELD') {
+      await updateWebchatAIStatus({
+        session_id,
+        village_id,
+        action: 'pending_balance',
+        message_id: batchResult.primaryMessageId,
+      });
+      logger.info('🪙 Webchat message held for wallet topup', {
+        session_id,
+        village_id,
+        heldForBalance: result.metadata?.heldForBalance,
+      });
+      res.json({
+        success: true,
+        response: '',
+        intent: 'AI_BALANCE_HELD',
+        held: true,
+        metadata: {
+          session_id,
+          processingTimeMs: Date.now() - startTime,
+        },
+      });
+      return;
+    }
+
     const guidanceText = result.guidanceText?.trim() ? result.guidanceText : '';
     const hasGuidance = guidanceText.length > 0;
     const replySynced = await saveWebchatMessage({
@@ -787,19 +815,24 @@ router.get('/:session_id/events', async (req: Request, res: Response) => {
     try {
       const payload = JSON.parse(dataLines.join('\n'));
       if (eventName === 'message') {
-        const isTakeoverMessage = payload.channel === 'WEBCHAT'
-          && payload.channel_identifier === session_id
-          && payload.source === 'ADMIN';
-        if (!isTakeoverMessage) return;
+        const matchesSession = payload.channel === 'WEBCHAT'
+          && payload.channel_identifier === session_id;
+        if (!matchesSession) return;
+
+        const isTakeoverMessage = payload.source === 'ADMIN';
+        // Flushed AI replies (after wallet topup) are delivered with actor 'ai'
+        // and the text in the `message` field.
+        const isFlushedAiMessage = payload.actor === 'ai' && !!payload.message;
+        if (!isTakeoverMessage && !isFlushedAiMessage) return;
 
         const timestamp = payload.timestamp || payload.sent_at || payload.at || new Date().toISOString();
         send('message', {
           sessionId: session_id,
           message_id: payload.message_id || payload.id,
-          content: payload.message_text || payload.content || '',
+          content: payload.message_text || payload.message || payload.content || '',
           role: 'assistant',
-          source: 'admin',
-          admin_name: payload.admin_name || takeoverStatus.admin_name || null,
+          source: isFlushedAiMessage ? 'ai' : 'admin',
+          admin_name: isFlushedAiMessage ? null : (payload.admin_name || takeoverStatus.admin_name || null),
           timestamp,
           at: Date.now(),
         });
@@ -854,6 +887,78 @@ router.get('/:session_id/events', async (req: Request, res: Response) => {
   req.on('close', () => {
     cleanup();
   });
+});
+
+/**
+ * Internal: flush held webchat messages after a wallet topup.
+ * POST /api/webchat/internal/flush-held-webchat
+ * Body: { village_id, channel_identifier, messages: [{ id, message_id, message_text, ... }] }
+ * Runs the agent for each held message and delivers the reply to channel-service,
+ * which persists it and pushes it to the open browser via livechat SSE.
+ */
+router.post('/internal/flush-held-webchat', async (req: Request, res: Response) => {
+  if (!internalApiKeyMatches(req.headers['x-internal-api-key'])) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const { village_id, channel_identifier, messages } = req.body || {};
+  if (!village_id || !channel_identifier || !Array.isArray(messages)) {
+    res.status(400).json({ error: 'village_id, channel_identifier, messages[] required' });
+    return;
+  }
+
+  let flushed = 0;
+  let failed = 0;
+
+  for (const held of messages) {
+    try {
+      const history = await fetchWebchatHistory({ session_id: channel_identifier, village_id });
+      const result = await processWebchatMessage({
+        userId: channel_identifier,
+        message: held.message_text,
+        conversationHistory: history.map(m => ({ role: m.role, content: m.content })),
+        village_id,
+        messageId: held.message_id,
+        batchedMessageIds: [held.message_id],
+      });
+
+      // If the wallet is somehow still exhausted, leave the message held.
+      if (result.intent === 'AI_BALANCE_HELD' || !result.response?.trim()) {
+        failed++;
+        continue;
+      }
+
+      await axios.post(
+        `${config.channelServiceUrl}/internal/held-messages/deliver-webchat`,
+        {
+          village_id,
+          channel_identifier,
+          held_message_id: held.message_id,
+          reply_text: result.response,
+          guidance_text: result.guidanceText,
+        },
+        {
+          headers: {
+            'x-internal-api-key': config.internalApiKey,
+            'x-village-id': village_id,
+          },
+          timeout: 15000,
+        }
+      );
+      flushed++;
+    } catch (error: any) {
+      failed++;
+      logger.error('Failed to flush held webchat message', {
+        village_id,
+        channel_identifier,
+        message_id: held?.message_id,
+        error: error?.response?.data || error.message,
+      });
+    }
+  }
+
+  res.json({ status: 'flushed', flushed, failed });
 });
 
 export const __test_only__ = {

@@ -66,6 +66,7 @@ import { startTakeoverForUser } from './channel-client.service';
 import { getEnhancedContext } from './conversation-context.service';
 import { getVillageBehaviorConfig, formatVillageBehaviorConfig } from './village-behavior.service';
 import { canProcessVillageAI } from './ai-wallet.service';
+import { holdMessageForWallet } from './held-message-client.service';
 import { finishAiBillingTurn, startAiBillingTurn, type AiBillingTurnHandle } from './ai-turn-billing.service';
 import { analyzeIncomingMedia } from './media-analysis.service';
 
@@ -1320,20 +1321,42 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       tracker.complete();
       notifyStage('done', 100);
 
+      // Wallet exhausted and the user did NOT explicitly ask for a human.
+      // Instead of rejecting (old behavior), silently HOLD the message so it can
+      // be answered for real once an admin tops up. No reply is sent to the user;
+      // the conversation is marked pending_balance for the dashboard.
+      const canHold = !isEvaluation && sideEffectMode !== 'knowledge_test' && !!resolvedVillageId;
+      let held = false;
+      if (canHold) {
+        held = await holdMessageForWallet({
+          villageId: resolvedVillageId,
+          channel: agentChannel === 'webchat' ? 'WEBCHAT' : 'WHATSAPP',
+          channelIdentifier: userId,
+          messageId: resolvedMessageId,
+          messageText: workingMessage,
+          hasMedia: !!mediaUrl,
+          mediaType: input.mediaType,
+          mediaUrl,
+          mediaCaption: undefined,
+        });
+      }
+
       return finish({
-        success: false,
-        response: 'Maaf, saldo AI desa sedang habis. Silakan hubungi admin desa untuk mengisi saldo agar layanan AI bisa digunakan kembali.',
-        intent: 'WALLET_EXHAUSTED',
+        success: true,
+        // Empty response → orchestrator/webchat route suppress sending anything.
+        response: '',
+        intent: 'AI_BALANCE_HELD',
         metadata: {
           processingTimeMs: Date.now() - startTime,
           hasKnowledge: false,
           traceId,
           walletStatus: walletGate.status,
           walletBalanceUsd: walletGate.balanceUsd,
+          heldForBalance: held,
           guardrail: {
             stage: 'pre_agent_balance',
             type: 'wallet_balance',
-            action: 'blocked',
+            action: held ? 'held' : 'blocked',
             reason: walletGate.reason || 'wallet_exhausted',
           },
         },

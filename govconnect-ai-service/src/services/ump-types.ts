@@ -116,6 +116,8 @@ export interface ProcessMessageResult {
     traceId?: string;
     walletStatus?: string;
     walletBalanceUsd?: number;
+    /** True when a wallet-exhausted message was held for later flush. */
+    heldForBalance?: boolean;
   };
   /** Error message if failed */
   error?: string;

@@ -55,6 +55,14 @@ import {
 } from '../controllers/channel-account.controller';
 import { handleUploadMedia } from '../controllers/media-upload.controller';
 import {
+  handleHoldMessage,
+  handleListHeldMessages,
+  handleListHeldConversations,
+  handleFlushHeldMessages,
+  handleFlushAllHeldMessages,
+  handleDeliverWebchatReply,
+} from '../controllers/held-message.controller';
+import {
   listWaSupportUsers,
   getWaSupportUser,
   getWaSupportSessionSettings,
@@ -139,6 +147,14 @@ router.delete('/conversations/:wa_user_id', handleDeleteConversation);
 router.get('/channel-accounts', handleListChannelAccounts);
 router.get('/channel-accounts/:village_id', handleGetChannelAccount);
 router.put('/channel-accounts/:village_id', handleUpsertChannelAccount);
+
+// Held messages (wallet exhausted) — hold inbound + admin flush after topup
+router.post('/held-messages/hold', handleHoldMessage);
+router.get('/held-messages', handleListHeldMessages);
+router.get('/held-messages/conversations', handleListHeldConversations);
+router.post('/held-messages/flush', handleFlushHeldMessages);
+router.post('/held-messages/flush-all', handleFlushAllHeldMessages);
+router.post('/held-messages/deliver-webchat', handleDeliverWebchatReply);
 
 // WA Support V2 Superadmin Routes
 router.get('/wa-support/health', checkWaSupportHealth);

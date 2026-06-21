@@ -329,6 +329,18 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       return;
     }
     
+    // Wallet exhausted: the message was silently held for later flush.
+    // Don't publish any reply — the citizen gets a real answer after topup.
+    if (result.intent === 'AI_BALANCE_HELD') {
+      logger.info('🪙 Message held for wallet topup, suppressing reply', {
+        wa_user_id,
+        message_id,
+        heldForBalance: result.metadata?.heldForBalance,
+      });
+      completeProcessing(village_id, wa_user_id, message_id);
+      return;
+    }
+
     // This is the latest message - send the response
     // Stop typing just before sending the actual reply (human-like gap)
     if (typingStarted) {

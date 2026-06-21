@@ -830,6 +830,32 @@ export const ai = {
     });
   },
 
+  // ── Held messages (wallet exhausted) — live on Channel Service ──
+  async listHeldConversations(villageId: string) {
+    return apiFetch(buildUrl(ServicePath.CHANNEL, '/internal/held-messages/conversations'), {
+      headers: getHeaders({ 'x-village-id': villageId }),
+    });
+  },
+
+  async flushHeldMessages(villageId: string, channelIdentifier: string) {
+    return apiFetch(
+      buildUrl(ServicePath.CHANNEL, `/internal/held-messages/flush?channel_identifier=${encodeURIComponent(channelIdentifier)}`),
+      {
+        method: 'POST',
+        headers: getHeaders({ 'x-village-id': villageId }),
+        body: JSON.stringify({}),
+      }
+    );
+  },
+
+  async flushAllHeldMessages(villageId: string) {
+    return apiFetch(buildUrl(ServicePath.CHANNEL, '/internal/held-messages/flush-all'), {
+      method: 'POST',
+      headers: getHeaders({ 'x-village-id': villageId }),
+      body: JSON.stringify({}),
+    });
+  },
+
   async listAIVouchers() {
     return apiFetch(buildUrl(ServicePath.AI, '/admin/ai-vouchers'), {
       headers: getHeaders(),

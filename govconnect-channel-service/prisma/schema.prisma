@@ -243,3 +243,32 @@ model PendingMessage {
   @@index([status, created_at])
   @@map("pending_messages")
 }
+
+// Messages held while village AI wallet is exhausted.
+// Status flow: held -> released (admin flushes) -> [row deleted].
+// Distinct from PendingMessage (AI-retry queue) so wallet exhaustion does not
+// pollute that queue's 24h cleanup.
+model HeldMessage {
+  id                 String   @id @default(cuid())
+  village_id         String
+  wa_user_id         String?
+  channel            ChannelType @default(WHATSAPP)
+  channel_identifier String
+  message_id         String   @unique
+  message_text       String   @db.Text
+  has_media          Boolean  @default(false)
+  media_type         String?
+  media_url          String?  @db.Text
+  media_public_url   String?  @db.Text
+  media_caption      String?  @db.Text
+  media_mime_type    String?
+  media_file_name    String?
+  status             String   @default("held") // held | releasing
+  reason             String   @default("wallet_exhausted")
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+
+  @@index([village_id, status, created_at])
+  @@index([village_id, channel, channel_identifier, status])
+  @@map("held_messages")
+}

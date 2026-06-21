@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { CheckCircle2, Loader2, Minus, Plus, Search, Ticket, Wallet } from "lucide-react"
+import { CheckCircle2, Loader2, Minus, Plus, Search, Send, Ticket, Wallet } from "lucide-react"
 
 import { useAuth } from "@/components/auth/AuthContext"
 import { useToast } from "@/hooks/use-toast"
@@ -34,6 +34,14 @@ interface WalletRow {
   balance_usd: number
   status: string
   updated_at: string
+}
+
+interface HeldConversation {
+  channel: "WHATSAPP" | "WEBCHAT"
+  channel_identifier: string
+  wa_user_id: string | null
+  count: number
+  oldest_at: string
 }
 
 interface VoucherRow {
@@ -164,6 +172,12 @@ export default function SuperadminAIWalletsPage() {
   const [voucherAmount, setVoucherAmount] = useState("")
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmAction | null>(null)
 
+  // Held messages (wallet exhausted) per village
+  const [heldByVillage, setHeldByVillage] = useState<Record<string, HeldConversation[]>>({})
+  const [flushingVillage, setFlushingVillage] = useState<string | null>(null)
+  const [flushingConversation, setFlushingConversation] = useState<string | null>(null)
+  const [expandedHeldVillage, setExpandedHeldVillage] = useState<string | null>(null)
+
   useEffect(() => {
     if (user && !isSuperadmin(user.role)) router.replace("/dashboard")
   }, [user, router])
@@ -182,6 +196,21 @@ export default function SuperadminAIWalletsPage() {
       setWallets(Array.isArray(walletsPayload?.data) ? walletsPayload.data : [])
       setVouchers(Array.isArray(vouchersPayload?.data) ? vouchersPayload.data : [])
       setVillages(Array.isArray(villagesPayload?.data) ? villagesPayload.data : [])
+
+      // Fetch held-message conversations per village (best-effort, non-blocking failures).
+      const walletRows: WalletRow[] = Array.isArray(walletsPayload?.data) ? walletsPayload.data : []
+      const heldEntries = await Promise.all(
+        walletRows.map(async (wallet) => {
+          try {
+            const payload = await fetchApi<any>(`/api/superadmin/ai-wallets/${encodeURIComponent(wallet.village_id)}/held-messages`)
+            const conversations: HeldConversation[] = Array.isArray(payload?.conversations) ? payload.conversations : []
+            return [wallet.village_id, conversations] as const
+          } catch {
+            return [wallet.village_id, [] as HeldConversation[]] as const
+          }
+        })
+      )
+      setHeldByVillage(Object.fromEntries(heldEntries))
     } catch (err: any) {
       setError(err?.message || "Gagal memuat AI wallets")
     } finally {
@@ -366,6 +395,31 @@ export default function SuperadminAIWalletsPage() {
       setSubmitting(false)
     }
   }
+
+  const flushHeld = async (villageId: string, channelIdentifier?: string) => {
+    try {
+      if (channelIdentifier) setFlushingConversation(channelIdentifier)
+      else setFlushingVillage(villageId)
+      const payload = await fetchApi<any>(`/api/superadmin/ai-wallets/${encodeURIComponent(villageId)}/held-messages/flush`, {
+        method: "POST",
+        body: JSON.stringify(channelIdentifier ? { channel_identifier: channelIdentifier } : {}),
+      })
+      const flushed = payload?.flushed ?? 0
+      toast({
+        title: "Pesan tertunda dikirim",
+        description: channelIdentifier
+          ? `${flushed} pesan warga ini diproses ulang oleh AI.`
+          : `${flushed} pesan tertunda di desa ini diproses ulang oleh AI.`,
+      })
+      await loadData()
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err?.message || "Gagal mengirim pesan tertunda", variant: "destructive" })
+    } finally {
+      setFlushingVillage(null)
+      setFlushingConversation(null)
+    }
+  }
+
   const handleCreateVoucher = async () => {
     if (!voucherCode.trim() || !isVoucherAmountValid) {
       toast({ title: "Gagal", description: "Kode voucher dan nominal valid wajib diisi", variant: "destructive" })
@@ -585,6 +639,7 @@ export default function SuperadminAIWalletsPage() {
                 <TableHead>Desa</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Saldo</TableHead>
+                <TableHead>Pesan Tertunda</TableHead>
                 <TableHead>Updated</TableHead>
                 <TableHead className="text-right">Aksi</TableHead>
               </TableRow>
@@ -592,33 +647,99 @@ export default function SuperadminAIWalletsPage() {
             <TableBody>
               {filteredWallets.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground">Belum ada wallet desa.</TableCell>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">Belum ada wallet desa.</TableCell>
                 </TableRow>
               ) : filteredWallets.map((wallet) => {
                 const village = villageMap.get(wallet.village_id)
+                const heldConversations = heldByVillage[wallet.village_id] ?? []
+                const heldTotal = heldConversations.reduce((sum, c) => sum + c.count, 0)
+                const isFlushing = flushingVillage === wallet.village_id
+                const isExpanded = expandedHeldVillage === wallet.village_id
                 return (
-                  <TableRow key={wallet.id}>
+                  <Fragment key={wallet.id}>
+                  <TableRow>
                     <TableCell>
                       <div className="font-medium">{village ? villageLabel(village) : wallet.village_id}</div>
                       <div className="font-mono text-xs text-muted-foreground">{village?.slug ? `${village.slug} · ` : ""}{wallet.village_id}</div>
                     </TableCell>
                     <TableCell><Badge variant={walletStatusBadge(wallet.status)}>{walletStatusLabel(wallet.status)}</Badge></TableCell>
                     <TableCell>{formatUsd(wallet.balance_usd)}</TableCell>
+                    <TableCell>
+                      {heldTotal > 0 ? (
+                        <button
+                          type="button"
+                          className="cursor-pointer"
+                          onClick={() => setExpandedHeldVillage(isExpanded ? null : wallet.village_id)}
+                          title="Lihat per warga"
+                        >
+                          <Badge variant="secondary">{heldTotal} pesan · {heldConversations.length} warga</Badge>
+                        </button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
                     <TableCell>{formatDateTime(wallet.updated_at)}</TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={wallet.balance_usd <= 0}
-                        onClick={() => {
-                          setReduceWallet(wallet)
-                          setReduceOpen(true)
-                        }}
-                      >
-                        <Minus className="mr-1 h-3 w-3" /> Kurangi
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        {heldTotal > 0 && (
+                          <Button
+                            size="sm"
+                            variant="default"
+                            disabled={isFlushing}
+                            onClick={() => flushHeld(wallet.village_id)}
+                            title="Kirim semua pesan tertunda warga di desa ini"
+                          >
+                            {isFlushing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
+                            Kirim Semua Tertunda
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={wallet.balance_usd <= 0}
+                          onClick={() => {
+                            setReduceWallet(wallet)
+                            setReduceOpen(true)
+                          }}
+                        >
+                          <Minus className="mr-1 h-3 w-3" /> Kurangi
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
+                  {isExpanded && heldConversations.length > 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="bg-muted/40">
+                        <div className="space-y-2 py-1">
+                          <div className="text-xs font-medium text-muted-foreground">Pesan tertunda per warga</div>
+                          {heldConversations.map((conv) => {
+                            const isConvFlushing = flushingConversation === conv.channel_identifier
+                            return (
+                              <div key={conv.channel_identifier} className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
+                                <div className="min-w-0">
+                                  <div className="truncate font-mono text-sm">{conv.channel_identifier}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {conv.channel === "WEBCHAT" ? "Webchat" : "WhatsApp"} · {conv.count} pesan · sejak {formatDateTime(conv.oldest_at)}
+                                  </div>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  disabled={isConvFlushing}
+                                  onClick={() => flushHeld(wallet.village_id, conv.channel_identifier)}
+                                  title="Kirim pesan tertunda warga ini saja"
+                                >
+                                  {isConvFlushing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
+                                  Kirim Warga Ini
+                                </Button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  </Fragment>
                 )
               })}
             </TableBody>
