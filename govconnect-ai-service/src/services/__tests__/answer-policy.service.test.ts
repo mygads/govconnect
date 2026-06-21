@@ -478,6 +478,24 @@ describe('verifyAnswer — village profile grounding', () => {
     expect(decision.rewritten).toBe(true);
   });
 
+  it('rewrites a hallucinated administrative-region address on a bare follow-up question', async () => {
+    const result = baseResult({
+      intent: 'AGENT',
+      response: 'Alamat kantor Desa Sanreseng Ade: Sanreseng Ade, Kec. Galut, Kab. Takalar, Sulawesi Selatan.',
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'alamatnya di mana?',
+      result,
+      toolsUsed: [],
+      handledByGuard: false,
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.kind).toBe('structured_fact_village_profile');
+    expect(decision.rewritten).toBe(true);
+  });
+
   it('accepts explicit uncertainty for village profile when no profile fact is claimed', async () => {
     const result = baseResult({
       intent: 'VILLAGE_PROFILE',

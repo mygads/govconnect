@@ -107,6 +107,9 @@ const VILLAGE_PROFILE_QUERY_PATTERNS = [
   /\b(alamat|lokasi|dimana|dmna|dmn)\s+(kantor|desa|kelurahan|balai|kelurahan)\b/i,
   /\b(alamat\s+(kantor|desa|kelurahan)|kantor\s+desa\s+dimana)\b/i,
   /\b(google\s*maps?|maps?\s+(desa|kantor))\b/i,
+  // Bare/pronoun address questions ("alamatnya di mana?", "lokasinya dimana") —
+  // common as a follow-up where the office is already the topic.
+  /\b(alamat|lokasi)(nya|\s+nya)?\s*(di\s*)?(mana|dimana|dmna|dmn)\b/i,
 ];
 
 const SERVICE_DETAIL_QUERY_PATTERNS = [
@@ -159,7 +162,10 @@ function mentionsServiceFactClaim(text: string): boolean {
 function mentionsVillageProfileFactClaim(text: string): boolean {
   return /\b\d{1,2}[:.]\d{2}\b/.test(text)
     || /\b(senin|selasa|rabu|kamis|jumat|sabtu|minggu|operasional|hari kerja)\b/i.test(text)
-    || /\b(jl\.|jalan|rt\s*\d|rw\s*\d|berada di|terletak di|google maps|gmaps|telepon kantor|nomor kantor)\b/i.test(text);
+    || /\b(jl\.|jalan|rt\s*\d|rw\s*\d|berada di|terletak di|google maps|gmaps|telepon kantor|nomor kantor)\b/i.test(text)
+    // Administrative-region claims — a fabricated kecamatan/kabupaten/provinsi is
+    // the exact failure we must catch ("Kec. Galut, Kab. Takalar" vs real data).
+    || /\b(kecamatan|kabupaten|provinsi|kec\.|kab\.|prov\.)\s+\w/i.test(text);
 }
 
 function mentionsStructuredFactClaim(text: string): boolean {
