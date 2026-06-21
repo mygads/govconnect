@@ -42,4 +42,15 @@ S=$(sess); echo "[C1 marah]"; say "$S" "kesel banget pelayanan lama amat!! kapan
 S=$(sess); echo "[C2 bingung]"; say "$S" "saya gaptek pak ga ngerti caranya gimana"
 S=$(sess); echo "[C3 terima kasih]"; say "$S" "makasih banyak ya pak sangat membantu"
 
+echo "########## D. Facet follow-ups (time/cost/channel) ##########"
+S=$(sess)
+echo "[D1 t1 service]"; say "$S" "saya mau urus surat keterangan usaha"
+sleep 1; echo "[D1 t2 berapa lama]"; say "$S" "prosesnya berapa lama ya?"
+sleep 1; echo "[D1 t3 berapa biaya]"; say "$S" "bayar berapa?"
+sleep 1; echo "[D1 t4 online/kantor]"; say "$S" "bisa online apa harus ke kantor?"
+
+echo "########## E. Single-turn facet (no prior context) ##########"
+S=$(sess); echo "[E1 biaya sktm]"; say "$S" "biaya surat keterangan tidak mampu berapa"
+S=$(sess); echo "[E2 lama usaha]"; say "$S" "ngurus surat keterangan usaha berapa lama"
+
 echo "########## DONE ##########"

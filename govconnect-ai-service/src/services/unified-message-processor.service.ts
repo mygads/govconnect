@@ -1928,11 +1928,12 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         },
       };
 
-      const cachedVerification = verifyAnswer({
+      const cachedVerification = await verifyAnswer({
         userMessage: sanitizedMessage,
         result: cacheResult,
         toolsUsed: cachedResponse.toolsUsed || [],
         handledByGuard: false,
+        villageId: resolvedVillageId,
       });
       if (!cachedVerification.ok && cachedVerification.replacement) {
         cacheResult = {
@@ -2145,11 +2146,12 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
     // rewrite into an honest "not found / not sure" reply so we never
     // fabricate a phone number or a fake service list.
     if (sideEffectMode !== 'knowledge_test' && agentResult.intent !== 'TAKEOVER') {
-      const verification = verifyAnswer({
+      const verification = await verifyAnswer({
         userMessage: sanitizedMessage,
         result: agentResult,
         toolsUsed: agentResult.metadata.toolsUsed || [],
         handledByGuard: false,
+        villageId: resolvedVillageId,
       });
 
       if (!verification.ok && verification.replacement) {

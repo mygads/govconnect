@@ -42,13 +42,13 @@ function baseResult(overrides: Partial<ProcessMessageResult>): ProcessMessageRes
 }
 
 describe('verifyAnswer — contact directory grounding', () => {
-  it('rewrites a contact-directory answer when no contact tool was used', () => {
+  it('rewrites a contact-directory answer when no contact tool was used', async () => {
     const result = baseResult({
       intent: 'CONTACT_DIRECTORY',
       response: 'Nomor damkar adalah 081234567890.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'ada nomor damkar?',
       result,
       toolsUsed: ['search_knowledge'],
@@ -61,13 +61,13 @@ describe('verifyAnswer — contact directory grounding', () => {
     expect(decision.replacement?.response || '').toMatch(/belum menemukan|belum ditemukan/i);
   });
 
-  it('rewrites when the response contains a phone-shaped number without a contact tool', () => {
+  it('rewrites when the response contains a phone-shaped number without a contact tool', async () => {
     const result = baseResult({
       intent: 'QUESTION',
       response: 'Silakan hubungi 081234567890.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'ada nomor kepala desa?',
       result,
       toolsUsed: ['search_knowledge'],
@@ -79,13 +79,13 @@ describe('verifyAnswer — contact directory grounding', () => {
     expect(decision.reason).toBe('contact_number_without_tool');
   });
 
-  it('accepts a contact-directory answer when get_important_contact was used', () => {
+  it('accepts a contact-directory answer when get_important_contact was used', async () => {
     const result = baseResult({
       intent: 'CONTACT_DIRECTORY',
       response: '*Damkar Bola*\n0200-123456',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'ada nomor damkar?',
       result,
       toolsUsed: ['get_important_contact'],
@@ -97,7 +97,7 @@ describe('verifyAnswer — contact directory grounding', () => {
     expect(decision.reason).toBe('grounded_via_contact_tool');
   });
 
-  it('accepts a contact-directory answer when trusted toolTrace proves directory grounding', () => {
+  it('accepts a contact-directory answer when trusted toolTrace proves directory grounding', async () => {
     const result = baseResult({
       intent: 'CONTACT_DIRECTORY',
       response: '*Damkar Bola*\n0200-123456',
@@ -117,7 +117,7 @@ describe('verifyAnswer — contact directory grounding', () => {
       },
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'ada nomor damkar?',
       result,
       toolsUsed: [],
@@ -128,13 +128,13 @@ describe('verifyAnswer — contact directory grounding', () => {
     expect(decision.reason).toBe('grounded_via_contact_tool');
   });
 
-  it('accepts when emergency tool was used for an active-emergency reply', () => {
+  it('accepts when emergency tool was used for an active-emergency reply', async () => {
     const result = baseResult({
       intent: 'EMERGENCY_CONTACTS',
       response: '*Damkar Bola*\n0200-123456',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'rumah saya kebakaran',
       result,
       toolsUsed: ['get_emergency_contacts'],
@@ -146,14 +146,14 @@ describe('verifyAnswer — contact directory grounding', () => {
 });
 
 describe('verifyAnswer — service listing grounding', () => {
-  it('rewrites a list-shaped service answer when get_service_info was not used', () => {
+  it('rewrites a list-shaped service answer when get_service_info was not used', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response:
         'Berikut beberapa layanan yang tersedia:\n\n1. Surat Domisili\n2. KTP\n3. KK\n\nMohon sebutkan yang Bapak/Ibu maksud.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'layanan apa aja yg bisa dilakukan disini?',
       result,
       toolsUsed: ['search_knowledge'],
@@ -165,14 +165,14 @@ describe('verifyAnswer — service listing grounding', () => {
     expect(decision.kind).toBe('structured_fact_service_listing');
   });
 
-  it('rewrites service-listing variants when get_service_info was not used', () => {
+  it('rewrites service-listing variants when get_service_info was not used', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Berikut layanan:\n\n- Surat Domisili\n- KTP',
     });
 
     for (const userMessage of ['pelayanan desa apa aja?', 'bisa urus apa aja di sini?']) {
-      const decision = verifyAnswer({
+      const decision = await verifyAnswer({
         userMessage,
         result,
         toolsUsed: ['search_knowledge'],
@@ -184,13 +184,13 @@ describe('verifyAnswer — service listing grounding', () => {
     }
   });
 
-  it('accepts a listing answer grounded in get_service_info', () => {
+  it('accepts a listing answer grounded in get_service_info', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Berikut layanan:\n\n1. Surat Domisili\n2. KTP',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'layanan apa aja',
       result,
       toolsUsed: ['get_service_info'],
@@ -201,13 +201,13 @@ describe('verifyAnswer — service listing grounding', () => {
     expect(decision.reason).toBe('grounded_via_service_tool');
   });
 
-  it('does not flag a specific-service detail question as listing', () => {
+  it('does not flag a specific-service detail question as listing', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Syarat KTP di Margahayu adalah KK dan formulir F1.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'syarat KTP apa?',
       result,
       toolsUsed: ['get_service_info'],
@@ -219,7 +219,7 @@ describe('verifyAnswer — service listing grounding', () => {
 });
 
 describe('verifyAnswer — guard pass-through', () => {
-  it('accepts any result that was handled by a pre-agent guard', () => {
+  it('accepts any result that was handled by a pre-agent guard', async () => {
     const result = baseResult({
       intent: 'CONTACT_DIRECTORY',
       response: 'Nomor tidak jelas disebut tapi guard sudah pre-validate.',
@@ -232,7 +232,7 @@ describe('verifyAnswer — guard pass-through', () => {
       },
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'ada nomor damkar?',
       result,
       toolsUsed: [],
@@ -245,13 +245,13 @@ describe('verifyAnswer — guard pass-through', () => {
 });
 
 describe('verifyAnswer — non-structured passthrough', () => {
-  it('leaves generic knowledge answers untouched', () => {
+  it('leaves generic knowledge answers untouched', async () => {
     const result = baseResult({
       intent: 'KNOWLEDGE_QUERY',
       response: 'Silakan datang ke kantor desa untuk konfirmasi.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'apa itu govconnect?',
       result,
       toolsUsed: ['search_knowledge'],
@@ -264,13 +264,13 @@ describe('verifyAnswer — non-structured passthrough', () => {
 });
 
 describe('verifyAnswer — mixed structured grounding', () => {
-  it('rewrites mixed service-and-contact answers when contact grounding exists but service grounding is missing', () => {
+  it('rewrites mixed service-and-contact answers when contact grounding exists but service grounding is missing', async () => {
     const result = baseResult({
       intent: 'QUESTION',
       response: 'Syarat Surat Keterangan Domisili adalah KTP dan KK. Nomor puskesmas 081234567890.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'syarat surat domisili dan nomor puskesmas berapa?',
       result,
       toolsUsed: ['get_important_contact'],
@@ -282,13 +282,13 @@ describe('verifyAnswer — mixed structured grounding', () => {
     expect(decision.reason).toBe('service_detail_without_tool');
   });
 
-  it('rewrites mixed village-profile-and-contact answers when contact grounding exists but profile grounding is missing', () => {
+  it('rewrites mixed village-profile-and-contact answers when contact grounding exists but profile grounding is missing', async () => {
     const result = baseResult({
       intent: 'QUESTION',
       response: 'Kantor desa buka jam 08:00-15:00. Nomor kantor desa 081234567890.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'jam buka kantor desa dan nomor kantor desa berapa?',
       result,
       toolsUsed: ['get_important_contact'],
@@ -300,13 +300,13 @@ describe('verifyAnswer — mixed structured grounding', () => {
     expect(decision.reason).toBe('village_profile_without_tool');
   });
 
-  it('accepts mixed service-and-contact answers when both groundings are present', () => {
+  it('accepts mixed service-and-contact answers when both groundings are present', async () => {
     const result = baseResult({
       intent: 'QUESTION',
       response: 'Syarat Surat Keterangan Domisili adalah KTP dan KK. Nomor puskesmas 081234567890.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'syarat surat domisili dan nomor puskesmas berapa?',
       result,
       toolsUsed: ['get_service_info', 'get_important_contact'],
@@ -319,13 +319,13 @@ describe('verifyAnswer — mixed structured grounding', () => {
 });
 
 describe('verifyAnswer — service detail grounding', () => {
-  it('rewrites ungrounded service requirement list', () => {
+  it('rewrites ungrounded service requirement list', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Syarat KTP:\n1. KK\n2. Fotokopi akta\n3. Surat pengantar RT',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'syarat bikin ktp apa aja?',
       result,
       toolsUsed: ['search_knowledge'],
@@ -337,13 +337,13 @@ describe('verifyAnswer — service detail grounding', () => {
     expect(decision.rewritten).toBe(true);
   });
 
-  it('rewrites ungrounded service detail even without list shape when it makes a factual claim', () => {
+  it('rewrites ungrounded service detail even without list shape when it makes a factual claim', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Untuk KTP biasanya gratis dan prosesnya 1 hari kerja.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'syarat ktp apa?',
       result,
       toolsUsed: [],
@@ -355,13 +355,13 @@ describe('verifyAnswer — service detail grounding', () => {
     expect(decision.rewritten).toBe(true);
   });
 
-  it('rewrites ungrounded service availability or mode claim', () => {
+  it('rewrites ungrounded service availability or mode claim', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Surat domisili masih tersedia dan bisa diajukan online lewat link formulir.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'surat domisili bisa online kah?',
       result,
       toolsUsed: ['search_knowledge'],
@@ -373,13 +373,13 @@ describe('verifyAnswer — service detail grounding', () => {
     expect(decision.rewritten).toBe(true);
   });
 
-  it('accepts explicit uncertainty for service detail when no service fact is claimed', () => {
+  it('accepts explicit uncertainty for service detail when no service fact is claimed', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Maaf Pak, saya cek dulu ya.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'syarat ktp apa?',
       result,
       toolsUsed: [],
@@ -391,7 +391,7 @@ describe('verifyAnswer — service detail grounding', () => {
     expect(decision.reason).toBe('explicit_uncertainty_without_service_tool');
   });
 
-  it('accepts service detail when trusted toolTrace proves official service grounding', () => {
+  it('accepts service detail when trusted toolTrace proves official service grounding', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Untuk KTP, syarat utamanya KK dan formulir pengajuan.',
@@ -411,7 +411,7 @@ describe('verifyAnswer — service detail grounding', () => {
       },
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'syarat ktp apa?',
       result,
       toolsUsed: [],
@@ -422,13 +422,13 @@ describe('verifyAnswer — service detail grounding', () => {
     expect(decision.reason).toBe('grounded_via_service_tool');
   });
 
-  it('does not treat edit-link tools as sufficient grounding for service detail facts', () => {
+  it('does not treat edit-link tools as sufficient grounding for service detail facts', async () => {
     const result = baseResult({
       intent: 'SERVICE_INFO',
       response: 'Untuk KTP biasanya gratis dan prosesnya 1 hari kerja.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'biaya ktp berapa?',
       result,
       toolsUsed: ['get_service_request_edit_link'],
@@ -442,13 +442,13 @@ describe('verifyAnswer — service detail grounding', () => {
 });
 
 describe('verifyAnswer — village profile grounding', () => {
-  it('rewrites ungrounded jam buka claim', () => {
+  it('rewrites ungrounded jam buka claim', async () => {
     const result = baseResult({
       intent: 'QUESTION',
       response: 'Kantor desa buka Senin-Jumat jam 08:00 sampai 15:00.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'jam buka kantor desa kapan?',
       result,
       toolsUsed: ['search_knowledge'],
@@ -460,13 +460,13 @@ describe('verifyAnswer — village profile grounding', () => {
     expect(decision.rewritten).toBe(true);
   });
 
-  it('rewrites ungrounded location claim even without a concrete street address', () => {
+  it('rewrites ungrounded location claim even without a concrete street address', async () => {
     const result = baseResult({
       intent: 'QUESTION',
       response: 'Kantor desa berada di dekat lapangan utama desa.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'kantor desa dimana?',
       result,
       toolsUsed: [],
@@ -478,13 +478,13 @@ describe('verifyAnswer — village profile grounding', () => {
     expect(decision.rewritten).toBe(true);
   });
 
-  it('accepts explicit uncertainty for village profile when no profile fact is claimed', () => {
+  it('accepts explicit uncertainty for village profile when no profile fact is claimed', async () => {
     const result = baseResult({
       intent: 'VILLAGE_PROFILE',
       response: 'Maaf Pak/Bu, untuk alamat dan jam bukanya saya cek dulu dari data resmi ya.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'jam buka kantor desa?',
       result,
       toolsUsed: [],
@@ -495,13 +495,13 @@ describe('verifyAnswer — village profile grounding', () => {
     expect(decision.reason).toBe('explicit_uncertainty_without_profile_tool');
   });
 
-  it('accepts village profile answer grounded by get_village_profile', () => {
+  it('accepts village profile answer grounded by get_village_profile', async () => {
     const result = baseResult({
       intent: 'VILLAGE_PROFILE',
       response: 'Kantor desa buka Senin-Jumat jam 08:00-15:00.',
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'jam buka kantor desa?',
       result,
       toolsUsed: ['get_village_profile'],
@@ -512,7 +512,7 @@ describe('verifyAnswer — village profile grounding', () => {
     expect(decision.reason).toBe('grounded_via_profile_tool');
   });
 
-  it('accepts village profile answer when grounding metadata is attached', () => {
+  it('accepts village profile answer when grounding metadata is attached', async () => {
     const result = baseResult({
       intent: 'VILLAGE_PROFILE',
       response: 'Kantor desa buka Senin-Jumat jam 08:00-15:00.',
@@ -531,7 +531,7 @@ describe('verifyAnswer — village profile grounding', () => {
       },
     });
 
-    const decision = verifyAnswer({
+    const decision = await verifyAnswer({
       userMessage: 'jam buka kantor desa?',
       result,
       toolsUsed: [],

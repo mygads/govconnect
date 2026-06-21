@@ -2,6 +2,26 @@ import logger from '../utils/logger';
 import { isContactDirectoryLookup } from './important-contacts.service';
 import type { ProcessMessageResult } from './ump-types';
 
+const DAY_LABELS: Record<string, string> = {
+  senin: 'Senin', selasa: 'Selasa', rabu: 'Rabu', kamis: 'Kamis',
+  jumat: 'Jumat', sabtu: 'Sabtu', minggu: 'Minggu',
+};
+const DAY_ORDER = ['senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu', 'minggu'];
+
+function formatOperatingHoursForResident(hours: any): string {
+  if (!hours) return '';
+  if (typeof hours === 'string') return hours.trim();
+  if (typeof hours !== 'object') return '';
+  const lines = DAY_ORDER
+    .filter((day) => (hours as any)[day])
+    .map((day) => {
+      const h = (hours as any)[day];
+      if (!h?.open && !h?.close) return `- ${DAY_LABELS[day]}: libur`;
+      return `- ${DAY_LABELS[day]}: ${h.open || '?'} - ${h.close || '?'}`;
+    });
+  return lines.join('\n');
+}
+
 export type AnswerPolicyKind =
   | 'structured_fact_contact'
   | 'structured_fact_service_listing'
@@ -34,6 +54,8 @@ interface VerifyInput {
   toolsUsed: string[];
   /** True if this message went through a deterministic pre-agent guard. */
   handledByGuard: boolean;
+  /** Resident's village, used to self-heal village-profile answers from DB. */
+  villageId?: string;
 }
 
 const CONTACT_GROUNDING_TOOLS = new Set([
@@ -235,7 +257,52 @@ function buildServiceDetailFallback(userMessage: string, traceId: string, startT
   };
 }
 
-function buildVillageProfileFallback(traceId: string, startTime: number): ProcessMessageResult {
+async function buildVillageProfileFallback(
+  userMessage: string,
+  villageId: string | undefined,
+  traceId: string,
+  startTime: number,
+): Promise<ProcessMessageResult> {
+  const profile = villageId
+    ? await import('./knowledge.service')
+        .then((m) => m.getVillageProfileSummary(villageId))
+        .catch(() => null)
+    : null;
+  const normalized = (userMessage || '').toLowerCase();
+  const wantsHours = /\b(jam|buka|tutup|kerja|operasional|pelayanan|kapan)\b/i.test(normalized);
+  const wantsAddress = /\b(alamat|lokasi|dimana|dmna|dmn|maps?)\b/i.test(normalized);
+
+  if (profile) {
+    const segments: string[] = [];
+    const hoursText = formatOperatingHoursForResident(profile.operating_hours);
+    if ((wantsHours || !wantsAddress) && hoursText) {
+      segments.push(`Jam buka Kantor Desa ${profile.name || ''}`.trim() + `:\n${hoursText}`);
+    }
+    if ((wantsAddress || !wantsHours)) {
+      if (profile.address) segments.push(`Alamat: ${profile.address}`);
+      if (profile.gmaps_url) segments.push(`Google Maps: ${profile.gmaps_url}`);
+    }
+    if (segments.length > 0) {
+      return {
+        success: true,
+        response: segments.join('\n\n'),
+        intent: 'VILLAGE_PROFILE',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          hasKnowledge: true,
+          agentMode: 'answer_policy_verifier',
+          traceId,
+          guardrail: {
+            stage: 'answer_policy',
+            type: 'village_profile_ungrounded',
+            action: 'rewritten_self_healed',
+            reason: 'no_village_profile_tool_used',
+          },
+        },
+      };
+    }
+  }
+
   return {
     success: true,
     response: 'Maaf Pak/Bu, untuk alamat dan jam buka kantor desa sebaiknya saya cek dulu dari data resmi agar tidak keliru. Coba tanyakan lagi sebentar ya.',
@@ -331,8 +398,8 @@ function hasReliableRetrievalGrounding(
 /**
  * Main entry: verify an outgoing result against the answer policy.
  */
-export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
-  const { userMessage, result, toolsUsed, handledByGuard } = input;
+export async function verifyAnswer(input: VerifyInput): Promise<AnswerPolicyDecision> {
+  const { userMessage, result, toolsUsed, handledByGuard, villageId } = input;
   const kind = classify(userMessage, result);
   const responseText = `${result.response || ''}\n${result.guidanceText || ''}`;
   const traceId = result.metadata?.traceId || 'unknown';
@@ -390,7 +457,7 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
       ok: false,
       rewritten: true,
       reason: 'village_profile_without_tool',
-      replacement: buildVillageProfileFallback(traceId, startTime),
+      replacement: await buildVillageProfileFallback(userMessage, villageId, traceId, startTime),
     };
   }
 
@@ -499,7 +566,9 @@ export function verifyAnswer(input: VerifyInput): AnswerPolicyDecision {
       ok: false,
       rewritten: true,
       reason: 'village_profile_without_tool',
-      replacement: buildVillageProfileFallback(
+      replacement: await buildVillageProfileFallback(
+        userMessage,
+        villageId,
         result.metadata?.traceId || 'unknown',
         Date.now() - (result.metadata?.processingTimeMs || 0),
       ),

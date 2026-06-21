@@ -1001,10 +1001,17 @@ export async function buildServiceInfoContext(
 
   // Surface processing time and cost when present so facet questions
   // ("berapa lama?", "berapa biaya?") are answered by the same grounded reply
-  // that the service-info stop-guard emits verbatim.
-  const processingTime = typeof service.estimated_processing_time === 'string'
+  // that the service-info stop-guard emits verbatim. The structured columns are
+  // frequently empty on real data, with the estimate baked into the description
+  // prose ("... Estimasi: ±15 menit."), so fall back to parsing it from there.
+  const description = typeof service.description === 'string' ? service.description : '';
+  let processingTime = typeof service.estimated_processing_time === 'string'
     ? service.estimated_processing_time.trim()
     : '';
+  if (!processingTime && description) {
+    const m = description.match(/estimasi[:\s]+([^\n.]+)/i);
+    if (m) processingTime = m[1].trim();
+  }
   if (processingTime) {
     replyText += `Estimasi proses: ${processingTime}.\n`;
   }
