@@ -200,8 +200,14 @@ function mentionsStructuredFactClaim(text: string): boolean {
 function mentionsTransactionSuccessClaim(text: string): boolean {
   const t = (text || '').toLowerCase();
   if (!t) return false;
-  // Explicit reference number is the strongest success signal.
-  if (/\b(lap|lay)-\s?\d/i.test(t)) return true;
+  // A reference number in an ISSUANCE/success context = a creation claim. Merely
+  // citing a LAP/LAY code (cancel-confirmation prompt "yakin batalkan LAP-...?",
+  // a status lookup, a history list) is NOT a creation claim and must not trip
+  // the guard — those flows are grounded by their own tools anyway.
+  if (/\b(dengan nomor|nomor pelacakan|nomor laporan|nomor tiket|berhasil dibuat|telah kami terima|sudah kami terima|telah kami catat|sudah kami catat)\b[\s\S]{0,40}\b(lap|lay)-\s?\d/i.test(t)
+    || /\b(lap|lay)-\s?\d[\s\S]{0,40}\b(berhasil dibuat|telah dibuat|sudah dibuat|telah kami terima|sudah kami terima|berhasil dicatat|telah tercatat)\b/i.test(t)) {
+    return true;
+  }
   // "laporan/pengaduan/permohonan (sudah/berhasil/telah) ... masuk/tercatat/dibuat/kami catat/kami terima/diteruskan"
   const recorded = /(laporan|pengaduan|permohonan|laporannya|aduan)\b[\s\S]{0,40}\b(sudah|telah|berhasil|saya|kami)?\s*(masuk|tercatat|dicatat|kami catat|saya catat|kami terima|kami terima|terkirim|dibuat|dibuatkan|diteruskan|kami teruskan|diproses|kami proses|tersimpan)\b/i;
   const recordedAlt = /\b(masuk ya|sudah masuk|berhasil dibuat|berhasil dicatat|sudah saya catat|sudah kami catat|sudah dicatat|sudah tercatat|sudah diteruskan|sudah kami teruskan)\b/i;

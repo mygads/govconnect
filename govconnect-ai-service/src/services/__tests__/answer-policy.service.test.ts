@@ -677,4 +677,27 @@ describe('verifyAnswer — phantom transaction guard', () => {
 
     expect(decision.reason).not.toBe('transaction_success_without_tool');
   });
+
+  it('does not flag a cancel-confirmation prompt that merely cites a LAP code', async () => {
+    const result = baseResult({
+      intent: 'CANCEL_COMPLAINT',
+      response: 'Apakah Bapak/Ibu yakin ingin membatalkan laporan LAP-20260621-002?\nBalas YA untuk konfirmasi.',
+      metadata: {
+        processingTimeMs: 1,
+        hasKnowledge: false,
+        agentMode: 'single_orchestrator',
+        traceId: 'trace-test',
+        toolsUsed: [],
+      },
+    });
+
+    const decision = await verifyAnswer({
+      userMessage: 'batalkan laporan LAP-20260621-002',
+      result,
+      toolsUsed: [],
+      handledByGuard: false,
+    });
+
+    expect(decision.reason).not.toBe('transaction_success_without_tool');
+  });
 });
