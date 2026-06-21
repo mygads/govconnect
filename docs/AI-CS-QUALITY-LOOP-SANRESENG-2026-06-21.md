@@ -52,6 +52,27 @@ B multi-turn memory, C tone, D facet follow-ups, E single-turn facets.
    (`answer-policy.service.test.ts` "rewrites a hallucinated administrative-region
    address") are the guarantee, since live reproduction isn't reliable.
 
+## Round 2 — complaint / pengaduan flow (2026-06-21 PM)
+
+Probed the complaint creation + status flow. Found and fixed the most severe bug
+of the whole loop.
+
+| Commit | Bug | Root cause | Fix |
+| --- | --- | --- | --- |
+| 59afd16 | **Bug W (CRITICAL): phantom complaint.** Agent told the resident "laporan masuk, kami teruskan ke petugas" while NOTHING persisted (zero complaints ever existed for this village). | The confirmation turn called `search_knowledge`, never `create_complaint`, and emitted a polished success message with intent AGENT — and answer-policy had no guard for transactional claims. | Phantom-transaction guard: a "recorded/filed/forwarded" claim with no create/update tool run is rewritten to an honest "belum sempat kami catat" reply. Fires regardless of intent; dedicated action_result-aware grounding check. |
+| 1dc613c | Complaint flow stalled on "lampu jalan mati". | Incident keyword was bare `lampu mati`; "lampu jalan mati" / "PJU mati" didn't match, even though the village's own type is named "Lampu Jalan Mati". | Widen `COMPLAINT_INCIDENT_KEYWORDS` to allow words between lampu…mati and match "lampu jalan" / "penerangan jalan" / "pju mati". |
+| 6373d65 | Guard regression: genuine history reply rewritten. | `get_my_history` / `user_history` not in the transactional grounding set, so "riwayat laporan saya" describing an existing LAP matched the success pattern and was wrongly rewritten. | Add get_my_history / user_history to the transactional grounding set. |
+
+**End-to-end verified (after all three fixes deployed):**
+- Full flow completes: report → name → phone → **LAP-20260621-001** issued, status OPEN.
+- Row persists in `cases.complaints`; `reporter_phone` is **encrypted at rest** (enc:...) — PII protection working.
+- Status check from the owning session returns "menunggu diproses".
+- Status check from a *different* session is correctly refused ("tidak terdaftar atas nomor Anda") — ownership-scoping is a security feature, not a bug.
+
+**Round-2 minor gaps (not fixed, low risk):**
+1. `deskripsi` stored with the "mau lapor" prefix ("mau lapor lampu jalan mati di RT 03..."). Cosmetic; extraction-cleanup deferred to avoid destabilizing the FSM.
+2. Combined "nama saya X, HP 0812..." in one message: only the name is extracted, phone re-asked. Flow still completes over an extra turn.
+
 ## Test status
 
 - `npx tsc --noEmit`: clean.
