@@ -999,8 +999,31 @@ export async function buildServiceInfoContext(
     replyText += `${service.description}\n\n`;
   }
 
+  // Surface processing time and cost when present so facet questions
+  // ("berapa lama?", "berapa biaya?") are answered by the same grounded reply
+  // that the service-info stop-guard emits verbatim.
+  const processingTime = typeof service.estimated_processing_time === 'string'
+    ? service.estimated_processing_time.trim()
+    : '';
+  if (processingTime) {
+    replyText += `Estimasi proses: ${processingTime}.\n`;
+  }
+  const estimatedCost = typeof service.estimated_cost === 'string'
+    ? service.estimated_cost.trim()
+    : '';
+  if (estimatedCost) {
+    replyText += `Biaya: ${estimatedCost}.\n`;
+  }
+  if (processingTime || estimatedCost) {
+    replyText += '\n';
+  }
+
   let guidanceText: string | undefined;
   if (isOnline) {
+    // Surface the channel facet so "online atau ke kantor?" is answered directly.
+    replyText += service.mode === 'both'
+      ? 'Layanan ini bisa diurus online maupun langsung di kantor desa.\n\n'
+      : 'Layanan ini bisa diurus secara online.\n\n';
     if (canOfferFormLink) {
       guidanceText = `Kalau Bapak/Ibu mau lanjut, saya bisa kirimkan link formulir terkait *${service.name}*.`;
     }
