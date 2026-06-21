@@ -1589,12 +1589,22 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
         return finish(greetingShortcut);
       }
     }
+    // History-derived service context: when a recent turn discussed a specific
+    // service but no structured active-service state was persisted (e.g. the
+    // answer came from the response cache without executing get_service_info),
+    // fall back to regex over recent history so follow-ups like "syaratnya apa?"
+    // still route to service_follow_up instead of a blind knowledge search.
+    const historyDerivedService = (!preGuardActiveServiceInfo && resolvedHistory?.length)
+      ? deriveLastDiscussedServiceContext(resolvedHistory)
+      : {};
+    const hasActiveServiceContext = !!preGuardActiveServiceInfo || !!historyDerivedService.serviceName;
+
     const routingDecision = decideFastIntent({
       message: workingMessage,
       hasPendingServiceOffer: !!preGuardServiceOffer,
       hasPendingEmergencyOffer: !!preGuardEmergencyOffer,
       hasPendingServiceClarification: !!preGuardServiceClarification,
-      hasActiveServiceInfo: !!preGuardActiveServiceInfo,
+      hasActiveServiceInfo: hasActiveServiceContext,
       hasPendingComplaintState: !!(preGuardAddressConfirmation || preGuardAddressRequest || preGuardComplaintData),
     });
     const releasedRoutingStates = releaseStatesForRoutingDecision(userId, preGuardStateSnapshot, routingDecision);
