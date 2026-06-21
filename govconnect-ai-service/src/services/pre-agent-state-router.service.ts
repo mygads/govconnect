@@ -2052,8 +2052,16 @@ export async function tryHandleLatePreAgentState(
       clearPendingCancelConfirmation(userId);
     } else {
     let decision = detectExplicitConfirmationReply(latestUserTurn);
-    // For cancel confirmation, skip LLM classifier — it's tuned for service form offers.
-    // If regex is uncertain but message is a short bare affirmative, treat as yes.
+    // For cancel confirmation, skip LLM classifier — it's tuned for service form offers
+    // (where "batal" means REJECT). Here the pending action IS a cancellation, so an
+    // affirmative phrase that includes "batalkan" ("iya benar batalkan", "ya batalkan
+    // saja") is a YES, not a NO — provided there's no explicit negation.
+    const cancelNegation = /\b(jangan|tidak jadi|gak jadi|nggak jadi|tdk jadi|urung|batalkan pembatalan)\b/i.test(latestUserTurn);
+    const cancelAffirmative = /\b(ya|iya|yes|oke|ok|siap|setuju|betul|benar|lanjut|konfirmasi|confirm|lanjutkan)\b/i.test(latestUserTurn)
+      && (/\b(batal|batalkan|cancel)\b/i.test(latestUserTurn) || /^(ya|iya|y|yes|oke|ok|siap|setuju|betul|benar|lanjut|konfirmasi|confirm)[\s!.]*$/i.test(latestUserTurn.trim()));
+    if (decision === 'uncertain' && !cancelNegation && cancelAffirmative) {
+      decision = 'yes';
+    }
     if (decision === 'uncertain' && /^(ya|iya|y|yes|oke|ok|siap|lanjut|setuju|betul|benar|confirm|konfirmasi)[\s!.]*$/i.test(latestUserTurn.trim())) {
       decision = 'yes';
     }
