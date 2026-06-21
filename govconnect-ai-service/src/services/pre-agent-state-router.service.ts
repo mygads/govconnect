@@ -186,7 +186,7 @@ function detectExplicitConfirmationReply(message: string): 'yes' | 'no' | 'uncer
 // Audit (2026-05-10): previously a bare "polisi" or "banjir" was enough to
 // route to emergency/complaint; this misrouted asks like "nomor polsek",
 // "program edukasi sampah", or "nomor KTP hilang".
-const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|jalan berlubang|lampu mati|sampah menumpuk|sampah berserakan|drainase|selokan mampet|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|amblas|kecelaka+an|kebakaran|orang pingsan|ledakan)\b/i;
+const COMPLAINT_INCIDENT_KEYWORDS = /\b(jalan rusak|jalan berlubang|lampu(?:\s+\w+){0,2}\s+mati|lampu jalan|penerangan jalan|pju\s+mati|sampah menumpuk|sampah berserakan|drainase|selokan mampet|banjir|pohon tumbang|fasilitas rusak|aspal rusak|jalan licin|jalan amblas|amblas|kecelaka+an|kebakaran|orang pingsan|ledakan)\b/i;
 const COMPLAINT_INFO_QUERY_PATTERN = /\b(pengaduan|keluhan|laporan)\b/i;
 const COMPLAINT_INFO_HINT_PATTERN = /\b(apa|bagaimana|gimana|jelaskan|contoh|format|prioritas|checklist|sop|panduan|prosedur|alur|status)\b/i;
 const SERVICE_ADMIN_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layanan|permohonan|pengantar)\b/i;
