@@ -38,6 +38,7 @@ import {
   buildNaturalServiceStatusResponse,
   buildNaturalStatusResponse,
   buildEditServiceFormUrl,
+  buildImportantContactsMessage,
   buildPublicServiceFormUrl,
   getPublicFormBaseUrl,
   getStatusLabel,
@@ -697,20 +698,29 @@ async function toolGetEmergencyContacts(ctx: ToolContext): Promise<ToolCallResul
     };
   }
 
+  const emergencyContactsPayload = finalContacts.map((contact) => ({
+    name: contact.name,
+    phone: contact.phone,
+    description: contact.description || null,
+    category: contact.category?.name || null,
+  }));
+  // Embed the formatted numbers directly in suggested_response so they survive
+  // even if the LLM render path emits only the suggested_response text (observed:
+  // a "minta nomor damkar" lookup returned the header with no numbers).
+  const emergencyContactsMessage = buildImportantContactsMessage(
+    emergencyContactsPayload.map((c) => ({ name: c.name, phone: c.phone, description: c.description })),
+    ctx.channel === 'whatsapp' ? 'whatsapp' : 'webchat',
+  );
+
   return {
     success: true,
     data: {
-      contacts: finalContacts.map((contact) => ({
-        name: contact.name,
-        phone: contact.phone,
-        description: contact.description || null,
-        category: contact.category?.name || null,
-      })),
+      contacts: emergencyContactsPayload,
       total: finalContacts.length,
       has_local_contacts: true,
       category_hint: lookup.category_hint,
       role_hint: lookup.role_hint,
-      suggested_response: 'Berikut kontak darurat yang tercatat untuk desa ini dan bisa segera dihubungi.',
+      suggested_response: `Berikut kontak darurat yang tercatat untuk desa ini dan bisa segera dihubungi.${emergencyContactsMessage}`,
     },
     meta: {
       trustLevel: 'trusted_fact',
