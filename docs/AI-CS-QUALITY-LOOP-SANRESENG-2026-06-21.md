@@ -224,4 +224,68 @@ intake stalled at the name step (`extractNameViaNLU` → null → endless
    files missing from the uploads volume; no vectors. Re-upload needed. (Round 3)
 2. **`estimated_cost` empty for all services** — "berapa biaya?" can't surface a
    price. (Round 1)
+3. **Emergency contacts not wired to complaint types** — EVERY row in
+   `cases.complaint_types` has `send_important_contacts=true` but
+   `important_contact_category_id` is NULL, so the auto-send of damkar/ambulans/
+   polisi contacts on an emergency complaint never fires (code hits the
+   warn-and-skip branch in complaint-handler.ts:319). The contact categories exist
+   (`dashboard.important_contact_categories`: Damkar, Ambulan, Polisi, Puskesmas…).
+   Admin must map each urgent complaint type → its contact category. Safety-
+   sensitive (wrong map = wrong emergency number), so not done autonomously. (Round 8)
+4. **Ambulans contact-search relevance** — "nomor ambulans desa" returned Polsek +
+   Damkar but missed the actual Ambulan contact (Pak Yoga). Category ranking in
+   contact lookup is imperfect. (Round 8)
+5. **Sumopod provider key invalid** — the stored `Sumopod` provider key fails auth
+   ("Invalid proxy server token"), so Sumopod models can't be used as an llm-lane
+   fallback. Refresh the key if Sumopod is wanted in rotation. (Round 8)
+
+## Round 8 — core-function sweep + llm fallback hardening (2026-06-22 late)
+
+Full natural-language sweep of the three core citizen functions, plus a deep fix
+of the cross-vendor fallback discovered in Round 7. The TokenRouter fallback added
+in Round 7 turned out to break agent tool-calling; three linked fixes landed.
+
+**Fallback chain fixes (all deployed):**
+- *tool_choice 400* (commit 5899914): TokenRouter's `deepseek-v4-flash` runs in
+  thinking mode and rejects `tool_choice` (HTTP 400), which broke ALL agent tool-
+  calling (RAG, report, status, cancel, service) on fallover — only plain-JSON
+  micro-NLU survived. Repointed the TokenRouter llm model to `xiaomi/mimo-v2.5`.
+- *multi-turn loop* (commit 4445f54): mimo-v2.5 (non-pro) can emit a tool call but
+  loops/errors on the follow-up turn that feeds tool results back. Repointed to
+  `xiaomi/mimo-v2.5-pro`, which completes the loop. Also: thinking models sometimes
+  return the answer in `reasoning_content` with `content` empty → gateway now reads
+  `reasoning_content` as a last resort.
+- *token starvation* (commit 50f9800): thinking models spend the agent's ~1500
+  token budget on hidden reasoning before the visible answer, returning empty
+  content. Gateway now floors `max_tokens` at 4000 for known thinking models
+  (mimo/deepseek). Standard models unchanged.
+
+**CRITICAL safety fix — fabricated emergency number (commit 1c0be82):**
+- A fire-emergency caller ("tolong kebakaran besar di RT 04 sekarang!") was told to
+  call damkar at `085242344116` — a number that exists NOWHERE in the village
+  contacts (real damkar = `082190001003` / `+62 821-9280-0935`). The model invented
+  it. The anti-fabrication guard only fired when the user literally asked for a
+  "nomor"; in an emergency the user describes the situation, so the guard was
+  skipped. Fixed: ANY phone number in a reply not sourced from a contact tool is now
+  blocked, with an emergency-specific safe downgrade. Regression tests added
+  (`validate-final-reply.test.ts`, 5 cases).
+
+**Core-function results:**
+- *Fn 1 — RAG/knowledge:* PASS. Factual queries (jam buka, alamat+maps, daftar
+  layanan) answer correctly and grounded; missing facts (kepala desa) honestly say
+  "belum tercatat" rather than fabricating; narrative SOP ("apa yang perlu
+  disiapkan saat melapor") returns "belum menemukan" — genuine data gap (no SOP doc
+  embedded), see ops item #1.
+- *Fn 2 — reporting:* normal complaint flow verified (LAP created, persisted, name/
+  phone captured). Urgent fire flow logs fast + surfaces damkar via the grounded
+  contact tool; fabrication guard now blocks invented numbers.
+- *Fn 3 — status/cancel/service:* status check, riwayat, and cancel verified in
+  Round 2/3; service-request form-link verified Round 3. Re-verification on the
+  fallback path pending breaker recovery.
+
+> Test-load note: each webchat turn fires several llm calls (sentiment + type-match
+> + 2+ agent iterations). Rapid back-to-back testing saturates databyte's per-minute
+> rate limit (429 "high demand"), tripping its circuit breaker and forcing traffic
+> onto the fallback. Real, spaced-out citizen traffic does not trip this. When
+> auditing, space requests ~8s+ apart to test the primary path.
 
