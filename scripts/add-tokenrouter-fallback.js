@@ -9,7 +9,11 @@ const prisma = new PrismaClient();
 const PROVIDER_SLUG = 'tokenrouter-openai-compatible';
 const BASE_URL = 'https://api.tokenrouter.com/v1';
 const API_KEY = process.env.TR_KEY;
-const UPSTREAM_MODEL = 'deepseek/deepseek-v4-flash';
+// NOTE: must support BOTH json_object mode (micro-NLU) AND tool_choice required/auto
+// (agent RAG/report/cancel/service). TokenRouter's deepseek-v4-flash runs in thinking
+// mode and rejects tool_choice (400) — xiaomi/mimo-v2.5 supports all three. See
+// scripts/fix-tokenrouter-model-mimo.js for the corrective repoint.
+const UPSTREAM_MODEL = 'xiaomi/mimo-v2.5';
 const LANE = 'llm';
 
 async function main() {
