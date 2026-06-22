@@ -990,7 +990,14 @@ function buildPromptBody(
     body.temperature = options.temperature;
   }
   if (typeof options.maxTokens === 'number') {
-    body.max_tokens = options.maxTokens;
+    // Thinking-mode models (TokenRouter mimo / deepseek reasoning) spend part of the
+    // token budget on hidden reasoning_content before emitting the visible answer.
+    // A normal agent cap (~1500) gets fully consumed by reasoning, yielding empty
+    // content. Give these models extra headroom so the user-facing reply survives.
+    const isThinkingModel = /\b(mimo|deepseek)\b/i.test(model) || /thinking|reasoning/i.test(model);
+    body.max_tokens = isThinkingModel
+      ? Math.max(options.maxTokens, 4000)
+      : options.maxTokens;
   }
   if (jsonMode) {
     body.response_format = { type: 'json_object' };
