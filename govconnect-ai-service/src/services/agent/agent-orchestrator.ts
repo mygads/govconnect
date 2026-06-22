@@ -590,7 +590,7 @@ function shouldAllowTextToolFallback(input: {
   return { allowed: true, reason: 'single_read_only_grounding_tool' };
 }
 
-function validateFinalAgentReply(text: string, toolsUsed: string[], userMessage?: string): string {
+export function validateFinalAgentReply(text: string, toolsUsed: string[], userMessage?: string): string {
   const normalized = text.toLowerCase();
   if (/<tool_call>|<function=|<parameter=/i.test(text)) {
     return buildAgentFallbackReply('', toolsUsed);
@@ -612,18 +612,25 @@ function validateFinalAgentReply(text: string, toolsUsed: string[], userMessage?
     return 'Saya belum bisa memastikan aksi itu sudah tercatat. Kirim detail atau nomor referensinya ya, nanti saya bantu cek langkah berikutnya.';
   }
 
-  // Guard against fabricated phone numbers: if the user asked for a contact
-  // and the reply mentions a phone number BUT no contact tool was actually
-  // used, downgrade the reply so we never invent a number.
-  if (userMessage) {
-    const askedForContact = /\b(nomor|nomer|no|kontak|telp|telepon|hp|wa|whatsapp)\b/i.test(userMessage);
+  // Guard against fabricated phone numbers. A phone number in the reply is only
+  // trustworthy if it came from a contact tool — otherwise the model invented it.
+  // This is especially dangerous in emergencies (fire/medical), where the user says
+  // "kebakaran!" (not "give me a number") yet the model may volunteer a fabricated
+  // damkar/ambulance number. So we fire regardless of whether the user asked: any
+  // ungrounded number is blocked. Legit number-bearing replies are either templated
+  // server-side (no phone pattern) or tool-sourced (usedContactTool true).
+  {
     // Strict phone pattern: matches Indonesian mobile/landline formats only.
     // Must NOT match LAP-20260101-001, NIK (16 digits), or year-counts ("tahun 2024").
     const repliedWithNumber = /(?:(?<![-\w])0\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}(?!\d)|\+?62\s?\d{2,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}|(?<!\d)08\d{8,11}(?!\d)|\(0\d{2,3}\)\s?\d{6,8})/.test(text);
     const usedContactTool = toolsUsed.some((tool) => tool === 'get_important_contact' || tool === 'get_emergency_contacts' || tool === 'get_village_profile');
     // Skip if the reply is referencing LAP/LAY codes (status lookup talk).
     const mentionsReferenceCode = /\b(LAP|LAY|LYN|RPT)-\d{8}-\d{3}\b/i.test(text);
-    if (askedForContact && repliedWithNumber && !usedContactTool && !mentionsReferenceCode) {
+    if (repliedWithNumber && !usedContactTool && !mentionsReferenceCode) {
+      const emergencyContext = /\b(kebakaran|damkar|pemadam|ambulan|ambulans|kecelakaan|darurat|gawat|bencana|longsor|gempa|evakuasi|ledakan|sakit keras|pingsan|kritis)\b/i.test(`${userMessage || ''} ${text}`);
+      if (emergencyContext) {
+        return 'Maaf Pak/Bu, untuk situasi darurat ini saya belum bisa memastikan nomor kontak yang benar dari sini. Mohon segera hubungi kantor desa atau layanan darurat setempat. Kalau Bapak/Ibu sebutkan layanan yang dibutuhkan (misalnya *damkar*, *ambulans*, atau *polisi*), saya cek nomor resminya dari daftar kontak desa ya.';
+      }
       return 'Maaf Pak/Bu, untuk nomor kontaknya saya belum bisa memastikan dari sini. Kalau mau, sebutkan nama atau jabatannya lebih spesifik, nanti saya cek ke daftar kontak desa ya.';
     }
   }
