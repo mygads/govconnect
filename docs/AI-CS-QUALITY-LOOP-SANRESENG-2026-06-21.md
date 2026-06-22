@@ -73,18 +73,56 @@ of the whole loop.
 1. `deskripsi` stored with the "mau lapor" prefix ("mau lapor lampu jalan mati di RT 03..."). Cosmetic; extraction-cleanup deferred to avoid destabilizing the FSM.
 2. Combined "nama saya X, HP 0812..." in one message: only the name is extracted, phone re-asked. Flow still completes over an extra turn.
 
+## Round 3 — service-request, cancel, and RAG (2026-06-21 PM/late)
+
+Probed the service-request submission flow, complaint cancellation, and RAG
+narrative retrieval.
+
+**Service request (SKU → form link):** works. "lanjut" issues a valid form link
+(`https://govconnect.my.id/form/desa-sanreseng-ade/keterangan-usaha?session=...`,
+HTTP 200), intent CREATE_SERVICE_REQUEST. Minor: a follow-up "kirim link" re-offers
+instead of re-sending — cosmetic.
+
+| Commit | Bug | Root cause | Fix |
+| --- | --- | --- | --- |
+| 35722e1 | Cancel confirmation "iya benar batalkan" read as NO ("tidak jadi dibatalkan"); cancel never happened. | The yes-pattern required "iya" directly before "batalkan"; "benar" in between → uncertain → fell to the service-form LLM classifier where "batal" = REJECT. | In the cancel branch, treat an affirmative containing batal/batalkan/cancel (or a bare yes) as YES unless there's an explicit negation (jangan / tidak jadi / urung). |
+| d34eea1 | Phantom-transaction guard false-positive: a cancel-confirmation prompt citing "LAP-..." was rewritten into "belum sempat kami catat". | The guard treated any LAP-/LAY-<digits> mention as a creation-success claim. | Require an issuance/success context (dengan nomor / berhasil dibuat / telah kami terima) around the reference number. Genuine creations are tool-grounded anyway. |
+
+**End-to-end verified (after fixes deployed):** report → name → phone → cancel →
+confirm. LAP-20260621-002 (Citra) and LAP-20260621-003 (Dewi) both CANCELED in
+`cases.complaints`; LAP-20260621-001 (Andi) still OPEN. Cancel reason recorded.
+
+**RAG narrative — NOT a code bug, a DATA/OPS gap (flag for ops):**
+"apa saja yang perlu disiapkan saat melapor" returns "belum menemukan informasi".
+Root cause: the village has a knowledge PDF ("Knowledge Based GovConnect (1).pdf",
+`status=completed` in `dashboard.knowledge_documents`) but **zero** rows in both
+`ai.document_vectors` and `ai.knowledge_vectors` — nothing was ever embedded.
+So narrative/SOP retrieval has nothing to search and the AI honestly refuses
+(correct — it does not fabricate). "Profil Desa" answers work because they use the
+structured DB path, not RAG. **Action for ops:** the embedding pipeline marked the
+PDF "completed" without producing vectors — re-run embedding for this village and
+investigate why completion was reported without vectors.
+
 ## Test status
 
 - `npx tsc --noEmit`: clean.
-- `answer-policy.service.test.ts`: 26/26 pass (incl. Bug Z regression).
-- Full `src/services/__tests__/`: 5 pre-existing failures unrelated to this work
-  (DB-at-127.0.0.1:5432 connection + provider-health timing), confirmed present on
-  clean main.
+- `answer-policy.service.test.ts`: 31/31 pass (phantom-transaction guard, history
+  grounding, cancel-prompt false-positive, Bug Z, and prior cases).
+- `pre-agent-state-router.test.ts`: 16/17 (1 pre-existing emergency-role failure,
+  unrelated, present on clean main).
+- Full `src/services/__tests__/`: remaining failures are pre-existing and
+  env-dependent (DB-at-127.0.0.1:5432 connection + provider-health timing +
+  emergency-role ambiguity), confirmed on clean main.
 
 ## Next candidate probes (future loops)
 
-- Complaint creation flow (CREATE_COMPLAINT) end-to-end + status check (LAP-/LAY-).
-- Service request submission + edit-link + cancel.
-- RAG document questions (SOP/kebijakan narrative) vs structured-fact questions.
-- User-memory recall across sessions (nama, riwayat).
+- User-memory recall across sessions (nama, riwayat) — pending.
 - Cross-service handoff and emergency-contact shortcut honesty.
+- Photo/media attachment to a complaint.
+- Combined name+phone extraction in one message (round-2 minor gap).
+
+## Open items for ops (data, not code)
+
+1. **RAG embedding broken for this village** — PDF "completed" but no vectors. (Round 3)
+2. **`estimated_cost` empty for all services** — "berapa biaya?" can't surface a price. (Round 1)
+
