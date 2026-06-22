@@ -631,10 +631,32 @@ function attemptSupportsCapability(attempt: RuntimeGatewayAttempt, capability?: 
 
 async function selectAttempts(lane: GatewayLaneKind, allAttempts: RuntimeGatewayAttempt[]): Promise<RuntimeGatewayAttempt[]> {
   const { available, demoted } = await partitionAttemptsByHealth(lane, allAttempts);
+  const dbLane = lane === 'rag' ? 'rewrite' : lane;
+
+  // A higher-priority provider whose cooldown has lapsed must get a probe even when a
+  // lower-priority fallback is healthy. Otherwise the primary stays demoted forever:
+  // its demote only clears on a recorded success, which never happens if we keep
+  // routing to the fallback. Probe it ahead of the fallback (single-claim gated), and
+  // keep the fallback behind it so a failed probe still serves the request.
+  if (available.length > 0 && demoted.length > 0) {
+    const bestAvailableRank = allAttempts.indexOf(available[0]);
+    for (const cand of demoted) {
+      if (!cand.providerId) continue;
+      if (allAttempts.indexOf(cand) >= bestAvailableRank) continue; // only higher priority
+      if (await healthService.shouldProbe(cand.providerId, dbLane as any)) {
+        logger.info('Higher-priority provider recovered; probing ahead of healthy fallback', {
+          lane,
+          providerId: cand.providerId,
+          modelId: cand.modelId,
+        });
+        return [cand, ...available];
+      }
+    }
+  }
+
   if (available.length > 0) return available;
   // All demoted: try the highest-priority demoted as a probe (best-effort).
   if (demoted.length > 0) {
-    const dbLane = lane === 'rag' ? 'rewrite' : lane;
     const head = demoted[0];
     if (head.providerId && (await healthService.shouldProbe(head.providerId, dbLane as any))) {
       logger.info('All providers demoted; sending probe to highest-priority', {
