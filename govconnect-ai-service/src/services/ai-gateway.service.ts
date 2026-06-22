@@ -738,35 +738,59 @@ async function doExecuteGatewayRequest<T>(
   timeoutMs: number,
   cacheEligible = false,
 ): Promise<GatewayResponseEnvelope<T>> {
-  const response = await fetch(getGatewayUrl(kind, gateway), {
-    method: 'POST',
-    headers: buildHeaders(gateway, apiKey.value, cacheEligible),
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  // A single chat turn fans out into several LLM calls (sentiment + type-match +
+  // agent iterations). On a low-rate-limit provider these bunch up and some get a
+  // 429 ("retry after N seconds"). Cascading straight to the fallback for a transient
+  // 429 is wrong — the fallback is slower/less reliable. Retry the SAME provider a
+  // couple of times with short backoff first; only a persistent 429 falls through.
+  const MAX_429_RETRIES = 2;
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(getGatewayUrl(kind, gateway), {
+      method: 'POST',
+      headers: buildHeaders(gateway, apiKey.value, cacheEligible),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
-  const cache = readOpenRouterCacheMetadata(gateway, response);
-  const responseText = await response.text();
-  let parsed: unknown = null;
+    const cache = readOpenRouterCacheMetadata(gateway, response);
+    const responseText = await response.text();
+    let parsed: unknown = null;
 
-  try {
-    parsed = responseText ? JSON.parse(responseText) : null;
-  } catch {
-    parsed = null;
+    try {
+      parsed = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      parsed = null;
+    }
+
+    if (!response.ok) {
+      const parsedAny = parsed as { error?: { message?: string } } | null;
+      const rawMessage = parsedAny?.error?.message || responseText || `HTTP ${response.status}`;
+      const errorMessage = scrubSecrets(rawMessage);
+
+      if (response.status === 429 && attempt < MAX_429_RETRIES) {
+        const retryAfterHeader = Number(response.headers.get('retry-after'));
+        const backoffMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+          ? Math.min(retryAfterHeader * 1000, 6000)
+          : 1200 * (attempt + 1);
+        logger.warn('AI gateway 429; backing off and retrying same provider', {
+          kind,
+          provider: gateway.provider,
+          attempt: attempt + 1,
+          backoffMs,
+        });
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        continue;
+      }
+
+      throw new Error(`${kind} gateway ${response.status}: ${errorMessage}`);
+    }
+
+    if (!parsed) {
+      throw new Error(`${kind} gateway returned an empty response`);
+    }
+
+    return { data: parsed as T, cache };
   }
-
-  if (!response.ok) {
-    const parsedAny = parsed as { error?: { message?: string } } | null;
-    const rawMessage = parsedAny?.error?.message || responseText || `HTTP ${response.status}`;
-    const errorMessage = scrubSecrets(rawMessage);
-    throw new Error(`${kind} gateway ${response.status}: ${errorMessage}`);
-  }
-
-  if (!parsed) {
-    throw new Error(`${kind} gateway returned an empty response`);
-  }
-
-  return { data: parsed as T, cache };
 }
 
 
