@@ -103,6 +103,24 @@ structured DB path, not RAG. **Action for ops:** the embedding pipeline marked t
 PDF "completed" without producing vectors — re-run embedding for this village and
 investigate why completion was reported without vectors.
 
+## Round 4 — memory recall + emergency contacts (2026-06-22)
+
+**User-memory recall — VERIFIED working.** Within a session, after the first
+complaint captures the name/phone, a second complaint auto-fills both and skips
+the questions (report → straight to LAP in one turn). Verified: LAP-20260622-002
+and -003 both created in one session as "Fajar Nugroho" with no re-asking; the
+durable profile stores the name and the phone encrypted at rest. (An earlier
+apparent "re-ask" was a test-harness session-id mismatch, not a product bug.)
+
+| Commit | Bug | Root cause | Fix |
+| --- | --- | --- | --- |
+| fb88b00 | "minta nomor pemadam kebakaran" returned a header ("Berikut kontak darurat...") with NO actual number. | Agent-path get_emergency_contacts returned contacts in structured data, but the LLM render emitted only `suggested_response`, dropping the numbers. (Emergencies E1/E2 worked via the deterministic pre-agent shortcut.) | Embed the formatted contact list inside `suggested_response` so numbers survive any render path. |
+
+**Verified live after fix:** "minta nomor pemadam kebakaran" → "Damkar Bola:
+https://wa.me/6282192800935"; active emergencies (kebakaran, ambulans) return
+grounded contacts with urgency; no fabricated numbers anywhere. When no medical
+contact is configured, it does not invent one (correct).
+
 ## Test status
 
 - `npx tsc --noEmit`: clean.
@@ -116,10 +134,10 @@ investigate why completion was reported without vectors.
 
 ## Next candidate probes (future loops)
 
-- User-memory recall across sessions (nama, riwayat) — pending.
-- Cross-service handoff and emergency-contact shortcut honesty.
 - Photo/media attachment to a complaint.
 - Combined name+phone extraction in one message (round-2 minor gap).
+- Cross-service handoff (complaint ↔ service ↔ contact) topic switches.
+- Service-request form submission completion (after the form link is opened).
 
 ## RAG embedding — definitive root cause (Round 3 deep-dive)
 
