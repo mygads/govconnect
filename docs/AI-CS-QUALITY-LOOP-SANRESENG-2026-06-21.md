@@ -121,8 +121,41 @@ investigate why completion was reported without vectors.
 - Photo/media attachment to a complaint.
 - Combined name+phone extraction in one message (round-2 minor gap).
 
+## RAG embedding — definitive root cause (Round 3 deep-dive)
+
+Investigated end-to-end. The narrative RAG gap is **data/ops, not code**:
+
+- Only the original demo village (`cml2i4ug8...`) has vectors (222 document + 2
+  knowledge). **Both** newer villages have documents marked `completed` with zero
+  vectors — a repeating pattern.
+- For Sanreseng's PDF (`7967bab0-...`, "Knowledge Based GovConnect (1).pdf"):
+  triggering the designed re-embed endpoint
+  (`POST /api/upload/document/:id/process`) fails with
+  *"Failed to download document file for processing"*.
+- Root cause: `file_url` is `http://ai-service:3002/uploads/documents/doc-...pdf`
+  — local container storage. The `gc-ai-uploads` volume is mounted and persistent,
+  but `/app/uploads/documents/` is **empty**: the source file is gone. Embedding
+  produced no vectors originally because the file wasn't retrievable, yet the
+  document was still marked `completed`.
+- Re-embedding the structured `knowledge_base` item (Profil Desa) via
+  `POST /api/knowledge/embed-all?village_id=...` succeeded (1 vector, valid
+  embedding). Profil Desa answers are served via the structured path regardless.
+
+**Actions for ops (cannot be fixed in code without re-upload):**
+1. Re-upload the knowledge PDF for Sanreseng (and the other new village) so vectors
+   regenerate. The current source file is missing from the uploads volume.
+2. Investigate why the ingest pipeline marks a document `completed` when the file
+   is unretrievable / no vectors were produced — it should mark `failed`.
+3. **Architecture risk:** knowledge documents are stored on the ai-service
+   container's local filesystem (`http://ai-service:3002/uploads/...`), not object
+   storage (R2/S3). A volume recreate orphans the files while the DB still says
+   "completed". Consider moving document storage to object storage. (Not changed
+   autonomously — storage-layer change, needs sign-off.)
+
 ## Open items for ops (data, not code)
 
-1. **RAG embedding broken for this village** — PDF "completed" but no vectors. (Round 3)
-2. **`estimated_cost` empty for all services** — "berapa biaya?" can't surface a price. (Round 1)
+1. **RAG embedding broken for new villages** — documents "completed" but source
+   files missing from the uploads volume; no vectors. Re-upload needed. (Round 3)
+2. **`estimated_cost` empty for all services** — "berapa biaya?" can't surface a
+   price. (Round 1)
 
