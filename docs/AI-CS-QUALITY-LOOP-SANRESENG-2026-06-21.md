@@ -188,6 +188,36 @@ Investigated end-to-end. The narrative RAG gap is **data/ops, not code**:
    "completed". Consider moving document storage to object storage. (Not changed
    autonomously — storage-layer change, needs sign-off.)
 
+## Round 7 — availability: micro-LLM lane single-vendor fallback (2026-06-22)
+
+Found while verifying the Round-3 cancel-confirmation fix live: the complaint
+intake stalled at the name step (`extractNameViaNLU` → null → endless
+"boleh tuliskan nama lengkap" re-prompt). Not a code bug — an availability gap.
+
+- **Root cause:** the global `llm` lane (`ai.ai_lane_assignments`) had its
+  `fallback_model_id` (`databyte-m1`) on the **same provider** (databyte,
+  `ai.databyte.co.id`) as its primary (`deepseek-v4-flash`). The circuit breaker
+  is keyed per provider+base_url, so when databyte returned
+  `429 Server is experiencing high demand` under load, the breaker opened for
+  **both** primary and fallback at once. Every micro-LLM call (name/phone
+  extraction, sentiment, routing) failed → intake dead until databyte recovered.
+- **Fix (config/DB, no code change — the failover logic already existed):**
+  registered **TokenRouter** (`api.tokenrouter.com/v1`, different vendor) as a
+  provider, added `deepseek/deepseek-v4-flash` as an llm-lane model (priority 90),
+  and repointed the lane `fallback_model_id` to it. Now databyte → TokenRouter is
+  cross-vendor, so a single-vendor outage no longer kills the lane. Key stored
+  AES-256-GCM via the existing admin path; provisioning is the idempotent
+  `scripts/add-tokenrouter-fallback.js` (reads `TR_KEY` env). Verified end-to-end
+  via `POST /api/testing/model` (success, provider TokenRouter, 2.2s).
+- **Verified after fix:** name extraction works (LAP-20260622-004), and the
+  Round-3 cancel-confirmation fix passes e2e — "iya benar batalkan" →
+  `CANCEL_REQUEST`, LAP-20260622-005 `status=CANCELED` in DB.
+- **Known limit (pre-existing, NOT a regression):** narrative/SOP RAG question
+  ("apa saja yang perlu disiapkan saat melapor pengaduan…") still returns a
+  generic agent fallback (`model:unknown, 0 tokens, ~247ms` — agent short-circuits
+  before a real model turn). Factual structured queries (jam buka, alamat) work.
+  This is the same agent/RAG quality gap noted earlier, separate from availability.
+
 ## Open items for ops (data, not code)
 
 1. **RAG embedding broken for new villages** — documents "completed" but source
