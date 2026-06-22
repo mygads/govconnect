@@ -1119,7 +1119,17 @@ export async function callAIGatewayPrompt(options: GatewayPromptOptions): Promis
           const cacheMetadata = envelope.cache;
           const durationMs = Date.now() - startTime;
           const choice = result.choices?.[0];
-          const text = extractTextContent(choice?.message?.content).trim();
+          let text = extractTextContent(choice?.message?.content).trim();
+
+          // Thinking-mode models (e.g. TokenRouter mimo / deepseek in reasoning mode)
+          // sometimes return the user-facing answer in `reasoning_content` while leaving
+          // `content` empty. Fall back to it so the agent's synthesis turn isn't lost.
+          if (!text && !choice?.message?.tool_calls) {
+            const reasoning = (choice?.message as { reasoning_content?: unknown })?.reasoning_content;
+            if (typeof reasoning === 'string' && reasoning.trim()) {
+              text = reasoning.trim();
+            }
+          }
 
           if (!text && !choice?.message?.tool_calls) {
             throw new Error('AI gateway returned empty message content');

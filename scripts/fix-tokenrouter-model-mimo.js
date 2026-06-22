@@ -8,8 +8,8 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 const PROVIDER_SLUG = 'tokenrouter-openai-compatible';
-const NEW_UPSTREAM = 'xiaomi/mimo-v2.5';
-const NEW_DISPLAY = 'TokenRouter MiMo v2.5';
+const NEW_UPSTREAM = 'xiaomi/mimo-v2.5-pro';
+const NEW_DISPLAY = 'TokenRouter MiMo v2.5 Pro';
 const LANE = 'llm';
 
 async function main() {
