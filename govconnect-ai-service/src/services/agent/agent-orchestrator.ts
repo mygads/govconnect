@@ -1456,6 +1456,25 @@ async function selectAllowedTools(
   const isOfficeContactProfileQuery = isOfficeContactProfileQueryText(userMessage);
   const isVillageProfileQuery = isOfficeContactProfileQuery;
   const isLocalKnowledgeQuery = isNonOfficeLocalKnowledgeQueryText(userMessage);
+  // Narrative "tell me about / info / profile of a village" question. Distinct
+  // from isVillageProfileQuery (pure office hours/address structured facts):
+  // this wants a richer answer, so we let RAG/documents run ALONGSIDE the DB
+  // profile tool. Also covers questions about OTHER villages — get_village_profile
+  // only knows this channel's village, so those must be answerable from RAG.
+  const isVillageInfoQuery =
+    /\b(jelaskan|ceritakan|cerita|gambaran|seputar|profil|informasi|info|tentang)\b/i.test(normalized)
+    && /\b(desa|kelurahan|kampung)\b/i.test(normalized)
+    && !isVillageProfileQuery;
+  // Informational / procedural question where the answer likely lives in the
+  // knowledge base or uploaded documents rather than a structured DB tool —
+  // e.g. "cara membuat surat X gimana", "kapan dana BLT cair", "langkah daftar".
+  // We let RAG run as a SUPPLEMENT (DB tools still win on conflict via the
+  // reconciler). Deliberately excludes pure value lookups (biaya/jam/alamat +
+  // berapa/dimana), which stay DB-authoritative.
+  const isInformationalProceduralQuery =
+    /\b(cara|gimana|bagaimana|langkah|prosedur|proses|tahapan|tahap|petunjuk|panduan)\b/i.test(normalized)
+    || /\b(kapan|jadwal)\b.*\b(cair|pencairan|dana|bansos|blt|pkh|bantuan|subsidi)\b/i.test(normalized)
+    || /\b(membuat|bikin|buat|mengurus|ngurus|urus|mengajukan|ajukan|daftar)\b.*\b(surat|dokumen|izin|akta|permohonan|sertifikat)\b/i.test(normalized);
   const isMemoryQuery = /\b(sebelumnya|tadi|terakhir|alamat saya|preferensi saya|yang pernah saya|saya pernah)\b/i.test(normalized);
   const isStatusByReference = hasReference && /\b(status|cek|periksa|tracking|lacak)\b/i.test(normalized);
   const isCancelIntent = /\b(batal|batalkan|cancel)\b/i.test(normalized);
@@ -1524,6 +1543,20 @@ async function selectAllowedTools(
   if (isVillageProfileQuery) {
     requireTool('get_village_profile');
     add('get_village_profile');
+  }
+
+  // Narrative village-info question: offer DB profile AND RAG/documents so the
+  // agent can enrich + cross-check. No requireTool — a question about ANOTHER
+  // village must not be forced through this channel's profile tool.
+  if (isVillageInfoQuery) {
+    add('get_village_profile', 'search_knowledge', 'search_documents');
+  }
+
+  // Informational/procedural question: let RAG/documents run as a supplement so
+  // how-to / when-disbursed answers can be served from the KB if present.
+  // DB tools (if also added) still win on conflict via the reconciler.
+  if (isInformationalProceduralQuery) {
+    add('search_knowledge', 'search_documents');
   }
 
   if (isGenericKnowledgeStatusQuestion) {
@@ -1970,6 +2003,22 @@ async function selectAllowedTools(
   if (shouldPreferAuthoritativeDbTools && !hasKnowledgeMixedIntent) {
     heuristicSet.delete('search_knowledge');
     heuristicSet.delete('search_documents');
+  }
+
+  // Re-assert narrative village-info tools after the delete cascade. A profile
+  // mention (e.g. "profil desa") can trip isVillageDocumentQuery and strip both
+  // RAG and get_village_profile; for an info/profile question we want DB profile
+  // AND RAG/documents available so the agent can enrich + cross-check, and so a
+  // question about ANOTHER village can be answered from this village's KB.
+  if (isVillageInfoQuery) {
+    add('get_village_profile', 'search_knowledge', 'search_documents');
+  }
+
+  // Re-assert RAG/documents for informational/procedural questions even when a
+  // structured-tool branch (e.g. isServiceInfoRequest) tried to strip them.
+  // Keeps DB tools too; the reconciler resolves any conflict in favor of DB.
+  if (isInformationalProceduralQuery) {
+    add('search_knowledge', 'search_documents');
   }
 
   if (heuristicSet.size === 0) {

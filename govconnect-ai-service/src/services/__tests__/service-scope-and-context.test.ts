@@ -829,6 +829,37 @@ describe('agent tool routing with active service context', () => {
     expect(result.allowedToolNames).not.toContain('search_knowledge');
     expect(result.allowedToolNames).not.toContain('search_documents');
   });
+
+  it('offers DB profile AND RAG for a narrative village-info question (own village)', async () => {
+    const result = await selectAllowedTools('jelaskan informasi desa sanreseng ade', {});
+
+    expect(result.allowedToolNames).toContain('get_village_profile');
+    expect(result.allowedToolNames).toContain('search_knowledge');
+    expect(result.allowedToolNames).toContain('search_documents');
+    // Must NOT force the profile tool — an other-village question has no DB profile.
+    expect(result.requiredTools).not.toContain('get_village_profile');
+  });
+
+  it('allows RAG for a question about another village without forcing the profile tool', async () => {
+    const result = await selectAllowedTools('jelaskan tentang desa margahayu', {});
+
+    expect(result.allowedToolNames).toContain('search_knowledge');
+    expect(result.allowedToolNames).toContain('search_documents');
+    expect(result.requiredTools).not.toContain('get_village_profile');
+  });
+
+  it('lets RAG/documents supplement an informational procedural how-to question', async () => {
+    const result = await selectAllowedTools('cara membuat surat keterangan usaha gimana?', {});
+
+    expect(result.allowedToolNames).toContain('search_knowledge');
+    expect(result.allowedToolNames).toContain('search_documents');
+  });
+
+  it('lets RAG answer a when-disbursed question', async () => {
+    const result = await selectAllowedTools('kapan dana BLT cair?', {});
+
+    expect(result.allowedToolNames).toContain('search_knowledge');
+  });
 });
 
 describe('response cacheability rules', () => {
