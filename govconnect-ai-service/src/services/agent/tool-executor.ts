@@ -138,6 +138,14 @@ function maskPhoneLike(raw: string): string {
   return `${digits.slice(0, 3)}***${digits.slice(-3)}`;
 }
 
+export function pickArgString(args: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const v = args[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
+}
+
 function redactMutationArgs(
   tool: AgentToolName,
   args: Record<string, unknown>,
@@ -439,7 +447,7 @@ async function toolGetServiceInfo(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolCallResult> {
-  const serviceName = typeof args.service_name === 'string' ? args.service_name.trim() : '';
+  const serviceName = pickArgString(args, 'service_name', 'serviceName', 'service', 'layanan', 'nama_layanan');
   const contextualServiceSlug = typeof ctx.activeServiceSlug === 'string' ? ctx.activeServiceSlug.trim() : '';
   const contextualServiceName = typeof ctx.activeServiceName === 'string' ? ctx.activeServiceName.trim() : '';
   const services = (await getServiceCatalog(ctx.villageId)).filter((service) => service.is_active);
@@ -1113,16 +1121,15 @@ async function toolCreateComplaint(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolCallResult> {
-  const kategori = typeof args.kategori === 'string' ? args.kategori.trim() : '';
-  const rawTypeId = typeof args.type_id === 'string' && args.type_id.trim() ? args.type_id.trim() : undefined;
-  const rawCategoryId = typeof args.category_id === 'string' && args.category_id.trim() ? args.category_id.trim() : undefined;
-  const alamat = typeof args.alamat === 'string' ? args.alamat.trim() : '';
-  const deskripsi = typeof args.deskripsi === 'string' ? args.deskripsi.trim() : '';
-  const rtRw = typeof args.rt_rw === 'string' && args.rt_rw.trim() ? args.rt_rw.trim() : undefined;
-  const namaPelapor = typeof args.nama_pelapor === 'string' && args.nama_pelapor.trim()
-    ? args.nama_pelapor.trim()
-    : undefined;
-  const noHp = typeof args.no_hp === 'string' && args.no_hp.trim() ? args.no_hp.trim() : undefined;
+  const pickString = (...keys: string[]): string => pickArgString(args, ...keys);
+  const kategori = pickString('kategori', 'category', 'category_name', 'jenis');
+  const rawTypeId = pickString('type_id', 'typeId') || undefined;
+  const rawCategoryId = pickString('category_id', 'categoryId') || undefined;
+  const alamat = pickString('alamat', 'address', 'location', 'lokasi');
+  const deskripsi = pickString('deskripsi', 'description', 'desc', 'detail');
+  const rtRw = pickString('rt_rw', 'rtRw', 'rt_rw_lokasi') || undefined;
+  const namaPelapor = pickString('nama_pelapor', 'reporter_name', 'reporterName', 'nama', 'name') || undefined;
+  const noHp = pickString('no_hp', 'phone', 'telp', 'noHp', 'phone_number') || undefined;
   const hasComplaintHint = Boolean(rawTypeId || rawCategoryId || kategori);
   const categoryConfig = hasComplaintHint
     ? await findComplaintCategoryConfig(kategori || undefined, ctx.villageId, rawTypeId, rawCategoryId)
@@ -1458,9 +1465,9 @@ async function toolUpdateComplaint(
   ctx: ToolContext,
 ): Promise<ToolCallResult> {
   const referenceNumber = normalizeReferenceNumber(args.reference_number);
-  const alamat = typeof args.alamat === 'string' && args.alamat.trim() ? args.alamat.trim() : undefined;
-  const deskripsiRaw = typeof args.deskripsi === 'string' && args.deskripsi.trim() ? args.deskripsi.trim() : undefined;
-  const rtRw = typeof args.rt_rw === 'string' && args.rt_rw.trim() ? args.rt_rw.trim() : undefined;
+  const alamat = pickArgString(args, 'alamat', 'address', 'location', 'lokasi') || undefined;
+  const deskripsiRaw = pickArgString(args, 'deskripsi', 'description', 'desc', 'detail') || undefined;
+  const rtRw = pickArgString(args, 'rt_rw', 'rtRw') || undefined;
 
   if (!referenceNumber) {
     return {
