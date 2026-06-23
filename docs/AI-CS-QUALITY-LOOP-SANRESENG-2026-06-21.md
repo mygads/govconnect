@@ -342,3 +342,40 @@ the Round-8 fallback hardening:
 - 2 failures in `ai-provider-health.test.ts` are pre-existing on clean HEAD (stale
   mock harness, not prod) — unrelated to the routing fixes.
 
+### Round 8c — complaint-detection + emergency-contact-first (2026-06-23)
+
+Two follow-ups to the split-turn complaint wander and the emergency UX:
+
+- *Natural-phrasing complaints now route to the deterministic FSM* (commit
+  93283f3): "jalan depan rumah saya rusak parah banyak lubang" failed
+  `COMPLAINT_INCIDENT_KEYWORDS` because that regex only matched the ADJACENT forms
+  "jalan rusak"/"jalan berlubang". With words between, it fell through to the agent,
+  where deepseek sometimes called `search_knowledge` instead of `create_complaint`.
+  Broadened the keyword regex to catch separated "jalan ...{1,4} rusak/berlubang/
+  amblas", standalone "berlubang", and "banyak lubang"/"lubang ... di jalan". Clear
+  complaints now hit the deterministic complaint FSM (setPendingAddressRequest →
+  decideAddressResume → handleComplaintCreation) and file reliably without agent
+  involvement. Verified live: the exact phrasing that wandered now files cleanly
+  (LAP-20260623-003) via address→name→phone. The `explicitReport || ACTIVE_EVENT_SIGNAL`
+  gate is unchanged, so an ambiguous bare incident noun still defers to the agent
+  (no false positives on informational questions). Also retired a stale
+  `shouldAttachEmergencyShortcutContacts` test that encoded the opposite of the
+  documented role-hint emergency-attach design (was failing on clean HEAD).
+- *Emergency contact surfaces on the FIRST turn* (commit f102878): a location-rich
+  fire filed via the complaint FSM, but the damkar number only appeared AFTER
+  name+phone+address collection. A smart human CS hands over the fire-department
+  number immediately, then takes the report. Now, when an is_urgent complaint
+  reaches the name-ask step, the grounded village emergency contact is prepended
+  (via `lookupImportantContacts` + `shouldAttachEmergencyLookupContacts`) —
+  fabrication-safe (real DB contact only; emits nothing if no confident match).
+  Only on the first ask (needsName) to avoid repeating it on the phone turn.
+  Verified live: fire report now shows "Damkar Bola: 6282192800935" on turn 1,
+  then proceeds name→phone→filed (LAP-20260623-004).
+
+**Final verified state (all on databyte primary):**
+- Fn 1 — RAG/knowledge: grounded, honest misses, no fabrication.
+- Fn 2 — reporting: natural + split-turn complaints file via deterministic FSM;
+  emergency fabrication guard holds; fire caller gets real damkar number on turn 1.
+- Fn 3 — status/cancel/service: all PASS.
+- 79/79 tests across the relevant suites; tsc clean.
+
