@@ -218,7 +218,12 @@ export function matchesComplaintIncident(normalized: string): boolean {
   }
   // Guard: if the user is asking for a contact number, not reporting.
   if (CONTACT_DIRECTORY_SIGNAL.test(normalized)) return false;
-  return explicitReport || ACTIVE_EVENT_SIGNAL.test(normalized);
+  // A specific incident keyword that survived the informational + contact guards is
+  // self-evidently a complaint ("lampu jalan mati seminggu", "sampah menumpuk bau"),
+  // even without an explicit "lapor" verb or urgency word. Route it to the
+  // deterministic complaint FSM rather than the flaky agent path. The FSM only asks
+  // for a location next, so a rare false positive is low-harm (user can ignore).
+  return true;
 }
 
 /**

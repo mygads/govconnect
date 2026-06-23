@@ -95,6 +95,14 @@ describe('matchesComplaintIncident — natural complaint phrasing', () => {
   it('does NOT match a contact-directory ask', () => {
     expect(matchesComplaintIncident('nomor dinas yang urus jalan rusak berapa?')).toBe(false);
   });
+
+  it('matches a bare incident report with no urgency/report verb (lampu jalan mati)', () => {
+    expect(matchesComplaintIncident('lampu jalan di depan gang kami sudah mati seminggu')).toBe(true);
+  });
+
+  it('matches "sampah menumpuk" with no explicit lapor verb', () => {
+    expect(matchesComplaintIncident('sampah menumpuk di pinggir jalan bikin bau')).toBe(true);
+  });
 });
 
 describe('isConfidentContactLookupResult', () => {
