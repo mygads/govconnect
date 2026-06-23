@@ -742,7 +742,17 @@ async function toolGetImportantContact(
   ctx: ToolContext,
 ): Promise<ToolCallResult> {
   const rawQuery = typeof args.query === 'string' ? args.query.trim() : '';
-  const fallbackQuery = rawQuery || (ctx.userMessage || '').trim();
+  const userMessage = (ctx.userMessage || '').trim();
+  const fallbackQuery = rawQuery || userMessage;
+
+  // Combine the model-supplied query with the user's actual message for hint
+  // extraction. The budget model sometimes passes a generic arg ("kontak darurat")
+  // that loses the specific role the citizen named ("ambulans"), which would drop
+  // the lookup into the unranked category fallback and surface the wrong contact.
+  // Searching both keeps the specific role term so the right contact ranks first.
+  const lookupQuery = rawQuery && userMessage && rawQuery !== userMessage
+    ? `${rawQuery} ${userMessage}`
+    : fallbackQuery;
 
   if (!fallbackQuery) {
     return {
@@ -775,7 +785,7 @@ async function toolGetImportantContact(
     };
   }
 
-  const lookup = await lookupImportantContacts(fallbackQuery, ctx.villageId, { limit: 3 });
+  const lookup = await lookupImportantContacts(lookupQuery, ctx.villageId, { limit: 3 });
 
   if (lookup.matches.length === 0) {
     return {

@@ -506,18 +506,27 @@ export async function lookupImportantContacts(
   }
 
   if (final.length === 0 && categoryHintTerms.length > 0) {
+    // Rank fallback matches by how specifically they match the hinted role/category,
+    // not arbitrary DB order. For a "darurat" (emergency) hint, every emergency
+    // contact shares the broad keyword list, so order by the most specific term hit:
+    // a contact whose name/category contains the role alias (e.g. "ambulan") outranks
+    // one that only matches a generic emergency word. Prevents "nomor ambulans" from
+    // surfacing Polsek/Damkar above the actual Ambulan contact.
+    const roleAliasTerms = roleHits.flatMap((role) => ROLE_ALIASES[role]);
     const fallback = contacts
       .map((contact) => {
         const haystack = contactHaystack(contact);
-        const hit = categoryHintTerms.find((term) => haystack.includes(term));
-        if (!hit) return null;
+        if (!categoryHintTerms.some((term) => haystack.includes(term))) return null;
+        const aliasHit = roleAliasTerms.length > 0
+          && roleAliasTerms.some((alias) => haystack.includes(alias));
         return {
           contact,
-          rawScore: 3,
+          rawScore: aliasHit ? 5 : 3,
           signals: ['category_fallback' as ContactMatchSource],
         } as Scored;
       })
       .filter((entry): entry is Scored => entry !== null)
+      .sort((a, b) => b.rawScore - a.rawScore)
       .slice(0, limit);
     final = fallback;
   }

@@ -223,4 +223,23 @@ describe('lookupImportantContacts', () => {
     expect(phones.filter((phone) => phone === '6281100001111')).toHaveLength(1);
     expect(new Set(phones).size).toBe(phones.length);
   });
+
+  it('ranks the actual Ambulan contact first for "nomor ambulans" (not Polsek/Damkar)', async () => {
+    const SANRESENG_CONTACTS: ImportantContact[] = [
+      { id: 'a1', name: 'Polsek Bola', phone: '+62 821-8811-8778', description: 'Laporan kriminal dan gangguan ketertiban', category: { id: 'p', name: 'Polisi' } },
+      { id: 'a2', name: 'Damkar Bola', phone: '+62 821-9280-0935', description: 'Penanganan kebakaran dan keadaan darurat', category: { id: 'd', name: 'Damkar' } },
+      { id: 'a3', name: 'Pak Yoga', phone: '+62 812-3378-4490', description: '', category: { id: 'am', name: 'Ambulan' } },
+      { id: 'a4', name: 'Puskesmas Sehat Mandiri', phone: '+62 821-9000-1004', description: 'Ambulans dan layanan medis darurat', category: { id: 'am2', name: 'ambulan' } },
+    ];
+    (axios.get as any).mockResolvedValue({ data: { data: SANRESENG_CONTACTS } });
+
+    const result = await lookupImportantContacts('nomor ambulans desa berapa?', 'village-sanreseng');
+    expect(result.matches.length).toBeGreaterThan(0);
+    const topCategory = (result.matches[0].contact.category?.name || '').toLowerCase();
+    expect(topCategory).toContain('ambulan');
+    // The actual ambulan contact must not be buried below Polsek/Damkar.
+    const ambulanRank = result.matches.findIndex((m) => (m.contact.category?.name || '').toLowerCase().includes('ambulan'));
+    const polisiRank = result.matches.findIndex((m) => (m.contact.category?.name || '').toLowerCase().includes('polisi'));
+    if (polisiRank !== -1) expect(ambulanRank).toBeLessThan(polisiRank);
+  });
 });
