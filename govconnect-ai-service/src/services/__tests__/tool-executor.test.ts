@@ -113,7 +113,7 @@ vi.mock('../channel-client.service', () => ({
   updateConversationUserProfile: vi.fn(async () => true),
 }));
 
-import { createComplaint, getComplaintTypes, updateComplaintByUser } from '../case-client.service';
+import { createComplaint, getComplaintTypes, updateComplaintByUser, getServiceCatalog } from '../case-client.service';
 import { getImportantContacts, lookupImportantContacts } from '../important-contacts.service';
 import { searchKnowledge, getVillageProfileSummary } from '../knowledge.service';
 import { AGENT_TOOLS } from '../agent/tool-definitions';
@@ -164,6 +164,22 @@ describe('executeToolCall user-facing errors', () => {
     expect(executed.result.suggested_response).not.toContain('secret123');
     expect(executed.result.suggested_response).not.toContain('RAG_500');
     expect(executed.trace.sourceKind).toBe('tool_error');
+  });
+
+  it('lists active services instead of emitting a blank "layanan **" when service_name is empty', async () => {
+    vi.mocked(getServiceCatalog).mockResolvedValue([
+      { slug: 'ktp-baru', name: 'Perekaman KTP', is_active: true, category: { name: 'Kependudukan' } },
+      { slug: 'sktm', name: 'Surat Keterangan Tidak Mampu', is_active: true, category: { name: 'Surat' } },
+    ] as any);
+
+    const executed = await executeToolCall('get_service_info', { service_name: '' }, ctx);
+
+    expect(executed.result.success).toBe(true);
+    expect(executed.result.data.list_only).toBe(true);
+    expect(executed.result.data.suggested_response).toContain('Perekaman KTP');
+    // Must never render the broken empty-bold not-found message.
+    expect(executed.result.data.suggested_response).not.toContain('layanan **');
+    expect(executed.result.data.suggested_response).not.toContain('belum menemukan layanan');
   });
 
   it('sanitizes mutation tool failures before they reach the user', async () => {

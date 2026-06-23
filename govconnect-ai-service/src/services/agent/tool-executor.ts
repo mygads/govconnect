@@ -543,12 +543,40 @@ async function toolGetServiceInfo(
   clearPendingServiceClarification(ctx.userId);
 
   if (!resolved.service) {
+    const queriedName = (serviceName || contextualServiceName || '').trim();
+    if (!queriedName) {
+      // No concrete service name to look up: fall back to listing active
+      // services instead of emitting a blank "layanan **" not-found message.
+      return {
+        success: true,
+        data: {
+          found: true,
+          list_only: true,
+          services: services.slice(0, 12).map((service) => ({
+            name: service.name,
+            slug: service.slug,
+            category: service.category?.name || null,
+            mode: service.mode || null,
+            description: service.description || null,
+          })),
+          total: services.length,
+          suggested_response: `Berikut beberapa layanan yang tersedia saat ini:\n\n${services
+            .slice(0, 8)
+            .map((service, index) => `${index + 1}. ${service.name}`)
+            .join('\n')}\n\nKalau Bapak/Ibu butuh syarat atau cara mengajukan salah satu layanan, tinggal sebut nama layanannya ya.`,
+        },
+        meta: {
+          trustLevel: 'trusted_fact',
+          sourceKind: 'official_service_info',
+        },
+      };
+    }
     return {
       success: true,
       data: {
         found: false,
-        message: `Layanan "${serviceName}" tidak ditemukan di katalog aktif.`,
-        suggested_response: `Maaf Pak/Bu, saya belum menemukan layanan *${serviceName}* di daftar layanan desa saat ini.\n\nKalau mau, sebutkan dokumen atau keperluannya, nanti saya bantu carikan layanan yang paling cocok.`,
+        message: `Layanan "${queriedName}" tidak ditemukan di katalog aktif.`,
+        suggested_response: `Maaf Pak/Bu, saya belum menemukan layanan *${queriedName}* di daftar layanan desa saat ini.\n\nKalau mau, sebutkan dokumen atau keperluannya, nanti saya bantu carikan layanan yang paling cocok.`,
       },
       meta: {
         trustLevel: 'trusted_fact',
