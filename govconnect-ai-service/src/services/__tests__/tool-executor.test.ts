@@ -175,11 +175,12 @@ describe('executeToolCall user-facing errors', () => {
     const executed = await executeToolCall('get_service_info', { service_name: '' }, ctx);
 
     expect(executed.result.success).toBe(true);
-    expect(executed.result.data.list_only).toBe(true);
-    expect(executed.result.data.suggested_response).toContain('Perekaman KTP');
+    const data = executed.result.data as any;
+    expect(data.list_only).toBe(true);
+    expect(data.suggested_response).toContain('Perekaman KTP');
     // Must never render the broken empty-bold not-found message.
-    expect(executed.result.data.suggested_response).not.toContain('layanan **');
-    expect(executed.result.data.suggested_response).not.toContain('belum menemukan layanan');
+    expect(data.suggested_response).not.toContain('layanan **');
+    expect(data.suggested_response).not.toContain('belum menemukan layanan');
   });
 
   it('sanitizes mutation tool failures before they reach the user', async () => {
