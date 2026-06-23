@@ -304,6 +304,19 @@ function isInformationalServiceLinkInquiry(message: string): boolean {
   return SERVICE_INFORMATIONAL_LINK_PATTERN.test((message || '').toLowerCase());
 }
 
+/**
+ * Weak affirmative cue inside a longer sentence — e.g. "owh bisa online ya,
+ * boleh saya mau via online saja". detectExplicitConfirmationReply() only
+ * matches anchored phrases, so these fall through as 'uncertain'. When such a
+ * sentence ALSO contains a follow-up keyword like "online"/"syarat", the
+ * follow-up guard would otherwise skip the LLM confirmation classifier and
+ * re-send the service info (duplicate reply). This lets the LLM disambiguate.
+ */
+function hasWeakAffirmativeCue(message: string): boolean {
+  const normalized = (message || '').toLowerCase();
+  return /\b(boleh|mau|iya|ya|oke|ok|setuju|lanjut|silakan|silahkan|gas|gpp|gak papa|nggak papa)\b/i.test(normalized);
+}
+
 function isPendingServiceLinkRequest(message: string): boolean {
   return isExplicitServiceActionRequest(message) || isInformationalServiceLinkInquiry(message);
 }
@@ -1324,7 +1337,15 @@ export async function tryHandlePendingOffers(
       const informationalLinkInquiry = isInformationalServiceLinkInquiry(message);
       const serviceFollowUp = isPendingServiceFollowUp(message);
       let decision = explicitActionRequest ? 'yes' : detectExplicitConfirmationReply(message);
-      if (decision === 'uncertain' && !informationalLinkInquiry && !serviceFollowUp) {
+      // Run the LLM confirmation classifier when the reply is ambiguous and
+      // either (a) it's not a pure info/follow-up question, or (b) it carries a
+      // weak affirmative cue ("boleh saya mau via online"). Case (b) prevents a
+      // sentence that merely mentions "online"/"syarat" from skipping the
+      // classifier and looping back to the service info (duplicate reply bug).
+      if (
+        decision === 'uncertain' &&
+        ((!informationalLinkInquiry && !serviceFollowUp) || hasWeakAffirmativeCue(message))
+      ) {
         const confirmationResult = await runWithMicroBudget(
           () => classifyConfirmation(message.trim(), {
             village_id: villageId,
@@ -2321,6 +2342,7 @@ export const __test_only__ = {
   isPendingServiceLinkRequest,
   isInformationalServiceLinkInquiry,
   isExplicitServiceActionRequest,
+  hasWeakAffirmativeCue,
   isClearlyDifferentIntent,
   decideFastIntent,
   buildOutOfScopeRedirect,

@@ -30,8 +30,36 @@ import {
   matchesComplaintIncident,
   shouldAttachEmergencyShortcutContacts,
   tryHandleServiceListingShortcut,
+  __test_only__,
 } from '../pre-agent-state-router.service';
 import { getServiceCatalog } from '../case-client.service';
+
+describe('hasWeakAffirmativeCue — duplicate-reply bug guard', () => {
+  const { hasWeakAffirmativeCue, isPendingServiceFollowUp, detectExplicitConfirmationReply } = __test_only__;
+
+  it('detects the affirmative cue in "owh bisa online ya, boleh saya mau via online saja"', () => {
+    const msg = 'owh bisa online ya, boleh saya mau via online saja';
+    // Regression: this message used to loop back to service info because it
+    // contains "online" (a follow-up keyword) while the anchored confirmation
+    // matcher returns 'uncertain'. The weak-affirmative cue must fire so the
+    // LLM confirmation classifier runs instead of re-sending the info.
+    expect(detectExplicitConfirmationReply(msg)).toBe('uncertain');
+    expect(isPendingServiceFollowUp(msg)).toBe(true);
+    expect(hasWeakAffirmativeCue(msg)).toBe(true);
+  });
+
+  it('detects cues in short affirmatives', () => {
+    expect(hasWeakAffirmativeCue('boleh')).toBe(true);
+    expect(hasWeakAffirmativeCue('iya mau dong')).toBe(true);
+    expect(hasWeakAffirmativeCue('oke lanjut')).toBe(true);
+  });
+
+  it('does NOT fire on a pure info question (keeps LLM skip for token saving)', () => {
+    expect(hasWeakAffirmativeCue('syaratnya apa saja?')).toBe(false);
+    expect(hasWeakAffirmativeCue('berapa biayanya')).toBe(false);
+    expect(hasWeakAffirmativeCue('prosesnya berapa lama')).toBe(false);
+  });
+});
 
 describe('isServiceListingQuery', () => {
   it('matches "layanan apa aja"', () => {
