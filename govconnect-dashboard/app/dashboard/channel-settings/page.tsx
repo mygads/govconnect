@@ -62,6 +62,7 @@ interface ChannelSettings {
   webhook_url?: string
   enabled_wa: boolean
   enabled_webchat: boolean
+  reply_delay_seconds: number
 }
 
 interface SessionStatus {
@@ -102,6 +103,7 @@ const emptyChannelSettings: ChannelSettings = {
   webhook_url: "",
   enabled_wa: false,
   enabled_webchat: false,
+  reply_delay_seconds: 0,
 }
 
 function extractQrCode(data: any): string {
@@ -819,6 +821,7 @@ export default function ChannelSettingsPage() {
             webhook_url: data.data?.webhook_url || "",
             enabled_wa: Boolean(data.data?.enabled_wa),
             enabled_webchat: Boolean(data.data?.enabled_webchat ?? false),
+            reply_delay_seconds: Number(data.data?.reply_delay_seconds ?? 0),
           })
           setObjectStorage(data.data?.object_storage || null)
           return
@@ -1269,6 +1272,7 @@ export default function ChannelSettingsPage() {
         body: JSON.stringify({
           enabled_wa: settings.enabled_wa,
           enabled_webchat: settings.enabled_webchat,
+          reply_delay_seconds: settings.reply_delay_seconds,
         }),
       })
 
@@ -1469,6 +1473,29 @@ export default function ChannelSettingsPage() {
               <Switch
                 checked={settings.enabled_webchat}
                 onCheckedChange={(value: boolean) => setSettings((prev) => ({ ...prev, enabled_webchat: value }))}
+              />
+            </div>
+
+            {/* Reply delay */}
+            <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+              <div className="flex items-start gap-2">
+                <Clock className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                <div>
+                  <p className="text-sm font-medium">Delay Balasan (detik)</p>
+                  <p className="text-xs text-muted-foreground">0 = balas instan; &gt;0 = tahan sekian detik biar terasa natural. Pesan beruntun dalam jeda ini digabung jadi satu balasan. Maks 60 detik.</p>
+                </div>
+              </div>
+              <Input
+                type="number"
+                min={0}
+                max={60}
+                className="w-24"
+                value={settings.reply_delay_seconds}
+                onChange={(event) => {
+                  const raw = Math.floor(Number(event.target.value))
+                  const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(60, raw)) : 0
+                  setSettings((prev) => ({ ...prev, reply_delay_seconds: clamped }))
+                }}
               />
             </div>
           </CardContent>

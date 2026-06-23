@@ -35,6 +35,7 @@ export async function handleGetChannelAccount(req: Request, res: Response) {
           webhook_url: webhookUrl,
           enabled_wa: false,
           enabled_webchat: false,
+          reply_delay_seconds: 0,
           object_storage: objectStorage,
         };
     return res.json({ data });
@@ -54,9 +55,18 @@ export async function handleUpsertChannelAccount(req: Request, res: Response) {
       wa_number,
       enabled_wa,
       enabled_webchat,
+      reply_delay_seconds,
     } = req.body;
 
     const webhookUrl = buildWebhookUrl();
+
+    // Clamp delay to a sane range (0–60s). undefined → keep existing/default.
+    const normalizeDelay = (raw: unknown, fallback: number): number => {
+      if (raw === undefined || raw === null || raw === '') return fallback;
+      const n = Math.floor(Number(raw));
+      if (!Number.isFinite(n)) return fallback;
+      return Math.max(0, Math.min(60, n));
+    };
 
     const existing = await prisma.channel_accounts.findUnique({
       where: { village_id },
@@ -71,12 +81,14 @@ export async function handleUpsertChannelAccount(req: Request, res: Response) {
         webhook_url: webhookUrl,
         enabled_wa: enabled_wa ?? false,
         enabled_webchat: enabled_webchat ?? false,
+        reply_delay_seconds: normalizeDelay(reply_delay_seconds, 0),
       },
       update: {
         wa_number: typeof wa_number === 'string' ? wa_number : (existing?.wa_number || ''),
         webhook_url: webhookUrl,
         enabled_wa: enabled_wa ?? existing?.enabled_wa ?? false,
         enabled_webchat: enabled_webchat ?? existing?.enabled_webchat ?? false,
+        reply_delay_seconds: normalizeDelay(reply_delay_seconds, existing?.reply_delay_seconds ?? 0),
       },
     });
 

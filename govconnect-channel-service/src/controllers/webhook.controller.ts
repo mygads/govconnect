@@ -1010,6 +1010,25 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
     // Set AI status to queued
     await setAIProcessing(waUserId, messageId, villageId, 'WHATSAPP');
 
+    // Per-village reply delay: hold publishing to AI for N seconds so the reply
+    // feels less instant/bot-like, and so a burst from the same user collapses
+    // into one AI turn. 0 = legacy immediate behavior.
+    let replyDelaySeconds = 0;
+    if (villageId) {
+      try {
+        const account = await prisma.channel_accounts.findUnique({
+          where: { village_id: villageId },
+          select: { reply_delay_seconds: true },
+        });
+        replyDelaySeconds = account?.reply_delay_seconds ?? 0;
+      } catch (error: any) {
+        logger.warn('Failed to read reply_delay_seconds, defaulting to 0', {
+          village_id: villageId,
+          error: error.message,
+        });
+      }
+    }
+
     // Add to message batcher
     // The batcher forwards immediately with spam guard context
     addMessageToBatch(
@@ -1025,6 +1044,7 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
         media_public_url: mediaInfo.mediaPublicUrl,
       },
       spamResult,
+      replyDelaySeconds,
     );
     
     logger.info('Message forwarded to AI for processing', {

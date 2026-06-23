@@ -32,11 +32,19 @@ function requireVillageId(villageId?: string): string {
 // Track pending publishes for retry
 const pendingRetries = new Map<string, NodeJS.Timeout>();
 
+// Per-user delay debounce: holds publishing to AI for `reply_delay_seconds`
+// so a burst of messages from the same user arrives as one combined context.
+// Keyed by `village_id:wa_user_id`. Only one in-flight delay per user.
+const pendingDelayedPublishes = new Map<string, NodeJS.Timeout>();
+
 /**
  * Forward an already-approved message to AI.
  * Spam guard check has already been done in webhook controller.
- * 
+ *
  * @param spamResult - Pre-computed spam guard result (shouldProcess must be true)
+ * @param replyDelaySeconds - Per-village delay (0 = publish immediately, the
+ *   legacy behavior). When >0, publishing is debounced per user so a burst of
+ *   messages collapses into one AI turn.
  */
 export function addMessageToBatch(
   village_id: string | undefined,
@@ -51,6 +59,7 @@ export function addMessageToBatch(
     media_public_url?: string;
   },
   spamResult?: SpamCheckResult,
+  replyDelaySeconds?: number,
 ): { spamResult?: SpamCheckResult } {
   const resolvedVillageId = requireVillageId(village_id);
 
@@ -81,12 +90,46 @@ export function addMessageToBatch(
     });
   }
 
-  // Forward to AI immediately
-  publishToAI(resolvedVillageId, wa_user_id, message_id, message_text, received_at, mediaInfo, result);
+  const delaySeconds = Math.max(0, Math.min(60, Math.floor(Number(replyDelaySeconds) || 0)));
 
-  logger.info('📨 Message forwarded to AI immediately', {
+  if (delaySeconds <= 0) {
+    // Forward to AI immediately (legacy behavior)
+    publishToAI(resolvedVillageId, wa_user_id, message_id, message_text, received_at, mediaInfo, result);
+    logger.info('📨 Message forwarded to AI immediately', {
+      wa_user_id,
+      message_id,
+      isDuplicate: result.isDuplicate,
+      supersedePrevious: result.supersedePrevious,
+      reason: result.reason,
+    });
+    return { spamResult: result };
+  }
+
+  // Debounce: a new message from the same user within the window resets the
+  // timer. Only the latest message is published, but spam-guard's
+  // contextMessages already carries the burst so the AI sees the full bubble.
+  const delayKey = `${resolvedVillageId}:${wa_user_id}`;
+  const existingTimer = pendingDelayedPublishes.get(delayKey);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+
+  const timer = setTimeout(() => {
+    pendingDelayedPublishes.delete(delayKey);
+    publishToAI(resolvedVillageId, wa_user_id, message_id, message_text, received_at, mediaInfo, result);
+    logger.info('📨 Message forwarded to AI after reply delay', {
+      wa_user_id,
+      message_id,
+      reply_delay_seconds: delaySeconds,
+    });
+  }, delaySeconds * 1000);
+
+  pendingDelayedPublishes.set(delayKey, timer);
+
+  logger.info('⏳ Message held for reply delay', {
     wa_user_id,
     message_id,
+    reply_delay_seconds: delaySeconds,
     isDuplicate: result.isDuplicate,
     supersedePrevious: result.supersedePrevious,
     reason: result.reason,
@@ -207,13 +250,22 @@ function scheduleRetry(
  */
 export function cancelBatch(wa_user_id: string, village_id?: string): void {
   const resolvedVillageId = requireVillageId(village_id);
-  
+
   // Cancel any pending retries for this user
   for (const [key, timer] of pendingRetries.entries()) {
     if (key.startsWith(`${resolvedVillageId}:${wa_user_id}:`)) {
       clearTimeout(timer);
       pendingRetries.delete(key);
     }
+  }
+
+  // Cancel any in-flight reply-delay timer for this user (e.g. admin takeover
+  // mid-window must not let the AI fire after the admin has taken over).
+  const delayKey = `${resolvedVillageId}:${wa_user_id}`;
+  const delayTimer = pendingDelayedPublishes.get(delayKey);
+  if (delayTimer) {
+    clearTimeout(delayTimer);
+    pendingDelayedPublishes.delete(delayKey);
   }
 
   logger.info('🚫 Pending messages cancelled for user', {
@@ -232,5 +284,12 @@ export async function flushAllBatches(): Promise<void> {
     clearTimeout(timer);
   }
   pendingRetries.clear();
+
+  // Clear all in-flight reply-delay timers
+  for (const [, timer] of pendingDelayedPublishes.entries()) {
+    clearTimeout(timer);
+  }
+  pendingDelayedPublishes.clear();
+
   logger.info('✅ All pending retries cleared');
 }

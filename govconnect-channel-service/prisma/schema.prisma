@@ -164,6 +164,7 @@ model channel_accounts {
   webhook_url    String
   enabled_wa     Boolean  @default(false)
   enabled_webchat Boolean @default(false)
+  reply_delay_seconds Int  @default(0)
   created_at     DateTime @default(now())
   updated_at     DateTime @updatedAt
 
