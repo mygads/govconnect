@@ -379,3 +379,18 @@ Two follow-ups to the split-turn complaint wander and the emergency UX:
 - Fn 3 — status/cancel/service: all PASS.
 - 79/79 tests across the relevant suites; tsc clean.
 
+### Round 8d — bare-incident reports → deterministic FSM (2026-06-23)
+
+Final routing gap closed (commit 048ce10). "lampu jalan mati seminggu" and "sampah
+menumpuk bikin bau" carry a specific incident keyword but no explicit *lapor* verb
+or urgency word, so `matchesComplaintIncident` returned false on its final
+`explicitReport || ACTIVE_EVENT_SIGNAL` gate. They fell through to the agent path,
+which produced the phantom "belum sempat kami catat" reply twice mid-flow (verified
+live on LAP-005) even though it eventually filed. A specific incident keyword that
+already survived the informational-question and contact-directory guards is
+self-evidently a complaint, so the final gate now returns true unconditionally —
+routing these to the deterministic complaint FSM (which only asks for a location
+next, so a rare false positive is low-harm). Verified live: "lampu jalan mati
+seminggu" now files cleanly via FSM (complaint→address→name→phone→LAP-20260623-007)
+with zero phantom-catat. 25/25 router tests (added no-signal lampu/sampah cases).
+
