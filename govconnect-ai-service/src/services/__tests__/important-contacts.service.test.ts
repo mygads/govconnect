@@ -242,4 +242,23 @@ describe('lookupImportantContacts', () => {
     const polisiRank = result.matches.findIndex((m) => (m.contact.category?.name || '').toLowerCase().includes('polisi'));
     if (polisiRank !== -1) expect(ambulanRank).toBeLessThan(polisiRank);
   });
+
+  it('falls back to the health facility (NOT Polsek/Damkar) for "nomor ambulans" when no dedicated ambulan contact exists', async () => {
+    // Real Sanreseng case: the village has Damkar/Polsek/Puskesmas but NO ambulan
+    // contact. A medical-transport request must route to the health facility, never
+    // to fire/police (which only match the broad emergency keyword bucket).
+    const NO_AMBULAN_CONTACTS: ImportantContact[] = [
+      { id: 'b1', name: 'Polsek Bola', phone: '+62 821-8811-8778', description: 'Laporan kriminal dan gangguan ketertiban', category: { id: 'p', name: 'Polisi' } },
+      { id: 'b2', name: 'Damkar Bola', phone: '+62 821-9280-0935', description: 'Penanganan kebakaran dan keadaan darurat', category: { id: 'd', name: 'Damkar' } },
+      { id: 'b3', name: 'Pak Andi Aswin (Puskesmas Solo)', phone: '+62 853-6373-2235', description: 'Kepala Puskesmas, layanan kesehatan', category: { id: 'pk', name: 'Puskesmas' } },
+    ];
+    (axios.get as any).mockResolvedValue({ data: { data: NO_AMBULAN_CONTACTS } });
+
+    const result = await lookupImportantContacts('nomor ambulans desa berapa?', 'village-no-ambulan');
+    expect(result.matches.length).toBeGreaterThan(0);
+    // Must surface the health facility, never Polsek/Damkar.
+    const categories = result.matches.map((m) => (m.contact.category?.name || '').toLowerCase());
+    expect(categories.some((c) => c.includes('puskesmas'))).toBe(true);
+    expect(categories.some((c) => c.includes('polisi') || c.includes('damkar'))).toBe(false);
+  });
 });

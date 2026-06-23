@@ -506,19 +506,31 @@ export async function lookupImportantContacts(
   }
 
   if (final.length === 0 && categoryHintTerms.length > 0) {
-    // Rank fallback matches by how specifically they match the hinted role/category,
-    // not arbitrary DB order. For a "darurat" (emergency) hint, every emergency
-    // contact shares the broad keyword list, so order by the most specific term hit:
-    // a contact whose name/category contains the role alias (e.g. "ambulan") outranks
-    // one that only matches a generic emergency word. Prevents "nomor ambulans" from
-    // surfacing Polsek/Damkar above the actual Ambulan contact.
     const roleAliasTerms = roleHits.flatMap((role) => ROLE_ALIASES[role]);
+    // A medical-transport request (ambulans/bidan) belongs to the HEALTH domain.
+    // When the village has no dedicated ambulance contact, the right fallback is the
+    // health facility (puskesmas/bidan), NOT fire/police — they share the broad
+    // "emergency" bucket but are useless for a medical call. So for a medical role,
+    // only health-domain (or exact-alias) contacts are relevant; unrelated emergency
+    // contacts are dropped. Non-medical emergency roles keep the emergency bucket,
+    // ranked so an exact role-alias hit outranks a generic emergency-word match.
+    const isMedicalRole = roleHits.some((role) => role === 'ambulans' || role === 'bidan');
+    const healthTerms = CATEGORY_HINT_KEYWORDS.health;
     const fallback = contacts
       .map((contact) => {
         const haystack = contactHaystack(contact);
-        if (!categoryHintTerms.some((term) => haystack.includes(term))) return null;
         const aliasHit = roleAliasTerms.length > 0
           && roleAliasTerms.some((alias) => haystack.includes(alias));
+        if (isMedicalRole) {
+          const healthHit = healthTerms.some((term) => haystack.includes(term));
+          if (!aliasHit && !healthHit) return null;
+          return {
+            contact,
+            rawScore: aliasHit ? 6 : 4,
+            signals: ['category_fallback' as ContactMatchSource],
+          } as Scored;
+        }
+        if (!categoryHintTerms.some((term) => haystack.includes(term))) return null;
         return {
           contact,
           rawScore: aliasHit ? 5 : 3,
