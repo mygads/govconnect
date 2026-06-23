@@ -394,3 +394,36 @@ next, so a rare false positive is low-harm). Verified live: "lampu jalan mati
 seminggu" now files cleanly via FSM (complaint→address→name→phone→LAP-20260623-007)
 with zero phantom-catat. 25/25 router tests (added no-signal lampu/sampah cases).
 
+
+### Round 8e — ambulans contact lookup → health domain (2026-06-23)
+
+Ops-item #2 fixed (commit f93d3a9). "nomor ambulans" returned Polsek/Damkar and
+missed any medical contact. Root cause (confirmed via a temporary live debug log,
+since removed): village Sanreseng has NO dedicated ambulan contact — only
+Damkar/Polsek/Puskesmas/Danpos/Kecamatan/Admin. The query carried `roleHint=ambulans`
+correctly, but the scored pass and alias-fallback found nothing, so it dropped into
+the emergency-category fallback — which returned Damkar+Polsek because they share
+the broad `emergency` keyword bucket. Medically useless for an ambulance call.
+
+Fix: a medical-transport role (ambulans/bidan) belongs to the HEALTH domain. When no
+dedicated ambulance contact exists, the category-fallback now restricts to
+health-domain (or exact-alias) contacts — surfacing the Puskesmas — and drops
+unrelated emergency contacts entirely. Non-medical emergency roles keep the emergency
+bucket, now ranked so an exact role-alias hit outranks a generic emergency-word match.
+Also hardened the `get_important_contact` tool to search the model arg + the user's
+actual message (the budget model sometimes passed a generic arg that lost the role
+term). Verified live: "nomor ambulans" → Puskesmas; "nomor damkar" → Damkar Bola
+(no regression). 23/23 contact-service tests (added ranked-when-present and
+health-fallback-when-absent cases).
+
+**Ops-item #1 — emergency-contact category wiring (admin action, decided 2026-06-23):**
+The complaint→contact mapping for Sanreseng, to be set in the dashboard admin UI
+(`pengaduan/kategori-jenis`), pointing only at the village-scoped category IDs that
+hold real contacts (NB: the DB has duplicate category rows — some belong to other
+villages / look like seed data; use the IDs below):
+- Kebakaran (Bencana, `cml6d76ua002env015fcpj93a`) → Damkar `cml670h9a0014mj01se5myph3`
+- Kebakaran (Infrastruktur, `cml6dht7u002inv01v6aobhd2`) → Damkar `cml670h9a0014mj01se5myph3`
+- Banjir (`cml6c43wq001jnv01c3bo669x`) → Danpos `cml673i6w001cmj01r8r4rssr`
+- Tanah Longsor (`cml6c50pi001lnv017e3l7tfz`) → Danpos `cml673i6w001cmj01r8r4rssr`
+- Kecelakaan (Medis, `cml6cx43g0024nv01xafhn7yv`) → Puskesmas `cml671p4d0018mj01ad2vcjyz`
+  (village has no dedicated Ambulan contact; Puskesmas is the nearest medical option)
