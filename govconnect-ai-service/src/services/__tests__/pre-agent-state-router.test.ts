@@ -27,6 +27,7 @@ vi.mock('../case-client.service', () => ({
 import {
   isConfidentContactLookupResult,
   isServiceListingQuery,
+  matchesComplaintIncident,
   shouldAttachEmergencyShortcutContacts,
   tryHandleServiceListingShortcut,
 } from '../pre-agent-state-router.service';
@@ -66,6 +67,36 @@ describe('isServiceListingQuery', () => {
   });
 });
 
+describe('matchesComplaintIncident — natural complaint phrasing', () => {
+  // Regression: the split-turn wander bug. "jalan depan rumah saya rusak parah
+  // banyak lubang" failed the old adjacent-only "jalan rusak" regex, fell through
+  // to the agent, and deepseek wandered into search_knowledge instead of the
+  // deterministic complaint FSM. Must now match so it routes deterministically.
+  it('matches "jalan depan rumah saya rusak parah banyak lubang"', () => {
+    expect(matchesComplaintIncident('jalan depan rumah saya rusak parah banyak lubang bahaya buat motor')).toBe(true);
+  });
+
+  it('matches separated "jalan ... berlubang" with a report signal', () => {
+    expect(matchesComplaintIncident('tolong jalan dekat pasar sudah berlubang dalam')).toBe(true);
+  });
+
+  it('matches "banyak lubang di jalan"', () => {
+    expect(matchesComplaintIncident('tolong banyak lubang di jalan dusun melati')).toBe(true);
+  });
+
+  it('still matches the classic adjacent "jalan rusak"', () => {
+    expect(matchesComplaintIncident('mau lapor jalan rusak')).toBe(true);
+  });
+
+  it('does NOT match an informational question about road damage', () => {
+    expect(matchesComplaintIncident('apa penyebab jalan rusak di musim hujan?')).toBe(false);
+  });
+
+  it('does NOT match a contact-directory ask', () => {
+    expect(matchesComplaintIncident('nomor dinas yang urus jalan rusak berapa?')).toBe(false);
+  });
+});
+
 describe('isConfidentContactLookupResult', () => {
   it('accepts a single high-score match', () => {
     expect(isConfidentContactLookupResult({
@@ -99,7 +130,11 @@ describe('shouldAttachEmergencyShortcutContacts', () => {
     })).toBe(true);
   });
 
-  it('requires confidence when a specific emergency role was inferred', () => {
+  it('attaches the top role-matched contact during a role-hinted emergency', () => {
+    // Design (see shouldAttachEmergencyLookupContacts): when role_hint is set from
+    // explicit keywords, surfacing the top plausible REAL contact beats refusing to
+    // attach any during a live emergency. Both candidates are real DB numbers, so
+    // attaching the top damkar is safety-positive, not fabrication.
     expect(shouldAttachEmergencyShortcutContacts({
       matches: [
         { score: 0.81, matchedBy: ['role_match'] } as any,
@@ -108,7 +143,7 @@ describe('shouldAttachEmergencyShortcutContacts', () => {
       total_candidates: 3,
       category_hint: 'emergency',
       role_hint: 'damkar',
-    })).toBe(false);
+    })).toBe(true);
   });
 });
 
