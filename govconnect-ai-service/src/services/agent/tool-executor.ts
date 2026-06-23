@@ -787,6 +787,15 @@ async function toolGetImportantContact(
 
   const lookup = await lookupImportantContacts(lookupQuery, ctx.villageId, { limit: 3 });
 
+  logger.info('🔎 [contact-lookup debug]', {
+    rawQuery,
+    userMessage,
+    lookupQuery,
+    roleHint: lookup.role_hint,
+    categoryHint: lookup.category_hint,
+    topMatches: lookup.matches.map((m) => `${m.contact.name}|${m.contact.category?.name}|${m.rawScore}|${Array.isArray(m.matchedBy) ? m.matchedBy.join('+') : m.matchedBy}`),
+  });
+
   if (lookup.matches.length === 0) {
     return {
       success: true,
