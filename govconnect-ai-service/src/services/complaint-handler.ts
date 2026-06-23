@@ -44,6 +44,8 @@ import {
   resolveComplaintTypeConfig,
   getCachedComplaintTypes,
 } from './ump-utils';
+import { lookupImportantContacts, shouldAttachEmergencyLookupContacts } from './important-contacts.service';
+import { buildImportantContactsMessage } from './ump-formatters';
 
 // ==================== COMPLAINT CATEGORIES TEXT ====================
 
@@ -98,6 +100,38 @@ function getRateLimitBlockedReply(userId: string, villageId?: string | null): st
 }
 
 /**
+ * For an active emergency (is_urgent complaint type), fetch the grounded village
+ * emergency contacts so the citizen gets the real number (e.g. damkar) on the FIRST
+ * turn, before we collect name/phone. Returns '' when no village/contacts or no
+ * confident grounded match — never fabricates a number.
+ */
+async function buildUrgentComplaintContactPrefix(
+  villageId: string | undefined,
+  query: string,
+  channel: ChannelType,
+): Promise<string> {
+  if (!villageId) return '';
+  try {
+    const lookup = await lookupImportantContacts(query, villageId, {
+      limit: 3,
+      categoryHint: 'emergency',
+    });
+    if (!shouldAttachEmergencyLookupContacts(lookup)) return '';
+    const contacts = lookup.matches.map((match) => match.contact);
+    const message = buildImportantContactsMessage(contacts, channel);
+    if (!message) return '';
+    return `Situasi darurat — mohon segera hubungi nomor berikut sekarang juga:${message}\n\n`;
+  } catch (error) {
+    logger.warn('Failed to fetch urgent-complaint emergency contacts', {
+      userId: undefined,
+      villageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return '';
+  }
+}
+
+/**
  * Handle complaint creation
  */
 export async function handleComplaintCreation(
@@ -106,8 +140,7 @@ export async function handleComplaintCreation(
   llmResponse: any,
   currentMessage: string,
   mediaUrl?: string
-): Promise<HandlerResult> {
-  const { kategori, rt_rw } = llmResponse.fields || {};
+): Promise<HandlerResult> {  const { kategori, rt_rw } = llmResponse.fields || {};
   let { alamat, deskripsi } = llmResponse.fields || {};
   const villageId = llmResponse.fields?.village_id;
   const complaintTypeConfig = await resolveComplaintTypeConfig(kategori, villageId);
@@ -248,8 +281,15 @@ export async function handleComplaintCreation(
     const pendingPhotoCount = getPendingPhotoCount(userId);
     const photoNote = pendingPhotoCount > 0 ? `\n${pendingPhotoCount} foto sudah kami terima.` : '';
 
+    // For an active emergency, surface the real village emergency contact NOW —
+    // before name/phone — so the citizen can call immediately. Only on the first
+    // ask (needsName) to avoid repeating it on the follow-up phone turn.
+    const urgentContactPrefix = isEmergency && needsName
+      ? await buildUrgentComplaintContactPrefix(villageId, deskripsi || kategori, channel)
+      : '';
+
     if (needsName) {
-      return `Baik Pak/Bu, sebelum laporan diproses, boleh kami tahu nama Bapak/Ibu?${photoNote}`;
+      return `${urgentContactPrefix}Baik Pak/Bu, sebelum laporan diproses, boleh kami tahu nama Bapak/Ibu?${photoNote}`;
     }
     return `Baik Pak/Bu, mohon informasikan nomor telepon yang dapat dihubungi agar petugas bisa menghubungi Bapak/Ibu terkait laporan ini.${photoNote}`;
   }
