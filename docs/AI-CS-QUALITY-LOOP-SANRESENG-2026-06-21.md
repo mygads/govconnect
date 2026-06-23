@@ -289,3 +289,56 @@ in Round 7 turned out to break agent tool-calling; three linked fixes landed.
 > onto the fallback. Real, spaced-out citizen traffic does not trip this. When
 > auditing, space requests ~8s+ apart to test the primary path.
 
+### Round 8b — routing root cause + arg-key alias (2026-06-23)
+
+The "stuck on flaky fallback" symptom turned out to have TWO root causes beyond
+the Round-8 fallback hardening:
+
+- *Stuck-demote — recovered primary never re-probed* (commit beabd8c): a provider's
+  demote only clears via `recordSuccess`, which only runs when it's retried.
+  `selectAttempts` only probed a demoted provider when ALL providers were demoted.
+  So once databyte tripped its low rate limit and the healthy TokenRouter fallback
+  existed, databyte was never retried → demoted indefinitely → every request hit the
+  flaky fallback even after databyte recovered. Fix: when a higher-priority
+  provider's cooldown has lapsed, send one `shouldProbe`-gated probe ahead of the
+  healthy fallback (fallback kept behind it so a failed probe still serves). Verified
+  live: `probing ahead` fires, databyte serves again (14/14, 21/21 calls on primary).
+- *429 burst cascade* (commit e037c2c): a single heavy agent turn bursts 8–21 llm
+  calls; the first 429 cascaded immediately to the flaky fallback. Fix: retry the
+  SAME provider after a short backoff on 429 before cascading. After fix, heavy
+  service-request and complaint-create turns stay entirely on databyte.
+- *English-key tool args* (commit f1e7c1c): deepseek-v4-flash ignores the strict
+  tool schema's Indonesian param names and emits English keys — a road-damage
+  complaint arrived as `{address, description}` not `{alamat, deskripsi}`, so
+  `create_complaint` read empty fields and re-asked the citizen for the address they
+  had just given. Added `pickArgString` alias resolver (Indonesian key preferred,
+  English alias fallback) on create/update complaint + service-info. Regression
+  tests in `pick-arg-string.test.ts` (5 cases). Note: the redact audit log preserves
+  keys verbatim, so a `redactedPayload` showing English keys is proof the MODEL sent
+  them.
+
+**Verified results after fixes (primary path, spaced requests):**
+- *Fn 1 — RAG/knowledge:* PASS (unchanged).
+- *Fn 2 — reporting:* emergency fabrication guard verified (no invented number; flow
+  files LAP-20260623-001 cleanly). Complaint-create files end-to-end (LAP-002,
+  address→name→phone→OPEN). **Intermittent:** on split turns (address on a separate
+  message), deepseek sometimes wanders into `search_knowledge` instead of calling
+  `create_complaint`, emitting the phantom-catat fallback. Address-inline-with-
+  complaint files reliably. This is agent-reasoning variance on the budget model, not
+  the alias bug — candidate for a future tool-policy nudge (require `create_complaint`
+  when an address-bearing turn follows a known complaint type).
+- *Fn 3 — status/cancel/service:* service-info → form-link, status, riwayat, cancel
+  all PASS on the primary.
+
+**Admin/ops findings:**
+- The complaint-type admin UI (`govconnect-dashboard/.../pengaduan/kategori-jenis`)
+  fully supports wiring `important_contact_category_id` (validates that
+  `send_important_contacts` requires a category; warns on legacy drift). The empty
+  values in production are a **seed-data gap**, not a code bug — an admin can wire
+  Kebakaran→Damkar, Kecelakaan→Ambulan etc. in the UI so emergency contacts
+  auto-send on those complaints.
+- *ambulans contact search:* "nomor ambulans" ranks Polsek/Damkar above the actual
+  Ambulan contact (Pak Yoga) — relevance gap in contact search.
+- 2 failures in `ai-provider-health.test.ts` are pre-existing on clean HEAD (stale
+  mock harness, not prod) — unrelated to the routing fixes.
+
