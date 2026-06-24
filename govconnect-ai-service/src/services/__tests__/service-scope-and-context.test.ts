@@ -860,6 +860,37 @@ describe('agent tool routing with active service context', () => {
 
     expect(result.allowedToolNames).toContain('search_knowledge');
   });
+
+  it('gives RAG safety-net to an unrecognized / regional-language question', async () => {
+    // Bugis-ish phrasing that matches no high-confidence intent regex.
+    const result = await selectAllowedTools('tabe, engka carana mappake aplikasi?', {});
+
+    expect(result.allowedToolNames).toContain('search_knowledge');
+    expect(result.allowedToolNames).toContain('search_documents');
+  });
+
+  it('gives RAG safety-net when routing confidence is low', async () => {
+    const result = await selectAllowedTools('itu yang kemarin gimana ya', {
+      routingDecision: {
+        action: 'defer_to_agent',
+        confidence: 'low',
+        primaryIntent: 'unknown',
+        mixedSignals: false,
+        reasons: ['no_hard_route'],
+      },
+    });
+
+    expect(result.allowedToolNames).toContain('search_knowledge');
+    expect(result.allowedToolNames).toContain('search_documents');
+  });
+
+  it('does NOT add RAG safety-net to a high-confidence contact lookup (precision lock intact)', async () => {
+    const result = await selectAllowedTools('nomor kepala desa berapa?', {});
+
+    expect(result.allowedToolNames).toEqual(['get_important_contact']);
+    expect(result.allowedToolNames).not.toContain('search_knowledge');
+    expect(result.allowedToolNames).not.toContain('search_documents');
+  });
 });
 
 describe('response cacheability rules', () => {

@@ -2096,6 +2096,32 @@ async function selectAllowedTools(
     heuristicSet.delete('check_status');
   }
 
+  // ── Adaptive retrieval safety-net ──
+  // When the deterministic regex routing is NOT confident (routing confidence
+  // low/unknown, or no informational tool matched at all), the message is likely
+  // phrased in a way the heuristics don't recognize — a regional-language word,
+  // an unusual phrasing, or an intent we have no pattern for. Rather than leave
+  // the agent blind, give it RAG/document retrieval so it can still try to
+  // understand and answer from the knowledge base, like a human clerk who looks
+  // it up.
+  //
+  // Gated on !shouldPreferAuthoritativeDbTools so we NEVER add noise to a
+  // deliberate DB-authoritative lookup (biaya/jam/alamat/kontak/darurat) — those
+  // stay structured and clean. Purely additive otherwise; mutation/transaction
+  // tools are never added here.
+  const routingConfidence = routingDecision?.confidence;
+  const lowConfidenceRoute = routingConfidence === 'low' || !routingConfidence;
+  const hasAnyInfoTool =
+    heuristicSet.has('search_knowledge')
+    || heuristicSet.has('search_documents')
+    || heuristicSet.has('get_village_profile')
+    || heuristicSet.has('get_service_info')
+    || heuristicSet.has('get_important_contact')
+    || heuristicSet.has('get_emergency_contacts');
+  if (!shouldPreferAuthoritativeDbTools && !isGreetingOnly && (lowConfidenceRoute || !hasAnyInfoTool)) {
+    add('search_knowledge', 'search_documents');
+  }
+
   const heuristicTools = Array.from(heuristicSet);
   const suggestedTools = Array.from(suggestedSet);
   const hardDeniedTools = Array.from(hardDeniedSet);
