@@ -53,6 +53,7 @@ const TYPO_CORRECTIONS: Record<string, string> = {
 
   // Common words
   'pengen': 'ingin',
+  'mau': 'ingin',
   'butuh': 'perlu',
   'bikin': 'buat',
   'gimana': 'bagaimana',
@@ -118,12 +119,49 @@ const PHRASE_CORRECTIONS: Array<[RegExp, string]> = [
   [/\bsrt\s+pngtr\b/gi, 'surat pengantar'],
   [/\bcek\s+sts\b/gi, 'cek status'],
   [/\bmau\s+lpr\b/gi, 'mau lapor'],
+
+  // Regional/dialect phrases → standard Indonesian
+  // Javanese: "badhe damel X" / "ngurus X" → "ingin membuat X"
+  [/\bbadhe\s+damel\b/gi, 'ingin membuat'],
+  [/\bdamel\b/gi, 'membuat'],
+  [/\bbadhe\b/gi, 'ingin'],
+  [/\bngurus\b/gi, 'mengurus'],
+  [/\bngadamel\b/gi, 'membuat'],
+  [/\bnggawe\b/gi, 'membuat'],
+  [/\bnggih\b/gi, 'iya'],
+  [/\bniki\b/gi, 'ini'],
+  [/\bniku\b/gi, 'itu'],
+  [/\bpiye\b/gi, 'bagaimana'],
+  [/\bpiye\s+carane\b/gi, 'bagaimana caranya'],
+  [/\bcarane\b/gi, 'caranya'],
+  [/\bsopo\b/gi, 'siapa'],
+  [/\bopo\b/gi, 'apa'],
+  [/\bkapan\b/gi, 'kapan'],
+
+  // Sundanese: "kumaha cara ngurus X" / "ngadamel surat" → "bagaimana cara mengurus X"
+  [/\bkumaha\s+cara\b/gi, 'bagaimana cara'],
+  [/\bkumaha\b/gi, 'bagaimana'],
+  [/\bnaon\b/gi, 'apa'],
+  [/\bteu\b/gi, 'tidak'],
+  [/\bhenteu\b/gi, 'tidak'],
+  [/\benteu\b/gi, 'tidak'],
+
+  // Bugis: "engka X" = "ada X", "tabe" = "permisi"
+  [/\bengka\b/gi, 'ada'],
+  [/\btabe\b/gi, 'permisi'],
+
+  // Colloquial service request phrases
+  [/\bbuat\s+(surat|ktp|kk|akta|surat pindah|surat domisili|surat kematian|surat lahir|surat nikah|surat cerai|surat usaha|surat pengantar|surat tidak mampu|surat miskin)\b/gi, 'membuat $1'],
+  [/\bngurus\s+(surat|ktp|kk|akta)\b/gi, 'mengurus $1'],
+  [/\burus\s+(surat|ktp|kk|akta)\b/gi, 'mengurus $1'],
+  [/\bmau\s+(bikin|buat)\b/gi, 'ingin membuat'],
+  [/\bpengen\s+(bikin|buat)\b/gi, 'ingin membuat'],
 ];
 
 /**
  * Apply typo corrections to message
  * Uses word boundaries to avoid partial matches
- * 
+ *
  * @param message - Raw user message
  * @returns Normalized message with typos corrected
  */
@@ -134,17 +172,17 @@ export function normalizeText(message: string): string {
 
   let corrected = message;
 
-  // Multi-token phrase normalization first — resolves "jm bk" → "jam buka"
-  // in one pass so the word-by-word loop below doesn't miss cross-token
-  // abbreviations.
-  for (const [pattern, replacement] of PHRASE_CORRECTIONS) {
-    corrected = corrected.replace(pattern, replacement);
-  }
-
-  // Apply typo corrections (word boundaries to avoid partial matches)
+  // Pass 1: Apply typo corrections first (word boundaries to avoid partial matches)
+  // This converts "bikin" → "buat", "gue" → "saya", etc.
   for (const [typo, correct] of Object.entries(TYPO_CORRECTIONS)) {
     const regex = new RegExp(`\\b${typo}\\b`, 'gi');
     corrected = corrected.replace(regex, correct);
+  }
+
+  // Pass 2: Apply phrase corrections (now that words are normalized)
+  // This converts "buat KTP" → "membuat KTP", "saya mau" → "saya ingin", etc.
+  for (const [pattern, replacement] of PHRASE_CORRECTIONS) {
+    corrected = corrected.replace(pattern, replacement);
   }
 
   return corrected;

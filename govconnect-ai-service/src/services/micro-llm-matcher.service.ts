@@ -139,7 +139,20 @@ Tentukan layanan mana yang paling cocok dengan permintaan user.
 
 ATURAN:
 - Pahami MAKNA dan KONTEKS, bukan kecocokan kata literal.
-- User bisa pakai singkatan (KTP, KK, SKU), bahasa informal, slang.
+- User bisa pakai singkatan (KTP, KK, SKU), bahasa informal, slang, atau bahasa daerah (Jawa: "badhe damel KTP"=mau buat KTP, "ngurus akta"=mengurus akta; Sunda: "ngadamel surat"=membuat surat; Bugis: "engka surat"=ada surat).
+- Istilah colloquial WAJIB dipetakan ke layanan resmi:
+  - "bikin KTP"/"buat KTP"/"ngurus KTP"/"urus KTP" → Perekaman KTP / Surat KTP / layanan yang mengandung "KTP"
+  - "bikin KK"/"buat KK" → Kartu Keluarga / layanan yang mengandung "KK"
+  - "bikin akta"/"buat akta lahir" → Akta Kelahiran / layanan yang mengandung "Akta"
+  - "surat pindah"/"pindah domisili"/"surat mutasi" → Surat Keterangan Pindah / Surat Mutasi
+  - "surat miskin"/"surat tidak mampu"/"SKTM" → SKTM / Surat Keterangan Tidak Mampu
+  - "surat domisili"/"surat tinggal" → Surat Keterangan Domisili
+  - "surat usaha"/"SKU"/"surat izin usaha" → Surat Keterangan Usaha
+  - "surat nikah"/"surat cerai"/"surat kawin" → layanan pernikahan/perceraian yang relevan
+  - "surat kematian"/"surat meninggal" → Surat Keterangan Kematian
+  - "surat lahir"/"surat kelahiran" → Akta Kelahiran
+  - "surat pengantar"/"pengantar" → Surat Pengantar
+- Kata kerja umum ("buat", "bikin", "ngurus", "urus", "ngadamel", "damel") = permintaan layanan, bukan sekadar pertanyaan info.
 - Jika tidak ada yang cocok sama sekali, kembalikan matched_slug: null.
 - PENTING: Jika ada 2+ layanan yang SAMA-SAMA COCOK (ambigu), kembalikan matched_slug: null dan isi alternatives dengan slug+nama layanan yang cocok. Contoh: query "surat BBM" bisa berarti "rekomendasi BBM" atau "pengantar BBM" — ini ambigu.
 
