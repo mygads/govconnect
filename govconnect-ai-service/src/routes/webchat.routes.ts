@@ -19,7 +19,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import axios from 'axios';
 import logger from '../utils/logger';
 import { config } from '../config/env';
-import { processUnifiedMessage, ProcessMessageResult } from '../services/unified-message-processor.service';
+import { processUnifiedMessage, ProcessMessageResult, isProcessingFailure } from '../services/unified-message-processor.service';
 import {
   saveWebchatMessage,
   updateWebchatAIStatus,
@@ -376,10 +376,10 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
           message_id: batchResult.primaryMessageId,
           error_message: 'Pemrosesan webchat melebihi batas waktu.',
         });
-        res.json({
-          success: true,
-          response: 'Maaf, pemrosesan pesan memakan waktu terlalu lama. Silakan coba lagi.',
-          intent: 'TIMEOUT',
+        res.status(503).json({
+          success: false,
+          error: 'processing_failed',
+          code: 'PROCESSING_TIMEOUT',
           metadata: { session_id, processingTimeMs: Date.now() - startTime },
         });
         return;
@@ -411,6 +411,56 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
           session_id,
           processingTimeMs: Date.now() - startTime,
         },
+      });
+      return;
+    }
+
+    // Processing FAILURE (LLM timeout/down, empty reply, error): do NOT send a
+    // hollow apology to the resident. Return 503 so the widget shows a soft
+    // "belum terproses" indicator instead of a bot "sorry, try again". Persist
+    // to failed_messages so admin can reprocess via the dashboard button.
+    if (isProcessingFailure(result)) {
+      logger.warn('🤐 Webchat message processing failed — returning 503 (no apology)', {
+        session_id, village_id, error: result.error, intent: result.intent,
+      });
+      await updateWebchatAIStatus({
+        session_id,
+        village_id,
+        action: 'error',
+        message_id: batchResult.primaryMessageId,
+        error_message: result.error || 'processing_failed',
+      }).catch(() => {});
+      try {
+        const { default: prisma } = await import('../lib/prisma');
+        await prisma.failed_messages.upsert({
+          where: { id: session_id },
+          create: {
+            id: session_id,
+            village_id: village_id || null,
+            wa_user_id: null,
+            session_id,
+            channel: 'webchat',
+            original_message: message || null,
+            message_id: batchResult.primaryMessageId,
+            attempts: 1,
+            status: 'pending',
+            last_error: result.error || 'processing_failed',
+          },
+          update: {
+            attempts: { increment: 1 },
+            last_error: result.error || 'processing_failed',
+            status: 'pending',
+            resolved_at: null,
+          },
+        });
+      } catch (dbErr: any) {
+        logger.warn('Failed to persist webchat failed_message to DB', { session_id, error: dbErr?.message });
+      }
+      res.status(503).json({
+        success: false,
+        error: 'processing_failed',
+        code: 'PROCESSING_FAILED',
+        metadata: { session_id, processingTimeMs: Date.now() - startTime },
       });
       return;
     }
@@ -524,10 +574,11 @@ router.post('/', webchatRateLimit, async (req: Request, res: Response) => {
       });
     }
 
-    res.status(500).json({
+    res.status(503).json({
       success: false,
-      error: 'Terjadi kesalahan saat memproses pesan',
-      response: 'Maaf, terjadi kesalahan. Silakan coba lagi atau hubungi kami via WhatsApp.',
+      error: 'processing_failed',
+      code: 'PROCESSING_ERROR',
+      metadata: { session_id: statusSessionId, processingTimeMs: Date.now() - startTime },
     });
   }
 });

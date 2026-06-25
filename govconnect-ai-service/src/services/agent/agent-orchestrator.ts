@@ -477,7 +477,7 @@ function buildMixedIntentLoopExhaustedReply(
 
   return partialReply
     ? `${partialReply}\n\nMaaf Pak/Bu,${suffix} ${retryHint}`
-    : `Maaf Pak/Bu, permintaan tadi terdiri dari beberapa bagian dan ${unresolvedLabels} belum berhasil saya pastikan sekarang. ${retryHint}`;
+    : '';
 }
 
 function getSufficientServiceInfoStopReason(
@@ -657,7 +657,11 @@ function buildAgentFallbackReply(userMessage: string, toolsUsed: string[] = []):
     return 'Maaf Pak/Bu, informasinya belum berhasil kami temukan sekarang. Untuk sementara, silakan datang ke kantor desa pada jam kerja atau kirim pertanyaan yang lebih spesifik ya.';
   }
 
-  return 'Maaf, saya membutuhkan waktu lebih lama untuk memproses permintaan ini. Silakan coba lagi.';
+  // No grounding tool ran AND no real answer — this is a processing failure
+  // (LLM timeout/down, loop exhausted). Return EMPTY so isProcessingFailure()
+  // in the processor catches it and we stay silent + retry instead of sending
+  // a hollow "sorry, try again" apology to the resident.
+  return '';
 }
 
 function detectAmbiguousIntent(userMessage: string, heuristicTools: AgentToolName[], allowedToolNames: AgentToolName[]): boolean {

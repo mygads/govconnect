@@ -53,7 +53,7 @@ export {
   setPendingServiceFormOffer,
 } from './unified-message-processor.service';
 
-import { processUnifiedMessage } from './unified-message-processor.service';
+import { processUnifiedMessage, isProcessingFailure } from './unified-message-processor.service';
 
 // ============================================
 // CONSTANTS
@@ -290,7 +290,31 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       batchedMessageIds: spamGuardInfo?.contextMessages?.map(ctx => ctx.messageId).filter(Boolean) ?? [],
       onStageChange,
     });
-    
+
+    // Processing FAILURE (LLM timeout/down, empty reply, error): stay SILENT —
+    // do NOT publish a hollow apology. Like a clerk whose system is down, we
+    // hold the message and retry instead of replying "sorry, try again".
+    if (isProcessingFailure(result)) {
+      logger.warn('🤐 WhatsApp message processing failed — staying silent + enqueuing retry', {
+        wa_user_id,
+        message_id,
+        error: result.error,
+        intent: result.intent,
+      });
+      if (typingStarted) {
+        try {
+          await stopTyping(wa_user_id, village_id);
+        } catch (typingError: any) {
+          logger.warn('Failed to stop typing after processing failure', {
+            wa_user_id, message_id, error: typingError?.message || String(typingError),
+          });
+        }
+      }
+      completeProcessing(village_id, wa_user_id, message_id);
+      addToAIRetryQueue(event, result.error || 'processing_failed');
+      return;
+    }
+
     if (!result.success && result.error === 'Spam message detected') {
       if (typingStarted) {
         try {

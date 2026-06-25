@@ -940,6 +940,34 @@ async function maybeTriggerHumanHandoff(input: {
   };
 }
 
+// ── Processing failure detector ──
+// During the transition from "apology on failure" to "silent + retry", we
+// catch BOTH the new `success: false` results AND the old processing-failure
+// apology strings that may still slip through (backward-compat during a
+// staggered deploy). The primary signal is now success:false + empty response;
+// the phrase list is a backstop only and deliberately EXCLUDES legit
+// "not found" wording (which is a real answer, not a processing failure).
+const GENERIC_TIMEOUT_PHRASES = [
+  'membutuhkan waktu lebih lama untuk memproses',
+  'membutuhkan waktu lebih lama',
+  'terjadi gangguan pada sistem',
+  'sistem sedang dalam pemeliharaan',
+  'pemrosesan pesan memakan waktu terlalu lama',
+];
+
+export function isProcessingFailure(result: ProcessMessageResult): boolean {
+  if (!result.success && result.error) return true;
+  // Empty reply = no answer produced (LLM timeout/down or loop exhausted).
+  if (!result.response || !result.response.trim()) return true;
+  // Backward-compat: catch old processing-failure apology strings that came
+  // back as success:true during staggered deploy.
+  const response = result.response.toLowerCase();
+  if (result.success && GENERIC_TIMEOUT_PHRASES.some(phrase => response.includes(phrase))) {
+    return true;
+  }
+  return false;
+}
+
 async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessageResult> {
   const {
     userId,
@@ -1049,6 +1077,28 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     const finalIntent = residentKnowledgeFallback?.intent || derivedIntent;
     const finalResponse = residentKnowledgeFallback?.response || result.replyText;
 
+    // Empty reply = the agent produced no answer (LLM timeout/down or loop
+    // exhausted without grounding). Treat as a processing FAILURE: stay silent
+    // + enqueue for retry instead of sending a hollow apology.
+    if (!finalResponse || !finalResponse.trim()) {
+      return {
+        success: false,
+        response: '',
+        guidanceText: result.guidanceText,
+        intent: 'AGENT_ERROR',
+        metadata: {
+          processingTimeMs: Date.now() - startTime,
+          model: result.model,
+          hasKnowledge: false,
+          agentMode: 'single_orchestrator',
+          sideEffectMode,
+          toolsUsed: result.toolsUsed,
+          traceId,
+        },
+        error: 'AGENT_EMPTY_REPLY',
+      };
+    }
+
     return {
       success: true,
       response: finalResponse,
@@ -1101,9 +1151,13 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
     logger.error('🤖 [Agent] Error', { traceId, userId, error: error.message });
     tracker.complete();
 
+    // Return a FAILURE (not a polished apology). WhatsApp orchestrator stays
+    // silent + enqueues retry; webchat route returns 503. The user is NOT sent
+    // a fake "sorry, try again" — like a clerk whose system is down, we hold
+    // the message and retry instead of replying with a hollow apology.
     return {
-      success: true,
-      response: 'Maaf, terjadi gangguan pada sistem. Silakan coba lagi nanti.',
+      success: false,
+      response: '',
       intent: 'AGENT_ERROR',
       metadata: {
         processingTimeMs: Date.now() - startTime,
@@ -1111,7 +1165,7 @@ async function processWithAgent(input: AgentProcessInput): Promise<ProcessMessag
         agentMode: 'single_orchestrator',
         traceId,
       },
-      error: error.message,
+      error: error?.message ? `AGENT_ERROR: ${error.message}` : 'AGENT_ERROR',
     };
   }
 }

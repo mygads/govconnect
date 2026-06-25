@@ -4,6 +4,7 @@ import logger from '../utils/logger';
 import { config } from '../config/env';
 import { RABBITMQ_CONFIG } from '../config/rabbitmq';
 import { MessageReceivedEvent, AIReplyEvent, AIErrorEvent, MessageStatusEvent } from '../types/event.types';
+import prisma from '../lib/prisma';
 
 let connection: any = null;
 let channel: any = null;
@@ -246,15 +247,25 @@ export async function retryFailedMessage(messageId: string): Promise<{ success: 
   
   try {
     await aiMessageHandler(failed.event);
-    
+
     // Success - remove from failed messages
     failedMessages.delete(messageId);
-    
+
+    // Resolve the durable DB row too.
+    prisma.failed_messages.update({
+      where: { id: messageId },
+      data: { status: 'resolved', resolved_at: new Date() },
+    }).catch((dbErr) => {
+      logger.warn('Failed to mark failed_messages row resolved in DB', {
+        message_id: messageId, error: dbErr?.message,
+      });
+    });
+
     logger.info('✅ Admin retry: Message processed successfully', {
       wa_user_id: failed.event.wa_user_id,
       message_id: failed.event.message_id,
     });
-    
+
     return { success: true };
   } catch (error: any) {
     // Failed again - put back in queue or mark as failed
@@ -262,23 +273,65 @@ export async function retryFailedMessage(messageId: string): Promise<{ success: 
     failed.attempts++;
     failed.lastAttempt = Date.now();
     failed.lastError = error.message || 'Unknown error';
-    
+
+    prisma.failed_messages.update({
+      where: { id: messageId },
+      data: { status: 'pending', attempts: { increment: 1 }, last_error: failed.lastError },
+    }).catch((dbErr) => {
+      logger.warn('Failed to update failed_messages retry attempt in DB', {
+        message_id: messageId, error: dbErr?.message,
+      });
+    });
+
     logger.error('❌ Admin retry: Failed', {
       wa_user_id: failed.event.wa_user_id,
       message_id: failed.event.message_id,
       error: failed.lastError,
     });
-    
+
     return { success: false, error: failed.lastError };
   }
 }
 
 /**
  * Admin manual retry all failed messages
+ * Rehydrates from the durable DB store first (so messages that survived a
+ * redeploy/maintenance get retried too), then retries each one.
  */
 export async function retryAllFailedMessages(): Promise<{ total: number; success: number; failed: number }> {
   const results = { total: 0, success: 0, failed: 0 };
-  
+
+  // Rehydrate durable DB rows into the in-memory retry map so retryFailedMessage
+  // (which works off the in-memory map + aiMessageHandler) can process them.
+  try {
+    const pendingRows = await prisma.failed_messages.findMany({
+      where: { status: { in: ['pending', 'failed'] } },
+      take: 500,
+    });
+    for (const row of pendingRows) {
+      if (failedMessages.has(row.id)) continue;
+      // Reconstruct a minimal MessageReceivedEvent from the persisted row.
+      failedMessages.set(row.id, {
+        event: {
+          village_id: row.village_id || undefined,
+          wa_user_id: row.wa_user_id || row.id,
+          message: row.original_message || '',
+          message_id: row.id,
+          received_at: row.first_attempt.toISOString(),
+          channel: (row.channel as any) || 'whatsapp',
+        },
+        attempts: row.attempts,
+        firstAttempt: row.first_attempt.getTime(),
+        lastAttempt: row.last_attempt.getTime(),
+        lastError: row.last_error || '',
+        status: 'failed',
+        failedAt: row.last_attempt.getTime(),
+      });
+    }
+  } catch (dbErr: any) {
+    logger.warn('Failed to rehydrate failed_messages from DB for retry-all', { error: dbErr?.message });
+  }
+
   for (const [messageId] of failedMessages) {
     results.total++;
     const result = await retryFailedMessage(messageId);
@@ -288,8 +341,50 @@ export async function retryAllFailedMessages(): Promise<{ total: number; success
       results.failed++;
     }
   }
-  
+
   return results;
+}
+
+/**
+ * Get failed messages from the durable DB store (admin dashboard view).
+ */
+export async function getFailedMessagesFromDB(limit = 200): Promise<Array<{
+  id: string; village_id: string | null; wa_user_id: string | null;
+  channel: string | null; original_message: string | null; message_id: string | null;
+  attempts: number; status: string; last_error: string | null;
+  first_attempt: Date; last_attempt: Date; resolved_at: Date | null;
+}>> {
+  return prisma.failed_messages.findMany({
+    where: { status: { in: ['pending', 'failed', 'retrying'] } },
+    orderBy: { last_attempt: 'desc' },
+    take: limit,
+  });
+}
+
+/**
+ * Aggregate stats of failed messages for the admin dashboard.
+ */
+export async function getFailedMessagesStats(): Promise<{
+  totalPending: number;
+  byStatus: Record<string, number>;
+  byVillage: Array<{ village_id: string; count: number }>;
+}> {
+  const [statusGroups, villageGroups, pendingCount] = await Promise.all([
+    prisma.failed_messages.groupBy({ by: ['status'], _count: { _all: true } }),
+    prisma.failed_messages.groupBy({
+      by: ['village_id'],
+      where: { status: { in: ['pending', 'failed', 'retrying'] } },
+      _count: { _all: true },
+    }),
+    prisma.failed_messages.count({ where: { status: { in: ['pending', 'failed', 'retrying'] } } }),
+  ]);
+  const byStatus: Record<string, number> = {};
+  for (const g of statusGroups) byStatus[g.status] = g._count._all;
+  return {
+    totalPending: pendingCount,
+    byStatus,
+    byVillage: villageGroups.map((g) => ({ village_id: g.village_id || '(none)', count: g._count._all })),
+  };
 }
 
 /**
@@ -426,18 +521,25 @@ function stopAIRetryWorker(): void {
  * Called when AI processing fails
  */
 export function addToAIRetryQueue(event: MessageReceivedEvent, error: string): void {
+  // Persist to DB (durable across redeploy/maintenance) — fire-and-forget.
+  persistFailedMessage(event, error).catch((dbErr) => {
+    logger.warn('Failed to persist failed_message to DB (in-memory queue still has it)', {
+      message_id: event.message_id, error: dbErr?.message,
+    });
+  });
+
   // Check if message is already in queue (by message_id)
   const existingIndex = aiMessageRetryQueue.findIndex(
     item => item.event.message_id === event.message_id
   );
-  
+
   if (existingIndex >= 0) {
     // Update existing entry
     const existing = aiMessageRetryQueue[existingIndex];
     existing.attempts++;
     existing.lastAttempt = Date.now();
     existing.lastError = error;
-    
+
     logger.info('📥 AI retry: Updated existing entry', {
       wa_user_id: event.wa_user_id,
       message_id: event.message_id,
@@ -445,7 +547,7 @@ export function addToAIRetryQueue(event: MessageReceivedEvent, error: string): v
     });
     return;
   }
-  
+
   // Check queue size limit
   if (aiMessageRetryQueue.length >= AI_MAX_QUEUE_SIZE) {
     // Drop oldest message
@@ -455,7 +557,7 @@ export function addToAIRetryQueue(event: MessageReceivedEvent, error: string): v
       queueSize: aiMessageRetryQueue.length,
     });
   }
-  
+
   // Add new entry
   aiMessageRetryQueue.push({
     event,
@@ -464,12 +566,41 @@ export function addToAIRetryQueue(event: MessageReceivedEvent, error: string): v
     lastAttempt: Date.now(),
     lastError: error,
   });
-  
+
   logger.info('📥 AI retry: Message added to queue', {
     wa_user_id: event.wa_user_id,
     message_id: event.message_id,
     queueSize: aiMessageRetryQueue.length,
     error,
+  });
+}
+
+// Durable persistence: upsert failed message row keyed by message_id.
+// The in-memory queue stays for fast active retries; DB is the source of truth
+// for the admin "reprocess all" button and survives redeploy/maintenance.
+async function persistFailedMessage(event: MessageReceivedEvent, error: string): Promise<void> {
+  if (!event.message_id) return;
+  const channel = event.channel || 'whatsapp';
+  await prisma.failed_messages.upsert({
+    where: { id: event.message_id },
+    create: {
+      id: event.message_id,
+      village_id: event.village_id || null,
+      wa_user_id: event.wa_user_id || null,
+      session_id: null,
+      channel,
+      original_message: event.message || null,
+      message_id: event.message_id,
+      attempts: 1,
+      status: 'pending',
+      last_error: error,
+    },
+    update: {
+      attempts: { increment: 1 },
+      last_error: error,
+      status: 'pending',
+      resolved_at: null,
+    },
   });
 }
 

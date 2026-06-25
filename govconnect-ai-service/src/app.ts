@@ -10,6 +10,8 @@ import {
   getRetryQueueStatus,
   getAIRetryQueueStatus,
   getFailedMessages,
+  getFailedMessagesFromDB,
+  getFailedMessagesStats,
   retryFailedMessage,
   retryAllFailedMessages,
   clearFailedMessages,
@@ -273,13 +275,29 @@ app.get('/stats/retry-queue', (req: Request, res: Response) => {
 /**
  * Get all failed messages (for admin dashboard)
  */
-app.get('/admin/failed-messages', (req: Request, res: Response) => {
+app.get('/admin/failed-messages', async (req: Request, res: Response) => {
   try {
-    const messages = getFailedMessages();
-
-    res.json({
-      count: messages.length,
-      messages: messages.map(msg => ({
+    // Prefer the durable DB store; fall back to in-memory if DB is unreachable.
+    let messages: any[] = [];
+    try {
+      const rows = await getFailedMessagesFromDB(200);
+      messages = rows.map(row => ({
+        message_id: row.id,
+        wa_user_id: row.wa_user_id,
+        village_id: row.village_id,
+        channel: row.channel,
+        attempts: row.attempts,
+        status: row.status,
+        lastError: row.last_error,
+        firstAttempt: row.first_attempt.toISOString(),
+        lastAttempt: row.last_attempt.toISOString(),
+        resolvedAt: row.resolved_at?.toISOString() || null,
+        originalMessage: row.original_message?.substring(0, 100) ?? null,
+      }));
+    } catch (dbErr: any) {
+      logger.warn('failed-messages DB query failed, falling back to in-memory', { error: dbErr?.message });
+      const mem = getFailedMessages();
+      messages = mem.map(msg => ({
         message_id: msg.event.message_id,
         wa_user_id: msg.event.wa_user_id,
         attempts: msg.attempts,
@@ -287,14 +305,28 @@ app.get('/admin/failed-messages', (req: Request, res: Response) => {
         lastError: msg.lastError,
         firstAttempt: new Date(msg.firstAttempt).toISOString(),
         lastAttempt: new Date(msg.lastAttempt).toISOString(),
-        failedAt: new Date(msg.failedAt).toISOString(),
+        resolvedAt: null,
         originalMessage: msg.event.message?.substring(0, 100),
-      })),
-    });
+      }));
+    }
+
+    res.json({ count: messages.length, messages });
   } catch (error: any) {
     res.status(500).json({
       error: 'Failed to get failed messages',
     });
+  }
+});
+
+/**
+ * Failed messages aggregate stats (admin dashboard)
+ */
+app.get('/admin/failed-messages/stats', async (req: Request, res: Response) => {
+  try {
+    const stats = await getFailedMessagesStats();
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get failed messages stats' });
   }
 });
 

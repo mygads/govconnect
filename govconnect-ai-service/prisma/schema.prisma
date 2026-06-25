@@ -805,3 +805,23 @@ model ai_runtime_grounding_mismatches {
   @@index([entity_type, detected_at])
   @@index([trace_id])
 }
+
+model failed_messages {
+  id               String   @id @default(cuid())
+  village_id       String?
+  wa_user_id       String?
+  session_id       String?
+  channel          String?  // "whatsapp" | "webchat"
+  original_message String?  @db.Text
+  message_id       String?
+  attempts         Int      @default(0)
+  max_attempts     Int      @default(10)
+  status           String   @default("pending") // pending | retrying | exhausted | resolved
+  last_error       String?  @db.Text
+  first_attempt    DateTime @default(now())
+  last_attempt     DateTime @updatedAt
+  resolved_at      DateTime?
+
+  @@index([village_id, status])
+  @@index([status])
+}

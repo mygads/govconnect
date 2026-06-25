@@ -449,6 +449,14 @@ export function useLiveChat() {
 
       if (!response.ok) {
         updateMessageStatus(userMessage.id, 'error');
+        // Processing failure (503 PROCESSING_FAILED): the message is held for
+        // retry + admin reprocess. Do NOT show a bot apology — stay silent like
+        // a clerk whose system is down. The user's bubble gets an error badge.
+        if (response.status === 503 && (data?.code === 'PROCESSING_FAILED' || data?.code === 'PROCESSING_TIMEOUT' || data?.code === 'PROCESSING_ERROR')) {
+          setServiceError('Pesan belum terproses. Sedang kami coba ulang otomatis; admin dapat memproses ulang dari dashboard.');
+          setState(prev => ({ ...prev, isTyping: false }));
+          return;
+        }
         const fallback = data?.fallbackResponse || data?.response || data?.error || 'Maaf, sistem sedang bermasalah. Silakan coba lagi nanti.';
         setServiceError(data?.error || fallback);
         addMessage({
