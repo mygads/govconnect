@@ -41,6 +41,7 @@ import axios from 'axios';
 import { z } from 'zod';
 import { config } from './config/env';
 import prisma from './lib/prisma';
+import { clearFewShotCache } from './services/few-shot-examples.service';
 import { finalizeAiBillingTurn } from './services/ai-turn-billing.service';
 import { getParam, getQuery } from './utils/http';
 import { runGoldenSetEvaluation, getGoldenSetSummary } from './services/golden-set-eval.service';
@@ -409,6 +410,78 @@ app.delete('/admin/failed-messages', (req: Request, res: Response) => {
     res.status(500).json({
       error: 'Failed to clear messages',
     });
+  }
+});
+
+// ==================== ADMIN NLU FEW-SHOT EXAMPLES ====================
+
+/**
+ * List admin-curated NLU few-shot examples for a village.
+ */
+app.get('/admin/nlu-examples', async (req: Request, res: Response) => {
+  try {
+    const villageId = getQuery(req, 'village_id') || undefined;
+    const rows = await prisma.ai_nlu_few_shot_examples.findMany({
+      where: {
+        ...(villageId ? { village_id: villageId } : {}),
+      },
+      orderBy: { created_at: 'desc' },
+      take: 500,
+    });
+    res.json({ count: rows.length, examples: rows });
+  } catch (error: any) {
+    logger.error('Failed to list NLU examples', { error: error?.message });
+    res.status(500).json({ error: 'Failed to list NLU examples' });
+  }
+});
+
+/**
+ * Create an NLU few-shot example (admin flags a wrong answer as "should have
+ * been intent X"). Invalidates the per-village classifier cache so the new
+ * example takes effect on the next message.
+ */
+app.post('/admin/nlu-examples', async (req: Request, res: Response) => {
+  try {
+    const { village_id, utterance, correct_intent, correct_category, source_message_id, created_by } = req.body || {};
+
+    if (typeof utterance !== 'string' || !utterance.trim()) {
+      res.status(400).json({ error: 'utterance is required' });
+      return;
+    }
+
+    const VALID_INTENTS = [
+      'service_info', 'service_listing', 'contact_lookup', 'emergency_contact',
+      'complaint_creation', 'knowledge_query', 'greeting', 'out_of_scope', 'unknown',
+    ];
+    if (correct_intent != null && !VALID_INTENTS.includes(correct_intent)) {
+      res.status(400).json({ error: `correct_intent must be one of: ${VALID_INTENTS.join(', ')}` });
+      return;
+    }
+
+    const created = await prisma.ai_nlu_few_shot_examples.create({
+      data: {
+        village_id: typeof village_id === 'string' ? village_id : null,
+        utterance: utterance.trim().substring(0, 500),
+        correct_intent: typeof correct_intent === 'string' ? correct_intent : null,
+        correct_category: typeof correct_category === 'string' ? correct_category : null,
+        source_message_id: typeof source_message_id === 'string' ? source_message_id : null,
+        created_by: typeof created_by === 'string' ? created_by : null,
+      },
+    });
+
+    // Invalidate cache so the example applies immediately for this village.
+    clearFewShotCache(created.village_id || undefined);
+
+    logger.info('Admin created NLU few-shot example', {
+      id: created.id,
+      villageId: created.village_id,
+      intent: created.correct_intent,
+    });
+
+    res.json({ status: 'success', example: created });
+  } catch (error: any) {
+    logger.error('Failed to create NLU example', { error: error?.message });
+    res.status(500).json({ error: 'Failed to create NLU example' });
   }
 });
 

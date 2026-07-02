@@ -295,6 +295,7 @@ export async function classifyNameUpdate(
 // Categories are now DYNAMIC — fetched from Dashboard DB per village.
 
 import { getCategoryListForPrompt } from './dynamic-categories.service';
+import { getFewShotForPrompt } from './few-shot-examples.service';
 
 /**
  * Build the unified classify prompt with dynamic categories.
@@ -309,6 +310,11 @@ async function buildUnifiedClassifyPrompt(villageId?: string): Promise<string> {
   // "no contact info available" instead of silently failing.
   const hasKontak = dynamicCategories.includes('"kontak"');
   const categoryList = hasKontak ? dynamicCategories : `${dynamicCategories}, "kontak"`;
+
+  // Admin-curated few-shot examples for THIS village (self-improvement loop).
+  // Empty string when the village has no examples — safe for new villages.
+  const fewShotBlock = await getFewShotForPrompt(villageId);
+  const fewShotSection = fewShotBlock ? `\n\n${fewShotBlock}\n` : '';
 
   return `Kamu adalah classifier pesan untuk sistem layanan publik Indonesia (GovConnect).
 
@@ -346,32 +352,50 @@ Analisis pesan user dan tentukan SEMUA aspek berikut dalam SATU jawaban:
    Pilih dari: ${categoryList}
    Boleh lebih dari satu jika relevan. Pilih kategori yang paling cocok dengan isi knowledge base.
 
-CONTOH:
-- "halo" → GREETING, rag_needed: false, categories: []
-- "jam buka kantor?" → QUESTION, rag_needed: true, categories: ["faq"]
-- "siapa kepala desanya?" → QUESTION, rag_needed: true, categories: ["profil_desa", "struktur_desa"]
-- "cara buat KTP gimana?" → QUESTION, rag_needed: true, categories: ["panduan-sop", "layanan_administrasi"]
-- "udah cukup makasih" → FAREWELL, rag_needed: false, categories: []
-- "jalan rusak depan masjid" → COMPLAINT, rag_needed: false, categories: []
-- "nama saya Clara" → DATA_INPUT, rag_needed: false, categories: []
-- "ya" → CONFIRMATION, rag_needed: false, categories: []
-- "layanan apa aja yang ada?" → QUESTION, rag_needed: true, categories: ["layanan_administrasi"]
-- "alamat kantor desa dimana?" → QUESTION, rag_needed: true, categories: ["kontak", "profil_desa"]
-- "mau lapor meninggal" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"]
-- "mau lapor pembuatan KTP" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"]
-- "lapor urus surat pindah" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"]
-- "ada orang sakit keras butuh bantuan cepat" → QUESTION, rag_needed: true, categories: ["kontak"]
-- "minta nomor damkar sekarang" → QUESTION, rag_needed: true, categories: ["kontak"]
-- "sampah menumpuk di jalan" → COMPLAINT, rag_needed: false, categories: []
-- "saya mau buat laporan tadi ada kecelakaan" → COMPLAINT, rag_needed: false, categories: []
-- "mau lapor kebakaran di kampung" → COMPLAINT, rag_needed: false, categories: []
-- "tolong ada kebakaran cepat" → QUESTION, rag_needed: true, categories: ["kontak"]
+4. **routing_intent**: Ke mana pesan ini harus diarahkan (PAHAMI MAKSUD, bukan sekadar kata kunci — warga bisa pakai bahasa daerah/slang/typo)
+   - service_info: Tanya/minta SATU layanan administrasi tertentu (syarat, biaya, cara, "mau buat/urus X"). Contoh maksud: bikin KTP, urus akta, surat pindah, badhe damel KK.
+   - service_listing: Tanya DAFTAR layanan ("layanan apa saja", "surat apa yang bisa diurus")
+   - contact_lookup: Minta nomor/kontak entitas (kepala desa, damkar, puskesmas, RT) TANPA situasi darurat aktif
+   - emergency_contact: Darurat aktif butuh bantuan segera (kebakaran, kecelakaan, sakit keras) — minta nomor/tolong
+   - complaint_creation: Ingin melaporkan masalah infrastruktur/lingkungan (jalan rusak, lampu mati, sampah) ATAU eksplisit "mau lapor/buat laporan"
+   - knowledge_query: Tanya info/profil desa, jam buka, alamat, program, penjelasan umum
+   - greeting: Salam/terima kasih/basa-basi murni
+   - out_of_scope: Di luar layanan desa (coding, hiburan, matematika, layanan pusat spt SIM/paspor/BPJS)
+   - unknown: Tidak jelas maksudnya
 
+5. **routing_confidence**: Seberapa yakin kamu pada routing_intent (0.0-1.0). Rendahkan bila ambigu.
+
+CONTOH:
+- "halo" → GREETING, rag_needed: false, categories: [], routing_intent: "greeting", routing_confidence: 0.95
+- "jam buka kantor?" → QUESTION, rag_needed: true, categories: ["faq"], routing_intent: "knowledge_query", routing_confidence: 0.9
+- "siapa kepala desanya?" → QUESTION, rag_needed: true, categories: ["profil_desa", "struktur_desa"], routing_intent: "knowledge_query", routing_confidence: 0.9
+- "cara buat KTP gimana?" → QUESTION, rag_needed: true, categories: ["panduan-sop", "layanan_administrasi"], routing_intent: "service_info", routing_confidence: 0.9
+- "bikin KTP" → QUESTION, rag_needed: true, categories: ["layanan_administrasi"], routing_intent: "service_info", routing_confidence: 0.88
+- "badhe damel KK" (Jawa: mau buat KK) → QUESTION, rag_needed: true, categories: ["layanan_administrasi"], routing_intent: "service_info", routing_confidence: 0.85
+- "kumaha cara ngurus akta" (Sunda) → QUESTION, rag_needed: true, categories: ["layanan_administrasi","panduan-sop"], routing_intent: "service_info", routing_confidence: 0.85
+- "udah cukup makasih" → FAREWELL, rag_needed: false, categories: [], routing_intent: "greeting", routing_confidence: 0.9
+- "jalan rusak depan masjid" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
+- "nama saya Clara" → DATA_INPUT, rag_needed: false, categories: [], routing_intent: "unknown", routing_confidence: 0.5
+- "ya" → CONFIRMATION, rag_needed: false, categories: [], routing_intent: "unknown", routing_confidence: 0.4
+- "layanan apa aja yang ada?" → QUESTION, rag_needed: true, categories: ["layanan_administrasi"], routing_intent: "service_listing", routing_confidence: 0.9
+- "alamat kantor desa dimana?" → QUESTION, rag_needed: true, categories: ["kontak", "profil_desa"], routing_intent: "knowledge_query", routing_confidence: 0.85
+- "nomor kepala desa berapa?" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "contact_lookup", routing_confidence: 0.9
+- "mau lapor meninggal" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"], routing_intent: "service_info", routing_confidence: 0.8
+- "lapor urus surat pindah" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"], routing_intent: "service_info", routing_confidence: 0.8
+- "ada orang sakit keras butuh bantuan cepat" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "emergency_contact", routing_confidence: 0.9
+- "minta nomor damkar sekarang" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "contact_lookup", routing_confidence: 0.85
+- "sampah menumpuk di jalan" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "saya mau buat laporan tadi ada kecelakaan" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
+- "mau lapor kebakaran di kampung" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
+- "tolong ada kebakaran cepat" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "emergency_contact", routing_confidence: 0.92
+${fewShotSection}
 OUTPUT (JSON saja, tanpa markdown):
 {
   "message_type": "GREETING|FAREWELL|QUESTION|DATA_INPUT|COMPLAINT|CONFIRMATION|SOCIAL",
   "rag_needed": true/false,
   "categories": ["kategori1", "kategori2"],
+  "routing_intent": "service_info|service_listing|contact_lookup|emergency_contact|complaint_creation|knowledge_query|greeting|out_of_scope|unknown",
+  "routing_confidence": 0.0-1.0,
   "confidence": 0.0-1.0,
   "reason": "penjelasan singkat"
 }
@@ -382,12 +406,25 @@ PESAN USER:
 
 export type MessageType = 'GREETING' | 'FAREWELL' | 'QUESTION' | 'DATA_INPUT' | 'COMPLAINT' | 'CONFIRMATION' | 'SOCIAL';
 
+export type ClassifierRoutingIntent =
+  | 'service_info'
+  | 'service_listing'
+  | 'contact_lookup'
+  | 'emergency_contact'
+  | 'complaint_creation'
+  | 'knowledge_query'
+  | 'greeting'
+  | 'out_of_scope'
+  | 'unknown';
+
 export interface UnifiedClassifyResult {
   message_type: MessageType;
   rag_needed: boolean;
   categories: string[];
   confidence: number;
   reason?: string;
+  routing_intent?: ClassifierRoutingIntent;
+  routing_confidence?: number;
 }
 
 export async function classifyMessage(
@@ -410,12 +447,26 @@ export async function classifyMessage(
   // Ensure categories is always an array
   if (!Array.isArray(parsed.categories)) parsed.categories = [];
 
+  // Validate routing_intent (optional field — may be absent on older prompts)
+  const validRoutingIntents: ClassifierRoutingIntent[] = [
+    'service_info', 'service_listing', 'contact_lookup', 'emergency_contact',
+    'complaint_creation', 'knowledge_query', 'greeting', 'out_of_scope', 'unknown',
+  ];
+  const routingIntent = validRoutingIntents.includes(parsed.routing_intent as ClassifierRoutingIntent)
+    ? parsed.routing_intent
+    : undefined;
+  const routingConfidence = typeof parsed.routing_confidence === 'number'
+    ? Math.max(0, Math.min(1, parsed.routing_confidence))
+    : undefined;
+
   logger.info('Micro LLM unified classify', {
     message: message.substring(0, 60),
     type: parsed.message_type,
     rag_needed: parsed.rag_needed,
     categories: parsed.categories,
     confidence: parsed.confidence,
+    routing_intent: routingIntent,
+    routing_confidence: routingConfidence,
   });
 
   return {
@@ -424,6 +475,8 @@ export async function classifyMessage(
     categories: parsed.categories,
     confidence: Math.max(0, Math.min(1, parsed.confidence)),
     reason: parsed.reason,
+    ...(routingIntent ? { routing_intent: routingIntent } : {}),
+    ...(routingConfidence !== undefined ? { routing_confidence: routingConfidence } : {}),
   };
 }
 

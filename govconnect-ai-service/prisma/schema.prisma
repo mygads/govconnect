@@ -825,3 +825,21 @@ model failed_messages {
   @@index([village_id, status])
   @@index([status])
 }
+
+// Admin-curated few-shot examples for the micro-NLU classifier. When an admin
+// flags a wrong answer as "should have been intent X", the villager's phrasing
+// is stored here and injected into the classifier prompt for that village, so
+// the agent progressively understands local phrasing without retraining.
+model ai_nlu_few_shot_examples {
+  id                String   @id @default(cuid())
+  village_id        String?
+  utterance         String   @db.Text
+  correct_intent    String?  // routing_intent the classifier should emit
+  correct_category  String?  // optional knowledge category hint
+  source_message_id String?  // links back to failed_messages.message_id when flagged from there
+  created_by        String?
+  enabled           Boolean  @default(true)
+  created_at        DateTime @default(now())
+
+  @@index([village_id, enabled])
+}

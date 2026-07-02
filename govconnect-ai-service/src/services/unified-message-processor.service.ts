@@ -25,6 +25,7 @@ import { getVillageProfileSummary } from './knowledge.service';
 import { isSpamMessage } from './rag.service';
 import { getAutoFillSuggestionsWithFallback } from './user-profile.service';
 import { normalizeText } from './text-normalizer.service';
+import { classifyMessage, type UnifiedClassifyResult } from './micro-llm-matcher.service';
 import { aiAnalyticsService } from './ai-analytics.service';
 import { createProcessingTracker } from './processing-status.service';
 import { getSmartFallback, getErrorFallback } from './fallback-response.service';
@@ -1645,6 +1646,26 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       : {};
     const hasActiveServiceContext = !!preGuardActiveServiceInfo || !!historyDerivedService.serviceName;
 
+    // NLU-first routing: run the unified classifier BEFORE the regex router so
+    // intent understanding (incl. regional/colloquial phrasing) is the PRIMARY
+    // signal, not a last-resort fallback. It runs under the shared micro-NLU
+    // budget — on timeout/failure it returns null and decideFastIntent falls
+    // back to its deterministic regex signals (zero stall). Skipped in
+    // knowledge_test mode. The classifier sees normalized text so colloquial
+    // phrasing ("bikin KTP", "badhe damel KK") is understood.
+    const normalizedForClassifier = normalizeText(sanitizeUserInput(workingMessage));
+    const unifiedClassification: UnifiedClassifyResult | null =
+      sideEffectMode === 'knowledge_test'
+        ? null
+        : await withMicroNluBudget(
+            () => classifyMessage(normalizedForClassifier, {
+              village_id: resolvedVillageId,
+              wa_user_id: userId,
+              channel: agentChannel,
+            }),
+            null,
+          );
+
     const routingDecision = decideFastIntent({
       message: workingMessage,
       hasPendingServiceOffer: !!preGuardServiceOffer,
@@ -1652,6 +1673,7 @@ async function processUnifiedMessageInternal(input: ProcessMessageInput): Promis
       hasPendingServiceClarification: !!preGuardServiceClarification,
       hasActiveServiceInfo: hasActiveServiceContext,
       hasPendingComplaintState: !!(preGuardAddressConfirmation || preGuardAddressRequest || preGuardComplaintData),
+      unified: unifiedClassification,
     });
     const releasedRoutingStates = releaseStatesForRoutingDecision(userId, preGuardStateSnapshot, routingDecision);
     const deferredRoutingOutcome = buildDeferredRoutingOutcome(routingDecision, releasedRoutingStates);

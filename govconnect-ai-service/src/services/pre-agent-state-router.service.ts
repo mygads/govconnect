@@ -364,6 +364,54 @@ function buildRoutingDecision(input: Partial<FastIntentDecision> & Pick<FastInte
   };
 }
 
+/**
+ * NLU-primary routing: turn a confident micro-NLU `routing_intent` into a
+ * routing decision. This is the ADAPTIVE path — it understands regional/
+ * colloquial phrasing that the regex signals below miss. It runs AFTER the
+ * deterministic safety guards (emergency, pending state) but BEFORE the
+ * lower-precision regex branches (complaint/knowledge/etc.), so those regex
+ * branches become the fallback when NLU is null or low-confidence.
+ *
+ * Returns null for 'unknown' (or unmapped) intents so the regex fallback and
+ * final classifier-aware fall-through can decide instead.
+ */
+function buildNluRoutingDecision(
+  unified: UnifiedClassifyResult,
+  ctx: { regexAgrees: boolean; mixedSignals: boolean },
+): FastIntentDecision | null {
+  const intent = unified.routing_intent;
+  if (!intent || intent === 'unknown') return null;
+
+  const reason = `nlu_${intent}`;
+  // When a regex signal points at the SAME family, promote confidence to hard.
+  // When regex points elsewhere (mixedSignals), stay medium + defer so the
+  // agent can disambiguate rather than committing to a fast pre-agent handler.
+  const confidence: RoutingConfidence = ctx.regexAgrees ? 'hard' : ctx.mixedSignals ? 'medium' : 'high';
+
+  switch (intent) {
+    case 'greeting':
+      return buildRoutingDecision({ primaryIntent: 'greeting', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason] });
+    case 'service_info':
+      return buildRoutingDecision({ primaryIntent: 'service_info', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_service_info'] });
+    case 'service_listing':
+      return buildRoutingDecision({ primaryIntent: 'service_listing', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_service_info'] });
+    case 'contact_lookup':
+      return buildRoutingDecision({ primaryIntent: 'contact_lookup', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_important_contact'] });
+    case 'emergency_contact':
+      return buildRoutingDecision({ primaryIntent: 'emergency_contact', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_emergency_contacts', 'create_complaint'] });
+    case 'complaint_creation':
+      return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
+    case 'knowledge_query':
+      return buildRoutingDecision({ primaryIntent: 'knowledge_query', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_village_profile', 'search_knowledge', 'get_important_contact'] });
+    case 'out_of_scope':
+      // Do NOT hard_block on NLU alone — the classifier can be wrong. Defer so
+      // the agent can politely redirect instead of silently blocking.
+      return buildRoutingDecision({ primaryIntent: 'out_of_scope', action: 'defer_to_agent', confidence: 'medium', mixedSignals: ctx.mixedSignals, reasons: [reason] });
+    default:
+      return null;
+  }
+}
+
 export function decideFastIntent(input: {
   message: string;
   hasPendingServiceOffer?: boolean;
@@ -552,6 +600,28 @@ export function decideFastIntent(input: {
 
   if (emergencySignal) {
     return buildRoutingDecision({ primaryIntent: 'emergency_contact', action: mixedSignals ? 'defer_to_agent' : 'handle_pre_agent', confidence: mixedSignals ? 'medium' : 'high', mixedSignals, reasons: ['emergency_signal'], allowedToolHints: ['get_emergency_contacts', 'create_complaint'] });
+  }
+
+  // ── NLU-primary routing (adaptive) ──
+  // After the deterministic safety/state guards above (greeting, contact,
+  // pending-state machine, service-listing, emergency), let a CONFIDENT
+  // micro-NLU intent lead. This is what makes the agent understand colloquial
+  // and regional phrasing the regex branches below miss (e.g. "bikin KTP",
+  // "badhe damel KK"). When the classifier is null (timeout/lane down) or
+  // low-confidence, we fall through to the deterministic regex branches, so
+  // there is never a stall — regex is the safety net, NLU is the lead.
+  if (input.unified?.routing_intent && (input.unified.routing_confidence ?? 0) >= 0.7) {
+    const nluIntent = input.unified.routing_intent;
+    const regexAgrees = (
+      (nluIntent === 'service_info' && serviceSignal) ||
+      (nluIntent === 'service_listing' && isServiceListingQuery(normalized)) ||
+      (nluIntent === 'contact_lookup' && contactSignal) ||
+      (nluIntent === 'complaint_creation' && complaintSignal) ||
+      (nluIntent === 'knowledge_query' && (villageProfileSignal || localKnowledgeSignal)) ||
+      (nluIntent === 'out_of_scope' && outOfScopeSignal)
+    );
+    const nluDecision = buildNluRoutingDecision(input.unified, { regexAgrees, mixedSignals });
+    if (nluDecision) return nluDecision;
   }
 
   if (complaintSignal) {
