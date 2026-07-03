@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
 import { fetchApi, fetchApiRaw } from "@/lib/frontend-api"
 import { formatDateTime } from "@/lib/utils"
-import { RefreshCw, AlertTriangle, RotateCcw, Inbox } from "lucide-react"
+import { RefreshCw, AlertTriangle, RotateCcw, Inbox, Brain } from "lucide-react"
 
 interface FailedMessage {
   message_id: string
@@ -48,6 +48,7 @@ export default function FailedMessagesPage() {
   const [loading, setLoading] = useState(true)
   const [retryingAll, setRetryingAll] = useState(false)
   const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [flaggingId, setFlaggingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -101,6 +102,36 @@ export default function FailedMessagesPage() {
     } finally {
       setRetryingAll(false)
       load()
+    }
+  }
+
+  const flagAsNluExample = async (m: FailedMessage) => {
+    if (!m.originalMessage?.trim()) {
+      toast({ title: "Pesan kosong, tidak bisa ditandai", variant: "destructive" })
+      return
+    }
+    setFlaggingId(m.message_id)
+    try {
+      const res = await fetchApiRaw("/api/admin/nlu-examples", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          village_id: m.village_id,
+          utterance: m.originalMessage.trim(),
+          correct_intent: "service_info",
+          source_message_id: m.message_id,
+        }),
+      })
+      if (res.ok) {
+        toast({ title: "Ditandai sebagai contoh NLU", description: "Buka Settings → Contoh NLU untuk ubah intent-nya." })
+      } else {
+        const j = await res.json().catch(() => ({}))
+        toast({ title: "Gagal menandai", description: j?.error, variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Gagal menandai", description: err?.message, variant: "destructive" })
+    } finally {
+      setFlaggingId(null)
     }
   }
 
@@ -163,14 +194,26 @@ export default function FailedMessagesPage() {
                   Terakhir gagal: {formatDateTime(m.lastAttempt, user?.village_timezone)}
                 </p>
               </div>
-              <Button
-                size="sm"
-                variant="default"
-                onClick={() => retryOne(m.message_id)}
-                disabled={retryingId === m.message_id}
-              >
-                {retryingId === m.message_id ? "..." : "Reproses"}
-              </Button>
+              <div className="flex gap-1 shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => flagAsNluExample(m)}
+                  disabled={flaggingId === m.message_id || !m.originalMessage}
+                  title="Tandai sebagai contoh NLU untuk melatih AI"
+                >
+                  <Brain className="h-3 w-3 mr-1" />
+                  {flaggingId === m.message_id ? "..." : "NLU"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={() => retryOne(m.message_id)}
+                  disabled={retryingId === m.message_id}
+                >
+                  {retryingId === m.message_id ? "..." : "Reproses"}
+                </Button>
+              </div>
             </Card>
           ))}
         </div>

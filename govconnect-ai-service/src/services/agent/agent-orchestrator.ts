@@ -596,8 +596,20 @@ export function validateFinalAgentReply(text: string, toolsUsed: string[], userM
     return buildAgentFallbackReply('', toolsUsed);
   }
 
-  if (/\b(ai|bot|llm|prompt)\b|\b(tool|retrieval|basis pengetahuan|dokumen internal)\b\s+(yang saya|saya (panggil|gunakan)|untuk mencari)/i.test(text)) {
-    return 'Maaf Pak/Bu, saya bantu jawab dari informasi layanan yang tersedia. Bisa sebutkan kebutuhan atau detail yang ingin dicek?';
+  // Broader meta-language guard — catches more AI-tell patterns that make
+  // the agent sound like a bot rather than a human CS officer.
+  const aiTellPatterns = [
+    /\b(ai|bot|llm|prompt)\b/i,
+    /\b(tool|retrieval|basis pengetahuan|dokumen internal)\b\s+(yang saya|saya (panggil|gunakan)|untuk mencari)/i,
+    /\bsebagai (asisten|ai|bot|sistem)\b/i,
+    /\bsistem kami (mendeteksi|mencatat|memproses|menunjukkan)\b/i,
+    /\bdata (tercatat|tersimpan) menunjukkan\b/i,
+    /\bberdasarkan (data resmi|database|sistem)\b/i,
+    /\bsaya (tidak bisa|tidak dapat|tidak mampu) (memahami|memproses|mengakses)\b/i,
+    /\bsebagai (model|large language|language model)\b/i,
+  ];
+  if (aiTellPatterns.some((p) => p.test(text))) {
+    return 'Saya belum menemukan informasi yang tepat untuk itu. Bisa dijelaskan lebih detail kebutuhannya?';
   }
 
   const claimsActionSuccess = /\b(sudah|berhasil|telah)\b.*\b(dibuat|dikirim|dibatalkan|diubah|diperbarui|tercatat)\b/i.test(normalized);
