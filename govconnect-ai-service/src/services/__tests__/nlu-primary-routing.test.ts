@@ -126,3 +126,58 @@ describe('decideFastIntent — NLU-primary routing', () => {
     expect(decision.stateAffinity).toBe('answers_pending_state');
   });
 });
+
+describe('decideFastIntent — broadened stateless intents (status/cancel/history/edit/update)', () => {
+  it('routes a status check via NLU', () => {
+    const decision = decideFastIntent({
+      message: 'gimana kelanjutan laporan saya kemarin',
+      unified: nlu({ routing_intent: 'status_lookup', routing_confidence: 0.85 }),
+    });
+    expect(decision.primaryIntent).toBe('status_lookup');
+    expect(decision.allowedToolHints).toContain('check_status');
+  });
+
+  it('routes a cancellation via NLU', () => {
+    const decision = decideFastIntent({
+      message: 'gak jadi ngurus suratnya, batalin aja',
+      unified: nlu({ routing_intent: 'cancellation', routing_confidence: 0.85 }),
+    });
+    expect(decision.primaryIntent).toBe('cancellation');
+    expect(decision.allowedToolHints).toContain('cancel_request');
+  });
+
+  it('routes a history lookup via NLU', () => {
+    const decision = decideFastIntent({
+      message: 'laporan saya apa aja sih sebelumnya',
+      unified: nlu({ routing_intent: 'history_lookup', routing_confidence: 0.85 }),
+    });
+    expect(decision.primaryIntent).toBe('history_lookup');
+    expect(decision.allowedToolHints).toContain('get_my_history');
+  });
+
+  it('routes a service edit via NLU', () => {
+    const decision = decideFastIntent({
+      message: 'mau edit data permohonan LAY-20260101-002',
+      unified: nlu({ routing_intent: 'service_edit', routing_confidence: 0.88 }),
+    });
+    expect(decision.primaryIntent).toBe('service_edit');
+    expect(decision.allowedToolHints).toContain('get_service_request_edit_link');
+  });
+
+  it('routes a complaint update via NLU', () => {
+    const decision = decideFastIntent({
+      message: 'tolong tambah keterangan di laporan LAP-20260101-001',
+      unified: nlu({ routing_intent: 'complaint_update', routing_confidence: 0.85 }),
+    });
+    expect(decision.primaryIntent).toBe('complaint_update');
+    expect(decision.allowedToolHints).toContain('update_complaint');
+  });
+
+  it('does not stall when a status query arrives with the classifier down (falls through, no throw)', () => {
+    // No unified + no regex signal for status — must still return a decision,
+    // never throw. The agent will interpret from context downstream.
+    const decision = decideFastIntent({ message: 'gimana kelanjutan laporan saya', unified: null });
+    expect(decision).toBeTruthy();
+    expect(decision.primaryIntent).toBeTruthy();
+  });
+});

@@ -296,6 +296,29 @@ export async function classifyNameUpdate(
 
 import { getCategoryListForPrompt } from './dynamic-categories.service';
 import { getFewShotForPrompt } from './few-shot-examples.service';
+import { getServiceCatalog } from './case-client.service';
+
+/**
+ * Build a compact list of the village's ACTIVE service names so the classifier
+ * knows what this village actually offers (not guessing blind). Cached upstream
+ * in getServiceCatalog; returns '' on any failure or empty catalog so the
+ * prompt gracefully omits the block.
+ */
+async function buildServiceCatalogHint(villageId?: string): Promise<string> {
+  if (!villageId) return '';
+  try {
+    const services = await getServiceCatalog(villageId);
+    const names = services
+      .filter((s) => s.is_active !== false && s.name)
+      .map((s) => s.name.trim())
+      .filter((n) => n.length > 0)
+      .slice(0, 40);
+    if (names.length === 0) return '';
+    return `\nLAYANAN RESMI YANG TERSEDIA DI DESA INI (pakai untuk mencocokkan "service_info"; warga sering menyebut versi awam/singkatannya):\n${names.map((n) => `- ${n}`).join('\n')}\n`;
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Build the unified classify prompt with dynamic categories.
@@ -310,6 +333,10 @@ async function buildUnifiedClassifyPrompt(villageId?: string): Promise<string> {
   // "no contact info available" instead of silently failing.
   const hasKontak = dynamicCategories.includes('"kontak"');
   const categoryList = hasKontak ? dynamicCategories : `${dynamicCategories}, "kontak"`;
+
+  // Village's actual service catalog — grounds "service_info" routing in the
+  // real offerings so colloquial phrasing maps to a genuine service.
+  const serviceCatalogHint = await buildServiceCatalogHint(villageId);
 
   // Admin-curated few-shot examples for THIS village (self-improvement loop).
   // Empty string when the village has no examples — safe for new villages.
@@ -358,13 +385,18 @@ Analisis pesan user dan tentukan SEMUA aspek berikut dalam SATU jawaban:
    - contact_lookup: Minta nomor/kontak entitas (kepala desa, damkar, puskesmas, RT) TANPA situasi darurat aktif
    - emergency_contact: Darurat aktif butuh bantuan segera (kebakaran, kecelakaan, sakit keras) — minta nomor/tolong
    - complaint_creation: Ingin melaporkan masalah infrastruktur/lingkungan (jalan rusak, lampu mati, sampah) ATAU eksplisit "mau lapor/buat laporan"
+   - status_lookup: Cek status/perkembangan laporan atau permohonan, biasanya menyebut nomor (LAP-xxx / LAY-xxx) atau "gimana laporan saya"
+   - cancellation: Ingin MEMBATALKAN laporan/permohonan ("batalkan laporan saya", "gak jadi ngurus surat", "cancel LAY-xxx")
+   - history_lookup: Menanyakan riwayat laporan/permohonan miliknya ("laporan saya apa aja", "riwayat pengajuan saya")
+   - service_edit: Ingin MENGUBAH/mengedit data permohonan layanan yang sudah dibuat ("edit permohonan LAY-xxx", "ubah data pengajuan saya")
+   - complaint_update: Ingin menambah/mengubah detail laporan yang sudah ada ("tambah keterangan laporan LAP-xxx", "update alamat di laporan saya", kirim foto bukti)
    - knowledge_query: Tanya info/profil desa, jam buka, alamat, program, penjelasan umum
    - greeting: Salam/terima kasih/basa-basi murni
    - out_of_scope: Di luar layanan desa (coding, hiburan, matematika, layanan pusat spt SIM/paspor/BPJS)
    - unknown: Tidak jelas maksudnya
 
 5. **routing_confidence**: Seberapa yakin kamu pada routing_intent (0.0-1.0). Rendahkan bila ambigu.
-
+${serviceCatalogHint}
 CONTOH:
 - "halo" → GREETING, rag_needed: false, categories: [], routing_intent: "greeting", routing_confidence: 0.95
 - "jam buka kantor?" → QUESTION, rag_needed: true, categories: ["faq"], routing_intent: "knowledge_query", routing_confidence: 0.9
@@ -388,13 +420,22 @@ CONTOH:
 - "saya mau buat laporan tadi ada kecelakaan" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
 - "mau lapor kebakaran di kampung" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
 - "tolong ada kebakaran cepat" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "emergency_contact", routing_confidence: 0.92
+- "cek status LAP-20260101-001" → QUESTION, rag_needed: false, categories: [], routing_intent: "status_lookup", routing_confidence: 0.92
+- "gimana kelanjutan laporan saya kemarin" → QUESTION, rag_needed: false, categories: [], routing_intent: "status_lookup", routing_confidence: 0.8
+- "batalkan permohonan LAY-20260101-002" → QUESTION, rag_needed: false, categories: [], routing_intent: "cancellation", routing_confidence: 0.9
+- "gak jadi ngurus suratnya, batalin aja" → QUESTION, rag_needed: false, categories: [], routing_intent: "cancellation", routing_confidence: 0.85
+- "laporan saya apa aja sih sebelumnya" → QUESTION, rag_needed: false, categories: [], routing_intent: "history_lookup", routing_confidence: 0.85
+- "riwayat pengajuan saya dong" → QUESTION, rag_needed: false, categories: [], routing_intent: "history_lookup", routing_confidence: 0.85
+- "mau edit data permohonan LAY-20260101-002" → QUESTION, rag_needed: false, categories: [], routing_intent: "service_edit", routing_confidence: 0.88
+- "tolong tambah keterangan di laporan LAP-20260101-001" → QUESTION, rag_needed: false, categories: [], routing_intent: "complaint_update", routing_confidence: 0.85
+- "alamat di laporan saya salah, mau diperbaiki" → QUESTION, rag_needed: false, categories: [], routing_intent: "complaint_update", routing_confidence: 0.8
 ${fewShotSection}
 OUTPUT (JSON saja, tanpa markdown):
 {
   "message_type": "GREETING|FAREWELL|QUESTION|DATA_INPUT|COMPLAINT|CONFIRMATION|SOCIAL",
   "rag_needed": true/false,
   "categories": ["kategori1", "kategori2"],
-  "routing_intent": "service_info|service_listing|contact_lookup|emergency_contact|complaint_creation|knowledge_query|greeting|out_of_scope|unknown",
+  "routing_intent": "service_info|service_listing|contact_lookup|emergency_contact|complaint_creation|status_lookup|cancellation|history_lookup|service_edit|complaint_update|knowledge_query|greeting|out_of_scope|unknown",
   "routing_confidence": 0.0-1.0,
   "confidence": 0.0-1.0,
   "reason": "penjelasan singkat"
@@ -412,6 +453,11 @@ export type ClassifierRoutingIntent =
   | 'contact_lookup'
   | 'emergency_contact'
   | 'complaint_creation'
+  | 'status_lookup'
+  | 'cancellation'
+  | 'history_lookup'
+  | 'service_edit'
+  | 'complaint_update'
   | 'knowledge_query'
   | 'greeting'
   | 'out_of_scope'
@@ -450,7 +496,9 @@ export async function classifyMessage(
   // Validate routing_intent (optional field — may be absent on older prompts)
   const validRoutingIntents: ClassifierRoutingIntent[] = [
     'service_info', 'service_listing', 'contact_lookup', 'emergency_contact',
-    'complaint_creation', 'knowledge_query', 'greeting', 'out_of_scope', 'unknown',
+    'complaint_creation', 'status_lookup', 'cancellation', 'history_lookup',
+    'service_edit', 'complaint_update', 'knowledge_query', 'greeting',
+    'out_of_scope', 'unknown',
   ];
   const routingIntent = validRoutingIntents.includes(parsed.routing_intent as ClassifierRoutingIntent)
     ? parsed.routing_intent

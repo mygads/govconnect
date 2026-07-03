@@ -79,8 +79,12 @@ export type FastIntentPrimary =
   | 'service_follow_up'
   | 'service_clarification'
   | 'service_form_confirmation'
+  | 'service_edit'
   | 'complaint_creation'
   | 'complaint_resume'
+  | 'complaint_update'
+  | 'cancellation'
+  | 'history_lookup'
   | 'contact_lookup'
   | 'emergency_contact'
   | 'out_of_scope'
@@ -401,6 +405,16 @@ function buildNluRoutingDecision(
       return buildRoutingDecision({ primaryIntent: 'emergency_contact', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_emergency_contacts', 'create_complaint'] });
     case 'complaint_creation':
       return buildRoutingDecision({ primaryIntent: 'complaint_creation', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['create_complaint', 'get_complaint_categories'] });
+    case 'status_lookup':
+      return buildRoutingDecision({ primaryIntent: 'status_lookup', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['check_status', 'get_my_history'] });
+    case 'cancellation':
+      return buildRoutingDecision({ primaryIntent: 'cancellation', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['cancel_request', 'get_my_history'] });
+    case 'history_lookup':
+      return buildRoutingDecision({ primaryIntent: 'history_lookup', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_my_history'] });
+    case 'service_edit':
+      return buildRoutingDecision({ primaryIntent: 'service_edit', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_service_request_edit_link', 'get_my_history'] });
+    case 'complaint_update':
+      return buildRoutingDecision({ primaryIntent: 'complaint_update', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['update_complaint', 'get_my_history'] });
     case 'knowledge_query':
       return buildRoutingDecision({ primaryIntent: 'knowledge_query', action: 'defer_to_agent', confidence, mixedSignals: ctx.mixedSignals, reasons: [reason], allowedToolHints: ['get_village_profile', 'search_knowledge', 'get_important_contact'] });
     case 'out_of_scope':
