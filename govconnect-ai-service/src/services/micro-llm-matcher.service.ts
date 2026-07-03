@@ -297,6 +297,7 @@ export async function classifyNameUpdate(
 import { getCategoryListForPrompt } from './dynamic-categories.service';
 import { getFewShotForPrompt } from './few-shot-examples.service';
 import { getServiceCatalog } from './case-client.service';
+import { buildComplaintCategoriesText } from './complaint-handler';
 
 /**
  * Build a compact list of the village's ACTIVE service names so the classifier
@@ -337,6 +338,22 @@ async function buildUnifiedClassifyPrompt(villageId?: string): Promise<string> {
   // Village's actual service catalog — grounds "service_info" routing in the
   // real offerings so colloquial phrasing maps to a genuine service.
   const serviceCatalogHint = await buildServiceCatalogHint(villageId);
+
+  // Village's actual complaint types/categories — lets the classifier tell a
+  // real infrastructure complaint ("jalan rusak") from a death/birth event
+  // that's actually a service ("mau lapor kematian" = service_info, not
+  // complaint). Cached via getCachedComplaintTypes.
+  let complaintCategoriesHint = '';
+  if (villageId) {
+    try {
+      const cats = await buildComplaintCategoriesText(villageId);
+      if (cats) {
+        complaintCategoriesHint = `\nKATEGORI PENGADUAN RESMI DESA INI (pakai untuk membedakan "mau lapor X" — jika X ada di daftar ini → complaint_creation; jika X peristiwa kependudukan/surat → service_info):\n${cats}\n`;
+      }
+    } catch {
+      // graceful — prompt omits the block
+    }
+  }
 
   // Admin-curated few-shot examples for THIS village (self-improvement loop).
   // Empty string when the village has no examples — safe for new villages.
@@ -396,7 +413,21 @@ Analisis pesan user dan tentukan SEMUA aspek berikut dalam SATU jawaban:
    - unknown: Tidak jelas maksudnya
 
 5. **routing_confidence**: Seberapa yakin kamu pada routing_intent (0.0-1.0). Rendahkan bila ambigu.
-${serviceCatalogHint}
+
+PETUNJUK TOOL SISTEM (intent → tool yang akan dipakai agen; pahami kapabilitasnya):
+- service_info → get_service_info (syarat/biaya/cara satu layanan)
+- service_listing → get_service_info mode list
+- contact_lookup → get_important_contact (direktori: kepala desa, RT, puskesmas)
+- emergency_contact → get_emergency_contacts (nomor darurat: damkar/ambulan/polisi)
+- complaint_creation → create_complaint + get_complaint_categories
+- status_lookup → check_status (butuh nomor LAP-xxx/LAY-xxx)
+- cancellation → cancel_request
+- history_lookup → get_my_history
+- service_edit → get_service_request_edit_link (butuh nomor LAY-xxx)
+- complaint_update → update_complaint
+- knowledge_query → get_village_profile (jam/alamat profil desa) atau search_knowledge/search_documents (SOP/info/prosedural)
+Jika pesan butuh data dari tool yang TIDAK ada di daftar di atas → pilih intent paling dekat, jangan tebak tool.
+${serviceCatalogHint}${complaintCategoriesHint}
 CONTOH:
 - "halo" → GREETING, rag_needed: false, categories: [], routing_intent: "greeting", routing_confidence: 0.95
 - "jam buka kantor?" → QUESTION, rag_needed: true, categories: ["faq"], routing_intent: "knowledge_query", routing_confidence: 0.9
@@ -420,6 +451,8 @@ CONTOH:
 - "saya mau buat laporan tadi ada kecelakaan" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
 - "mau lapor kebakaran di kampung" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.85
 - "tolong ada kebakaran cepat" → QUESTION, rag_needed: true, categories: ["kontak"], routing_intent: "emergency_contact", routing_confidence: 0.92
+- "mau lapor jalan rusak" → COMPLAINT, rag_needed: false, categories: [], routing_intent: "complaint_creation", routing_confidence: 0.9
+- "mau lapor meninggal" → QUESTION, rag_needed: true, categories: ["layanan_administrasi", "panduan-sop"], routing_intent: "service_info", routing_confidence: 0.8
 - "cek status LAP-20260101-001" → QUESTION, rag_needed: false, categories: [], routing_intent: "status_lookup", routing_confidence: 0.92
 - "gimana kelanjutan laporan saya kemarin" → QUESTION, rag_needed: false, categories: [], routing_intent: "status_lookup", routing_confidence: 0.8
 - "batalkan permohonan LAY-20260101-002" → QUESTION, rag_needed: false, categories: [], routing_intent: "cancellation", routing_confidence: 0.9

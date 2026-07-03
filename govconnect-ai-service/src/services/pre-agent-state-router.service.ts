@@ -282,7 +282,7 @@ const VILLAGE_SERVICE_SCOPE_PATTERN = /\b(surat|ktp|kk|akta|domisili|sktm|layana
 const VILLAGE_PROFILE_TOPIC_PATTERN = /\b(jam\s+(buka|kerja|operasional|pelayanan|tutup)|kapan\s+(buka|tutup)|alamat\s+(kantor|desa|kelurahan)|lokasi\s+(kantor|desa)|maps?|google\s*maps?|kantor\s+desa|kantor\s+kelurahan|balai\s+desa|sekretariat\s+desa|(nomor|kontak|telp|telpon|telepon)\s+kantor)\b/i;
 const NON_OFFICE_LOCAL_ENTITY_PATTERN = /\b(puskesmas|pustu|klinik|poliklinik|posyandu|bidan(?:\s+desa)?|pasar|lapangan|sekolah|paud|tk|sd|smp|sma|masjid|mushola|bumdes|pkh|blt|bansos)\b/i;
 const LOCAL_KNOWLEDGE_QUERY_PATTERN = /\b(jadwal|kapan|jam\s+(buka|operasional|pelayanan|tutup)|alamat|lokasi|dimana|di\s+mana|maps?|google\s*maps?|info(?:rmasi)?)\b/i;
-const STATUS_CANCEL_EDIT_TOPIC_PATTERN = /\b(cek\s+status|status\s+(laporan|layanan|pengajuan|permohonan)|riwayat|history|batal|batalkan|cancel|edit\s+layanan|ubah\s+data|update\s+data|perbarui\s+data)\b/i;
+const STATUS_CANCEL_EDIT_TOPIC_PATTERN = /\b(cek\s+status|status\s+(laporan|layanan|pengajuan|permohonan)|riwayat|history|batal|batalkan|cancel|edit\s+layanan|ubah\s+data|update\s+data|perbarui\s+data|(?:LAP|LAY)-\d{8}-\d{3,4})\b/i;
 const CORRECTION_TOPIC_SHIFT_PATTERN = /\b(bukan\s+itu|maksud\s+saya|maksudnya|ganti\s+topik|sebentar|nanti\s+dulu)\b/i;
 
 function isOutOfScopeGeneralQuestion(message: string): boolean {
@@ -451,6 +451,23 @@ export function decideFastIntent(input: {
 
   if (/^(halo|hai|hi|assalamualaikum|permisi|terima kasih|makasih)[\s!.,?]*$/i.test(normalized)) {
     return buildRoutingDecision({ primaryIntent: 'greeting', action: 'defer_to_agent', confidence: 'high', reasons: ['greeting_or_thanks'] });
+  }
+
+  // Bare or leading reference number (LAP-xxx / LAY-xxx) — a status check by
+  // definition. Deterministic so it still routes when the NLU lane is down.
+  // Only fires when NLU is unavailable or low-confidence: if the classifier
+  // confidently says service_edit or complaint_update (e.g. "edit permohonan
+  // LAY-xxx"), those more specific intents take priority over status_lookup.
+  const nluConfident = input.unified?.routing_intent && (input.unified.routing_confidence ?? 0) >= 0.7;
+  if (!nluConfident && /\b(?:LAP|LAY)-\d{8}-\d{3,4}\b/i.test(input.message || '')) {
+    return buildRoutingDecision({
+      primaryIntent: 'status_lookup',
+      action: mixedSignals ? 'defer_to_agent' : 'handle_pre_agent',
+      confidence: mixedSignals ? 'medium' : 'hard',
+      mixedSignals,
+      reasons: ['reference_number_detected'],
+      allowedToolHints: ['check_status', 'get_my_history'],
+    });
   }
 
   if ((input.hasPendingServiceOffer || input.hasPendingServiceClarification) && (villageProfileSignal || localKnowledgeSignal) && !mixedSignals) {

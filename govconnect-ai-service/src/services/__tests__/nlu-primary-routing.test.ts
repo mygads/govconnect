@@ -181,3 +181,21 @@ describe('decideFastIntent — broadened stateless intents (status/cancel/histor
     expect(decision.primaryIntent).toBeTruthy();
   });
 });
+
+describe('decideFastIntent — bare reference number regex fallback', () => {
+  it('routes a bare LAP-xxx to status_lookup even when the classifier is null', () => {
+    // Bare reference number with no verb. Before the fix, the regex
+    // STATUS_CANCEL_EDIT_TOPIC_PATTERN required keywords like "cek status",
+    // so this fell to unknown when the LLM was down. Now the bare number
+    // itself is recognized as a status topic.
+    const decision = decideFastIntent({ message: 'LAP-20260101-001', unified: null });
+    expect(decision).toBeTruthy();
+    // Must NOT be the default unknown — it should route to status_lookup.
+    expect(decision.primaryIntent).toBe('status_lookup');
+  });
+
+  it('routes a bare LAY-xxx to status_lookup even when the classifier is null', () => {
+    const decision = decideFastIntent({ message: 'LAY-20260203-002', unified: null });
+    expect(decision.primaryIntent).toBe('status_lookup');
+  });
+});
