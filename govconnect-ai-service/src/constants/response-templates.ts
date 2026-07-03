@@ -105,8 +105,9 @@ export const FALLBACK_TEMPLATES: Record<string, string[]> = {
   ],
   
   'KNOWLEDGE_QUERY': [
-    'Mohon maaf Pak/Bu, saya belum bisa memastikan informasi yang dimaksud dari data yang tersedia saat ini. Kalau berkenan, sebutkan topik atau nama layanannya lebih spesifik ya.',
-    'Mohon maaf Pak/Bu, saya belum menemukan informasi yang cukup tepat untuk pertanyaan tadi. Boleh diperjelas sedikit, misalnya nama layanan, dokumen, atau kebutuhan yang ingin dicek?',
+    'Wah, untuk pertanyaan itu saya belum menemukan informasinya. Bisa diperjelas sedikit? Misalnya nama layanan atau topik spesifiknya.',
+    'Hmm, saya belum punya data yang tepat untuk itu. Boleh sebutkan lebih detail apa yang dicari?',
+    'Untuk informasi itu, saya belum menemukan jawaban yang pasti. Coba sebutkan nama layanan atau topiknya ya.',
   ],
   
   'THANKS': THANKS_RESPONSES,
@@ -168,16 +169,19 @@ export const MISSING_FIELD_PROMPTS: Record<string, string[]> = {
 
 export const ERROR_TEMPLATES: Record<string, string[]> = {
   'TIMEOUT': [
-    'Maaf Pak/Bu, prosesnya belum sempat selesai karena sistem kami sedang lambat. Coba kirim ulang pesannya sebentar lagi ya.',
-    'Maaf Pak/Bu, pengecekannya butuh waktu lebih lama dari biasanya. Silakan coba lagi beberapa saat lagi, nanti saya bantu lanjutkan.',
+    'Prosesnya agak lambat sebentar. Coba kirim ulang pesannya ya, nanti saya bantu lanjutkan.',
+    'Wah, pengecekannya butuh waktu lebih lama dari biasanya. Silakan coba lagi sebentar, saya tunggu.',
+    'Sistem sedang agak lambat. Coba kirim ulang lagi ya, biasanya langsung bisa.',
   ],
   'RATE_LIMIT': [
-    'Maaf Pak/Bu, antrian pesan sedang ramai. Coba kirim lagi dalam 1-2 menit ya, nanti saya bantu lanjutkan.',
-    'Maaf Pak/Bu, sistem sedang padat sebentar. Silakan coba lagi ya, biasanya tidak lama.',
+    'Antrian pesan sedang ramai. Tunggu 1-2 menit lalu kirim lagi ya.',
+    'Sistem sedang padat sebentar. Coba lagi sebentar lagi ya, biasanya tidak lama.',
+    'Belum bisa diproses karena antrian penuh. Tunggu sebentar lalu coba lagi.',
   ],
   'SERVICE_DOWN': [
-    'Maaf Pak/Bu, layanan sedang kami perbaiki sebentar. Silakan coba lagi nanti; kalau masih terkendala, saya bantu arahkan ke petugas desa.',
-    'Maaf Pak/Bu, sistem sedang dalam perbaikan dari sisi kami. Coba lagi beberapa saat ya, nanti saya bantu lanjutkan.',
+    'Layanan sedang dalam perbaikan. Coba lagi nanti ya; kalau masih terkendala, saya bantu arahkan ke petugas desa.',
+    'Sistem sedang diperbaiki. Coba lagi beberapa saat, nanti saya bantu lanjutkan.',
+    'Ada kendala teknis sebentar. Silakan coba lagi nanti, atau kalau mendesak, hubungi kantor desa langsung.',
   ],
   'DEFAULT': FALLBACK_TEMPLATES['ERROR'],
 };

@@ -146,9 +146,44 @@ const PHRASE_CORRECTIONS: Array<[RegExp, string]> = [
   [/\bhenteu\b/gi, 'tidak'],
   [/\benteu\b/gi, 'tidak'],
 
-  // Bugis: "engka X" = "ada X", "tabe" = "permisi"
+  // Bugis: "engka X" = "ada X", "tabe" = "permisi", "mappake" = "menggunakan"
   [/\bengka\b/gi, 'ada'],
   [/\btabe\b/gi, 'permisi'],
+  [/\bmappake\b/gi, 'menggunakan'],
+  [/\bcarana\b/gi, 'caranya'],
+  [/\bnappe\b/gi, 'apa'],
+  [/\baji\b/gi, 'hanya'],
+  [/\bise\b/gi, 'ini'],
+  [/\biya\b/gi, 'iya'],
+
+  // Madura: "sapaen" = "bagaimana", "aken" = "akan", "nyaman" = "enak", "bhuntheng" = "apa"
+  [/\bsapaen\b/gi, 'bagaimana'],
+  [/\baken\b/gi, 'akan'],
+  [/\bbhuntheng\b/gi, 'apa'],
+  [/\bcarek\b/gi, 'anak'],
+  [/\bmon\b/gi, 'kalau'],
+  [/\bbangkalan\b/gi, 'bangkalan'],
+
+  // Minang: "indak/tidak" = "tidak", "kan" = "ini", "nan" = "yang", "ko" = "ini"
+  [/\bindak\b/gi, 'tidak'],
+  [/\bnan\b/gi, 'yang'],
+  [/\bko\b/gi, 'ini'],
+  [/\bkan\b/gi, 'ini'],
+  [/\bbaralek\b/gi, 'nikah'],
+  [/\bbajalan\b/gi, 'jalan'],
+  [/\bbalun\b/gi, 'belum'],
+  [/\bsudah\s+do\b/gi, 'sudah'],
+  [/\bdo\b/gi, ''],
+
+  // Batak: "songon" = "seperti", "dang" = "tidak", "ma" = "sudah", "ro" = "datang"
+  [/\bsongon\b/gi, 'seperti'],
+  [/\bdang\b/gi, 'tidak'],
+  [/\bholan\b/gi, 'hanya'],
+  [/\bma\b/gi, 'sudah'],
+  [/\bro\b/gi, 'datang'],
+  [/\bhamu\b/gi, 'kamu'],
+  [/\bhu\b/gi, 'saya'],
+  [/\baho\b/gi, 'siapa'],
 
   // Colloquial service request phrases
   [/\bbuat\s+(surat|ktp|kk|akta|surat pindah|surat domisili|surat kematian|surat lahir|surat nikah|surat cerai|surat usaha|surat pengantar|surat tidak mampu|surat miskin)\b/gi, 'membuat $1'],
