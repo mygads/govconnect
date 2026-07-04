@@ -186,10 +186,10 @@ services:
 # ===================================================================================
 networks:
   govconnect-network:
-    external: true
+    external: false
     name: govconnect-network
   infra-network:
-    external: true
+    external: false
     name: infra-network
 
 # ===================================================================================
