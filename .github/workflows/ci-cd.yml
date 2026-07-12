@@ -394,7 +394,7 @@ jobs:
         run: |
           if [ -n "$ENV_FILE" ]; then
             echo "📝 Updating .env file on server..."
-            printf '%s' "$ENV_FILE" | ssh $VPS_USER@$VPS_HOST "cat > /tmp/govconnect.env && sudo install -D -m 600 -o root -g root /tmp/govconnect.env /home/$VPS_USER/genfity/govconnect/.env && rm -f /tmp/govconnect.env"
+            printf '%s' "$ENV_FILE" | ssh $VPS_USER@$VPS_HOST "cat > /home/$VPS_USER/genfity/govconnect/.env && chmod 600 /home/$VPS_USER/genfity/govconnect/.env"
             echo "✅ ENV file updated with full replace!"
           else
             echo "⏭️ ENV_FILE secret not set, skipping .env update"
@@ -472,7 +472,7 @@ jobs:
             git remote set-url origin https://github.com/${{ github.repository }}.git
 
             # Login to GHCR using PAT
-            echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u mygads --password-stdin
 
             # Channel schema was historically created by postgres; make the runtime
             # migration role own its schema objects before channel-service starts.
@@ -531,9 +531,9 @@ jobs:
             echo "💽 Free disk before pull: ${free_kb} KB"
             if [ -n "$free_kb" ] && [ "$free_kb" -lt "$min_free_kb" ]; then
               echo "🧹 Low disk space detected, running pre-pull Docker cleanup..."
-              sudo docker builder prune -af || true
-              sudo docker image prune -af --filter "until=24h" || true
-              sudo docker system df || true
+              docker builder prune -af || true
+              docker image prune -af --filter "until=24h" || true
+              docker system df || true
               free_kb=$(df --output=avail / | tail -n 1 | tr -cd '0-9')
               echo "💽 Free disk after cleanup: ${free_kb} KB"
             fi
@@ -544,15 +544,15 @@ jobs:
               local max_attempts=2
               while [ "$attempts" -lt "$max_attempts" ]; do
                 attempts=$((attempts + 1))
-                if sudo -E docker compose pull $services; then
+                if docker compose pull $services; then
                   return 0
                 fi
                 if [ "$attempts" -ge "$max_attempts" ]; then
                   return 1
                 fi
                 echo "⚠️ docker compose pull failed, retrying after lightweight cleanup..."
-                sudo docker builder prune -af || true
-                sudo docker image prune -af --filter "until=12h" || true
+                docker builder prune -af || true
+                docker image prune -af --filter "until=12h" || true
                 sleep 5
               done
               return 1
@@ -564,11 +564,11 @@ jobs:
               pull_services_with_retry "$SERVICES_TO_PULL"
 
               echo "🚀 Recreating services: $SERVICES_TO_PULL"
-              sudo -E docker compose up -d --no-deps --force-recreate $SERVICES_TO_PULL
+              docker compose up -d --no-deps --force-recreate $SERVICES_TO_PULL
             else
               echo "⚠️ No services to recreate, running all services"
               pull_services_with_retry ""
-              sudo -E docker compose up -d
+              docker compose up -d
             fi
 
             # Wait for services to start
@@ -576,7 +576,7 @@ jobs:
 
             # Check container status
             echo "📊 Container status:"
-            sudo docker compose ps
+            docker compose ps
 
             echo "✅ Deployment complete!"
           EOF
@@ -621,7 +621,7 @@ jobs:
               while [ "$attempt" -le "$max_attempts" ]; do
                 echo "📦 Running $service migrations (attempt $attempt/$max_attempts)..."
 
-                if sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate deploy" >"$tmp_log" 2>&1; then
+                if docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate deploy" >"$tmp_log" 2>&1; then
                   cat "$tmp_log"
                   rm -f "$tmp_log"
                   return 0
@@ -651,19 +651,19 @@ jobs:
 
             # Run migrations in explicit serial order for shared advisory locks.
             for service in ai-service case-service notification-service channel-service dashboard; do
-              if ! sudo docker compose ps --services --status running | grep -qx "$service"; then
+              if ! docker compose ps --services --status running | grep -qx "$service"; then
                 echo "⏭️ $service not running, migration skipped"
                 echo "$service skipped_not_running" >> "$migration_summary"
                 continue
               fi
 
-              if ! sudo docker compose exec -T "$service" sh -c "test -x ./node_modules/.bin/prisma && test -d prisma/migrations && test -n \"\$(ls -A prisma/migrations 2>/dev/null)\""; then
+              if ! docker compose exec -T "$service" sh -c "test -x ./node_modules/.bin/prisma && test -d prisma/migrations && test -n \"\$(ls -A prisma/migrations 2>/dev/null)\""; then
                 echo "⏭️ $service has no Prisma migrations"
                 echo "$service skipped_no_migrations" >> "$migration_summary"
                 continue
               fi
 
-              db_url=$(sudo docker compose exec -T "$service" sh -c 'printf "%s" "${DATABASE_URL:-}"')
+              db_url=$(docker compose exec -T "$service" sh -c 'printf "%s" "${DATABASE_URL:-}"')
               db_name=$(printf '%s' "$db_url" | sed -n 's|.*/\([^?]*\).*|\1|p')
               db_schema=$(printf '%s' "$db_url" | sed -n 's|.*[?&]schema=\([^&]*\).*|\1|p')
               [ -n "$db_name" ] || db_name="unknown"
@@ -673,7 +673,7 @@ jobs:
               if [ "$service" = "channel-service" ] && [ "$CHANNEL_NEEDS_BASELINE" = "true" ]; then
                 echo "📌 Marking existing channel baseline migrations as applied..."
                 for migration in 20240101000000_channel_baseline 20250101000000_add_wa_support_fields 20260207_add_instance_name 20260424_add_takeover_enrichment_json; do
-                  sudo docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate resolve --applied $migration" || true
+                  docker compose exec -T "$service" sh -c "./node_modules/.bin/prisma migrate resolve --applied $migration" || true
                 done
               fi
 
@@ -712,7 +712,7 @@ jobs:
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             echo "Checking services..."
             failures=0
-            DASHBOARD_PORT=$(sudo grep -E '^DASHBOARD_PORT=' ~/genfity/govconnect/.env 2>/dev/null | tail -n 1 | cut -d= -f2-)
+            DASHBOARD_PORT=$(grep -E '^DASHBOARD_PORT=' ~/genfity/govconnect/.env 2>/dev/null | tail -n 1 | cut -d= -f2-)
             DASHBOARD_PORT=${DASHBOARD_PORT:-3000}
 
             check_url() {
@@ -743,11 +743,11 @@ jobs:
             # Show container status and memory usage
             echo ""
             echo "Container Status:"
-            sudo docker compose ps
+            docker compose ps
             
             echo ""
             echo "Memory Usage:"
-            sudo docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | grep govconnect || true
+            docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}" | grep govconnect || true
           ENDSSH
 
       - name: Generate deployment summary
@@ -787,7 +787,7 @@ jobs:
         run: |
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             echo "🧹 Running scheduled cleanup..."
-            sudo docker system prune -f --filter "until=24h"
-            sudo docker image prune -af --filter "until=48h"
+            docker system prune -f --filter "until=24h"
+            docker image prune -af --filter "until=48h"
             echo "✅ Cleanup complete!"
           ENDSSH
