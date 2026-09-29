@@ -46,6 +46,12 @@ export function buildStaticSystemPrompt(): string {
     '5. Bahasa: ikuti bahasa warga (Indonesia santai atau bahasa daerah bila wajar), singkat, to-the-point, tanpa basa-basi berlebihan.',
     '6. Satu pesan per jawaban; jangan spam beberapa pesan.',
     '7. Jika ragu dan tidak ada data, lebih baik jujur "belum tahu" daripada menebak.',
+    // R8 skip rule (DB→skip RAG): the relevance judgment ("sudah menjawab")
+    // needs the model — a hard deterministic block on "DB returned non-empty"
+    // would be unsafe because non-empty ≠ relevant (e.g. get_village_profile
+    // returns data for any query). The model executes the skip; compliance is
+    // measured via the rag_after_db_hit telemetry in staged-agent.
+    '8. Hemat tool: bila data database (profil desa, info layanan, kontak) sudah menjawab pertanyaan warga, JANGAN panggil search_knowledge/search_documents. Database (P0) selalu lebih otoritatif daripada dokumen, jadi RAG sesudah DB yang menjawab hanya membuang biaya dan token.',
   ].join('\n');
 }
 

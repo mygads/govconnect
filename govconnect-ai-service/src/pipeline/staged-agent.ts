@@ -202,6 +202,17 @@ async function runBoundedLoop(
   ];
   // Injected once per turn when a tool is denied for identity reasons.
   let identityNoteInjected = false;
+  // R8 telemetry: set when a DB read tool succeeds this turn. If the model
+  // then calls RAG anyway, we log rag_after_db_hit so skip-rule compliance
+  // is measurable. (No hard block: non-empty DB output is not proof it
+  // answered the question — only the model can judge relevance — and
+  // overriding that judgment risks wrong answers.)
+  let dbReadHit = false;
+  const DB_READ_TOOLS = new Set([
+    'get_village_profile', 'get_service_info',
+    'get_important_contact', 'get_emergency_contacts',
+  ]);
+  const RAG_TOOLS = new Set(['search_knowledge', 'search_documents']);
 
   let model = 'unknown';
   let finalText = '';
@@ -253,6 +264,15 @@ async function runBoundedLoop(
       const r = await gatewayExecute(c.name as AgentToolName, c.args, gw);
       traces.push(r.trace);
       if (!r.blocked && r.ok) toolsUsed.push(c.name);
+      // R8: track DB hits and RAG-after-DB-hit for skip-rule telemetry.
+      if (!r.blocked && r.ok && DB_READ_TOOLS.has(c.name)) {
+        dbReadHit = true;
+      }
+      if (RAG_TOOLS.has(c.name) && dbReadHit) {
+        logger.info('[staged-agent] rag_after_db_hit', {
+          traceId: input.ctx.traceId, tool: c.name, stage,
+        });
+      }
       let content = r.ok
         ? resultToText(r.result)
         : JSON.stringify({ success: false, error: r.error, errorKind: r.errorKind });
