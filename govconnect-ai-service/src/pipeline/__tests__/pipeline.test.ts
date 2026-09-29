@@ -25,6 +25,9 @@ import { decideMemoryAction } from '../memory-policy';
 import { isCacheable, cacheKeyFor } from '../semantic-cache';
 import { checkBudget } from '../cost-guard';
 import { detectAnomaly, checkRateLimit, ingressCheck } from '../ingress-guard';
+import {
+  confirmButtons, categoryList, optionList, validateInteractive,
+} from '../wa-interactive';
 
 describe('stage-router (deterministic)', () => {
   it('routes emergency keywords to EMERGENCY deterministically', () => {
@@ -419,5 +422,37 @@ describe('ingress-guard', () => {
     });
     expect(v.action).toBe('quarantined');
     expect(v.userReply).toBeTruthy();
+  });
+});
+
+describe('wa-interactive', () => {
+  it('builds valid VERIFY confirm buttons', () => {
+    const p = confirmButtons('Ringkasan laporan…');
+    expect(validateInteractive(p)).toBe(true);
+    if (p.type === 'buttons') expect(p.buttons).toHaveLength(3);
+  });
+
+  it('builds a valid category list within WA limits', () => {
+    const p = categoryList('Pilih kategori laporan:');
+    expect(validateInteractive(p)).toBe(true);
+    if (p.type === 'list') {
+      expect(p.sections[0].rows.length).toBeLessThanOrEqual(10);
+      expect(p.buttonText.length).toBeLessThanOrEqual(20);
+    }
+  });
+
+  it('truncates long titles to WA limits', () => {
+    const p = optionList('body', 'Pilih salah satu opsi yang tersedia disini', 'Seksi', [
+      { id: 'a', title: 'Judul yang sangat panjang melebihi batas dua puluh karakter' },
+    ]);
+    expect(validateInteractive(p)).toBe(true);
+    if (p.type === 'list') {
+      expect(p.buttonText.length).toBeLessThanOrEqual(20);
+      expect(p.sections[0].rows[0].title.length).toBeLessThanOrEqual(24);
+    }
+  });
+
+  it('rejects empty button sets', () => {
+    expect(validateInteractive({ type: 'buttons', body: 'x', buttons: [] })).toBe(false);
   });
 });

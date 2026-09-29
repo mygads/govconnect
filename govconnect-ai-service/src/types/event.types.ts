@@ -40,6 +40,16 @@ export interface AIReplyEvent {
     organization?: string;  // e.g., "Pemadam Kebakaran", "Puskesmas"
     title?: string;         // e.g., "Hotline Darurat", "Nomor Layanan"
   }>;
+  // Optional interactive payload (buttons / list). channel-service sends it
+  // via sendButtonsMessage/sendListMessage; falls back to reply_text on
+  // failure. Shapes match the channel-service interactive convention.
+  interactive?:
+    | { type: 'buttons'; body: string;
+        buttons: Array<{ type: 'reply'; id: string; title: string }>; footer?: string }
+    | { type: 'list'; body: string; buttonText: string;
+        sections: Array<{ title?: string;
+          rows: Array<{ title: string; desc?: string; RowId?: string }> }>;
+        footer?: string };
 }
 
 export interface AIErrorEvent {

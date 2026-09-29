@@ -419,6 +419,7 @@ export async function processMessage(event: MessageReceivedEvent): Promise<void>
       reply_text: result.response,
       guidance_text: result.guidanceText,
       contacts: result.contacts,
+      interactive: result.fields?.interactive,
       message_id: message_id,
       batched_message_ids: allBatchedIds,
     });

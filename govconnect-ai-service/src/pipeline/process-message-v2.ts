@@ -25,6 +25,25 @@ import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
 import { applyMemoryPolicy } from './memory-policy';
 import { buildFallback, persistFallbackTicket } from './fallback-policy';
 import {
+  confirmButtons, categoryList, validateInteractive, type InteractivePayload,
+} from './wa-interactive';
+
+/** Stage-native interactive attachments (degrade to plain text). */
+function interactiveForTurn(turn: {
+  stage: string; terminalState: string; response: string;
+}): InteractivePayload | undefined {
+  if (turn.terminalState !== 'SUCCEEDED' || !turn.response) return undefined;
+  if (turn.stage === 'VERIFY') {
+    const p = confirmButtons(turn.response);
+    return validateInteractive(p) ? p : undefined;
+  }
+  if ((turn.stage === 'TRIAGE' || turn.stage === 'COLLECT') && /kategori/i.test(turn.response)) {
+    const p = categoryList(turn.response);
+    return validateInteractive(p) ? p : undefined;
+  }
+  return undefined;
+}
+import {
   extractSlotsDeterministic, mergeSlots, classifySlotIntent,
   nextMissingSlot, isCollectComplete, renderVerifySummary,
   INTENT_SLOT_KEY, COLLECT_ATTEMPTS_KEY, type SlotIntent, type Slots,
@@ -280,12 +299,14 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       },
     };
 
+    const interactive = interactiveForTurn(turn);
+
     const result: ProcessMessageResult = {
       success: turn.terminalState === 'SUCCEEDED',
       response: turn.response,
       guidanceText: turn.guidanceText,
       intent: turn.intent,
-      fields: turn.fields,
+      fields: { ...turn.fields, ...(interactive ? { interactive } : {}) },
       metadata,
       ...(turn.degraded ? { error: turn.degradationReason ?? 'degraded' } : {}),
     };
