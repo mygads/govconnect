@@ -76,12 +76,62 @@ async function createAnomalyAlert(
       },
     });
     logger.warn('[cost-anomaly] alert created', { villageId, alertType, severity, details });
+
+    // R9: notify admins via notification service (fire-and-forget).
+    void notifyAdminsOfCostAnomaly(villageId, alertType, severity, details).catch(() => undefined);
+
     return true;
   } catch (error) {
     logger.warn('[cost-anomaly] failed to create alert', {
       villageId, alertType, error: (error as Error)?.message ?? String(error),
     });
     return false;
+  }
+}
+
+/**
+ * R9: Send cost anomaly notification to village admins via notification-service.
+ * Best-effort: failures are logged, never thrown.
+ */
+async function notifyAdminsOfCostAnomaly(
+  villageId: string,
+  alertType: AnomalyAlertType,
+  severity: AnomalySeverity,
+  details: AnomalyDetails,
+): Promise<void> {
+  try {
+    const { default: axios } = await import('axios');
+    const { config } = await import('../config/env');
+    const notificationUrl = (config as any).notificationServiceUrl;
+    if (!notificationUrl) return;
+
+    const title = alertType === 'turn_cost_spike'
+      ? '⚠️ Lonjakan Biaya AI per Turn'
+      : '🚨 Lonjakan Belanja Harian AI';
+    const message = alertType === 'turn_cost_spike'
+      ? `Satu turn AI di desa ${villageId} menghabiskan $${details.observed_usd} (batas: $${details.threshold_usd}). ${details.recommended_action}`
+      : `Belanja AI hari ini di desa ${villageId}: $${details.today_usd} (${details.ratio}× rata-rata 7 hari $${details.baseline_avg7d_usd}). ${details.recommended_action}`;
+
+    await axios.post(
+      `${notificationUrl}/api/internal/notify-admins`,
+      {
+        village_id: villageId,
+        type: 'cost_anomaly',
+        severity,
+        title,
+        message,
+        metadata: { alertType, ...details },
+      },
+      {
+        headers: { 'x-internal-api-key': (config as any).internalApiKey },
+        timeout: 5000,
+      },
+    );
+    logger.info('[cost-anomaly] admin notification sent', { villageId, alertType });
+  } catch (err: any) {
+    logger.warn('[cost-anomaly] admin notification failed (non-fatal)', {
+      villageId, alertType, error: err?.message ?? String(err),
+    });
   }
 }
 

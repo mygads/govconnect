@@ -182,3 +182,52 @@ export async function runSuggesterForVillage(opts: SuggestOptions): Promise<KbPr
   });
   return created;
 }
+
+export interface SuggesterRunResult {
+  villageId: string;
+  proposalsCreated: number;
+}
+
+/**
+ * R5: Run the suggester for all villages that have the feature enabled.
+ * Used by the scheduler (kb-suggester-scheduler.ts). Each village is
+ * processed independently — a failure in one does not stop the others.
+ */
+export async function runSuggesterForAllVillages(opts: {
+  days?: number;
+}): Promise<SuggesterRunResult[]> {
+  const days = opts.days ?? 7;
+  const results: SuggesterRunResult[] = [];
+
+  // Find villages with suggester enabled (or all villages if no flag).
+  let villageIds: string[] = [];
+  try {
+    const rows = (await prisma.$queryRawUnsafe(
+      `SELECT village_id FROM dashboard.village_behavior_configs
+       WHERE kb_suggester_enabled = true`,
+    )) as Array<{ village_id: string }>;
+    villageIds = rows.map((r) => r.village_id);
+  } catch {
+    // Fallback: table/column may not exist — run for villages with recent activity.
+    const rows = (await prisma.$queryRawUnsafe(
+      `SELECT DISTINCT tenant_id AS village_id FROM pipeline_audit
+       WHERE occurred_at > now() - interval '30 days' LIMIT 50`,
+    )) as Array<{ village_id: string }>;
+    villageIds = rows.map((r) => r.village_id).filter(Boolean);
+  }
+
+  for (const villageId of villageIds) {
+    try {
+      const created = await runSuggesterForVillage({ villageId, days });
+      results.push({ villageId, proposalsCreated: created.length });
+    } catch (err: any) {
+      logger.warn('[kb-suggester] failed for village', {
+        villageId,
+        error: String(err?.message ?? err).slice(0, 120),
+      });
+      results.push({ villageId, proposalsCreated: 0 });
+    }
+  }
+
+  return results;
+}

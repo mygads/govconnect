@@ -993,6 +993,10 @@ model pipeline_takeovers {
   taken_at    DateTime  @default(now()) @db.Timestamptz(6)
   expires_at  DateTime  @db.Timestamptz(6)
   released_at DateTime? @db.Timestamptz(6)
+  // W4: takeover state machine
+  state                   String    @default("HUMAN_ACTIVE")
+  last_human_activity_at  DateTime? @db.Timestamptz(6)
+  nudge_sent_at           DateTime? @db.Timestamptz(6)
 
   @@id([tenant_id, user_id, channel])
   @@schema("ai")
