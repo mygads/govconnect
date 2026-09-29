@@ -20,6 +20,7 @@ import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
 import { checkBudget } from './cost-guard';
+import { ingressCheck } from './ingress-guard';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
 import { applyMemoryPolicy } from './memory-policy';
 import { buildFallback, persistFallbackTicket } from './fallback-policy';
@@ -96,6 +97,24 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
       ctx.slots = { ...(prior.slots as Record<string, unknown>) };
       ctx.assessorConfidences = [...(prior.assessorConfidences ?? [])];
       audit('INGRESS', 'turn_state_restored', { stage: prior.stage });
+    }
+
+    // 0c. Ingress guard: rate limit + anomaly quarantine (never-silent).
+    const ingress = await ingressCheck({
+      tenantId, userId: input.userId, channel, traceId, message: input.message,
+    });
+    if (ingress.action !== 'allow') {
+      return {
+        success: false,
+        response: ingress.userReply ?? 'Pesan diterima.',
+        intent: ingress.action === 'rate_limited' ? 'rate_limited' : 'quarantined',
+        metadata: {
+          processingTimeMs: Date.now() - started,
+          hasKnowledge: false,
+          agentMode: 'single_orchestrator',
+          traceId,
+        },
+      };
     }
 
     // 0d. Budget guard: no LLM spend when the tenant's daily budget is out.
