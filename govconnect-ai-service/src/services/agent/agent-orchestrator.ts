@@ -1,4 +1,12 @@
 /**
+ * @deprecated — v1 legacy agent loop. Do NOT use for new code.
+ *
+ * Superseded by the staged pipeline (src/pipeline/staged-agent.ts), which is
+ * the single staged agent per arsitektur-final. This module is kept only
+ * because unit tests import it (`__test_only__`, `validateFinalAgentReply`);
+ * production traffic does not route through it. If the tests are migrated,
+ * this file (and agent-prompt.ts) should be deleted.
+ *
  * Agent Orchestrator — function-calling loop for single-agent architecture.
  *
  * Fase 2.3: Implements the core agent loop:

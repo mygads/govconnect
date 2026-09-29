@@ -1,4 +1,11 @@
 /**
+ * @deprecated — v1 legacy agent system prompt. Do NOT use for new code.
+ *
+ * Superseded by src/pipeline/prompt-builder.ts (staged pipeline prompt).
+ * Kept only because agent-orchestrator.ts (itself deprecated, kept for unit
+ * tests) imports it; production traffic does not route through it. If the
+ * tests are migrated, this file should be deleted.
+ *
  * Agent System Prompt — single orchestrator agent with tools.
  *
  * Design goal: maximize prompt-prefix caching. The STATIC system prompt

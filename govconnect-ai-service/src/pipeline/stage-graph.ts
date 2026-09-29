@@ -58,11 +58,30 @@ export const STAGE_TRANSITIONS: StageTransition[] = [
   { from: 'CLOSE', to: 'INGRESS', kind: 'deterministic', rule: 'turn selesai' },
 ];
 
-/** Stages that must NEVER invoke the LLM agent loop (pure deterministic). */
+/**
+ * Stages that must NEVER invoke the LLM agent loop (pure deterministic).
+ *
+ * Wired as a fail-closed guard in runStagedTurn (staged-agent.ts): if one of
+ * these stages ever reaches the bounded agent loop, the turn throws and the
+ * turn-level catch produces the never-silent fallback instead of an
+ * LLM-generated answer.
+ *
+ * Membership notes (corrected 2026-09-29; previously this set was a dead
+ * declaration that did not match reality):
+ * - EMERGENCY: dedicated deterministic handler (emergencyReply), no LLM.
+ * - VERIFY / EXECUTE: deterministic confirmation gate + confirmed-mutation
+ *   runner, no LLM loop.
+ * - INGRESS is NOT listed: the stage router maps it deterministically to
+ *   TRIAGE/EMERGENCY/INFORMATION/STATUS_CHECK, so it never reaches
+ *   runStagedTurn as a decision stage.
+ * - STATUS_CHECK is NOT listed: it intentionally uses the bounded agent loop
+ *   with a DB-only tool allowlist (check_status, get_my_history) so citizens
+ *   get a natural-language status answer; the data itself is deterministic.
+ */
 export const DETERMINISTIC_ONLY_STAGES: ReadonlySet<Stage> = new Set([
-  'INGRESS',
   'EMERGENCY',
-  'STATUS_CHECK',
+  'VERIFY',
+  'EXECUTE',
 ]);
 
 /** Stages where mutations may happen — only via the deterministic stage-runner. */

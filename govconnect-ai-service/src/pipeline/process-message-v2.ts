@@ -98,6 +98,125 @@ function idemKey(input: ProcessMessageInput): string {
   return buildIdempotencyKey(input);
 }
 
+/**
+ * Upper bound for the village-name lookup per turn. The name only
+ * personalizes prompt copy, so a slow dashboard service must never stall
+ * the turn: on timeout we fall back to the placeholder and the profile
+ * cache (15 min TTL in knowledge.service) keeps later turns fast.
+ */
+const VILLAGE_NAME_TIMEOUT_MS = 800;
+
+/**
+ * Module-level name cache (5 min TTL). The name is cosmetic prompt copy —
+ * caching even the 'Desa' fallback during a dashboard outage is an
+ * accepted trade-off so an outage can't add 800ms to every turn.
+ */
+const villageNameCache = new Map<string, { name: string; ts: number }>();
+const VILLAGE_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Track A2: resolve the real village name for prompts (DB-first).
+ * getVillageProfileSummary is cached per village; fail-soft to the neutral
+ * placeholder 'Desa' so a dashboard-service outage never blocks the turn.
+ * Never cross-tenant: the lookup is keyed by this turn's tenantId only.
+ *
+ * The import is dynamic on purpose: knowledge.service pulls a heavy
+ * transitive graph (rag.service, embedding stack) that must not join the
+ * pipeline entry point's static import graph, and any load/lookup failure
+ * degrades to the placeholder instead of breaking the turn.
+ */
+export async function resolveVillageName(villageId: string): Promise<string> {
+  const cached = villageId ? villageNameCache.get(villageId) : undefined;
+  if (cached && Date.now() - cached.ts < VILLAGE_NAME_CACHE_TTL_MS) return cached.name;
+
+  let name = 'Desa';
+  try {
+    const { getVillageProfileSummary } = await import('../services/knowledge.service');
+    const profile = await Promise.race([
+      getVillageProfileSummary(villageId || undefined),
+      new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('village name lookup timeout')), VILLAGE_NAME_TIMEOUT_MS),
+      ),
+    ]);
+    const resolved = profile?.short_name?.trim() || profile?.name?.trim();
+    if (resolved) name = resolved;
+  } catch (err) {
+    logger.warn('[process-message-v2] village name lookup failed, using placeholder', {
+      error: redactForLog((err as Error)?.message ?? String(err)),
+    });
+  }
+  if (villageId) villageNameCache.set(villageId, { name, ts: Date.now() });
+  return name;
+}
+
+/**
+ * Track A2: DB-first reconciliation for v2.
+ *
+ * v1 calls reconcile() inside the orchestrator; v2's choke point is the
+ * processMessageV2 wrapper so EVERY response — semantic-cache hits,
+ * deterministic fast lanes, agent-loop answers — is fact-checked against
+ * the DB before it leaves the pipeline. DB wins over RAG/documents on
+ * phone numbers, hours, addresses, fees, durations, modes, availability,
+ * and requirements.
+ *
+ * Skipped when side effects are disallowed (shadow/evaluation): the
+ * reconciler writes guardrail records, which are production state.
+ * Non-blocking: reconciler failure never breaks the send path.
+ */
+export async function applyDbRagReconcile(params: {
+  villageId: string;
+  userId: string;
+  channel: 'whatsapp' | 'webchat';
+  userMessage: string;
+  result: ProcessMessageResult;
+  sideEffectsAllowed: boolean;
+}): Promise<ProcessMessageResult> {
+  const { villageId, userId, channel, userMessage, result, sideEffectsAllowed } = params;
+  if (!sideEffectsAllowed || !result.response?.trim()) return result;
+  const traceId = result.metadata?.traceId ?? '';
+  try {
+    // Dynamic import: the reconciler pulls knowledge.service → rag.service →
+    // the embedding stack. Kept out of the pipeline entry point's static
+    // import graph so a load failure here can only skip reconciliation —
+    // never break the send path (fail-soft contract of this function).
+    const { reconcile: reconcileDbRag } = await import('../services/db-rag-reconciler.service');
+    const reconciliation = await reconcileDbRag({
+      villageId,
+      userMessage,
+      result,
+      toolsUsed: result.metadata?.toolsUsed ?? [],
+    });
+    if (!reconciliation.ok && reconciliation.replacement) {
+      // Audit carries mismatch KINDS only — never raw offending values
+      // (they may contain phone numbers / PII).
+      void appendAudit({
+        tenantId: villageId, traceId, userId, channel,
+        stage: 'CLOSE', event: 'db_rag_reconciler_rewrite',
+        payload: {
+          isEvaluation: false,
+          mismatchKinds: reconciliation.mismatches.map((m) => m.kind),
+          mismatchCount: reconciliation.mismatches.length,
+        },
+      });
+      return {
+        ...reconciliation.replacement,
+        // The reconciler's replacement already carries a guardrail marker
+        // (stage 'db_rag_reconciler', action 'rewritten'); keep it and
+        // restore this turn's traceId.
+        metadata: {
+          ...reconciliation.replacement.metadata,
+          traceId,
+        },
+      };
+    }
+  } catch (err) {
+    logger.warn('[process-message-v2] db-rag reconciliation failed (response untouched)', {
+      traceId, error: redactForLog((err as Error)?.message ?? String(err)),
+    });
+  }
+  return result;
+}
+
 export async function processMessageV2Inner(input: ProcessMessageInput): Promise<ProcessMessageResult> {
   const started = Date.now();
   const traceId = crypto.randomUUID();
@@ -647,11 +766,13 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
       }
     }
 
+    // Track A2: real village name (DB-first, cached), fail-soft to 'Desa'.
+    const villageName = await resolveVillageName(tenantId);
     const turn = await runStagedTurn({
       message: input.message,
       decision,
       ctx,
-      villageName: 'Desa', // TODO: resolve from tenant service (DB-first)
+      villageName,
       confirmed: input.confirmed,
       summary: undefined,
       language: 'id',
@@ -816,7 +937,20 @@ export async function processMessageV2Inner(input: ProcessMessageInput): Promise
  * `canary_token_leaked`. Never silent, never throws.
  */
 export async function processMessageV2(input: ProcessMessageInput): Promise<ProcessMessageResult> {
-  const result = await processMessageV2Inner(input);
+  let result = await processMessageV2Inner(input);
+
+  // Track A2: DB-first reconciliation — v2's equivalent of the v1
+  // orchestrator's reconcile() call. Runs on every response leaving the
+  // pipeline, before the canary safety net.
+  result = await applyDbRagReconcile({
+    villageId: input.villageId ?? '',
+    userId: input.userId,
+    channel: input.channel === 'webchat' ? 'webchat' : 'whatsapp',
+    userMessage: input.message,
+    result,
+    sideEffectsAllowed: (input.sideEffectMode ?? 'production') === 'production',
+  });
+
   try {
     // traceId lives on the result metadata, not the input.
     const traceId = result.metadata?.traceId ?? '';
