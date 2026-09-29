@@ -19,6 +19,7 @@ import { runStagedTurn, createPipelineContext } from './staged-agent';
 import { transitionsFrom } from './stage-graph';
 import { isTakeoverActive } from './takeover';
 import { resolveServiceSlug } from './micro-assessor';
+import { processImageMedia } from './media-pipeline';
 import { checkBudget } from './cost-guard';
 import { ingressCheck } from './ingress-guard';
 import { semanticCacheLookup, semanticCacheStore } from './semantic-cache';
@@ -234,6 +235,25 @@ export async function processMessageV2(input: ProcessMessageInput): Promise<Proc
     // For incomplete COLLECT, give the agent loop the deterministic slot status
     // so its question matches the FSM (the FSM remains authoritative).
     const turnFacts: string[] = [];
+    // 2c. Media intake (image): privacy-first — hash, EXIF strip, redaction
+    // check. Raw pixels never reach the LLM; only the signal fact does.
+    if (input.mediaUrl && /image|photo|jpeg|jpg|png/i.test(input.mediaType ?? '')) {
+      try {
+        const media = await processImageMedia({
+          tenantId, userId: input.userId, channel, traceId,
+          mediaUrl: input.mediaUrl, mediaType: input.mediaType, messageId: input.messageId,
+        });
+        if (media.promptFact) turnFacts.push(media.promptFact);
+        audit('INGRESS', 'media_signal', {
+          hasImage: media.hasImage, duplicate: media.duplicate,
+          redaction: media.redaction, exifStripped: media.exifStripped,
+        });
+      } catch (err) {
+        logger.debug('[processMessageV2] media intake failed', {
+          error: String((err as Error)?.message ?? err).slice(0, 120),
+        });
+      }
+    }
     if (decision.stage === 'COLLECT') {
       const intent = ctx.slots[INTENT_SLOT_KEY] as SlotIntent | undefined;
       if (intent) {

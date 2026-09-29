@@ -28,6 +28,9 @@ import { detectAnomaly, checkRateLimit, ingressCheck } from '../ingress-guard';
 import {
   confirmButtons, categoryList, optionList, validateInteractive,
 } from '../wa-interactive';
+import {
+  stripJpegAppSegments, sha256Hex, processImageMedia,
+} from '../media-pipeline';
 
 describe('stage-router (deterministic)', () => {
   it('routes emergency keywords to EMERGENCY deterministically', () => {
@@ -454,5 +457,51 @@ describe('wa-interactive', () => {
 
   it('rejects empty button sets', () => {
     expect(validateInteractive({ type: 'buttons', body: 'x', buttons: [] })).toBe(false);
+  });
+});
+
+describe('media-pipeline', () => {
+  it('strips JPEG APPn segments (EXIF) while keeping image data', () => {
+    // Minimal synthetic JPEG: SOI + APP1(EXIF) + DQT + SOS + EOI
+    const app1 = Buffer.concat([
+      Buffer.from([0xff, 0xe1, 0x00, 0x08]), Buffer.from('Exif\0\0\x01'),
+    ]);
+    const rest = Buffer.from([0xff, 0xdb, 0x00, 0x04, 0x01, 0x02, 0xff, 0xda, 0x00, 0x02, 0xaa, 0xff, 0xd9]);
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8]), app1, rest]);
+    const stripped = stripJpegAppSegments(jpeg);
+    expect(stripped).not.toBeNull();
+    expect(stripped!.includes(Buffer.from('Exif'))).toBe(false);
+    expect(stripped![0]).toBe(0xff);
+    expect(stripped![1]).toBe(0xd8);
+    expect(stripped!.length).toBeLessThan(jpeg.length);
+  });
+
+  it('returns null for non-JPEG input', () => {
+    expect(stripJpegAppSegments(Buffer.from('not a jpeg'))).toBeNull();
+  });
+
+  it('sha256 is stable and 64 hex chars', () => {
+    const h = sha256Hex(Buffer.from('test'));
+    expect(h).toHaveLength(64);
+    expect(sha256Hex(Buffer.from('test'))).toBe(h);
+  });
+
+  it('returns not_applicable signal when no media', async () => {
+    const s = await processImageMedia({
+      tenantId: 't', userId: 'u', channel: 'whatsapp', traceId: 'x',
+    });
+    expect(s.hasImage).toBe(false);
+    expect(s.forwardToLlm).toBe(false);
+    expect(s.redaction).toBe('not_applicable');
+  });
+
+  it('never forwards raw images to the LLM (degraded redaction)', async () => {
+    // Unreachable URL → fetch fails → hasImage with no forwarding.
+    const s = await processImageMedia({
+      tenantId: 't', userId: 'u', channel: 'whatsapp', traceId: 'x',
+      mediaUrl: 'http://127.0.0.1:9/unreachable.jpg', mediaType: 'image',
+    });
+    expect(s.forwardToLlm).toBe(false);
+    expect(s.promptFact).toBeTruthy();
   });
 });
