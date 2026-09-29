@@ -11,7 +11,7 @@ import {
   renderMonthlyMarkdown,
   periodBounds,
 } from '../reports/monthly-report';
-import { buildDistrictRollup, renderDistrictMarkdown } from '../reports/district-rollup';
+import { buildDistrictRollup, renderDistrictMarkdown, type RollupScope } from '../reports/district-rollup';
 
 const router = Router();
 
@@ -70,13 +70,14 @@ router.get('/monthly', async (req: Request, res: Response) => {
 /**
  * A5: GET /api/reports/district?village_ids=a,b&year=2026&month=9&format=json|markdown
  *   &village_names=Desa A,Desa B (optional, same order as village_ids)
+ *     GET /api/reports/province (same params)
  *
- * District rollup across villages. SCOPE: the caller (dashboard) MUST only
- * include villages the requesting operator is authorized to see — this
- * endpoint rolls up exactly what it is given and cannot verify operator
- * scope itself (internal API).
+ * Region rollup across villages. SCOPE: the dashboard proxy resolves the
+ * village list FROM THE OPERATOR'S SESSION (village admin → own village
+ * only; superadmin → explicit village_ids). This endpoint rolls up exactly
+ * what it is given and never trusts a client-supplied list on its own.
  */
-router.get('/district', async (req: Request, res: Response) => {
+async function handleRegionRollup(req: Request, res: Response, scope: RollupScope) {
   try {
     const ids = String(req.query.village_ids ?? '')
       .split(',').map((s) => s.trim()).filter(Boolean);
@@ -97,15 +98,23 @@ router.get('/district', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'format must be json or markdown' });
     }
     const villages = ids.map((id, i) => ({ id, name: names[i] || undefined }));
-    const rollup = await buildDistrictRollup({ villages, year, month });
+    const rollup = await buildDistrictRollup({ villages, year, month, scope });
     if (format === 'markdown') {
       res.setHeader('content-type', 'text/markdown; charset=utf-8');
       return res.send(renderDistrictMarkdown(rollup));
     }
     res.json({ success: true, rollup });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? 'failed to build district rollup' });
+    res.status(500).json({ error: err?.message ?? 'failed to build region rollup' });
   }
+}
+
+router.get('/district', async (req: Request, res: Response) => {
+  await handleRegionRollup(req, res, 'district');
+});
+
+router.get('/province', async (req: Request, res: Response) => {
+  await handleRegionRollup(req, res, 'province');
 });
 
 export default router;

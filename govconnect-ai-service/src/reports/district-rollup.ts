@@ -7,8 +7,14 @@
  * SCOPE MODEL (important):
  * - This module is scope-agnostic: it rolls up EXACTLY the villages the
  *   caller passes. Authorization ("which villages may this operator see")
- *   MUST be enforced by the caller (dashboard session: kabupaten operator
- *   → only their villages). Never pass an unfiltered village list.
+ *   is enforced by the dashboard proxy (session-derived village list;
+ *   never trusts client-supplied village_ids for non-superadmins).
+ *   Never call these builders with an unfiltered village list.
+ * - `scope` is a label for the administrative level being reported
+ *   ('district' = kabupaten, 'province' = provinsi). The math is identical:
+ *   a province rollup aggregates its villages directly. There are no
+ *   intermediate district subtotals yet (per-village district attribution
+ *   is not tracked) — this is stated in the report notes, not hidden.
  * - Fail-soft per village: a village whose aggregates are unavailable is
  *   listed with data_available=false and excluded from totals — never
  *   estimated, always noted.
@@ -37,8 +43,11 @@ export interface VillageSummary {
   avg_resolution_hours: number | null;
 }
 
+/** Administrative level being reported. 'district' = kabupaten, 'province' = provinsi. */
+export type RollupScope = 'district' | 'province';
+
 export interface DistrictRollup {
-  scope: 'district';
+  scope: RollupScope;
   period: { year: number; month: number; label: string };
   generated_at: string;
   village_count: number;
@@ -69,14 +78,16 @@ function mergeCounts(into: Record<string, number>, from: Record<string, number>)
 
 /**
  * Pure assembly from per-village aggregates. `fetchCases` is injectable for tests.
+ * `scope` only labels the administrative level; the math is identical.
  */
 export async function buildDistrictRollup(args: {
   villages: RollupVillage[];
   year: number;
   month: number;
+  scope?: RollupScope;
   fetchCases?: CasesFetcher;
 }): Promise<DistrictRollup> {
-  const { villages, year, month } = args;
+  const { villages, year, month, scope = 'district' } = args;
   const fetchCases = args.fetchCases ?? fetchCaseAggregates;
   const { label } = periodBounds(year, month);
   const notes: string[] = [];
@@ -125,7 +136,7 @@ export async function buildDistrictRollup(args: {
     .sort((a, b) => b.count - a.count);
 
   return {
-    scope: 'district',
+    scope,
     period: { year, month, label },
     generated_at: new Date().toISOString(),
     village_count: villages.length,
@@ -146,10 +157,14 @@ function fmtHours(h: number | null): string {
 /** Pure Markdown renderer. */
 export function renderDistrictMarkdown(r: DistrictRollup): string {
   const L: string[] = [];
-  L.push('# REKAPITULASI PELAYANAN MASYARAKAT TINGKAT KABUPATEN');
+  const level = r.scope === 'province' ? 'PROVINSI' : 'KABUPATEN';
+  L.push(`# REKAPITULASI PELAYANAN MASYARAKAT TINGKAT ${level}`);
   L.push(`**Periode:** ${r.period.label}`);
   L.push(`**Desa tercakup:** ${r.villages_with_data}/${r.village_count} desa (data tersedia)`);
   L.push(`**Dibuat:** ${r.generated_at}`);
+  if (r.scope === 'province') {
+    L.push('_Catatan: rekapitulasi provinsi menggabungkan desa-desa secara langsung; subtotal per kabupaten belum tersedia._');
+  }
   L.push('');
   L.push('## Ringkasan');
   L.push(`- Total tiket pengaduan: **${r.totals.tickets}**`);

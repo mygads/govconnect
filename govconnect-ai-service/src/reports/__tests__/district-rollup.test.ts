@@ -79,4 +79,24 @@ describe('buildDistrictRollup', () => {
     expect(md).toContain('data tidak tersedia');
     expect(md).toContain('September 2026');
   });
+
+  it('province scope: same math, province label, honest no-subtotal note', async () => {
+    const r = await buildDistrictRollup({
+      villages: [{ id: 'v1', name: 'Desa A' }, { id: 'v2', name: 'Desa B' }],
+      year: 2026, month: 9, scope: 'province', fetchCases: FETCHER,
+    });
+    expect(r.scope).toBe('province');
+    expect(r.totals.tickets).toBe(15);
+    const md = renderDistrictMarkdown(r);
+    expect(md).toContain('TINGKAT PROVINSI');
+    expect(md).not.toContain('KABUPATEN');
+    expect(md).toContain('subtotal per kabupaten belum tersedia');
+  });
+
+  it('district is the default scope', async () => {
+    const r = await buildDistrictRollup({
+      villages: [{ id: 'v1' }], year: 2026, month: 9, fetchCases: FETCHER,
+    });
+    expect(r.scope).toBe('district');
+  });
 });
