@@ -14,18 +14,26 @@
  *   are wiped (photo_bytes = NULL); metadata + audit trail stay.
  * - Photo bytes are NEVER sent to any AI/LLM/OCR — only to the admin's
  *   dashboard over the authenticated internal API.
+ * - NIK is NEVER stored plaintext in pipeline_ktp_verifications. On approve
+ *   the NIK goes into the NIK vault (AES-256-GCM, scope (village_id,
+ *   user_id), TTL KTP_NIK_TOKEN_TTL_MS); the row keeps only the opaque
+ *   `nik_token`. Decrypt happens on-view via resolveKtpNikForReview, which
+ *   audits who looked at the NIK and when.
  *
  * Approve effects:
  * 1. fields validated (validateKtpFields — pure),
- * 2. status → approved, photo wiped, reviewer + timestamp recorded,
- * 3. identity ladder L2 granted (identitySetVerified),
- * 4. citizen notified.
+ * 2. pending row re-read (village-scoped), NIK → vault → token,
+ * 3. status → approved (conditional UPDATE; race loser → token invalidated,
+ *    never orphaned), photo wiped, reviewer + timestamp recorded,
+ * 4. identity ladder L2 granted (identitySetVerified),
+ * 5. citizen notified.
  */
 
 import { randomUUID, createHash } from 'crypto';
 import {
   getDb, dbDown, appendAudit, identitySetVerified,
 } from './pipeline-store';
+import { vaultStoreNik, vaultResolveNik, vaultInvalidateNik } from './pii-vault';
 import { notifyCitizen } from './doc-reminders';
 import logger from '../utils/logger';
 
@@ -46,8 +54,38 @@ export const KTP_REJECTED_COPY = (reason: string): string =>
 
 export const MAX_KTP_PHOTO_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Vault TTL for a verified-identity NIK (default 365 days, override via
+ * KTP_NIK_TOKEN_TTL_MS).
+ *
+ * Rationale: chat NIK tokens are ephemeral (NIK_TOKEN_TTL_MS, default 24h)
+ * because they only mask NIKs inside a live conversation. A VERIFIED NIK
+ * is different — it backs L2 identity and slot pre-fill for future visits.
+ * Forcing re-verification every 24h would be hostile to citizens, but
+ * keeping the NIK forever violates UU PDP data minimization. One year is
+ * the middle ground: one verification cycle per citizen per year; after
+ * expiry the vault returns null, readers degrade gracefully ("NIK
+ * kedaluwarsa"), and the citizen simply re-verifies. Production deployments
+ * should align this with their retention policy.
+ */
+export const KTP_NIK_TOKEN_TTL_MS = Number(
+  process.env.KTP_NIK_TOKEN_TTL_MS ?? 365 * 24 * 3600 * 1000,
+);
+
+/**
+ * Vault scope for a verified NIK: (village_id, user_id).
+ *
+ * Stronger than the vault's usual village-only scope: even within one
+ * village, a token minted for citizen A can never be resolved in the
+ * context of citizen B (vaultResolveNik enforces exact scope match).
+ */
+export function ktpVaultScope(villageId: string, userId: string): string {
+  return `${villageId}:${userId}`;
+}
+
 export interface KtpFields {
-  nik?: string;
+  nik?: string; // admin input (form) or legacy pre-vault rows — NEVER written to DB anymore
+  nik_token?: string; // vault token; the only NIK reference persisted since 2026-09-29
   nama?: string;
   tempat_lahir?: string;
   tanggal_lahir?: string; // YYYY-MM-DD
@@ -241,7 +279,19 @@ export interface KtpDecision {
   validationErrors?: string[];
 }
 
-/** Approve: validate → pending→approved → L2 → wipe photo → notify. */
+/** Approve: validate → vault NIK → pending→approved → L2 → wipe photo → notify.
+ *
+ * Ordering is deliberate for atomicity ("no false-success"):
+ *  1. pure validation first — nothing is written on invalid input;
+ *  2. re-read the pending row (village-scoped) — a non-pending row never
+ *     reaches the vault, so no token is minted for nothing;
+ *  3. NIK → vault (scope (village_id, user_id));
+ *  4. conditional claim UPDATE writes ONLY the token (never plaintext NIK).
+ *     If the claim loses a race (claimed !== 1), the freshly minted token
+ *     is invalidated immediately — no orphan token, no approved row
+ *     without a token;
+ *  5. photo wiped, L2 granted, audit, notify — as before.
+ */
 export async function approveKtpVerification(input: {
   villageId: string; id: string; reviewedBy: string; fields: KtpFields;
 }): Promise<KtpDecision> {
@@ -250,7 +300,21 @@ export async function approveKtpVerification(input: {
   const validationErrors = validateKtpFields(input.fields);
   if (validationErrors.length > 0) return { ok: false, validationErrors };
   const traceId = randomUUID();
+  const nikDigits = String(input.fields.nik ?? '').replace(/\D/g, '');
   try {
+    // Re-read the pending row first: we need user_id for the vault scope,
+    // and a non-pending row must never mint a vault token.
+    const pending = (await db.$queryRawUnsafe(
+      `SELECT id, user_id, channel FROM pipeline_ktp_verifications
+        WHERE id = $1 AND village_id = $2 AND status = 'pending' LIMIT 1`,
+      input.id, input.villageId,
+    )) as Array<{ id: string; user_id: string; channel: string }>;
+    const row = pending[0];
+    if (!row) {
+      return { ok: false, error: 'not_pending_or_not_found' };
+    }
+    const userScope = ktpVaultScope(input.villageId, row.user_id);
+    const nikToken = await vaultStoreNik(nikDigits, userScope, KTP_NIK_TOKEN_TTL_MS);
     const claimed = Number(await db.$executeRawUnsafe(
       `UPDATE pipeline_ktp_verifications
           SET status = 'approved', fields = $3::jsonb,
@@ -258,7 +322,8 @@ export async function approveKtpVerification(input: {
         WHERE id = $1 AND village_id = $2 AND status = 'pending'`,
       input.id, input.villageId,
       JSON.stringify({
-        nik: String(input.fields.nik ?? '').replace(/\D/g, ''),
+        // NIK plaintext is NEVER persisted — only the vault token.
+        nik_token: nikToken,
         nama: String(input.fields.nama ?? '').trim(),
         tempat_lahir: String(input.fields.tempat_lahir ?? '').trim(),
         tanggal_lahir: String(input.fields.tanggal_lahir ?? '').trim(),
@@ -267,22 +332,20 @@ export async function approveKtpVerification(input: {
       input.reviewedBy.slice(0, 200),
     ) as unknown as number);
     if (claimed !== 1) {
+      // Lost a race with another admin: drop the token we just minted so
+      // it can never resolve to a NIK for a row that isn't ours.
+      await vaultInvalidateNik(nikToken, userScope).catch(() => undefined);
       return { ok: false, error: 'not_pending_or_not_found' };
     }
     await wipeKtpPhoto(db, input.id);
-    const ver = await getKtpVerification(input.villageId, input.id);
-    if (ver) {
-      await identitySetVerified(input.villageId, ver.user_id, input.reviewedBy, `KTP manual review ${input.id}`);
-    }
+    await identitySetVerified(input.villageId, row.user_id, input.reviewedBy, `KTP manual review ${input.id}`);
     await appendAudit({
-      tenantId: input.villageId, traceId, userId: ver?.user_id ?? '',
-      channel: ver?.channel ?? 'whatsapp', stage: 'EXECUTE',
+      tenantId: input.villageId, traceId, userId: row.user_id,
+      channel: row.channel ?? 'whatsapp', stage: 'EXECUTE',
       event: 'ktp_verification_approved',
       payload: { verificationId: input.id, reviewedBy: input.reviewedBy },
     }).catch(() => undefined);
-    if (ver) {
-      await notifyCitizen(input.villageId, ver.user_id, KTP_APPROVED_COPY);
-    }
+    await notifyCitizen(input.villageId, row.user_id, KTP_APPROVED_COPY);
     return { ok: true };
   } catch (err) {
     logger.warn('[ktp] approve failed', { error: String((err as Error)?.message ?? err).slice(0, 120) });
@@ -328,7 +391,14 @@ export async function rejectKtpVerification(input: {
   }
 }
 
-/** Latest approved identity fields for slot pre-fill (verified data only). */
+/** Latest approved identity fields for slot pre-fill (verified data only).
+ *
+ * The NIK is resolved from the vault token here so slot pre-fill keeps
+ * working with the real NIK while storage holds only the token. If the
+ * token expired (or the vault is unreachable), the identity is returned
+ * WITHOUT a NIK — fail-open: the citizen just answers the question again.
+ * Legacy pre-vault rows (plaintext `nik` in fields) are returned as-is.
+ */
 export async function getVerifiedIdentity(
   villageId: string, userId: string,
 ): Promise<KtpFields | null> {
@@ -342,10 +412,64 @@ export async function getVerifiedIdentity(
       villageId, userId,
     )) as Array<{ fields: KtpFields }>;
     const f = rows[0]?.fields;
-    return f && typeof f === 'object' ? f : null;
+    if (!f || typeof f !== 'object') return null;
+    const out: KtpFields = {
+      nama: f.nama, tempat_lahir: f.tempat_lahir,
+      tanggal_lahir: f.tanggal_lahir, alamat: f.alamat,
+    };
+    if (typeof f.nik === 'string' && f.nik) {
+      out.nik = f.nik; // legacy pre-vault row
+      return out;
+    }
+    const token = typeof f.nik_token === 'string' ? f.nik_token : '';
+    if (!token) return out; // no NIK stored at all
+    const nik = await vaultResolveNik(token, ktpVaultScope(villageId, userId)).catch(() => null);
+    if (nik) out.nik = nik;
+    else logger.warn('[ktp] NIK token unresolvable (expired?)', { villageId });
+    return out;
   } catch {
     return null;
   }
+}
+
+export interface KtpNikView {
+  ok: boolean;
+  nik?: string;
+  expired?: boolean;
+  error?: string;
+}
+
+/**
+ * Decrypt-on-view for the admin dashboard: resolves the vault token for a
+ * single verification and audits WHO looked at the NIK and WHEN
+ * (event `ktp_nik_viewed`). Graceful on expiry: returns `{ ok: true,
+ * expired: true }` instead of throwing — the dashboard shows
+ * "NIK kedaluwarsa di vault".
+ */
+export async function resolveKtpNikForReview(input: {
+  villageId: string; id: string; reviewedBy: string;
+}): Promise<KtpNikView> {
+  const db = await getDb();
+  if (!db) return dbDown('resolveKtpNikForReview', { ok: false, error: 'database_unavailable' });
+  const ver = await getKtpVerification(input.villageId, input.id);
+  if (!ver) return { ok: false, error: 'not_found' };
+  const fields = (ver.fields ?? {}) as KtpFields;
+  let nik: string | null = null;
+  if (typeof fields.nik_token === 'string' && fields.nik_token) {
+    nik = await vaultResolveNik(fields.nik_token, ktpVaultScope(input.villageId, ver.user_id)).catch(() => null);
+  } else if (typeof fields.nik === 'string' && fields.nik) {
+    nik = fields.nik; // legacy pre-vault row
+  }
+  await appendAudit({
+    tenantId: input.villageId, traceId: randomUUID(), userId: ver.user_id,
+    channel: ver.channel, stage: 'EXECUTE', event: 'ktp_nik_viewed',
+    payload: {
+      verificationId: input.id, reviewedBy: input.reviewedBy.slice(0, 200),
+      resolved: !!nik, legacy: !fields.nik_token && !!fields.nik,
+    },
+  }).catch(() => undefined);
+  if (!nik) return { ok: true, expired: true };
+  return { ok: true, nik };
 }
 
 /**

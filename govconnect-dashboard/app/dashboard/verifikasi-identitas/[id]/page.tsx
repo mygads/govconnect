@@ -63,6 +63,10 @@ export default function VerifikasiIdentitasDetailPage() {
   const [zoom, setZoom] = useState(1)
   const [fields, setFields] = useState({ nik: "", nama: "", tempat_lahir: "", tanggal_lahir: "", alamat: "" })
   const [touched, setTouched] = useState(false)
+  // Decrypt-on-view for decided rows: NIK is stored as a vault token, resolved here (audited server-side).
+  const [viewNik, setViewNik] = useState<string | null>(null)
+  const [nikExpired, setNikExpired] = useState(false)
+  const [nikLoading, setNikLoading] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState("")
   const [submitting, setSubmitting] = useState<"approve" | "reject" | null>(null)
@@ -81,6 +85,24 @@ export default function VerifikasiIdentitasDetailPage() {
           tanggal_lahir: data.item.fields?.tanggal_lahir ?? "",
           alamat: data.item.fields?.alamat ?? "",
         })
+        // Decided rows keep only a vault token: resolve on view (server audits the view).
+        const token = (data.item.fields as any)?.nik_token as string | undefined
+        const legacyNik = (data.item.fields as any)?.nik as string | undefined
+        if (token) {
+          setNikLoading(true)
+          try {
+            const r = await fetch(`/api/ktp-verifications/${encodeURIComponent(id)}/nik`)
+            const d = await r.json()
+            if (r.ok && d.nik) setViewNik(d.nik)
+            else setNikExpired(true)
+          } catch {
+            setNikExpired(true) // graceful: never break the page on resolve failure
+          } finally {
+            setNikLoading(false)
+          }
+        } else if (legacyNik) {
+          setViewNik(legacyNik) // pre-vault row
+        }
       } catch (err: any) {
         toast({ title: "Gagal memuat", description: String(err?.message ?? err), variant: "destructive" })
       } finally {
@@ -239,9 +261,22 @@ export default function VerifikasiIdentitasDetailPage() {
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="nik">NIK (16 digit)</Label>
-              <Input id="nik" inputMode="numeric" placeholder="3201010101900001"
-                value={fields.nik} onChange={set("nik")} disabled={!isPending} maxLength={16} />
-              {touched && errors.nik && <p className="text-xs text-destructive">{errors.nik}</p>}
+              {isPending ? (
+                <>
+                  <Input id="nik" inputMode="numeric" placeholder="3201010101900001"
+                    value={fields.nik} onChange={set("nik")} disabled={!isPending} maxLength={16} />
+                  {touched && errors.nik && <p className="text-xs text-destructive">{errors.nik}</p>}
+                </>
+              ) : nikLoading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : nikExpired ? (
+                <p className="text-xs text-muted-foreground border rounded-md px-3 py-2.5">
+                  NIK kedaluwarsa di vault — warga perlu verifikasi ulang bila NIK dibutuhkan lagi.
+                </p>
+              ) : (
+                <Input id="nik" value={viewNik ?? ""} disabled readOnly className="font-mono"
+                  placeholder="—" title="NIK terverifikasi (tersimpan di vault)" />
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="nama">Nama lengkap</Label>

@@ -60,19 +60,21 @@ function decrypt(packed: string, key: Buffer): string {
 const memVault = new Map<string, { cipher: string; tenantId: string; expiresAt: number }>();
 
 /** Store a plaintext NIK, return the opaque token. Plaintext never persists. */
-export async function vaultStoreNik(plainNik: string, tenantId: string): Promise<string> {
+export async function vaultStoreNik(
+  plainNik: string, tenantId: string, ttlMs: number = TOKEN_TTL_MS,
+): Promise<string> {
   const token = `⟦NIK_${randomBytes(6).toString('hex')}⟧`;
   const key = getKey();
   if (!key) {
     // Degraded: memory-only, plaintext never leaves the process.
-    memVault.set(token, { cipher: plainNik, tenantId, expiresAt: Date.now() + TOKEN_TTL_MS });
+    memVault.set(token, { cipher: plainNik, tenantId, expiresAt: Date.now() + ttlMs });
     logger.warn('[nik-vault] stored NIK token in MEMORY (no key/DB) — not multi-instance safe');
     return token;
   }
   const cipher = encrypt(plainNik, key);
-  const persisted = await vaultPut(token, tenantId, cipher, TOKEN_TTL_MS);
+  const persisted = await vaultPut(token, tenantId, cipher, ttlMs);
   if (!persisted) {
-    memVault.set(token, { cipher, tenantId, expiresAt: Date.now() + TOKEN_TTL_MS });
+    memVault.set(token, { cipher, tenantId, expiresAt: Date.now() + ttlMs });
     logger.warn('[nik-vault] DB unavailable — token kept in memory fallback');
   }
   return token;

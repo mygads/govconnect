@@ -15,18 +15,31 @@ vi.mock('../pipeline-store', async (importOriginal) => {
 vi.mock('../doc-reminders', () => ({
   notifyCitizen: vi.fn(async () => true),
 }));
+vi.mock('../pii-vault', () => ({
+  vaultStoreNik: vi.fn(async () => '⟦NIK_aaaabbbbcccc⟧'),
+  vaultResolveNik: vi.fn(async () => '3201010101900001'),
+  vaultInvalidateNik: vi.fn(async () => undefined),
+}));
 
-import { getDb, identitySetVerified } from '../pipeline-store';
+import { getDb, identitySetVerified, appendAudit } from '../pipeline-store';
 import { notifyCitizen } from '../doc-reminders';
+import {
+  vaultStoreNik, vaultResolveNik, vaultInvalidateNik,
+} from '../pii-vault';
 import {
   validateKtpFields, createKtpVerification,
   approveKtpVerification, rejectKtpVerification,
   prefillSlotsFromVerifiedIdentity, KTP_RECEIVED_COPY,
+  getVerifiedIdentity, resolveKtpNikForReview, ktpVaultScope,
 } from '../ktp-verification';
 
 const mockGetDb = vi.mocked(getDb);
 const mockSetVerified = vi.mocked(identitySetVerified);
 const mockNotify = vi.mocked(notifyCitizen);
+const mockAppendAudit = vi.mocked(appendAudit);
+const mockVaultStore = vi.mocked(vaultStoreNik);
+const mockVaultResolve = vi.mocked(vaultResolveNik);
+const mockVaultInvalidate = vi.mocked(vaultInvalidateNik);
 
 function fakeDb(overrides: Record<string, any> = {}) {
   return {
@@ -186,5 +199,156 @@ describe('prefillSlotsFromVerifiedIdentity', () => {
 describe('copy', () => {
   it('uses the user-decided received copy', () => {
     expect(KTP_RECEIVED_COPY).toContain('petugas desa akan memverifikasi');
+  });
+});
+
+describe('ktpVaultScope', () => {
+  it('scopes tokens to (village_id, user_id)', () => {
+    expect(ktpVaultScope('v1', 'u1')).toBe('v1:u1');
+    expect(ktpVaultScope('v1', 'u1')).not.toBe(ktpVaultScope('v1', 'u2'));
+    expect(ktpVaultScope('v1', 'u1')).not.toBe(ktpVaultScope('v2', 'u1'));
+  });
+});
+
+describe('approveKtpVerification (vault-backed NIK)', () => {
+  it('stores nik_token, never plaintext NIK, scoped to (village, user)', async () => {
+    const db = fakeDb({
+      $queryRawUnsafe: vi.fn(async () => [
+        { id: 'k1', user_id: 'u1', channel: 'whatsapp' },
+      ]),
+    });
+    mockGetDb.mockResolvedValue(db as any);
+    const r = await approveKtpVerification({
+      villageId: 'v1', id: 'k1', reviewedBy: 'admin', fields: VALID,
+    });
+    expect(r.ok).toBe(true);
+    expect(mockVaultStore).toHaveBeenCalledWith('3201010101900001', 'v1:u1', expect.any(Number));
+    const updateCall = db.$executeRawUnsafe.mock.calls[0];
+    const jsonArg = updateCall.find(
+      (a: any) => typeof a === 'string' && a.includes('nik_token'),
+    ) as string;
+    expect(jsonArg).toBeTruthy();
+    const parsed = JSON.parse(jsonArg);
+    expect(parsed.nik_token).toBe('⟦NIK_aaaabbbbcccc⟧');
+    expect(parsed.nik).toBeUndefined();
+    // No plaintext NIK anywhere in any SQL text or bound arg sent to the DB.
+    const allStrings = db.$executeRawUnsafe.mock.calls
+      .flat()
+      .filter((a: any) => typeof a === 'string') as string[];
+    expect(allStrings.length).toBeGreaterThan(0);
+    for (const s of allStrings) expect(s).not.toContain('3201010101900001');
+  });
+
+  it('mints no vault token when the row is not pending', async () => {
+    const db = fakeDb({ $queryRawUnsafe: vi.fn(async () => []) });
+    mockGetDb.mockResolvedValue(db as any);
+    const r = await approveKtpVerification({
+      villageId: 'v1', id: 'k1', reviewedBy: 'admin', fields: VALID,
+    });
+    expect(r).toEqual({ ok: false, error: 'not_pending_or_not_found' });
+    expect(mockVaultStore).not.toHaveBeenCalled();
+    expect(db.$executeRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('invalidates the minted token when the claim loses a race (no orphan)', async () => {
+    const db = fakeDb({
+      $queryRawUnsafe: vi.fn(async () => [
+        { id: 'k1', user_id: 'u1', channel: 'whatsapp' },
+      ]),
+      $executeRawUnsafe: vi.fn(async () => 0),
+    });
+    mockGetDb.mockResolvedValue(db as any);
+    const r = await approveKtpVerification({
+      villageId: 'v1', id: 'k1', reviewedBy: 'admin', fields: VALID,
+    });
+    expect(r).toEqual({ ok: false, error: 'not_pending_or_not_found' });
+    expect(mockVaultInvalidate).toHaveBeenCalledWith('⟦NIK_aaaabbbbcccc⟧', 'v1:u1');
+    expect(mockSetVerified).not.toHaveBeenCalled();
+    expect(mockNotify).not.toHaveBeenCalled();
+  });
+});
+
+describe('getVerifiedIdentity (vault)', () => {
+  it('resolves nik_token to plaintext for pre-fill without leaking the token', async () => {
+    const db = fakeDb({
+      $queryRawUnsafe: vi.fn(async () => [
+        { fields: { nik_token: '⟦NIK_aaaabbbbcccc⟧', nama: 'Budi', alamat: 'Jl. X' } },
+      ]),
+    });
+    mockGetDb.mockResolvedValue(db as any);
+    const ident = await getVerifiedIdentity('v1', 'u1');
+    expect(mockVaultResolve).toHaveBeenCalledWith('⟦NIK_aaaabbbbcccc⟧', 'v1:u1');
+    expect(ident?.nik).toBe('3201010101900001');
+    expect(ident?.nama).toBe('Budi');
+    expect((ident as any)?.nik_token).toBeUndefined();
+  });
+
+  it('returns identity without NIK when the token expired (graceful)', async () => {
+    mockVaultResolve.mockResolvedValueOnce(null);
+    const db = fakeDb({
+      $queryRawUnsafe: vi.fn(async () => [
+        { fields: { nik_token: '⟦NIK_old⟧', nama: 'Budi' } },
+      ]),
+    });
+    mockGetDb.mockResolvedValue(db as any);
+    const ident = await getVerifiedIdentity('v1', 'u1');
+    expect(ident?.nik).toBeUndefined();
+    expect(ident?.nama).toBe('Budi');
+  });
+
+  it('supports legacy plaintext rows without touching the vault', async () => {
+    const db = fakeDb({
+      $queryRawUnsafe: vi.fn(async () => [
+        { fields: { nik: '3201010101900001', nama: 'Budi' } },
+      ]),
+    });
+    mockGetDb.mockResolvedValue(db as any);
+    const ident = await getVerifiedIdentity('v1', 'u1');
+    expect(ident?.nik).toBe('3201010101900001');
+    expect(mockVaultResolve).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveKtpNikForReview (decrypt-on-view)', () => {
+  function decidedRow(fields: Record<string, unknown>) {
+    return {
+      id: 'k1', village_id: 'v1', user_id: 'u1', channel: 'whatsapp',
+      status: 'approved', fields, photo_sha256: '', photo_mime: 'image/jpeg',
+      reviewed_by: 'admin', reviewed_at: null, reject_reason: '',
+      created_at: '2026-01-01', has_photo: false,
+    };
+  }
+
+  it('resolves the token and audits who viewed it', async () => {
+    const db = fakeDb({
+      $queryRawUnsafe: vi.fn(async () => [
+        decidedRow({ nik_token: '⟦NIK_aaaabbbbcccc⟧', nama: 'Budi' }),
+      ]),
+    });
+    mockGetDb.mockResolvedValue(db as any);
+    const r = await resolveKtpNikForReview({ villageId: 'v1', id: 'k1', reviewedBy: 'admin_desa' });
+    expect(r).toEqual({ ok: true, nik: '3201010101900001' });
+    expect(mockVaultResolve).toHaveBeenCalledWith('⟦NIK_aaaabbbbcccc⟧', 'v1:u1');
+    expect(mockAppendAudit).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'ktp_nik_viewed',
+      payload: expect.objectContaining({ reviewedBy: 'admin_desa', resolved: true }),
+    }));
+  });
+
+  it('is graceful when the token expired', async () => {
+    mockVaultResolve.mockResolvedValueOnce(null);
+    const db = fakeDb({
+      $queryRawUnsafe: vi.fn(async () => [decidedRow({ nik_token: '⟦NIK_old⟧' })]),
+    });
+    mockGetDb.mockResolvedValue(db as any);
+    const r = await resolveKtpNikForReview({ villageId: 'v1', id: 'k1', reviewedBy: 'admin_desa' });
+    expect(r).toEqual({ ok: true, expired: true });
+  });
+
+  it('returns not_found for unknown id', async () => {
+    const db = fakeDb({ $queryRawUnsafe: vi.fn(async () => []) });
+    mockGetDb.mockResolvedValue(db as any);
+    const r = await resolveKtpNikForReview({ villageId: 'v1', id: 'nope', reviewedBy: 'admin' });
+    expect(r).toEqual({ ok: false, error: 'not_found' });
   });
 });

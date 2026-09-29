@@ -15,7 +15,7 @@ import { internalApiKeyMatches } from '../utils/internal-auth';
 import { getQuery, getParam } from '../utils/http';
 import {
   listKtpVerifications, getKtpVerification, getKtpPhoto,
-  approveKtpVerification, rejectKtpVerification,
+  approveKtpVerification, rejectKtpVerification, resolveKtpNikForReview,
   type KtpVerificationStatus,
 } from '../pipeline/ktp-verification';
 
@@ -65,8 +65,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 /** GET /api/ktp-verifications/:id/photo?village_id=X — admin eyes only. */
-router.get('/:id/photo', async (req: Request, res: Response) => {
-  const villageId = villageIdOf(req);
+router.get('/:id/photo', async (req: Request, res: Response) => {  const villageId = villageIdOf(req);
   if (!villageId) return res.status(400).json({ error: 'village_id required' });
   const id = getParam(req, 'id');
   if (!id) return res.status(400).json({ error: 'id required' });
@@ -75,6 +74,29 @@ router.get('/:id/photo', async (req: Request, res: Response) => {
   res.setHeader('content-type', photo.mime);
   res.setHeader('cache-control', 'no-store');
   res.send(photo.bytes);
+});
+
+/**
+ * GET /api/ktp-verifications/:id/nik?village_id=X&reviewed_by=Y
+ * Decrypt-on-view: resolves the vault NIK token for the dashboard and
+ * audits who looked at the NIK (ktp_nik_viewed). Returns
+ * `{ nik }` or `{ nik: null, expired: true }` — never throws on expiry.
+ */
+router.get('/:id/nik', async (req: Request, res: Response) => {
+  const villageId = villageIdOf(req);
+  if (!villageId) return res.status(400).json({ error: 'village_id required' });
+  const reviewedBy = String(getQuery(req, 'reviewed_by') ?? '').trim().slice(0, 200);
+  const id = getParam(req, 'id');
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const result = await resolveKtpNikForReview({
+    villageId, id, reviewedBy: reviewedBy || 'unknown',
+  });
+  if (!result.ok) {
+    const status = result.error === 'not_found' ? 404 : 503;
+    return res.status(status).json({ success: false, error: result.error });
+  }
+  res.setHeader('cache-control', 'no-store');
+  res.json({ success: true, nik: result.nik ?? null, expired: !!result.expired });
 });
 
 /** POST /api/ktp-verifications/:id/approve */
